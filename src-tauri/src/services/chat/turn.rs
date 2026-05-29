@@ -1,0 +1,2323 @@
+//! Turn execution for chat-with-your-emails: prompt assembly, the tool-call
+//! loop (including XML-tool-call salvage and direct-tool shortcuts),
+//! thread-bound turns, and the top-level `run_chat_turn` orchestrator that
+//! streams the answer and persists the assistant message.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::{Datelike, Utc};
+use tauri::{AppHandle, Emitter};
+use tokio::time::timeout;
+
+use crate::ai::provider::{AIProvider, AiMessage};
+use crate::db::Database;
+use crate::models::error::{AppError, Result};
+use crate::models::{
+    ChatMessage, ChatMessageSource, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace, ChatTraceEvent,
+    LlmCallTrace, RetrievalTrace, RouteMode, ToolCallTrace,
+};
+use crate::services::ai::AiService;
+use crate::util::html::strip_html_for_fts;
+
+use super::conversations::{derive_title, title_is_default};
+use super::retrieval::{
+    mark_relevant_region, retrieve_context_with_trace, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
+    MAX_SOURCE_BODY_CHARS, TOP_K_SOURCES,
+};
+use super::routing::classify_route;
+use super::tools;
+use super::{count_invalid_citations, emit_log, format_date, strip_invalid_citations, truncate_chars};
+
+/// Max conversation turns (user+assistant combined) kept in the prompt.
+const MAX_HISTORY_TURNS: usize = 6;
+
+/// Format a message list as readable text for the reasoning panel (and for
+/// Phoenix tracing when enabled). Shows each message's role, content, and any
+/// tool calls — including tool-result messages that carry search_emails
+/// output back to the LLM. Always compiled so dev builds (without the
+/// `tracing` feature) can still capture LLM I/O for the in-app debug panel.
+fn format_messages_for_trace(messages: &[crate::ai::provider::AiMessage]) -> String {
+    // No truncation: the reasoning panel needs the FULL prompt so the
+    // developer can copy-paste it verbatim into a llama.cpp / Ollama prompt
+    // for debugging. A long system prompt + tool results can run to tens of
+    // KB; that's still cheap to serialise into the ChatTrace JSON blob, and
+    // capture is dev-only (cfg(debug_assertions)).
+    messages
+        .iter()
+        .map(|m| {
+            let tool_call_str = match &m.tool_calls {
+                Some(tcs) if !tcs.is_empty() => {
+                    let calls: Vec<String> = tcs
+                        .iter()
+                        .map(|tc| format!("{}({})", tc.function.name, tc.function.arguments))
+                        .collect();
+                    format!("\ntool_calls: {}", calls.join(", "))
+                }
+                _ => String::new(),
+            };
+            format!("[{}] {}{}", m.role, m.content, tool_call_str)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
+}
+
+/// Format a tool-round response for the reasoning panel (and Phoenix tracing
+/// when enabled). Always compiled — see `format_messages_for_trace`.
+fn format_response_for_trace(response: &crate::ai::provider::AiMessage) -> String {
+    // No truncation — see format_messages_for_trace. Full response capture
+    // makes the reasoning panel copy-paste reproducible.
+    let mut parts: Vec<String> = Vec::new();
+    if !response.content.is_empty() {
+        parts.push(response.content.clone());
+    }
+    if let Some(tool_calls) = &response.tool_calls {
+        for tc in tool_calls {
+            parts.push(format!("tool_call: {}({})", tc.function.name, tc.function.arguments));
+        }
+    }
+    if parts.is_empty() {
+        "(empty)".to_string()
+    } else {
+        parts.join("\n")
+    }
+}
+
+/// Render a `search_emails` tool result, grouped by Gmail category in the
+/// priority order Primary → Updates → Other. Users reading a chat answer want
+/// direct mail surfaced first; shipping / receipt "Updates" next; and newsletter
+/// / social noise last. Callers (the LLM) read this text so we emit explicit
+/// "## Primary / ## Updates / ## Other" headers — cheaper and more reliable
+/// than asking the model to re-sort by itself.
+/// Prefix string for the "tool result ←" log line that exposes the email
+/// count for search-shaped results. `format_search_emails_output` emits one
+/// `- id=…` line per email row, so we count those. Returns either
+/// `"N emails, "` or `""` (empty for tools that don't return email lists).
+fn tool_result_count_hint(tool_name: &str, result: &str) -> String {
+    match tool_name {
+        "search_emails" | "search_contacts" | "get_attachments" => {
+            let n = result.matches("\n- ").count();
+            if n > 0 {
+                format!("{} rows, ", n)
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Assemble `(role, content)` messages to send to Ollama's /api/chat.
+///
+/// Layout:
+///   system: instructions + sources block
+///   user:   <older turn>
+///   assistant: <older turn>
+///   ...
+///   user:   <the new question>
+/// Assemble `(role, content)` chat messages.
+///
+/// `system_template` is the user-editable system-prompt template — typically
+/// loaded via `prompts::get_template(db, "chat.system")`. We render it with
+/// `{{today}}`, `{{tomorrow}}`, `{{language_instruction}}` and then append
+/// the per-turn dynamic Sources block, which stays in code because its
+/// formatting (citation numbering, smart-snippet slicing, relevant-region
+/// markers) is structurally tied to retrieval and unsafe to expose to the
+/// user-editable template.
+pub fn build_prompt(
+    sources: &[ScoredEmail],
+    history: &[ChatMessage],
+    user_question: &str,
+    language: &str,
+    system_template: &str,
+    tools_section: &str,
+) -> Vec<(String, String)> {
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let tomorrow = (Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let language_instruction = if language.is_empty() {
+        "Reply in the language the user writes in.".to_string()
+    } else {
+        format!("Reply in {language}.")
+    };
+
+    let mut tpl_vars = std::collections::HashMap::new();
+    tpl_vars.insert("today", today);
+    tpl_vars.insert("tomorrow", tomorrow);
+    tpl_vars.insert("language_instruction", language_instruction);
+    tpl_vars.insert("tools_section", tools_section.to_string());
+    let rendered = crate::services::prompts::render(system_template, &tpl_vars);
+
+    let mut system = String::with_capacity(rendered.len() + sources.len() * 1200);
+    system.push_str(&rendered);
+
+    if sources.is_empty() {
+        system.push_str(
+            "Sources: (none pre-retrieved for this turn — you MUST call search_emails \
+before answering any factual question about the user's mailbox.)\n",
+        );
+    } else {
+        system.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
+        for src in sources {
+            let body_text = strip_html_for_fts(&src.body);
+            let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
+            let marked = mark_relevant_region(&sliced);
+            system.push_str(&format!(
+                "[{}] From: {} <{}>  Subject: {}  Date: {}\n    {}\n\n",
+                src.citation_number,
+                src.email.sender,
+                src.email.sender_email,
+                src.email.subject,
+                format_date(src.email.timestamp),
+                marked
+            ));
+        }
+    }
+
+    let mut messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
+    messages.push(("system".to_string(), system));
+
+    // Trim history to the last MAX_HISTORY_TURNS turns, preserving order.
+    let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
+    for msg in &history[start..] {
+        if msg.role == "user" || msg.role == "assistant" {
+            messages.push((msg.role.clone(), msg.content.clone()));
+        }
+    }
+
+    messages.push(("user".to_string(), user_question.to_string()));
+    messages
+}
+
+// ── Tool calling ────────────────────────────────────────────────────────────
+
+/// Maximum tool-call round-trips before we force the model to answer.
+const MAX_TOOL_ROUNDS: usize = 5;
+
+/// Per-tool dispatch result: the text the LLM sees plus the structural
+/// allowlists this tool contributed (email ids + draft ids). Callers fold
+/// the refs into per-turn accumulators that end up on the assistant
+/// `ChatMessage` as `referenced_email_ids` / `referenced_draft_ids`.
+struct DispatchedTool {
+    text: String,
+    email_refs: Vec<String>,
+    draft_refs: Vec<String>,
+}
+
+/// Dispatch one tool call through the registry: look up the tool (honouring
+/// feature gating), execute it, emit any `ToolEffect`s as `chat-tool-effect`
+/// Tauri events for the frontend to react to, and return the text the LLM
+/// will see as the tool-result message along with the email-id allowlist
+/// this tool produced.
+async fn dispatch_tool(
+    registry: &tools::ToolRegistry,
+    db: &Arc<Database>,
+    app: Option<&AppHandle>,
+    account_id: &str,
+    categories: &[String],
+    name: &str,
+    args: serde_json::Value,
+) -> DispatchedTool {
+    use tauri::Emitter;
+    match registry.get(name, db.as_ref()) {
+        Some(tool) => {
+            let ctx = tools::ToolCtx {
+                db,
+                account_id,
+                categories,
+                app,
+            };
+            match tool.execute(&ctx, args).await {
+                Ok(out) => {
+                    if let Some(handle) = app {
+                        for eff in &out.effects {
+                            if let Err(e) = handle.emit("chat-tool-effect", eff) {
+                                // Effect dispatch failures don't poison the tool result
+                                // — the LLM still gets its text; we just log the miss.
+                                emit_log(handle, "warn", &format!("chat-tool-effect emit failed for {name}: {e}"));
+                            }
+                        }
+                    }
+                    DispatchedTool {
+                        text: out.text,
+                        email_refs: out.email_refs,
+                        draft_refs: out.draft_refs,
+                    }
+                }
+                Err(e) => DispatchedTool {
+                    text: format!("Tool '{name}' error: {e}"),
+                    email_refs: Vec::new(),
+                    draft_refs: Vec::new(),
+                },
+            }
+        }
+        None => {
+            // Distinguish unknown vs gated-off so the LLM and the user get a
+            // useful hint instead of a flat "unknown tool".
+            let text = if registry.lookup(name).is_some() {
+                format!("Tool '{name}' is currently disabled in Settings.")
+            } else {
+                format!("Unknown tool: {name}")
+            };
+            DispatchedTool {
+                text,
+                email_refs: Vec::new(),
+                draft_refs: Vec::new(),
+            }
+        }
+    }
+}
+
+/// Sync test shim. Internally drives `dispatch_tool` through a current-thread
+/// runtime so the existing tool tests (all `#[test]`-flavoured) don't need to
+/// be rewritten to `#[tokio::test]`. Production code never calls this — the
+/// real chat loop uses `dispatch_tool` directly so it can emit effects via
+/// the real `AppHandle`.
+#[cfg(test)]
+pub(in crate::services::chat) fn execute_tool(
+    db: &Arc<Database>,
+    account_id: &str,
+    categories: &[String],
+    name: &str,
+    arguments: &serde_json::Value,
+) -> String {
+    // The tests assume every tool is available, including gated ones, because
+    // the old `execute_tool` had no gating. Enable each feature on a fresh
+    // test DB so lookups succeed. Production code path goes through real
+    // Settings flags via the registry.
+    let _ = db.set_preference("memory_enabled", "true");
+    let _ = db.set_preference("task_enabled", "true");
+    let _ = db.set_preference("lenses_enabled", "true");
+    let _ = db.set_preference("ai_drafts_enabled", "true");
+
+    let registry = tools::default_registry();
+    let args = arguments.clone();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    // Existing tests only assert on text — drop the refs after dispatch.
+    rt.block_on(dispatch_tool(&registry, db, None, account_id, categories, name, args))
+        .text
+}
+
+/// Salvage XML-style tool calls embedded in plain assistant text.
+///
+/// Some small instruction-tuned models (Qwen 3.5 4B notably) sometimes
+/// emit tool calls as text using this Llama-3 style envelope instead of
+/// returning them in the JSON `tool_calls` field the chat-completion API
+/// expects:
+///
+/// ```text
+/// <tool_call>
+/// <function=get_email_body>
+/// <parameter=email_id>
+/// 19e6e27f48f95297
+/// </parameter>
+/// </function>
+/// </tool_call>
+/// ```
+///
+/// When that happens the tool loop sees an empty `tool_calls` array and
+/// would otherwise treat the XML as the model's final answer. This parser
+/// extracts every `<tool_call>` block and converts it into a proper
+/// `AiToolCall` so the loop can dispatch it normally.
+///
+/// Integer-shaped parameter values are promoted to a JSON number so args
+/// like `limit=25` still match the tool's schema; everything else stays a
+/// string. Returns an empty `Vec` when no `<tool_call>` block is found.
+fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    const OPEN: &str = "<tool_call>";
+    const CLOSE: &str = "</tool_call>";
+    const FN_OPEN: &str = "<function=";
+    const PARAM_OPEN: &str = "<parameter=";
+    const PARAM_CLOSE: &str = "</parameter>";
+
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel_open) = text[cursor..].find(OPEN) {
+        let after_open = cursor + rel_open + OPEN.len();
+        let close = match text[after_open..].find(CLOSE) {
+            Some(c) => after_open + c,
+            None => break,
+        };
+        let block = &text[after_open..close];
+        cursor = close + CLOSE.len();
+
+        // Function name: <function=NAME>...
+        let fn_start = match block.find(FN_OPEN) {
+            Some(s) => s + FN_OPEN.len(),
+            None => continue,
+        };
+        let fn_end = match block[fn_start..].find('>') {
+            Some(e) => fn_start + e,
+            None => continue,
+        };
+        let name = block[fn_start..fn_end].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        // Walk every <parameter=KEY>VALUE</parameter> inside the function
+        // block and accumulate them into a JSON object.
+        let mut args = serde_json::Map::new();
+        let mut search_from = fn_end + 1;
+        while let Some(rel_p) = block[search_from..].find(PARAM_OPEN) {
+            let key_start = search_from + rel_p + PARAM_OPEN.len();
+            let key_end = match block[key_start..].find('>') {
+                Some(e) => key_start + e,
+                None => break,
+            };
+            let key = block[key_start..key_end].trim().to_string();
+            let val_start = key_end + 1;
+            let val_end = match block[val_start..].find(PARAM_CLOSE) {
+                Some(e) => val_start + e,
+                None => break,
+            };
+            let raw_val = block[val_start..val_end].trim();
+            let json_val: serde_json::Value = if let Ok(n) = raw_val.parse::<i64>() {
+                serde_json::Value::Number(n.into())
+            } else if let Ok(f) = raw_val.parse::<f64>() {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::String(raw_val.to_string()))
+            } else {
+                serde_json::Value::String(raw_val.to_string())
+            };
+            if !key.is_empty() {
+                args.insert(key, json_val);
+            }
+            search_from = val_end + PARAM_CLOSE.len();
+        }
+
+        out.push(AiToolCall {
+            function: AiToolCallFunction {
+                name,
+                arguments: serde_json::Value::Object(args),
+            },
+        });
+    }
+    out
+}
+
+/// Salvage Python-call-style tool calls embedded in plain assistant text.
+///
+/// Companion to [`parse_xml_tool_calls`] for the *other* malformed shape
+/// small models emit when they lose the tool-call channel — a Python
+/// function-call literal either prefixed with `tool_call:` or appearing
+/// alone on a line as a bare `name(args)`:
+///
+/// ```text
+/// tool_call: get_email_body(email_id="19e73d15a43b67e8")
+/// search_emails(from="lena.park@orbitfreight.co", limit=1)
+/// ```
+///
+/// A line is considered a salvageable call when EITHER:
+///   1. It begins with `tool_call:` (case-insensitive) — prefix-tagged form,
+///      accepted regardless of the identifier; OR
+///   2. It is structurally `name(args)` after trimming (no prose before the
+///      identifier, no prose after the closing paren, modulo trailing
+///      `.,;` punctuation) AND `name` matches one of `known_tools`.
+///
+/// The registry check on the bare form is the false-positive guard: prose
+/// like "I used `search_emails(...)` to find it" still won't trigger a
+/// phantom call because the line isn't structurally just the call. An
+/// unknown identifier is treated as prose either way.
+///
+/// Arguments are parsed as `key=value` pairs:
+///   - `"..."` and `'...'` → string
+///   - integer / float literals → JSON number (so `limit=25` matches the
+///     tool schema)
+///   - `true` / `false` → JSON bool
+///   - anything else → string (kept verbatim)
+fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> Vec<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    let is_valid_ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let trimmed_start = line.trim_start();
+        // Branch 1: explicit `tool_call:` prefix — accepted regardless of
+        // identifier (legacy salvage from when the registry wasn't threaded
+        // through; still useful when the model invents a tool name).
+        let rest_owned;
+        let rest: &str = if trimmed_start.len() >= "tool_call:".len()
+            && trimmed_start[.."tool_call:".len()].eq_ignore_ascii_case("tool_call:")
+        {
+            trimmed_start["tool_call:".len()..].trim_start()
+        } else {
+            // Branch 2: bare `name(args)` line. The whole line, after
+            // trimming whitespace and trailing punctuation, must structurally
+            // be the call, AND `name` must be in the registry.
+            let stripped = line.trim().trim_end_matches(['.', ',', ';']).trim_end();
+            let paren_open = match stripped.find('(') {
+                Some(i) => i,
+                None => continue,
+            };
+            // Closing paren must terminate the (stripped) line.
+            if !stripped.ends_with(')') {
+                continue;
+            }
+            let name = stripped[..paren_open].trim();
+            if !is_valid_ident(name) || !known_tools.contains(&name) {
+                continue;
+            }
+            rest_owned = stripped.to_string();
+            &rest_owned
+        };
+
+        // `rest` should now look like `name(args)`. Find the outer parens.
+        let paren_open = match rest.find('(') {
+            Some(i) => i,
+            None => continue,
+        };
+        let paren_close = match rest.rfind(')') {
+            Some(i) if i > paren_open => i,
+            _ => continue,
+        };
+        let name = rest[..paren_open].trim();
+        if !is_valid_ident(name) {
+            continue;
+        }
+        let args_str = &rest[paren_open + 1..paren_close];
+        let args = parse_python_call_kwargs(args_str);
+
+        out.push(AiToolCall {
+            function: AiToolCallFunction {
+                name: name.to_string(),
+                arguments: serde_json::Value::Object(args),
+            },
+        });
+    }
+    out
+}
+
+/// Parse a Python-call kwargs string (`a="x", b=1, c=true`) into a JSON
+/// object. Tolerates whitespace; respects single- and double-quoted
+/// strings so commas inside strings don't split a pair in two.
+fn parse_python_call_kwargs(s: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    for piece in split_top_level_commas(s) {
+        let pair = piece.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let eq = match pair.find('=') {
+            Some(i) => i,
+            None => continue,
+        };
+        let key = pair[..eq].trim();
+        let raw_val = pair[eq + 1..].trim();
+        if key.is_empty() {
+            continue;
+        }
+        out.insert(key.to_string(), parse_python_value(raw_val));
+    }
+    out
+}
+
+/// Split a comma-separated kwargs body at top level, respecting `"` and
+/// `'` string delimiters so `a="x,y", b=2` produces two pieces, not three.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut start = 0usize;
+    let mut quote: Option<u8> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match quote {
+            Some(q) if b == q => quote = None,
+            Some(_) => {}
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b',' => {
+                    out.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
+    }
+    if start <= s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+fn parse_python_value(raw: &str) -> serde_json::Value {
+    let r = raw.trim();
+    if r.len() >= 2 && ((r.starts_with('"') && r.ends_with('"')) || (r.starts_with('\'') && r.ends_with('\''))) {
+        return serde_json::Value::String(r[1..r.len() - 1].to_string());
+    }
+    if let Ok(n) = r.parse::<i64>() {
+        return serde_json::Value::Number(n.into());
+    }
+    if let Ok(f) = r.parse::<f64>() {
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return serde_json::Value::Number(n);
+        }
+    }
+    match r {
+        "true" | "True" => return serde_json::Value::Bool(true),
+        "false" | "False" => return serde_json::Value::Bool(false),
+        "null" | "None" => return serde_json::Value::Null,
+        _ => {}
+    }
+    serde_json::Value::String(r.to_string())
+}
+
+// ── Direct-tool shortcut routing ────────────────────────────────────────────
+//
+// Some queries are so stereotyped ("summary of today's emails", "mis pendientes")
+// that the cheapest way to answer them is to skip the LLM's tool-choice round
+// entirely and drive the tool call from the backend. On a local 3B-class model
+// that's a 2–6 s latency win: the first LLM round just decides which tool to
+// call, and we can decide that deterministically from keywords for these cases.
+//
+// Returns `Some(Vec<AiToolCall>)` when the question matches a shortcut. The
+// caller feeds these calls as the "virtual round 0" into `run_tool_loop`, so
+// the first real LLM pass is the one that *summarises* the tool results —
+// exactly the work the LLM is actually good at.
+fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider::AiToolCall>> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+    let q = user_question.trim().to_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+
+    // Helper: build a search_emails call with an ISO since/until window.
+    let search_since_until = |since: chrono::NaiveDate, until: chrono::NaiveDate| -> Vec<AiToolCall> {
+        vec![AiToolCall {
+            function: AiToolCallFunction {
+                name: "search_emails".to_string(),
+                arguments: serde_json::json!({
+                    "since": since.format("%Y-%m-%d").to_string(),
+                    "until": until.format("%Y-%m-%d").to_string(),
+                    "limit": 25,
+                }),
+            },
+        }]
+    };
+
+    // Keyword co-occurrence rather than fixed substrings: the frontend quick
+    // shortcuts send verbose prompts (e.g. "Hazme un resumen de los
+    // emails que he recibido hoy. Formatéalo como una tabla markdown…") that
+    // wouldn't match rigid phrases like "resumen de hoy". Co-occurrence with
+    // mutual exclusion of competing time windows gets the right intent.
+    let has_today = q.contains("hoy") || q.contains("today");
+    let has_week = q.contains("semana") || q.contains("week");
+    let has_month = q.contains("mes ") || q.contains(" mes.") || q.contains(" mes,") || q.contains("month");
+    let has_summary = q.contains("resumen")
+        || q.contains("resume ")
+        || q.contains("resúmeme")
+        || q.contains("resumeme")
+        || q.contains("summary")
+        || q.contains("summarize")
+        || q.contains("summarise");
+
+    // Summary of today's emails (EN + ES).
+    if has_today && has_summary && !has_week && !has_month {
+        let today = chrono::Utc::now().date_naive();
+        let tomorrow = today + chrono::Duration::days(1);
+        return Some(search_since_until(today, tomorrow));
+    }
+
+    // Summary of this week's emails (EN + ES).
+    if has_week && has_summary && !has_month {
+        let now = chrono::Utc::now().date_naive();
+        let days_since_monday = now.weekday().num_days_from_monday() as i64;
+        let monday = now - chrono::Duration::days(days_since_monday);
+        let next_monday = monday + chrono::Duration::days(7);
+        return Some(search_since_until(monday, next_monday));
+    }
+
+    // Pending tasks: frontend sends "Identifica los emails que requieren mi
+    // respuesta o acción…" — match on the action verbs rather than exact phrases.
+    let pending_triggers = [
+        "pendiente",
+        "pendientes",
+        "requieren mi respuesta",
+        "requieren respuesta",
+        "mi acción",
+        "mi accion",
+        "pending tasks",
+        "my pending",
+        "what are my pending",
+        "open tasks",
+        "what needs my",
+        "awaiting my",
+        "needs my reply",
+    ];
+    if pending_triggers.iter().any(|p| q.contains(p)) {
+        return Some(vec![AiToolCall {
+            function: AiToolCallFunction {
+                name: "list_pending_tasks".to_string(),
+                arguments: serde_json::json!({}),
+            },
+        }]);
+    }
+
+    // Open threads / waiting on
+    let open_threads_patterns = [
+        "open threads",
+        "what am i waiting on",
+        "waiting on me",
+        "hilos abiertos",
+        "qué tengo pendiente de responder",
+        "que tengo pendiente de responder",
+    ];
+    if open_threads_patterns.iter().any(|p| q.contains(p)) {
+        return Some(vec![AiToolCall {
+            function: AiToolCallFunction {
+                name: "list_open_threads".to_string(),
+                arguments: serde_json::json!({}),
+            },
+        }]);
+    }
+
+    None
+}
+
+/// Outcome of the tool-call loop — returned instead of just the message list
+/// so `run_chat_turn` can distinguish "model answered directly" from
+/// "everything timed out before we got any assistant content" and react
+/// accordingly (the latter must surface an error to the user instead of
+/// trying to re-stream from the initial prompt, which will likely also hang).
+struct ToolLoopOutcome {
+    messages: Vec<AiMessage>,
+    /// True when the loop exited without producing any assistant message
+    /// (e.g. `chat_with_tools` errored on round 0 with no prior answer).
+    failed_without_answer: bool,
+    /// Human-readable reason the loop aborted, if any.
+    error: Option<String>,
+    /// Union (insertion-order, dedup'd) of every `ToolOutput.email_refs`
+    /// produced by tool calls in this turn. The frontend uses it as an
+    /// allowlist for `email://EMAIL_ID` links the LLM emits in its prose.
+    aggregated_email_refs: Vec<String>,
+    /// Same shape as `aggregated_email_refs` but for `ToolOutput.draft_refs`
+    /// — the `draft://DRAFT_ID` allowlist for re-open-the-draft chips.
+    aggregated_draft_refs: Vec<String>,
+}
+
+/// Run a tool-call loop: send the prompt with tool definitions, execute any
+/// requested tool calls, feed results back, repeat until the model gives a
+/// text-only response (or we hit MAX_TOOL_ROUNDS).
+async fn run_tool_loop(
+    db: &Arc<Database>,
+    registry: &Arc<tools::ToolRegistry>,
+    provider: &dyn AIProvider,
+    app: &AppHandle,
+    account_id: &str,
+    categories: &[String],
+    initial_messages: Vec<(String, String)>,
+    preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
+    tool_traces: &mut Vec<ToolCallTrace>,
+    llm_calls: &mut Vec<LlmCallTrace>,
+) -> ToolLoopOutcome {
+    // Feature-flag–aware: tools whose `is_available(db)` returns false are
+    // omitted from the array the LLM sees.
+    let tools = registry.definitions(db.as_ref());
+
+    // Convert (role, content) pairs into AiMessage structs.
+    let mut messages: Vec<AiMessage> = initial_messages
+        .into_iter()
+        .map(|(role, content)| AiMessage {
+            role,
+            content,
+            tool_calls: None,
+        })
+        .collect();
+
+    let mut had_any_answer = false;
+    let mut abort_error: Option<String> = None;
+    // Small local models (e.g. qwen3.5-4b) sometimes "announce" they will call
+    // a tool ("Voy a buscar el contacto…") and then stop without emitting an
+    // actual tool_call — turning the announcement into the final answer. Allow
+    // exactly one nudge round in that situation before accepting the bare text.
+    let mut nudges_used = 0u32;
+    const MAX_NUDGES: u32 = 1;
+    // Insertion-ordered, dedup'd union of every email id each tool call
+    // hands back. Persisted on the assistant message at end of turn and
+    // shipped to the frontend as the `email://EMAIL_ID` allowlist. The
+    // HashSet is the dedup key; the Vec preserves first-seen order so the
+    // UI can render chips in the order tools produced them.
+    let mut aggregated_email_refs: Vec<String> = Vec::new();
+    let mut seen_email_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Same shape for drafts (`draft://DRAFT_ID` chips).
+    let mut aggregated_draft_refs: Vec<String> = Vec::new();
+    let mut seen_draft_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // ── Preseeded round 0: execute heuristic-detected tool calls directly ──
+    // For shortcut queries like "summary of today's emails" we already know
+    // which tool to call. Skip the LLM tool-choice round entirely: synthesise
+    // an assistant message with the tool_calls, execute each tool, append the
+    // tool results, and fall through to the normal loop so the LLM's first
+    // call just synthesises the answer from the tool output.
+    if let Some(tool_calls) = preseeded_tool_calls {
+        if !tool_calls.is_empty() {
+            emit_log(
+                app,
+                "info",
+                &format!(
+                    "shortcut: executing {} tool(s) directly (skipped LLM tool-choice round)",
+                    tool_calls.len()
+                ),
+            );
+
+            // Synthetic assistant message with the preseeded tool_calls.
+            messages.push(AiMessage {
+                role: "assistant".to_string(),
+                content: String::new(),
+                tool_calls: Some(tool_calls.clone()),
+            });
+            had_any_answer = true;
+
+            for tc in &tool_calls {
+                let name = &tc.function.name;
+                let args = &tc.function.arguments;
+
+                let args_str = serde_json::to_string(args).unwrap_or_else(|_| args.to_string());
+                emit_log(
+                    app,
+                    "info",
+                    &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
+                );
+
+                let t_tool = std::time::Instant::now();
+                let dispatched =
+                    dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
+                let elapsed_ms = t_tool.elapsed().as_millis() as i64;
+                let result = dispatched.text;
+                for id in dispatched.email_refs {
+                    if seen_email_refs.insert(id.clone()) {
+                        aggregated_email_refs.push(id);
+                    }
+                }
+                for id in dispatched.draft_refs {
+                    if seen_draft_refs.insert(id.clone()) {
+                        aggregated_draft_refs.push(id);
+                    }
+                }
+
+                emit_log(
+                    app,
+                    "info",
+                    &format!(
+                        "tool result ← {} ({}{} chars, {}ms)",
+                        name,
+                        tool_result_count_hint(name, &result),
+                        result.len(),
+                        elapsed_ms,
+                    ),
+                );
+
+                tool_traces.push(ToolCallTrace {
+                    name: name.clone(),
+                    arguments: args.clone(),
+                    result_preview: truncate_chars(&result, 16000),
+                    result_chars: result.len() as i32,
+                    elapsed_ms,
+                });
+
+                messages.push(AiMessage {
+                    role: "tool".to_string(),
+                    content: result,
+                    tool_calls: None,
+                });
+            }
+        }
+    }
+
+    for round in 0..MAX_TOOL_ROUNDS {
+        // Snapshot the prompt sent to the model so the reasoning panel can
+        // show exactly what each tool round received. Dev-only — release
+        // builds skip the formatting to avoid the per-round allocation cost.
+        #[cfg(debug_assertions)]
+        let input_snapshot = format_messages_for_trace(&messages);
+
+        // Surface every LLM round at info-level. On first turn this is where
+        // the model GGUF loads (multi-second), so users would otherwise see
+        // "thinking…" with no further progress until first token.
+        emit_log(
+            app,
+            "info",
+            &format!(
+                "llm round {}: calling chat_with_tools ({} msgs in context)",
+                round,
+                messages.len(),
+            ),
+        );
+        let t_call = std::time::Instant::now();
+        let call_result = provider.chat_with_tools(&messages, &tools).await;
+        let call_ms = t_call.elapsed().as_millis() as i64;
+        emit_log(
+            app,
+            "info",
+            &format!(
+                "llm round {}: returned [{}ms] ({})",
+                round,
+                call_ms,
+                match &call_result {
+                    Ok(r) => format!("{} tool_calls", r.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0)),
+                    Err(e) => format!("error: {}", e),
+                }
+            ),
+        );
+
+        let response = match call_result {
+            Ok(r) => {
+                let requested = r.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0) as i32;
+                llm_calls.push(LlmCallTrace {
+                    kind: "tool_round".to_string(),
+                    round: round as i32,
+                    latency_ms: call_ms,
+                    tool_calls_requested: requested,
+                    failed: false,
+                    #[cfg(debug_assertions)]
+                    input: Some(input_snapshot),
+                    #[cfg(not(debug_assertions))]
+                    input: None,
+                    #[cfg(debug_assertions)]
+                    output: Some(format_response_for_trace(&r)),
+                    #[cfg(not(debug_assertions))]
+                    output: None,
+                });
+                r
+            }
+            Err(e) => {
+                llm_calls.push(LlmCallTrace {
+                    kind: "tool_round".to_string(),
+                    round: round as i32,
+                    latency_ms: call_ms,
+                    tool_calls_requested: 0,
+                    failed: true,
+                    #[cfg(debug_assertions)]
+                    input: Some(input_snapshot),
+                    #[cfg(not(debug_assertions))]
+                    input: None,
+                    output: None,
+                });
+                let msg = format!("tool-call round {} failed: {}", round, e);
+                emit_log(app, "warn", &msg);
+                abort_error = Some(e.to_string());
+                break;
+            }
+        };
+
+        // Salvage tool calls that some small models (notably Qwen 3.5 4B)
+        // emit as plain text instead of through the JSON tool_calls
+        // channel. Two formats are recognised: `<tool_call>…</tool_call>`
+        // XML envelopes, and `tool_call: name(args)` Python-call literals.
+        // Swap any parse hits into the response as if they came through
+        // normally — keeps the rest of the loop blissfully unaware of the
+        // model quirk.
+        let response = if response.tool_calls.as_ref().map(|tc| tc.is_empty()).unwrap_or(true) {
+            let mut parsed = parse_xml_tool_calls(&response.content);
+            let mut kind = "XML";
+            if parsed.is_empty() {
+                let known_tools = registry.names();
+                parsed = parse_python_call_tool_calls(&response.content, &known_tools);
+                kind = "python-call";
+            }
+            if !parsed.is_empty() {
+                let names: Vec<&str> = parsed.iter().map(|c| c.function.name.as_str()).collect();
+                emit_log(
+                    app,
+                    "warn",
+                    &format!(
+                        "model emitted tool call as text instead of a tool_call message — \
+                         salvaged {} {}-format call(s): [{}]. This usually means the \
+                         current model has weak tool-calling support.",
+                        parsed.len(),
+                        kind,
+                        names.join(", ")
+                    ),
+                );
+                AiMessage {
+                    role: response.role,
+                    content: String::new(),
+                    tool_calls: Some(parsed),
+                }
+            } else {
+                response
+            }
+        } else {
+            response
+        };
+
+        let tool_calls = match &response.tool_calls {
+            Some(tc) if !tc.is_empty() => tc.clone(),
+            _ => {
+                // No tool calls. If no tool has actually executed yet, this is
+                // very likely a small-model failure mode: the model wrote
+                // something like "Voy a buscar el contacto…" instead of
+                // emitting the tool_call. Nudge it once and continue the loop
+                // before accepting the bare text as the final answer.
+                if tool_traces.is_empty() && nudges_used < MAX_NUDGES {
+                    nudges_used += 1;
+                    emit_log(
+                        app,
+                        "info",
+                        "tool_loop: model returned text with no tool call \
+                         and no tool has executed yet — nudging once",
+                    );
+                    // Keep the model's announcement in history so its next
+                    // turn can reference what it said it would do, then push
+                    // a corrective user message asking for the actual call.
+                    messages.push(response);
+                    messages.push(AiMessage {
+                        role: "user".to_string(),
+                        content: "No describas lo que vas a hacer — llama \
+                                  directamente a la tool apropiada AHORA \
+                                  (search_contacts, search_emails, etc.). \
+                                  Si realmente no puedes responder con las \
+                                  tools disponibles, dilo explícitamente en \
+                                  una sola frase.\n\nDo not describe what \
+                                  you are going to do — call the appropriate \
+                                  tool NOW. If you genuinely cannot answer \
+                                  with the available tools, say so plainly \
+                                  in a single sentence."
+                            .to_string(),
+                        tool_calls: None,
+                    });
+                    continue;
+                }
+                // No tool calls — model gave a direct answer. Push the
+                // assistant message and return so it can be re-streamed.
+                had_any_answer = true;
+                messages.push(response);
+                break;
+            }
+        };
+
+        // Push the assistant's tool-call message so the history stays coherent.
+        had_any_answer = true;
+        messages.push(response);
+
+        for tc in &tool_calls {
+            let name = &tc.function.name;
+            let args = &tc.function.arguments;
+
+            // Surfaced in the output panel so users can see exactly which tools
+            // the model is calling and with what arguments. Info level (not debug)
+            // because this is the main observability hook for chat retrieval.
+            let args_str = serde_json::to_string(args).unwrap_or_else(|_| args.to_string());
+            emit_log(
+                app,
+                "info",
+                &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
+            );
+
+            let t_tool = std::time::Instant::now();
+            let dispatched = dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
+            let elapsed_ms = t_tool.elapsed().as_millis() as i64;
+            let result = dispatched.text;
+            for id in dispatched.email_refs {
+                if seen_email_refs.insert(id.clone()) {
+                    aggregated_email_refs.push(id);
+                }
+            }
+            for id in dispatched.draft_refs {
+                if seen_draft_refs.insert(id.clone()) {
+                    aggregated_draft_refs.push(id);
+                }
+            }
+
+            emit_log(
+                app,
+                "info",
+                &format!("tool result ← {} ({} chars, {}ms)", name, result.len(), elapsed_ms),
+            );
+
+            // Record the call for the reasoning trace. We keep a generous cap
+            // (16 KiB) so the eval report's expandable panel can show the full
+            // tool output for debugging — large enough for a typical thread or
+            // 25-row search_emails dump, small enough to bound the JSON blob.
+            tool_traces.push(ToolCallTrace {
+                name: name.clone(),
+                arguments: args.clone(),
+                result_preview: truncate_chars(&result, 16000),
+                result_chars: result.len() as i32,
+                elapsed_ms,
+            });
+
+            messages.push(AiMessage {
+                role: "tool".to_string(),
+                content: result,
+                tool_calls: None,
+            });
+        }
+    }
+
+    ToolLoopOutcome {
+        messages,
+        failed_without_answer: !had_any_answer,
+        error: abort_error,
+        aggregated_email_refs,
+        aggregated_draft_refs,
+    }
+}
+
+// ── Orchestration ───────────────────────────────────────────────────────────
+
+/// Run one chat turn for a "thread-bound" conversation — one that was seeded
+/// with the cleaned content of an email thread (see
+/// [`create_conversation_with_thread`]). Skips RAG retrieval and tool calls
+/// because the thread is already the entire context the user wants the model
+/// to consider.
+///
+/// Used as a short-circuit at the top of [`run_chat_turn`].
+#[allow(clippy::too_many_arguments)]
+async fn run_thread_bound_turn(
+    db: Arc<Database>,
+    app: AppHandle,
+    provider: Arc<dyn AIProvider>,
+    conversation_id: String,
+    assistant_message_id: String,
+    user_question: String,
+    history: Vec<ChatMessage>,
+    system_messages: Vec<ChatMessage>,
+    turn_start: std::time::Instant,
+) -> Result<()> {
+    /// Bounded so a stuck local model can't leave the UI thinking forever.
+    /// Matches the existing final-stream timeout in `run_chat_turn`.
+    const STREAM_TIMEOUT: Duration = Duration::from_secs(180);
+    /// Cap how many recent user/assistant turns we replay before the new
+    /// question. The seeded thread already eats a chunk of context — we don't
+    /// want a long back-and-forth to push the thread itself out.
+    const THREAD_HISTORY_TURNS: usize = 12;
+
+    emit_log(
+        &app,
+        "info",
+        &format!(
+            "thinking about thread… (model={}, msgs={})",
+            provider.model_name(),
+            system_messages.len()
+        ),
+    );
+
+    // Render the configured chat.system template (today / tomorrow / language
+    // instruction), then append the thread context + a hard instruction to
+    // ground answers in it.
+    let language = crate::services::i18n::resolve_ai_language(&db)?;
+    let language_instruction = format!("Reply in {}.", language.english_name());
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let tomorrow = (Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let mut tpl_vars = std::collections::HashMap::new();
+    tpl_vars.insert("today", today);
+    tpl_vars.insert("tomorrow", tomorrow);
+    tpl_vars.insert("language_instruction", language_instruction);
+    let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
+    let mut system = crate::services::prompts::render(&system_template, &tpl_vars);
+
+    // Append each system message (in practice there's exactly one — the
+    // cleaned thread — but this loop is robust to any future multi-context
+    // chats that seed several system messages).
+    for msg in &system_messages {
+        system.push_str("\n\n");
+        system.push_str(&msg.content);
+    }
+    system.push_str(
+        "\n\nIMPORTANT: The user wants to chat about the email thread above. \
+Answer using ONLY that thread as your source. Do not call any tools, do not \
+search other emails. If the thread does not contain enough information to \
+answer, say so plainly.",
+    );
+
+    // Build the message list: system + last N user/assistant turns + current question.
+    let mut messages: Vec<AiMessage> = Vec::with_capacity(history.len() + 2);
+    messages.push(AiMessage {
+        role: "system".to_string(),
+        content: system,
+        tool_calls: None,
+    });
+    let start = history.len().saturating_sub(THREAD_HISTORY_TURNS);
+    for msg in &history[start..] {
+        if msg.role == "user" || msg.role == "assistant" {
+            messages.push(AiMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+                tool_calls: None,
+            });
+        }
+    }
+    messages.push(AiMessage {
+        role: "user".to_string(),
+        content: user_question.clone(),
+        tool_calls: None,
+    });
+
+    // Stream the answer.
+    let conv_id_for_stream = conversation_id.clone();
+    let msg_id_for_stream = assistant_message_id.clone();
+    let app_for_stream = app.clone();
+    let stream_fut = provider.chat_stream(
+        messages,
+        Box::new(move |token| {
+            let _ = app_for_stream.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: msg_id_for_stream.clone(),
+                    conversation_id: conv_id_for_stream.clone(),
+                    token,
+                    done: false,
+                    error: None,
+                    token_count: None,
+                    latency_ms: None,
+                },
+            );
+            true
+        }),
+    );
+
+    let stream_result = match timeout(STREAM_TIMEOUT, stream_fut).await {
+        Ok(res) => res,
+        Err(_) => Err(AppError::AiError(format!(
+            "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+            STREAM_TIMEOUT.as_secs()
+        ))),
+    };
+
+    let latency_ms = turn_start.elapsed().as_millis() as i64;
+
+    match stream_result {
+        Ok(result) => {
+            let token_count = result.eval_count.map(|c| c as i32);
+            if let Err(e) =
+                db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
+            {
+                emit_log(&app, "error", &format!("failed to persist assistant message: {e}"));
+            }
+            let _ = app.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    token: String::new(),
+                    done: true,
+                    error: None,
+                    token_count,
+                    latency_ms: Some(latency_ms),
+                },
+            );
+            let tokens_str = token_count
+                .map(|c| format!("{c} tokens"))
+                .unwrap_or_else(|| "? tokens".to_string());
+            emit_log(
+                &app,
+                "success",
+                &format!(
+                    "thread reply complete ({}, {:.1}s)",
+                    tokens_str,
+                    latency_ms as f64 / 1000.0
+                ),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let err_text = format!("Chat failed: {e}");
+            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
+            let _ = app.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    token: String::new(),
+                    done: true,
+                    error: Some(err_text.clone()),
+                    token_count: None,
+                    latency_ms: Some(latency_ms),
+                },
+            );
+            emit_log(&app, "error", &err_text);
+            Err(e)
+        }
+    }
+}
+
+/// Run one chat turn: retrieve, persist sources, stream tokens, persist final content.
+///
+/// `assistant_message_id` must already exist in the DB (created empty by the
+/// command layer) so the frontend can subscribe to events keyed off it before
+/// any tokens arrive.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_chat_turn(
+    db: Arc<Database>,
+    registry: Arc<tools::ToolRegistry>,
+    app: AppHandle,
+    conversation_id: String,
+    assistant_message_id: String,
+    account_id: String,
+    user_question: String,
+    model: String,
+    history: Vec<ChatMessage>,
+    categories: Vec<String>,
+) -> Result<()> {
+    let turn_start = std::time::Instant::now();
+
+    // Build the configured AI provider from DB preferences. Falls back to
+    // Ollama if the provider preference is missing or unrecognised.
+    let provider = AiService::load_provider(&db)?;
+
+    // ── Thread-bound short-circuit ─────────────────────────────────────
+    // If the conversation was seeded with an email thread (system-role
+    // message inserted by `create_conversation_with_thread`), skip the
+    // entire route/retrieval/tool-loop pipeline and answer using just the
+    // cleaned thread as context.
+    let system_messages = db.get_chat_system_messages(&conversation_id).unwrap_or_default();
+    if !system_messages.is_empty() {
+        return run_thread_bound_turn(
+            db,
+            app,
+            provider,
+            conversation_id,
+            assistant_message_id,
+            user_question,
+            history,
+            system_messages,
+            turn_start,
+        )
+        .await;
+    }
+
+    emit_log(
+        &app,
+        "info",
+        &format!("thinking… (model={}, account={})", provider.model_name(), account_id),
+    );
+
+    // ── 0. Auto-derive conversation title from the first user turn ──────
+    // If the conversation title is still the default placeholder and this turn
+    // has no prior history, use the user's message as the title and notify the
+    // UI so the sidebar updates without waiting for a reload.
+    if history.is_empty() {
+        match db.get_chat_conversation(&conversation_id) {
+            Ok(Some(conv)) if title_is_default(&conv.title) => {
+                let new_title = derive_title(&user_question);
+                match db.rename_chat_conversation(&conversation_id, &new_title) {
+                    Ok(_) => {
+                        let _ = app.emit(
+                            "chat-renamed",
+                            ChatRenamedEvent {
+                                conversation_id: conversation_id.clone(),
+                                title: new_title.clone(),
+                            },
+                        );
+                    }
+                    Err(e) => emit_log(&app, "error", &format!("auto-title rename failed: {}", e)),
+                }
+            }
+            Ok(_) => {}
+            Err(e) => emit_log(&app, "error", &format!("auto-title lookup failed: {}", e)),
+        }
+    }
+
+    // ── 1. Classify route: RAG-first vs tools-first ─────────────────────
+    // Stage markers are info-level on purpose: the chat panel filters by level
+    // and "I can't tell where it's stuck" is the most common chat support
+    // question. Per-stage timing follows on completion.
+    let t_route = std::time::Instant::now();
+    emit_log(&app, "info", "stage: route");
+    let route = classify_route(&db, &user_question);
+    emit_log(
+        &app,
+        "info",
+        &format!(
+            "route: {:?} ({}) [{}ms]",
+            route.mode,
+            route.reason,
+            t_route.elapsed().as_millis()
+        ),
+    );
+
+    // Heuristic shortcut: recognise common phrasings and pre-seed the tool
+    // call so we can skip the LLM's tool-choice round entirely. Returns None
+    // for anything that doesn't match, in which case the normal loop runs.
+    let preseeded_tool_calls = heuristic_direct_tools(&user_question);
+    if preseeded_tool_calls.is_some() {
+        emit_log(&app, "info", "shortcut: matched direct-tool pattern");
+    }
+
+    // ── 2. Retrieve sources (skipped entirely when route == ToolsFirst) ─
+    // Match by reference so we can still read `route` later when assembling the
+    // final ChatTrace.
+    let t_retrieve = std::time::Instant::now();
+    emit_log(&app, "info", "stage: retrieve");
+    let (sources, retrieval_trace): (Vec<ScoredEmail>, Option<RetrievalTrace>) = match &route.mode {
+        RouteMode::ToolsFirst => {
+            emit_log(&app, "info", "retrieve: skipped (ToolsFirst route)");
+            (Vec::new(), None)
+        }
+        RouteMode::RagFirst => {
+            match retrieve_context_with_trace(
+                &db,
+                provider.as_ref(),
+                &app,
+                &account_id,
+                &user_question,
+                &categories,
+                TOP_K_SOURCES,
+            )
+            .await
+            {
+                Ok((srcs, trace)) => {
+                    emit_log(
+                        &app,
+                        "info",
+                        &format!(
+                            "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
+                            srcs.len(),
+                            trace.vector_hits,
+                            trace.fts_hits,
+                            trace.fused_top_k,
+                            t_retrieve.elapsed().as_millis()
+                        ),
+                    );
+                    (srcs, Some(trace))
+                }
+                Err(e) => {
+                    emit_log(&app, "error", &format!("retrieval error: {}", e));
+                    (Vec::new(), None)
+                }
+            }
+        }
+    };
+
+    // ── 3. Persist citations + notify frontend ───────────────────────────
+    // Include denormalized email metadata so the UI can render source details
+    // (subject, sender, date) without extra API calls.
+    // Keep the excerpt a bit shorter than what we hand to the LLM so the
+    // "sources used" UI shows a readable preview, not a 4KB wall of text.
+    const SOURCES_EXCERPT_CHARS: usize = 600;
+    let source_rows: Vec<ChatMessageSource> = sources
+        .iter()
+        .map(|s| {
+            let body_text = strip_html_for_fts(&s.body);
+            let excerpt = smart_body_slice(&body_text, &user_question, SOURCES_EXCERPT_CHARS);
+            ChatMessageSource {
+                citation_number: s.citation_number,
+                email_id: s.email.id.clone(),
+                relevance_score: Some(s.score),
+                subject: s.email.subject.clone(),
+                sender: s.email.sender.clone(),
+                sender_email: s.email.sender_email.clone(),
+                timestamp: s.email.timestamp,
+                body_excerpt: if excerpt.is_empty() { None } else { Some(excerpt) },
+            }
+        })
+        .collect();
+
+    if let Err(e) = db.insert_chat_message_sources(&assistant_message_id, &source_rows) {
+        emit_log(&app, "error", &format!("failed to persist citations: {}", e));
+    }
+
+    let _ = app.emit(
+        "chat-sources",
+        ChatSourcesEvent {
+            message_id: assistant_message_id.clone(),
+            conversation_id: conversation_id.clone(),
+            sources: source_rows.clone(),
+        },
+    );
+
+    // ── 4. Tool-call loop + streaming reply ─────────────────────────────
+    let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
+    let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
+    // Tools section is rendered from the registry so it stays in lockstep
+    // with what `definitions(&db)` advertises to the LLM via the
+    // function-calling menu. Disabling a feature in Settings instantly
+    // removes its tools from BOTH places — no template edit needed.
+    let tools_section = registry.render_system_prompt_section(db.as_ref());
+    let mut initial_messages = build_prompt(
+        &sources,
+        &history,
+        &user_question,
+        ai_language.english_name(),
+        &system_template,
+        &tools_section,
+    );
+
+    // Inject the memory header after the system prompt — but only when the
+    // user has the Memory feature enabled. Disabling it in Settings should
+    // remove `<memory>...</memory>` from the prompt entirely (the user can
+    // verify this in the reasoning panel). Pure SQLite reads → negligible
+    // latency. Errors degrade to no-header rather than failing the turn.
+    let memory_enabled = db
+        .get_preference("memory_enabled")
+        .ok()
+        .flatten()
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if memory_enabled {
+        match crate::services::memory::header::build_header(&db, &account_id, &user_question) {
+            Ok(Some(header)) => {
+                if let Some(sys) = initial_messages.iter_mut().find(|(r, _)| r == "system") {
+                    sys.1.push_str("\n\n");
+                    sys.1.push_str(&header);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => emit_log(&app, "debug", &format!("memory header skipped: {e}")),
+        }
+    }
+
+    // Collected by run_tool_loop; fed into the final ChatTrace below.
+    let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+    let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+
+    // Run the tool loop only on the ToolsFirst path. RagFirst is strictly
+    // sources-only: no tool definitions exposed, no tool loop, single LLM
+    // stream over the prompt with retrieved sources. This is Pattern B —
+    // exactly one retrieval mechanism per turn, so the model never has to
+    // choose between stale RAG sources and a fresh tool call.
+    let (
+        final_messages,
+        tool_loop_ms,
+        loop_failed_without_answer,
+        loop_error,
+        aggregated_email_refs,
+        aggregated_draft_refs,
+    ) = match &route.mode {
+        RouteMode::ToolsFirst => {
+            emit_log(&app, "info", "stage: tool_loop");
+            let t_tool_loop = std::time::Instant::now();
+            let outcome = run_tool_loop(
+                &db,
+                &registry,
+                provider.as_ref(),
+                &app,
+                &account_id,
+                &categories,
+                initial_messages,
+                preseeded_tool_calls,
+                &mut tool_traces,
+                &mut llm_calls,
+            )
+            .await;
+            let elapsed = t_tool_loop.elapsed().as_millis() as i64;
+            emit_log(
+                &app,
+                "info",
+                &format!(
+                    "tool_loop: done ({} tool calls, {} llm rounds) [{}ms]",
+                    tool_traces.len(),
+                    llm_calls.len(),
+                    elapsed
+                ),
+            );
+            (
+                outcome.messages,
+                elapsed,
+                outcome.failed_without_answer,
+                outcome.error,
+                outcome.aggregated_email_refs,
+                outcome.aggregated_draft_refs,
+            )
+        }
+        RouteMode::RagFirst => {
+            // No tool loop, no preseeded tools. Convert the prompt directly
+            // into AiMessages so the stream branch below can run a single
+            // LLM call over sources + history. tool_traces/llm_calls stay
+            // empty — they get populated only by the tool loop. The RAG
+            // path also has no email-ref or draft-ref allowlist: every
+            // source the model can cite is already in `sources` as a
+            // numbered citation, and those drive `[n](citation://n)`
+            // chips — `email://` / `draft://` are reserved for tool-mode
+            // mentions.
+            emit_log(&app, "info", "stage: tool_loop skipped (RagFirst route)");
+            let msgs: Vec<AiMessage> = initial_messages
+                .into_iter()
+                .map(|(role, content)| AiMessage {
+                    role,
+                    content,
+                    tool_calls: None,
+                })
+                .collect();
+            (msgs, 0i64, false, None, Vec::new(), Vec::new())
+        }
+    };
+
+    // If the tool loop ended with a direct assistant text answer, use it as-is
+    // and SKIP the re-stream. Otherwise we'd be appending the answer as context
+    // and asking the model to continue — which produces empty tokens because
+    // the model already said everything it wanted to.
+    let direct_answer: Option<String> = final_messages.last().and_then(|m| {
+        let no_calls = m.tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true);
+        if m.role == "assistant" && no_calls && !m.content.trim().is_empty() {
+            Some(m.content.clone())
+        } else {
+            None
+        }
+    });
+
+    emit_log(&app, "info", "stage: stream");
+    let t_stream = std::time::Instant::now();
+    let mut streaming_happened = false;
+    // Captures the exact prompt sent to the final LLM call (dev builds only).
+    // Set in either branch below — direct-answer reuses the tool-loop output,
+    // streaming branch snapshots the full message list before move.
+    #[cfg(debug_assertions)]
+    #[allow(unused_assignments)]
+    let mut final_stream_input: Option<String> = None;
+    // If the tool loop gave up without any assistant answer at all (round 0
+    // timeout, provider error, etc.), don't try to re-stream from the initial
+    // prompt — the same model just failed us, the stream has no overall
+    // timeout in `chat_stream`, and a silent hang here is exactly what
+    // freezes the "thinking…" indicator on the client. Fail fast instead.
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if loop_failed_without_answer {
+        let detail = loop_error
+            .clone()
+            .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
+        Err(AppError::AiError(detail))
+    } else if let Some(answer) = direct_answer {
+        // Qwen 4B in tool-results mode often invents `[1]..[9]` citation
+        // markers despite the CITATION CONTRACT — strip any that fall outside
+        // the retrieved source range BEFORE emitting so the user never sees
+        // them. count_invalid_citations later (line ~3099) will then report 0.
+        let answer = strip_invalid_citations(&answer, sources.len());
+        // Emit the full answer as a single stream token so the UI sees it,
+        // then synthesise a successful ChatStreamResult (no re-round-trip).
+        let _ = app.emit(
+            "chat-stream",
+            ChatStreamEvent {
+                message_id: assistant_message_id.clone(),
+                conversation_id: conversation_id.clone(),
+                token: answer.clone(),
+                done: false,
+                error: None,
+                token_count: None,
+                latency_ms: None,
+            },
+        );
+        Ok(crate::ai::provider::ChatStreamResult {
+            content: answer,
+            eval_count: None,
+            prompt_eval_count: None,
+        })
+    } else {
+        // No direct answer yet but the loop produced at least an assistant
+        // tool-call message (likely hit MAX_TOOL_ROUNDS) — synthesise the
+        // final answer by streaming. Bounded by STREAM_TIMEOUT so a stuck
+        // provider can't leave the UI thinking forever.
+        const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+        streaming_happened = true;
+
+        let conv_id_for_stream = conversation_id.clone();
+        let msg_id_for_stream = assistant_message_id.clone();
+        let app_for_stream = app.clone();
+
+        // Snapshot the final prompt in dev builds so the reasoning panel
+        // can show exactly what was sent to chat_stream. Done before the
+        // `into_iter` move so we don't have to clone `final_messages`.
+        #[cfg(debug_assertions)]
+        {
+            let snapshot = format_messages_for_trace(&final_messages);
+            final_stream_input = Some(snapshot);
+        }
+
+        let ai_messages: Vec<AiMessage> = final_messages
+            .into_iter()
+            .map(|m| AiMessage {
+                role: m.role,
+                content: m.content,
+                tool_calls: None,
+            })
+            .collect();
+
+        let stream_fut = provider.chat_stream(
+            ai_messages,
+            Box::new(move |token| {
+                let _ = app_for_stream.emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: msg_id_for_stream.clone(),
+                        conversation_id: conv_id_for_stream.clone(),
+                        token,
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                    },
+                );
+                true
+            }),
+        );
+        match timeout(STREAM_TIMEOUT, stream_fut).await {
+            Ok(res) => res,
+            Err(_) => Err(AppError::AiError(format!(
+                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+                STREAM_TIMEOUT.as_secs()
+            ))),
+        }
+    };
+
+    let streaming_ms = t_stream.elapsed().as_millis() as i64;
+    let latency_ms = turn_start.elapsed().as_millis() as i64;
+
+    // Record the final-stream LLM call latency (captured regardless of success
+    // so the reasoning panel can show "slow / timed out" breakdowns).
+    if streaming_happened {
+        // Dev-only: surface the exact prompt + streamed answer in the
+        // reasoning panel so the user can copy-paste them while debugging.
+        #[cfg(debug_assertions)]
+        let stream_input = final_stream_input.take();
+        #[cfg(not(debug_assertions))]
+        let stream_input: Option<String> = None;
+        #[cfg(debug_assertions)]
+        let stream_output = match &stream_result {
+            Ok(r) => Some(r.content.clone()),
+            Err(e) => Some(format!("(error) {}", e)),
+        };
+        #[cfg(not(debug_assertions))]
+        let stream_output: Option<String> = None;
+
+        llm_calls.push(LlmCallTrace {
+            kind: "final_stream".to_string(),
+            round: -1,
+            latency_ms: streaming_ms,
+            tool_calls_requested: 0,
+            failed: stream_result.is_err(),
+            input: stream_input,
+            output: stream_output,
+        });
+    }
+
+    match stream_result {
+        Ok(mut result) => {
+            // Strip hallucinated citations from the answer before persisting so
+            // a re-render after reload shows the cleaned-up text. The direct-
+            // answer path already stripped earlier; this catches the live-
+            // streaming path (and is a cheap no-op when nothing is invalid).
+            result.content = strip_invalid_citations(&result.content, sources.len());
+            let token_count = result.eval_count.map(|c| c as i32);
+            if let Err(e) =
+                db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
+            {
+                emit_log(&app, "error", &format!("failed to persist assistant message: {}", e));
+            }
+            // Persist the structural email-ref allowlist alongside the
+            // final content. Frontend validates `email://EMAIL_ID` markdown
+            // links against this list when rendering the bubble — anything
+            // outside it gets dropped + warned. Direct-answer and re-stream
+            // paths converge here so both write the refs once.
+            if let Err(e) = db.update_chat_message_referenced_emails(&assistant_message_id, &aggregated_email_refs) {
+                emit_log(&app, "error", &format!("failed to persist email refs: {}", e));
+            }
+            // Same shape for draft refs (`draft://DRAFT_ID` chips).
+            if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
+                emit_log(&app, "error", &format!("failed to persist draft refs: {}", e));
+            }
+            #[cfg(feature = "tracing")]
+            crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
+                model: provider.model_name().to_string(),
+                user_question: user_question.clone(),
+                final_answer: result.content.clone(),
+                prompt_tokens: result.prompt_eval_count.unwrap_or(0),
+                completion_tokens: result.eval_count.unwrap_or(0),
+                total_ms: latency_ms as u64,
+                route_mode: format!("{:?}", route.mode),
+                retrieval: retrieval_trace.as_ref().map(|r| crate::ai::tracing::RetrievalInfo {
+                    vector_hits: r.vector_hits,
+                    fts_hits: r.fts_hits,
+                    elapsed_ms: r.elapsed_ms,
+                    embedding_ms: r.embedding_ms,
+                    vec_search_ms: r.vec_search_ms,
+                    fts_search_ms: r.fts_search_ms,
+                    rerank_ms: r.rerank_ms,
+                    query_rewrite_ms: r.query_rewrite_ms,
+                    expanded_query: r.expanded_query.clone(),
+                    vector_fallback: r.vector_fallback,
+                    invalid_citations: r.invalid_citations,
+                    documents: source_rows
+                        .iter()
+                        .map(|s| crate::ai::tracing::RetrievedDocument {
+                            id: s.email_id.clone(),
+                            score: s.relevance_score.unwrap_or(0.0),
+                            content: s.body_excerpt.clone().unwrap_or_default(),
+                            metadata_json: serde_json::json!({
+                                "citation_number": s.citation_number,
+                                "subject": s.subject,
+                                "sender": s.sender,
+                                "sender_email": s.sender_email,
+                                "timestamp": s.timestamp,
+                            })
+                            .to_string(),
+                        })
+                        .collect(),
+                }),
+                tool_calls: tool_traces
+                    .iter()
+                    .map(|t| crate::ai::tracing::ToolCallInfo {
+                        name: t.name.clone(),
+                        arguments_json: serde_json::to_string(&t.arguments).unwrap_or_default(),
+                        result_preview: t.result_preview.clone(),
+                        elapsed_ms: t.elapsed_ms,
+                    })
+                    .collect(),
+                llm_calls: llm_calls
+                    .iter()
+                    .map(|l| {
+                        let (input, output) = if l.kind == "final_stream" {
+                            // Final stream: user question → final answer
+                            (Some(user_question.clone()), Some(result.content.clone()))
+                        } else {
+                            // Tool rounds: captured per-round in run_tool_loop
+                            (l.input.clone(), l.output.clone())
+                        };
+                        crate::ai::tracing::LlmCallInfo {
+                            kind: l.kind.clone(),
+                            round: l.round,
+                            latency_ms: l.latency_ms,
+                            tool_calls_requested: l.tool_calls_requested,
+                            failed: l.failed,
+                            input,
+                            output,
+                        }
+                    })
+                    .collect(),
+                error: None,
+            });
+
+            // ── 4b. Citation validation ───────────────────────────────────
+            // Count [n] markers in the answer that reference a source number
+            // outside the retrieved set. 0 = all valid, n>0 = hallucinated
+            // citations (prompt contract violation). Logged to the trace so
+            // the eval report can track the rate over time.
+            let invalid_citations = if result.content.trim().is_empty() {
+                -1
+            } else {
+                count_invalid_citations(&result.content, sources.len())
+            };
+            if invalid_citations > 0 {
+                emit_log(
+                    &app,
+                    "warn",
+                    &format!(
+                        "answer contains {} citation(s) outside the source range 1..={}",
+                        invalid_citations,
+                        sources.len()
+                    ),
+                );
+            }
+            let retrieval_trace = retrieval_trace.clone().map(|mut t| {
+                t.invalid_citations = invalid_citations;
+                t
+            });
+
+            // ── 5. Assemble, persist, and emit the reasoning trace ─────────
+            // Done after stream success so the trace reflects the full flow
+            // (routing + retrieval + any tool calls + total wall-clock time).
+            let trace = ChatTrace {
+                route: route.clone(),
+                retrieval: retrieval_trace.clone(),
+                tool_calls: tool_traces.clone(),
+                model: model.clone(),
+                total_elapsed_ms: latency_ms,
+                tool_loop_ms,
+                llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
+                llm_calls: llm_calls.clone(),
+            };
+            if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
+                emit_log(&app, "error", &format!("failed to persist reasoning trace: {}", e));
+            }
+            let _ = app.emit(
+                "chat-trace",
+                ChatTraceEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    trace,
+                    referenced_email_ids: aggregated_email_refs.clone(),
+                    referenced_draft_ids: aggregated_draft_refs.clone(),
+                },
+            );
+
+            let _ = app.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    token: String::new(),
+                    done: true,
+                    error: None,
+                    token_count,
+                    latency_ms: Some(latency_ms),
+                },
+            );
+            let tokens_str = token_count
+                .map(|c| format!("{} tokens", c))
+                .unwrap_or_else(|| "? tokens".to_string());
+            emit_log(
+                &app,
+                "success",
+                &format!(
+                    "reply complete ({}, {:.1}s, {} sources)",
+                    tokens_str,
+                    latency_ms as f64 / 1000.0,
+                    sources.len()
+                ),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let err_text = format!("Chat failed: {}", e);
+            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
+            let _ = app.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id,
+                    token: String::new(),
+                    done: true,
+                    error: Some(err_text.clone()),
+                    token_count: None,
+                    latency_ms: Some(latency_ms),
+                },
+            );
+            emit_log(&app, "error", &err_text);
+            Err(AppError::AiError(err_text))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::Email;
+
+    /// Default chat-system template for tests — keeps the build_prompt
+    /// signature tidy at each callsite without dragging the full default
+    /// string in at every call.
+    fn tpl() -> &'static str {
+        crate::services::prompts::defaults::CHAT_SYSTEM
+    }
+
+    fn make_scored(citation_number: i32, subject: &str, body: &str) -> ScoredEmail {
+        let email = Email {
+            id: format!("e{}", citation_number),
+            account_id: "acc1".into(),
+            thread_id: format!("t{}", citation_number),
+            message_id: None,
+            subject: subject.into(),
+            sender: "Alice".into(),
+            sender_email: "alice@example.com".into(),
+            recipients: vec![],
+            cc: vec![],
+            body: body.into(),
+            snippet: String::new(),
+            timestamp: 1_700_000_000,
+            is_read: true,
+            triage_status: None,
+            category: "primary".into(),
+            mailbox: "inbox".into(),
+        };
+        ScoredEmail {
+            email,
+            body: body.into(),
+            score: 1.0 / citation_number as f32,
+            citation_number,
+        }
+    }
+
+    fn make_message(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: "c1".into(),
+            role: role.into(),
+            content: content.into(),
+            model: None,
+            token_count: None,
+            latency_ms: None,
+            created_at: 0,
+            sources: Vec::new(),
+            trace: None,
+            referenced_email_ids: Vec::new(),
+            referenced_draft_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn prompt_includes_numbered_sources() {
+        let sources = vec![
+            make_scored(1, "Q1 plan", "we will ship by march"),
+            make_scored(2, "Invoice", "please pay by friday"),
+        ];
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", tpl(), "");
+        assert_eq!(msgs[0].0, "system");
+        let sys = &msgs[0].1;
+        assert!(sys.contains("[1] From: Alice"));
+        assert!(sys.contains("Subject: Q1 plan"));
+        assert!(sys.contains("[2] From: Alice"));
+        assert!(sys.contains("Subject: Invoice"));
+        assert_eq!(msgs.last().unwrap().0, "user");
+        assert_eq!(msgs.last().unwrap().1, "when do we ship?");
+    }
+
+    #[test]
+    fn prompt_trims_body_length() {
+        let long_body = "x".repeat(MAX_SOURCE_BODY_CHARS * 4);
+        let sources = vec![make_scored(1, "long", &long_body)];
+        let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
+        let sys = &msgs[0].1;
+        // Source body should be truncated (ellipsis marker present).
+        assert!(sys.contains("…"));
+        // System prompt must be meaningfully shorter than the raw body —
+        // otherwise the truncation is not taking effect.
+        assert!(
+            sys.len() < long_body.len(),
+            "sys prompt ({}) should be shorter than untruncated body ({})",
+            sys.len(),
+            long_body.len(),
+        );
+    }
+
+    #[test]
+    fn prompt_strips_html_from_bodies() {
+        let sources = vec![make_scored(1, "html email", "<p>hello <b>world</b></p>")];
+        let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
+        let sys = &msgs[0].1;
+        assert!(sys.contains("hello"));
+        assert!(sys.contains("world"));
+        assert!(!sys.contains("<b>"));
+        assert!(!sys.contains("<p>"));
+    }
+
+    #[test]
+    fn prompt_keeps_only_last_six_turns() {
+        let mut history: Vec<ChatMessage> = Vec::new();
+        for i in 0..10 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            history.push(make_message(role, &format!("turn-{}", i)));
+        }
+        let msgs = build_prompt(&[], &history, "new question", "en", tpl(), "");
+        // system + 6 history turns + user question = 8
+        assert_eq!(msgs.len(), 8);
+        // The oldest included turn should be turn-4 (indices 4..10 = 6 turns).
+        assert_eq!(msgs[1].1, "turn-4");
+        assert_eq!(msgs[6].1, "turn-9");
+        assert_eq!(msgs[7].1, "new question");
+    }
+
+    #[test]
+    fn prompt_skips_system_role_in_history() {
+        let history = vec![
+            make_message("system", "do not surface me"),
+            make_message("user", "hi"),
+            make_message("assistant", "hello"),
+        ];
+        let msgs = build_prompt(&[], &history, "next", "en", tpl(), "");
+        assert!(msgs.iter().all(|(_, c)| c != "do not surface me"));
+    }
+
+    #[test]
+    fn prompt_empty_sources_advises_model() {
+        let msgs = build_prompt(&[], &[], "anything?", "en", tpl(), "");
+        let sys = &msgs[0].1;
+        // When no sources were pre-retrieved, the prompt must push the model
+        // toward calling search_emails rather than refusing or guessing.
+        assert!(sys.contains("none pre-retrieved"));
+        assert!(sys.contains("search_emails"));
+    }
+
+    #[test]
+    fn prompt_advertises_citation_contract_and_few_shots() {
+        // The new prompt rewrite must surface (a) the strict citation rule,
+        // (b) the valid citation range, and (c) at least one few-shot example.
+        let sources = vec![
+            make_scored(1, "Kickoff", "reunión el martes 3 de marzo"),
+            make_scored(2, "Proposal", "monthly fee drop to $1.5k"),
+        ];
+        let msgs = build_prompt(&sources, &[], "¿cuándo fue el kickoff?", "es", tpl(), "");
+        let sys = &msgs[0].1;
+        assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
+        assert!(sys.contains("valid citation range: [1]..[2]"), "missing valid range");
+        assert!(sys.contains("Example 1"), "missing few-shot examples");
+    }
+
+    #[test]
+    fn prompt_includes_app_context_and_tools() {
+        use crate::services::chat::tools::default_registry;
+        let db = Database::new_for_testing().expect("test db");
+        // The dynamic `Tools:` section is now rendered from the registry —
+        // build it the same way `run_chat_turn` does and feed it in.
+        let tools_section = default_registry().render_system_prompt_section(&db);
+        let msgs = build_prompt(&[], &[], "hola", "es", tpl(), &tools_section);
+        let sys = &msgs[0].1;
+        // App identity so the model never claims it lacks mailbox access.
+        assert!(sys.contains("EmailOps"));
+        // Every always-on tool must be documented so the model knows what it
+        // can call. Memory/task/lens/draft tools are gated behind Settings
+        // and excluded from a default test DB; the always-on five must show.
+        for tool in [
+            "search_contacts",
+            "search_emails",
+            "get_email_body",
+            "get_thread",
+            "get_attachments",
+        ] {
+            assert!(sys.contains(tool), "system prompt missing tool: {}", tool);
+        }
+    }
+
+    #[test]
+    fn prompt_advertises_draft_tool_when_drafts_enabled() {
+        use crate::services::chat::tools::default_registry;
+        let db = Database::new_for_testing().expect("test db");
+        // Drafts default to ON; confirm the LLM sees `generate_email_draft`
+        // so it actually calls the tool instead of inventing a draft inline.
+        let tools_section = default_registry().render_system_prompt_section(&db);
+        let msgs = build_prompt(&[], &[], "draft a reply", "en", tpl(), &tools_section);
+        let sys = &msgs[0].1;
+        assert!(
+            sys.contains("generate_email_draft"),
+            "draft tool missing from prompt: {sys}"
+        );
+    }
+
+    #[test]
+    fn prompt_hides_lens_tools_when_lenses_disabled() {
+        use crate::services::chat::tools::default_registry;
+        let db = Database::new_for_testing().expect("test db");
+        // Lenses default OFF — confirm the section omits them entirely so a
+        // user who never enabled the feature doesn't get tool calls for it.
+        let tools_section = default_registry().render_system_prompt_section(&db);
+        let msgs = build_prompt(&[], &[], "show me invoices lens", "en", tpl(), &tools_section);
+        let sys = &msgs[0].1;
+        assert!(!sys.contains("get_lens_data"), "lens tool leaked when feature off");
+        assert!(!sys.contains("list_lenses"), "lens tool leaked when feature off");
+    }
+
+    // ── Direct-tool shortcuts ───────────────────────────────────────────
+    //
+    // These prompts are the exact strings the "Resumen de hoy", "Esta
+    // semana" and "Pendientes" quick-access buttons in ChatView.tsx send.
+    // Regression test: the heuristic must recognise them so the chat skips
+    // the LLM's tool-choice round entirely (saves ~2–6 s on local models).
+
+    #[test]
+    fn direct_shortcut_matches_today_summary_button_prompt() {
+        let prompt = "Hazme un resumen de los emails que he recibido hoy. \
+Formatéalo como una tabla markdown con las columnas | Remitente | Asunto | Hora | Urgencia | Resumen |, \
+ordenados por urgencia. Cita cada email con su número de referencia. \
+Termina con un párrafo breve destacando lo más importante del día.";
+        let calls = heuristic_direct_tools(prompt).expect("today shortcut must match the button prompt");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        let args = &calls[0].function.arguments;
+        assert!(args.get("since").is_some(), "must pass a since=today bound");
+        assert!(args.get("until").is_some(), "must pass an until=tomorrow bound");
+    }
+
+    #[test]
+    fn direct_shortcut_matches_this_week_button_prompt() {
+        let prompt = "Resume los emails más importantes de esta semana. \
+Usa una tabla markdown con columnas | Día | Remitente | Asunto | Tema | Acción sugerida |, \
+ordenados cronológicamente. Cita cada entrada. \
+Termina con dos o tres frases sobre los temas dominantes de la semana.";
+        let calls = heuristic_direct_tools(prompt).expect("week shortcut must match the button prompt");
+        assert_eq!(calls[0].function.name, "search_emails");
+    }
+
+    #[test]
+    fn direct_shortcut_matches_pending_button_prompt() {
+        let prompt = "Identifica los emails que requieren mi respuesta o acción. \
+Preséntalos en una tabla markdown …";
+        let calls = heuristic_direct_tools(prompt).expect("pending shortcut must match the button prompt");
+        assert_eq!(calls[0].function.name, "list_pending_tasks");
+    }
+
+    #[test]
+    fn direct_shortcut_today_ignored_when_week_also_mentioned() {
+        // "resumen" + "hoy" + "semana" — ambiguous; bail out of the today
+        // shortcut rather than answering the wrong window.
+        let out = heuristic_direct_tools("resumen de hoy y de la semana");
+        // Week shortcut wins because "has_month" is false and the today
+        // branch is skipped when has_week is true.
+        let calls = out.expect("should fall through to week shortcut");
+        let args = &calls[0].function.arguments;
+        let since = args.get("since").and_then(|v| v.as_str()).unwrap_or("");
+        // The week bound must start on a Monday — not on "today".
+        let monday = chrono::NaiveDate::parse_from_str(since, "%Y-%m-%d").unwrap();
+        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
+    }
+    // ── XML tool-call rescue ────────────────────────────────────────────
+    //
+    // Some small models emit tool calls as plain `<tool_call>` text
+    // instead of through the JSON tool_calls channel. `parse_xml_tool_calls`
+    // salvages those so the loop can still dispatch them.
+
+    #[test]
+    fn parse_xml_tool_calls_returns_empty_for_plain_text() {
+        assert!(parse_xml_tool_calls("just a regular answer with no XML").is_empty());
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_extracts_single_call_with_one_param() {
+        let text = "<tool_call>\n<function=get_email_body>\n<parameter=email_id>\n19e6e27f48f95297\n</parameter>\n</function>\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments["email_id"], "19e6e27f48f95297");
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_extracts_multiple_calls() {
+        // The actual failure mode that triggered this rescue: Qwen 3.5 4B
+        // dumped four `get_email_body` calls back-to-back as text after a
+        // `search_emails` returned four hits.
+        let text = "<tool_call>\n<function=get_email_body>\n<parameter=email_id>\na\n</parameter>\n</function>\n</tool_call>\n\
+                    <tool_call>\n<function=get_email_body>\n<parameter=email_id>\nb\n</parameter>\n</function>\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.arguments["email_id"], "a");
+        assert_eq!(calls[1].function.arguments["email_id"], "b");
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_promotes_integer_params_to_numbers() {
+        // `limit=25` must be a JSON number so it matches the tool schema's
+        // integer type — leaving it as a string would silently break the
+        // search_emails call.
+        let text = "<tool_call><function=search_emails><parameter=limit>25</parameter><parameter=query>foo</parameter></function></tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].function.arguments["limit"].is_number());
+        assert_eq!(calls[0].function.arguments["limit"].as_i64(), Some(25));
+        assert_eq!(calls[0].function.arguments["query"], "foo");
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_skips_blocks_with_missing_close_tag() {
+        // Truncated stream — keep the well-formed calls, drop the
+        // malformed one. Don't panic.
+        let text = "<tool_call><function=ok><parameter=k>v</parameter></function></tool_call>\
+                    <tool_call><function=broken><parameter=k>v";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "ok");
+    }
+
+    // ── Python-call tool-call rescue ────────────────────────────────────
+    //
+    // Same idea as the XML rescue, but for the *other* malformed shape
+    // Qwen 3.5 4B emits when it fumbles the tool-call channel:
+    //
+    //   tool_call: get_email_body(email_id="19e73d15a43b67e8")
+    //
+    // The exact user-reported failure was this line preceded by
+    // "Voy a obtener el contenido del email..." narration. The salvage
+    // must keep only the `tool_call:` lines so a model that confidently
+    // writes a python-shaped sentence in prose ("I will use `foo(x=1)`
+    // here") doesn't trigger a phantom tool execution.
+
+    #[test]
+    fn parse_python_call_tool_calls_returns_empty_for_plain_text() {
+        assert!(parse_python_call_tool_calls("just a normal answer, no calls here", &[]).is_empty());
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_extracts_single_call_with_string_arg() {
+        let text = "tool_call: get_email_body(email_id=\"19e73d15a43b67e8\")";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments["email_id"], "19e73d15a43b67e8");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_tolerates_narration_prefix() {
+        // The exact failure mode from the bug report — the model
+        // narrates a plan first ("Voy a obtener..."), then emits the
+        // tool_call line. The salvage must find the call regardless.
+        let text = "Voy a obtener el contenido del email que mencioné en la tabla anterior.\n\
+                    tool_call: get_email_body(email_id=\"19e73d15a43b67e8\")";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments["email_id"], "19e73d15a43b67e8");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_promotes_integer_kwargs_to_numbers() {
+        // Same reason as the XML rescue — `limit=25` must be a JSON
+        // number to match the tool schema's integer type.
+        let text = "tool_call: search_emails(query=\"foo\", limit=25)";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.arguments["query"], "foo");
+        assert!(calls[0].function.arguments["limit"].is_number());
+        assert_eq!(calls[0].function.arguments["limit"].as_i64(), Some(25));
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_handles_multiple_calls_on_separate_lines() {
+        let text = "tool_call: get_email_body(email_id=\"a\")\n\
+                    tool_call: get_email_body(email_id=\"b\")";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.arguments["email_id"], "a");
+        assert_eq!(calls[1].function.arguments["email_id"], "b");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_ignores_function_shaped_prose_without_prefix() {
+        // Critical false-positive guard: assistant prose that *describes*
+        // a tool call (without the `tool_call:` prefix) must NOT trigger
+        // a salvage. Otherwise an answer like "I used search_emails(...)
+        // to find it" would re-invoke the search every render.
+        let text = "I called search_emails(query=\"foo\", limit=25) to find it.";
+        assert!(parse_python_call_tool_calls(text, &[]).is_empty());
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_accepts_single_quoted_strings() {
+        // Models alternate between " and ' depending on locale / mood.
+        let text = "tool_call: get_email_body(email_id='abc-123')";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.arguments["email_id"], "abc-123");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_salvages_bare_registered_tool_line_after_narration() {
+        // Exact failure mode: model narrates first, then emits a bare
+        // `name(args)` line with no `tool_call:` prefix. As long as
+        // `name` matches a registered tool, the line is structurally
+        // a function call → salvage it.
+        let text = "I can find Lena Park's most recent email about the renewal terms to draft the reply for you.\n\
+                    search_emails(from=\"lena.park@orbitfreight.co\", limit=1, since=\"2026-05-26\")";
+        let calls = parse_python_call_tool_calls(text, &["search_emails", "get_email_body"]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[0].function.arguments["from"], "lena.park@orbitfreight.co");
+        assert_eq!(calls[0].function.arguments["limit"].as_i64(), Some(1));
+        assert_eq!(calls[0].function.arguments["since"], "2026-05-26");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_tolerates_trailing_punctuation_on_bare_line() {
+        // Some models terminate the call with a period or comma.
+        let text = "search_emails(from=\"a@b.com\", limit=1).";
+        let calls = parse_python_call_tool_calls(text, &["search_emails"]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_ignores_bare_unregistered_tool_line() {
+        // Salvage is registry-bounded — an unknown identifier is treated
+        // as prose, not as a phantom call.
+        let text = "fabricate_facts(x=1)";
+        assert!(parse_python_call_tool_calls(text, &["search_emails"]).is_empty());
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_ignores_registered_tool_name_inside_prose() {
+        // Even with `search_emails` in the registry, prose surrounding
+        // the call must NOT trigger a salvage. The line must be
+        // structurally a function call after trim.
+        let text = "I called search_emails(query=\"foo\") to find it and it worked.";
+        assert!(parse_python_call_tool_calls(text, &["search_emails"]).is_empty());
+    }
+}

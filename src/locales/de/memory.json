@@ -1,0 +1,72 @@
+{
+  "title": "Gedächtnis",
+  "subtitle": "Aus deinem Postfach extrahierte Fakten",
+  "emptyState": {
+    "title": "Noch nichts gemerkt",
+    "hint": "Sobald die Extraktion läuft, erscheinen Fakten hier. Du kannst alles, was der Assistent aufzeichnet, bearbeiten oder löschen."
+  },
+  "eligibilityBanner": {
+    "disabled": "Das Gedächtnis ist deaktiviert. Aktiviere es in Einstellungen → KI-Gedächtnis.",
+    "noAi": "Für das Gedächtnis muss die KI aktiviert sein.",
+    "openSettings": "Einstellungen öffnen"
+  },
+  "eligibility": {
+    "title": "Extraktionsfilter",
+    "categories": "Kategorien:",
+    "all": "alle",
+    "selfOnly": "Nur E-Mails, die vom Kontoinhaber gesendet wurden",
+    "excludesSenders": "Ausgeschlossene Absender:",
+    "excludesTags": "Ausgeschlossene Tags:",
+    "changeHint": "Ändere das in Einstellungen → Gedächtnis."
+  },
+  "filters": {
+    "all": "Alle",
+    "allChip": "Alle",
+    "search": "Fakten suchen…",
+    "sortBy": "Sortieren nach",
+    "newest": "Neueste",
+    "oldest": "Älteste",
+    "confidence": "Sicherheit"
+  },
+  "fact": {
+    "edit": "Fakt bearbeiten",
+    "delete": "Fakt löschen",
+    "source": "Quell-E-Mail",
+    "extracted": "Extrahiert {{when}}",
+    "confidence": "Sicherheit: {{value}}",
+    "companyTitle": "Firma (aus der Empfängerdomain abgeleitet)"
+  },
+  "actions": {
+    "extractNow": "Aus dem Postfach extrahieren",
+    "clearAll": "Alle Erinnerungen löschen",
+    "clearAllConfirm": "Alle Erinnerungen löschen? Das kann nicht rückgängig gemacht werden."
+  },
+  "status": {
+    "extracting": "Fakten werden extrahiert…",
+    "lastRun": "Letzter Lauf: {{when}}",
+    "promoted": {
+      "title": "Konsolidiert",
+      "hint": "Geprüfte, aussagekräftige Fakten"
+    },
+    "candidate": {
+      "title": "Kandidaten",
+      "hint": "Warten auf Bestätigung"
+    },
+    "retired": {
+      "title": "Ausgemustert",
+      "hint": "Ersetzt oder unwichtig"
+    }
+  },
+  "view": {
+    "totalCount": "{{count}} insgesamt",
+    "consolidatedSuffix": " · {{count}} konsolidiert",
+    "candidateSuffix": " · {{count}} Kandidaten",
+    "companyLabel": "Unternehmen:",
+    "loadingFacts": "Fakten werden geladen…",
+    "noFactsYet": "Noch keine Fakten. Das Gedächtnis füllt sich, sobald E-Mails synchronisiert und klassifiziert werden.",
+    "noMatches": "Keine Treffer für deine Suche.",
+    "selectAccount": "Wähle ein Konto, um das Gedächtnis anzuzeigen.",
+    "previewEmpty": "Wähle einen Fakt, um die ursprüngliche E-Mail anzuzeigen.",
+    "previewMissing": "Dieser Fakt hat keine ursprüngliche E-Mail (z. B. vom Nutzer bearbeitet oder konsolidiert)."
+  }
+}

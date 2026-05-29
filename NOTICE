@@ -1,0 +1,14 @@
+EmailOps
+Copyright 2026 Gero DP
+
+This product includes software and model artifacts from third parties.
+Licensing details and required attributions are documented in:
+
+- LICENSE
+- MODEL_LICENSES.md
+
+Bundled model artifact in macOS distributions:
+
+- nomic-embed-text-v1.5-q4_k_m.gguf
+  Source: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF
+  License: Apache-2.0

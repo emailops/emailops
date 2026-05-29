@@ -1,0 +1,72 @@
+{
+  "title": "Memoria",
+  "subtitle": "Datos extraídos de tu bandeja de entrada",
+  "emptyState": {
+    "title": "Aún no se ha recordado nada",
+    "hint": "Cuando se ejecute la extracción, los datos aparecerán aquí. Puedes editar o eliminar cualquier cosa que registre el asistente."
+  },
+  "eligibilityBanner": {
+    "disabled": "La memoria está desactivada. Actívala en Ajustes → Memoria de IA.",
+    "noAi": "La memoria necesita que la IA esté activada.",
+    "openSettings": "Abrir ajustes"
+  },
+  "eligibility": {
+    "title": "Criterios de extracción",
+    "categories": "Categorías:",
+    "all": "todas",
+    "selfOnly": "Solo correos enviados por el titular de la cuenta",
+    "excludesSenders": "Excluye remitentes:",
+    "excludesTags": "Excluye etiquetas:",
+    "changeHint": "Cámbialo en Ajustes → Memoria."
+  },
+  "filters": {
+    "all": "Todos",
+    "allChip": "Todas",
+    "search": "Buscar datos…",
+    "sortBy": "Ordenar por",
+    "newest": "Más recientes",
+    "oldest": "Más antiguos",
+    "confidence": "Confianza"
+  },
+  "fact": {
+    "edit": "Editar dato",
+    "delete": "Eliminar dato",
+    "source": "Correo de origen",
+    "extracted": "Extraído {{when}}",
+    "confidence": "Confianza: {{value}}",
+    "companyTitle": "Empresa (derivada del dominio del destinatario)"
+  },
+  "actions": {
+    "extractNow": "Extraer de la bandeja",
+    "clearAll": "Borrar todos los recuerdos",
+    "clearAllConfirm": "¿Eliminar todos los recuerdos? No se puede deshacer."
+  },
+  "status": {
+    "extracting": "Extrayendo datos…",
+    "lastRun": "Última ejecución: {{when}}",
+    "promoted": {
+      "title": "Consolidados",
+      "hint": "Datos validados y de alta señal"
+    },
+    "candidate": {
+      "title": "Candidatos",
+      "hint": "A la espera de corroboración"
+    },
+    "retired": {
+      "title": "Retirados",
+      "hint": "Sustituidos o de bajo valor"
+    }
+  },
+  "view": {
+    "totalCount": "{{count}} en total",
+    "consolidatedSuffix": " · {{count}} consolidados",
+    "candidateSuffix": " · {{count}} candidatos",
+    "companyLabel": "Empresa:",
+    "loadingFacts": "Cargando datos…",
+    "noFactsYet": "Aún no hay datos. La memoria se llena a medida que los correos se sincronizan y clasifican.",
+    "noMatches": "Sin resultados para tu búsqueda.",
+    "selectAccount": "Selecciona una cuenta para ver la memoria.",
+    "previewEmpty": "Selecciona un dato para previsualizar su correo de origen.",
+    "previewMissing": "Este dato no tiene correo de origen (p. ej., editado por el usuario o consolidado)."
+  }
+}

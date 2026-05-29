@@ -1,0 +1,53 @@
+{
+  "system": {
+    "appStarted": "EmailOps iniciado",
+    "appUpdated": "Aplicación actualizada a {{version}}",
+    "windowShown": "Ventana restaurada"
+  },
+  "sync": {
+    "starting": "Sincronizando {{email}}…",
+    "manualStarted": "Sincronización manual iniciada para {{email}}",
+    "downloading": "Descargando {{count}} correos nuevos",
+    "downloadingOne": "Descargando 1 correo nuevo",
+    "upToDate": "Bandeja al día",
+    "complete": "Sincronización completa para {{email}}",
+    "failed": "Error de sincronización: {{message}}",
+    "skippedOffline": "Sincronización omitida — sin conexión.",
+    "settingsSavedSyncing": "Ajustes guardados. Iniciando sincronización…"
+  },
+  "embeddings": {
+    "starting": "Iniciando la generación de embeddings",
+    "clearing": "Borrando embeddings existentes",
+    "generating": "Generando embedding {{current}}/{{total}}",
+    "complete": "Embeddings listos ({{count}})",
+    "failed": "Fallo al generar embeddings: {{message}}"
+  },
+  "ai": {
+    "operation": "{{provider}}/{{model}} → {{operation}}: {{tokens}} tokens{{cost}}",
+    "enableToChat": "Activa la IA para chatear sobre un hilo",
+    "preparingChat": "Preparando el chat del hilo \"{{subject}}\"",
+    "threadChatFailed": "No se pudo iniciar el chat del hilo: {{message}}"
+  },
+  "account": {
+    "loaded": "Cargadas {{count}} cuentas",
+    "loadedOne": "Cargada 1 cuenta",
+    "adding": "Añadiendo cuenta de {{provider}}…",
+    "added": "Cuenta añadida: {{email}}",
+    "addImapAdded": "Cuenta IMAP añadida: {{email}}",
+    "addFailed": "No se pudo añadir la cuenta: {{message}}",
+    "deleting": "Eliminando cuenta…",
+    "deleted": "Cuenta eliminada.",
+    "reauthenticating": "Volviendo a autenticar la cuenta…",
+    "reauthSuccess": "Reautenticación correcta",
+    "reauthFailed": "Reautenticación fallida: {{message}}",
+    "updateImap": "Actualiza las credenciales IMAP para volver a autenticarte."
+  },
+  "search": {
+    "filtering": "Filtrando bandeja: \"{{query}}\"",
+    "filteringReused": "Filtrando bandeja: \"{{query}}\" ({{count}} resultados reutilizados)"
+  },
+  "banners": {
+    "offline": "Estás sin conexión — sincronización pausada.",
+    "reconnect": "Vuelta a la red — la sincronización se reanudará."
+  }
+}

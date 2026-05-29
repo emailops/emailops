@@ -1,0 +1,111 @@
+{
+  "title": "Chat",
+  "newConversation": "New conversation",
+  "renameConversation": "Rename conversation",
+  "deleteConversation": "Delete conversation",
+  "deleteConfirm": "Delete this conversation? This cannot be undone.",
+  "emptyState": {
+    "title": "Ask anything about your inbox",
+    "hint": "Try \"summarise unread emails from this week\" or \"draft a reply to my last message from {{sender}}\".",
+    "askToStart": "Ask a question about your emails to get started.",
+    "askThreadToStart": "Ask a question about this email thread to get started."
+  },
+  "input": {
+    "placeholder": "Send a message…",
+    "placeholderEmails": "Ask about your emails… (Enter to send, Shift+Enter for newline)",
+    "waitingReply": "Waiting for reply…",
+    "send": "Send",
+    "stop": "Stop generating",
+    "regenerate": "Regenerate",
+    "categoryFilter": "Filter by category",
+    "attachContext": "Attach context"
+  },
+  "noAccount": "Select an account to start chatting with your emails.",
+  "shortcuts": {
+    "today": {
+      "label": "Today's summary",
+      "prompt": "Summarise the emails I've received today. Format it as a markdown table with the columns | Sender | Subject | Time | Urgency | Summary |, sorted by urgency. Cite each email with its reference number. End with a short paragraph highlighting the most important things of the day."
+    },
+    "pending": {
+      "label": "To-dos",
+      "prompt": "Identify the emails that need my reply or action. Present them in a markdown table with the columns | Sender | Subject | What they ask | Deadline | Priority |, sorted by priority (high → low). Include the relevant citations. Close with a short, friendly recommendation on where to start."
+    },
+    "thisWeek": {
+      "label": "This week",
+      "prompt": "Summarise the most important emails of this week. Use a markdown table with the columns | Day | Sender | Subject | Topic | Suggested action |, sorted chronologically. Cite each entry. End with two or three sentences on the week's dominant topics."
+    },
+    "unread": {
+      "label": "Unread",
+      "prompt": "Show me the most relevant unread emails. Format: a markdown table with the columns | Sender | Subject | Category | Why it matters | Urgency |. Sort by descending urgency and include the citations. Close with a short, polite suggestion on which ones are worth opening first."
+    },
+    "clients": {
+      "label": "Clients",
+      "prompt": "Review recent client emails and flag the ones that need attention. Use a markdown table with the columns | Client | Subject | Type (enquiry / complaint / opportunity) | What they expect from me | Urgency |, sorted by urgency. Cite each row. End with a short tip on the next step for each key client."
+    },
+    "draft": {
+      "label": "Write a draft",
+      "prompt": "Write a draft for "
+    }
+  },
+  "message": {
+    "user": "You",
+    "assistant": "Assistant",
+    "system": "System",
+    "copy": "Copy message",
+    "copied": "Copied",
+    "thinking": "Thinking…",
+    "streaming": "Generating…",
+    "stopped": "Generation stopped",
+    "error": "Something went wrong",
+    "retry": "Retry"
+  },
+  "reasoning": {
+    "show": "Show reasoning",
+    "hide": "Hide reasoning",
+    "label": "Reasoning",
+    "trace": {
+      "arguments": "arguments",
+      "resultPreview": "result (preview)",
+      "failed": "· failed",
+      "devOnly": "· (prompt capture only in dev builds)",
+      "timeline": "Timeline",
+      "vectorFallback": "(vector fallback active)",
+      "route": "Route",
+      "workflow": "Workflow · LLM calls",
+      "toolCallDetails": "Tool call details"
+    }
+  },
+  "sources": {
+    "title": "Sources",
+    "openEmail": "Open email",
+    "emailCount": "{{count}} sources",
+    "emailCountOne": "1 source"
+  },
+  "citation": {
+    "label": "Citation {{n}}"
+  },
+  "errors": {
+    "noAiEnabled": "Enable AI to use chat",
+    "noAccountSelected": "Select an account first",
+    "loadFailed": "Could not load conversations"
+  },
+  "categoryDropdown": {
+    "searchLabel": "Search:",
+    "categoriesHeader": "Categories",
+    "title": "Which email categories to search",
+    "resetToPrimary": "Reset to Primary"
+  },
+  "intro": {
+    "title": "Chat with your emails",
+    "body": "Ask questions in natural language. The assistant retrieves the most relevant emails and grounds its answer in them, with clickable citations.",
+    "retrievalRestricted": "Retrieval is restricted to {{categories}}. Change the selection in the chat input dropdown."
+  },
+  "threadContext": {
+    "label": "Email thread context"
+  },
+  "conversations": {
+    "empty": "No conversations yet.",
+    "confirmDelete": "Confirm?",
+    "newChat": "New chat"
+  }
+}

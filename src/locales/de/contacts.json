@@ -1,0 +1,66 @@
+{
+  "title": "Kontakte",
+  "search": "Kontakte suchen…",
+  "empty": "Keine Kontakte gefunden",
+  "row": {
+    "messagesCount": "{{count}} Nachrichten",
+    "messagesCountOne": "1 Nachricht",
+    "compose": "An {{name}} schreiben",
+    "viewEmails": "E-Mails von {{name}} anzeigen"
+  },
+  "company": {
+    "title": "Unternehmen: {{name}}",
+    "contactsCount": "{{count}} Kontakte",
+    "contactsCountOne": "1 Kontakt"
+  },
+  "sort": {
+    "byName": "Nach Name",
+    "byCount": "Nach Nachrichtenanzahl",
+    "byLastSeen": "Nach Letzter Aktivität",
+    "mostRecent": "Zuletzt aktiv",
+    "relationship": "Beziehungsstärke",
+    "mostEmails": "Meiste E-Mails",
+    "mostReceived": "Meiste empfangen",
+    "mostSent": "Meiste gesendet",
+    "nameAZ": "Name (A–Z)"
+  },
+  "kind": {
+    "all": "Alle",
+    "people": "Personen",
+    "automated": "Automatisiert"
+  },
+  "view": {
+    "noCompany": "Kein Unternehmen",
+    "contactsAndEmailsOne": "{{count}} Kontakt · {{emails}} E-Mails",
+    "contactsAndEmailsOther": "{{count}} Kontakte · {{emails}} E-Mails",
+    "filterToCompany": "Liste filtern →",
+    "noGroupings": "Noch keine Unternehmensgruppen — Unternehmens-Tags entstehen während der Synchronisation.",
+    "modeList": "Liste",
+    "modeCompany": "Nach Unternehmen",
+    "searchPlaceholder": "Kontakte suchen...",
+    "sortPrefix": "Sortieren: {{label}}",
+    "allCompanies": "Alle Unternehmen",
+    "companyChip": "Unternehmen: {{name}} ×",
+    "noMatch": "Keine Kontakte entsprechen den aktuellen Filtern.",
+    "noContactsYet": "Noch keine Kontakte — synchronisiere zuerst einige E-Mails.",
+    "countOfTotalOne": "{{shown}} von {{total}} Kontakt",
+    "countOfTotalOther": "{{shown}} von {{total}} Kontakten",
+    "loadMore": "Mehr laden",
+    "loading": "Lädt…",
+    "couldNotLoad": "Kontaktdetails konnten nicht geladen werden.",
+    "selectAccount": "Wähle ein Konto, um Kontakte anzuzeigen."
+  },
+  "detail": {
+    "title": "Kontakt",
+    "closeAria": "Schließen",
+    "automated": "automatisiert",
+    "otherAddresses": "Weitere Adressen",
+    "received": "Empfangen",
+    "sent": "Gesendet",
+    "total": "Gesamt",
+    "lastContact": "Letzter Kontakt",
+    "relationship": "Beziehung",
+    "composeEmail": "E-Mail verfassen",
+    "viewAllEmails": "Alle E-Mails anzeigen"
+  }
+}

@@ -1,0 +1,18 @@
+# EmailOps funding configuration.
+# Uncomment the platforms you actually use so the "Sponsor" button shows
+# up on the repo page. See:
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# github: [gerodp]
+# patreon:
+# open_collective:
+# ko_fi:
+# tidelift:
+# community_bridge:
+# liberapay:
+# issuehunt:
+# lfx_crowdfunding:
+# polar:
+# buy_me_a_coffee:
+# thanks_dev:
+# custom: ['https://example.com/donate']

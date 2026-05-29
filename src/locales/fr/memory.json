@@ -1,0 +1,72 @@
+{
+  "title": "Mémoire",
+  "subtitle": "Faits extraits de votre boîte",
+  "emptyState": {
+    "title": "Rien de retenu pour le moment",
+    "hint": "Une fois l'extraction lancée, les faits apparaîtront ici. Vous pouvez modifier ou supprimer tout ce que l'assistant a enregistré."
+  },
+  "eligibilityBanner": {
+    "disabled": "La mémoire est désactivée. Activez-la dans Paramètres → Mémoire de l'IA.",
+    "noAi": "La mémoire nécessite que l'IA soit activée.",
+    "openSettings": "Ouvrir les paramètres"
+  },
+  "eligibility": {
+    "title": "Critères d'extraction",
+    "categories": "Catégories :",
+    "all": "toutes",
+    "selfOnly": "Uniquement les courriels envoyés par le titulaire du compte",
+    "excludesSenders": "Exclut les expéditeurs :",
+    "excludesTags": "Exclut les étiquettes :",
+    "changeHint": "Modifiez ces réglages dans Paramètres → Mémoire."
+  },
+  "filters": {
+    "all": "Tous",
+    "allChip": "Toutes",
+    "search": "Rechercher des faits…",
+    "sortBy": "Trier par",
+    "newest": "Les plus récents",
+    "oldest": "Les plus anciens",
+    "confidence": "Confiance"
+  },
+  "fact": {
+    "edit": "Modifier le fait",
+    "delete": "Supprimer le fait",
+    "source": "Courriel source",
+    "extracted": "Extrait {{when}}",
+    "confidence": "Confiance : {{value}}",
+    "companyTitle": "Entreprise (déduite du domaine du destinataire)"
+  },
+  "actions": {
+    "extractNow": "Extraire de la boîte",
+    "clearAll": "Effacer tous les souvenirs",
+    "clearAllConfirm": "Supprimer tous les souvenirs ? Cette action est irréversible."
+  },
+  "status": {
+    "extracting": "Extraction des faits…",
+    "lastRun": "Dernière exécution : {{when}}",
+    "promoted": {
+      "title": "Consolidés",
+      "hint": "Faits validés et à fort signal"
+    },
+    "candidate": {
+      "title": "Candidats",
+      "hint": "En attente de corroboration"
+    },
+    "retired": {
+      "title": "Retirés",
+      "hint": "Remplacés ou peu utiles"
+    }
+  },
+  "view": {
+    "totalCount": "{{count}} au total",
+    "consolidatedSuffix": " · {{count}} consolidés",
+    "candidateSuffix": " · {{count}} candidats",
+    "companyLabel": "Entreprise :",
+    "loadingFacts": "Chargement des faits…",
+    "noFactsYet": "Aucun fait pour le moment. La mémoire se remplit à mesure que les courriels sont synchronisés et classés.",
+    "noMatches": "Aucun résultat pour votre recherche.",
+    "selectAccount": "Sélectionnez un compte pour voir la mémoire.",
+    "previewEmpty": "Sélectionnez un fait pour prévisualiser son courriel d'origine.",
+    "previewMissing": "Ce fait n'a pas de courriel d'origine (par ex. modifié par l'utilisateur ou consolidé)."
+  }
+}

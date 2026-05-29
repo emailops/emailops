@@ -1,0 +1,25 @@
+# Gitleaks configuration — extends the default ruleset.
+# Run locally:   gitleaks detect --no-git --redact --verbose
+# Pre-commit:    gitleaks protect --staged --redact --verbose
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore generated artifacts, lockfiles, and example placeholders"
+paths = [
+    '''(^|/)src-tauri/target/''',
+    '''(^|/)node_modules/''',
+    '''(^|/)dist/''',
+    '''(^|/)src/types/generated/''',
+    '''(^|/)\.venv.*/''',
+    '''(^|/)src-tauri/Cargo\.lock$''',
+    '''(^|/)package-lock\.json$''',
+    '''\.gitleaks\.toml$''',
+]
+regexes = [
+    # OAuth credential placeholders shipped in .env.example
+    '''YOUR_CLIENT_ID_HERE''',
+    '''YOUR_CLIENT_SECRET_HERE''',
+    '''YOUR_API_KEY_HERE''',
+]

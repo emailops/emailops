@@ -1,0 +1,68 @@
+{
+  "title": "Tasks",
+  "subtitle": "Action items pulled from your inbox",
+  "emptyState": {
+    "title": "No tasks yet",
+    "hint": "When the assistant finds action items in new emails, they will show up here."
+  },
+  "filters": {
+    "open": "Open",
+    "done": "Done",
+    "snoozed": "Snoozed",
+    "dismissed": "Dismissed",
+    "all": "All"
+  },
+  "task": {
+    "markDone": "Mark done",
+    "markOpen": "Reopen",
+    "snooze": "Snooze",
+    "dismiss": "Dismiss",
+    "edit": "Edit task",
+    "delete": "Delete task",
+    "openSource": "Open source email",
+    "due": "Due {{date}}",
+    "noDue": "No due date"
+  },
+  "actions": {
+    "extractNow": "Extract tasks now",
+    "clearCompleted": "Clear completed"
+  },
+  "status": {
+    "extracting": "Extracting tasks…",
+    "lastRun": "Last run: {{when}}"
+  },
+  "panel": {
+    "openCount": "{{count}} open",
+    "overdueSuffix": " · {{count}} overdue",
+    "dueTodaySuffix": " · {{count}} due today",
+    "waitingSuffix": " · {{count}} waiting on reply",
+    "companyLabel": "Company:",
+    "allChip": "All",
+    "addPlaceholder": "Add a task (e.g. send invoice to Acme)",
+    "addButton": "Add",
+    "loadingTasks": "Loading tasks…",
+    "noOpenTasks": "No open tasks.",
+    "noTasksForFilter": "No tasks for {{filter}}.",
+    "thisFilter": "this filter",
+    "sections": {
+      "overdue": "Overdue",
+      "dueToday": "Due today",
+      "upcoming": "Upcoming",
+      "noDate": "No due date",
+      "count": "{{title}} ({{n}})"
+    },
+    "companyTitle": "Company (derived from recipient domain)",
+    "high": "High",
+    "snooze": "Snooze",
+    "dismiss": "Dismiss",
+    "markDoneTitle": "Mark done",
+    "waitingTitle": "Waiting on reply ({{n}})",
+    "loadingThreads": "Loading open threads…",
+    "lastTouched": "Last touched {{when}}",
+    "deadlineSuffix": " · deadline {{date}}",
+    "selectAccount": "Select an account to view tasks.",
+    "previewEmpty": "Select a task or thread to preview its email.",
+    "previewMissingTask": "This task was added manually — no originating email.",
+    "previewMissingThread": "No source email available for this thread."
+  }
+}

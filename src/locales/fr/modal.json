@@ -1,0 +1,101 @@
+{
+  "addAccount": {
+    "title": "Ajouter un compte de messagerie",
+    "subtitle": "Choisissez comment connecter votre compte.",
+    "gmail": "Gmail",
+    "gmailHint": "Se connecter avec Google OAuth",
+    "outlook": "Outlook / Microsoft 365",
+    "outlookHint": "Se connecter avec Microsoft OAuth (API Graph)",
+    "imap": "IMAP / SMTP",
+    "imapHint": "iCloud, Yahoo, Fastmail, personnalisé…",
+    "cancel": "Annuler",
+    "providerHeading": "Ajouter un compte {{provider}}",
+    "syncWindow": "Période à synchroniser",
+    "syncWindowOptions": {
+      "thirtyDays": "30 derniers jours",
+      "ninetyDays": "90 derniers jours",
+      "oneYear": "Dernière année",
+      "all": "Tout"
+    },
+    "connecting": "Connexion à {{provider}}…",
+    "errorPrefix": "Impossible d'ajouter le compte"
+  },
+  "imapAccount": {
+    "title": "Ajouter un compte IMAP / SMTP",
+    "modalTitle": "Ajouter un compte IMAP",
+    "email": "Adresse e-mail",
+    "emailLabel": "E-mail / Nom d'utilisateur",
+    "password": "Mot de passe",
+    "passwordLabel": "Mot de passe / Mot de passe d'application",
+    "imapHost": "Serveur IMAP",
+    "imapPort": "Port IMAP",
+    "smtpHost": "Serveur SMTP",
+    "smtpPort": "Port SMTP",
+    "displayName": "Nom affiché (facultatif)",
+    "displayNamePlaceholder": "E-mail professionnel",
+    "useTls": "Utiliser TLS",
+    "test": "Tester la connexion",
+    "add": "Ajouter le compte",
+    "testing": "Test de connexion…",
+    "testSuccess": "Connexion réussie",
+    "testFailedShort": "Échec de la connexion",
+    "testFailed": "Échec de connexion : {{error}}",
+    "testHint": "Testez la connexion avant d'ajouter le compte."
+  },
+  "accountSettings": {
+    "title": "Paramètres du compte",
+    "modalTitle": "Paramètres du compte",
+    "loading": "Chargement des paramètres...",
+    "syncHeading": "Synchronisation",
+    "categoriesHeading": "Catégories à synchroniser",
+    "autoDownloadHeading": "Téléchargement automatique des pièces jointes",
+    "autoDownloadEmptyCategories": "Sélectionnez d'abord les catégories à synchroniser ci-dessus.",
+    "imapHeading": "Configuration IMAP / SMTP",
+    "syncPeriodHeading": "Période de synchronisation",
+    "dangerHeading": "Zone de danger",
+    "dangerWarning": "Cette action est irréversible.",
+    "name": "Nom affiché",
+    "email": "Adresse e-mail",
+    "syncEnabled": "Activer la synchronisation",
+    "syncFrom": "Synchroniser depuis",
+    "categories": "Catégories Gmail à synchroniser",
+    "categoriesHint": "Choisissez quels onglets de la boîte Gmail sont téléchargés. Les modifications prennent effet lors de la prochaine synchronisation.",
+    "imapHint": "Les identifiants sont stockés dans le trousseau du système d'exploitation. Les modifications sont vérifiées avant l'enregistrement.",
+    "imapServer": "Serveur IMAP",
+    "smtpServer": "Serveur SMTP",
+    "syncPeriodHint": "Les courriels antérieurs à cette date seront téléchargés lors de la prochaine synchronisation.",
+    "syncSince": "Synchroniser les courriels depuis",
+    "deleteAccount": "Supprimer le compte",
+    "deleteWarning": "La suppression de ce compte effacera définitivement tous les courriels, contacts, tâches et mémoires d'IA associés. Saisissez l'adresse e-mail du compte pour confirmer.",
+    "categoryPrimary": "Principal",
+    "categorySocial": "Social",
+    "categoryUpdates": "Notifications",
+    "categoryForums": "Forums",
+    "categoryPromotions": "Promotions",
+    "removeAccountConfirm": "Supprimer ce compte et tous les courriels stockés localement ? Cette action est irréversible.",
+    "saved": "Paramètres enregistrés"
+  },
+  "ruleManagement": {
+    "title": "Règles de pièces jointes",
+    "addRule": "Ajouter une règle",
+    "editRule": "Modifier la règle",
+    "name": "Nom de la règle",
+    "senderPattern": "Motif d'expéditeur",
+    "subjectPattern": "Motif d'objet",
+    "destination": "Dossier de destination",
+    "applyExisting": "Appliquer aux courriels existants",
+    "delete": "Supprimer la règle",
+    "deleteConfirm": "Supprimer cette règle ? Les fichiers existants ne seront pas supprimés."
+  },
+  "confirm": {
+    "title": "Êtes-vous sûr ?",
+    "destructive": "Cette action est irréversible."
+  },
+  "inbox": {
+    "expand": "Développer la boîte de réception"
+  },
+  "errorBoundary": {
+    "title": "Une erreur s'est produite",
+    "body": "EmailOps a rencontré une erreur inattendue de l'interface. Rechargez l'application et réessayez."
+  }
+}

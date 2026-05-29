@@ -1,0 +1,13 @@
+# Public synthetic memory-recall eval examples.
+# Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
+
+- id: demo_memory_pending_tasks
+  question: "what client follow-ups are pending?"
+  account: "alex@northwindlabs.io"
+  category: memory_tasks
+  tier: full
+  expected_route: tools_first
+  expected_tools_called: ["list_pending_tasks"]
+  expected_answer_contains: []
+  metrics:
+    - answer_relevancy

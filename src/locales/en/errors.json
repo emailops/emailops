@@ -1,0 +1,58 @@
+{
+  "generic": "Something went wrong: {{message}}",
+  "unknown": "An unknown error occurred",
+  "network": "Network error. Check your connection.",
+  "offline": "You are offline. Some features are unavailable.",
+  "database": "Local database error: {{message}}",
+  "auth": {
+    "expired": "Authentication expired. Sign in again.",
+    "invalidCredentials": "Invalid credentials.",
+    "providerRejected": "{{provider}} rejected the sign-in attempt.",
+    "cancelled": "Sign-in was cancelled."
+  },
+  "sync": {
+    "failed": "Sync failed: {{message}}",
+    "rateLimited": "{{provider}} rate-limited the sync. Try again later.",
+    "skippedOffline": "Sync skipped — currently offline.",
+    "noAccount": "No account is selected."
+  },
+  "ai": {
+    "disabled": "AI is disabled. Enable it in Settings.",
+    "providerUnreachable": "Could not reach the AI provider.",
+    "modelMissing": "Selected model is not available.",
+    "rateLimited": "AI provider rate-limited the request.",
+    "contextTooLong": "Message is too long for the model's context window."
+  },
+  "compose": {
+    "noRecipients": "Add at least one recipient before sending.",
+    "smtpFailed": "Could not send via SMTP: {{message}}",
+    "draftSaveFailed": "Could not save draft: {{message}}"
+  },
+  "account": {
+    "addFailed": "Could not add account: {{message}}",
+    "removeFailed": "Could not remove account: {{message}}",
+    "saveSettingsFailed": "Could not save account settings: {{message}}",
+    "imapTestFailed": "IMAP test failed: {{message}}"
+  },
+  "preferences": {
+    "loadFailed": "Could not load preference: {{key}}",
+    "saveFailed": "Could not save preference: {{key}}"
+  },
+  "codes": {
+    "auth": "Authentication failed: {{detail}}",
+    "database": "Local database error: {{detail}}",
+    "http": "Network request failed: {{detail}}",
+    "json": "Could not read the server response: {{detail}}",
+    "oauth": "Sign-in error: {{detail}}",
+    "sync": "Sync failed: {{detail}}",
+    "keyring": "Keychain error: {{detail}}",
+    "needs_reauth": "Authentication required — please sign in again.",
+    "not_found": "Not found: {{detail}}",
+    "invalid_input": "Invalid input: {{detail}}",
+    "ai": "AI error: {{detail}}",
+    "ai_disabled": "AI is disabled. Enable it in Settings.",
+    "io": "File error: {{detail}}",
+    "budget_exceeded": "AI budget exceeded: {{detail}}",
+    "cancelled": "Cancelled."
+  }
+}

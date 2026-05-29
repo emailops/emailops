@@ -1,0 +1,21 @@
+# Public synthetic shortcut eval example.
+# Real mailbox-specific shortcut cases belong under ignored `private-evals/chat/shortcuts/`.
+
+shortcut_id: weekly_summary
+label: "This week"
+account: "alex@northwindlabs.io"
+model: "gemma4:e2b"
+
+rubric:
+  language: en
+  must_contain_table: true
+  required_columns: ["Day", "Sender", "Subject"]
+  min_rows: 1
+  must_end_with_summary_paragraph: true
+  require_row_citations: true
+
+variants:
+  - id: v0_demo
+    description: "Synthetic demo prompt"
+    prompt: |
+      Summarize the most important client emails from this week. Use a markdown table and cite each row.

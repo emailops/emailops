@@ -1,0 +1,56 @@
+{
+  "title": "Dashboard",
+  "loading": "Loading…",
+  "noAccounts": "No accounts connected.",
+  "storage": {
+    "title": "Disk usage",
+    "loading": "Loading storage stats…",
+    "totalOnDisk": "Total on disk"
+  },
+  "accounts": {
+    "title": "Accounts",
+    "syncedSince": "Synced since",
+    "lastSync": "Last sync",
+    "localServer": "Local / server",
+    "sent": "Sent",
+    "categories": "Categories",
+    "openSettings": "Open account settings",
+    "refreshTotal": "Refresh total",
+    "refreshing": "Refreshing…",
+    "fetchFromProvider": "Fetch from provider",
+    "lastFetched": "Last fetched {{time}}",
+    "classified": "Classified",
+    "memoriesAnalyzed": "Memories analyzed",
+    "tasksAnalyzed": "Tasks analyzed",
+    "embeddings": "Embeddings"
+  },
+  "queues": {
+    "title": "Background queues",
+    "loading": "Loading queue state…",
+    "idle": "idle",
+    "empty": "empty",
+    "noHistory": "no history yet",
+    "aiInteractive": "AI (interactive)",
+    "aiBackground": "AI (background)",
+    "db": "DB",
+    "sync": "Sync"
+  },
+  "log": {
+    "title": "Output",
+    "allModules": "all modules",
+    "filterByModule": "Filter by module",
+    "aiBackend": "AI Backend",
+    "aiModel": "AI Model",
+    "aiSettings": "AI Settings",
+    "clearLogs": "Clear logs",
+    "minimizePanel": "Minimize panel",
+    "expandPanel": "Expand panel",
+    "levels": {
+      "error": "ERR",
+      "warn": "WRN",
+      "success": "OK",
+      "debug": "DBG",
+      "info": "INF"
+    }
+  }
+}

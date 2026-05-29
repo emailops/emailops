@@ -1,0 +1,203 @@
+import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { errorText } from '@/lib/errors';
+import { useChatStore } from '@/stores/chatStore';
+import { useLogStore } from '@/stores/logStore';
+import { ChatInput } from './ChatInput';
+import { ConversationList } from './ConversationList';
+import { MessageList } from './MessageList';
+
+// Each shortcut chip either auto-sends a fully-formed prompt (action: 'send'
+// — the model picks the right retrieval path and renders a scannable answer)
+// or seeds the chat input with a sentence stem the user finishes themselves
+// (action: 'prefill' — for open-ended starters like "Write a draft for …").
+// Labels + prompts come from the `chat:shortcuts.*` locale keys; only the
+// icon and the dispatch action stay inline.
+const SHORTCUTS = [
+  { id: 'today', icon: '📋', action: 'send' },
+  { id: 'thisWeek', icon: '📅', action: 'send' },
+  { id: 'draft', icon: '✍️', action: 'prefill' },
+] as const;
+
+interface ChatViewProps {
+  accountId: string | null;
+  /** Called when a citation opens an email — lets the parent switch to the inbox view. */
+  onNavigateToInbox?: () => void;
+}
+
+export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
+  const { t } = useTranslation(['chat', 'common']);
+  const {
+    conversations,
+    activeConversationId,
+    messages,
+    streamingMessageId,
+    isSending,
+    isLoadingConversations,
+    isLoadingMessages,
+    error,
+    fetchConversations,
+    createConversation,
+    selectConversation,
+    renameConversation,
+    deleteConversation,
+    sendMessage,
+    loadCategoriesPref,
+    categoriesLoaded,
+    selectedCategories,
+  } = useChatStore();
+  const addLog = useLogStore((s) => s.addLog);
+  // Prefill plumbing for shortcut chips that ask the user to finish the
+  // sentence (e.g. "Write a draft for …") instead of auto-sending. The
+  // nonce lets us re-apply the same text after another click — useState
+  // skips re-renders when the literal value is unchanged.
+  const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
+  const [inputPrefillNonce, setInputPrefillNonce] = useState(0);
+
+  // Load the persisted category filter once, so the dropdown reflects the
+  // user's last choice immediately on mount.
+  useEffect(() => {
+    if (!categoriesLoaded) void loadCategoriesPref();
+  }, [categoriesLoaded, loadCategoriesPref]);
+
+  // Load conversations whenever the active account changes. Track the previous
+  // accountId so that re-mounting the view (e.g. when navigating from inbox
+  // back to chat, or via "Chat about this thread") does NOT wipe the currently
+  // active conversation — only an actual account switch should clear it.
+  // App.tsx already resets the entire chat store on account switch, so this
+  // effect just needs to (re)load the conversation list for the current
+  // account.
+  const lastAccountIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!accountId) return;
+    void fetchConversations(accountId);
+    if (lastAccountIdRef.current !== null && lastAccountIdRef.current !== accountId) {
+      void selectConversation(null);
+    }
+    lastAccountIdRef.current = accountId;
+  }, [accountId, fetchConversations, selectConversation]);
+
+  const handleCreate = async () => {
+    if (!accountId) return;
+    try {
+      await createConversation(accountId);
+    } catch (e) {
+      addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
+    }
+  };
+
+  const handleSend = async (content: string) => {
+    // Auto-create a conversation if none is active (first message in a session).
+    if (!activeConversationId) {
+      if (!accountId) return;
+      try {
+        await createConversation(accountId);
+      } catch (e) {
+        addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
+        return;
+      }
+    }
+    addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
+    await sendMessage(content);
+  };
+
+  if (!accountId) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-white text-gray-500 text-sm">
+        {t('chat:noAccount')}
+      </div>
+    );
+  }
+
+  // Show the intro + shortcut chips whenever the main pane is otherwise empty —
+  // either no conversation is selected yet, or the selected conversation has no
+  // messages. That way a user who created a fresh "New chat" still gets the
+  // same one-click prompts as the first-ever visit.
+  const showIntro = !activeConversationId || (!isLoadingMessages && messages.length === 0);
+
+  return (
+    <div className="flex flex-1 overflow-hidden bg-white">
+      <ConversationList
+        conversations={conversations}
+        activeId={activeConversationId}
+        isLoading={isLoadingConversations}
+        onSelect={(id) => void selectConversation(id)}
+        onCreate={() => void handleCreate()}
+        onRename={(id, title) => void renameConversation(id, title)}
+        onDelete={(id) => void deleteConversation(id)}
+      />
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {showIntro ? (
+          <>
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">
+              <div>
+                <h2 className="text-lg font-medium text-gray-900 mb-1">{t('chat:intro.title')}</h2>
+                <p className="text-sm text-gray-500 max-w-md">{t('chat:intro.body')}</p>
+              </div>
+              <div className="text-xs text-gray-500 max-w-md">
+                {t('chat:intro.retrievalRestricted', {
+                  categories: selectedCategories.length > 0 ? selectedCategories.join(', ') : 'primary',
+                })}
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 max-w-lg">
+                {SHORTCUTS.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      const prompt = t(`chat:shortcuts.${s.id}.prompt` as const);
+                      if (s.action === 'prefill') {
+                        setInputPrefillText(prompt);
+                        // Bumping the nonce re-fires the prefill effect even
+                        // when the prompt text is unchanged (otherwise a
+                        // second click of the same chip would be a no-op).
+                        setInputPrefillNonce((n) => n + 1);
+                      } else {
+                        void handleSend(prompt);
+                      }
+                    }}
+                    disabled={isSending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    <span>{s.icon}</span>
+                    <span>{t(`chat:shortcuts.${s.id}.label` as const)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ChatInput
+              onSend={handleSend}
+              disabled={isSending}
+              placeholder={t('chat:input.placeholderEmails')}
+              prefillText={inputPrefillText}
+              prefillNonce={inputPrefillNonce}
+            />
+          </>
+        ) : (
+          <>
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {isLoadingMessages ? (
+                <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
+                  {t('common:state.loading')}
+                </div>
+              ) : (
+                <MessageList
+                  messages={messages}
+                  streamingMessageId={streamingMessageId}
+                  accountId={accountId}
+                  onOpenEmail={onNavigateToInbox}
+                />
+              )}
+              {error && <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>}
+            </div>
+            <ChatInput
+              onSend={handleSend}
+              disabled={isSending || streamingMessageId !== null}
+              placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

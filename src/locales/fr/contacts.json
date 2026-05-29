@@ -1,0 +1,66 @@
+{
+  "title": "Contacts",
+  "search": "Rechercher des contacts…",
+  "empty": "Aucun contact trouvé",
+  "row": {
+    "messagesCount": "{{count}} messages",
+    "messagesCountOne": "1 message",
+    "compose": "Écrire à {{name}}",
+    "viewEmails": "Voir les courriels de {{name}}"
+  },
+  "company": {
+    "title": "Entreprise : {{name}}",
+    "contactsCount": "{{count}} contacts",
+    "contactsCountOne": "1 contact"
+  },
+  "sort": {
+    "byName": "Par nom",
+    "byCount": "Par nb de messages",
+    "byLastSeen": "Par dernière activité",
+    "mostRecent": "Plus récents",
+    "relationship": "Force de la relation",
+    "mostEmails": "Plus de courriels",
+    "mostReceived": "Plus reçus",
+    "mostSent": "Plus envoyés",
+    "nameAZ": "Nom (A–Z)"
+  },
+  "kind": {
+    "all": "Tous",
+    "people": "Personnes",
+    "automated": "Automatisés"
+  },
+  "view": {
+    "noCompany": "Sans entreprise",
+    "contactsAndEmailsOne": "{{count}} contact · {{emails}} courriels",
+    "contactsAndEmailsOther": "{{count}} contacts · {{emails}} courriels",
+    "filterToCompany": "Filtrer la liste →",
+    "noGroupings": "Pas encore de regroupement par entreprise — les étiquettes d'entreprise sont déduites pendant la synchronisation.",
+    "modeList": "Liste",
+    "modeCompany": "Par entreprise",
+    "searchPlaceholder": "Rechercher des contacts...",
+    "sortPrefix": "Trier : {{label}}",
+    "allCompanies": "Toutes les entreprises",
+    "companyChip": "Entreprise : {{name}} ×",
+    "noMatch": "Aucun contact ne correspond aux filtres actuels.",
+    "noContactsYet": "Aucun contact pour le moment — synchronisez d'abord quelques courriels.",
+    "countOfTotalOne": "{{shown}} sur {{total}} contact",
+    "countOfTotalOther": "{{shown}} sur {{total}} contacts",
+    "loadMore": "Charger plus",
+    "loading": "Chargement…",
+    "couldNotLoad": "Impossible de charger les détails du contact.",
+    "selectAccount": "Sélectionnez un compte pour voir les contacts."
+  },
+  "detail": {
+    "title": "Contact",
+    "closeAria": "Fermer",
+    "automated": "automatisé",
+    "otherAddresses": "Autres adresses",
+    "received": "Reçus",
+    "sent": "Envoyés",
+    "total": "Total",
+    "lastContact": "Dernier contact",
+    "relationship": "Relation",
+    "composeEmail": "Rédiger un courriel",
+    "viewAllEmails": "Voir tous les courriels"
+  }
+}
