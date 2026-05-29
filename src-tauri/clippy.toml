@@ -1,0 +1,8 @@
+too-many-arguments-threshold = 12
+
+# The `clippy::unwrap_used` and `clippy::expect_used` lints are enabled in
+# `commands/mod.rs` (and incrementally elsewhere) to keep panicky code out of
+# user-facing surfaces. Allow them freely in tests — fixtures use them
+# heavily and the safety argument doesn't apply there.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

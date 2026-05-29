@@ -1,0 +1,24 @@
+# Example only. Copy to `private-evals/benchmark.toml` and fill in local paths.
+# The Rust eval CLIs currently accept these values as flags; this file is a
+# private benchmark runbook, not an automatically parsed config.
+
+[database]
+prod_db = "/Users/you/Library/Application Support/com.emailops.app/emailops.db"
+mode = "copy-to-temp"
+
+[judge]
+enabled = false
+provider = "local"
+model = "gemma4:e2b"
+
+[reports]
+base_dir = "reports/evaluations/private"
+
+[chat]
+cases_dir = "private-evals/chat/cases"
+tier = "smoke"
+account = "account-id-or-email"
+
+[lenses]
+out_dir = "reports/evaluations/private/lenses"
+limit = 20

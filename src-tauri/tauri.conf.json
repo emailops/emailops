@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "EmailOps",
+  "version": "0.5.0",
+  "identifier": "com.emailops.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "EmailOps",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "minWidth": 800,
+        "minHeight": 600,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; img-src 'self' asset: http://asset.localhost https: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-qqHzR7GUw4nA0pK1+9bI37pMVgmog/3o9YQEkjPqJjQ='; connect-src 'self' ipc: http://ipc.localhost http://localhost:11434 https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://login.microsoftonline.com https://graph.microsoft.com; font-src 'self' data:; media-src 'self' data: blob:; object-src data: blob: asset: http://asset.localhost; frame-src data: blob: asset: http://asset.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {
+      "resources/models/nomic-embed-text-v1.5-q4_k_m.gguf": "models/embed/nomic-embed-text-v1.5-q4_k_m.gguf"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": "entitlements.plist",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "exceptionDomain": null
+    },
+    "category": "Productivity",
+    "copyright": "© 2026 Gero DP"
+  },
+  "plugins": {
+    "shell": {
+      "open": "^(https?://|mailto:).+"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "generic": "Une erreur s'est produite : {{message}}",
+  "unknown": "Une erreur inconnue est survenue",
+  "network": "Erreur réseau. Vérifiez votre connexion.",
+  "offline": "Vous êtes hors ligne. Certaines fonctions sont indisponibles.",
+  "database": "Erreur de base de données locale : {{message}}",
+  "auth": {
+    "expired": "Authentification expirée. Reconnectez-vous.",
+    "invalidCredentials": "Identifiants invalides.",
+    "providerRejected": "{{provider}} a refusé la connexion.",
+    "cancelled": "Connexion annulée."
+  },
+  "sync": {
+    "failed": "Échec de synchronisation : {{message}}",
+    "rateLimited": "{{provider}} a limité la synchronisation. Réessayez plus tard.",
+    "skippedOffline": "Synchronisation ignorée — hors ligne.",
+    "noAccount": "Aucun compte sélectionné."
+  },
+  "ai": {
+    "disabled": "L'IA est désactivée. Activez-la dans les Paramètres.",
+    "providerUnreachable": "Impossible de contacter le fournisseur d'IA.",
+    "modelMissing": "Le modèle sélectionné n'est pas disponible.",
+    "rateLimited": "Le fournisseur d'IA a limité la requête.",
+    "contextTooLong": "Le message dépasse la fenêtre de contexte du modèle."
+  },
+  "compose": {
+    "noRecipients": "Ajoutez au moins un destinataire avant d'envoyer.",
+    "smtpFailed": "Échec de l'envoi via SMTP : {{message}}",
+    "draftSaveFailed": "Impossible d'enregistrer le brouillon : {{message}}"
+  },
+  "account": {
+    "addFailed": "Impossible d'ajouter le compte : {{message}}",
+    "removeFailed": "Impossible de supprimer le compte : {{message}}",
+    "saveSettingsFailed": "Impossible d'enregistrer les paramètres du compte : {{message}}",
+    "imapTestFailed": "Échec du test IMAP : {{message}}"
+  },
+  "preferences": {
+    "loadFailed": "Impossible de charger la préférence : {{key}}",
+    "saveFailed": "Impossible d'enregistrer la préférence : {{key}}"
+  },
+  "codes": {
+    "auth": "Échec de l'authentification : {{detail}}",
+    "database": "Erreur de base de données locale : {{detail}}",
+    "http": "Échec de la requête réseau : {{detail}}",
+    "json": "Impossible de lire la réponse du serveur : {{detail}}",
+    "oauth": "Erreur de connexion : {{detail}}",
+    "sync": "Échec de synchronisation : {{detail}}",
+    "keyring": "Erreur du trousseau : {{detail}}",
+    "needs_reauth": "Authentification requise — reconnectez-vous.",
+    "not_found": "Introuvable : {{detail}}",
+    "invalid_input": "Entrée invalide : {{detail}}",
+    "ai": "Erreur d'IA : {{detail}}",
+    "ai_disabled": "L'IA est désactivée. Activez-la dans les Paramètres.",
+    "io": "Erreur de fichier : {{detail}}",
+    "budget_exceeded": "Budget d'IA dépassé : {{detail}}",
+    "cancelled": "Annulé."
+  }
+}

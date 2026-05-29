@@ -1,0 +1,97 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+# macOS code-signing / notarization secrets — see .env.signing.example
+.env.signing
+
+# Local scripts (not committed)
+scripts/*.local.sh
+
+# Logs
+*.log
+npm-debug.log*
+*.pyc
+__pycache__/
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Tauri
+src-tauri/target/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.pytest_cache/
+
+# Eval results (contain real email data — keep scripts, exclude data)
+eval/results-*.json
+eval/parse-results-*.json
+eval/classify-results-*.json
+eval/draft-results-*.json
+eval/report-*.html
+eval/classify-report-*.html
+eval/draft-report-*.html
+eval/qrels.candidates.jsonl
+eval/qrels.pool.summary.json
+eval/REPORT.md
+
+# Python virtual environments
+.venv*/
+
+# Rust chat eval harness output — HTML reports contain real email text
+# snippets. Keep cases/ and harness code committed, exclude generated output
+# and DB snapshots the runner materializes under /tmp is fine but any local
+# staging copies should not be tracked.
+reports/evaluations/
+src-tauri/evals/.cache/
+src-tauri/evals/tmp/
+src-tauri/reports/
+eval_report_*.html
+reference_docs/eval_report_*.html
+reference_docs/evaluation/
+
+# Private benchmark suites can contain real mailbox-derived cases and notes.
+private-evals/*
+!private-evals/README.md
+!private-evals/*.example
+
+# Repo-local app data used by Makefile dev/demo workflows.
+.emailops-data/
+.emailops-data-fresh/
+.emailops-demo-data/
+.emailops-demo-data-es/
+
+# Bundled local AI models (fetched by `make fetch-bundled-models`, pinned by
+# URL + SHA-256 in scripts/fetch_bundled_models.sh; the .gguf itself is too
+# large to commit and is reproducible from the upstream HuggingFace mirror)
+src-tauri/resources/models/*.gguf
+
+# Raw (unsanitised) provider cassettes — real email content, never commit.
+# Sanitised cassettes under cassettes/<provider>/ ARE committed as the
+# integration-test corpus.
+src-tauri/tests/fixtures/cassettes/raw/

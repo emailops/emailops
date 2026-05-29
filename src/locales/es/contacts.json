@@ -1,0 +1,66 @@
+{
+  "title": "Contactos",
+  "search": "Buscar contactos…",
+  "empty": "Sin contactos",
+  "row": {
+    "messagesCount": "{{count}} mensajes",
+    "messagesCountOne": "1 mensaje",
+    "compose": "Escribir a {{name}}",
+    "viewEmails": "Ver correos de {{name}}"
+  },
+  "company": {
+    "title": "Empresa: {{name}}",
+    "contactsCount": "{{count}} contactos",
+    "contactsCountOne": "1 contacto"
+  },
+  "sort": {
+    "byName": "Por nombre",
+    "byCount": "Por nº de mensajes",
+    "byLastSeen": "Por última vez",
+    "mostRecent": "Más recientes",
+    "relationship": "Fuerza de la relación",
+    "mostEmails": "Más correos",
+    "mostReceived": "Más recibidos",
+    "mostSent": "Más enviados",
+    "nameAZ": "Nombre (A–Z)"
+  },
+  "kind": {
+    "all": "Todos",
+    "people": "Personas",
+    "automated": "Automatizados"
+  },
+  "view": {
+    "noCompany": "Sin empresa",
+    "contactsAndEmailsOne": "{{count}} contacto · {{emails}} correos",
+    "contactsAndEmailsOther": "{{count}} contactos · {{emails}} correos",
+    "filterToCompany": "Filtrar lista →",
+    "noGroupings": "Aún no hay agrupaciones por empresa: las etiquetas de empresa se derivan durante la sincronización.",
+    "modeList": "Lista",
+    "modeCompany": "Por empresa",
+    "searchPlaceholder": "Buscar contactos...",
+    "sortPrefix": "Ordenar: {{label}}",
+    "allCompanies": "Todas las empresas",
+    "companyChip": "Empresa: {{name}} ×",
+    "noMatch": "Ningún contacto coincide con los filtros actuales.",
+    "noContactsYet": "Aún no hay contactos: sincroniza algunos correos primero.",
+    "countOfTotalOne": "{{shown}} de {{total}} contacto",
+    "countOfTotalOther": "{{shown}} de {{total}} contactos",
+    "loadMore": "Cargar más",
+    "loading": "Cargando…",
+    "couldNotLoad": "No se pudieron cargar los detalles del contacto.",
+    "selectAccount": "Selecciona una cuenta para ver los contactos."
+  },
+  "detail": {
+    "title": "Contacto",
+    "closeAria": "Cerrar",
+    "automated": "automatizado",
+    "otherAddresses": "Otras direcciones",
+    "received": "Recibidos",
+    "sent": "Enviados",
+    "total": "Total",
+    "lastContact": "Último contacto",
+    "relationship": "Relación",
+    "composeEmail": "Redactar correo",
+    "viewAllEmails": "Ver todos los correos"
+  }
+}

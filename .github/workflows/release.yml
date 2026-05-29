@@ -1,0 +1,91 @@
+name: Release
+
+# Release-on-tag-push is temporarily disabled while we cut releases by
+# building locally with `make build-mac` and uploading the .dmg manually
+# to the GitHub Release page. Re-enable by uncommenting the `push.tags`
+# block below; `workflow_dispatch` is kept on so the workflow can still be
+# triggered from the Actions UI when we want CI to build a tag's bundle.
+on:
+  workflow_dispatch:
+  # push:
+  #   tags:
+  #     - 'v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  release-macos:
+    name: Release (macOS universal)
+    runs-on: macos-26
+    permissions:
+      contents: write  # needed to create the GitHub Release
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: macos-universal
+
+      # Import the Developer ID Application certificate into a short-lived
+      # keychain that only exists for the duration of this job.
+      - name: Import Developer ID Application certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
+
+          security create-keychain -p "" build.keychain
+          security import /tmp/certificate.p12 -k ~/Library/Keychains/build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s ~/Library/Keychains/build.keychain \
+            $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s ~/Library/Keychains/build.keychain
+          security unlock-keychain -p "" ~/Library/Keychains/build.keychain
+          security set-keychain-settings ~/Library/Keychains/build.keychain
+          # Allow codesign to access the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" \
+            ~/Library/Keychains/build.keychain
+
+          rm /tmp/certificate.p12
+
+      - run: npm ci
+
+      # Tauri reads these env vars automatically to sign and notarize.
+      # APPLE_SIGNING_IDENTITY  → passed to codesign
+      # APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID → passed to notarytool
+      - name: Build, sign, and notarize
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri -- build --target universal-apple-darwin
+
+      - name: Verify signing and notarization
+        run: make verify-mac
+
+      # Delete the ephemeral keychain so the certificate doesn't linger.
+      - name: Delete build keychain
+        if: always()
+        run: security delete-keychain ~/Library/Keychains/build.keychain || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg

@@ -1,0 +1,68 @@
+{
+  "title": "Aufgaben",
+  "subtitle": "Aus deinem Postfach extrahierte Aktionen",
+  "emptyState": {
+    "title": "Noch keine Aufgaben",
+    "hint": "Wenn der Assistent in neuen E-Mails Aktionen findet, erscheinen sie hier."
+  },
+  "filters": {
+    "open": "Offen",
+    "done": "Erledigt",
+    "snoozed": "Verschoben",
+    "dismissed": "Verworfen",
+    "all": "Alle"
+  },
+  "task": {
+    "markDone": "Als erledigt markieren",
+    "markOpen": "Erneut öffnen",
+    "snooze": "Verschieben",
+    "dismiss": "Verwerfen",
+    "edit": "Aufgabe bearbeiten",
+    "delete": "Aufgabe löschen",
+    "openSource": "Quell-E-Mail öffnen",
+    "due": "Fällig: {{date}}",
+    "noDue": "Kein Fälligkeitsdatum"
+  },
+  "actions": {
+    "extractNow": "Aufgaben jetzt extrahieren",
+    "clearCompleted": "Erledigte löschen"
+  },
+  "status": {
+    "extracting": "Aufgaben werden extrahiert…",
+    "lastRun": "Letzter Lauf: {{when}}"
+  },
+  "panel": {
+    "openCount": "{{count}} offen",
+    "overdueSuffix": " · {{count}} überfällig",
+    "dueTodaySuffix": " · {{count}} heute fällig",
+    "waitingSuffix": " · {{count}} warten auf Antwort",
+    "companyLabel": "Unternehmen:",
+    "allChip": "Alle",
+    "addPlaceholder": "Aufgabe hinzufügen (z. B. Rechnung an Acme senden)",
+    "addButton": "Hinzufügen",
+    "loadingTasks": "Aufgaben werden geladen…",
+    "noOpenTasks": "Keine offenen Aufgaben.",
+    "noTasksForFilter": "Keine Aufgaben für {{filter}}.",
+    "thisFilter": "diesen Filter",
+    "sections": {
+      "overdue": "Überfällig",
+      "dueToday": "Heute fällig",
+      "upcoming": "Anstehend",
+      "noDate": "Ohne Fälligkeitsdatum",
+      "count": "{{title}} ({{n}})"
+    },
+    "companyTitle": "Unternehmen (aus der Empfängerdomain abgeleitet)",
+    "high": "Hoch",
+    "snooze": "Verschieben",
+    "dismiss": "Verwerfen",
+    "markDoneTitle": "Als erledigt markieren",
+    "waitingTitle": "Warten auf Antwort ({{n}})",
+    "loadingThreads": "Offene Konversationen werden geladen…",
+    "lastTouched": "Zuletzt aktiv {{when}}",
+    "deadlineSuffix": " · Frist {{date}}",
+    "selectAccount": "Wähle ein Konto, um Aufgaben anzuzeigen.",
+    "previewEmpty": "Wähle eine Aufgabe oder Konversation, um die E-Mail anzuzeigen.",
+    "previewMissingTask": "Diese Aufgabe wurde manuell hinzugefügt – keine ursprüngliche E-Mail.",
+    "previewMissingThread": "Keine Quell-E-Mail für diese Konversation verfügbar."
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "system": {
+    "appStarted": "EmailOps started",
+    "appUpdated": "Application updated to {{version}}",
+    "windowShown": "Window restored"
+  },
+  "sync": {
+    "starting": "Syncing {{email}}…",
+    "manualStarted": "Manual sync started for {{email}}",
+    "downloading": "Downloading {{count}} new emails",
+    "downloadingOne": "Downloading 1 new email",
+    "upToDate": "Inbox up to date",
+    "complete": "Sync complete for {{email}}",
+    "failed": "Sync failed: {{message}}",
+    "skippedOffline": "Sync skipped — currently offline.",
+    "settingsSavedSyncing": "Settings saved. Starting sync…"
+  },
+  "embeddings": {
+    "starting": "Starting embedding generation",
+    "clearing": "Clearing existing embeddings",
+    "generating": "Generating embedding {{current}}/{{total}}",
+    "complete": "Embeddings ready ({{count}})",
+    "failed": "Embedding generation failed: {{message}}"
+  },
+  "ai": {
+    "operation": "{{provider}}/{{model}} → {{operation}}: {{tokens}} tokens{{cost}}",
+    "enableToChat": "Enable AI to chat about a thread",
+    "preparingChat": "Preparing chat for thread \"{{subject}}\"",
+    "threadChatFailed": "Failed to start thread chat: {{message}}"
+  },
+  "account": {
+    "loaded": "Loaded {{count}} accounts",
+    "loadedOne": "Loaded 1 account",
+    "adding": "Adding {{provider}} account…",
+    "added": "Account added: {{email}}",
+    "addImapAdded": "IMAP account added: {{email}}",
+    "addFailed": "Failed to add account: {{message}}",
+    "deleting": "Deleting account…",
+    "deleted": "Account deleted.",
+    "reauthenticating": "Re-authenticating account…",
+    "reauthSuccess": "Re-authentication successful",
+    "reauthFailed": "Re-authentication failed: {{message}}",
+    "updateImap": "Update IMAP credentials to re-authenticate."
+  },
+  "search": {
+    "filtering": "Filtering inbox: \"{{query}}\"",
+    "filteringReused": "Filtering inbox: \"{{query}}\" (reused {{count}} results)"
+  },
+  "banners": {
+    "offline": "You are offline — sync paused.",
+    "reconnect": "Reconnected — sync will resume."
+  }
+}

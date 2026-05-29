@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened Runtime entitlements for the notarized Developer ID build.
+        Required by llama-cpp-2's runtime (executable JIT pages, unsigned exec
+        memory). NOT for the Mac App Store sandbox build — see
+        entitlements.mas.plist (Phase 3) when that ships.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,34 @@
+# db/emails
+
+## What this module owns
+
+All SQL queries that read or write the `emails`, `email_bodies`, `email_tags`, and `email_attachment_meta` tables.
+
+- **crud.rs** — INSERT / UPDATE / DELETE: `upsert_email`, `mark_as_read`, `delete_email`, `mark_body_downloaded`, etc.
+- **batch.rs** — batch upsert for sync loops: `upsert_emails_batch(conn, emails)` — always runs in one transaction.
+- **search.rs** — FTS5 and structured filter queries: `search_emails`, `get_filtered_emails`, `get_emails_with_cursor`
+- **autocomplete.rs** — sender/recipient autocomplete (`autocomplete_senders`, `autocomplete_recipients`)
+- **contacts.rs** — contact aggregation queries (sender stats, company grouping)
+- **failed.rs** — queries for emails with missing/failed bodies (used by redownload flow)
+- **test_helpers.rs** — `insert_email_for_test`, `insert_email_body_for_test` helpers for `#[cfg(test)]` modules
+- **mod.rs** — re-exports
+
+## Access rules (enforced by CLAUDE.md)
+
+| Operation | Must use |
+|-----------|----------|
+| SELECT | `db.reader()` |
+| INSERT / UPDATE / DELETE / DDL | `db.connection()` |
+| Read-then-write (TOCTOU) | `db.connection()` for both |
+
+## Performance guidelines
+
+- Thread-latest queries use `GROUP BY thread_id, MAX(timestamp)` — never `NOT EXISTS`.
+- Broad filters (domain/sender) drive from `idx_emails_account_active` with LIMIT; selective filters (tags) drive from `email_tags`.
+- `LIKE 'prefix%'` is converted to `>= / <` range bounds to avoid parameter-plan problems.
+
+## What should NOT live here
+
+- Business logic (classification decisions, draft assembly) — `services/`
+- Vector/embedding queries — `db/embeddings.rs`
+- Schema migrations — `db/schema.rs`

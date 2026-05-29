@@ -1,0 +1,68 @@
+{
+  "title": "Tâches",
+  "subtitle": "Actions extraites de votre boîte",
+  "emptyState": {
+    "title": "Aucune tâche pour le moment",
+    "hint": "Lorsque l'assistant détecte des actions dans de nouveaux courriels, elles apparaissent ici."
+  },
+  "filters": {
+    "open": "Ouvertes",
+    "done": "Faites",
+    "snoozed": "Reportées",
+    "dismissed": "Ignorées",
+    "all": "Toutes"
+  },
+  "task": {
+    "markDone": "Marquer comme faite",
+    "markOpen": "Rouvrir",
+    "snooze": "Reporter",
+    "dismiss": "Ignorer",
+    "edit": "Modifier la tâche",
+    "delete": "Supprimer la tâche",
+    "openSource": "Ouvrir le courriel source",
+    "due": "Échéance : {{date}}",
+    "noDue": "Pas d'échéance"
+  },
+  "actions": {
+    "extractNow": "Extraire les tâches maintenant",
+    "clearCompleted": "Effacer celles terminées"
+  },
+  "status": {
+    "extracting": "Extraction des tâches…",
+    "lastRun": "Dernière exécution : {{when}}"
+  },
+  "panel": {
+    "openCount": "{{count}} ouvertes",
+    "overdueSuffix": " · {{count}} en retard",
+    "dueTodaySuffix": " · {{count}} pour aujourd'hui",
+    "waitingSuffix": " · {{count}} en attente de réponse",
+    "companyLabel": "Entreprise :",
+    "allChip": "Toutes",
+    "addPlaceholder": "Ajouter une tâche (par ex. envoyer la facture à Acme)",
+    "addButton": "Ajouter",
+    "loadingTasks": "Chargement des tâches…",
+    "noOpenTasks": "Aucune tâche ouverte.",
+    "noTasksForFilter": "Aucune tâche pour {{filter}}.",
+    "thisFilter": "ce filtre",
+    "sections": {
+      "overdue": "En retard",
+      "dueToday": "Pour aujourd'hui",
+      "upcoming": "À venir",
+      "noDate": "Sans échéance",
+      "count": "{{title}} ({{n}})"
+    },
+    "companyTitle": "Entreprise (déduite du domaine du destinataire)",
+    "high": "Élevée",
+    "snooze": "Reporter",
+    "dismiss": "Ignorer",
+    "markDoneTitle": "Marquer comme faite",
+    "waitingTitle": "En attente de réponse ({{n}})",
+    "loadingThreads": "Chargement des fils ouverts…",
+    "lastTouched": "Dernière activité {{when}}",
+    "deadlineSuffix": " · échéance {{date}}",
+    "selectAccount": "Sélectionnez un compte pour voir les tâches.",
+    "previewEmpty": "Sélectionnez une tâche ou un fil pour prévisualiser son courriel.",
+    "previewMissingTask": "Cette tâche a été ajoutée manuellement — aucun courriel d'origine.",
+    "previewMissingThread": "Aucun courriel source disponible pour ce fil."
+  }
+}

@@ -1,0 +1,24 @@
+# EmailOps CODEOWNERS
+#
+# This file routes pull requests to the right reviewers automatically.
+# See: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Order matters — the *last* matching pattern wins for a given file.
+
+# Default owner for everything in the repo.
+*                               @gerodp
+
+# Rust backend
+/src-tauri/                     @gerodp
+
+# Frontend (React + TypeScript)
+/src/                           @gerodp
+
+# CI / GitHub configuration
+/.github/                       @gerodp
+
+# Security-sensitive surfaces
+/SECURITY.md                    @gerodp
+/src-tauri/src/sync/            @gerodp
+/src-tauri/src/services/auth/   @gerodp
+/src/lib/sanitizeEmailHtml.ts   @gerodp

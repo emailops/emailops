@@ -1,0 +1,53 @@
+{
+  "system": {
+    "appStarted": "EmailOps démarré",
+    "appUpdated": "Application mise à jour vers {{version}}",
+    "windowShown": "Fenêtre restaurée"
+  },
+  "sync": {
+    "starting": "Synchronisation de {{email}}…",
+    "manualStarted": "Synchronisation manuelle lancée pour {{email}}",
+    "downloading": "Téléchargement de {{count}} nouveaux courriels",
+    "downloadingOne": "Téléchargement d'1 nouveau courriel",
+    "upToDate": "Boîte à jour",
+    "complete": "Synchronisation terminée pour {{email}}",
+    "failed": "Échec de synchronisation : {{message}}",
+    "skippedOffline": "Synchronisation ignorée — hors ligne.",
+    "settingsSavedSyncing": "Paramètres enregistrés. Lancement de la synchronisation…"
+  },
+  "embeddings": {
+    "starting": "Démarrage de la génération d'embeddings",
+    "clearing": "Suppression des embeddings existants",
+    "generating": "Génération de l'embedding {{current}}/{{total}}",
+    "complete": "Embeddings prêts ({{count}})",
+    "failed": "Échec de la génération des embeddings : {{message}}"
+  },
+  "ai": {
+    "operation": "{{provider}}/{{model}} → {{operation}} : {{tokens}} jetons{{cost}}",
+    "enableToChat": "Activez l'IA pour discuter d'un fil",
+    "preparingChat": "Préparation de la discussion pour le fil « {{subject}} »",
+    "threadChatFailed": "Impossible de lancer la discussion du fil : {{message}}"
+  },
+  "account": {
+    "loaded": "{{count}} comptes chargés",
+    "loadedOne": "1 compte chargé",
+    "adding": "Ajout du compte {{provider}}…",
+    "added": "Compte ajouté : {{email}}",
+    "addImapAdded": "Compte IMAP ajouté : {{email}}",
+    "addFailed": "Impossible d'ajouter le compte : {{message}}",
+    "deleting": "Suppression du compte…",
+    "deleted": "Compte supprimé.",
+    "reauthenticating": "Reconnexion du compte…",
+    "reauthSuccess": "Reconnexion réussie",
+    "reauthFailed": "Reconnexion échouée : {{message}}",
+    "updateImap": "Mettez à jour les identifiants IMAP pour vous reconnecter."
+  },
+  "search": {
+    "filtering": "Filtrage de la boîte : « {{query}} »",
+    "filteringReused": "Filtrage de la boîte : « {{query}} » ({{count}} résultats réutilisés)"
+  },
+  "banners": {
+    "offline": "Vous êtes hors ligne — synchronisation en pause.",
+    "reconnect": "Reconnecté — la synchronisation reprend."
+  }
+}

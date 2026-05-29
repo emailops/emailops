@@ -1,0 +1,66 @@
+{
+  "title": "Contacts",
+  "search": "Search contacts…",
+  "empty": "No contacts found",
+  "row": {
+    "messagesCount": "{{count}} messages",
+    "messagesCountOne": "1 message",
+    "compose": "Compose to {{name}}",
+    "viewEmails": "View emails from {{name}}"
+  },
+  "company": {
+    "title": "Company: {{name}}",
+    "contactsCount": "{{count}} contacts",
+    "contactsCountOne": "1 contact"
+  },
+  "sort": {
+    "byName": "By name",
+    "byCount": "By message count",
+    "byLastSeen": "By last seen",
+    "mostRecent": "Most recent",
+    "relationship": "Relationship strength",
+    "mostEmails": "Most emails",
+    "mostReceived": "Most received",
+    "mostSent": "Most sent",
+    "nameAZ": "Name (A–Z)"
+  },
+  "kind": {
+    "all": "All",
+    "people": "People",
+    "automated": "Automated"
+  },
+  "view": {
+    "noCompany": "No company",
+    "contactsAndEmailsOne": "{{count}} contact · {{emails}} emails",
+    "contactsAndEmailsOther": "{{count}} contacts · {{emails}} emails",
+    "filterToCompany": "Filter list →",
+    "noGroupings": "No company groupings yet — company tags are derived during sync.",
+    "modeList": "List",
+    "modeCompany": "By company",
+    "searchPlaceholder": "Search contacts...",
+    "sortPrefix": "Sort: {{label}}",
+    "allCompanies": "All companies",
+    "companyChip": "Company: {{name}} ×",
+    "noMatch": "No contacts match the current filters.",
+    "noContactsYet": "No contacts found yet — sync some emails first.",
+    "countOfTotalOne": "{{shown}} of {{total}} contact",
+    "countOfTotalOther": "{{shown}} of {{total}} contacts",
+    "loadMore": "Load more",
+    "loading": "Loading…",
+    "couldNotLoad": "Could not load contact details.",
+    "selectAccount": "Select an account to view contacts."
+  },
+  "detail": {
+    "title": "Contact",
+    "closeAria": "Close",
+    "automated": "automated",
+    "otherAddresses": "Other addresses",
+    "received": "Received",
+    "sent": "Sent",
+    "total": "Total",
+    "lastContact": "Last contact",
+    "relationship": "Relationship",
+    "composeEmail": "Compose email",
+    "viewAllEmails": "View all emails"
+  }
+}

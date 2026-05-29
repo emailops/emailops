@@ -1,0 +1,58 @@
+{
+  "generic": "Algo ha salido mal: {{message}}",
+  "unknown": "Se ha producido un error desconocido",
+  "network": "Error de red. Comprueba tu conexión.",
+  "offline": "Estás sin conexión. Algunas funciones no están disponibles.",
+  "database": "Error de base de datos local: {{message}}",
+  "auth": {
+    "expired": "La sesión ha caducado. Inicia sesión de nuevo.",
+    "invalidCredentials": "Credenciales no válidas.",
+    "providerRejected": "{{provider}} rechazó el inicio de sesión.",
+    "cancelled": "El inicio de sesión se canceló."
+  },
+  "sync": {
+    "failed": "Error de sincronización: {{message}}",
+    "rateLimited": "{{provider}} ha limitado la sincronización. Vuelve a intentarlo más tarde.",
+    "skippedOffline": "Sincronización omitida — sin conexión.",
+    "noAccount": "No hay ninguna cuenta seleccionada."
+  },
+  "ai": {
+    "disabled": "La IA está desactivada. Actívala en Ajustes.",
+    "providerUnreachable": "No se pudo contactar con el proveedor de IA.",
+    "modelMissing": "El modelo seleccionado no está disponible.",
+    "rateLimited": "El proveedor de IA limitó la solicitud.",
+    "contextTooLong": "El mensaje es demasiado largo para el contexto del modelo."
+  },
+  "compose": {
+    "noRecipients": "Añade al menos un destinatario antes de enviar.",
+    "smtpFailed": "No se pudo enviar por SMTP: {{message}}",
+    "draftSaveFailed": "No se pudo guardar el borrador: {{message}}"
+  },
+  "account": {
+    "addFailed": "No se pudo añadir la cuenta: {{message}}",
+    "removeFailed": "No se pudo eliminar la cuenta: {{message}}",
+    "saveSettingsFailed": "No se pudieron guardar los ajustes: {{message}}",
+    "imapTestFailed": "La prueba IMAP falló: {{message}}"
+  },
+  "preferences": {
+    "loadFailed": "No se pudo cargar la preferencia: {{key}}",
+    "saveFailed": "No se pudo guardar la preferencia: {{key}}"
+  },
+  "codes": {
+    "auth": "Error de autenticación: {{detail}}",
+    "database": "Error de base de datos local: {{detail}}",
+    "http": "Error en la solicitud de red: {{detail}}",
+    "json": "No se pudo leer la respuesta del servidor: {{detail}}",
+    "oauth": "Error de inicio de sesión: {{detail}}",
+    "sync": "Error de sincronización: {{detail}}",
+    "keyring": "Error del llavero: {{detail}}",
+    "needs_reauth": "Se requiere autenticación: inicia sesión de nuevo.",
+    "not_found": "No encontrado: {{detail}}",
+    "invalid_input": "Entrada no válida: {{detail}}",
+    "ai": "Error de IA: {{detail}}",
+    "ai_disabled": "La IA está desactivada. Actívala en Ajustes.",
+    "io": "Error de archivo: {{detail}}",
+    "budget_exceeded": "Presupuesto de IA superado: {{detail}}",
+    "cancelled": "Cancelado."
+  }
+}

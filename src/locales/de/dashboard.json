@@ -1,0 +1,56 @@
+{
+  "title": "Dashboard",
+  "loading": "Wird geladen…",
+  "noAccounts": "Keine Konten verbunden.",
+  "storage": {
+    "title": "Speichernutzung",
+    "loading": "Speicherstatistik wird geladen…",
+    "totalOnDisk": "Gesamt auf dem Datenträger"
+  },
+  "accounts": {
+    "title": "Konten",
+    "syncedSince": "Synchronisiert seit",
+    "lastSync": "Letzte Synchronisierung",
+    "localServer": "Lokal / Server",
+    "sent": "Gesendet",
+    "categories": "Kategorien",
+    "openSettings": "Kontoeinstellungen öffnen",
+    "refreshTotal": "Gesamtzahl aktualisieren",
+    "refreshing": "Wird aktualisiert…",
+    "fetchFromProvider": "Vom Anbieter abrufen",
+    "lastFetched": "Zuletzt abgerufen {{time}}",
+    "classified": "Klassifiziert",
+    "memoriesAnalyzed": "Erinnerungen analysiert",
+    "tasksAnalyzed": "Aufgaben analysiert",
+    "embeddings": "Embeddings"
+  },
+  "queues": {
+    "title": "Hintergrund-Warteschlangen",
+    "loading": "Warteschlangenstatus wird geladen…",
+    "idle": "inaktiv",
+    "empty": "leer",
+    "noHistory": "noch kein Verlauf",
+    "aiInteractive": "KI (interaktiv)",
+    "aiBackground": "KI (Hintergrund)",
+    "db": "DB",
+    "sync": "Synchronisierung"
+  },
+  "log": {
+    "title": "Ausgabe",
+    "allModules": "alle Module",
+    "filterByModule": "Nach Modul filtern",
+    "aiBackend": "KI-Backend",
+    "aiModel": "KI-Modell",
+    "aiSettings": "KI-Einstellungen",
+    "clearLogs": "Protokolle löschen",
+    "minimizePanel": "Panel minimieren",
+    "expandPanel": "Panel erweitern",
+    "levels": {
+      "error": "FHL",
+      "warn": "WRN",
+      "success": "OK",
+      "debug": "DBG",
+      "info": "INF"
+    }
+  }
+}
