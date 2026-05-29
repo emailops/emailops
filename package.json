@@ -60,7 +60,7 @@
     "i18next-parser": "^9.0.2",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^4.3.0",
+    "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
     "jsdom": "^29.1.1",
     "lefthook": "^2.1.8",
