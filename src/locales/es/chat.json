@@ -1,0 +1,111 @@
+{
+  "title": "Chat",
+  "newConversation": "Nueva conversación",
+  "renameConversation": "Renombrar conversación",
+  "deleteConversation": "Eliminar conversación",
+  "deleteConfirm": "¿Eliminar esta conversación? No se puede deshacer.",
+  "emptyState": {
+    "title": "Pregunta lo que quieras sobre tu bandeja",
+    "hint": "Prueba con \"resume mis correos sin leer de esta semana\" o \"redacta una respuesta a mi último mensaje de {{sender}}\".",
+    "askToStart": "Haz una pregunta sobre tus correos para empezar.",
+    "askThreadToStart": "Haz una pregunta sobre este hilo de correo para empezar."
+  },
+  "input": {
+    "placeholder": "Envía un mensaje…",
+    "placeholderEmails": "Pregunta sobre tus correos… (Enter para enviar, Mayús+Enter para salto de línea)",
+    "waitingReply": "Esperando respuesta…",
+    "send": "Enviar",
+    "stop": "Detener generación",
+    "regenerate": "Regenerar",
+    "categoryFilter": "Filtrar por categoría",
+    "attachContext": "Adjuntar contexto"
+  },
+  "noAccount": "Selecciona una cuenta para empezar a chatear con tus correos.",
+  "shortcuts": {
+    "today": {
+      "label": "Resumen de hoy",
+      "prompt": "Hazme un resumen de los emails que he recibido hoy. Formatéalo como una tabla markdown con las columnas | Remitente | Asunto | Hora | Urgencia | Resumen |, ordenados por urgencia. Cita cada email con su número de referencia. Termina con un párrafo breve destacando lo más importante del día."
+    },
+    "pending": {
+      "label": "Pendientes",
+      "prompt": "Identifica los emails que requieren mi respuesta o acción. Preséntalos en una tabla markdown con las columnas | Remitente | Asunto | Qué pide | Plazo | Prioridad |, ordenados por prioridad (alta → baja). Incluye las citas correspondientes. Cierra con una recomendación corta y amable sobre por dónde empezar."
+    },
+    "thisWeek": {
+      "label": "Esta semana",
+      "prompt": "Resume los emails más importantes de esta semana. Usa una tabla markdown con columnas | Día | Remitente | Asunto | Tema | Acción sugerida |, ordenados cronológicamente. Cita cada entrada. Termina con dos o tres frases sobre los temas dominantes de la semana."
+    },
+    "unread": {
+      "label": "Sin leer",
+      "prompt": "Muéstrame los emails sin leer más relevantes. Formato: tabla markdown con columnas | Remitente | Asunto | Categoría | Por qué importa | Urgencia |. Ordena por urgencia descendente e incluye las citas. Cierra con una sugerencia breve y cortés sobre cuáles merece la pena abrir primero."
+    },
+    "clients": {
+      "label": "Clientes",
+      "prompt": "Revisa los emails recientes de clientes y señala los que necesitan atención. Usa una tabla markdown con columnas | Cliente | Asunto | Tipo (consulta / queja / oportunidad) | Qué espera de mí | Urgencia |, ordenados por urgencia. Cita cada fila. Termina con un consejo corto sobre el próximo paso para cada cliente clave."
+    },
+    "draft": {
+      "label": "Escribe un borrador",
+      "prompt": "Escribe un borrador para "
+    }
+  },
+  "message": {
+    "user": "Tú",
+    "assistant": "Asistente",
+    "system": "Sistema",
+    "copy": "Copiar mensaje",
+    "copied": "Copiado",
+    "thinking": "Pensando…",
+    "streaming": "Generando…",
+    "stopped": "Generación detenida",
+    "error": "Algo ha salido mal",
+    "retry": "Reintentar"
+  },
+  "reasoning": {
+    "show": "Mostrar razonamiento",
+    "hide": "Ocultar razonamiento",
+    "label": "Razonamiento",
+    "trace": {
+      "arguments": "argumentos",
+      "resultPreview": "resultado (vista previa)",
+      "failed": "· error",
+      "devOnly": "· (captura de prompt solo en versiones de desarrollo)",
+      "timeline": "Cronología",
+      "vectorFallback": "(reserva vectorial activa)",
+      "route": "Ruta",
+      "workflow": "Flujo · llamadas al LLM",
+      "toolCallDetails": "Detalles de llamadas a herramientas"
+    }
+  },
+  "sources": {
+    "title": "Fuentes",
+    "openEmail": "Abrir correo",
+    "emailCount": "{{count}} fuentes",
+    "emailCountOne": "1 fuente"
+  },
+  "citation": {
+    "label": "Cita {{n}}"
+  },
+  "errors": {
+    "noAiEnabled": "Activa la IA para usar el chat",
+    "noAccountSelected": "Selecciona primero una cuenta",
+    "loadFailed": "No se pudieron cargar las conversaciones"
+  },
+  "categoryDropdown": {
+    "searchLabel": "Buscar:",
+    "categoriesHeader": "Categorías",
+    "title": "En qué categorías de correo buscar",
+    "resetToPrimary": "Restablecer a Principal"
+  },
+  "intro": {
+    "title": "Chatea con tus correos",
+    "body": "Pregunta en lenguaje natural. El asistente recupera los correos más relevantes y fundamenta su respuesta en ellos, con citas en las que puedes hacer clic.",
+    "retrievalRestricted": "La recuperación se limita a {{categories}}. Cambia la selección en el desplegable del cuadro de chat."
+  },
+  "threadContext": {
+    "label": "Contexto del hilo de correo"
+  },
+  "conversations": {
+    "empty": "Aún no hay conversaciones.",
+    "confirmDelete": "¿Confirmar?",
+    "newChat": "Nuevo chat"
+  }
+}

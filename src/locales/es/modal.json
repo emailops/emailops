@@ -1,0 +1,101 @@
+{
+  "addAccount": {
+    "title": "Añadir cuenta de correo",
+    "subtitle": "Elige cómo conectar tu cuenta.",
+    "gmail": "Gmail",
+    "gmailHint": "Inicia sesión con Google OAuth",
+    "outlook": "Outlook / Microsoft 365",
+    "outlookHint": "Inicia sesión con Microsoft OAuth (Graph API)",
+    "imap": "IMAP / SMTP",
+    "imapHint": "iCloud, Yahoo, Fastmail, personalizado…",
+    "cancel": "Cancelar",
+    "providerHeading": "Añadir cuenta de {{provider}}",
+    "syncWindow": "Cuánto tiempo atrás sincronizar",
+    "syncWindowOptions": {
+      "thirtyDays": "Últimos 30 días",
+      "ninetyDays": "Últimos 90 días",
+      "oneYear": "Último año",
+      "all": "Todo"
+    },
+    "connecting": "Conectando con {{provider}}…",
+    "errorPrefix": "No se pudo añadir la cuenta"
+  },
+  "imapAccount": {
+    "title": "Añadir cuenta IMAP / SMTP",
+    "modalTitle": "Añadir cuenta IMAP",
+    "email": "Dirección de correo",
+    "emailLabel": "Correo / Usuario",
+    "password": "Contraseña",
+    "passwordLabel": "Contraseña / Contraseña de aplicación",
+    "imapHost": "Servidor IMAP",
+    "imapPort": "Puerto IMAP",
+    "smtpHost": "Servidor SMTP",
+    "smtpPort": "Puerto SMTP",
+    "displayName": "Nombre visible (opcional)",
+    "displayNamePlaceholder": "Correo del trabajo",
+    "useTls": "Usar TLS",
+    "test": "Probar conexión",
+    "add": "Añadir cuenta",
+    "testing": "Probando conexión…",
+    "testSuccess": "Conexión correcta",
+    "testFailedShort": "Conexión fallida",
+    "testFailed": "La conexión falló: {{error}}",
+    "testHint": "Prueba la conexión antes de añadir la cuenta."
+  },
+  "accountSettings": {
+    "title": "Ajustes de la cuenta",
+    "modalTitle": "Ajustes de la cuenta",
+    "loading": "Cargando ajustes...",
+    "syncHeading": "Sincronización",
+    "categoriesHeading": "Categorías a sincronizar",
+    "autoDownloadHeading": "Descarga automática de adjuntos",
+    "autoDownloadEmptyCategories": "Selecciona primero las categorías a sincronizar arriba.",
+    "imapHeading": "Configuración IMAP / SMTP",
+    "syncPeriodHeading": "Periodo de sincronización",
+    "dangerHeading": "Zona de peligro",
+    "dangerWarning": "Esta acción no se puede deshacer.",
+    "name": "Nombre visible",
+    "email": "Dirección de correo",
+    "syncEnabled": "Activar sincronización",
+    "syncFrom": "Sincronizar desde",
+    "categories": "Categorías de Gmail que sincronizar",
+    "categoriesHint": "Elige qué pestañas de la bandeja de Gmail se descargan. Los cambios surten efecto en la próxima sincronización.",
+    "imapHint": "Las credenciales se guardan en el llavero del sistema operativo. Los cambios se verifican antes de guardarse.",
+    "imapServer": "Servidor IMAP",
+    "smtpServer": "Servidor SMTP",
+    "syncPeriodHint": "Los correos anteriores a esta fecha se descargarán en la próxima sincronización.",
+    "syncSince": "Sincronizar correos desde",
+    "deleteAccount": "Eliminar cuenta",
+    "deleteWarning": "Eliminar esta cuenta borrará de forma permanente todos los correos, contactos, tareas y memorias de IA asociados. Escribe el correo de la cuenta para confirmar.",
+    "categoryPrimary": "Principal",
+    "categorySocial": "Social",
+    "categoryUpdates": "Notificaciones",
+    "categoryForums": "Foros",
+    "categoryPromotions": "Promociones",
+    "removeAccountConfirm": "¿Eliminar esta cuenta y todos los correos guardados localmente? Esta acción no se puede deshacer.",
+    "saved": "Ajustes guardados"
+  },
+  "ruleManagement": {
+    "title": "Reglas de adjuntos",
+    "addRule": "Añadir regla",
+    "editRule": "Editar regla",
+    "name": "Nombre de la regla",
+    "senderPattern": "Patrón de remitente",
+    "subjectPattern": "Patrón de asunto",
+    "destination": "Carpeta de destino",
+    "applyExisting": "Aplicar a los correos existentes",
+    "delete": "Eliminar regla",
+    "deleteConfirm": "¿Eliminar esta regla? Los archivos existentes no se borrarán."
+  },
+  "confirm": {
+    "title": "¿Estás seguro?",
+    "destructive": "Esta acción no se puede deshacer."
+  },
+  "inbox": {
+    "expand": "Expandir bandeja de entrada"
+  },
+  "errorBoundary": {
+    "title": "Algo ha salido mal",
+    "body": "EmailOps ha encontrado un error inesperado de interfaz. Recarga la aplicación e inténtalo de nuevo."
+  }
+}

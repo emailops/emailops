@@ -1,0 +1,101 @@
+{
+  "addAccount": {
+    "title": "E-Mail-Konto hinzufügen",
+    "subtitle": "Wähle, wie du dein Konto verbinden möchtest.",
+    "gmail": "Gmail",
+    "gmailHint": "Mit Google OAuth anmelden",
+    "outlook": "Outlook / Microsoft 365",
+    "outlookHint": "Mit Microsoft OAuth (Graph API) anmelden",
+    "imap": "IMAP / SMTP",
+    "imapHint": "iCloud, Yahoo, Fastmail, benutzerdefiniert…",
+    "cancel": "Abbrechen",
+    "providerHeading": "{{provider}}-Konto hinzufügen",
+    "syncWindow": "Wie weit zurück synchronisieren",
+    "syncWindowOptions": {
+      "thirtyDays": "Letzte 30 Tage",
+      "ninetyDays": "Letzte 90 Tage",
+      "oneYear": "Letztes Jahr",
+      "all": "Alles"
+    },
+    "connecting": "Verbinde mit {{provider}}…",
+    "errorPrefix": "Konto konnte nicht hinzugefügt werden"
+  },
+  "imapAccount": {
+    "title": "IMAP-/SMTP-Konto hinzufügen",
+    "modalTitle": "IMAP-Konto hinzufügen",
+    "email": "E-Mail-Adresse",
+    "emailLabel": "E-Mail / Benutzername",
+    "password": "Passwort",
+    "passwordLabel": "Passwort / App-Passwort",
+    "imapHost": "IMAP-Server",
+    "imapPort": "IMAP-Port",
+    "smtpHost": "SMTP-Server",
+    "smtpPort": "SMTP-Port",
+    "displayName": "Anzeigename (optional)",
+    "displayNamePlaceholder": "Arbeits-E-Mail",
+    "useTls": "TLS verwenden",
+    "test": "Verbindung testen",
+    "add": "Konto hinzufügen",
+    "testing": "Verbindung wird getestet…",
+    "testSuccess": "Verbindung erfolgreich",
+    "testFailedShort": "Verbindung fehlgeschlagen",
+    "testFailed": "Verbindung fehlgeschlagen: {{error}}",
+    "testHint": "Teste die Verbindung, bevor du das Konto hinzufügst."
+  },
+  "accountSettings": {
+    "title": "Konto-Einstellungen",
+    "modalTitle": "Konto-Einstellungen",
+    "loading": "Einstellungen werden geladen...",
+    "syncHeading": "Synchronisierung",
+    "categoriesHeading": "Zu synchronisierende Kategorien",
+    "autoDownloadHeading": "Anhänge automatisch herunterladen",
+    "autoDownloadEmptyCategories": "Wähle zuerst oben die zu synchronisierenden Kategorien aus.",
+    "imapHeading": "IMAP-/SMTP-Konfiguration",
+    "syncPeriodHeading": "Synchronisierungszeitraum",
+    "dangerHeading": "Gefahrenzone",
+    "dangerWarning": "Diese Aktion kann nicht rückgängig gemacht werden.",
+    "name": "Anzeigename",
+    "email": "E-Mail-Adresse",
+    "syncEnabled": "Synchronisierung aktivieren",
+    "syncFrom": "Synchronisieren ab",
+    "categories": "Zu synchronisierende Gmail-Kategorien",
+    "categoriesHint": "Wähle, welche Gmail-Posteingangs-Tabs heruntergeladen werden. Änderungen werden bei der nächsten Synchronisierung wirksam.",
+    "imapHint": "Die Zugangsdaten werden im Schlüsselbund des Betriebssystems gespeichert. Änderungen werden vor dem Speichern überprüft.",
+    "imapServer": "IMAP-Server",
+    "smtpServer": "SMTP-Server",
+    "syncPeriodHint": "E-Mails, die älter als dieses Datum sind, werden bei der nächsten Synchronisierung nachgeladen.",
+    "syncSince": "E-Mails synchronisieren ab",
+    "deleteAccount": "Konto löschen",
+    "deleteWarning": "Das Löschen dieses Kontos entfernt dauerhaft alle zugehörigen E-Mails, Kontakte, Aufgaben und KI-Erinnerungen. Gib die Konto-E-Mail-Adresse ein, um zu bestätigen.",
+    "categoryPrimary": "Allgemein",
+    "categorySocial": "Soziales",
+    "categoryUpdates": "Benachrichtigungen",
+    "categoryForums": "Foren",
+    "categoryPromotions": "Werbung",
+    "removeAccountConfirm": "Dieses Konto und alle lokal gespeicherten E-Mails entfernen? Das kann nicht rückgängig gemacht werden.",
+    "saved": "Einstellungen gespeichert"
+  },
+  "ruleManagement": {
+    "title": "Anhang-Regeln",
+    "addRule": "Regel hinzufügen",
+    "editRule": "Regel bearbeiten",
+    "name": "Regelname",
+    "senderPattern": "Absender-Muster",
+    "subjectPattern": "Betreff-Muster",
+    "destination": "Zielordner",
+    "applyExisting": "Auf vorhandene E-Mails anwenden",
+    "delete": "Regel löschen",
+    "deleteConfirm": "Diese Regel löschen? Vorhandene Dateien werden nicht entfernt."
+  },
+  "confirm": {
+    "title": "Bist du sicher?",
+    "destructive": "Diese Aktion kann nicht rückgängig gemacht werden."
+  },
+  "inbox": {
+    "expand": "Posteingang ausklappen"
+  },
+  "errorBoundary": {
+    "title": "Etwas ist schiefgelaufen",
+    "body": "In EmailOps ist ein unerwarteter UI-Fehler aufgetreten. Lade die App neu und versuche es noch einmal."
+  }
+}

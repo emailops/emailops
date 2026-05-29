@@ -1,0 +1,53 @@
+{
+  "system": {
+    "appStarted": "EmailOps gestartet",
+    "appUpdated": "Anwendung aktualisiert auf {{version}}",
+    "windowShown": "Fenster wiederhergestellt"
+  },
+  "sync": {
+    "starting": "Synchronisiere {{email}}…",
+    "manualStarted": "Manuelle Synchronisierung gestartet für {{email}}",
+    "downloading": "{{count}} neue E-Mails werden heruntergeladen",
+    "downloadingOne": "1 neue E-Mail wird heruntergeladen",
+    "upToDate": "Posteingang auf dem neuesten Stand",
+    "complete": "Synchronisierung abgeschlossen für {{email}}",
+    "failed": "Synchronisierung fehlgeschlagen: {{message}}",
+    "skippedOffline": "Synchronisierung übersprungen — derzeit offline.",
+    "settingsSavedSyncing": "Einstellungen gespeichert. Synchronisierung wird gestartet…"
+  },
+  "embeddings": {
+    "starting": "Embedding-Generierung startet",
+    "clearing": "Vorhandene Embeddings werden gelöscht",
+    "generating": "Generiere Embedding {{current}}/{{total}}",
+    "complete": "Embeddings bereit ({{count}})",
+    "failed": "Embedding-Generierung fehlgeschlagen: {{message}}"
+  },
+  "ai": {
+    "operation": "{{provider}}/{{model}} → {{operation}}: {{tokens}} Tokens{{cost}}",
+    "enableToChat": "Aktiviere die KI, um über einen Thread zu chatten",
+    "preparingChat": "Bereite Chat für Thread „{{subject}}\" vor",
+    "threadChatFailed": "Thread-Chat konnte nicht gestartet werden: {{message}}"
+  },
+  "account": {
+    "loaded": "{{count}} Konten geladen",
+    "loadedOne": "1 Konto geladen",
+    "adding": "{{provider}}-Konto wird hinzugefügt…",
+    "added": "Konto hinzugefügt: {{email}}",
+    "addImapAdded": "IMAP-Konto hinzugefügt: {{email}}",
+    "addFailed": "Konto konnte nicht hinzugefügt werden: {{message}}",
+    "deleting": "Konto wird gelöscht…",
+    "deleted": "Konto gelöscht.",
+    "reauthenticating": "Konto wird erneut authentifiziert…",
+    "reauthSuccess": "Erneute Anmeldung erfolgreich",
+    "reauthFailed": "Erneute Anmeldung fehlgeschlagen: {{message}}",
+    "updateImap": "Aktualisiere die IMAP-Zugangsdaten, um dich erneut anzumelden."
+  },
+  "search": {
+    "filtering": "Posteingang gefiltert: „{{query}}\"",
+    "filteringReused": "Posteingang gefiltert: „{{query}}\" ({{count}} Treffer wiederverwendet)"
+  },
+  "banners": {
+    "offline": "Du bist offline — Synchronisierung pausiert.",
+    "reconnect": "Wieder online — Synchronisierung wird fortgesetzt."
+  }
+}

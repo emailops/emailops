@@ -1,0 +1,101 @@
+{
+  "addAccount": {
+    "title": "Add Email Account",
+    "subtitle": "Choose how to connect your account.",
+    "gmail": "Gmail",
+    "gmailHint": "Sign in with Google OAuth",
+    "outlook": "Outlook / Microsoft 365",
+    "outlookHint": "Sign in with Microsoft OAuth (Graph API)",
+    "imap": "IMAP / SMTP",
+    "imapHint": "iCloud, Yahoo, Fastmail, custom…",
+    "cancel": "Cancel",
+    "providerHeading": "Add {{provider}} account",
+    "syncWindow": "How far back to sync",
+    "syncWindowOptions": {
+      "thirtyDays": "Last 30 days",
+      "ninetyDays": "Last 90 days",
+      "oneYear": "Last year",
+      "all": "Everything"
+    },
+    "connecting": "Connecting to {{provider}}…",
+    "errorPrefix": "Could not add account"
+  },
+  "imapAccount": {
+    "title": "Add IMAP / SMTP account",
+    "modalTitle": "Add IMAP Account",
+    "email": "Email address",
+    "emailLabel": "Email / Username",
+    "password": "Password",
+    "passwordLabel": "Password / App Password",
+    "imapHost": "IMAP host",
+    "imapPort": "IMAP port",
+    "smtpHost": "SMTP host",
+    "smtpPort": "SMTP port",
+    "displayName": "Display Name (optional)",
+    "displayNamePlaceholder": "Work Email",
+    "useTls": "Use TLS",
+    "test": "Test connection",
+    "add": "Add account",
+    "testing": "Testing connection…",
+    "testSuccess": "Connection successful",
+    "testFailedShort": "Connection failed",
+    "testFailed": "Connection failed: {{error}}",
+    "testHint": "Test the connection before adding the account."
+  },
+  "accountSettings": {
+    "title": "Account settings",
+    "modalTitle": "Account Settings",
+    "loading": "Loading settings...",
+    "syncHeading": "Sync",
+    "categoriesHeading": "Categories to sync",
+    "autoDownloadHeading": "Auto-download attachments",
+    "autoDownloadEmptyCategories": "Select categories to sync above first.",
+    "imapHeading": "IMAP / SMTP configuration",
+    "syncPeriodHeading": "Sync period",
+    "dangerHeading": "Danger zone",
+    "dangerWarning": "This action cannot be undone.",
+    "name": "Display name",
+    "email": "Email address",
+    "syncEnabled": "Enable sync",
+    "syncFrom": "Sync starting from",
+    "categories": "Gmail categories to sync",
+    "categoriesHint": "Choose which Gmail inbox tabs are downloaded. Changes take effect on the next sync.",
+    "imapHint": "Credentials are stored in the OS keychain. Changes are verified before saving.",
+    "imapServer": "IMAP server",
+    "smtpServer": "SMTP server",
+    "syncPeriodHint": "Emails older than this date will be backfilled on the next sync.",
+    "syncSince": "Sync emails since",
+    "deleteAccount": "Delete account",
+    "deleteWarning": "Deleting this account will permanently remove all associated emails, contacts, tasks, and AI memories. Type the account email to confirm.",
+    "categoryPrimary": "Primary",
+    "categorySocial": "Social",
+    "categoryUpdates": "Updates",
+    "categoryForums": "Forums",
+    "categoryPromotions": "Promotions",
+    "removeAccountConfirm": "Remove this account and all locally stored emails? This cannot be undone.",
+    "saved": "Settings saved"
+  },
+  "ruleManagement": {
+    "title": "Attachment rules",
+    "addRule": "Add rule",
+    "editRule": "Edit rule",
+    "name": "Rule name",
+    "senderPattern": "Sender pattern",
+    "subjectPattern": "Subject pattern",
+    "destination": "Destination folder",
+    "applyExisting": "Apply to existing emails",
+    "delete": "Delete rule",
+    "deleteConfirm": "Delete this rule? Existing files will not be removed."
+  },
+  "confirm": {
+    "title": "Are you sure?",
+    "destructive": "This action cannot be undone."
+  },
+  "inbox": {
+    "expand": "Expand inbox"
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "body": "EmailOps hit an unexpected UI error. Reload the app and try again."
+  }
+}

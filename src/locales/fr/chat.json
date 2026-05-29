@@ -1,0 +1,111 @@
+{
+  "title": "Discussion",
+  "newConversation": "Nouvelle conversation",
+  "renameConversation": "Renommer la conversation",
+  "deleteConversation": "Supprimer la conversation",
+  "deleteConfirm": "Supprimer cette conversation ? Cette action est irréversible.",
+  "emptyState": {
+    "title": "Posez n'importe quelle question sur votre boîte",
+    "hint": "Essayez « résume mes courriels non lus de la semaine » ou « rédige une réponse à mon dernier message de {{sender}} ».",
+    "askToStart": "Posez une question sur vos courriels pour commencer.",
+    "askThreadToStart": "Posez une question sur ce fil de courriels pour commencer."
+  },
+  "input": {
+    "placeholder": "Envoyer un message…",
+    "placeholderEmails": "Posez une question sur vos e-mails… (Entrée pour envoyer, Maj+Entrée pour un saut de ligne)",
+    "waitingReply": "En attente de la réponse…",
+    "send": "Envoyer",
+    "stop": "Arrêter la génération",
+    "regenerate": "Régénérer",
+    "categoryFilter": "Filtrer par catégorie",
+    "attachContext": "Joindre du contexte"
+  },
+  "noAccount": "Sélectionnez un compte pour commencer à discuter avec vos e-mails.",
+  "shortcuts": {
+    "today": {
+      "label": "Résumé du jour",
+      "prompt": "Résume les e-mails que j'ai reçus aujourd'hui. Présente-les sous forme de tableau markdown avec les colonnes | Expéditeur | Objet | Heure | Urgence | Résumé |, triés par urgence. Cite chaque e-mail avec son numéro de référence. Termine par un court paragraphe mettant en avant les points les plus importants de la journée."
+    },
+    "pending": {
+      "label": "À traiter",
+      "prompt": "Identifie les e-mails qui requièrent ma réponse ou une action. Présente-les dans un tableau markdown avec les colonnes | Expéditeur | Objet | Demande | Échéance | Priorité |, triés par priorité (haute → basse). Inclus les citations correspondantes. Termine par une recommandation brève et bienveillante sur l'ordre dans lequel commencer."
+    },
+    "thisWeek": {
+      "label": "Cette semaine",
+      "prompt": "Résume les e-mails les plus importants de cette semaine. Utilise un tableau markdown avec les colonnes | Jour | Expéditeur | Objet | Sujet | Action suggérée |, triés chronologiquement. Cite chaque entrée. Termine par deux ou trois phrases sur les thèmes dominants de la semaine."
+    },
+    "unread": {
+      "label": "Non lus",
+      "prompt": "Montre-moi les e-mails non lus les plus pertinents. Format : tableau markdown avec les colonnes | Expéditeur | Objet | Catégorie | Pourquoi c'est important | Urgence |. Trie par urgence décroissante et inclus les citations. Termine par une suggestion brève et courtoise sur ceux qu'il vaut la peine d'ouvrir en premier."
+    },
+    "clients": {
+      "label": "Clients",
+      "prompt": "Passe en revue les e-mails récents des clients et signale ceux qui nécessitent une attention. Utilise un tableau markdown avec les colonnes | Client | Objet | Type (demande / réclamation / opportunité) | Ce qu'il attend de moi | Urgence |, triés par urgence. Cite chaque ligne. Termine par un court conseil sur la prochaine étape pour chaque client clé."
+    },
+    "draft": {
+      "label": "Rédige un brouillon",
+      "prompt": "Rédige un brouillon pour "
+    }
+  },
+  "message": {
+    "user": "Vous",
+    "assistant": "Assistant",
+    "system": "Système",
+    "copy": "Copier le message",
+    "copied": "Copié",
+    "thinking": "Réflexion…",
+    "streaming": "Génération…",
+    "stopped": "Génération arrêtée",
+    "error": "Une erreur s'est produite",
+    "retry": "Réessayer"
+  },
+  "reasoning": {
+    "show": "Afficher le raisonnement",
+    "hide": "Masquer le raisonnement",
+    "label": "Raisonnement",
+    "trace": {
+      "arguments": "arguments",
+      "resultPreview": "résultat (aperçu)",
+      "failed": "· échec",
+      "devOnly": "· (capture du prompt uniquement en version de développement)",
+      "timeline": "Chronologie",
+      "vectorFallback": "(repli vectoriel actif)",
+      "route": "Route",
+      "workflow": "Flux · appels au LLM",
+      "toolCallDetails": "Détails des appels d'outils"
+    }
+  },
+  "sources": {
+    "title": "Sources",
+    "openEmail": "Ouvrir le courriel",
+    "emailCount": "{{count}} sources",
+    "emailCountOne": "1 source"
+  },
+  "citation": {
+    "label": "Citation {{n}}"
+  },
+  "errors": {
+    "noAiEnabled": "Activez l'IA pour utiliser la discussion",
+    "noAccountSelected": "Sélectionnez d'abord un compte",
+    "loadFailed": "Impossible de charger les conversations"
+  },
+  "categoryDropdown": {
+    "searchLabel": "Rechercher :",
+    "categoriesHeader": "Catégories",
+    "title": "Dans quelles catégories de courriels rechercher",
+    "resetToPrimary": "Réinitialiser sur Principale"
+  },
+  "intro": {
+    "title": "Discutez avec vos courriels",
+    "body": "Posez vos questions en langage naturel. L'assistant récupère les courriels les plus pertinents et fonde sa réponse sur eux, avec des citations cliquables.",
+    "retrievalRestricted": "La recherche est limitée à {{categories}}. Modifiez la sélection dans le menu déroulant du champ de chat."
+  },
+  "threadContext": {
+    "label": "Contexte du fil de courriels"
+  },
+  "conversations": {
+    "empty": "Aucune conversation pour le moment.",
+    "confirmDelete": "Confirmer ?",
+    "newChat": "Nouvelle discussion"
+  }
+}

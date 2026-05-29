@@ -1,0 +1,58 @@
+{
+  "generic": "Etwas ist schiefgelaufen: {{message}}",
+  "unknown": "Ein unbekannter Fehler ist aufgetreten",
+  "network": "Netzwerkfehler. Prüfe deine Verbindung.",
+  "offline": "Du bist offline. Einige Funktionen sind nicht verfügbar.",
+  "database": "Fehler der lokalen Datenbank: {{message}}",
+  "auth": {
+    "expired": "Anmeldung ist abgelaufen. Melde dich erneut an.",
+    "invalidCredentials": "Ungültige Zugangsdaten.",
+    "providerRejected": "{{provider}} hat die Anmeldung abgelehnt.",
+    "cancelled": "Die Anmeldung wurde abgebrochen."
+  },
+  "sync": {
+    "failed": "Synchronisierung fehlgeschlagen: {{message}}",
+    "rateLimited": "{{provider}} hat die Synchronisierung gedrosselt. Versuch es später erneut.",
+    "skippedOffline": "Synchronisierung übersprungen — derzeit offline.",
+    "noAccount": "Es ist kein Konto ausgewählt."
+  },
+  "ai": {
+    "disabled": "Die KI ist deaktiviert. Aktiviere sie in den Einstellungen.",
+    "providerUnreachable": "Der KI-Anbieter konnte nicht erreicht werden.",
+    "modelMissing": "Das ausgewählte Modell ist nicht verfügbar.",
+    "rateLimited": "Der KI-Anbieter hat die Anfrage gedrosselt.",
+    "contextTooLong": "Die Nachricht überschreitet das Kontextfenster des Modells."
+  },
+  "compose": {
+    "noRecipients": "Füge vor dem Senden mindestens einen Empfänger hinzu.",
+    "smtpFailed": "Senden per SMTP fehlgeschlagen: {{message}}",
+    "draftSaveFailed": "Entwurf konnte nicht gespeichert werden: {{message}}"
+  },
+  "account": {
+    "addFailed": "Konto konnte nicht hinzugefügt werden: {{message}}",
+    "removeFailed": "Konto konnte nicht entfernt werden: {{message}}",
+    "saveSettingsFailed": "Konto-Einstellungen konnten nicht gespeichert werden: {{message}}",
+    "imapTestFailed": "IMAP-Test fehlgeschlagen: {{message}}"
+  },
+  "preferences": {
+    "loadFailed": "Einstellung konnte nicht geladen werden: {{key}}",
+    "saveFailed": "Einstellung konnte nicht gespeichert werden: {{key}}"
+  },
+  "codes": {
+    "auth": "Authentifizierung fehlgeschlagen: {{detail}}",
+    "database": "Fehler der lokalen Datenbank: {{detail}}",
+    "http": "Netzwerkanfrage fehlgeschlagen: {{detail}}",
+    "json": "Die Serverantwort konnte nicht gelesen werden: {{detail}}",
+    "oauth": "Anmeldefehler: {{detail}}",
+    "sync": "Synchronisierung fehlgeschlagen: {{detail}}",
+    "keyring": "Schlüsselbund-Fehler: {{detail}}",
+    "needs_reauth": "Authentifizierung erforderlich — melde dich erneut an.",
+    "not_found": "Nicht gefunden: {{detail}}",
+    "invalid_input": "Ungültige Eingabe: {{detail}}",
+    "ai": "KI-Fehler: {{detail}}",
+    "ai_disabled": "Die KI ist deaktiviert. Aktiviere sie in den Einstellungen.",
+    "io": "Dateifehler: {{detail}}",
+    "budget_exceeded": "KI-Budget überschritten: {{detail}}",
+    "cancelled": "Abgebrochen."
+  }
+}

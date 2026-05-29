@@ -1,0 +1,72 @@
+{
+  "title": "Memory",
+  "subtitle": "Facts extracted from your inbox",
+  "emptyState": {
+    "title": "Nothing remembered yet",
+    "hint": "Once extraction runs, facts will appear here. You can edit or delete anything the assistant recorded."
+  },
+  "eligibilityBanner": {
+    "disabled": "Memory is disabled. Enable it in Settings → AI Memory.",
+    "noAi": "Memory requires AI to be enabled.",
+    "openSettings": "Open settings"
+  },
+  "eligibility": {
+    "title": "Extraction eligibility",
+    "categories": "Categories:",
+    "all": "all",
+    "selfOnly": "Only emails sent by the account owner",
+    "excludesSenders": "Excludes senders:",
+    "excludesTags": "Excludes tags:",
+    "changeHint": "Change in Settings → Memory."
+  },
+  "filters": {
+    "all": "All",
+    "allChip": "All",
+    "search": "Search facts…",
+    "sortBy": "Sort by",
+    "newest": "Newest",
+    "oldest": "Oldest",
+    "confidence": "Confidence"
+  },
+  "fact": {
+    "edit": "Edit fact",
+    "delete": "Delete fact",
+    "source": "Source email",
+    "extracted": "Extracted {{when}}",
+    "confidence": "Confidence: {{value}}",
+    "companyTitle": "Company (derived from recipient domain)"
+  },
+  "actions": {
+    "extractNow": "Extract from inbox",
+    "clearAll": "Clear all memories",
+    "clearAllConfirm": "Delete all memories? This cannot be undone."
+  },
+  "status": {
+    "extracting": "Extracting facts…",
+    "lastRun": "Last run: {{when}}",
+    "promoted": {
+      "title": "Consolidated",
+      "hint": "Validated, high-signal facts"
+    },
+    "candidate": {
+      "title": "Candidate",
+      "hint": "Awaiting corroboration"
+    },
+    "retired": {
+      "title": "Retired",
+      "hint": "Superseded or low-value"
+    }
+  },
+  "view": {
+    "totalCount": "{{count}} total",
+    "consolidatedSuffix": " · {{count}} consolidated",
+    "candidateSuffix": " · {{count}} candidate",
+    "companyLabel": "Company:",
+    "loadingFacts": "Loading facts…",
+    "noFactsYet": "No facts yet. Memory is populated as emails are synced and classified.",
+    "noMatches": "No matches for your search.",
+    "selectAccount": "Select an account to view memory.",
+    "previewEmpty": "Select a fact to preview its originating email.",
+    "previewMissing": "This fact has no originating email (e.g. user-edited or consolidated)."
+  }
+}

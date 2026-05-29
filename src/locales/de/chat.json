@@ -1,0 +1,111 @@
+{
+  "title": "Chat",
+  "newConversation": "Neue Unterhaltung",
+  "renameConversation": "Unterhaltung umbenennen",
+  "deleteConversation": "Unterhaltung löschen",
+  "deleteConfirm": "Diese Unterhaltung löschen? Das kann nicht rückgängig gemacht werden.",
+  "emptyState": {
+    "title": "Frag den Assistenten zu deinem Postfach",
+    "hint": "Versuch „fasse meine ungelesenen E-Mails dieser Woche zusammen\" oder „entwirf eine Antwort auf meine letzte Nachricht von {{sender}}\".",
+    "askToStart": "Stelle eine Frage zu deinen E-Mails, um zu beginnen.",
+    "askThreadToStart": "Stelle eine Frage zu diesem E-Mail-Thread, um zu beginnen."
+  },
+  "input": {
+    "placeholder": "Nachricht senden…",
+    "placeholderEmails": "Frag etwas zu deinen E-Mails… (Enter zum Senden, Umschalt+Enter für Zeilenumbruch)",
+    "waitingReply": "Warte auf Antwort…",
+    "send": "Senden",
+    "stop": "Generierung stoppen",
+    "regenerate": "Neu generieren",
+    "categoryFilter": "Nach Kategorie filtern",
+    "attachContext": "Kontext anhängen"
+  },
+  "noAccount": "Wähle ein Konto aus, um mit deinen E-Mails zu chatten.",
+  "shortcuts": {
+    "today": {
+      "label": "Zusammenfassung heute",
+      "prompt": "Fasse die E-Mails zusammen, die ich heute erhalten habe. Formatiere das als Markdown-Tabelle mit den Spalten | Absender | Betreff | Uhrzeit | Dringlichkeit | Zusammenfassung |, sortiert nach Dringlichkeit. Zitiere jede E-Mail mit ihrer Referenznummer. Schließe mit einem kurzen Absatz ab, der das Wichtigste des Tages hervorhebt."
+    },
+    "pending": {
+      "label": "Offen",
+      "prompt": "Finde die E-Mails, die meine Antwort oder eine Aktion erfordern. Stelle sie in einer Markdown-Tabelle mit den Spalten | Absender | Betreff | Worum es geht | Frist | Priorität | dar, sortiert nach Priorität (hoch → niedrig). Füge die passenden Zitate hinzu. Schließe mit einer kurzen, freundlichen Empfehlung ab, womit du anfangen solltest."
+    },
+    "thisWeek": {
+      "label": "Diese Woche",
+      "prompt": "Fasse die wichtigsten E-Mails dieser Woche zusammen. Verwende eine Markdown-Tabelle mit den Spalten | Tag | Absender | Betreff | Thema | Vorgeschlagene Aktion |, chronologisch sortiert. Zitiere jeden Eintrag. Schließe mit zwei oder drei Sätzen zu den vorherrschenden Themen der Woche ab."
+    },
+    "unread": {
+      "label": "Ungelesen",
+      "prompt": "Zeig mir die relevantesten ungelesenen E-Mails. Format: Markdown-Tabelle mit den Spalten | Absender | Betreff | Kategorie | Warum es wichtig ist | Dringlichkeit |. Sortiere nach absteigender Dringlichkeit und füge die Zitate hinzu. Schließe mit einem kurzen, höflichen Vorschlag ab, welche es sich lohnt, zuerst zu öffnen."
+    },
+    "clients": {
+      "label": "Kunden",
+      "prompt": "Sieh dir die neuesten Kunden-E-Mails an und markiere die, die Aufmerksamkeit brauchen. Verwende eine Markdown-Tabelle mit den Spalten | Kunde | Betreff | Art (Anfrage / Beschwerde / Chance) | Was er von mir erwartet | Dringlichkeit |, sortiert nach Dringlichkeit. Zitiere jede Zeile. Schließe mit einem kurzen Tipp zum nächsten Schritt für jeden wichtigen Kunden ab."
+    },
+    "draft": {
+      "label": "Entwurf schreiben",
+      "prompt": "Entwirf einen Entwurf für "
+    }
+  },
+  "message": {
+    "user": "Du",
+    "assistant": "Assistent",
+    "system": "System",
+    "copy": "Nachricht kopieren",
+    "copied": "Kopiert",
+    "thinking": "Denke nach…",
+    "streaming": "Wird generiert…",
+    "stopped": "Generierung gestoppt",
+    "error": "Etwas ist schiefgelaufen",
+    "retry": "Erneut versuchen"
+  },
+  "reasoning": {
+    "show": "Begründung anzeigen",
+    "hide": "Begründung ausblenden",
+    "label": "Begründung",
+    "trace": {
+      "arguments": "Argumente",
+      "resultPreview": "Ergebnis (Vorschau)",
+      "failed": "· fehlgeschlagen",
+      "devOnly": "· (Prompt-Erfassung nur in Entwickler-Builds)",
+      "timeline": "Zeitleiste",
+      "vectorFallback": "(Vektor-Fallback aktiv)",
+      "route": "Route",
+      "workflow": "Workflow · LLM-Aufrufe",
+      "toolCallDetails": "Details der Tool-Aufrufe"
+    }
+  },
+  "sources": {
+    "title": "Quellen",
+    "openEmail": "E-Mail öffnen",
+    "emailCount": "{{count}} Quellen",
+    "emailCountOne": "1 Quelle"
+  },
+  "citation": {
+    "label": "Zitat {{n}}"
+  },
+  "errors": {
+    "noAiEnabled": "Aktiviere die KI, um den Chat zu nutzen",
+    "noAccountSelected": "Wähle zuerst ein Konto aus",
+    "loadFailed": "Unterhaltungen konnten nicht geladen werden"
+  },
+  "categoryDropdown": {
+    "searchLabel": "Suche:",
+    "categoriesHeader": "Kategorien",
+    "title": "In welchen E-Mail-Kategorien gesucht wird",
+    "resetToPrimary": "Auf Primär zurücksetzen"
+  },
+  "intro": {
+    "title": "Chatte mit deinen E-Mails",
+    "body": "Stelle Fragen in natürlicher Sprache. Der Assistent ruft die relevantesten E-Mails ab und stützt seine Antwort darauf — mit anklickbaren Quellenangaben.",
+    "retrievalRestricted": "Die Suche ist auf {{categories}} beschränkt. Ändere die Auswahl im Dropdown des Chat-Eingabefelds."
+  },
+  "threadContext": {
+    "label": "Kontext des E-Mail-Threads"
+  },
+  "conversations": {
+    "empty": "Noch keine Unterhaltungen.",
+    "confirmDelete": "Bestätigen?",
+    "newChat": "Neuer Chat"
+  }
+}

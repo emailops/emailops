@@ -1,0 +1,27 @@
+# Phoenix (Arize AI) — single-container LLM observability for EmailOps development.
+#
+# Usage:
+#   make phoenix-up    # start Phoenix
+#   make dev-trace     # run EmailOps with tracing enabled
+#
+# Phoenix UI: http://localhost:6006
+# OTLP HTTP:  http://localhost:6006  (→ /v1/traces auto-appended by the exporter)
+#
+# No API keys required for local development.
+# Set PHOENIX_HOST=http://localhost:6006 in .env if you want to override the default.
+
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    restart: unless-stopped
+    ports:
+      - "6006:6006"   # UI + OTLP HTTP
+      - "4317:4317"   # OTLP gRPC (optional)
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+
+volumes:
+  phoenix_data:
+    driver: local

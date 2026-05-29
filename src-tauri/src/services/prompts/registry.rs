@@ -1,0 +1,227 @@
+//! Static registry of user-editable prompts.
+//!
+//! Each `PromptDef` describes a prompt the user can override from Settings:
+//! its id, label, the default template string, and the list of variables that
+//! get substituted at render time. The id is also the suffix used to persist
+//! the override in `user_preferences` (`prompt.<id>`).
+
+use serde::Serialize;
+
+use super::defaults;
+
+#[derive(Debug, Clone, Copy)]
+pub struct VariableDef {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptCategory {
+    Chat,
+    Classification,
+    Memory,
+    Tasks,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PromptDef {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub category: PromptCategory,
+    /// Hide behind the "Show advanced prompts" toggle in the UI.
+    pub advanced: bool,
+    pub default_template: &'static str,
+    pub variables: &'static [VariableDef],
+}
+
+// ── Variable definitions, grouped per prompt for clarity ────────────────────
+
+const CLASSIFY_EMAIL_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD.",
+    },
+    VariableDef {
+        name: "language_clause",
+        description: "Output-language instruction (empty when no preference is set).",
+    },
+    VariableDef {
+        name: "intents",
+        description: "Comma-separated list of intents from your Classification settings.",
+    },
+    VariableDef {
+        name: "topics",
+        description: "Comma-separated list of topics from your Classification settings.",
+    },
+];
+
+const MEMORY_TASKS_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD.",
+    },
+    VariableDef {
+        name: "language_clause",
+        description: "Output-language instruction (empty when no preference is set).",
+    },
+    VariableDef {
+        name: "max_tasks_clause",
+        description: "Auto-generated cap on tasks per email (from Memory settings).",
+    },
+    VariableDef {
+        name: "dedup_block",
+        description: "Existing open tasks for this thread that the model should not duplicate.",
+    },
+    VariableDef {
+        name: "sender",
+        description: "Email sender display name.",
+    },
+    VariableDef {
+        name: "sender_email",
+        description: "Email sender address.",
+    },
+    VariableDef {
+        name: "subject",
+        description: "Email subject line.",
+    },
+    VariableDef {
+        name: "snippet",
+        description: "Truncated email body (up to ~1500 chars).",
+    },
+];
+
+const MEMORY_FACTS_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD.",
+    },
+    VariableDef {
+        name: "language_clause",
+        description: "Output-language instruction (empty when no preference is set).",
+    },
+    VariableDef {
+        name: "sender",
+        description: "Email sender display name.",
+    },
+    VariableDef {
+        name: "sender_email",
+        description: "Email sender address.",
+    },
+    VariableDef {
+        name: "subject",
+        description: "Email subject line.",
+    },
+    VariableDef {
+        name: "snippet",
+        description: "Truncated email body (up to ~1500 chars).",
+    },
+];
+
+const CHAT_SYSTEM_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD.",
+    },
+    VariableDef {
+        name: "tomorrow",
+        description: "Tomorrow's date (UTC) as YYYY-MM-DD — used in `since/until` examples.",
+    },
+    VariableDef {
+        name: "language_instruction",
+        description: "Reply-language instruction (default: 'Reply in the language the user writes in.').",
+    },
+    VariableDef {
+        name: "tools_section",
+        description: "`Tools:` section auto-generated from the registry; lists the tools the LLM may call this turn, honouring Settings feature flags.",
+    },
+];
+
+const CHAT_QUERY_REWRITE_VARS: &[VariableDef] = &[VariableDef {
+    name: "user_question",
+    description: "The raw user question being rewritten for retrieval.",
+}];
+
+const CHAT_RERANK_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "user_question",
+        description: "The raw user question.",
+    },
+    VariableDef {
+        name: "candidates",
+        description: "Numbered candidate list with subject + smart-snippet body slices.",
+    },
+];
+
+// ── Registry table ──────────────────────────────────────────────────────────
+
+pub const PROMPTS: &[PromptDef] = &[
+    PromptDef {
+        id: "classify.email",
+        label: "Email classification",
+        description: "Used to assign intent / topic / urgency to each new email.",
+        category: PromptCategory::Classification,
+        advanced: false,
+        default_template: defaults::CLASSIFY_EMAIL,
+        variables: CLASSIFY_EMAIL_VARS,
+    },
+    PromptDef {
+        id: "memory.extract_tasks",
+        label: "Legacy — task extraction",
+        description: "Legacy task prompt id kept for existing overrides.",
+        category: PromptCategory::Memory,
+        advanced: true,
+        default_template: defaults::MEMORY_EXTRACT_TASKS,
+        variables: MEMORY_TASKS_VARS,
+    },
+    PromptDef {
+        id: "tasks.extract",
+        label: "Tasks — extraction",
+        description: "Pulls action items, commitments, and deadlines from each email.",
+        category: PromptCategory::Tasks,
+        advanced: false,
+        default_template: defaults::MEMORY_EXTRACT_TASKS,
+        variables: MEMORY_TASKS_VARS,
+    },
+    PromptDef {
+        id: "memory.extract_facts",
+        label: "Memory — fact extraction",
+        description: "Pulls durable facts and preferences from each email.",
+        category: PromptCategory::Memory,
+        advanced: false,
+        default_template: defaults::MEMORY_EXTRACT_FACTS,
+        variables: MEMORY_FACTS_VARS,
+    },
+    PromptDef {
+        id: "chat.system",
+        label: "Chat — system prompt",
+        description: "Top-level instructions and tool descriptions for the chat assistant.",
+        category: PromptCategory::Chat,
+        advanced: false,
+        default_template: defaults::CHAT_SYSTEM,
+        variables: CHAT_SYSTEM_VARS,
+    },
+    PromptDef {
+        id: "chat.query_rewrite",
+        label: "Chat — query rewrite (HyDE)",
+        description: "Internal reformulation step that expands the user's question before retrieval.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_QUERY_REWRITE,
+        variables: CHAT_QUERY_REWRITE_VARS,
+    },
+    PromptDef {
+        id: "chat.rerank",
+        label: "Chat — result reranker",
+        description: "Internal step that re-scores retrieval candidates by relevance.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RERANK,
+        variables: CHAT_RERANK_VARS,
+    },
+];
+
+pub fn lookup(id: &str) -> Option<&'static PromptDef> {
+    PROMPTS.iter().find(|p| p.id == id)
+}

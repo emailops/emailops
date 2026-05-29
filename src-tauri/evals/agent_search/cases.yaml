@@ -1,0 +1,10 @@
+# Public synthetic agent-search eval examples.
+# Real mailbox-specific cases belong under ignored `private-evals/agent_search/`.
+
+- id: demo_proposals_sent
+  question: "emails where I sent proposals to clients"
+  account: alex@example.com
+  judge_criteria: |
+    Relevant emails are sent by the user and directly transmit a commercial
+    proposal, quote, SOW, or similar sales document to a client or prospect.
+  tags: [sent_by_user, proposals, semantic]

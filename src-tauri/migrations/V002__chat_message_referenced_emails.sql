@@ -1,0 +1,15 @@
+-- The chat layer hands a structural list of email IDs from every tool call
+-- to the assistant message that consumed them. The UI uses that list as an
+-- allowlist when rendering `email://EMAIL_ID` markdown links the LLM emits —
+-- dropping any id the tools never produced (i.e. hallucinations) and
+-- emitting a warning to the output panel.
+--
+-- Stored as a JSON array TEXT to mirror `trace` (also JSON TEXT on this
+-- table). A side join table would be cleaner relationally but the only
+-- access pattern is "load all refs for one message at render time", so the
+-- JSON column avoids an extra query per message.
+--
+-- Pre-existing rows have NULL → frontend treats absence as an empty
+-- allowlist (no chips render), which is the same graceful-degrade behaviour
+-- as a brand-new message before tool calls aggregated anything.
+ALTER TABLE chat_messages ADD COLUMN referenced_email_ids TEXT;

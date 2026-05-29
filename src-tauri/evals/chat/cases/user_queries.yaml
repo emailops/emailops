@@ -1,0 +1,82 @@
+# Public synthetic chat eval examples.
+# Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
+#
+# Note on flakiness with small local models:
+# Cases that exercise the `email://EMAIL_ID` link contract sometimes fail
+# with Qwen 3.5 4B because the model is non-deterministic at this size —
+# it can produce a clean answer with valid links on one run and an empty
+# `<think>` or a hallucinated id on the next, on the same input. The
+# defense-in-depth allowlist in `MarkdownContent.tsx` validates every
+# emitted id and silently drops hallucinations, so the *system* behaves
+# correctly even when the *model* doesn't. Treat repeated failures here
+# as a model-quality signal (try a larger / different model) rather than
+# a regression in the prompt or the email-ref plumbing.
+
+- id: demo_daily_summary
+  question: "summarize today's client emails"
+  account: "alex@northwindlabs.io"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains: []
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# Exercises the EMAIL LINKS prompt clause: a broad query that should hit
+# at least one demo email, giving the model the chance to wrap mentions
+# as `[label](email://EMAIL_ID)` so the chat UI can render open-the-email
+# chips. The expected substring is the scheme prefix itself — kept loose so
+# we don't snapshot a specific demo email id.
+- id: demo_email_links_emitted
+  question: "show me my three most recent emails"
+  account: "alex@northwindlabs.io"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains:
+    - "email://"
+  metrics:
+    - answer_relevancy
+
+# Regression case for the Qwen 3.5 4B failure where a user-requested table
+# format caused the model to skip every `email://` link. The strengthened
+# EMAIL LINKS clause + Example 3 should make every row carry a link inside
+# the Subject cell. Kept short (2 columns, no sort) so the 4B model has
+# enough reasoning budget to honour BOTH the table format AND the
+# email:// contract — a longer prompt overflows its plan/answer split and
+# blocks before the answer ever forms.
+# Exercises the DRAFT LINKS clause: ask the chat to draft a reply, expect
+# the assistant's confirmation to contain a `draft://` link. Per CLAUDE.md
+# scope-to-relevant-cases guidance, run with `--case demo_draft_link_emitted`
+# when iterating on draft-link prompt wording. Known flaky on Qwen 3.5 4B
+# (see file header note) — the multi-step search → generate_email_draft
+# chain hits the model's tool-discipline ceiling and often gives up before
+# producing the confirmation that would contain the `draft://` chip. The
+# wire is correct; verify manually with a larger model or by interacting
+# with the running app.
+- id: demo_draft_link_emitted
+  question: "search for emails about auth and draft a brief reply to the top result"
+  account: "alex@northwindlabs.io"
+  category: drafting
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains:
+    - "](draft://"
+  metrics:
+    - answer_relevancy
+
+- id: demo_email_links_in_table
+  question: "search my inbox for 'birthday' and show every result as a markdown table with columns | Sender | Subject |"
+  account: "alex@northwindlabs.io"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains:
+    - "](email://"
+  metrics:
+    - answer_relevancy

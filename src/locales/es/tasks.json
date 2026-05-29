@@ -1,0 +1,68 @@
+{
+  "title": "Tareas",
+  "subtitle": "Acciones extraídas de tu bandeja",
+  "emptyState": {
+    "title": "Aún no hay tareas",
+    "hint": "Cuando el asistente encuentre acciones en correos nuevos, aparecerán aquí."
+  },
+  "filters": {
+    "open": "Abiertas",
+    "done": "Hechas",
+    "snoozed": "Pospuestas",
+    "dismissed": "Descartadas",
+    "all": "Todas"
+  },
+  "task": {
+    "markDone": "Marcar como hecha",
+    "markOpen": "Reabrir",
+    "snooze": "Posponer",
+    "dismiss": "Descartar",
+    "edit": "Editar tarea",
+    "delete": "Eliminar tarea",
+    "openSource": "Abrir correo de origen",
+    "due": "Vence {{date}}",
+    "noDue": "Sin fecha límite"
+  },
+  "actions": {
+    "extractNow": "Extraer tareas ahora",
+    "clearCompleted": "Borrar completadas"
+  },
+  "status": {
+    "extracting": "Extrayendo tareas…",
+    "lastRun": "Última ejecución: {{when}}"
+  },
+  "panel": {
+    "openCount": "{{count}} abiertas",
+    "overdueSuffix": " · {{count}} vencidas",
+    "dueTodaySuffix": " · {{count}} para hoy",
+    "waitingSuffix": " · {{count}} esperando respuesta",
+    "companyLabel": "Empresa:",
+    "allChip": "Todas",
+    "addPlaceholder": "Añadir una tarea (p. ej. enviar factura a Acme)",
+    "addButton": "Añadir",
+    "loadingTasks": "Cargando tareas…",
+    "noOpenTasks": "No hay tareas abiertas.",
+    "noTasksForFilter": "No hay tareas para {{filter}}.",
+    "thisFilter": "este filtro",
+    "sections": {
+      "overdue": "Vencidas",
+      "dueToday": "Para hoy",
+      "upcoming": "Próximas",
+      "noDate": "Sin fecha límite",
+      "count": "{{title}} ({{n}})"
+    },
+    "companyTitle": "Empresa (derivada del dominio del destinatario)",
+    "high": "Alta",
+    "snooze": "Posponer",
+    "dismiss": "Descartar",
+    "markDoneTitle": "Marcar como hecha",
+    "waitingTitle": "Esperando respuesta ({{n}})",
+    "loadingThreads": "Cargando hilos abiertos…",
+    "lastTouched": "Última actividad {{when}}",
+    "deadlineSuffix": " · fecha límite {{date}}",
+    "selectAccount": "Selecciona una cuenta para ver las tareas.",
+    "previewEmpty": "Selecciona una tarea o hilo para previsualizar su correo.",
+    "previewMissingTask": "Esta tarea se añadió manualmente: no tiene correo de origen.",
+    "previewMissingThread": "No hay correo de origen disponible para este hilo."
+  }
+}

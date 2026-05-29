@@ -1,0 +1,56 @@
+{
+  "title": "Dashboard",
+  "loading": "Cargando…",
+  "noAccounts": "No hay cuentas conectadas.",
+  "storage": {
+    "title": "Uso de disco",
+    "loading": "Cargando estadísticas de almacenamiento…",
+    "totalOnDisk": "Total en disco"
+  },
+  "accounts": {
+    "title": "Cuentas",
+    "syncedSince": "Sincronizado desde",
+    "lastSync": "Última sincronización",
+    "localServer": "Local / servidor",
+    "sent": "Enviados",
+    "categories": "Categorías",
+    "openSettings": "Abrir ajustes de la cuenta",
+    "refreshTotal": "Actualizar total",
+    "refreshing": "Actualizando…",
+    "fetchFromProvider": "Obtener del proveedor",
+    "lastFetched": "Última obtención {{time}}",
+    "classified": "Clasificados",
+    "memoriesAnalyzed": "Memorias analizadas",
+    "tasksAnalyzed": "Tareas analizadas",
+    "embeddings": "Embeddings"
+  },
+  "queues": {
+    "title": "Colas en segundo plano",
+    "loading": "Cargando estado de la cola…",
+    "idle": "inactiva",
+    "empty": "vacía",
+    "noHistory": "sin historial aún",
+    "aiInteractive": "IA (interactiva)",
+    "aiBackground": "IA (en segundo plano)",
+    "db": "BD",
+    "sync": "Sincronización"
+  },
+  "log": {
+    "title": "Salida",
+    "allModules": "todos los módulos",
+    "filterByModule": "Filtrar por módulo",
+    "aiBackend": "Motor de IA",
+    "aiModel": "Modelo de IA",
+    "aiSettings": "Ajustes de IA",
+    "clearLogs": "Borrar registros",
+    "minimizePanel": "Minimizar panel",
+    "expandPanel": "Expandir panel",
+    "levels": {
+      "error": "ERR",
+      "warn": "ALR",
+      "success": "OK",
+      "debug": "DBG",
+      "info": "INF"
+    }
+  }
+}

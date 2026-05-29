@@ -1,0 +1,199 @@
+[package]
+name = "emailops"
+version = "0.5.0"
+description = "Privacy-first, AI-native email client"
+authors = ["Gero DP"]
+edition = "2021"
+default-run = "emailops"
+license = "Apache-2.0"
+repository = "https://github.com/emailops/emailops"
+homepage = "https://github.com/emailops/emailops"
+readme = "../README.md"
+keywords = ["email", "tauri", "ai", "gmail", "outlook"]
+categories = ["email", "gui"]
+
+[lib]
+name = "emailops_lib"
+# `staticlib` is only required for iOS/Android Tauri builds; on macOS desktop
+# it adds a ~590 MB archive that must be rewritten on every relink. Drop it
+# until/unless we ship a mobile target.
+crate-type = ["lib", "cdylib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full", "test-util"] }
+# Pinned to 0.38 (not 0.40) because `refinery` 0.9.1 caps its rusqlite range
+# at <=0.38. Bump together once refinery widens that bound.
+rusqlite = { version = "0.38", features = ["bundled", "backup"] }
+refinery = { version = "0.9", features = ["rusqlite"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+# Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
+# impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
+reqwest = { version = "0.12", features = ["json", "stream"] }
+keyring = "4"
+keyring-core = "1"
+oauth2 = { version = "5", features = ["reqwest"] }
+base64 = "0.22"
+urlencoding = "2"
+url = "2"
+open = "5"
+dotenvy = "0.15"
+argon2 = { version = "0.5", features = ["std"] }
+sha2 = "0.11"
+hex = "0.4"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+axum = "0.8"
+unicode-normalization = "0.1.25"
+regex = "1"
+sqlite-vec = "0.1.9"
+async-trait = "0.1"
+imap = { version = "2", features = ["native-tls"] }
+native-tls = "0.2"
+lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "builder"] }
+mailparse = "0.16"
+ammonia = "4"
+futures = "0.3"
+libc = "0.2"
+sys-locale = "0.3"
+# Eval harness deps (used by examples/chat_eval.rs)
+serde_yaml = "0.9"
+tera = "1"
+# Embedded llama.cpp (optional — enabled via the `llamacpp` feature)
+llama-cpp-2 = { version = "0.1.146", optional = true, default-features = false }
+# TypeScript type generation (optional — enabled via the `ts` feature)
+# cargo test --features ts -- export_bindings → writes src/types/generated/*.ts
+ts-rs = { version = "12", optional = true }
+
+# Phoenix (Arize AI) observability (optional — enabled via the `tracing` feature, dev only)
+opentelemetry      = { version = "0.32", optional = true }
+opentelemetry_sdk  = { version = "0.32", optional = true }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+
+[features]
+# Enables tauri::test::mock_builder for the eval examples so they can build an
+# AppHandle outside the desktop runtime. Turn on with:
+#   cargo run --features eval --example chat_eval
+eval = ["tauri/test"]
+# Generate TypeScript types from Rust structs via ts-rs.
+# cargo test --features ts export_bindings
+ts = ["dep:ts-rs"]
+
+# Embedded llama.cpp inference — enabled by default for production builds.
+# Disable with --no-default-features to skip the C++/cmake toolchain for
+# fast iteration or CI jobs that only need Ollama/OpenRouter.
+default = ["llamacpp"]
+llamacpp = ["dep:llama-cpp-2"]
+
+# Phoenix (Arize AI) observability via OpenTelemetry OTLP.
+# Local development only — never enabled in default or release builds.
+# Configure PHOENIX_HOST if routing traces to a local collector.
+#   cargo tauri dev --features tracing
+tracing = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+]
+# GPU backend sub-features (pick one per platform):
+metal = ["llama-cpp-2/metal"]    # Apple Silicon — enabled automatically in release
+cuda = ["llama-cpp-2/cuda"]      # NVIDIA (Linux/Windows, future)
+vulkan = ["llama-cpp-2/vulkan"]  # AMD/Intel (Linux/Windows, future)
+
+[dev-dependencies]
+tempfile = "3"
+# Used by `sync::mock::MockProviderServer` to replay recorded provider HTTP
+# transcripts in integration tests. Not linked into release builds — the
+# mock module is gated behind `cfg(any(test, debug_assertions))`.
+wiremock = "0.6"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build profiles — compile-time optimizations for iterative development
+# ─────────────────────────────────────────────────────────────────────────────
+# `debug = "line-tables-only"` keeps panic backtraces / line numbers but drops
+# full DWARF. Cuts `libemailops_lib.{a,rlib}` size ~3-5× and dramatically
+# reduces linker work on every relink. Use `debug = true` only when actively
+# stepping through code in a debugger.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.test]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Compile dependencies at -O1. They're cached after first build, so this
+# trades a one-time cost for faster test runs without slowing iterative
+# dev compiles of our own code (which stays at default -O0).
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.test.package."*"]
+opt-level = 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Eval harnesses and ad-hoc tools — declared as `[[example]]` (not `[[bin]]`)
+# so the tauri-bundler does NOT enumerate them and try to copy them into the
+# packaged .app. See tauri-apps/tauri#4807. Files live under `examples/`
+# (cargo's default examples dir); invoke via:
+#   cargo run --features eval --example <name>
+# ─────────────────────────────────────────────────────────────────────────────
+[[example]]
+name = "generate_fixtures"
+required-features = ["eval"]
+
+[[example]]
+name = "chat_eval"
+required-features = ["eval"]
+
+[[example]]
+# Single-turn ad-hoc probe of `services::chat::run_chat_turn` against the
+# real DB. Usage:
+#   cargo run --features eval --example chat_probe -- --question "..."
+name = "chat_probe"
+required-features = ["eval"]
+
+[[example]]
+name = "chat_shortcut_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "task_extract_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "memory_extract_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "lens_extract_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "invoice_extract_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "email_classification_eval"
+required-features = ["eval"]
+
+[[example]]
+name = "agent_search_eval"
+required-features = ["eval"]
+
+[[example]]
+# Evaluation harness for the AI draft generator. Gated behind `eval` so it is
+# never compiled by default. Usage:
+#   cargo run --features eval --example draft_eval -- --n 5
+name = "draft_eval"
+required-features = ["eval"]
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-shell = "2"

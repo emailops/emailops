@@ -1,0 +1,101 @@
+# Lefthook — Git hooks configuration
+# Install hooks: npx lefthook install
+
+pre-commit:
+  parallel: true
+  commands:
+    # Enforce that all Tauri invoke() calls go through src/lib/api.ts.
+    # Direct imports of @tauri-apps/api/core in other files are a bug —
+    # they bypass type wrappers and break the single source-of-truth contract.
+    no-invoke-outside-api:
+      run: |
+        violations=$(grep -rn "from '@tauri-apps/api/core'" src/ --include='*.ts' --include='*.tsx' | grep -v 'src/lib/api.ts' || true)
+        if [ -n "$violations" ]; then
+          echo "ERROR: Direct @tauri-apps/api/core import found outside src/lib/api.ts:"
+          echo "$violations"
+          echo "Use the typed wrappers in src/lib/api.ts instead of calling invoke() directly."
+          exit 1
+        fi
+    # Strict JSX-literal guard. Every user-visible string must come from
+    # `t()` — see `src/locales/` and `src/i18n/`. The script reports zero
+    # violations after the Phase 2 component sweep. Add `// i18n-ignore`
+    # to a line to opt out (debug UI, intentional English).
+    no-jsx-literals:
+      glob: "src/**/*.{ts,tsx}"
+      run: node scripts/check-jsx-literals.mjs
+    biome-check:
+      glob: "src/**/*.{ts,tsx}"
+      run: npx biome check --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+    typecheck:
+      glob: "src/**/*.{ts,tsx}"
+      run: npx tsc --noEmit
+    clippy:
+      glob: "src-tauri/src/**/*.rs"
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+    rustfmt-check:
+      glob: "src-tauri/src/**/*.rs"
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+    # Scan staged files for committed secrets. Requires gitleaks to be
+    # installed locally: `brew install gitleaks`. The hook is a no-op if
+    # the binary isn't present so contributors aren't blocked by setup.
+    gitleaks:
+      run: |
+        if command -v gitleaks >/dev/null 2>&1; then
+          gitleaks protect --staged --redact --verbose
+        else
+          echo "warning: gitleaks not installed — skipping secret scan. Run 'brew install gitleaks'."
+        fi
+
+pre-push:
+  parallel: true
+  commands:
+    clippy:
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+    rust-tests:
+      run: cargo test --manifest-path src-tauri/Cargo.toml
+    secrets-check:
+      run: "! git diff origin/main...HEAD -- ':(exclude)*.example' ':(exclude)*.md' 2>/dev/null | grep -E '^\\+.*(sk-or-v1-[a-f0-9]{20}|GOCSPX-[A-Za-z0-9]{20})' || (echo 'ERROR: Potential secrets detected in diff' && exit 1)"
+    # Blocking check for outdated Rust dependencies. Push fails if any
+    # root dep has a newer version available on crates.io.
+    # Install via Homebrew (recommended on macOS — `cargo install` tends to
+    # fail at link time against libssh2/OpenSSL): `brew install cargo-outdated`.
+    #
+    # Deps intentionally pinned below latest because of upstream constraints.
+    # Drop these flags as the upstreams catch up:
+    #   - reqwest  (--ignore):  oauth2 5.x's AsyncHttpClient is wired against
+    #                           reqwest 0.12. Reporting is hidden but the
+    #                           scratch resolver still sees the constraint.
+    #   - rusqlite (--exclude): refinery 0.9 caps its rusqlite range at <=0.38.
+    #                           Must --exclude (not --ignore) so cargo-outdated's
+    #                           scratch resolver doesn't try to bump rusqlite to
+    #                           0.40 and crash on the libsqlite3-sys links clash.
+    cargo-outdated:
+      run: |
+        if command -v cargo-outdated >/dev/null 2>&1; then
+          cargo outdated --manifest-path src-tauri/Cargo.toml \
+            --root-deps-only \
+            --exit-code 1 \
+            --exclude rusqlite \
+            --ignore reqwest \
+            --color always
+        else
+          echo "warning: cargo-outdated not installed — skipping outdated-deps check. Run 'brew install cargo-outdated' (or 'cargo install --locked cargo-outdated' on Linux)."
+        fi
+    # Catch package.json / package-lock.json drift before it breaks CI.
+    # CI (.github/workflows/ci.yml) and the release workflow both call
+    # `npm ci`, which refuses to install when the two files are out of
+    # sync. This bit us once when a new dep was added to package.json
+    # without regenerating the lockfile — the failure only surfaced on
+    # the macOS runner mid-release. `npm ci --dry-run` reproduces that
+    # exact check locally in ~1s with a warm npm cache.
+    npm-lockfile-sync:
+      run: |
+        if ! npm ci --dry-run >/dev/null 2>&1; then
+          echo "ERROR: package.json and package-lock.json are out of sync."
+          echo "Run 'npm install --package-lock-only' and commit the updated lockfile."
+          echo ""
+          echo "Full npm ci output:"
+          npm ci --dry-run 2>&1 | head -40
+          exit 1
+        fi

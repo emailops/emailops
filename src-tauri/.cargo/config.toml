@@ -1,0 +1,12 @@
+# Cargo build settings for fast iterative development.
+#
+# `incremental = true` is the default, but make it explicit so a stray
+# CARGO_INCREMENTAL=0 in the environment doesn't silently nuke it.
+[build]
+incremental = true
+
+# Strip debug symbols at link time (dev binaries already drop DWARF via
+# `debug = "line-tables-only"` in Cargo.toml — this keeps linker output small
+# without affecting panic backtraces).
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-S"]

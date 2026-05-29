@@ -1,0 +1,56 @@
+{
+  "title": "Dashboard",
+  "loading": "Chargement…",
+  "noAccounts": "Aucun compte connecté.",
+  "storage": {
+    "title": "Utilisation du disque",
+    "loading": "Chargement des statistiques de stockage…",
+    "totalOnDisk": "Total sur le disque"
+  },
+  "accounts": {
+    "title": "Comptes",
+    "syncedSince": "Synchronisé depuis",
+    "lastSync": "Dernière synchronisation",
+    "localServer": "Local / serveur",
+    "sent": "Envoyés",
+    "categories": "Catégories",
+    "openSettings": "Ouvrir les paramètres du compte",
+    "refreshTotal": "Actualiser le total",
+    "refreshing": "Actualisation…",
+    "fetchFromProvider": "Récupérer depuis le fournisseur",
+    "lastFetched": "Dernière récupération {{time}}",
+    "classified": "Classés",
+    "memoriesAnalyzed": "Mémoires analysées",
+    "tasksAnalyzed": "Tâches analysées",
+    "embeddings": "Embeddings"
+  },
+  "queues": {
+    "title": "Files d'arrière-plan",
+    "loading": "Chargement de l'état des files…",
+    "idle": "inactive",
+    "empty": "vide",
+    "noHistory": "aucun historique",
+    "aiInteractive": "IA (interactive)",
+    "aiBackground": "IA (arrière-plan)",
+    "db": "BdD",
+    "sync": "Synchronisation"
+  },
+  "log": {
+    "title": "Sortie",
+    "allModules": "tous les modules",
+    "filterByModule": "Filtrer par module",
+    "aiBackend": "Moteur d'IA",
+    "aiModel": "Modèle d'IA",
+    "aiSettings": "Paramètres d'IA",
+    "clearLogs": "Effacer les journaux",
+    "minimizePanel": "Réduire le panneau",
+    "expandPanel": "Agrandir le panneau",
+    "levels": {
+      "error": "ERR",
+      "warn": "AVT",
+      "success": "OK",
+      "debug": "DBG",
+      "info": "INF"
+    }
+  }
+}

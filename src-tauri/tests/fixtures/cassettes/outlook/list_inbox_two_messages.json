@@ -1,0 +1,35 @@
+{
+  "scenario": "list_inbox_two_messages",
+  "provider": "outlook",
+  "sanitized": true,
+  "recordedAt": 1748000000,
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/me/mailFolders/inbox/messages",
+        "queryParams": [
+          ["$top", "100"],
+          ["$select", "id,conversationId"],
+          ["$orderby", "receivedDateTime desc"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "bodyJson": {
+          "value": [
+            {
+              "id": "AAMkAD-msg-001",
+              "conversationId": "AAQkAD-thread-001"
+            },
+            {
+              "id": "AAMkAD-msg-002",
+              "conversationId": "AAQkAD-thread-001"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
