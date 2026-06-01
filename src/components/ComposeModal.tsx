@@ -5,6 +5,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import type { EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { prepareOutgoingHtml } from '@/lib/composeHtml';
+import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
@@ -33,11 +34,6 @@ interface LoadingFile {
 
 function getDomain(email: string): string {
   return extractEmail(email).split('@')[1]?.toLowerCase() || '';
-}
-
-function extractEmail(raw: string): string {
-  const match = raw.match(/<([^>]+)>/);
-  return (match ? match[1] : raw).trim().toLowerCase();
 }
 
 function detectUnusualRecipients(recipients: string[], selfEmails: string[]): string[] {
@@ -214,23 +210,27 @@ export function ComposeModal({
   }, [onClose, isSending]);
 
   const handleSend = async () => {
+    // Include a valid address still sitting in the input box (typed but not
+    // tokenized) so it isn't silently dropped from the outgoing message.
+    const to = mergePendingRecipient(toRecipients, toInput);
+    const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (toRecipients.length === 0 || !subject.trim() || !plain || isLoadingAttachments) return;
+    if (to.length === 0 || !subject.trim() || !plain || isLoadingAttachments) return;
     setSendError(null);
     setIsSending(true);
     try {
       await api.sendNewEmail(
         fromAccountId,
-        toRecipients,
-        ccRecipients,
+        to,
+        cc,
         subject.trim(),
         plain,
         attachments,
         prepared.bodyHtml,
         prepared.inlineImages,
       );
-      addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
+      addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
       setSent(true);
       setTimeout(onClose, 1200);
     } catch (err) {
@@ -567,7 +567,7 @@ export function ComposeModal({
               isSending ||
               sent ||
               isLoadingAttachments ||
-              toRecipients.length === 0 ||
+              mergePendingRecipient(toRecipients, toInput).length === 0 ||
               !subject.trim() ||
               !bodyHtml.trim()
             }
