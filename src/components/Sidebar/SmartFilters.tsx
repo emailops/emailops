@@ -147,35 +147,32 @@ export function SmartFilters({
         >
           <FilterIcon type={filter.type} className="w-3.5 h-3.5 flex-shrink-0" />
           <span className="truncate flex-1">{filter.value}</span>
-          {isHovered ? (
-            <span className="flex items-center gap-0.5 flex-shrink-0">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  pinned ? onUnpinFilter(filter) : onPinFilter(filter);
-                }}
-                className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
-                title={pinned ? 'Unpin' : 'Pin'}
-              >
-                <PinIcon filled={pinned} className="w-3 h-3" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveFilter(filter);
-                }}
-                className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
-                title={t('sidebar:filterActions.hide')}
-              >
-                <XIcon className="w-3 h-3" />
-              </button>
-            </span>
-          ) : (
-            <span className={`text-xs flex-shrink-0 ${isActive ? 'text-primary-200' : 'text-gray-500'}`}>
-              {filter.count}
-            </span>
-          )}
+          <span
+            className={`text-xs flex-shrink-0 ${isActive ? 'text-primary-200' : 'text-gray-500'} ${isHovered ? 'invisible' : ''}`}
+          >
+            {filter.count}
+          </span>
         </button>
+        {isHovered && (
+          // Overlay the row's right edge instead of nesting these buttons inside
+          // the row <button> — nested buttons are invalid HTML and break hydration.
+          <span className="absolute inset-y-0 right-2 flex items-center gap-0.5">
+            <button
+              onClick={() => (pinned ? onUnpinFilter(filter) : onPinFilter(filter))}
+              className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
+              title={pinned ? 'Unpin' : 'Pin'}
+            >
+              <PinIcon filled={pinned} className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => onRemoveFilter(filter)}
+              className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
+              title={t('sidebar:filterActions.hide')}
+            >
+              <XIcon className="w-3 h-3" />
+            </button>
+          </span>
+        )}
       </li>
     );
   };

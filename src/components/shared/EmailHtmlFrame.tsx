@@ -149,9 +149,16 @@ export const BRIDGE_SCRIPT = String.raw`
 
 // Baseline styles inside the frame. Tailwind doesn't apply here — these
 // reproduce the look the previous div-based renderer had via utility classes.
-const FRAME_BASE_CSS = `
+export const FRAME_BASE_CSS = `
   html, body { margin: 0; padding: 0; background: transparent; }
   body {
+    /* flow-root establishes a block formatting context so the first/last child's
+       vertical margins stay *inside* the body instead of collapsing through it.
+       With a margin-less body, a leading <p>'s top margin escapes above the body
+       and shifts content down without being counted in body.scrollHeight — so
+       auto-height under-measures by that margin and clips the trailing footer.
+       Containing the margins keeps scrollHeight accurate. */
+    display: flow-root;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     color: #1f2937;
     font-size: 14px;

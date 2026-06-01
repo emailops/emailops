@@ -11,7 +11,7 @@
 // documentElement height).
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BRIDGE_SCRIPT } from './EmailHtmlFrame';
+import { BRIDGE_SCRIPT, FRAME_BASE_CSS } from './EmailHtmlFrame';
 
 function runBridge() {
   // BRIDGE_SCRIPT is a self-invoking IIFE; new Function runs it in global scope
@@ -53,5 +53,19 @@ describe('EmailHtmlFrame bridge auto-height', () => {
     for (const h of heights) {
       expect(h).toBe(20654);
     }
+  });
+});
+
+describe('EmailHtmlFrame margin containment', () => {
+  // Regression: a short email ending in a footer (e.g. `<p>body</p>...<hr><p>Sent
+  // with EmailOps</p>`) rendered with its footer clipped. The body has no
+  // padding/border, so the leading <p>'s top margin collapsed *through* the body
+  // and escaped above it — shifting content down ~16px without being counted in
+  // document.body.scrollHeight. Auto-height then under-measured and the iframe
+  // clipped the trailing footer. A block formatting context on the body contains
+  // those margins so scrollHeight reflects the true content height. jsdom can't
+  // exercise layout, so we lock the CSS that prevents the collapse.
+  it('the frame body establishes a block formatting context to contain child margins', () => {
+    expect(FRAME_BASE_CSS).toMatch(/display:\s*flow-root/);
   });
 });

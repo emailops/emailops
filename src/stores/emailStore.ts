@@ -25,6 +25,29 @@ export function computeHasMore(emailsLength: number, totalCount: number, pageSiz
   return emailsLength >= pageSize;
 }
 
+/**
+ * Pure helper: append a freshly-fetched page onto the existing list, dropping
+ * any emails whose id is already present.
+ *
+ * Pagination is offset-based (`offset = emails.length`). If a new email is
+ * inserted at the top of the ordering between the initial fetch and a
+ * load-more — e.g. a post-send sync pulling the Sent copy to position 0 — every
+ * row shifts down by one and the next page re-returns a row already in the
+ * list. Appending it blindly yields two React children with the same key, which
+ * React warns about and renders incorrectly. Deduplicating on append keeps keys
+ * unique regardless of offset drift.
+ */
+export function appendUniqueEmails(existing: Email[], more: Email[]): Email[] {
+  const seen = new Set(existing.map((e) => e.id));
+  const additions: Email[] = [];
+  for (const email of more) {
+    if (seen.has(email.id)) continue;
+    seen.add(email.id);
+    additions.push(email);
+  }
+  return additions.length === more.length ? [...existing, ...more] : [...existing, ...additions];
+}
+
 export interface EmailThreadTab {
   type: 'thread';
   id: string;
@@ -379,7 +402,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const newTotal = emails.length + moreEmails.length;
 
       set((state) => ({
-        emails: [...state.emails, ...moreEmails],
+        emails: appendUniqueEmails(state.emails, moreEmails),
         isLoadingMore: false,
         loadMoreLock: false,
         // Same hasMore logic as fetchEmails — see computeHasMore for the

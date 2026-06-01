@@ -4,9 +4,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { computeHasMore, useEmailStore } from './emailStore';
+import type { Email } from '@/types';
+import { appendUniqueEmails, computeHasMore, useEmailStore } from './emailStore';
 
 const PAGE_SIZE = 50;
+
+function makeEmail(id: string): Email {
+  return { id } as Email;
+}
 
 describe('computeHasMore', () => {
   describe('with known totalCount (> 0)', () => {
@@ -79,6 +84,36 @@ describe('computeHasMore', () => {
       expect(computeHasMore(50, -1)).toBe(true);
       expect(computeHasMore(49, -1)).toBe(false);
     });
+  });
+});
+
+describe('appendUniqueEmails', () => {
+  it('appends a non-overlapping page unchanged', () => {
+    const existing = [makeEmail('a'), makeEmail('b')];
+    const more = [makeEmail('c'), makeEmail('d')];
+    expect(appendUniqueEmails(existing, more).map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('drops emails whose id is already in the list', () => {
+    // Regression: offset-based load-more re-returns a row when a new email is
+    // inserted at the top (post-send sync). Without dedup, two list children
+    // get the same React key. See appendUniqueEmails doc comment.
+    const existing = [makeEmail('a'), makeEmail('b'), makeEmail('c')];
+    const more = [makeEmail('c'), makeEmail('d')];
+    expect(appendUniqueEmails(existing, more).map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('drops the entire page when it fully overlaps', () => {
+    const existing = [makeEmail('a'), makeEmail('b')];
+    const more = [makeEmail('a'), makeEmail('b')];
+    expect(appendUniqueEmails(existing, more).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('produces no duplicate ids', () => {
+    const existing = [makeEmail('a'), makeEmail('b')];
+    const more = [makeEmail('b'), makeEmail('c'), makeEmail('c')];
+    const ids = appendUniqueEmails(existing, more).map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 
