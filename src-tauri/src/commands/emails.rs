@@ -114,16 +114,22 @@ pub async fn send_reply(
     cc_emails: Option<Vec<String>>,
 ) -> Result<(), AppError> {
     let email_body = build_email_body(body, body_html, inline_images)?;
-    services::emails::send_reply(
+    let sent_account_id = services::emails::send_reply(
         &state.db,
         &email_id,
         &email_body,
         from_account_id.as_deref(),
         to_emails,
         cc_emails,
-        app,
+        app.clone(),
     )
-    .await
+    .await?;
+
+    // Refresh the sending account so the Sent copy (IMAP-appended, or filed
+    // server-side by Gmail/Graph) lands in the Sent view without waiting for
+    // the next periodic sync.
+    enqueue_account_sync(&app, &state, sent_account_id).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -140,7 +146,7 @@ pub async fn send_new_email(
     attachments: Option<Vec<crate::sync::provider::EmailAttachment>>,
 ) -> Result<(), AppError> {
     let email_body = build_email_body(body, body_html, inline_images)?;
-    services::emails::send_new_email(
+    let sent_account_id = services::emails::send_new_email(
         &state.db,
         &account_id,
         to_emails,
@@ -148,9 +154,15 @@ pub async fn send_new_email(
         &subject,
         &email_body,
         attachments.unwrap_or_default(),
-        app,
+        app.clone(),
     )
-    .await
+    .await?;
+
+    // Refresh the sending account so the Sent copy (IMAP-appended, or filed
+    // server-side by Gmail/Graph) lands in the Sent view without waiting for
+    // the next periodic sync.
+    enqueue_account_sync(&app, &state, sent_account_id).await;
+    Ok(())
 }
 
 /// Construct an `EmailBody` from the wire payload. When `body_html` is present
@@ -189,6 +201,9 @@ fn build_email_body(
         text: body,
         html,
         inline_images: inline,
+        // Footer language is resolved from the user's UI preference in the send
+        // service; default here keeps this builder free of DB access.
+        language: crate::services::i18n::Language::default(),
     })
 }
 
@@ -443,12 +458,19 @@ pub async fn start_resync_mailbox(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn start_sync_account(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    account_id: String,
-) -> Result<(), AppError> {
+/// Enqueue an incremental sync of one account on its dedicated per-account
+/// sync queue.
+///
+/// Submitting to the per-account queue keeps different accounts on independent
+/// FIFOs — one slow provider can no longer block syncs of other accounts.
+/// Within an account, `sync_locks` (try_lock) still guarantees only one
+/// download is in-flight at any moment.
+///
+/// Shared by the manual `start_sync_account` command and the post-send refresh
+/// (see `send_reply` / `send_new_email`), so a just-sent message — which IMAP
+/// must `APPEND` to the Sent folder itself — shows up in the Sent view without
+/// waiting for the next periodic sync.
+async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
     let db = state.db.clone();
     let app_data_dir = state.app_data_dir.clone();
     let ai_background = state.ai_background.clone();
@@ -458,11 +480,6 @@ pub async fn start_sync_account(
     let app_for_task = app.clone();
     let app_for_errors = app.clone();
 
-    // Submit to the dedicated per-account sync queue so different accounts
-    // run on independent FIFOs — one slow provider can no longer block
-    // manual syncs of other accounts. Within an account, `sync_locks`
-    // (try_lock) still guarantees only one download is actually in-flight
-    // at any moment.
     let task_label = format!("sync:{}", account_id);
     let account_queue = state.sync_queue_for(&account_id);
     account_queue
@@ -493,7 +510,15 @@ pub async fn start_sync_account(
             }
         })
         .await;
+}
 
+#[tauri::command]
+pub async fn start_sync_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<(), AppError> {
+    enqueue_account_sync(&app, &state, account_id).await;
     Ok(())
 }
 

@@ -43,6 +43,21 @@ const TRASH_FOLDER_CANDIDATES: &[&str] = &[
     "INBOX.Trash",
 ];
 
+/// Pick the mailbox to APPEND a sent copy into, given the folder names the
+/// server reports via `LIST`. Walks `SENT_FOLDER_CANDIDATES` in priority order
+/// and returns the server's actual folder name (preserving its casing, since
+/// IMAP mailbox names are case-sensitive on the wire) for the first
+/// case-insensitive match. Falls back to `"Sent"` when the server reports no
+/// recognizable Sent folder.
+fn select_sent_folder(existing: &[String]) -> String {
+    for &candidate in SENT_FOLDER_CANDIDATES {
+        if let Some(found) = existing.iter().find(|name| name.eq_ignore_ascii_case(candidate)) {
+            return found.clone();
+        }
+    }
+    "Sent".to_string()
+}
+
 /// Credentials for an IMAP account (stored in keychain as JSON).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImapCredentials {
@@ -81,6 +96,18 @@ impl ImapFolder {
             Self::Sent => SENT_FOLDER_CANDIDATES,
             Self::Spam => SPAM_FOLDER_CANDIDATES,
             Self::Trash => TRASH_FOLDER_CANDIDATES,
+        }
+    }
+
+    /// The `mailbox` column value for a message fetched from this folder.
+    /// `parse_message` defaults every message to `"inbox"`, so `get_message`
+    /// must apply this so Sent/Spam/Trash messages are not mis-filed as inbox.
+    fn mailbox_name(&self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Sent => "sent",
+            Self::Spam => "spam",
+            Self::Trash => "trash",
         }
     }
 }
@@ -642,6 +669,11 @@ impl EmailProvider for ImapClient {
 
         // Use the full (prefixed) message_id so the stored ID is globally unique
         email.id = message_id.to_string();
+        // `parse_message` defaults every message to mailbox='inbox'. Override
+        // with the folder this UID was actually fetched from, otherwise a Sent
+        // (or Spam/Trash) message ingested by the primary merged pass would be
+        // stored as 'inbox' and show up in the Inbox view as well as Sent.
+        email.mailbox = folder.mailbox_name().to_string();
         // Sent emails are always read.
         if folder == ImapFolder::Sent {
             email.is_read = true;
@@ -757,7 +789,10 @@ impl EmailProvider for ImapClient {
             body,
             attachments: &[],
         })?;
-        self.smtp_send(message).await
+        let raw = message.formatted();
+        self.smtp_send(message).await?;
+        self.save_sent_copy(raw).await;
+        Ok(())
     }
 
     async fn send_new_email(
@@ -778,7 +813,10 @@ impl EmailProvider for ImapClient {
             body,
             attachments,
         })?;
-        self.smtp_send(message).await
+        let raw = message.formatted();
+        self.smtp_send(message).await?;
+        self.save_sent_copy(raw).await;
+        Ok(())
     }
 
     async fn fetch_attachment_bytes(&self, _message_id: &str, _attachment_id: &str) -> Result<Vec<u8>> {
@@ -865,5 +903,101 @@ impl ImapClient {
             .await
             .map_err(|e| AppError::SyncError(format!("SMTP send failed: {e}")))?;
         Ok(())
+    }
+
+    /// Save a copy of a just-sent message into the account's Sent folder.
+    ///
+    /// SMTP submission only delivers to recipients — it does NOT file a copy in
+    /// the sender's Sent folder. Provider HTTP APIs (Gmail, Graph) do this
+    /// server-side, but a plain IMAP/SMTP account (Amazon WorkMail included)
+    /// must IMAP `APPEND` the copy itself, otherwise the message never appears
+    /// in the Sent view.
+    ///
+    /// Best-effort: the message has already been delivered by the time this
+    /// runs, so an APPEND failure must not fail the send. It is logged to the
+    /// output panel so the user knows the Sent copy is missing.
+    async fn save_sent_copy(&self, raw: Vec<u8>) {
+        let creds = self.credentials.clone();
+        let outcome = tokio::task::spawn_blocking(move || Self::append_to_sent_blocking(&creds, &raw))
+            .await
+            .unwrap_or_else(|e| Err(AppError::SyncError(format!("sent-copy task join error: {e}"))));
+
+        if let Err(e) = outcome {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!(
+                    "[{}] Email was sent, but saving a copy to the Sent folder failed: {e}",
+                    self.email
+                ),
+            );
+        }
+    }
+
+    /// Synchronous IMAP `APPEND` of `raw` RFC 5322 bytes into the Sent folder.
+    /// Intended to run inside `spawn_blocking`. Marks the appended message
+    /// `\Seen` so the user's own outgoing mail does not show as unread.
+    fn append_to_sent_blocking(creds: &ImapCredentials, raw: &[u8]) -> Result<()> {
+        use imap::types::Flag;
+
+        let mut session =
+            Self::connect_sync(creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+
+        let folder = match session.list(None, Some("*")) {
+            Ok(names) => {
+                let existing: Vec<String> = names.iter().map(|n| n.name().to_string()).collect();
+                select_sent_folder(&existing)
+            }
+            // If LIST fails, fall back to the conventional default rather than
+            // giving up — many servers expose "Sent" even when LIST is flaky.
+            Err(_) => "Sent".to_string(),
+        };
+
+        let append_result = session.append_with_flags(&folder, raw, &[Flag::Seen]);
+        let _ = session.logout();
+        append_result.map_err(|e| AppError::SyncError(format!("IMAP APPEND to '{folder}' failed: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_sent_folder_prefers_highest_priority_candidate() {
+        // Server exposes several mailboxes; "Sent" outranks the others.
+        let existing = vec!["INBOX".to_string(), "Sent Items".to_string(), "Sent".to_string()];
+        assert_eq!(select_sent_folder(&existing), "Sent");
+    }
+
+    #[test]
+    fn select_sent_folder_matches_provider_specific_name() {
+        // Amazon WorkMail / Exchange use "Sent Items" and no plain "Sent".
+        let existing = vec!["INBOX".to_string(), "Sent Items".to_string()];
+        assert_eq!(select_sent_folder(&existing), "Sent Items");
+    }
+
+    #[test]
+    fn select_sent_folder_is_case_insensitive_and_preserves_server_casing() {
+        // Match ignores case but the returned name keeps the server's exact casing,
+        // since IMAP mailbox names are case-sensitive on the wire.
+        let existing = vec!["INBOX".to_string(), "SENT".to_string()];
+        assert_eq!(select_sent_folder(&existing), "SENT");
+    }
+
+    #[test]
+    fn select_sent_folder_defaults_to_sent_when_none_match() {
+        let existing = vec!["INBOX".to_string(), "Archive".to_string()];
+        assert_eq!(select_sent_folder(&existing), "Sent");
+    }
+
+    #[test]
+    fn imap_folder_maps_to_mailbox_column() {
+        // A message fetched from the Sent folder must be stored as mailbox='sent'
+        // (not 'inbox'), otherwise it shows up in the Inbox view as well as Sent.
+        assert_eq!(ImapFolder::Inbox.mailbox_name(), "inbox");
+        assert_eq!(ImapFolder::Sent.mailbox_name(), "sent");
+        assert_eq!(ImapFolder::Spam.mailbox_name(), "spam");
+        assert_eq!(ImapFolder::Trash.mailbox_name(), "trash");
     }
 }

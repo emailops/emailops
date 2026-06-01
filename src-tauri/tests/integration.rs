@@ -1222,6 +1222,39 @@ async fn send_new_email_with_provider_records_message() {
 }
 
 #[tokio::test]
+async fn send_applies_ui_language_to_footer() {
+    // The "Sent with EmailOps" footer must follow the user's UI-language
+    // preference. The service resolves it and stamps it onto the EmailBody the
+    // provider receives; the MIME builder then renders the localized footer.
+    let db = test_db();
+    db.insert_account(&make_account("acc-es", "from@example.com")).unwrap();
+    db.set_preference("ui_language", "es").unwrap();
+
+    let provider = FakeEmailProvider::new("from@example.com", "Me");
+    emailops_lib::services::emails::send_new_email_with_provider(
+        &db,
+        "acc-es",
+        vec!["to@dest.com".to_string()],
+        vec![],
+        "Hola",
+        &emailops_lib::sync::provider::EmailBody::plain("cuerpo"),
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_new_email_with_provider");
+
+    let sent = provider.sent();
+    assert_eq!(
+        sent[0].body.language,
+        emailops_lib::services::i18n::Language::Es,
+        "footer language must follow the UI-language preference"
+    );
+    // Body text itself is untouched — the footer is added at the MIME layer.
+    assert_eq!(sent[0].body.text, "cuerpo");
+}
+
+#[tokio::test]
 async fn send_new_email_with_provider_fails_for_unknown_account() {
     let db = test_db();
     let provider = FakeEmailProvider::new("x@example.com", "X");

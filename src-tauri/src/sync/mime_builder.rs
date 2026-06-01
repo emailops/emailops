@@ -65,7 +65,7 @@ pub fn build_send_mime(params: &SendMimeParams<'_>) -> Result<String> {
 pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage> {
     let builder = base_builder(params)?;
 
-    let body_text = format!("{}{}", params.body.text, email_footer_plain());
+    let body_text = format!("{}{}", params.body.text, email_footer_plain(params.body.language));
 
     let msg = match (params.body.html.as_deref(), params.attachments.is_empty()) {
         // Plain text, no attachments — lettre infers `text/plain; charset=utf-8`.
@@ -87,7 +87,7 @@ pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage
 
         // HTML + (optional inline images) + (optional attachments).
         (Some(html), _) => {
-            let body_html = format!("{}{}", html, email_footer_html());
+            let body_html = format!("{}{}", html, email_footer_html(params.body.language));
             let alternative = MultiPart::alternative_plain_html(body_text, body_html);
 
             let inline_images = &params.body.inline_images;
@@ -222,8 +222,23 @@ mod tests {
             "plain-only message should not be multipart, got:\n{mime}"
         );
         assert!(mime.contains("hi there"));
-        // Footer always appended.
-        assert!(mime.contains("Emailops"), "footer must be appended");
+        // Footer always appended (default English, brand "EmailOps").
+        assert!(mime.contains("Sent with EmailOps"), "footer must be appended");
+    }
+
+    #[test]
+    fn footer_follows_body_language() {
+        use crate::services::i18n::Language;
+        let body = EmailBody::plain("hola").with_language(Language::Es);
+        let mime = p(&body, &[]);
+        assert!(
+            mime.contains("Enviado con EmailOps"),
+            "Spanish body must get the Spanish footer, got:\n{mime}"
+        );
+        assert!(
+            !mime.contains("Sent with"),
+            "must not fall back to English, got:\n{mime}"
+        );
     }
 
     #[test]

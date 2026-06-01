@@ -9,6 +9,12 @@ use crate::sync::provider::{EmailBody, EmailProvider};
 use super::events::emit_account_log;
 use super::provider::{build_provider_for_account, map_send_error};
 
+/// Language for the "Sent with EmailOps" footer: the user's UI-language
+/// preference, falling back to English (the app default) when unset.
+fn footer_language(db: &Arc<Database>) -> Result<crate::services::i18n::Language> {
+    Ok(crate::services::i18n::resolve_ui_language(db)?.unwrap_or_default())
+}
+
 /// Send a reply using an already-built `EmailProvider`. No `AppHandle`
 /// required — suitable for integration tests via `FakeEmailProvider`.
 pub async fn send_reply_with_provider(
@@ -31,6 +37,7 @@ pub async fn send_reply_with_provider(
 
     let to = to_emails.unwrap_or_else(|| vec![email.sender_email.clone()]);
     let cc = cc_emails.unwrap_or_default();
+    let body = body.clone().with_language(footer_language(db)?);
 
     emit_account_log(
         "info",
@@ -47,7 +54,7 @@ pub async fn send_reply_with_provider(
             &email.thread_id,
             email.message_id.as_deref(),
             &email.subject,
-            body,
+            &body,
         )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
@@ -67,6 +74,9 @@ pub async fn send_reply_with_provider(
 /// Send a reply for `email_id`, building the OAuth provider from the account's
 /// stored credentials. The `AppHandle` is used for mid-send token-refresh UI
 /// events; pass `None` (via `send_reply_with_provider`) in tests.
+///
+/// Returns the id of the account the reply was sent from, so the caller can
+/// trigger a follow-up sync that pulls the Sent copy into the Sent view.
 pub async fn send_reply(
     db: &Arc<Database>,
     email_id: &str,
@@ -75,7 +85,7 @@ pub async fn send_reply(
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
     app: AppHandle,
-) -> Result<()> {
+) -> Result<String> {
     let email = db
         .get_email(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
@@ -87,6 +97,7 @@ pub async fn send_reply(
 
     let to = to_emails.unwrap_or_else(|| vec![email.sender_email.clone()]);
     let cc = cc_emails.unwrap_or_default();
+    let body = body.clone().with_language(footer_language(db)?);
 
     emit_account_log(
         "info",
@@ -106,7 +117,7 @@ pub async fn send_reply(
             &email.thread_id,
             email.message_id.as_deref(),
             &email.subject,
-            body,
+            &body,
         )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
@@ -120,7 +131,7 @@ pub async fn send_reply(
 
     crate::services::tasks::on_reply_sent(db, &email.account_id, &email.thread_id, Some(email_id), &to);
 
-    Ok(())
+    Ok(account_id.to_string())
 }
 
 /// Send a new email using an already-built `EmailProvider`. No `AppHandle`
@@ -165,8 +176,9 @@ pub async fn send_new_email_with_provider(
     };
     emit_account_log("info", "sync", &account.email, &log_msg);
 
+    let body = body.clone().with_language(footer_language(db)?);
     provider
-        .send_new_email(&account.email, &to_emails, &cc_emails, subject, body, &attachments)
+        .send_new_email(&account.email, &to_emails, &cc_emails, subject, &body, &attachments)
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
 
@@ -182,6 +194,9 @@ pub async fn send_new_email_with_provider(
 /// Send a new email, building the OAuth provider from the account's stored
 /// credentials. The `AppHandle` is used for mid-send token-refresh UI events;
 /// pass `None` (via `send_new_email_with_provider`) in tests.
+///
+/// Returns the id of the sending account so the caller can trigger a follow-up
+/// sync that pulls the Sent copy into the Sent view.
 pub async fn send_new_email(
     db: &Arc<Database>,
     account_id: &str,
@@ -191,7 +206,7 @@ pub async fn send_new_email(
     body: &EmailBody,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     app: AppHandle,
-) -> Result<()> {
+) -> Result<String> {
     let account = db
         .get_account(account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
@@ -212,8 +227,9 @@ pub async fn send_new_email(
     let provider = build_provider_for_account(&account, Some(app))
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
+    let body = body.clone().with_language(footer_language(db)?);
     provider
-        .send_new_email(&account.email, &to_emails, &cc_emails, subject, body, &attachments)
+        .send_new_email(&account.email, &to_emails, &cc_emails, subject, &body, &attachments)
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
 
@@ -223,5 +239,5 @@ pub async fn send_new_email(
         &account.email,
         &format!("Email sent to {}", to_emails.join(", ")),
     );
-    Ok(())
+    Ok(account_id.to_string())
 }

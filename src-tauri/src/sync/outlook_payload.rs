@@ -50,7 +50,7 @@ pub fn build_reply_payload(params: &OutlookSendParams<'_>) -> Value {
         })
     } else {
         json!({
-            "comment": format!("{}{}", params.body.text, email_footer_plain()),
+            "comment": format!("{}{}", params.body.text, email_footer_plain(params.body.language)),
             "message": {
                 "toRecipients": build_recipients(params.to_emails),
                 "ccRecipients": build_recipients(params.cc_emails),
@@ -85,12 +85,12 @@ fn build_body_object(body: &EmailBody) -> Value {
     if let Some(html) = &body.html {
         json!({
             "contentType": "HTML",
-            "content": format!("{}{}", html, email_footer_html()),
+            "content": format!("{}{}", html, email_footer_html(body.language)),
         })
     } else {
         json!({
             "contentType": "Text",
-            "content": format!("{}{}", body.text, email_footer_plain()),
+            "content": format!("{}{}", body.text, email_footer_plain(body.language)),
         })
     }
 }

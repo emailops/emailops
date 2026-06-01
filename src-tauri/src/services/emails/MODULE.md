@@ -24,8 +24,8 @@ All business logic for email read/write operations that cross the provider bound
 
 - `sync_account(db, account_id, app_data_dir, app, ai_background, abort_flags, sync_locks) -> Result<()>`
 - `generate_draft(db, email_id, account_id, app, ai_queue) -> Result<String>`
-- `send_reply(db, account_id, email_id, body, to, cc, attachments) -> Result<()>`
-- `send_new_email(db, account_id, to, subject, body, cc, attachments) -> Result<()>`
+- `send_reply(db, email_id, body, from_account_id, to, cc, app) -> Result<String>` (returns sending account id for a post-send sync)
+- `send_new_email(db, account_id, to, cc, subject, body, attachments, app) -> Result<String>` (returns sending account id for a post-send sync)
 - `redownload_email(db, account_id, email_id) -> Result<()>`
 
 ## What should NOT live here

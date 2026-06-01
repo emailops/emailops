@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::models::error::Result;
 use crate::models::Email;
+use crate::services::i18n::Language;
 
 /// An attachment to include in an outgoing email.
 ///
@@ -47,6 +48,10 @@ pub struct EmailBody {
     /// have `is_inline = true` and a non-empty `content_id`. Ignored when
     /// `html` is None.
     pub inline_images: Vec<EmailAttachment>,
+    /// Language for the "Sent with EmailOps" footer appended at the MIME/payload
+    /// layer. Resolved from the user's UI-language preference in the send
+    /// service; defaults to English so direct constructions stay deterministic.
+    pub language: Language,
 }
 
 impl EmailBody {
@@ -56,6 +61,7 @@ impl EmailBody {
             text: text.into(),
             html: None,
             inline_images: Vec::new(),
+            language: Language::default(),
         }
     }
 
@@ -65,7 +71,15 @@ impl EmailBody {
             text: text.into(),
             html: Some(html.into()),
             inline_images: Vec::new(),
+            language: Language::default(),
         }
+    }
+
+    /// Set the footer language (builder-style). Used by the send service after
+    /// resolving the user's UI-language preference.
+    pub fn with_language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
     }
 
     /// True when this body has an HTML alternative the provider should serialize.
@@ -152,18 +166,34 @@ impl EmailCategory {
     }
 }
 
-/// Plain-text footer appended to every outgoing email.
+/// Localized "Sent with" lead-in for the footer. The product name "EmailOps"
+/// is a brand and is never translated.
+fn footer_prefix(language: Language) -> &'static str {
+    match language {
+        Language::En => "Sent with",
+        Language::Es => "Enviado con",
+        Language::Fr => "Envoyé avec",
+        Language::De => "Gesendet mit",
+    }
+}
+
+/// Plain-text footer appended to every outgoing email, in the user's UI language.
 ///
 /// The URL is on its own line — wrapping it in parentheses (e.g. `(https://…)`)
 /// makes most email-client auto-linkers swallow the trailing `)` into the URL,
 /// producing a broken link like `https://getemailops.com)/`.
-pub fn email_footer_plain() -> &'static str {
-    "\n\n--\nEnviado con Emailops\nhttps://getemailops.com"
+pub fn email_footer_plain(language: Language) -> String {
+    format!("\n\n--\n{} EmailOps\nhttps://getemailops.com", footer_prefix(language))
 }
 
-/// HTML footer appended to every outgoing email.
-pub fn email_footer_html() -> &'static str {
-    "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\"><p style=\"color:#888;font-size:12px;margin:0\">Enviado con <a href=\"https://getemailops.com\" style=\"color:#888\">Emailops</a></p>"
+/// HTML footer appended to every outgoing email, in the user's UI language.
+pub fn email_footer_html(language: Language) -> String {
+    format!(
+        "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\">\
+         <p style=\"color:#888;font-size:12px;margin:0\">{} \
+         <a href=\"https://getemailops.com\" style=\"color:#888\">EmailOps</a></p>",
+        footer_prefix(language)
+    )
 }
 
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
@@ -627,10 +657,54 @@ mod tests {
         assert!(plain.html.is_none());
         assert!(plain.inline_images.is_empty());
         assert!(!plain.has_html());
+        // Footer language defaults to English so direct constructions are deterministic.
+        assert_eq!(plain.language, Language::En);
 
         let rich = EmailBody::with_html("hello", "<p>hello</p>");
         assert!(rich.has_html());
         assert_eq!(rich.html.as_deref(), Some("<p>hello</p>"));
+    }
+
+    #[test]
+    fn email_body_with_language_overrides_default() {
+        let body = EmailBody::plain("hi").with_language(Language::De);
+        assert_eq!(body.language, Language::De);
+    }
+
+    #[test]
+    fn footer_plain_is_localized_and_uses_emailops_brand() {
+        // Brand name is "EmailOps" (capital O), never "Emailops", in every locale.
+        for lang in Language::ALL {
+            let footer = email_footer_plain(lang);
+            assert!(
+                footer.contains("EmailOps"),
+                "{lang:?} footer must brand EmailOps: {footer}"
+            );
+            assert!(
+                !footer.contains("Emailops"),
+                "{lang:?} footer must not lowercase the O: {footer}"
+            );
+            assert!(footer.contains("https://getemailops.com"));
+        }
+        assert!(email_footer_plain(Language::En).contains("Sent with EmailOps"));
+        assert!(email_footer_plain(Language::Es).contains("Enviado con EmailOps"));
+        assert!(email_footer_plain(Language::Fr).contains("Envoyé avec EmailOps"));
+        assert!(email_footer_plain(Language::De).contains("Gesendet mit EmailOps"));
+    }
+
+    #[test]
+    fn footer_html_is_localized_and_links_emailops() {
+        for lang in Language::ALL {
+            let footer = email_footer_html(lang);
+            assert!(
+                footer.contains(">EmailOps</a>"),
+                "{lang:?} html footer must link EmailOps: {footer}"
+            );
+            assert!(!footer.contains(">Emailops</a>"));
+            assert!(footer.contains("href=\"https://getemailops.com\""));
+        }
+        assert!(email_footer_html(Language::En).contains("Sent with <a"));
+        assert!(email_footer_html(Language::Es).contains("Enviado con <a"));
     }
 
     #[tokio::test]
