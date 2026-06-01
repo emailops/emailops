@@ -1,6 +1,6 @@
 [package]
 name = "emailops"
-version = "0.5.0"
+version = "0.5.1"
 description = "Privacy-first, AI-native email client"
 authors = ["Gero DP"]
 edition = "2021"

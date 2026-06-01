@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.5.1] — 2026-06-01
+
+### Fixed
+
+- **Case-insensitive `from:` search.** Sender-address searches now match
+  regardless of the casing used in the query or the stored address.
+- **PDF attachment previews render** instead of opening a blank tab.
+- **Send with a typed-but-untokenized recipient.** Composing now sends even
+  when the recipient address was typed but not yet converted into a chip/token.
+- **Account setup ordering.** The account row is now inserted before its
+  credentials are stored, avoiding a setup failure during account creation.
+
+### Changed
+
+- **Stable release DMG names.** Release builds publish a versionless
+  `EmailOps-macos.dmg` so the GitHub `latest` download link is permanent.
+
 ## [0.5.0] — 2026-05-29
 
 First public release, re-released with the multi-language UI and AI language
