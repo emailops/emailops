@@ -78,14 +78,23 @@ jobs:
       - name: Verify signing and notarization
         run: make verify-mac
 
+      # Copy the versioned bundle DMG to a stable, versionless name so the
+      # release exposes a permanent "latest" download URL:
+      #   .../releases/latest/download/EmailOps-macos.dmg
+      - name: Stage stable-named DMG
+        run: make dist-mac
+
       # Delete the ephemeral keychain so the certificate doesn't linger.
       - name: Delete build keychain
         if: always()
         run: security delete-keychain ~/Library/Keychains/build.keychain || true
 
+      # Upload both the stable-named DMG (permanent latest link) and the
+      # versioned bundle DMG (kept as a per-release archival artifact).
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
+            release/EmailOps-macos.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg

@@ -112,6 +112,7 @@ npm run dev              # frontend-only in a browser
 
 See the `Makefile` for the full list (release/notarization targets, evaluation manifests, etc.).
 
+
 ## Bundled Model License + Attribution
 
 EmailOps bundles one embedding model in macOS releases:

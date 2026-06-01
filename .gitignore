@@ -5,11 +5,19 @@ node_modules/
 dist/
 target/
 
+# Stable-named release DMGs staged by `make dist-mac` / `dist-mac-intel`.
+# Anchored to repo root so it does not also match `.claude/skills/release/`.
+/release/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Claude Code — share skills, keep personal/local state out of the repo.
+.claude/settings.local.json
+.claude/worktrees/
 
 # OS
 .DS_Store

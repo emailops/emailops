@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac build-mac-intel verify-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -232,6 +232,19 @@ verify-mac:
 	echo "── spctl ──"; spctl -a -t exec -vv "$$APP" 2>&1 | sed 's/^/  /'; \
 	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'
 
+# Copy the freshly built universal DMG to a stable, versionless name under
+# release/. Tauri always embeds the version in the bundle filename
+# (EmailOps_<version>_universal.dmg), which breaks permanent download links.
+# Upload release/EmailOps-macos.dmg to the GitHub Release so it is reachable at
+#   https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg
+# Run after `make build-mac && make verify-mac`.
+dist-mac:
+	@DMG=$$(ls -t src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1); \
+	if [ -z "$$DMG" ]; then echo "ERROR: no universal .dmg found. Run 'make build-mac' first."; exit 1; fi; \
+	mkdir -p release; \
+	cp "$$DMG" release/EmailOps-macos.dmg; \
+	echo "Staged release/EmailOps-macos.dmg (from $$(basename "$$DMG"))"
+
 # Intel-only signed + notarized DMG. Same flow as `build-mac` but targets
 # `x86_64-apple-darwin` only — and ships WITHOUT the embedded llama.cpp AI
 # provider, because (a) Apple-Silicon-only `metal` acceleration means
@@ -283,6 +296,17 @@ verify-mac-intel:
 	else \
 		echo "  ✅ no .gguf files in the bundle (Intel build is AI-disabled by policy)"; \
 	fi
+
+# Copy the freshly built Intel DMG to a stable, versionless name under release/.
+# Upload release/EmailOps-macos-intel.dmg to the GitHub Release so it is reachable at
+#   https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos-intel.dmg
+# Run after `make build-mac-intel && make verify-mac-intel`.
+dist-mac-intel:
+	@DMG=$$(ls -t src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1); \
+	if [ -z "$$DMG" ]; then echo "ERROR: no Intel .dmg found. Run 'make build-mac-intel' first."; exit 1; fi; \
+	mkdir -p release; \
+	cp "$$DMG" release/EmailOps-macos-intel.dmg; \
+	echo "Staged release/EmailOps-macos-intel.dmg (from $$(basename "$$DMG"))"
 
 # Regenerate the evaluations index (manifest.json + instructions to open index.html)
 eval-index:

@@ -124,3 +124,17 @@ cargo run --features eval --example draft_eval -- --n 5
 
 Eval result files (JSON, HTML reports under `src-tauri/reports/`) are gitignored
 — they may contain real email data.
+
+## Releasing
+
+### Cutting a release
+
+Releases are orchestrated by [release Claude skill](.claude/skills/release/SKILL.md).
+
+Invoke it from Claude Code with `/release <patch|minor|major|X.Y.Z>`. It walks
+the full pipeline: bumps the version across `package.json`,
+`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `Cargo.lock`; updates
+`CHANGELOG.md`; runs `make check`; builds the signed + notarized universal DMG
+via `make build-mac && make verify-mac`; then commits and tags. Pushing and the
+GitHub release are gated behind explicit confirmation, and the skill always
+stops to ask when anything is ambiguous.
