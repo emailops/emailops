@@ -2,11 +2,15 @@ import { describe, expect, test } from 'vitest';
 import { getAttachmentIframeSandbox } from './AttachmentTabView';
 
 describe('getAttachmentIframeSandbox', () => {
-  test('returns restrictive sandbox for html attachments', () => {
+  test('sandboxes html attachments to block scripts (untrusted markup)', () => {
     expect(getAttachmentIframeSandbox('text/html')).toBe('');
   });
 
-  test('returns restrictive sandbox for non-html iframe previews', () => {
-    expect(getAttachmentIframeSandbox('application/pdf')).toBe('');
+  // Regression: PDFs (and other binary previews) are rendered by the WebView's
+  // native viewer, which a fully-restrictive `sandbox=""` blocks — leaving the
+  // tab blank. They must NOT be sandboxed (undefined → attribute omitted) so the
+  // viewer can render the opaque-origin data: URI.
+  test('does not sandbox pdf previews so the native viewer can render them', () => {
+    expect(getAttachmentIframeSandbox('application/pdf')).toBeUndefined();
   });
 });

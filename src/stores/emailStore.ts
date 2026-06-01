@@ -219,7 +219,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           t.type === 'attachment' && t.id === meta.id ? { ...t, dataUrl, isLoading: false } : t,
         ),
       }));
-    } catch {
+    } catch (error) {
+      console.error(`Failed to load attachment "${meta.filename}":`, errorText(error));
+      // Leave dataUrl empty so AttachmentTabView shows its "load failed" state.
       set((state) => ({
         tabs: state.tabs.map((t) => (t.type === 'attachment' && t.id === meta.id ? { ...t, isLoading: false } : t)),
       }));
