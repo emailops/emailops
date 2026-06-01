@@ -67,13 +67,8 @@ pub async fn add_account(db: &Arc<Database>, provider_name: &str, sync_from_time
         )));
     }
 
-    // Store tokens securely
-    let account_id = Uuid::new_v4().to_string();
-    store_tokens(&account_id, &tokens)?;
-
-    // Create account record
     let account = Account {
-        id: account_id,
+        id: Uuid::new_v4().to_string(),
         provider: provider_name.to_string(),
         email,
         name,
@@ -83,9 +78,32 @@ pub async fn add_account(db: &Arc<Database>, provider_name: &str, sync_from_time
         sync_from_timestamp,
     };
 
-    db.insert_account(&account)?;
+    persist_oauth_account(db, &account, &tokens)?;
 
     Ok(account)
+}
+
+/// Persist a new OAuth account and its tokens, account row first.
+///
+/// Mirrors [`persist_imap_account`]: in dev mode tokens land in `dev_tokens`
+/// (no FK today, but the account-first order keeps the two paths consistent and
+/// future-proofs against an FK being added). If token storage fails, the
+/// orphaned account row is rolled back so a retry isn't blocked by
+/// `account_exists_by_email`.
+fn persist_oauth_account(db: &Arc<Database>, account: &Account, tokens: &OAuthTokens) -> Result<()> {
+    db.insert_account(account)?;
+
+    if let Err(e) = store_tokens(&account.id, tokens) {
+        if let Err(cleanup_err) = db.delete_account(&account.id) {
+            eprintln!(
+                "[accounts] failed to roll back account {} after token storage error: {cleanup_err}",
+                account.id
+            );
+        }
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 pub fn list_accounts(db: &Arc<Database>) -> Result<Vec<Account>> {
@@ -541,11 +559,8 @@ pub async fn add_imap_account(
         )));
     }
 
-    let account_id = uuid::Uuid::new_v4().to_string();
-    store_imap_credentials(&account_id, &credentials)?;
-
     let account = Account {
-        id: account_id,
+        id: uuid::Uuid::new_v4().to_string(),
         provider: "imap".to_string(),
         email,
         name: display,
@@ -555,8 +570,33 @@ pub async fn add_imap_account(
         sync_from_timestamp,
     };
 
-    db.insert_account(&account)?;
+    persist_imap_account(db, &account, &credentials)?;
     Ok(account)
+}
+
+/// Persist a new IMAP account and its credentials.
+///
+/// Order matters: `imap_account_settings` and `dev_imap_creds` carry a
+/// `FOREIGN KEY` to `accounts(id)`, so the account row must exist before
+/// `store_imap_credentials` runs. If credential storage fails, the orphaned
+/// account row is rolled back so a retry isn't blocked by `account_exists_by_email`.
+fn persist_imap_account(db: &Arc<Database>, account: &Account, credentials: &ImapCredentials) -> Result<()> {
+    db.insert_account(account)?;
+
+    if let Err(e) = store_imap_credentials(&account.id, credentials) {
+        // Best-effort rollback of the account row we just inserted. If cleanup
+        // also fails, surface the original credential error — it's the more
+        // actionable one — but record the cleanup failure so the orphan is visible.
+        if let Err(cleanup_err) = db.delete_account(&account.id) {
+            eprintln!(
+                "[accounts] failed to roll back account {} after credential storage error: {cleanup_err}",
+                account.id
+            );
+        }
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 /// Called by `remove_account` for IMAP accounts to clean up keychain entry.
@@ -612,6 +652,88 @@ pub fn available_categories_for_account(db: &Database, account_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // `store_imap_credentials` reads the process-global `TOKEN_DB` in dev mode,
+    // so credential-store tests must not run concurrently against different DBs.
+    static CRED_STORE_LOCK: Mutex<()> = Mutex::new(());
+
+    fn imap_creds() -> ImapCredentials {
+        ImapCredentials {
+            host: "imap.example.com".into(),
+            port: 993,
+            username: "hello@example.com".into(),
+            password: "app-password".into(),
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 465,
+        }
+    }
+
+    fn imap_account(id: &str, email: &str) -> Account {
+        Account {
+            id: id.into(),
+            provider: "imap".into(),
+            email: email.into(),
+            name: email.into(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+        }
+    }
+
+    // Regression: adding an IMAP account stored credentials *before* inserting
+    // the account row. `imap_account_settings` has a FOREIGN KEY to accounts(id),
+    // so the write failed with "FOREIGN KEY constraint failed" and no account
+    // was ever created. The account row must be inserted first.
+    #[test]
+    fn persist_imap_account_inserts_account_before_credentials() {
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        warm_token_cache(&db);
+
+        let account = imap_account("acc-1", "hello@example.com");
+        let creds = imap_creds();
+
+        persist_imap_account(&db, &account, &creds).expect("persist should succeed");
+
+        assert!(
+            db.get_account("acc-1").expect("get_account").is_some(),
+            "account row must exist after persisting"
+        );
+        assert!(
+            db.get_imap_settings("acc-1").expect("get_imap_settings").is_some(),
+            "imap_account_settings row must exist after persisting"
+        );
+    }
+
+    // Consistency with the IMAP path: the account row must be inserted before
+    // tokens are stored. Tokens land in `dev_tokens` (no FK today), but keeping
+    // both account-creation paths account-first guards against future FK drift.
+    #[test]
+    fn persist_oauth_account_inserts_account_before_tokens() {
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        warm_token_cache(&db);
+
+        let account = imap_account("oauth-1", "gmail-user@example.com");
+        let tokens = OAuthTokens {
+            access_token: "access".into(),
+            refresh_token: Some("refresh".into()),
+            expires_at: Some(0),
+        };
+
+        persist_oauth_account(&db, &account, &tokens).expect("persist should succeed");
+
+        assert!(
+            db.get_account("oauth-1").expect("get_account").is_some(),
+            "account row must exist after persisting"
+        );
+        assert!(
+            db.get_dev_tokens("oauth-1").expect("get_dev_tokens").is_some(),
+            "dev_tokens row must exist after persisting"
+        );
+    }
 
     #[test]
     fn gmail_returns_users_opted_in_categories() {
