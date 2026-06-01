@@ -1,9 +1,9 @@
 ---
 name: release
-description: Cut a new signed + notarized EmailOps macOS release — version bump across all source-of-truth files, CHANGELOG, quality gates, universal build, commit, tag, and (confirmation-gated) push + GitHub release.
+description: Cut a new signed + notarized EmailOps macOS release — version bump across all source-of-truth files, CHANGELOG, quality gates, universal build, commit, tag, and (confirmation-gated) push. The GitHub release is never created automatically; the skill prints the exact info to publish it manually.
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
-allowed-tools: Bash, Read, Edit, Grep
+allowed-tools: Bash, Read, Edit, Write, Grep
 ---
 
 # Release EmailOps
@@ -117,41 +117,73 @@ git tag vX.Y.Z
 Do **not** add Claude/agent as author or co-author (repo convention). Use the
 real new version in both the message and tag.
 
-## Phase 7 — Publish (confirmation-gated)
+## Phase 7 — Push (confirmation-gated)
 
-Pushing and releasing are shared, irreversible actions. **Always ask for
-explicit confirmation before each**, even if the user kicked off the release.
+Pushing is a shared, irreversible action. **Always ask for explicit
+confirmation before it**, even if the user kicked off the release.
 
-1. Push branch + tag (only after the user confirms):
+Push branch + tag (only after the user confirms):
+
+```bash
+git push origin main
+git push origin vX.Y.Z
+```
+
+**Do not create the GitHub release yourself.** Even if `gh` is installed and
+authenticated, never run `gh release create` (or otherwise publish the release)
+as part of this skill. The developer creates the GitHub release manually — your
+job ends at printing the exact info they need (see Phase 8).
+
+## Phase 8 — Print the manual GitHub-release info
+
+The GitHub release is always created by the developer by hand. Gather and print
+everything they need to do it, so it is copy-paste ready. Verify each fact
+before printing it (don't assume):
+
+1. **Confirm the assets exist and match.** Stat both DMGs and compute their
+   SHA-256 so the developer can sanity-check the upload:
 
    ```bash
-   git push origin main
-   git push origin vX.Y.Z
+   ls -la release/EmailOps-macos.dmg \
+          src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
+   shasum -a 256 release/EmailOps-macos.dmg \
+                 src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
    ```
 
-2. GitHub release: check whether `gh` is installed (`command -v gh`).
-   - If **available** and the user confirms, create the release and attach both
-     the stable-named DMG (permanent latest link) and the versioned bundle DMG
-     (per-release archival copy):
+2. **Confirm the tag is on origin** (`git ls-remote --tags origin vX.Y.Z`) and
+   note the repo (`git remote get-url origin`).
 
-     ```bash
-     gh release create vX.Y.Z \
-       --title "vX.Y.Z" \
-       --notes-file <changelog-section-or-temp-file> \
-       release/EmailOps-macos.dmg \
-       src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-     ```
+3. **Write the release notes to a temp file** from the new CHANGELOG section
+   (e.g. `/tmp/emailops-vX.Y.Z-notes.md`) so the `--notes-file` path is real.
 
-     The stable name is what makes
-     `https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`
-     resolve to this release's build.
+Then print, in your final message:
 
-   - If **not available**, do not fail. Print the manual steps: the DMG paths
-     above and the exact `gh release create` command to run once `gh` is
-     installed, then let the user take it from there.
+- **Repo, tag (+ commit it points at), and release title** (`vX.Y.Z`).
+- **The two DMG asset paths**, noting they are byte-identical copies (same
+  SHA-256): `release/EmailOps-macos.dmg` is the permanent-`latest` stable name,
+  and `src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg`
+  is the per-release archival copy. Attaching the stable-named one is what makes
+  `https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`
+  resolve to this build.
+- **The raw release notes** (inline) plus the temp-file path.
+- **Both ways to publish**, and let the developer pick:
+  - *gh CLI* (run from repo root):
+
+    ```bash
+    gh release create vX.Y.Z \
+      --title "vX.Y.Z" \
+      --notes-file /tmp/emailops-vX.Y.Z-notes.md \
+      release/EmailOps-macos.dmg \
+      src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
+    ```
+
+    If `gh` is not installed, mention it (`brew install gh && gh auth login`).
+  - *Web UI*: open `https://github.com/emailops/emailops/releases/new`, choose
+    the existing `vX.Y.Z` tag, set the title, paste the notes, drag in both
+    DMGs, keep "Set as the latest release" checked, and publish.
 
 ## Done
 
 Report: the new version, that gates/build/verify passed, the commit + tag
-created, and the current push/release state (pushed or pending the user's
-manual step).
+created, the push state (pushed or pending), and that the GitHub release is left
+for the developer to create manually (with the info from Phase 8 printed above).
