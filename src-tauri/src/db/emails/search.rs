@@ -404,8 +404,10 @@ impl Database {
         }
 
         // From filter — two-pronged:
-        //   1. Prefix match on `sender_email` (uses idx_emails_sender_email index).
-        //      SQLite LIKE without a leading wildcard is a range scan on the index.
+        //   1. Prefix match on `sender_email` (uses idx_emails_sender_email_nocase).
+        //      A case-folded range scan so mixed-case stored addresses still match
+        //      the lowercased needle (the porter/unicode FTS branch is already
+        //      case-insensitive; this keeps the address branch consistent).
         //   2. FTS5 sender-column search for display-name matches (e.g. "from:Alice").
         //
         // When both branches are needed we materialise a separate `from_match` CTE
@@ -429,10 +431,12 @@ impl Database {
             let upper_bound = prefix_upper_bound(&from_lower);
 
             if fts_sender.is_empty() {
-                // Very short or symbol-only input — range scan only
+                // Very short or symbol-only input — range scan only.
+                // COLLATE NOCASE so a mixed-case stored address still falls in
+                // range against the lowercased needle (idx_emails_sender_email_nocase).
                 if let Some(ref ub) = upper_bound {
                     cte_conditions.push(format!(
-                        "(match_e.sender_email >= ?{lo} AND match_e.sender_email < ?{hi})",
+                        "(match_e.sender_email >= ?{lo} COLLATE NOCASE AND match_e.sender_email < ?{hi} COLLATE NOCASE)",
                         lo = param_idx,
                         hi = param_idx + 1,
                     ));
@@ -440,31 +444,34 @@ impl Database {
                     params_vec.push(Box::new(ub.clone()));
                     param_idx += 2;
                 } else {
-                    cte_conditions.push(format!("match_e.sender_email >= ?{}", param_idx));
+                    cte_conditions.push(format!("match_e.sender_email >= ?{} COLLATE NOCASE", param_idx));
                     params_vec.push(Box::new(from_lower.clone()));
                     param_idx += 1;
                 }
             } else {
                 // UNION CTE: each branch uses its own index independently.
-                //   Branch 1 (>= / <) → idx_emails_sender_email B-tree range scan.
+                //   Branch 1 (>= / <) → idx_emails_sender_email_nocase B-tree range scan.
                 //   Branch 2 (MATCH)   → emails_fts inverted index (display-name hits).
                 //
                 // is_deleted is intentionally omitted — filter_match enforces it.
+                // COLLATE NOCASE on both bounds so a mixed-case stored address
+                // still falls in range against the lowercased needle; the
+                // idx_emails_sender_email_nocase index serves the case-folded scan.
                 let range_clause = if let Some(ref _ub) = upper_bound {
                     format!(
-                        "sender_email >= ?{lo} AND sender_email < ?{hi}",
+                        "sender_email >= ?{lo} COLLATE NOCASE AND sender_email < ?{hi} COLLATE NOCASE",
                         lo = param_idx,
                         hi = param_idx + 1,
                     )
                 } else {
-                    format!("sender_email >= ?{}", param_idx)
+                    format!("sender_email >= ?{} COLLATE NOCASE", param_idx)
                 };
                 let range_params = if upper_bound.is_some() { 2 } else { 1 };
 
                 from_match_cte = Some(format!(
                     "from_match AS (
                          SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_email
+                         FROM emails INDEXED BY idx_emails_sender_email_nocase
                          WHERE account_id = ?1
                            AND {range}
                          UNION
@@ -850,6 +857,52 @@ mod tests {
             ids
         );
         assert!(!ids.contains(&"e2"), "Bob must not appear, got: {:?}", ids);
+    }
+
+    // Regression: a `from:` search must match the sender address regardless of
+    // case. Providers can send mixed-case local parts (e.g. the user-reported
+    // "EMEA_Invoicing@email.apple.com"). The filter lowercases the needle, so the
+    // case-sensitive (BINARY) range scan over the stored mixed-case sender_email
+    // returned 0 results — `from:EMEA_Invoicing@email.apple.com` found nothing.
+    #[test]
+    fn search_from_filter_address_is_case_insensitive() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_search_email(
+            &db,
+            "e1",
+            account,
+            "thread-apple",
+            "EMEA Invoicing",
+            "EMEA_Invoicing@email.apple.com",
+            "Your invoice",
+            "see attached",
+            100,
+        );
+
+        // Needle differs only in case from the stored address.
+        let results = db
+            .search_emails(
+                account,
+                "",
+                None,
+                Some("emea_invoicing@email.apple.com"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+            )
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(
+            ids.contains(&"e1"),
+            "case-insensitive from: must find the mixed-case sender, got: {:?}",
+            ids
+        );
     }
 
     #[test]
