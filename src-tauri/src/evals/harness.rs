@@ -58,8 +58,14 @@ pub async fn run_case(
 ) -> EvalResult<CaseOutcome> {
     let start = Instant::now();
 
-    // 1. Fresh conversation — title defaults to "New chat" so auto-title logic triggers.
-    let conv: ChatConversation = db.create_chat_conversation(account_id, "New chat")?;
+    // 1. Fresh conversation. Thread-bound cases seed it with the cleaned
+    //    thread (role='system' message) so `run_chat_turn` takes the
+    //    thread-bound short-circuit; everything else starts as an empty chat
+    //    whose title defaults to "New chat" so the auto-title logic triggers.
+    let conv: ChatConversation = match case.thread_id.as_deref() {
+        Some(thread_id) => crate::services::chat::create_conversation_with_thread(&db, account_id, thread_id)?,
+        None => db.create_chat_conversation(account_id, "New chat")?,
+    };
 
     // 2. User + empty assistant rows, matching the production command flow.
     let _user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &case.question, None)?;

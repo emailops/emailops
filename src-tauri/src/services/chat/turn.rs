@@ -15,7 +15,7 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
     ChatMessage, ChatMessageSource, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace, ChatTraceEvent,
-    LlmCallTrace, RetrievalTrace, RouteMode, ToolCallTrace,
+    LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
@@ -712,6 +712,7 @@ async fn run_tool_loop(
     categories: &[String],
     initial_messages: Vec<(String, String)>,
     preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
+    force_tool_use: bool,
     tool_traces: &mut Vec<ToolCallTrace>,
     llm_calls: &mut Vec<LlmCallTrace>,
 ) -> ToolLoopOutcome {
@@ -954,7 +955,14 @@ async fn run_tool_loop(
                 // something like "Voy a buscar el contacto…" instead of
                 // emitting the tool_call. Nudge it once and continue the loop
                 // before accepting the bare text as the final answer.
-                if tool_traces.is_empty() && nudges_used < MAX_NUDGES {
+                //
+                // Only when `force_tool_use` is set: in tool-first chat a turn
+                // is expected to call a tool, so a bare-text reply is a failure
+                // worth nudging. Thread-bound chat is the opposite — most turns
+                // are plain Q&A over the seeded thread and should accept the
+                // direct answer; nudging there would push the model to call the
+                // lone draft tool when the user only asked a question.
+                if force_tool_use && tool_traces.is_empty() && nudges_used < MAX_NUDGES {
                     nudges_used += 1;
                     emit_log(
                         app,
@@ -1061,11 +1069,53 @@ async fn run_tool_loop(
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
+/// Assemble the system prompt for a thread-bound turn: the rendered
+/// `chat.system` base, the seeded thread context message(s), and a tail
+/// instruction that grounds the model in the thread.
+///
+/// Pure so the grounding/draft contract is unit-testable without a provider
+/// or `AppHandle`. When `drafts_available` is true the model is told it may
+/// call `generate_email_draft` (the only tool exposed in this mode) for
+/// explicit draft/reply requests; otherwise it is told to use no tools at all.
+fn build_thread_bound_system(base_system: &str, system_messages: &[ChatMessage], drafts_available: bool) -> String {
+    let mut system = base_system.to_string();
+
+    // Append each seeded system message (in practice exactly one — the cleaned
+    // thread — but robust to future multi-context chats).
+    for msg in system_messages {
+        system.push_str("\n\n");
+        system.push_str(&msg.content);
+    }
+
+    if drafts_available {
+        system.push_str(
+            "\n\nIMPORTANT: You are chatting about the email thread above. Ground \
+every answer ONLY in that thread — do not invent facts or claim details the \
+thread does not contain. If the thread lacks the information to answer, say so \
+plainly.\n\nThe ONLY action you may take is calling `generate_email_draft`, and \
+ONLY when the user explicitly asks you to draft, write, or reply to a message. \
+For a reply, pass `email_id` set to the exact value shown as `(id: ...)` next \
+to the message you are replying to in the thread above. Never invent an id. For \
+a plain question, do NOT call any tool — just answer from the thread.",
+        );
+    } else {
+        system.push_str(
+            "\n\nIMPORTANT: You are chatting about the email thread above. Answer \
+using ONLY that thread as your source. Do not call any tools, do not search \
+other emails. If the thread does not contain enough information to answer, say \
+so plainly.",
+        );
+    }
+
+    system
+}
+
 /// Run one chat turn for a "thread-bound" conversation — one that was seeded
 /// with the cleaned content of an email thread (see
-/// [`create_conversation_with_thread`]). Skips RAG retrieval and tool calls
-/// because the thread is already the entire context the user wants the model
-/// to consider.
+/// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
+/// is already the entire context the user wants the model to consider, and
+/// exposes a single tool — `generate_email_draft` — so the user can ask it to
+/// draft a reply grounded in that thread.
 ///
 /// Used as a short-circuit at the top of [`run_chat_turn`].
 #[allow(clippy::too_many_arguments)]
@@ -1075,6 +1125,7 @@ async fn run_thread_bound_turn(
     provider: Arc<dyn AIProvider>,
     conversation_id: String,
     assistant_message_id: String,
+    account_id: String,
     user_question: String,
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
@@ -1098,9 +1149,9 @@ async fn run_thread_bound_turn(
         ),
     );
 
-    // Render the configured chat.system template (today / tomorrow / language
-    // instruction), then append the thread context + a hard instruction to
-    // ground answers in it.
+    // Render the base chat.system template (today / tomorrow / language
+    // instruction), then layer the thread context + grounding/draft contract
+    // on top via the pure `build_thread_bound_system` helper.
     let language = crate::services::i18n::resolve_ai_language(&db)?;
     let language_instruction = format!("Reply in {}.", language.english_name());
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -1110,74 +1161,135 @@ async fn run_thread_bound_turn(
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("language_instruction", language_instruction);
     let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
-    let mut system = crate::services::prompts::render(&system_template, &tpl_vars);
+    let base_system = crate::services::prompts::render(&system_template, &tpl_vars);
 
-    // Append each system message (in practice there's exactly one — the
-    // cleaned thread — but this loop is robust to any future multi-context
-    // chats that seed several system messages).
-    for msg in &system_messages {
-        system.push_str("\n\n");
-        system.push_str(&msg.content);
-    }
-    system.push_str(
-        "\n\nIMPORTANT: The user wants to chat about the email thread above. \
-Answer using ONLY that thread as your source. Do not call any tools, do not \
-search other emails. If the thread does not contain enough information to \
-answer, say so plainly.",
-    );
+    // Drafts are gated behind a Settings toggle (defaults ON). When enabled we
+    // expose exactly one tool — `generate_email_draft` — so the user can ask
+    // for a reply grounded in this thread; otherwise the model is told to use
+    // no tools at all and just answer from the thread.
+    let drafts_available = db.is_ai_drafts_enabled().unwrap_or(true);
+    let system = build_thread_bound_system(&base_system, &system_messages, drafts_available);
 
-    // Build the message list: system + last N user/assistant turns + current question.
-    let mut messages: Vec<AiMessage> = Vec::with_capacity(history.len() + 2);
-    messages.push(AiMessage {
-        role: "system".to_string(),
-        content: system,
-        tool_calls: None,
-    });
+    // Build the message list as (role, content) pairs for the tool loop:
+    // system + last N user/assistant turns + the current question.
+    let mut initial_messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
+    initial_messages.push(("system".to_string(), system));
     let start = history.len().saturating_sub(THREAD_HISTORY_TURNS);
     for msg in &history[start..] {
         if msg.role == "user" || msg.role == "assistant" {
-            messages.push(AiMessage {
-                role: msg.role.clone(),
-                content: msg.content.clone(),
-                tool_calls: None,
-            });
+            initial_messages.push((msg.role.clone(), msg.content.clone()));
         }
     }
-    messages.push(AiMessage {
-        role: "user".to_string(),
-        content: user_question.clone(),
-        tool_calls: None,
+    initial_messages.push(("user".to_string(), user_question.clone()));
+
+    // Draft-only registry: the single tool the thread-bound model may call.
+    // `run_tool_loop` further gates it on `is_available(db)`, so a disabled
+    // drafts feature yields an empty tool menu and a pure-text answer.
+    let draft_tool: Arc<dyn tools::Tool> = Arc::new(tools::generate_email_draft::GenerateEmailDraftTool);
+    let registry: Arc<tools::ToolRegistry> = Arc::new(tools::ToolRegistry::with_tools(vec![draft_tool]));
+
+    let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+    let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+
+    emit_log(&app, "info", "stage: tool_loop (thread-bound)");
+    let t_tool_loop = std::time::Instant::now();
+    // Don't force a tool call: thread-bound chat is mostly Q&A about the
+    // thread, and only an explicit "draft a reply" should produce a draft.
+    let outcome = run_tool_loop(
+        &db,
+        &registry,
+        provider.as_ref(),
+        &app,
+        &account_id,
+        &[],
+        initial_messages,
+        None,
+        false,
+        &mut tool_traces,
+        &mut llm_calls,
+    )
+    .await;
+    let tool_loop_ms = t_tool_loop.elapsed().as_millis() as i64;
+    let aggregated_email_refs = outcome.aggregated_email_refs.clone();
+    let aggregated_draft_refs = outcome.aggregated_draft_refs.clone();
+
+    // If the loop ended on a direct assistant text answer, reuse it as-is;
+    // otherwise stream a synthesis pass over whatever messages it produced.
+    let direct_answer: Option<String> = outcome.messages.last().and_then(|m| {
+        let no_calls = m.tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true);
+        if m.role == "assistant" && no_calls && !m.content.trim().is_empty() {
+            Some(m.content.clone())
+        } else {
+            None
+        }
     });
 
-    // Stream the answer.
-    let conv_id_for_stream = conversation_id.clone();
-    let msg_id_for_stream = assistant_message_id.clone();
-    let app_for_stream = app.clone();
-    let stream_fut = provider.chat_stream(
-        messages,
-        Box::new(move |token| {
-            let _ = app_for_stream.emit(
-                "chat-stream",
-                ChatStreamEvent {
-                    message_id: msg_id_for_stream.clone(),
-                    conversation_id: conv_id_for_stream.clone(),
-                    token,
-                    done: false,
-                    error: None,
-                    token_count: None,
-                    latency_ms: None,
-                },
-            );
-            true
-        }),
-    );
-
-    let stream_result = match timeout(STREAM_TIMEOUT, stream_fut).await {
-        Ok(res) => res,
-        Err(_) => Err(AppError::AiError(format!(
-            "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-            STREAM_TIMEOUT.as_secs()
-        ))),
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.failed_without_answer {
+        let detail = outcome
+            .error
+            .clone()
+            .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
+        Err(AppError::AiError(detail))
+    } else if let Some(answer) = direct_answer {
+        // Emit the whole answer as one stream token, then synthesise a
+        // successful result (no extra round-trip to the model).
+        let _ = app.emit(
+            "chat-stream",
+            ChatStreamEvent {
+                message_id: assistant_message_id.clone(),
+                conversation_id: conversation_id.clone(),
+                token: answer.clone(),
+                done: false,
+                error: None,
+                token_count: None,
+                latency_ms: None,
+            },
+        );
+        Ok(crate::ai::provider::ChatStreamResult {
+            content: answer,
+            eval_count: None,
+            prompt_eval_count: None,
+        })
+    } else {
+        // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
+        // Stream a synthesis pass, bounded by STREAM_TIMEOUT.
+        let conv_id_for_stream = conversation_id.clone();
+        let msg_id_for_stream = assistant_message_id.clone();
+        let app_for_stream = app.clone();
+        let ai_messages: Vec<AiMessage> = outcome
+            .messages
+            .into_iter()
+            .map(|m| AiMessage {
+                role: m.role,
+                content: m.content,
+                tool_calls: None,
+            })
+            .collect();
+        let stream_fut = provider.chat_stream(
+            ai_messages,
+            Box::new(move |token| {
+                let _ = app_for_stream.emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: msg_id_for_stream.clone(),
+                        conversation_id: conv_id_for_stream.clone(),
+                        token,
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                    },
+                );
+                true
+            }),
+        );
+        match timeout(STREAM_TIMEOUT, stream_fut).await {
+            Ok(res) => res,
+            Err(_) => Err(AppError::AiError(format!(
+                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+                STREAM_TIMEOUT.as_secs()
+            ))),
+        }
     };
 
     let latency_ms = turn_start.elapsed().as_millis() as i64;
@@ -1190,6 +1302,49 @@ answer, say so plainly.",
             {
                 emit_log(&app, "error", &format!("failed to persist assistant message: {e}"));
             }
+            // Persist + ship the email/draft allowlists so the frontend chip
+            // validator accepts the `draft://DRAFT_ID` the model emitted for
+            // the reply instead of dropping it as hallucinated.
+            if let Err(e) = db.update_chat_message_referenced_emails(&assistant_message_id, &aggregated_email_refs) {
+                emit_log(&app, "error", &format!("failed to persist email refs: {e}"));
+            }
+            if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
+                emit_log(&app, "error", &format!("failed to persist draft refs: {e}"));
+            }
+
+            // Emit a minimal reasoning trace so the frontend receives the
+            // referenced-draft allowlist live (the `chat-trace` event is the
+            // delivery hook for it). The route is synthetic: a thread-bound
+            // turn is a forced tools-first short-circuit.
+            let trace = ChatTrace {
+                route: RouteDecision {
+                    mode: RouteMode::ToolsFirst,
+                    reason: "thread-bound".to_string(),
+                    matched_keywords: vec![],
+                    classifier: "forced".to_string(),
+                },
+                retrieval: None,
+                tool_calls: tool_traces.clone(),
+                model: provider.model_name().to_string(),
+                total_elapsed_ms: latency_ms,
+                tool_loop_ms,
+                llm_streaming_ms: None,
+                llm_calls: llm_calls.clone(),
+            };
+            if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
+                emit_log(&app, "error", &format!("failed to persist reasoning trace: {e}"));
+            }
+            let _ = app.emit(
+                "chat-trace",
+                ChatTraceEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    trace,
+                    referenced_email_ids: aggregated_email_refs.clone(),
+                    referenced_draft_ids: aggregated_draft_refs.clone(),
+                },
+            );
+
             let _ = app.emit(
                 "chat-stream",
                 ChatStreamEvent {
@@ -1274,6 +1429,7 @@ pub async fn run_chat_turn(
             provider,
             conversation_id,
             assistant_message_id,
+            account_id,
             user_question,
             history,
             system_messages,
@@ -1492,6 +1648,7 @@ pub async fn run_chat_turn(
                 &categories,
                 initial_messages,
                 preseeded_tool_calls,
+                true,
                 &mut tool_traces,
                 &mut llm_calls,
             )
@@ -2072,6 +2229,39 @@ mod tests {
         assert!(
             sys.contains("generate_email_draft"),
             "draft tool missing from prompt: {sys}"
+        );
+    }
+
+    #[test]
+    fn thread_bound_system_offers_draft_tool_when_drafts_enabled() {
+        let thread = make_message("system", "[1] (id: e1) From: Alice\n    Subject: Hi\n\nthread body");
+        let sys = build_thread_bound_system("BASE", std::slice::from_ref(&thread), true);
+        // Base template and the seeded thread context are both present.
+        assert!(sys.contains("BASE"));
+        assert!(sys.contains("thread body"));
+        // Draft tool is offered; the no-tools instruction must be absent so the
+        // model actually calls `generate_email_draft` on an explicit request.
+        assert!(sys.contains("generate_email_draft"), "draft tool not offered: {sys}");
+        assert!(
+            !sys.contains("Do not call any tools"),
+            "no-tools instruction leaked: {sys}"
+        );
+    }
+
+    #[test]
+    fn thread_bound_system_forbids_tools_when_drafts_disabled() {
+        let thread = make_message("system", "[1] (id: e1) From: Alice\n    Subject: Hi\n\nthread body");
+        let sys = build_thread_bound_system("BASE", std::slice::from_ref(&thread), false);
+        assert!(sys.contains("BASE"));
+        assert!(sys.contains("thread body"));
+        // With drafts off the model must be told to use no tools at all.
+        assert!(
+            sys.contains("Do not call any tools"),
+            "missing no-tools instruction: {sys}"
+        );
+        assert!(
+            !sys.contains("generate_email_draft"),
+            "draft tool leaked when disabled: {sys}"
         );
     }
 

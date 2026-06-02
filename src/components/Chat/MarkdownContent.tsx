@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactNode } from 'react';
+import { Children, isValidElement, type ReactNode, useEffect, useRef } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useLogStore } from '@/stores/logStore';
@@ -106,6 +106,27 @@ export function MarkdownContent({
   const draftAllowSet = new Set(draftRefAllowlist ?? []);
   const addLog = useLogStore((s) => s.addLog);
 
+  // Dropped-ref warnings are gathered during render and flushed from an
+  // effect — never logged inline in the `a` renderer. The renderer runs in
+  // React's render phase, where side effects are forbidden: a streaming
+  // bubble re-renders on every token, so an inline `addLog` re-fires the same
+  // "Dropping draft://…" warning dozens of times (the v0.5.x duplicate-warning
+  // bug). `pendingWarnings` collects this render's messages (reset each
+  // render); `loggedWarnings` is the persistent set of everything already
+  // logged for this mounted bubble, so re-renders and repeated ids never
+  // re-warn.
+  const pendingWarnings = useRef<string[]>([]);
+  pendingWarnings.current = [];
+  const loggedWarnings = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const msg of pendingWarnings.current) {
+      if (!loggedWarnings.current.has(msg)) {
+        loggedWarnings.current.add(msg);
+        addLog('warn', 'chat', msg);
+      }
+    }
+  });
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -141,9 +162,7 @@ export function MarkdownContent({
             // and log a warning so the regression is visible without
             // surfacing a broken chip to the user.
             if (!emailId || !emailAllowSet.has(emailId)) {
-              addLog(
-                'warn',
-                'chat',
+              pendingWarnings.current.push(
                 `Dropping email://${emailId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
               );
               return <>{children}</>;
@@ -156,9 +175,7 @@ export function MarkdownContent({
             // Same allowlist guarantee as `email://` — drafts the LLM never
             // saw can't be opened via a chip.
             if (!draftId || !draftAllowSet.has(draftId)) {
-              addLog(
-                'warn',
-                'chat',
+              pendingWarnings.current.push(
                 `Dropping draft://${draftId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
               );
               return <>{children}</>;

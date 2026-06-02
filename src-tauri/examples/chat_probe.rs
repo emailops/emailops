@@ -156,6 +156,7 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         tier: "smoke".into(),
         model: None,
         account: None,
+        thread_id: None,
         expected_route: None,
         expected_tools_called: vec![],
         expected_answer_contains: vec![],

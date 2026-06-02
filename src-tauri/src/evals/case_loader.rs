@@ -50,6 +50,15 @@ pub struct EvalCase {
     #[serde(default)]
     pub account: Option<String>,
 
+    /// Thread id to seed the conversation with. When set, the harness creates
+    /// the conversation via `create_conversation_with_thread` (instead of an
+    /// empty chat), so `run_chat_turn` takes the thread-bound short-circuit —
+    /// the path that grounds the answer in this single thread and exposes only
+    /// the `generate_email_draft` tool. Use this to eval thread-bound chat
+    /// (e.g. "draft a reply") rather than the RAG/tools pipeline.
+    #[serde(default)]
+    pub thread_id: Option<String>,
+
     /// Expected router mode. Absence skips the route check.
     #[serde(default)]
     pub expected_route: Option<RouteMode>,

@@ -139,8 +139,9 @@ pub fn format_thread_context(
         let cleaned = clean_email_body(&raw_body, max_chars_per_email);
         let date = format_date(email.timestamp);
         out.push_str(&format!(
-            "[{n}] From: {sender} <{addr}>\n    Date: {date}\n    Subject: {subj}\n\n{body}\n\n",
+            "[{n}] (id: {id}) From: {sender} <{addr}>\n    Date: {date}\n    Subject: {subj}\n\n{body}\n\n",
             n = idx + 1,
+            id = email.id,
             sender = email.sender,
             addr = email.sender_email,
             date = date,
@@ -469,9 +470,41 @@ mod tests {
         let out = format_thread_context(&[e1, e2], bodies, 1000);
         assert!(out.contains("Subject: Project kickoff"));
         assert!(out.contains("Messages: 2"));
-        assert!(out.contains("[1] From: Alice <alice@x.com>"));
-        assert!(out.contains("[2] From: Bob <bob@y.com>"));
+        assert!(out.contains("[1] (id: e1) From: Alice <alice@x.com>"));
+        assert!(out.contains("[2] (id: e2) From: Bob <bob@y.com>"));
         assert!(out.contains("proposing 10am Wed"));
         assert!(out.contains("Works for me."));
+    }
+
+    #[test]
+    fn format_thread_context_exposes_email_ids_for_reply_targeting() {
+        use crate::models::Email;
+        // Thread-bound chat lets the model draft a reply via
+        // generate_email_draft(email_id=...). The model can only do that if the
+        // real email id is visible in the rendered context — otherwise it
+        // invents one and the draft chip is dropped as hallucinated.
+        let e = Email {
+            id: "19e6e27f48f95297".into(),
+            account_id: "a".into(),
+            thread_id: "t".into(),
+            message_id: Some("m1".into()),
+            subject: "Pedido Apple".into(),
+            sender: "Dani".into(),
+            sender_email: "dani@x.com".into(),
+            recipients: vec![],
+            cc: vec![],
+            body: String::new(),
+            snippet: String::new(),
+            timestamp: 1_700_000_000,
+            is_read: true,
+            triage_status: None,
+            category: "primary".into(),
+            mailbox: "inbox".into(),
+        };
+        let out = format_thread_context(&[e], |_| Some("Body".to_string()), 1000);
+        assert!(
+            out.contains("(id: 19e6e27f48f95297)"),
+            "real email id must appear in the context: {out}"
+        );
     }
 }

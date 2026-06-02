@@ -11,9 +11,19 @@
 // is actually present in the output, which is what the user reported as
 // missing in the chat panel.
 
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownContent } from './MarkdownContent';
+
+// `addLog` is the side effect we're guarding: a hallucinated `email://` /
+// `draft://` ref must be logged exactly once per mounted bubble, not on every
+// re-render (the v0.5.x duplicate-warning bug fired it ~23× during streaming).
+const { addLogMock } = vi.hoisted(() => ({ addLogMock: vi.fn() }));
+vi.mock('@/stores/logStore', () => ({
+  useLogStore: (selector: (s: { addLog: typeof addLogMock }) => unknown) => selector({ addLog: addLogMock }),
+}));
 
 describe('MarkdownContent — URI scheme rendering', () => {
   it('renders `[label](email://ID)` as an EmailRefPill when ID is in the allowlist', () => {
@@ -96,5 +106,73 @@ describe('MarkdownContent — URI scheme rendering', () => {
     for (const block of liBlocks) {
       expect(block).not.toMatch(/<p[\s>]/);
     }
+  });
+});
+
+describe('MarkdownContent — hallucination warning de-dup', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    addLogMock.mockClear();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('logs a dropped hallucinated draft ref only once across re-renders', () => {
+    // The model emitted `draft://d-1`, an id never produced by a tool call,
+    // so the chip is dropped. Streaming re-renders the bubble many times; the
+    // warning must still fire exactly once, not once per render.
+    // Fresh element each render (new props object) so React actually
+    // re-reconciles — mirroring how streaming pushes new content each tick.
+    const render = () =>
+      act(() => {
+        root.render(
+          <MarkdownContent
+            content="Here is your [draft](draft://d-1)"
+            sources={[]}
+            accountId="acc-1"
+            draftRefAllowlist={[]}
+          />,
+        );
+      });
+    render();
+    render();
+    render();
+
+    expect(addLogMock).toHaveBeenCalledTimes(1);
+    expect(addLogMock).toHaveBeenCalledWith('warn', 'chat', expect.stringContaining('Dropping draft://d-1'));
+  });
+
+  it('logs distinct hallucinated refs once each, even when one id repeats', () => {
+    const el = (
+      <MarkdownContent
+        content="[a](email://x-1) then [a-again](email://x-1) and [b](draft://y-2)"
+        sources={[]}
+        accountId="acc-1"
+        emailRefAllowlist={[]}
+        draftRefAllowlist={[]}
+      />
+    );
+    act(() => {
+      root.render(el);
+    });
+    act(() => {
+      root.render(el);
+    });
+
+    // Two distinct messages (one email id appearing twice collapses to one).
+    expect(addLogMock).toHaveBeenCalledTimes(2);
+    expect(addLogMock).toHaveBeenCalledWith('warn', 'chat', expect.stringContaining('Dropping email://x-1'));
+    expect(addLogMock).toHaveBeenCalledWith('warn', 'chat', expect.stringContaining('Dropping draft://y-2'));
   });
 });
