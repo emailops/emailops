@@ -59,20 +59,66 @@
     "error": "Une erreur s'est produite",
     "retry": "Réessayer"
   },
+  "processing": {
+    "routing": "Routage…",
+    "retrieving": "Récupération des courriels…",
+    "searchingContacts": "Recherche de contacts…",
+    "searchingEmails": "Recherche de courriels…",
+    "retrievingEmail": "Récupération du courriel…",
+    "generatingDraft": "Génération du brouillon…",
+    "runningTools": "Traitement de la requête…",
+    "generating": "Génération…"
+  },
   "reasoning": {
     "show": "Afficher le raisonnement",
     "hide": "Masquer le raisonnement",
     "label": "Raisonnement",
     "trace": {
       "arguments": "arguments",
+      "tool": "outil :",
       "resultPreview": "résultat (aperçu)",
       "failed": "· échec",
       "devOnly": "· (capture du prompt uniquement en version de développement)",
-      "timeline": "Chronologie",
+      "timeline": "Latence",
       "vectorFallback": "(repli vectoriel actif)",
       "route": "Route",
       "workflow": "Flux · appels au LLM",
-      "toolCallDetails": "Détails des appels d'outils"
+      "toolCallDetails": "Détails des appels d'outils",
+      "retrievalDetail": "Détail de la récupération",
+      "routeMode": {
+        "rag_first": "RAG d'abord",
+        "tools_first": "Outils d'abord"
+      },
+      "phase": {
+        "retrieval": "Récupération",
+        "toolRound": "LLM · tour d'outils {{n}}",
+        "finalStream": "LLM · réponse finale",
+        "toolLoop": "Boucle d'outils",
+        "llmStreaming": "Diffusion du LLM",
+        "llmCall": "Appel au LLM"
+      },
+      "step": {
+        "embedding": "Embedding",
+        "vectorSearch": "Recherche vectorielle",
+        "ftsSearch": "Recherche FTS",
+        "fetchMetadata": "Récupérer les métadonnées",
+        "threadExpansion": "Expansion du fil"
+      },
+      "noCalls": "aucun appel",
+      "fallbackSkipped": "repli (ignoré)",
+      "categories": "catégories",
+      "hits": "{{n}} résultats",
+      "fused": "{{n}} fusionnés",
+      "dedup": "dédup {{n}}",
+      "chars": "{{n}} carac.",
+      "tokens": "{{n}} tokens",
+      "throughput": "{{rate}} tok/s",
+      "copy": "copier",
+      "copied": "copié",
+      "model": "modèle",
+      "input": "entrée",
+      "output": "sortie",
+      "toolCallsRequested": "{{n}} appels d'outils"
     }
   },
   "sources": {

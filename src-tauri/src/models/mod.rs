@@ -645,6 +645,41 @@ pub struct ChatSourcesEvent {
     pub sources: Vec<ChatMessageSource>,
 }
 
+/// Coarse processing stage of an in-flight chat turn. Emitted on the
+/// `chat-phase` event at each stage boundary so the UI can show an LM
+/// Studio-style "Processing…" status before any answer tokens stream — the
+/// most common "what is it doing / is it stuck?" question. Ordered by when
+/// each stage occurs in `run_chat_turn`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatPhase {
+    /// Classifying the route (RAG-first vs tools-first).
+    Routing,
+    /// Retrieving relevant emails (hybrid vector + FTS).
+    Retrieving,
+    /// Looking up contacts (`search_contacts`).
+    SearchingContacts,
+    /// Searching the mailbox (`search_emails`).
+    SearchingEmails,
+    /// Fetching a specific email or thread body (`get_email_body` / `get_thread`).
+    RetrievingEmail,
+    /// Generating an email draft (`generate_email_draft`).
+    GeneratingDraft,
+    /// Running any other tool in the loop — generic fallback when no
+    /// tool-specific phase applies.
+    RunningTools,
+    /// Streaming the final assistant answer.
+    Generating,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPhaseEvent {
+    pub message_id: String,
+    pub conversation_id: String,
+    pub phase: ChatPhase,
+}
+
 /// Emitted when the backend auto-derives a conversation title from the first
 /// user turn, so the sidebar updates live.
 #[derive(Debug, Clone, Serialize)]
@@ -814,4 +849,48 @@ pub struct CreateTaskRequest {
     /// Optional company tag; when the caller omits it we fall back to deriving
     /// from the source email (or leave it `NULL` for chat-originated tasks).
     pub company: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_phase_serializes_as_camel_case_strings() {
+        // The frontend `ChatPhase` union and the i18n `chat:processing.*` keys
+        // are keyed off these exact wire values — keep them in lockstep.
+        assert_eq!(serde_json::to_value(ChatPhase::Routing).unwrap(), "routing");
+        assert_eq!(serde_json::to_value(ChatPhase::Retrieving).unwrap(), "retrieving");
+        assert_eq!(
+            serde_json::to_value(ChatPhase::SearchingContacts).unwrap(),
+            "searchingContacts"
+        );
+        assert_eq!(
+            serde_json::to_value(ChatPhase::SearchingEmails).unwrap(),
+            "searchingEmails"
+        );
+        assert_eq!(
+            serde_json::to_value(ChatPhase::RetrievingEmail).unwrap(),
+            "retrievingEmail"
+        );
+        assert_eq!(
+            serde_json::to_value(ChatPhase::GeneratingDraft).unwrap(),
+            "generatingDraft"
+        );
+        assert_eq!(serde_json::to_value(ChatPhase::RunningTools).unwrap(), "runningTools");
+        assert_eq!(serde_json::to_value(ChatPhase::Generating).unwrap(), "generating");
+    }
+
+    #[test]
+    fn chat_phase_event_uses_camel_case_field_names() {
+        let event = ChatPhaseEvent {
+            message_id: "m1".into(),
+            conversation_id: "c1".into(),
+            phase: ChatPhase::Generating,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["messageId"], "m1");
+        assert_eq!(json["conversationId"], "c1");
+        assert_eq!(json["phase"], "generating");
+    }
 }

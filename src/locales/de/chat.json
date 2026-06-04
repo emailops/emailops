@@ -59,20 +59,66 @@
     "error": "Etwas ist schiefgelaufen",
     "retry": "Erneut versuchen"
   },
+  "processing": {
+    "routing": "Route bestimmen…",
+    "retrieving": "E-Mails abrufen…",
+    "searchingContacts": "Kontakte suchen…",
+    "searchingEmails": "E-Mails suchen…",
+    "retrievingEmail": "E-Mail abrufen…",
+    "generatingDraft": "Entwurf generieren…",
+    "runningTools": "Anfrage verarbeiten…",
+    "generating": "Antwort generieren…"
+  },
   "reasoning": {
     "show": "Begründung anzeigen",
     "hide": "Begründung ausblenden",
     "label": "Begründung",
     "trace": {
       "arguments": "Argumente",
+      "tool": "Tool:",
       "resultPreview": "Ergebnis (Vorschau)",
       "failed": "· fehlgeschlagen",
       "devOnly": "· (Prompt-Erfassung nur in Entwickler-Builds)",
-      "timeline": "Zeitleiste",
+      "timeline": "Latenz",
       "vectorFallback": "(Vektor-Fallback aktiv)",
       "route": "Route",
       "workflow": "Workflow · LLM-Aufrufe",
-      "toolCallDetails": "Details der Tool-Aufrufe"
+      "toolCallDetails": "Details der Tool-Aufrufe",
+      "retrievalDetail": "Abrufdetails",
+      "routeMode": {
+        "rag_first": "RAG zuerst",
+        "tools_first": "Tools zuerst"
+      },
+      "phase": {
+        "retrieval": "Abruf",
+        "toolRound": "LLM · Tool-Runde {{n}}",
+        "finalStream": "LLM · finale Antwort",
+        "toolLoop": "Tool-Schleife",
+        "llmStreaming": "LLM-Streaming",
+        "llmCall": "LLM-Aufruf"
+      },
+      "step": {
+        "embedding": "Embedding",
+        "vectorSearch": "Vektorsuche",
+        "ftsSearch": "FTS-Suche",
+        "fetchMetadata": "Metadaten abrufen",
+        "threadExpansion": "Thread-Erweiterung"
+      },
+      "noCalls": "keine Aufrufe",
+      "fallbackSkipped": "Fallback (übersprungen)",
+      "categories": "Kategorien",
+      "hits": "{{n}} Treffer",
+      "fused": "{{n}} fusioniert",
+      "dedup": "Dedup {{n}}",
+      "chars": "{{n}} Zeichen",
+      "tokens": "{{n}} Tokens",
+      "throughput": "{{rate}} Tok/s",
+      "copy": "kopieren",
+      "copied": "kopiert",
+      "model": "Modell",
+      "input": "Eingabe",
+      "output": "Ausgabe",
+      "toolCallsRequested": "{{n}} Tool-Aufrufe"
     }
   },
   "sources": {

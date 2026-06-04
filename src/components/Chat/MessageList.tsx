@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ChatPhase } from '@/types';
 import { MessageBubble } from './MessageBubble';
 
 interface MessageListProps {
   messages: ChatMessage[];
   streamingMessageId: string | null;
+  /** Processing stage of the in-flight turn; applied only to the streaming bubble. */
+  streamingPhase: ChatPhase | null;
   accountId: string;
   onOpenEmail?: () => void;
 }
@@ -57,7 +59,13 @@ function ThreadContextCard({ content }: { content: string }) {
   );
 }
 
-export function MessageList({ messages, streamingMessageId, accountId, onOpenEmail }: MessageListProps) {
+export function MessageList({
+  messages,
+  streamingMessageId,
+  streamingPhase,
+  accountId,
+  onOpenEmail,
+}: MessageListProps) {
   const { t } = useTranslation(['chat']);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +105,7 @@ export function MessageList({ messages, streamingMessageId, accountId, onOpenEma
           key={m.id}
           message={m}
           isStreaming={m.id === streamingMessageId}
+          phase={m.id === streamingMessageId ? streamingPhase : null}
           accountId={accountId}
           onOpenEmail={onOpenEmail}
         />

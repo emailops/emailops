@@ -14,8 +14,8 @@ use crate::ai::provider::{AIProvider, AiMessage};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
-    ChatMessage, ChatMessageSource, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace, ChatTraceEvent,
-    LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
+    ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace,
+    ChatTraceEvent, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
@@ -27,7 +27,9 @@ use super::retrieval::{
 };
 use super::routing::classify_route;
 use super::tools;
-use super::{count_invalid_citations, emit_log, format_date, strip_invalid_citations, truncate_chars};
+use super::{
+    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, strip_invalid_citations, truncate_chars,
+};
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
 const MAX_HISTORY_TURNS: usize = 6;
@@ -703,11 +705,14 @@ struct ToolLoopOutcome {
 /// Run a tool-call loop: send the prompt with tool definitions, execute any
 /// requested tool calls, feed results back, repeat until the model gives a
 /// text-only response (or we hit MAX_TOOL_ROUNDS).
+#[allow(clippy::too_many_arguments)]
 async fn run_tool_loop(
     db: &Arc<Database>,
     registry: &Arc<tools::ToolRegistry>,
     provider: &dyn AIProvider,
     app: &AppHandle,
+    conversation_id: &str,
+    message_id: &str,
     account_id: &str,
     categories: &[String],
     initial_messages: Vec<(String, String)>,
@@ -785,6 +790,9 @@ async fn run_tool_loop(
                     &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
                 );
 
+                // Tool-specific status ("Searching emails" / "Generating
+                // draft" / …) so the UI reflects what each call is doing.
+                emit_phase(app, conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
                 let dispatched =
                     dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
@@ -1017,6 +1025,10 @@ async fn run_tool_loop(
                 &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
             );
 
+            // Tool-specific status ("Searching emails" / "Generating draft" /
+            // …) so the UI reflects what each call is doing instead of a flat
+            // "Running tools" for the whole loop.
+            emit_phase(app, conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
             let dispatched = dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
@@ -1192,6 +1204,7 @@ async fn run_thread_bound_turn(
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
 
     emit_log(&app, "info", "stage: tool_loop (thread-bound)");
+    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::RunningTools);
     let t_tool_loop = std::time::Instant::now();
     // Don't force a tool call: thread-bound chat is mostly Q&A about the
     // thread, and only an explicit "draft a reply" should produce a draft.
@@ -1200,6 +1213,8 @@ async fn run_thread_bound_turn(
         &registry,
         provider.as_ref(),
         &app,
+        &conversation_id,
+        &assistant_message_id,
         &account_id,
         &[],
         initial_messages,
@@ -1224,6 +1239,7 @@ async fn run_thread_bound_turn(
         }
     });
 
+    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Generating);
     let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.failed_without_answer {
         let detail = outcome
             .error
@@ -1476,6 +1492,7 @@ pub async fn run_chat_turn(
     // question. Per-stage timing follows on completion.
     let t_route = std::time::Instant::now();
     emit_log(&app, "info", "stage: route");
+    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Routing);
     let route = classify_route(&db, &user_question);
     emit_log(
         &app,
@@ -1507,6 +1524,7 @@ pub async fn run_chat_turn(
             (Vec::new(), None)
         }
         RouteMode::RagFirst => {
+            emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Retrieving);
             match retrieve_context_with_trace(
                 &db,
                 provider.as_ref(),
@@ -1638,12 +1656,15 @@ pub async fn run_chat_turn(
     ) = match &route.mode {
         RouteMode::ToolsFirst => {
             emit_log(&app, "info", "stage: tool_loop");
+            emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::RunningTools);
             let t_tool_loop = std::time::Instant::now();
             let outcome = run_tool_loop(
                 &db,
                 &registry,
                 provider.as_ref(),
                 &app,
+                &conversation_id,
+                &assistant_message_id,
                 &account_id,
                 &categories,
                 initial_messages,
@@ -1710,6 +1731,7 @@ pub async fn run_chat_turn(
     });
 
     emit_log(&app, "info", "stage: stream");
+    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Generating);
     let t_stream = std::time::Instant::now();
     let mut streaming_happened = false;
     // Captures the exact prompt sent to the final LLM call (dev builds only).

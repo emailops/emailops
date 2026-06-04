@@ -39,15 +39,46 @@ pub use turn::{build_prompt, run_chat_turn};
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::db::Database;
-use crate::models::Email;
+use crate::models::{ChatPhase, ChatPhaseEvent, Email};
 
 // ── Logging helper ──────────────────────────────────────────────────────────
 
 pub(super) fn emit_log(_app: &AppHandle, level: &str, message: &str) {
     crate::services::logger::log(level, "chat", message);
+}
+
+/// Notify the UI which coarse stage the in-flight turn just entered, so the
+/// chat bubble can show an LM Studio-style "Processing…" status before any
+/// answer tokens stream. Fire-and-forget: a dropped phase event only costs a
+/// less-specific status, never correctness, so we swallow emit errors like the
+/// other one-shot chat events.
+pub(super) fn emit_phase(app: &AppHandle, conversation_id: &str, message_id: &str, phase: ChatPhase) {
+    let _ = app.emit(
+        "chat-phase",
+        ChatPhaseEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            phase,
+        },
+    );
+}
+
+/// Map a tool name to the specific processing phase shown while it runs, so the
+/// status reads "Searching contacts" / "Searching emails" / "Retrieving email"
+/// / "Generating draft" instead of the generic "Running tools". Tools without a
+/// dedicated phase fall back to [`ChatPhase::RunningTools`]. Pure so the mapping
+/// is unit-testable without an `AppHandle`.
+pub(super) fn phase_for_tool(tool_name: &str) -> ChatPhase {
+    match tool_name {
+        "search_contacts" => ChatPhase::SearchingContacts,
+        "search_emails" => ChatPhase::SearchingEmails,
+        "get_email_body" | "get_thread" => ChatPhase::RetrievingEmail,
+        "generate_email_draft" => ChatPhase::GeneratingDraft,
+        _ => ChatPhase::RunningTools,
+    }
 }
 
 // ── Citation validator ─────────────────────────────────────────────────────
@@ -291,6 +322,46 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phase_for_tool_maps_known_tools_to_specific_phases() {
+        // The status label is keyed off these — search/contact/retrieve/draft
+        // each get a tool-specific phase instead of the generic "Running tools".
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("search_contacts")).unwrap(),
+            "searchingContacts"
+        );
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("search_emails")).unwrap(),
+            "searchingEmails"
+        );
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("get_email_body")).unwrap(),
+            "retrievingEmail"
+        );
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("get_thread")).unwrap(),
+            "retrievingEmail"
+        );
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("generate_email_draft")).unwrap(),
+            "generatingDraft"
+        );
+    }
+
+    #[test]
+    fn phase_for_tool_falls_back_to_running_tools_for_others() {
+        // Tools without a dedicated label (memory_search, create_task,
+        // get_attachments, …) keep the generic "Running tools" status.
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("memory_search")).unwrap(),
+            "runningTools"
+        );
+        assert_eq!(
+            serde_json::to_value(phase_for_tool("get_attachments")).unwrap(),
+            "runningTools"
+        );
+    }
 
     #[test]
     fn count_invalid_citations_flags_out_of_range() {

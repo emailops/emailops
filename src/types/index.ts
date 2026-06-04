@@ -390,6 +390,25 @@ export interface ChatSourcesEvent {
   sources: ChatMessageSource[];
 }
 
+/** Coarse processing stage of an in-flight chat turn. Drives the LM Studio-style
+ *  "Processing…" status the bubble shows before any answer tokens arrive.
+ *  Mirrors the Rust `ChatPhase` enum (camelCase serde). */
+export type ChatPhase =
+  | 'routing'
+  | 'retrieving'
+  | 'searchingContacts'
+  | 'searchingEmails'
+  | 'retrievingEmail'
+  | 'generatingDraft'
+  | 'runningTools'
+  | 'generating';
+
+export interface ChatPhaseEvent {
+  messageId: string;
+  conversationId: string;
+  phase: ChatPhase;
+}
+
 /** Trace + email-ref allowlist payload, fired on `chat-trace` once the
  *  turn finalizes. Mirrors `ChatTraceEvent` in Rust. The email refs
  *  piggyback on this event because both are computed at the same end-of-turn

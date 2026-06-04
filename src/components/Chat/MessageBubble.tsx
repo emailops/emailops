@@ -1,6 +1,7 @@
+import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { useLogStore } from '@/stores/logStore';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ChatPhase } from '@/types';
 import { MarkdownContent } from './MarkdownContent';
 import { ReasoningSection, StatsFooter } from './ReasoningTrace';
 import { SourcesList } from './SourcesList';
@@ -8,8 +9,30 @@ import { SourcesList } from './SourcesList';
 interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming: boolean;
+  /** Coarse processing stage of the in-flight turn — only set for the message
+   *  currently streaming. Drives the LM Studio-style status shown before any
+   *  answer tokens arrive. */
+  phase?: ChatPhase | null;
   accountId: string;
   onOpenEmail?: () => void;
+}
+
+/** LM Studio-style "Processing…" status: a spinner plus a localized label for
+ *  the stage the backend just entered (routing → retrieving → tools →
+ *  generating). Shown in place of the bare typing dots once the backend tells
+ *  us what it's doing, so a slow prompt-processing pass reads as progress
+ *  rather than a hang. */
+function ProcessingStatus({ phase }: { phase: ChatPhase }) {
+  const { t } = useTranslation(['chat']);
+  return (
+    <span className="inline-flex items-center gap-2 text-gray-500">
+      <svg className="w-3.5 h-3.5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+      <span>{t(`chat:processing.${phase}` as const)}</span>
+    </span>
+  );
 }
 
 /** Split assistant content into "thinking" (scratchpad inside <think>...</think>
@@ -90,7 +113,7 @@ function ThinkingSection({ text, streaming }: { text: string; streaming: boolean
   );
 }
 
-export function MessageBubble({ message, isStreaming, accountId, onOpenEmail }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, phase, accountId, onOpenEmail }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const addLog = useLogStore((s) => s.addLog);
 
@@ -141,13 +164,16 @@ export function MessageBubble({ message, isStreaming, accountId, onOpenEmail }: 
           message.content
         ) : (
           <>
-            {showTypingDots && (
-              <span className="inline-flex items-center gap-1 text-gray-500">
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
-              </span>
-            )}
+            {showTypingDots &&
+              (phase ? (
+                <ProcessingStatus phase={phase} />
+              ) : (
+                <span className="inline-flex items-center gap-1 text-gray-500">
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                </span>
+              ))}
             {hasThinking && <ThinkingSection text={trimmedThinking} streaming={!thinkingComplete && isStreaming} />}
             {hasAnswer && (
               <MarkdownContent

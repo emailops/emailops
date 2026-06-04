@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolCtx, ToolError, ToolOutput};
-use crate::services::chat::truncate_chars;
 use crate::services::emails;
-use crate::util::html::strip_html_for_fts;
+use crate::services::thread_clean;
 
 pub struct GetEmailBodyTool;
 
@@ -43,14 +42,15 @@ impl Tool for GetEmailBodyTool {
         match emails::get_email_body(ctx.db, email_id) {
             Ok(body) if body.is_empty() => Ok(ToolOutput::text("Email body is empty or not yet downloaded.")),
             Ok(body) => {
-                let text = strip_html_for_fts(&body);
+                // Reuse the same cleaning pipeline as "chat about this email"
+                // (strip HTML, quoted replies, signatures, invisible chars) at
+                // the single-email ceiling, so the model gets the body nearly
+                // whole instead of a 3000-char slice cut mid-sentence.
+                let text = thread_clean::clean_email_body(&body, thread_clean::MAX_CHARS_PER_EMAIL);
                 // Whitelist the email the LLM just read so any
                 // `email://EMAIL_ID` link it emits ("here's the relevant
                 // excerpt from <email://X>...") passes validation.
-                Ok(ToolOutput::text_with_email_refs(
-                    truncate_chars(text.trim(), 3000),
-                    vec![email_id.to_string()],
-                ))
+                Ok(ToolOutput::text_with_email_refs(text, vec![email_id.to_string()]))
             }
             Err(e) => Ok(ToolOutput::text(format!("Error: {}", e))),
         }

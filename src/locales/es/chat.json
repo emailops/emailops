@@ -59,20 +59,66 @@
     "error": "Algo ha salido mal",
     "retry": "Reintentar"
   },
+  "processing": {
+    "routing": "Enrutando…",
+    "retrieving": "Recuperando correos…",
+    "searchingContacts": "Buscando contactos…",
+    "searchingEmails": "Buscando correos…",
+    "retrievingEmail": "Recuperando correo…",
+    "generatingDraft": "Generando borrador…",
+    "runningTools": "Procesando consulta…",
+    "generating": "Generando…"
+  },
   "reasoning": {
     "show": "Mostrar razonamiento",
     "hide": "Ocultar razonamiento",
     "label": "Razonamiento",
     "trace": {
       "arguments": "argumentos",
+      "tool": "herramienta:",
       "resultPreview": "resultado (vista previa)",
       "failed": "· error",
       "devOnly": "· (captura de prompt solo en versiones de desarrollo)",
-      "timeline": "Cronología",
+      "timeline": "Latencia",
       "vectorFallback": "(reserva vectorial activa)",
       "route": "Ruta",
       "workflow": "Flujo · llamadas al LLM",
-      "toolCallDetails": "Detalles de llamadas a herramientas"
+      "toolCallDetails": "Detalles de llamadas a herramientas",
+      "retrievalDetail": "Detalle de recuperación",
+      "routeMode": {
+        "rag_first": "RAG primero",
+        "tools_first": "Herramientas primero"
+      },
+      "phase": {
+        "retrieval": "Recuperación",
+        "toolRound": "LLM · ronda de herramientas {{n}}",
+        "finalStream": "LLM · respuesta final",
+        "toolLoop": "Bucle de herramientas",
+        "llmStreaming": "Transmisión del LLM",
+        "llmCall": "Llamada al LLM"
+      },
+      "step": {
+        "embedding": "Embedding",
+        "vectorSearch": "Búsqueda vectorial",
+        "ftsSearch": "Búsqueda FTS",
+        "fetchMetadata": "Obtener metadatos",
+        "threadExpansion": "Expansión del hilo"
+      },
+      "noCalls": "sin llamadas",
+      "fallbackSkipped": "reserva (omitida)",
+      "categories": "categorías",
+      "hits": "{{n}} resultados",
+      "fused": "{{n}} fusionados",
+      "dedup": "dedup {{n}}",
+      "chars": "{{n}} carac.",
+      "tokens": "{{n}} tokens",
+      "throughput": "{{rate}} tok/s",
+      "copy": "copiar",
+      "copied": "copiado",
+      "model": "modelo",
+      "input": "entrada",
+      "output": "salida",
+      "toolCallsRequested": "{{n}} llamadas a herramientas"
     }
   },
   "sources": {

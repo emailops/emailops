@@ -10,6 +10,8 @@ import { errorText } from '@/lib/errors';
 import type {
   ChatConversation,
   ChatMessage,
+  ChatPhase,
+  ChatPhaseEvent,
   ChatRenamedEvent,
   ChatSourcesEvent,
   ChatStreamEvent,
@@ -42,6 +44,10 @@ interface ChatStore {
   messages: ChatMessage[];
   /** id of the assistant message currently receiving tokens, if any */
   streamingMessageId: string | null;
+  /** Coarse processing stage of the in-flight turn (routing → retrieving →
+   *  running tools → generating). Null when nothing is streaming. Drives the
+   *  bubble's "Processing…" status before the first answer token arrives. */
+  streamingPhase: ChatPhase | null;
   isSending: boolean;
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
@@ -67,6 +73,7 @@ interface ChatStore {
 
   /** Event handlers — wired once in App.tsx via tauri listen() */
   handleStreamToken: (e: ChatStreamEvent) => void;
+  handlePhase: (e: ChatPhaseEvent) => void;
   handleSources: (e: ChatSourcesEvent) => void;
   handleTrace: (e: ChatTraceEvent) => void;
   handleRenamed: (e: ChatRenamedEvent) => void;
@@ -80,6 +87,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   activeConversationId: null,
   messages: [],
   streamingMessageId: null,
+  streamingPhase: null,
   isSending: false,
   isLoadingConversations: false,
   isLoadingMessages: false,
@@ -189,7 +197,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return;
     }
     if (get().isSending) return;
-    set({ isSending: true, error: null });
+    // Clear any stale phase from a previous turn up front. We must NOT clear it
+    // again when the command returns: a fast turn (e.g. thread-bound chat) can
+    // emit its first phase during the await, and that early phase must survive
+    // the streamingMessageId assignment so the status shows instead of bare dots.
+    set({ isSending: true, error: null, streamingPhase: null });
 
     try {
       const { userMessage, assistantMessage } = await api.sendChatMessage(
@@ -205,7 +217,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         isSending: false,
       }));
     } catch (e) {
-      set({ isSending: false, error: errorText(e), streamingMessageId: null });
+      set({ isSending: false, error: errorText(e), streamingMessageId: null, streamingPhase: null });
     }
   },
 
@@ -231,9 +243,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const messages = [...s.messages];
       messages[idx] = updated;
       const streamingMessageId = evt.done ? null : s.streamingMessageId;
+      // The turn is over once `done` fires — drop the processing status so a
+      // stale "Generating…" can't linger under the finished answer.
+      const streamingPhase = evt.done ? null : s.streamingPhase;
       const error = evt.error ?? s.error;
-      return { messages, streamingMessageId, error };
+      return { messages, streamingMessageId, streamingPhase, error };
     });
+  },
+
+  handlePhase: (evt) => {
+    const { activeConversationId, streamingMessageId } = get();
+    if (evt.conversationId !== activeConversationId) return;
+    // Scope to the active conversation's in-flight turn so a late event from a
+    // previous turn can't flip the status back. The streaming id is only known
+    // once sendMessage's command returns, so a turn that reaches its first
+    // emit_phase quickly (e.g. thread-bound chat jumping straight to
+    // RunningTools) can beat that assignment — accept the event while the id is
+    // still null. handleStreamToken nulls streamingPhase on `done`, so no event
+    // after the turn ends can re-show a phase.
+    if (streamingMessageId !== null && evt.messageId !== streamingMessageId) return;
+    set({ streamingPhase: evt.phase });
   },
 
   handleSources: (evt) => {
@@ -288,6 +317,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       activeConversationId: null,
       messages: [],
       streamingMessageId: null,
+      streamingPhase: null,
       isSending: false,
       isLoadingConversations: false,
       isLoadingMessages: false,

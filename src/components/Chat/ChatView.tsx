@@ -32,6 +32,7 @@ export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
     activeConversationId,
     messages,
     streamingMessageId,
+    streamingPhase,
     isSending,
     isLoadingConversations,
     isLoadingMessages,
@@ -184,6 +185,7 @@ export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
                 <MessageList
                   messages={messages}
                   streamingMessageId={streamingMessageId}
+                  streamingPhase={streamingPhase}
                   accountId={accountId}
                   onOpenEmail={onNavigateToInbox}
                 />

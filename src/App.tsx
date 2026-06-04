@@ -56,6 +56,7 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import { useTagStore } from '@/stores/tagStore';
 import type {
   ActiveFilter,
+  ChatPhaseEvent,
   ChatRenamedEvent,
   ChatSourcesEvent,
   ChatStreamEvent,
@@ -573,6 +574,11 @@ function AppInner() {
     unlisteners.push(
       listen<ChatStreamEvent>('chat-stream', (event) => {
         useChatStore.getState().handleStreamToken(event.payload);
+      }),
+    );
+    unlisteners.push(
+      listen<ChatPhaseEvent>('chat-phase', (event) => {
+        useChatStore.getState().handlePhase(event.payload);
       }),
     );
     unlisteners.push(

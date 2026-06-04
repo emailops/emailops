@@ -7,7 +7,7 @@ describe('extractEmail', () => {
   });
 
   it('returns a bare address lowercased and trimmed', () => {
-    expect(extractEmail('  GERODP@gmail.com ')).toBe('gerodp@gmail.com');
+    expect(extractEmail('  GERO@emailops.com ')).toBe('gero@emailops.com');
   });
 });
 
@@ -16,7 +16,7 @@ describe('mergePendingRecipient', () => {
   // (user didn't press Enter/Tab or pick a suggestion) must still count, so
   // Send isn't disabled and the address isn't dropped on send.
   it('includes a valid email still sitting in the input box', () => {
-    expect(mergePendingRecipient([], 'gerodp@gmail.com')).toEqual(['gerodp@gmail.com']);
+    expect(mergePendingRecipient([], 'gero@emailops.com')).toEqual(['gero@emailops.com']);
   });
 
   it('returns the committed list unchanged when the input is empty', () => {

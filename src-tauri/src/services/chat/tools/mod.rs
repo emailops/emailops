@@ -1621,6 +1621,37 @@ mod tests {
         assert!(!out.contains("<b>"), "HTML should be stripped; got: {}", out);
     }
 
+    /// Regression: `get_email_body` used to clip the body at a hard 3000-char
+    /// cap (truncate_chars), which sliced long emails mid-sentence. It now
+    /// reuses `thread_clean::clean_email_body` with the single-email ceiling
+    /// (`MAX_CHARS_PER_EMAIL` = 8000), matching the "chat about this email"
+    /// path — so a 5000-char body comes back whole.
+    #[test]
+    fn get_email_body_returns_full_body_not_clipped_at_old_3000_cap() {
+        let db = tools_test_db();
+        // 5000 chars of unbroken plain text — beyond the old 3000 cap but under
+        // the 8000 ceiling, so the cleaner returns it intact (no "…" marker).
+        let long_body = "x".repeat(5000);
+        seed_email(&db, "e1", "acc", "t1", "A", "a@x.com", "subj", &long_body, 1);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "get_email_body",
+            &arg(serde_json::json!({ "email_id": "e1" })),
+        );
+        assert!(
+            out.chars().count() > 3000,
+            "body must not be clipped at the old 3000 cap; got {} chars",
+            out.chars().count()
+        );
+        assert!(
+            !out.ends_with('…'),
+            "5000-char body is under the 8000 ceiling — should not be truncated; out len {}",
+            out.chars().count()
+        );
+    }
+
     #[test]
     fn get_email_body_missing_id_returns_error() {
         let db = tools_test_db();
@@ -1675,6 +1706,38 @@ mod tests {
         let b_pos = out.find("reply").expect("thread missing reply");
         assert!(a_pos < b_pos, "earlier email should appear first; got: {}", out);
         assert!(!out.contains("unrelated"), "other thread leaked: {}", out);
+    }
+
+    /// Regression: `get_thread` used to clip each email at a hard 1500-char
+    /// cap. It now reuses `thread_clean::clean_email_body` with the
+    /// thread-aware budget (`chars_per_email(n)`), so a short thread keeps each
+    /// message nearly whole instead of slicing it mid-sentence.
+    #[test]
+    fn get_thread_returns_full_bodies_not_clipped_at_old_1500_cap() {
+        let db = tools_test_db();
+        // A 2-email thread → chars_per_email(2) = 6000, so each 4000-char body
+        // survives whole (well beyond the old 1500 cap).
+        let body_a = "a".repeat(4000);
+        let body_b = "b".repeat(4000);
+        seed_email(&db, "ta", "acc", "thread-1", "A", "a@x.com", "first", &body_a, 100);
+        seed_email(&db, "tb", "acc", "thread-1", "B", "b@x.com", "reply", &body_b, 200);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "get_thread",
+            &arg(serde_json::json!({ "thread_id": "thread-1" })),
+        );
+        assert!(
+            out.contains(&body_a),
+            "first email body clipped below 4000 chars; out len {}",
+            out.len()
+        );
+        assert!(
+            out.contains(&body_b),
+            "second email body clipped below 4000 chars; out len {}",
+            out.len()
+        );
     }
 
     #[test]

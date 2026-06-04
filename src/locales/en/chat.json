@@ -59,20 +59,66 @@
     "error": "Something went wrong",
     "retry": "Retry"
   },
+  "processing": {
+    "routing": "Routing…",
+    "retrieving": "Retrieving emails…",
+    "searchingContacts": "Searching contacts…",
+    "searchingEmails": "Searching emails…",
+    "retrievingEmail": "Retrieving email…",
+    "generatingDraft": "Generating draft…",
+    "runningTools": "Processing prompt…",
+    "generating": "Generating…"
+  },
   "reasoning": {
     "show": "Show reasoning",
     "hide": "Hide reasoning",
     "label": "Reasoning",
     "trace": {
       "arguments": "arguments",
+      "tool": "tool:",
       "resultPreview": "result (preview)",
       "failed": "· failed",
       "devOnly": "· (prompt capture only in dev builds)",
-      "timeline": "Timeline",
+      "timeline": "Latency",
       "vectorFallback": "(vector fallback active)",
       "route": "Route",
       "workflow": "Workflow · LLM calls",
-      "toolCallDetails": "Tool call details"
+      "toolCallDetails": "Tool call details",
+      "retrievalDetail": "Retrieval detail",
+      "routeMode": {
+        "rag_first": "RAG first",
+        "tools_first": "Tools first"
+      },
+      "phase": {
+        "retrieval": "Retrieval",
+        "toolRound": "LLM · tool round {{n}}",
+        "finalStream": "LLM · final stream",
+        "toolLoop": "Tool loop",
+        "llmStreaming": "LLM streaming",
+        "llmCall": "LLM call"
+      },
+      "step": {
+        "embedding": "Embedding",
+        "vectorSearch": "Vector search",
+        "ftsSearch": "FTS search",
+        "fetchMetadata": "Fetch metadata",
+        "threadExpansion": "Thread expansion"
+      },
+      "noCalls": "no calls",
+      "fallbackSkipped": "fallback (skipped)",
+      "categories": "categories",
+      "hits": "{{n}} hits",
+      "fused": "{{n}} fused",
+      "dedup": "dedup {{n}}",
+      "chars": "{{n}} chars",
+      "tokens": "{{n}} tokens",
+      "throughput": "{{rate}} tok/s",
+      "copy": "copy",
+      "copied": "copied",
+      "model": "model",
+      "input": "input",
+      "output": "output",
+      "toolCallsRequested": "{{n}} tool calls"
     }
   },
   "sources": {
