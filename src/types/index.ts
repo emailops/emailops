@@ -453,6 +453,10 @@ export interface RetrievalTrace {
 
 export interface ToolCallTrace {
   name: string;
+  /** Tool-loop round that issued this call (0-based). -1 for preseeded
+   * shortcut tools that run before the LLM loop. Lets the UI render tool and
+   * LLM calls in true execution order. */
+  round: number;
   arguments: unknown;
   resultPreview: string;
   resultChars: number;

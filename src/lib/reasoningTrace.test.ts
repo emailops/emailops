@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatTrace, LlmCallTrace, RetrievalTrace, ToolCallTrace } from '@/types';
-import { buildWaterfall, formatLatency, groupWorkflow, tokensPerSecond } from './reasoningTrace';
+import type { ChatTrace, LlmCallTrace, ToolCallTrace } from '@/types';
+import { buildFlow, formatLatency, tokensPerSecond } from './reasoningTrace';
 
 function makeTrace(overrides: Partial<ChatTrace> = {}): ChatTrace {
   return {
@@ -17,8 +17,13 @@ function llmCall(overrides: Partial<LlmCallTrace>): LlmCallTrace {
   return { kind: 'tool_round', round: 0, latencyMs: 0, ...overrides };
 }
 
-function toolCall(name: string): ToolCallTrace {
-  return { name, arguments: {}, resultPreview: '', resultChars: 0, elapsedMs: 0 };
+function toolCall(name: string, round = 0): ToolCallTrace {
+  return { name, round, arguments: {}, resultPreview: '', resultChars: 0, elapsedMs: 0 };
+}
+
+/** Collapse a flow into a readable `kind:label` list for order assertions. */
+function flowLabels(trace: ChatTrace): string[] {
+  return buildFlow(trace).map((e) => (e.kind === 'llm' ? `llm:${e.call.kind}:${e.call.round}` : `tool:${e.call.name}`));
 }
 
 describe('formatLatency', () => {
@@ -45,160 +50,131 @@ describe('tokensPerSecond', () => {
   });
 });
 
-describe('buildWaterfall', () => {
-  it('renders a single full-width bar for a thread-bound turn with one slow LLM round', () => {
+describe('buildFlow', () => {
+  it('places a preseeded shortcut tool before the LLM round that consumed it', () => {
+    // Shortcut path: search_emails runs first (round -1), then tool_round 0
+    // synthesises the answer and requests no further tools. Execution order is
+    // tool → LLM, so the flow must read that way (the bug was the reverse).
     const trace = makeTrace({
-      totalElapsedMs: 30000,
-      toolLoopMs: 30000,
-      llmCalls: [llmCall({ kind: 'tool_round', round: 0, latencyMs: 30000 })],
+      totalElapsedMs: 35000,
+      toolCalls: [toolCall('search_emails', -1)],
+      llmCalls: [llmCall({ kind: 'tool_round', round: 0, latencyMs: 35000, toolCallsRequested: 0 })],
     });
 
-    const phases = buildWaterfall(trace);
-
-    expect(phases).toHaveLength(1);
-    expect(phases[0]).toMatchObject({ group: 'llm', labelKey: 'toolRound', labelParams: { n: 0 }, ms: 30000 });
-    expect(phases[0].fraction).toBe(1);
+    expect(flowLabels(trace)).toEqual(['tool:search_emails', 'llm:tool_round:0']);
   });
 
-  it('sizes retrieval and final-stream bars proportionally to the total', () => {
-    const retrieval: RetrievalTrace = {
-      vectorHits: 5,
-      ftsHits: 3,
-      fusedTopK: 8,
-      elapsedMs: 200,
-      vectorFallback: false,
-    };
-    const trace = makeTrace({
-      route: { mode: 'rag_first', reason: '', matchedKeywords: [], classifier: 'heuristic' },
-      retrieval,
-      totalElapsedMs: 1000,
-      llmStreamingMs: 800,
-      llmCalls: [llmCall({ kind: 'final_stream', round: -1, latencyMs: 800 })],
-    });
-
-    const phases = buildWaterfall(trace);
-
-    expect(phases.map((p) => p.group)).toEqual(['retrieval', 'llm']);
-    expect(phases[0].fraction).toBeCloseTo(0.2);
-    expect(phases[1].fraction).toBeCloseTo(0.8);
-    expect(phases[1].labelKey).toBe('finalStream');
-  });
-
-  it('never lets a bar overflow the track when phase timings exceed the total', () => {
-    const trace = makeTrace({
-      totalElapsedMs: 1000,
-      llmCalls: [
-        llmCall({ kind: 'tool_round', round: 0, latencyMs: 700 }),
-        llmCall({ kind: 'final_stream', round: -1, latencyMs: 500 }),
-      ],
-    });
-
-    const phases = buildWaterfall(trace);
-    const sum = phases.reduce((acc, p) => acc + p.fraction, 0);
-
-    expect(phases.every((p) => p.fraction <= 1)).toBe(true);
-    expect(sum).toBeCloseTo(1);
-  });
-
-  it('falls back to the aggregate tool-loop timing when no per-call breakdown exists', () => {
-    const trace = makeTrace({ totalElapsedMs: 5000, toolLoopMs: 5000 });
-
-    const phases = buildWaterfall(trace);
-
-    expect(phases).toHaveLength(1);
-    expect(phases[0]).toMatchObject({ group: 'tools', labelKey: 'toolLoop', ms: 5000 });
-  });
-
-  it('marks a failed LLM round so the bar can be styled as an error', () => {
-    const trace = makeTrace({
-      totalElapsedMs: 100,
-      llmCalls: [llmCall({ kind: 'tool_round', round: 0, latencyMs: 100, failed: true })],
-    });
-
-    expect(buildWaterfall(trace)[0].failed).toBe(true);
-  });
-
-  it('interleaves tool-call bars right after the round that requested them', () => {
+  it('places a normal-loop tool right after the round that requested it', () => {
     const trace = makeTrace({
       totalElapsedMs: 77000,
-      toolCalls: [{ name: 'generate_email_draft', arguments: {}, resultPreview: '', resultChars: 0, elapsedMs: 19000 }],
+      toolCalls: [toolCall('generate_email_draft', 0)],
       llmCalls: [
         llmCall({ kind: 'tool_round', round: 0, latencyMs: 34600, toolCallsRequested: 1 }),
         llmCall({ kind: 'tool_round', round: 1, latencyMs: 23500 }),
       ],
     });
 
-    const phases = buildWaterfall(trace);
-
-    expect(phases.map((p) => p.group)).toEqual(['llm', 'tools', 'llm']);
-    expect(phases[1]).toMatchObject({ group: 'tools', label: 'generate_email_draft', ms: 19000 });
-    // round0 + tool + round1 = 77.1s ≈ total, so each bar is sized against the real total.
-    expect(phases[0].fraction).toBeCloseTo(34600 / 77100);
-    expect(phases[1].fraction).toBeCloseTo(19000 / 77100);
+    expect(flowLabels(trace)).toEqual(['llm:tool_round:0', 'tool:generate_email_draft', 'llm:tool_round:1']);
   });
 
-  it('still surfaces tool-call bars that no round claimed', () => {
+  it('orders multi-round tool calls by the round that issued each one', () => {
     const trace = makeTrace({
-      totalElapsedMs: 1000,
-      toolCalls: [{ name: 'orphan', arguments: {}, resultPreview: '', resultChars: 0, elapsedMs: 200 }],
-      llmCalls: [llmCall({ kind: 'final_stream', round: -1, latencyMs: 800 })],
+      toolCalls: [toolCall('search', 0), toolCall('fetch', 1), toolCall('draft', 1)],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 }),
+        llmCall({ kind: 'tool_round', round: 1, toolCallsRequested: 2 }),
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
     });
 
-    const phases = buildWaterfall(trace);
-
-    expect(phases.map((p) => p.label ?? p.labelKey)).toEqual(['finalStream', 'orphan']);
-  });
-});
-
-describe('groupWorkflow', () => {
-  it('attributes each tool call to the round that requested it, in execution order', () => {
-    const llmCalls = [
-      llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 }),
-      llmCall({ kind: 'tool_round', round: 1, toolCallsRequested: 2 }),
-      llmCall({ kind: 'final_stream', round: -1 }),
-    ];
-    const toolCalls = [toolCall('search'), toolCall('fetch'), toolCall('draft')];
-
-    const { items, unattributed } = groupWorkflow(llmCalls, toolCalls);
-
-    expect(items.map((i) => i.tools.map((t) => t.name))).toEqual([['search'], ['fetch', 'draft'], []]);
-    expect(unattributed).toEqual([]);
+    expect(flowLabels(trace)).toEqual([
+      'llm:tool_round:0',
+      'tool:search',
+      'llm:tool_round:1',
+      'tool:fetch',
+      'tool:draft',
+      'llm:final_stream:-1',
+    ]);
   });
 
-  it('gives a final-stream call no tool calls even if it carries a stray count', () => {
-    const llmCalls = [llmCall({ kind: 'final_stream', round: -1, toolCallsRequested: 3 })];
-    const toolCalls = [toolCall('search')];
+  it('interleaves per-round tools by request count even when legacy tools all default to round 0', () => {
+    // Traces persisted before the `round` field existed deserialize every tool
+    // to round 0. The flow must still place each round's tool after that round
+    // using the reliable per-round request count, not the tool's round number
+    // (otherwise all tools cluster under round 0 — the legacy-trace bug).
+    const trace = makeTrace({
+      toolCalls: [toolCall('search_contacts', 0), toolCall('search_emails', 0), toolCall('search_emails', 0)],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 }),
+        llmCall({ kind: 'tool_round', round: 1, toolCallsRequested: 1 }),
+        llmCall({ kind: 'tool_round', round: 2, toolCallsRequested: 1 }),
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
+    });
 
-    const { items, unattributed } = groupWorkflow(llmCalls, toolCalls);
-
-    expect(items[0].tools).toEqual([]);
-    expect(unattributed).toEqual([toolCall('search')]);
+    expect(flowLabels(trace)).toEqual([
+      'llm:tool_round:0',
+      'tool:search_contacts',
+      'llm:tool_round:1',
+      'tool:search_emails',
+      'llm:tool_round:2',
+      'tool:search_emails',
+      'llm:final_stream:-1',
+    ]);
   });
 
-  it('returns tool calls that no round claimed as unattributed so nothing is hidden', () => {
-    const llmCalls = [llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 })];
-    const toolCalls = [toolCall('search'), toolCall('orphan')];
+  it('interleaves a preseeded tool and a tool the first round then requests', () => {
+    const trace = makeTrace({
+      toolCalls: [toolCall('search_emails', -1), toolCall('get_thread', 0)],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 }),
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
+    });
 
-    const { items, unattributed } = groupWorkflow(llmCalls, toolCalls);
-
-    expect(items[0].tools.map((t) => t.name)).toEqual(['search']);
-    expect(unattributed.map((t) => t.name)).toEqual(['orphan']);
+    expect(flowLabels(trace)).toEqual([
+      'tool:search_emails',
+      'llm:tool_round:0',
+      'tool:get_thread',
+      'llm:final_stream:-1',
+    ]);
   });
 
-  it('treats a missing request count as zero rather than swallowing tool calls', () => {
-    const llmCalls = [llmCall({ kind: 'tool_round', round: 0 })];
-    const toolCalls = [toolCall('search')];
+  it('never attaches tool calls to a final-stream LLM call', () => {
+    const trace = makeTrace({
+      toolCalls: [toolCall('search', 0)],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 1 }),
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
+    });
 
-    const { items, unattributed } = groupWorkflow(llmCalls, toolCalls);
-
-    expect(items[0].tools).toEqual([]);
-    expect(unattributed.map((t) => t.name)).toEqual(['search']);
+    expect(flowLabels(trace)).toEqual(['llm:tool_round:0', 'tool:search', 'llm:final_stream:-1']);
   });
 
-  it('reports all tool calls as unattributed when there are no LLM-call records', () => {
-    const { items, unattributed } = groupWorkflow([], [toolCall('search')]);
+  it('surfaces tool calls that no round claimed at the end instead of hiding them', () => {
+    const trace = makeTrace({
+      toolCalls: [toolCall('orphan', 5)],
+      llmCalls: [llmCall({ kind: 'final_stream', round: -1 })],
+    });
 
-    expect(items).toEqual([]);
-    expect(unattributed.map((t) => t.name)).toEqual(['search']);
+    expect(flowLabels(trace)).toEqual(['llm:final_stream:-1', 'tool:orphan']);
+  });
+
+  it('returns an empty flow when there are no LLM or tool calls', () => {
+    expect(buildFlow(makeTrace())).toEqual([]);
+  });
+
+  it('carries the underlying call objects through so the UI can render details', () => {
+    const trace = makeTrace({
+      toolCalls: [toolCall('search_emails', -1)],
+      llmCalls: [llmCall({ kind: 'tool_round', round: 0, latencyMs: 35000 })],
+    });
+
+    const flow = buildFlow(trace);
+    expect(flow[0]).toMatchObject({ kind: 'tool', call: { name: 'search_emails' } });
+    expect(flow[1]).toMatchObject({ kind: 'llm', call: { kind: 'tool_round', latencyMs: 35000 } });
+    // ids are unique so they're safe as React keys.
+    expect(new Set(flow.map((e) => e.id)).size).toBe(flow.length);
   });
 });

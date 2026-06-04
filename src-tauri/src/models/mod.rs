@@ -584,6 +584,12 @@ pub struct LlmCallTrace {
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallTrace {
     pub name: String,
+    /// Tool-loop round that issued this call (0-based). `-1` for preseeded
+    /// shortcut tools that run before the LLM loop. Lets the UI render tool
+    /// and LLM calls in true execution order. `#[serde(default)]` keeps old
+    /// persisted traces (which lack the field) deserialising to `0`.
+    #[serde(default)]
+    pub round: i32,
     /// JSON arguments as sent to the tool.
     pub arguments: serde_json::Value,
     /// Truncated copy of the tool result (currently 16 KiB). Large enough for

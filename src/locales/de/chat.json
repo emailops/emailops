@@ -79,10 +79,9 @@
       "resultPreview": "Ergebnis (Vorschau)",
       "failed": "· fehlgeschlagen",
       "devOnly": "· (Prompt-Erfassung nur in Entwickler-Builds)",
-      "timeline": "Latenz",
       "vectorFallback": "(Vektor-Fallback aktiv)",
       "route": "Route",
-      "workflow": "Workflow · LLM-Aufrufe",
+      "workflow": "Ablauf",
       "toolCallDetails": "Details der Tool-Aufrufe",
       "retrievalDetail": "Abrufdetails",
       "routeMode": {
@@ -90,11 +89,8 @@
         "tools_first": "Tools zuerst"
       },
       "phase": {
-        "retrieval": "Abruf",
         "toolRound": "LLM · Tool-Runde {{n}}",
         "finalStream": "LLM · finale Antwort",
-        "toolLoop": "Tool-Schleife",
-        "llmStreaming": "LLM-Streaming",
         "llmCall": "LLM-Aufruf"
       },
       "step": {

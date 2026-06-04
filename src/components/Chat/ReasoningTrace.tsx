@@ -1,23 +1,10 @@
 import { Fragment, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  buildWaterfall,
-  formatLatency,
-  groupWorkflow,
-  tokensPerSecond,
-  type WaterfallPhase,
-} from '@/lib/reasoningTrace';
+import { buildFlow, formatLatency, tokensPerSecond } from '@/lib/reasoningTrace';
 import type { ChatMessage, ChatTrace, LlmCallTrace, RouteMode, ToolCallTrace } from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
 export { formatLatency };
-
-/** Tailwind bar color per waterfall phase group. */
-const PHASE_COLOR: Record<WaterfallPhase['group'], string> = {
-  retrieval: 'bg-sky-500',
-  llm: 'bg-primary-500',
-  tools: 'bg-amber-500',
-};
 
 function CopyButton({ text }: { text: string }) {
   const { t } = useTranslation(['chat']);
@@ -158,44 +145,8 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
   );
 }
 
-/** Proportional latency waterfall — one bar per phase that consumed wall-clock
- *  time. Replaces the old flat step list; the per-step retrieval timings live
- *  in `RetrievalDetail` below. */
-function LatencyWaterfall({ trace }: { trace: ChatTrace }) {
-  const { t } = useTranslation(['chat']);
-  const phases = buildWaterfall(trace);
-  if (phases.length === 0) {
-    return null;
-  }
-  return (
-    <div>
-      <div className="text-gray-600 uppercase tracking-wide text-xs mb-1">
-        {t('chat:reasoning.trace.timeline')} · {formatLatency(trace.totalElapsedMs)}
-      </div>
-      <ul className="space-y-1">
-        {phases.map((p) => (
-          <li key={p.id} className="flex items-center gap-2">
-            <span className={`min-w-[160px] truncate ${p.label ? 'font-mono text-gray-700' : 'text-gray-800'}`}>
-              {p.label
-                ? `tool: ${p.label}`
-                : p.labelKey && t(`chat:reasoning.trace.phase.${p.labelKey}` as const, p.labelParams)}
-            </span>
-            <span className="flex-1 h-2 rounded bg-gray-100 overflow-hidden">
-              <span
-                className={`block h-full rounded ${p.failed ? 'bg-red-500' : PHASE_COLOR[p.group]}`}
-                style={{ width: `${Math.max(p.fraction * 100, 2)}%` }}
-              />
-            </span>
-            <span className="text-gray-700 tabular-nums min-w-[52px] text-right">{formatLatency(p.ms)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 /** Per-step retrieval timings + counts — the granular detail a developer wants
- *  when the retrieval bar in the waterfall looks slow. */
+ *  when the retrieval step in the flow looks slow. */
 function RetrievalDetail({ trace }: { trace: ChatTrace }) {
   const { t } = useTranslation(['chat']);
   const r = trace.retrieval;
@@ -275,7 +226,7 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
   const routeMode = (mode: RouteMode | string): string =>
     mode === 'rag_first' || mode === 'tools_first' ? t(`chat:reasoning.trace.routeMode.${mode}` as const) : mode;
 
-  const { items, unattributed } = groupWorkflow(trace.llmCalls ?? [], trace.toolCalls);
+  const flow = buildFlow(trace);
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-200">
@@ -324,45 +275,28 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
             )}
           </div>
 
-          {/* Proportional latency waterfall */}
-          <LatencyWaterfall trace={trace} />
-
           {/* Per-step retrieval breakdown */}
           <RetrievalDetail trace={trace} />
 
-          {/* Workflow — every LLM call in order, with the tool calls each
-              round triggered nested beneath it so the full flow reads top to
-              bottom: tool_round 0 → its tool calls → tool_round 1 → … →
-              final_stream. LLM rows expand to the exact prompt + response
-              (input/output only populated in dev builds); tool rows expand to
-              arguments + result preview. Tool calls that couldn't be tied to a
-              round (no llmCalls records, or request counts that didn't add up)
-              are listed at the end so nothing is hidden. */}
-          {(items.length > 0 || unattributed.length > 0) && (
+          {/* Flow — every LLM call and tool call in true execution order so the
+              turn reads top to bottom: preseeded shortcut tools → tool_round 0
+              → the tools it requested → … → final_stream. LLM rows expand to
+              the exact prompt + response (input/output only populated in dev
+              builds); tool rows expand to arguments + result preview. The
+              header carries the turn's total latency in place of the old bar. */}
+          {flow.length > 0 && (
             <div>
               <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
-                {t('chat:reasoning.trace.workflow')}
+                {t('chat:reasoning.trace.workflow')} · {formatLatency(trace.totalElapsedMs)}
               </div>
               <ul className="space-y-0.5">
-                {items.map(({ call, tools }) => (
-                  <Fragment key={`${call.kind}-${call.round}`}>
-                    <LlmCallRow call={call} />
-                    {tools.length > 0 && (
-                      <li className="ml-5 border-l border-gray-200 pl-2">
-                        <ul className="space-y-0.5">
-                          {tools.map((c, i) => (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: tool calls may repeat (same name twice) and the list is never reordered
-                            <ToolCallRow key={i} call={c} />
-                          ))}
-                        </ul>
-                      </li>
-                    )}
-                  </Fragment>
-                ))}
-                {unattributed.map((c, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: tool calls may repeat (same name twice) and the list is never reordered
-                  <ToolCallRow key={`unattributed-${i}`} call={c} />
-                ))}
+                {flow.map((entry) =>
+                  entry.kind === 'llm' ? (
+                    <LlmCallRow key={entry.id} call={entry.call} />
+                  ) : (
+                    <ToolCallRow key={entry.id} call={entry.call} />
+                  ),
+                )}
               </ul>
             </div>
           )}

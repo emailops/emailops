@@ -75,14 +75,13 @@
     "label": "Razonamiento",
     "trace": {
       "arguments": "argumentos",
-      "tool": "herramienta:",
+      "tool": "tool:",
       "resultPreview": "resultado (vista previa)",
       "failed": "· error",
       "devOnly": "· (captura de prompt solo en versiones de desarrollo)",
-      "timeline": "Latencia",
       "vectorFallback": "(reserva vectorial activa)",
       "route": "Ruta",
-      "workflow": "Flujo · llamadas al LLM",
+      "workflow": "Flujo",
       "toolCallDetails": "Detalles de llamadas a herramientas",
       "retrievalDetail": "Detalle de recuperación",
       "routeMode": {
@@ -90,11 +89,8 @@
         "tools_first": "Herramientas primero"
       },
       "phase": {
-        "retrieval": "Recuperación",
         "toolRound": "LLM · ronda de herramientas {{n}}",
         "finalStream": "LLM · respuesta final",
-        "toolLoop": "Bucle de herramientas",
-        "llmStreaming": "Transmisión del LLM",
         "llmCall": "Llamada al LLM"
       },
       "step": {

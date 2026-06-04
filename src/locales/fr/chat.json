@@ -79,10 +79,9 @@
       "resultPreview": "résultat (aperçu)",
       "failed": "· échec",
       "devOnly": "· (capture du prompt uniquement en version de développement)",
-      "timeline": "Latence",
       "vectorFallback": "(repli vectoriel actif)",
       "route": "Route",
-      "workflow": "Flux · appels au LLM",
+      "workflow": "Flux",
       "toolCallDetails": "Détails des appels d'outils",
       "retrievalDetail": "Détail de la récupération",
       "routeMode": {
@@ -90,11 +89,8 @@
         "tools_first": "Outils d'abord"
       },
       "phase": {
-        "retrieval": "Récupération",
         "toolRound": "LLM · tour d'outils {{n}}",
         "finalStream": "LLM · réponse finale",
-        "toolLoop": "Boucle d'outils",
-        "llmStreaming": "Diffusion du LLM",
         "llmCall": "Appel au LLM"
       },
       "step": {

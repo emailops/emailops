@@ -823,6 +823,8 @@ async fn run_tool_loop(
 
                 tool_traces.push(ToolCallTrace {
                     name: name.clone(),
+                    // Preseeded shortcut tools run before the LLM loop.
+                    round: -1,
                     arguments: args.clone(),
                     result_preview: truncate_chars(&result, 16000),
                     result_chars: result.len() as i32,
@@ -857,6 +859,12 @@ async fn run_tool_loop(
                 messages.len(),
             ),
         );
+        // While the model thinks, reflect "Processing prompt…" rather than
+        // leaving the UI on the previous tool's status (e.g. a preseeded
+        // search_emails leaves "Searching emails…" up for the whole multi-second
+        // LLM round, making the turn look stuck). RunningTools is the generic
+        // "the model is working" phase.
+        emit_phase(app, conversation_id, message_id, ChatPhase::RunningTools);
         let t_call = std::time::Instant::now();
         let call_result = provider.chat_with_tools(&messages, &tools).await;
         let call_ms = t_call.elapsed().as_millis() as i64;
@@ -1056,6 +1064,7 @@ async fn run_tool_loop(
             // 25-row search_emails dump, small enough to bound the JSON blob.
             tool_traces.push(ToolCallTrace {
                 name: name.clone(),
+                round: round as i32,
                 arguments: args.clone(),
                 result_preview: truncate_chars(&result, 16000),
                 result_chars: result.len() as i32,

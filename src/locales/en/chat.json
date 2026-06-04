@@ -79,10 +79,9 @@
       "resultPreview": "result (preview)",
       "failed": "· failed",
       "devOnly": "· (prompt capture only in dev builds)",
-      "timeline": "Latency",
       "vectorFallback": "(vector fallback active)",
       "route": "Route",
-      "workflow": "Workflow · LLM calls",
+      "workflow": "Flow",
       "toolCallDetails": "Tool call details",
       "retrievalDetail": "Retrieval detail",
       "routeMode": {
@@ -90,11 +89,8 @@
         "tools_first": "Tools first"
       },
       "phase": {
-        "retrieval": "Retrieval",
         "toolRound": "LLM · tool round {{n}}",
         "finalStream": "LLM · final stream",
-        "toolLoop": "Tool loop",
-        "llmStreaming": "LLM streaming",
         "llmCall": "LLM call"
       },
       "step": {
