@@ -122,7 +122,7 @@ pub fn create_conversation_with_thread(
     let context = crate::services::thread_clean::format_thread_context(
         &emails,
         |id| bodies.get(id).cloned(),
-        crate::services::thread_clean::DEFAULT_MAX_CHARS_PER_EMAIL,
+        crate::services::thread_clean::chars_per_email(emails.len()),
     );
 
     let title = thread_title_from_subject(&emails[0].subject);

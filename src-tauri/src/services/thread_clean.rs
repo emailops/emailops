@@ -21,10 +21,26 @@ use regex::Regex;
 use crate::models::Email;
 use crate::util::html::decode_html_entities;
 
-/// Default per-email cap. Lower than `MAX_SOURCE_BODY_CHARS` (4000) used by the
-/// RAG path because thread context concatenates N emails — we'd rather show
-/// more emails truncated than two emails verbatim.
+/// Per-email floor. Even long threads keep at least this much of each message
+/// so no single email is reduced to a useless stub. Lower than the RAG path's
+/// `MAX_SOURCE_BODY_CHARS` (4000) because thread context concatenates N emails.
 pub const DEFAULT_MAX_CHARS_PER_EMAIL: usize = 2000;
+
+/// Per-email ceiling. A single-message "chat about this email" shows the body
+/// nearly whole instead of clipping it at the floor.
+pub const MAX_CHARS_PER_EMAIL: usize = 8000;
+
+/// Total budget shared across the thread; the per-email cap is this divided by
+/// the message count, clamped to `[DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL]`.
+const THREAD_CONTEXT_BUDGET: usize = 12_000;
+
+/// Pick the per-email character cap for a thread of `num_emails` messages.
+/// Few messages get a generous cap (up to the ceiling); long threads divide the
+/// shared budget but never drop below the floor.
+pub fn chars_per_email(num_emails: usize) -> usize {
+    let n = num_emails.max(1);
+    (THREAD_CONTEXT_BUDGET / n).clamp(DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL)
+}
 
 /// Clean a single email body. Accepts the raw body (HTML or plain text).
 ///
@@ -33,10 +49,35 @@ pub const DEFAULT_MAX_CHARS_PER_EMAIL: usize = 2000;
 /// run downstream.
 pub fn clean_email_body(body: &str, max_chars: usize) -> String {
     let text = to_plain_text(body);
-    let de_quoted = strip_quoted_replies(&text);
+    let visible = strip_invisible_chars(&text);
+    let de_quoted = strip_quoted_replies(&visible);
     let de_signed = strip_signature(&de_quoted);
     let collapsed = collapse_whitespace(&de_signed);
     truncate_chars(&collapsed, max_chars)
+}
+
+/// Remove zero-width / invisible formatting characters that newsletters stuff
+/// into the body (and especially the preheader) to pad the inbox preview.
+/// These are noise that consumes the context budget and renders as nothing.
+///
+/// `U+200D` ZERO WIDTH JOINER is deliberately **kept** — it glues multi-codepoint
+/// emoji sequences (e.g. 👨‍💻), so stripping it would corrupt real glyphs.
+fn strip_invisible_chars(text: &str) -> String {
+    if !text.chars().any(is_invisible_spacer) {
+        return text.to_string();
+    }
+    text.chars().filter(|c| !is_invisible_spacer(*c)).collect()
+}
+
+fn is_invisible_spacer(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'   // soft hyphen
+        | '\u{034F}' // combining grapheme joiner
+        | '\u{200B}' // zero width space
+        | '\u{2060}' // word joiner
+        | '\u{FEFF}' // zero width no-break space / BOM
+    )
 }
 
 // ── HTML / plain-text normalisation ────────────────────────────────────────
@@ -433,6 +474,57 @@ mod tests {
         let body = "First.\n\n\n\n\nSecond.\n\n\n\nThird.";
         let cleaned = clean_email_body(body, 4000);
         assert_eq!(cleaned, "First.\n\nSecond.\n\nThird.");
+    }
+
+    #[test]
+    fn chars_per_email_is_generous_for_single_email_threads() {
+        // A "chat about this email" with one message should show it nearly whole,
+        // not clip it at the old 2000-char floor.
+        assert_eq!(chars_per_email(1), MAX_CHARS_PER_EMAIL);
+        assert_eq!(chars_per_email(2), 6000);
+    }
+
+    #[test]
+    fn chars_per_email_shrinks_then_floors_for_long_threads() {
+        // Many-message threads divide the shared budget but never drop below the
+        // floor, so each email keeps a usable amount of context.
+        assert_eq!(chars_per_email(6), DEFAULT_MAX_CHARS_PER_EMAIL);
+        assert_eq!(chars_per_email(50), DEFAULT_MAX_CHARS_PER_EMAIL);
+    }
+
+    #[test]
+    fn chars_per_email_handles_zero_without_panicking() {
+        assert_eq!(chars_per_email(0), MAX_CHARS_PER_EMAIL);
+    }
+
+    #[test]
+    fn strips_newsletter_preheader_spacer_spam() {
+        // Substack-style preheader: emoji encoded as numeric refs followed by a
+        // long run of invisible spacer chars (combining grapheme joiner U+034F,
+        // figure space U+2007, soft hyphen U+00AD) repeated to pad the preview.
+        let body = "<p>&#128104;&#8205;&#128187; Hola</p>\
+                    <p>&#847;&#8199;&#173;&#847;&#8199;&#173;&#847;&#8199;&#173; Mundo</p>";
+        let cleaned = clean_email_body(body, 4000);
+        // Numeric entities decode to real glyphs, not literal "&#…;".
+        assert!(!cleaned.contains("&#"), "entities must be decoded: {cleaned:?}");
+        assert!(cleaned.contains("👨‍💻 Hola"), "emoji+text preserved: {cleaned:?}");
+        assert!(
+            cleaned.contains("Mundo"),
+            "real content after spam survives: {cleaned:?}"
+        );
+        // The invisible spacer chars must be gone.
+        assert!(!cleaned.contains('\u{034F}'), "combining grapheme joiner stripped");
+        assert!(!cleaned.contains('\u{00AD}'), "soft hyphen stripped");
+    }
+
+    #[test]
+    fn preserves_zero_width_joiner_in_emoji_sequences() {
+        // U+200D ZERO WIDTH JOINER glues emoji sequences (man + ZWJ + laptop);
+        // stripping it would corrupt the glyph, so it must survive.
+        let body = "On my way 👨\u{200D}💻";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.contains('\u{200D}'), "ZWJ kept inside emoji: {cleaned:?}");
+        assert!(cleaned.contains("👨\u{200D}💻"));
     }
 
     #[test]
