@@ -42,6 +42,7 @@ import * as api from '@/lib/api';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
+import { planViewChange } from '@/lib/viewNavigation';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -901,10 +902,15 @@ function AppInner() {
           isSyncing={isSyncing}
           viewMode={viewMode}
           onSetViewMode={(mode) => {
-            if (mode === 'inbox') {
+            const plan = planViewChange(mode, inboxLayout);
+            if (plan.resetInboxFilters) {
               clearSearchQuery();
               clearActiveFilter();
               setSelectedCategories(new Set<EmailCategory>(['primary']));
+            }
+            if (plan.closeOpenEmail) {
+              setActiveTab(null);
+              void selectEmail(null);
             }
             setViewMode(mode);
           }}
