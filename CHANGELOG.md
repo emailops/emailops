@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.5.2] — 2026-06-08
+
+### Added
+
+- **Gemma 4 12B Instruct** is available as a local chat model (replaces Gemma 3
+  12B; runs in 16 GB+ RAM).
+- **Per-tool chat status labels** show which tool the assistant is running.
+- **Live assistant prose** now streams during the tool-calling round instead of
+  appearing only after the tools finish.
+
+### Fixed
+
+- **Latest email by sender** now returns the newest message regardless of Gmail
+  category — an `updates`-category newsletter no longer hides behind an older
+  `primary` email for an explicit "last email from X" query.
+- **Reasoning and tool-call markup no longer leak into chat answers.** Gemma
+  `<|channel>` / `<|tool_call>` and Qwen `<think>` spans are stripped from
+  user-visible output, including mid-stream.
+- **Startup no longer aborts opaquely**, and local backups no longer grow
+  unbounded.
+- **Reasoning "Flow" panel** is unified, tool ordering is corrected, and prompt
+  status is shown.
+- **Thread-bound chat** drafts real emails, dedupes chip warnings, decodes HTML
+  entities, and no longer clips conversation context.
+- **Full-width layout** closes the open email when switching views.
+- **Email footer** no longer clips, and list/sidebar render bugs are fixed.
+- **Sent view** shows sent copies, and the EmailOps footer is localized.
+
 ## [0.5.1] — 2026-06-01
 
 ### Fixed
