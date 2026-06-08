@@ -19,6 +19,7 @@
 /// markers contain whitespace; JSON markers are matched after normalisation).
 const TOOL_OPENERS: &[&str] = &[
     "<tool_call>",
+    "<|tool_call>",
     "<|python_tag|>",
     "<function",
     "[TOOL_CALLS]",
@@ -37,7 +38,13 @@ const MAX_GATE_CHARS: usize = 16;
 /// prose and then a tool call in the same turn. Bare JSON is excluded here on
 /// purpose — `{"name"…}` shows up in answers that talk about JSON, and we must
 /// not truncate those.
-const TOOL_TAG_MARKERS: &[&str] = &["<tool_call>", "<|python_tag|>", "[TOOL_CALLS]", "<function"];
+const TOOL_TAG_MARKERS: &[&str] = &[
+    "<tool_call>",
+    "<|tool_call>",
+    "<|python_tag|>",
+    "[TOOL_CALLS]",
+    "<function",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GateState {
@@ -410,5 +417,36 @@ mod tests {
         // Prose then a dangling, truncated tag prefix at EOF — drop the markup.
         let (out, _suppressed) = run(&["All set. ", "<tool_"]);
         assert_eq!(out, "All set. ");
+    }
+
+    // ── Gemma 4 tool-call syntax (`<|tool_call>…<tool_call|>`) ───────────────
+    //
+    // Gemma 4 emits tool calls as `<|tool_call>call:NAME{args}<tool_call|>` with
+    // `<|"|>` quote markers inside. The opener has a pipe (`<|tool_call>`) and is
+    // distinct from Qwen's `<tool_call>`; without it the gate streams the raw
+    // syntax to the user. The whole span (quote markers included) is suppressed.
+
+    #[test]
+    fn gemma_tool_call_tag_is_suppressed() {
+        let (out, suppressed) = run(&["<|tool_call>call:search_emails{query:<|\"|>team hackers<|\"|>}<tool_call|>"]);
+        assert_eq!(out, "");
+        assert!(suppressed);
+    }
+
+    #[test]
+    fn gemma_tool_call_tag_split_across_chunks_is_suppressed() {
+        let (out, suppressed) = run(&["<|tool", "_call>call:get_email_body{email_id:<|\"|>abc<|\"|>}"]);
+        assert_eq!(out, "");
+        assert!(suppressed);
+    }
+
+    #[test]
+    fn mid_stream_gemma_tool_call_after_prose_is_cut() {
+        let (out, suppressed) = run(&[
+            "Aquí tienes el resumen. ",
+            "<|tool_call>call:search_emails{}<tool_call|>",
+        ]);
+        assert_eq!(out, "Aquí tienes el resumen. ");
+        assert!(suppressed);
     }
 }

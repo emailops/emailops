@@ -102,15 +102,17 @@ pub static CATALOG: &[CatalogModel] = &[
         bundled: false,
     },
     CatalogModel {
-        id: "gemma-3-12b-it-q4_k_m",
-        display_name: "Gemma 3 12B Instruct",
+        id: "gemma-4-12b-it-qat-ud-q4_k_xl",
+        display_name: "Gemma 4 12B Instruct",
         kind: ModelKind::Chat,
-        size_bytes: 7_200_000_000,
-        context_window: 32768,
-        sha256: "",
-        url: "https://huggingface.co/bartowski/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
+        // unsloth/gemma-4-12B-it-qat-GGUF/main · gemma-4-12B-it-qat-UD-Q4_K_XL.gguf
+        // Upstream Content-Length (x-linked-size) and x-linked-etag (LFS sha256).
+        size_bytes: 6_716_355_328,
+        context_window: 262_144,
+        sha256: "cc9ff072e0a8203429ed854e6662c17a6c2bc1e5dca5b475dd4736caaacbc165",
+        url: "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
         license: "gemma",
-        min_ram_gb: 24,
+        min_ram_gb: 16,
         recommended: false,
         supports_tools: true,
         bundled: false,
@@ -197,15 +199,40 @@ mod tests {
     }
 
     #[test]
-    fn gemma4_models_are_removed() {
-        // Gemma 4 was retired from the catalog because it lacks reliable
-        // tool-calling. Existing local files still load via the runtime's
-        // Gemma 4 chat template; they're just no longer offered for download.
-        assert!(find("gemma-4-e2b-it-q4_k_m").is_none(), "Gemma 4 E2B must be removed");
+    fn gemma4_12b_entry_is_present_and_correct() {
+        let entry = find("gemma-4-12b-it-qat-ud-q4_k_xl").expect("Gemma 4 12B QAT must be in the catalog");
+        assert_eq!(entry.kind, ModelKind::Chat);
+        assert_eq!(
+            entry.url,
+            "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf"
+        );
+        // Authoritative values from the HuggingFace `resolve` endpoint headers:
+        // x-linked-size (Content-Length) and x-linked-etag (LFS sha256).
+        assert_eq!(entry.size_bytes, 6_716_355_328);
+        assert_eq!(
+            entry.sha256,
+            "cc9ff072e0a8203429ed854e6662c17a6c2bc1e5dca5b475dd4736caaacbc165"
+        );
+        assert!(entry.supports_tools, "Gemma 4 12B must support tool-calling");
+        assert_eq!(entry.license, "gemma");
+        assert_eq!(entry.min_ram_gb, 16, "Gemma 4 12B QAT runs in 16 GB+");
+    }
+
+    #[test]
+    fn small_gemma4_variants_remain_absent() {
+        // The E2B/E4B variants stay out — they're the ones with unreliable
+        // tool-calling. The 12B (above) benchmarks strongly and is offered.
+        assert!(find("gemma-4-e2b-it-q4_k_m").is_none(), "Gemma 4 E2B must be absent");
         assert!(
             find("gemma-4-e4b-obliterated-q4_k_m").is_none(),
-            "Gemma 4 E4B must be removed"
+            "Gemma 4 E4B must be absent"
         );
+    }
+
+    #[test]
+    fn gemma3_12b_is_replaced_by_gemma4() {
+        // Gemma 3 12B was swapped out for Gemma 4 12B in the picker.
+        assert!(find("gemma-3-12b-it-q4_k_m").is_none(), "Gemma 3 12B must be removed");
     }
 
     #[test]

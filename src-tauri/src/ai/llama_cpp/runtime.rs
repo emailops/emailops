@@ -386,6 +386,7 @@ use crate::ai::provider::{
     AiMessage, AiToolCall, AiToolCallFunction, ChatStreamResult, CompletionOptions, ToolStreamResult,
 };
 use crate::ai::stream_gate::StreamGate;
+use crate::ai::thinking_filter::{strip_reasoning, ThinkingGate};
 use crate::models::error::{AppError, Result};
 
 // ── Global backend ────────────────────────────────────────────────────────────
@@ -850,7 +851,9 @@ impl LlamaCppRuntime {
         .map_err(|e| AppError::AiError(format!("Generation task panicked: {}", e)))?
         .map_err(AppError::AiError)?;
 
-        Ok(text)
+        // Strip any reasoning/thinking markers (Gemma 4 `<|channel>…<channel|>`,
+        // Qwen `<think>…</think>`) the model leaked into the visible answer.
+        Ok(strip_reasoning(&text))
     }
 
     /// Streaming generation.  `on_token` is called for each piece; returning
@@ -908,14 +911,33 @@ impl LlamaCppRuntime {
                     .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
 
                 let mut cb = on_token;
-                Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, Some(&mut *cb))
+                let mut gate = ThinkingGate::new();
+                // Suppress reasoning/thinking spans from the live stream so the
+                // user never sees `<|channel>…<channel|>` / `<think>…</think>`.
+                let gen = {
+                    let mut gated = |piece: String| -> bool {
+                        let out = gate.push(&piece);
+                        if out.is_empty() {
+                            true
+                        } else {
+                            cb(out)
+                        }
+                    };
+                    Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, Some(&mut gated))
+                };
+                let (output, prompt_t, eval_t) = gen?;
+                let tail = gate.finish();
+                if !tail.is_empty() {
+                    let _ = cb(tail);
+                }
+                Ok((output, prompt_t, eval_t))
             })
             .await
             .map_err(|e| AppError::AiError(format!("Streaming task panicked: {}", e)))?
             .map_err(AppError::AiError)?;
 
         Ok(ChatStreamResult {
-            content,
+            content: strip_reasoning(&content),
             eval_count: Some(eval_tokens),
             prompt_eval_count: Some(prompt_tokens),
         })
@@ -1027,7 +1049,7 @@ impl LlamaCppRuntime {
         let parsed: serde_json::Value = serde_json::from_str(parsed_json)
             .map_err(|e| AppError::AiError(format!("Parsed tool JSON malformed: {}", e)))?;
 
-        let content = parsed.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let content = strip_reasoning(parsed.get("content").and_then(|v| v.as_str()).unwrap_or(""));
 
         let tool_calls: Vec<AiToolCall> = parsed
             .get("tool_calls")
@@ -1128,12 +1150,18 @@ impl LlamaCppRuntime {
                     .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
 
                 let mut cb = on_token;
+                let mut think_gate = ThinkingGate::new();
                 let mut gate = StreamGate::new();
-                // Generate, gating each piece: tool-call syntax is buffered and
-                // suppressed; prose is flushed live to the user's callback.
+                // Generate, gating each piece through two filters: first strip
+                // reasoning spans (`<|channel>…`, `<think>…`), then suppress
+                // tool-call syntax; whatever survives is flushed live to the user.
                 let gen = {
                     let mut gated = |piece: String| -> bool {
-                        let out = gate.push(&piece);
+                        let dereasoned = think_gate.push(&piece);
+                        if dereasoned.is_empty() {
+                            return true;
+                        }
+                        let out = gate.push(&dereasoned);
                         if out.is_empty() {
                             true
                         } else {
@@ -1144,7 +1172,9 @@ impl LlamaCppRuntime {
                 };
                 let (output, prompt_t, eval_t) = gen?;
 
-                // Flush any buffered prose left at end of stream.
+                // Flush both gates at end of stream: the thinking gate only ever
+                // holds truncated markup (dropped), then forward buffered prose.
+                think_gate.finish();
                 let tail = gate.finish();
                 if !tail.is_empty() {
                     let _ = cb(tail);

@@ -2,6 +2,7 @@ pub mod ollama;
 pub mod openrouter;
 pub mod provider;
 pub mod stream_gate;
+pub mod thinking_filter;
 pub mod tracing;
 
 #[cfg(feature = "llamacpp")]
