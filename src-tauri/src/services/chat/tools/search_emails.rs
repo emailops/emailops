@@ -97,7 +97,13 @@ impl Tool for SearchEmailsTool {
 
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 25) as i32;
 
-        let cat_filter: Option<&[String]> = if ctx.categories.is_empty() {
+        // An explicit sender / recipient / subject lookup must not be silently
+        // narrowed by the chat turn's category scope (default ["primary"]). That
+        // scope is meant for broad keyword/RAG retrieval; when the user names a
+        // target we return the newest matching mail regardless of Gmail category
+        // — a newsletter landing in `updates` must still surface for `from:X`.
+        let has_explicit_target = from_filter.is_some() || to_filter.is_some() || subject_filter.is_some();
+        let cat_filter: Option<&[String]> = if has_explicit_target || ctx.categories.is_empty() {
             None
         } else {
             Some(ctx.categories)

@@ -1076,6 +1076,63 @@ mod tests {
         );
     }
 
+    /// Regression: an explicit `from:` lookup must return that sender's NEWEST
+    /// email regardless of Gmail category. A chat turn scopes retrieval to
+    /// `categories=["primary"]` by default — that scope is meant for broad RAG
+    /// queries, not for an explicit sender lookup. A newsletter sender whose
+    /// newest mail lands in `updates` was wrongly hidden, so `from:X limit:1`
+    /// returned an older `primary` email instead of the genuinely latest one.
+    #[test]
+    fn search_emails_from_filter_ignores_category_scope() {
+        let db = tools_test_db();
+        // Older email from the sender, category=primary.
+        seed_email_with_category(
+            &db,
+            "old_primary",
+            "acc",
+            "t-old",
+            "Team Hackers",
+            "teamhackers@substack.com",
+            "Older issue",
+            "body",
+            100,
+            "primary",
+        );
+        // Newer email from the same sender, category=updates (the real latest).
+        seed_email_with_category(
+            &db,
+            "new_updates",
+            "acc",
+            "t-new",
+            "Team Hackers",
+            "teamhackers@substack.com",
+            "Latest issue",
+            "body",
+            200,
+            "updates",
+        );
+
+        // Simulate the chat turn default, which scopes retrieval to primary only.
+        let categories = vec!["primary".to_string()];
+        let out = execute_tool(
+            &db,
+            "acc",
+            &categories,
+            "search_emails",
+            &arg(serde_json::json!({ "from": "teamhackers@substack.com", "limit": 1 })),
+        );
+        assert!(
+            out.contains("id=new_updates"),
+            "explicit from: must return the newest email regardless of category; out:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("id=old_primary"),
+            "must not fall back to the older primary email; out:\n{}",
+            out
+        );
+    }
+
     /// `search_emails` output must be grouped by Gmail category in the order
     /// Primary → Updates → Other, with the `category=` field emitted on every
     /// row so the LLM can reference it when summarising.
