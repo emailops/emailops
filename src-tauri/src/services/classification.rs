@@ -97,13 +97,13 @@ pub fn get_config(db: &Database) -> Result<ClassificationConfig> {
         db.get_preference("ai_provider")
             .ok()
             .flatten()
-            .unwrap_or_else(|| "ollama".to_string())
+            .unwrap_or_else(|| "llamacpp".to_string())
     });
     let model = db.get_preference("classify_model")?.unwrap_or_else(|| {
         db.get_preference("ai_model")
             .ok()
             .flatten()
-            .unwrap_or_else(|| "gemma4:e2b".to_string())
+            .unwrap_or_else(|| "qwen3.5-4b-q4_k_m".to_string())
     });
     let intents = db
         .get_preference("classify_intents")?

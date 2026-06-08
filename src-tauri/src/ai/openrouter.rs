@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::provider::{
     AIProvider, AiMessage, BackendCapabilities, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult,
-    ModelInfo, ModelPricing, ProviderType,
+    ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
 use crate::models::error::{AppError, Result};
 
@@ -391,6 +391,19 @@ impl AIProvider for OpenRouterClient {
     ) -> Result<ChatStreamResult> {
         Err(AppError::AiError(
             "Streaming is not supported for OpenRouter backend".to_string(),
+        ))
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        _messages: Vec<AiMessage>,
+        _tools: Vec<serde_json::Value>,
+        _on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        // OpenRouter is wired as an embeddings/judge backend only here; chat and
+        // tool-calling are intentionally unsupported (see `chat_with_tools`).
+        Err(AppError::AiError(
+            "Streaming tool-calls are not supported for OpenRouter backend".to_string(),
         ))
     }
 

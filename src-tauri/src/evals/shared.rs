@@ -21,6 +21,10 @@ pub fn build_mock_app() -> EvalResult<AppHandle> {
 pub const EVAL_MODEL_ENV: &str = "EMAILOPS_EVAL_MODEL";
 pub const EVAL_PROVIDER_ENV: &str = "EMAILOPS_EVAL_PROVIDER";
 
+/// Default model evals run against when neither an env override nor a per-case
+/// `model:` is set. Matches the app's catalog default (local llama.cpp GGUF).
+pub const DEFAULT_EVAL_MODEL: &str = "qwen3.5-4b-q4_k_m";
+
 /// Apply a model+provider override to the (already copied) eval DB so every
 /// downstream call to `AiService::load_provider(&db)` picks up the requested
 /// model. Reads `EMAILOPS_EVAL_MODEL` / `EMAILOPS_EVAL_PROVIDER` from the
@@ -46,6 +50,27 @@ pub fn apply_eval_model_override_from_env(db: &Database) -> EvalResult<Option<(S
         provider, model
     );
     Ok(Some((provider, model)))
+}
+
+/// Pin the (already copied) eval DB to a provider+model for the duration of an
+/// eval run. Evals must default to the app's *default* provider — local
+/// llama.cpp — rather than inheriting whatever the copied prod DB happened to
+/// have configured (often Ollama from day-to-day use).
+///
+/// An explicit `EMAILOPS_EVAL_MODEL` env override still wins: when it is set,
+/// `apply_eval_model_override_from_env` has already written the desired
+/// provider+model, so this leaves the prefs untouched.
+///
+/// `case_model` is the model the case/suite requested (YAML `model:` or
+/// `--model`); it becomes `ai_model` whenever no env override is active.
+pub fn pin_eval_provider(db: &Database, case_model: &str) -> EvalResult<()> {
+    if read_non_empty_env(EVAL_MODEL_ENV).is_some() {
+        // Env override already pinned provider+model; respect it.
+        return Ok(());
+    }
+    db.set_preference("ai_provider", "llamacpp")?;
+    db.set_preference("ai_model", case_model)?;
+    Ok(())
 }
 
 fn read_non_empty_env(name: &str) -> Option<String> {
@@ -128,6 +153,45 @@ mod tests {
             .expect("override applied");
         assert_eq!(provider, "ollama");
         assert_eq!(model, "llama3.1:8b");
+        clear_eval_env();
+    }
+
+    #[test]
+    fn pin_eval_provider_forces_llamacpp_when_env_unset() {
+        let _g = env_lock();
+        clear_eval_env();
+        let db = fresh_db();
+        pin_eval_provider(&db, "qwen3.5-4b-q4_k_m").expect("pin ok");
+        assert_eq!(
+            db.get_preference("ai_provider").expect("read"),
+            Some("llamacpp".to_string())
+        );
+        assert_eq!(
+            db.get_preference("ai_model").expect("read"),
+            Some("qwen3.5-4b-q4_k_m".to_string())
+        );
+    }
+
+    #[test]
+    fn pin_eval_provider_respects_env_override() {
+        let _g = env_lock();
+        clear_eval_env();
+        let db = fresh_db();
+        // Simulate apply_eval_model_override_from_env having run for an Ollama override.
+        std::env::set_var(EVAL_MODEL_ENV, "llama3.1:8b");
+        db.set_preference("ai_provider", "ollama").expect("set");
+        db.set_preference("ai_model", "llama3.1:8b").expect("set");
+
+        // pin must not clobber the deliberate env-driven override.
+        pin_eval_provider(&db, "qwen3.5-4b-q4_k_m").expect("pin ok");
+        assert_eq!(
+            db.get_preference("ai_provider").expect("read"),
+            Some("ollama".to_string())
+        );
+        assert_eq!(
+            db.get_preference("ai_model").expect("read"),
+            Some("llama3.1:8b".to_string())
+        );
         clear_eval_env();
     }
 

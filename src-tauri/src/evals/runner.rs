@@ -69,6 +69,11 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     let prepared_db = prepare_eval_db(&cfg.prod_db_path, cfg.db_mode, "chat")?;
     let db = Arc::new(Database::new(prepared_db.db_dir().to_path_buf())?);
     crate::evals::shared::apply_eval_model_override_from_env(&db)?;
+    // When no env override is active, default the suite to the app default
+    // provider (local llama.cpp) + default model rather than inheriting the
+    // copied prod DB's prefs. Per-case `model:` still overrides via the pin in
+    // the run loop below.
+    crate::evals::shared::pin_eval_provider(&db, crate::evals::shared::DEFAULT_EVAL_MODEL)?;
 
     // ── 3. Resolve suite-level default account ──────────────────────────────
     // Cases may override via their own `account:` field (matched against id or
@@ -166,6 +171,11 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
             },
         };
 
+        // Evals must run on the app default provider (local llama.cpp) unless an
+        // explicit EMAILOPS_EVAL_MODEL override is set. `run_case` → `run_chat_turn`
+        // resolves the provider from DB prefs via `load_provider`, so pin them here.
+        crate::evals::shared::pin_eval_provider(&db, &model)?;
+
         match run_case(db.clone(), app.clone(), &effective_account_id, &model, case).await {
             Ok(outcome) => {
                 let heuristics = evaluate(case, &outcome)?;
@@ -255,6 +265,6 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
 fn resolve_default_model(db: &Arc<Database>) -> String {
     match db.get_preference("ai_model") {
         Ok(Some(v)) if !v.is_empty() => v,
-        _ => "gemma4:e2b".to_string(),
+        _ => crate::evals::shared::DEFAULT_EVAL_MODEL.to_string(),
     }
 }

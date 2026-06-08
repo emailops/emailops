@@ -15,7 +15,7 @@ use async_trait::async_trait;
 
 use crate::ai::provider::{
     AIProvider, AiMessage, BackendCapabilities, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult,
-    ModelInfo, ModelPricing, ProviderType,
+    ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
 use crate::models::error::Result;
 
@@ -133,6 +133,15 @@ impl AIProvider for LlamaCppBackend {
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
         self.runtime.chat_stream(messages, on_token).await
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        self.runtime.chat_stream_with_tools(&messages, &tools, on_token).await
     }
 
     fn capabilities(&self) -> BackendCapabilities {

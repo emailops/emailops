@@ -52,6 +52,19 @@ pub struct ChatStreamResult {
     pub prompt_eval_count: Option<u32>,
 }
 
+/// Result from a streaming chat completion that may also carry tool calls.
+///
+/// `message` is the fully-accumulated assistant turn: `content` holds the prose
+/// that was streamed to the user (empty when the turn resolved to a tool call),
+/// and `tool_calls` holds any structured calls the caller must resolve. Token
+/// counts mirror [`ChatStreamResult`].
+#[derive(Debug, Clone)]
+pub struct ToolStreamResult {
+    pub message: AiMessage,
+    pub eval_count: Option<u32>,
+    pub prompt_eval_count: Option<u32>,
+}
+
 /// Capability flags for a backend. Higher-level code can use these to
 /// gracefully degrade when a backend doesn't support a feature.
 #[derive(Debug, Clone)]
@@ -147,6 +160,41 @@ pub trait AIProvider: Send + Sync {
         messages: Vec<AiMessage>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult>;
+
+    /// Streaming multi-turn chat WITH tool definitions. Streams assistant
+    /// *prose* via `on_token` (returning `false` cancels) while still returning
+    /// any structured `tool_calls` in the final `ToolStreamResult.message`.
+    ///
+    /// This unifies `chat_with_tools` (tools, no streaming) and `chat_stream`
+    /// (streaming, no tools): the tool round can now stream synthesized prose to
+    /// the user without losing the ability to dispatch tool calls.
+    ///
+    /// When a turn resolves to tool calls, NO prose tokens are emitted — a
+    /// model's tool-call syntax / planning must never leak into the user-visible
+    /// stream. Providers that expose tool_calls structurally (Ollama,
+    /// OpenRouter) stream content live and accumulate tool_calls separately;
+    /// llama.cpp parses tool-call syntax out of the token stream and so buffers
+    /// the leading tokens until it can tell prose from a tool call.
+    ///
+    /// The default impl falls back to the blocking `chat_with_tools` and emits
+    /// the resulting prose as a single chunk — correct, just not incremental.
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        let msg = self.chat_with_tools(&messages, &tools).await?;
+        let has_tool_calls = msg.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+        if !has_tool_calls && !msg.content.is_empty() {
+            let _ = on_token(msg.content.clone());
+        }
+        Ok(ToolStreamResult {
+            message: msg,
+            eval_count: None,
+            prompt_eval_count: None,
+        })
+    }
 
     /// Capability flags. Used to decide whether to use tool-calling vs RAG-only,
     /// streaming vs buffered, etc.
@@ -254,6 +302,16 @@ impl FakeAiProvider {
                 content: content.into(),
                 tool_calls: None,
             });
+    }
+
+    /// Queue a fully-formed canned chat response (e.g. one carrying
+    /// `tool_calls`). Returned in FIFO order from `chat_with_tools` /
+    /// `chat_stream_with_tools`.
+    pub fn push_chat_message(&self, msg: AiMessage) {
+        self.chats
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(msg);
     }
 
     /// Every prompt passed to `complete`, in call order.
@@ -453,6 +511,78 @@ mod tests {
         assert_eq!(a.embedding, b.embedding);
         assert_ne!(a.embedding, c.embedding);
         assert_eq!(a.embedding.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn chat_stream_with_tools_default_streams_prose() {
+        use std::sync::{Arc, Mutex};
+        let p = FakeAiProvider::new();
+        p.push_chat_response("hello world");
+        let tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = tokens.clone();
+        let msg = AiMessage {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            tool_calls: None,
+        };
+        let result = p
+            .chat_stream_with_tools(
+                vec![msg],
+                vec![],
+                Box::new(move |t| {
+                    sink.lock().unwrap_or_else(PoisonError::into_inner).push(t);
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.message.content, "hello world");
+        assert!(result.message.tool_calls.is_none());
+        assert_eq!(
+            *tokens.lock().unwrap_or_else(PoisonError::into_inner),
+            vec!["hello world".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_stream_with_tools_default_suppresses_prose_on_tool_call() {
+        use std::sync::{Arc, Mutex};
+        let p = FakeAiProvider::new();
+        p.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "internal planning that must not leak".to_string(),
+            tool_calls: Some(vec![AiToolCall {
+                function: AiToolCallFunction {
+                    name: "search_emails".to_string(),
+                    arguments: serde_json::json!({"query": "invoices"}),
+                },
+            }]),
+        });
+        let tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = tokens.clone();
+        let msg = AiMessage {
+            role: "user".to_string(),
+            content: "find invoices".to_string(),
+            tool_calls: None,
+        };
+        let result = p
+            .chat_stream_with_tools(
+                vec![msg],
+                vec![],
+                Box::new(move |t| {
+                    sink.lock().unwrap_or_else(PoisonError::into_inner).push(t);
+                    true
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(
+            tokens.lock().unwrap_or_else(PoisonError::into_inner).is_empty(),
+            "tool-call turns must not stream prose"
+        );
+        let calls = result.message.tool_calls.expect("tool_calls preserved");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
     }
 
     #[tokio::test]

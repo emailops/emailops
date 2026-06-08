@@ -214,6 +214,12 @@ async fn run_variant(
     variant: &ShortcutVariant,
 ) -> EvalResult<CaseOutcome> {
     let start = Instant::now();
+
+    // Evals must run on the app default provider (local llama.cpp), not whatever
+    // the copied prod DB had configured. `run_chat_turn` selects the provider via
+    // `load_provider(&db)` (the `model` arg is cosmetic), so pin the DB prefs here.
+    crate::evals::shared::pin_eval_provider(&db, model)?;
+
     let conv: ChatConversation = db.create_chat_conversation(account_id, "New chat")?;
     let _user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &variant.prompt, None)?;
     let assistant_msg: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;

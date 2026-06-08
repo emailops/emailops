@@ -14,6 +14,26 @@ use crate::models::{RouteDecision, RouteMode};
 /// we skip RAG and let the tool loop drive the query. Mixed EN/ES because the
 /// user works in both.
 const TOOLS_FIRST_KEYWORDS: &[&str] = &[
+    // Draft / compose / reply intent. The user is asking us to WRITE something,
+    // which must run the tool loop so `generate_email_draft` fires (saving a
+    // real draft + opening the composer) instead of RAG free-writing the body.
+    // Substrings are chosen to catch verb families: "contesta" matches
+    // "contestar"/"contestarle", "responde" matches "responder", "redacta"
+    // matches "redactar". Routing ToolsFirst on a false positive is cheap (the
+    // model still has every tool), so we err toward catching the intent.
+    // EN:
+    "draft",
+    "compose",
+    "reply to",
+    "respond to",
+    "write a reply",
+    "write an email",
+    "write a response",
+    // ES:
+    "borrador",
+    "redacta",
+    "contesta",
+    "responde",
     // Recency / specificity (EN)
     "latest",
     "most recent",
@@ -242,6 +262,24 @@ mod tests {
     fn heuristic_returns_none_for_open_ended_questions() {
         assert!(heuristic_route("what does the team think about the proposal?").is_none());
         assert!(heuristic_route("resumen del kickoff").is_none());
+    }
+
+    #[test]
+    fn heuristic_routes_draft_intent_to_tools() {
+        // Writing/replying intent must run the tool loop so generate_email_draft
+        // fires (saving a real draft + opening the composer) instead of RAG
+        // free-writing the body. EN + ES, covering the reported regression.
+        for q in [
+            "escribe un borrador para contestar a dani de apple, pidiendo info del pedido",
+            "redacta una respuesta para maria",
+            "draft a reply to John about the invoice",
+            "compose an email to billing@acme.com",
+            "write a reply to the support thread",
+        ] {
+            let res = heuristic_route(q);
+            assert!(res.is_some(), "expected ToolsFirst for: {}", q);
+            assert_eq!(res.unwrap().0, RouteMode::ToolsFirst, "query: {}", q);
+        }
     }
 
     #[test]

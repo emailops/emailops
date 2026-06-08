@@ -166,6 +166,28 @@ pub(crate) fn strip_invalid_citations(answer: &str, max_valid: usize) -> String 
     String::from_utf8(out).unwrap_or_else(|_| answer.to_string())
 }
 
+/// Unambiguous markers that begin a tool-call payload some small models
+/// (notably Qwen 3.5 4B) emit as plain text instead of through the structured
+/// tool_calls channel. Only the *tag* markers live here — bare-JSON openers
+/// like `{"name"` are deliberately excluded because they appear in legitimate
+/// prose ("the JSON is {\"name\": …}"), so truncating on them would eat real
+/// answer text. These mirror the tag subset of `StreamGate`'s `TOOL_OPENERS`.
+pub(crate) const TOOL_CALL_TAG_MARKERS: &[&str] = &["<tool_call>", "<|python_tag|>", "[TOOL_CALLS]", "<function"];
+
+/// Deterministic safety net for the live-stream gate: truncate `content` from
+/// the earliest tool-call TAG marker to the end, returning the trimmed prose
+/// that precedes it. When a small model leaks `…answer.<tool_call>{…}` into the
+/// final answer text, this drops the markup so the persisted/rendered bubble
+/// shows only the prose. No marker → returned unchanged (cheap no-op).
+pub(crate) fn strip_tool_call_markup(content: &str) -> String {
+    let cut = TOOL_CALL_TAG_MARKERS
+        .iter()
+        .filter_map(|m| content.find(m))
+        .min()
+        .unwrap_or(content.len());
+    content[..cut].trim_end().to_string()
+}
+
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
 pub(crate) fn format_date(ts: i64) -> String {
@@ -303,6 +325,69 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
     out
 }
 
+/// Like [`format_search_emails_output`] but inlines each email's full cleaned
+/// body (looked up in `bodies` by id) under its row instead of just a snippet.
+/// Used by the summary shortcuts, which preseed `include_bodies` so a weak
+/// local model can summarise complete emails in a single pass — without it the
+/// model tends to chain a `get_email_body` call per result and leak the
+/// tool-call markup into its answer. Emails missing from `bodies` (or with an
+/// empty body) fall back to the snippet line.
+pub(crate) fn format_search_emails_output_with_bodies(
+    emails: &[Email],
+    bodies: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut primary: Vec<&Email> = Vec::new();
+    let mut updates: Vec<&Email> = Vec::new();
+    let mut other: Vec<&Email> = Vec::new();
+    for e in emails {
+        match e.category.as_str() {
+            "primary" => primary.push(e),
+            "updates" => updates.push(e),
+            _ => other.push(e),
+        }
+    }
+
+    let mut out = String::new();
+    let mut render = |header: &str, group: &[&Email], show_category: bool| {
+        if group.is_empty() {
+            return;
+        }
+        out.push_str(&format!("## {} ({})\n", header, group.len()));
+        for email in group {
+            let head = format!(
+                "- id={} thread_id={} from=\"{} <{}>\" subject=\"{}\" date={}",
+                email.id,
+                email.thread_id,
+                email.sender,
+                email.sender_email,
+                email.subject,
+                format_date(email.timestamp),
+            );
+            out.push_str(&head);
+            if show_category {
+                out.push_str(&format!(" category={}", email.category));
+            }
+            out.push('\n');
+            match bodies.get(&email.id) {
+                Some(body) if !body.trim().is_empty() => {
+                    out.push_str("  body:\n");
+                    out.push_str(body.trim_end());
+                    out.push('\n');
+                }
+                // No body available — keep the snippet so the row still carries
+                // some content for the model.
+                _ => {
+                    out.push_str(&format!("  snippet=\"{}\"\n", truncate_chars(&email.snippet, 100)));
+                }
+            }
+        }
+    };
+    render("Primary", &primary, false);
+    render("Updates", &updates, false);
+    render("Other", &other, true);
+    out
+}
+
 /// Parse `YYYY-MM-DD` or RFC-3339 into a unix timestamp. Returns None on
 /// anything we don't recognise — callers treat that as "no filter".
 pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
@@ -422,5 +507,42 @@ mod tests {
         // numbered link label is preserved.
         let ans = "See [the renewal](email://demo_x) [9].";
         assert_eq!(strip_invalid_citations(ans, 0), "See [the renewal](email://demo_x).");
+    }
+
+    #[test]
+    fn strip_tool_call_markup_removes_xml_envelope_keeps_prose() {
+        let s =
+            "Here is your summary.\n<tool_call><function=get_email_body>{\"email_id\":\"e1\"}</function></tool_call>";
+        assert_eq!(strip_tool_call_markup(s), "Here is your summary.");
+    }
+
+    #[test]
+    fn strip_tool_call_markup_no_marker_is_identity() {
+        let s = "A normal answer with a [1] citation and a {\"name\": value} mention.";
+        assert_eq!(strip_tool_call_markup(s), s);
+    }
+
+    #[test]
+    fn strip_tool_call_markup_handles_function_marker() {
+        let s = "Summary done. <function=search_emails>{}";
+        assert_eq!(strip_tool_call_markup(s), "Summary done.");
+    }
+
+    #[test]
+    fn strip_tool_call_markup_handles_python_tag_and_toolcalls() {
+        assert_eq!(strip_tool_call_markup("Done <|python_tag|>foo()"), "Done");
+        assert_eq!(strip_tool_call_markup("Done [TOOL_CALLS][{}]"), "Done");
+    }
+
+    #[test]
+    fn strip_tool_call_markup_picks_earliest_marker() {
+        // Two markers present — truncate at the earlier one.
+        let s = "Prose <function=a>{} and later <tool_call>{}";
+        assert_eq!(strip_tool_call_markup(s), "Prose");
+    }
+
+    #[test]
+    fn strip_tool_call_markup_marker_only_yields_empty() {
+        assert_eq!(strip_tool_call_markup("<tool_call>{}"), "");
     }
 }

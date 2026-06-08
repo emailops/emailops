@@ -28,7 +28,8 @@ use super::retrieval::{
 use super::routing::classify_route;
 use super::tools;
 use super::{
-    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, strip_invalid_citations, truncate_chars,
+    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, strip_invalid_citations,
+    strip_tool_call_markup, truncate_chars,
 };
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
@@ -597,6 +598,11 @@ fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider
                     "since": since.format("%Y-%m-%d").to_string(),
                     "until": until.format("%Y-%m-%d").to_string(),
                     "limit": 25,
+                    // Internal arg (not in the tool's LLM-facing schema): pull
+                    // full bodies so the summary pass has everything it needs in
+                    // one shot — the model never has to call get_email_body and
+                    // can't leak that tool-call markup into the summary.
+                    "include_bodies": true,
                 }),
             },
         }]
@@ -700,6 +706,68 @@ struct ToolLoopOutcome {
     /// Same shape as `aggregated_email_refs` but for `ToolOutput.draft_refs`
     /// — the `draft://DRAFT_ID` allowlist for re-open-the-draft chips.
     aggregated_draft_refs: Vec<String>,
+    /// True when the loop already streamed the final assistant answer to the
+    /// client live (token-by-token via `chat_stream_with_tools`). When set, the
+    /// caller's direct-answer path must NOT re-emit the answer as a single
+    /// `chat-stream` token — doing so would duplicate the whole bubble.
+    answer_streamed_live: bool,
+}
+
+/// How `run_chat_turn` should turn the tool loop's final messages into the
+/// user-visible answer.
+enum AnswerPlan {
+    /// The loop already produced a complete assistant text answer (e.g. a
+    /// normal tools-first turn where the model replied after a tool round).
+    /// Emit it as a single stream token — no extra model round-trip.
+    DirectText(String),
+    /// The loop stopped before writing any answer text: a preseeded shortcut
+    /// handed back tool results for synthesis, or the loop hit MAX_TOOL_ROUNDS.
+    /// Stream a synthesis pass over these messages. `tool_calls` are kept so the
+    /// assistant→tool linkage that binds each result to its call survives into
+    /// the prompt (providers that render OpenAI-style tool roles need it;
+    /// text-only streaming backends ignore the field).
+    StreamSynthesis(Vec<AiMessage>),
+}
+
+/// Decide how to produce the answer from the tool loop's final message list.
+/// Pure so the routing is unit-testable without a provider or `AppHandle`.
+///
+/// A trailing assistant message with real text and no pending tool_calls is a
+/// finished answer; anything else (a tool result, a still-open tool call, a
+/// blank assistant turn) needs a streamed synthesis pass.
+fn plan_answer(final_messages: Vec<AiMessage>) -> AnswerPlan {
+    let is_direct = final_messages
+        .last()
+        .map(|m| {
+            m.role == "assistant"
+                && m.tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true)
+                && !m.content.trim().is_empty()
+        })
+        .unwrap_or(false);
+    if is_direct {
+        // Guarded by `is_direct`, so `last()` is Some.
+        let content = final_messages.last().map(|m| m.content.clone()).unwrap_or_default();
+        AnswerPlan::DirectText(content)
+    } else {
+        AnswerPlan::StreamSynthesis(final_messages)
+    }
+}
+
+/// Whether a tool-loop round may stream its assistant prose to the user live.
+///
+/// A round must NOT stream when a nudge is still possible: small models often
+/// "announce" a tool call as plain text on the first force-tool round
+/// ("Voy a buscar el contacto…") and then stop. We nudge once and discard that
+/// announcement instead of accepting it as the answer — streaming it live would
+/// leak the discarded text to the user. Once a tool has executed, nudges are
+/// exhausted, or the turn does not force tool use (thread-bound Q&A), the
+/// model's prose is a genuine answer and is safe to stream token-by-token.
+///
+/// This is the exact inverse of the nudge guard in the loop, kept as one pure
+/// function so both the gate decision and the nudge branch share a single
+/// source of truth.
+fn round_may_stream_live(force_tool_use: bool, no_tool_executed_yet: bool, nudges_used: u32, max_nudges: u32) -> bool {
+    !(force_tool_use && no_tool_executed_yet && nudges_used < max_nudges)
 }
 
 /// Run a tool-call loop: send the prompt with tool definitions, execute any
@@ -737,6 +805,11 @@ async fn run_tool_loop(
 
     let mut had_any_answer = false;
     let mut abort_error: Option<String> = None;
+    // Set when the round that produced the final answer streamed its prose to
+    // the client live (token-by-token). The caller reads this to decide whether
+    // its direct-answer path should re-emit the answer as a single token or skip
+    // (it was already shipped).
+    let mut answer_streamed_live = false;
     // Small local models (e.g. qwen3.5-4b) sometimes "announce" they will call
     // a tool ("Voy a buscar el contacto…") and then stop without emitting an
     // actual tool_call — turning the announcement into the final answer. Allow
@@ -777,7 +850,6 @@ async fn run_tool_loop(
                 content: String::new(),
                 tool_calls: Some(tool_calls.clone()),
             });
-            had_any_answer = true;
 
             for tc in &tool_calls {
                 let name = &tc.function.name;
@@ -837,6 +909,25 @@ async fn run_tool_loop(
                     tool_calls: None,
                 });
             }
+
+            // Shortcut path: the heuristic already chose the tool(s) and they
+            // have run, so the only work left is to synthesise the answer from
+            // their output. Skip the blocking `chat_with_tools` synthesis round
+            // and hand the tool results back so `run_chat_turn` can STREAM the
+            // synthesis — the user sees tokens within a second or two instead of
+            // staring at a status for the whole multi-second blocking call. The
+            // trailing message is a tool result, so `plan_answer` routes this
+            // into `StreamSynthesis`.
+            return ToolLoopOutcome {
+                messages,
+                failed_without_answer: false,
+                error: None,
+                aggregated_email_refs,
+                aggregated_draft_refs,
+                // Preseeded shortcuts hand tool results back for a streamed
+                // synthesis pass in the caller — the loop itself streamed nothing.
+                answer_streamed_live: false,
+            };
         }
     }
 
@@ -854,7 +945,7 @@ async fn run_tool_loop(
             app,
             "info",
             &format!(
-                "llm round {}: calling chat_with_tools ({} msgs in context)",
+                "llm round {}: calling chat_stream_with_tools ({} msgs in context)",
                 round,
                 messages.len(),
             ),
@@ -866,7 +957,48 @@ async fn run_tool_loop(
         // "the model is working" phase.
         emit_phase(app, conversation_id, message_id, ChatPhase::RunningTools);
         let t_call = std::time::Instant::now();
-        let call_result = provider.chat_with_tools(&messages, &tools).await;
+
+        // Stream this round's prose to the client live UNLESS a nudge is still
+        // possible — see `round_may_stream_live`. On llama.cpp the provider's
+        // StreamGate suppresses tool-call syntax, so a tool-calling round emits
+        // nothing here and only a genuine text answer reaches `on_token`. The
+        // atomic records whether any token was actually shipped so the caller's
+        // direct-answer path can skip re-emitting an already-streamed answer.
+        let stream_live = round_may_stream_live(force_tool_use, tool_traces.is_empty(), nudges_used, MAX_NUDGES);
+        let streamed_any = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let on_token: Box<dyn FnMut(String) -> bool + Send> = if stream_live {
+            let app_for_token = app.clone();
+            let conv_for_token = conversation_id.to_string();
+            let msg_for_token = message_id.to_string();
+            let streamed_flag = streamed_any.clone();
+            Box::new(move |token: String| {
+                if !token.is_empty() {
+                    streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = app_for_token.emit(
+                        "chat-stream",
+                        ChatStreamEvent {
+                            message_id: msg_for_token.clone(),
+                            conversation_id: conv_for_token.clone(),
+                            token,
+                            done: false,
+                            error: None,
+                            token_count: None,
+                            latency_ms: None,
+                        },
+                    );
+                }
+                true
+            })
+        } else {
+            // Nudge still possible: buffer silently. Any prose this round is a
+            // potential tool-call announcement we may discard, so never ship it.
+            Box::new(|_token: String| true)
+        };
+        let call_result = provider
+            .chat_stream_with_tools(messages.clone(), tools.clone(), on_token)
+            .await
+            .map(|r| r.message);
+        let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
             app,
@@ -978,7 +1110,7 @@ async fn run_tool_loop(
                 // are plain Q&A over the seeded thread and should accept the
                 // direct answer; nudging there would push the model to call the
                 // lone draft tool when the user only asked a question.
-                if force_tool_use && tool_traces.is_empty() && nudges_used < MAX_NUDGES {
+                if !round_may_stream_live(force_tool_use, tool_traces.is_empty(), nudges_used, MAX_NUDGES) {
                     nudges_used += 1;
                     emit_log(
                         app,
@@ -1007,9 +1139,11 @@ async fn run_tool_loop(
                     });
                     continue;
                 }
-                // No tool calls — model gave a direct answer. Push the
-                // assistant message and return so it can be re-streamed.
+                // No tool calls — model gave a direct answer. If this round
+                // streamed its prose live, record that so the caller skips
+                // re-emitting it as a single token. Push and break.
                 had_any_answer = true;
+                answer_streamed_live = last_round_streamed_live;
                 messages.push(response);
                 break;
             }
@@ -1085,6 +1219,7 @@ async fn run_tool_loop(
         error: abort_error,
         aggregated_email_refs,
         aggregated_draft_refs,
+        answer_streamed_live,
     }
 }
 
@@ -1237,6 +1372,10 @@ async fn run_thread_bound_turn(
     let aggregated_email_refs = outcome.aggregated_email_refs.clone();
     let aggregated_draft_refs = outcome.aggregated_draft_refs.clone();
 
+    // Whether the loop already shipped the answer live (skip the single-token
+    // re-emit below if so). Captured before `outcome` is partially moved.
+    let answer_streamed_live = outcome.answer_streamed_live;
+
     // If the loop ended on a direct assistant text answer, reuse it as-is;
     // otherwise stream a synthesis pass over whatever messages it produced.
     let direct_answer: Option<String> = outcome.messages.last().and_then(|m| {
@@ -1256,20 +1395,25 @@ async fn run_thread_bound_turn(
             .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
         Err(AppError::AiError(detail))
     } else if let Some(answer) = direct_answer {
+        // Strip any leaked tool-call markup before it reaches the bubble.
+        let answer = strip_tool_call_markup(&answer);
         // Emit the whole answer as one stream token, then synthesise a
-        // successful result (no extra round-trip to the model).
-        let _ = app.emit(
-            "chat-stream",
-            ChatStreamEvent {
-                message_id: assistant_message_id.clone(),
-                conversation_id: conversation_id.clone(),
-                token: answer.clone(),
-                done: false,
-                error: None,
-                token_count: None,
-                latency_ms: None,
-            },
-        );
+        // successful result (no extra round-trip to the model). Skip the emit
+        // when the loop already streamed the answer live, or the bubble doubles.
+        if !answer_streamed_live {
+            let _ = app.emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                    token: answer.clone(),
+                    done: false,
+                    error: None,
+                    token_count: None,
+                    latency_ms: None,
+                },
+            );
+        }
         Ok(crate::ai::provider::ChatStreamResult {
             content: answer,
             eval_count: None,
@@ -1290,37 +1434,69 @@ async fn run_thread_bound_turn(
                 tool_calls: None,
             })
             .collect();
+        // Gate the live stream so any tool-call markup the backend emits as raw
+        // text is suppressed before it reaches the bubble (see the tools-first
+        // synthesis path for the rationale).
+        let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
+        let gate_for_token = gate.clone();
+        let app_for_token = app_for_stream.clone();
+        let conv_for_token = conv_id_for_stream.clone();
+        let msg_for_token = msg_id_for_stream.clone();
         let stream_fut = provider.chat_stream(
             ai_messages,
             Box::new(move |token| {
+                let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
+                if !forward.is_empty() {
+                    let _ = app_for_token.emit(
+                        "chat-stream",
+                        ChatStreamEvent {
+                            message_id: msg_for_token.clone(),
+                            conversation_id: conv_for_token.clone(),
+                            token: forward,
+                            done: false,
+                            error: None,
+                            token_count: None,
+                            latency_ms: None,
+                        },
+                    );
+                }
+                true
+            }),
+        );
+        let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
+            Ok(res) => res,
+            Err(_) => Err(AppError::AiError(format!(
+                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+                STREAM_TIMEOUT.as_secs()
+            ))),
+        };
+        if let Ok(mut g) = gate.lock() {
+            let tail = g.finish();
+            if !tail.is_empty() {
                 let _ = app_for_stream.emit(
                     "chat-stream",
                     ChatStreamEvent {
                         message_id: msg_id_for_stream.clone(),
                         conversation_id: conv_id_for_stream.clone(),
-                        token,
+                        token: tail,
                         done: false,
                         error: None,
                         token_count: None,
                         latency_ms: None,
                     },
                 );
-                true
-            }),
-        );
-        match timeout(STREAM_TIMEOUT, stream_fut).await {
-            Ok(res) => res,
-            Err(_) => Err(AppError::AiError(format!(
-                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-                STREAM_TIMEOUT.as_secs()
-            ))),
+            }
         }
+        res
     };
 
     let latency_ms = turn_start.elapsed().as_millis() as i64;
 
     match stream_result {
-        Ok(result) => {
+        Ok(mut result) => {
+            // Safety net: strip any tool-call markup that leaked into the final
+            // text before persisting, so a reload shows the cleaned-up answer.
+            result.content = strip_tool_call_markup(&result.content);
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
@@ -1662,6 +1838,7 @@ pub async fn run_chat_turn(
         loop_error,
         aggregated_email_refs,
         aggregated_draft_refs,
+        loop_answer_streamed_live,
     ) = match &route.mode {
         RouteMode::ToolsFirst => {
             emit_log(&app, "info", "stage: tool_loop");
@@ -1701,6 +1878,7 @@ pub async fn run_chat_turn(
                 outcome.error,
                 outcome.aggregated_email_refs,
                 outcome.aggregated_draft_refs,
+                outcome.answer_streamed_live,
             )
         }
         RouteMode::RagFirst => {
@@ -1722,22 +1900,11 @@ pub async fn run_chat_turn(
                     tool_calls: None,
                 })
                 .collect();
-            (msgs, 0i64, false, None, Vec::new(), Vec::new())
+            // RagFirst never runs the tool loop, so nothing was streamed there;
+            // the synthesis stream below ships the answer.
+            (msgs, 0i64, false, None, Vec::new(), Vec::new(), false)
         }
     };
-
-    // If the tool loop ended with a direct assistant text answer, use it as-is
-    // and SKIP the re-stream. Otherwise we'd be appending the answer as context
-    // and asking the model to continue — which produces empty tokens because
-    // the model already said everything it wanted to.
-    let direct_answer: Option<String> = final_messages.last().and_then(|m| {
-        let no_calls = m.tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true);
-        if m.role == "assistant" && no_calls && !m.content.trim().is_empty() {
-            Some(m.content.clone())
-        } else {
-            None
-        }
-    });
 
     emit_log(&app, "info", "stage: stream");
     emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Generating);
@@ -1759,85 +1926,133 @@ pub async fn run_chat_turn(
             .clone()
             .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
         Err(AppError::AiError(detail))
-    } else if let Some(answer) = direct_answer {
-        // Qwen 4B in tool-results mode often invents `[1]..[9]` citation
-        // markers despite the CITATION CONTRACT — strip any that fall outside
-        // the retrieved source range BEFORE emitting so the user never sees
-        // them. count_invalid_citations later (line ~3099) will then report 0.
-        let answer = strip_invalid_citations(&answer, sources.len());
-        // Emit the full answer as a single stream token so the UI sees it,
-        // then synthesise a successful ChatStreamResult (no re-round-trip).
-        let _ = app.emit(
-            "chat-stream",
-            ChatStreamEvent {
-                message_id: assistant_message_id.clone(),
-                conversation_id: conversation_id.clone(),
-                token: answer.clone(),
-                done: false,
-                error: None,
-                token_count: None,
-                latency_ms: None,
-            },
-        );
-        Ok(crate::ai::provider::ChatStreamResult {
-            content: answer,
-            eval_count: None,
-            prompt_eval_count: None,
-        })
     } else {
-        // No direct answer yet but the loop produced at least an assistant
-        // tool-call message (likely hit MAX_TOOL_ROUNDS) — synthesise the
-        // final answer by streaming. Bounded by STREAM_TIMEOUT so a stuck
-        // provider can't leave the UI thinking forever.
-        const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
-        streaming_happened = true;
+        match plan_answer(final_messages) {
+            // The tool loop ended with a direct assistant text answer — reuse it
+            // as-is and SKIP the re-stream. Otherwise we'd be appending the answer
+            // as context and asking the model to continue, which produces empty
+            // tokens because the model already said everything it wanted to.
+            AnswerPlan::DirectText(answer) => {
+                // Defense-in-depth: a weak local model can leak tool-call markup
+                // (`<tool_call>…`) into its direct answer. Truncate from the
+                // first tag marker so the markup never reaches the bubble.
+                let answer = strip_tool_call_markup(&answer);
+                // Qwen 4B in tool-results mode often invents `[1]..[9]` citation
+                // markers despite the CITATION CONTRACT — strip any that fall
+                // outside the retrieved source range BEFORE emitting so the user
+                // never sees them. count_invalid_citations later then reports 0.
+                let answer = strip_invalid_citations(&answer, sources.len());
+                // If the tool loop already streamed this answer token-by-token,
+                // re-emitting it as one token would duplicate the whole bubble —
+                // skip the emit and just synthesise the result for persistence.
+                // Otherwise emit the full answer as a single stream token so the
+                // UI sees it (no extra model round-trip).
+                if !loop_answer_streamed_live {
+                    let _ = app.emit(
+                        "chat-stream",
+                        ChatStreamEvent {
+                            message_id: assistant_message_id.clone(),
+                            conversation_id: conversation_id.clone(),
+                            token: answer.clone(),
+                            done: false,
+                            error: None,
+                            token_count: None,
+                            latency_ms: None,
+                        },
+                    );
+                }
+                Ok(crate::ai::provider::ChatStreamResult {
+                    content: answer,
+                    eval_count: None,
+                    prompt_eval_count: None,
+                })
+            }
+            // No direct text answer: the loop handed back tool results (a
+            // preseeded shortcut, or a run that hit MAX_TOOL_ROUNDS). Synthesise
+            // the final answer by STREAMING from those tool results so the user
+            // sees tokens within a second or two. Bounded by STREAM_TIMEOUT so a
+            // stuck provider can't leave the UI thinking forever.
+            AnswerPlan::StreamSynthesis(synthesis_messages) => {
+                const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+                streaming_happened = true;
 
-        let conv_id_for_stream = conversation_id.clone();
-        let msg_id_for_stream = assistant_message_id.clone();
-        let app_for_stream = app.clone();
+                let conv_id_for_stream = conversation_id.clone();
+                let msg_id_for_stream = assistant_message_id.clone();
+                let app_for_stream = app.clone();
 
-        // Snapshot the final prompt in dev builds so the reasoning panel
-        // can show exactly what was sent to chat_stream. Done before the
-        // `into_iter` move so we don't have to clone `final_messages`.
-        #[cfg(debug_assertions)]
-        {
-            let snapshot = format_messages_for_trace(&final_messages);
-            final_stream_input = Some(snapshot);
-        }
+                // Snapshot the final prompt in dev builds so the reasoning panel
+                // can show exactly what was sent to chat_stream. Done before the
+                // move so we don't have to clone `synthesis_messages`.
+                #[cfg(debug_assertions)]
+                {
+                    let snapshot = format_messages_for_trace(&synthesis_messages);
+                    final_stream_input = Some(snapshot);
+                }
 
-        let ai_messages: Vec<AiMessage> = final_messages
-            .into_iter()
-            .map(|m| AiMessage {
-                role: m.role,
-                content: m.content,
-                tool_calls: None,
-            })
-            .collect();
-
-        let stream_fut = provider.chat_stream(
-            ai_messages,
-            Box::new(move |token| {
-                let _ = app_for_stream.emit(
-                    "chat-stream",
-                    ChatStreamEvent {
-                        message_id: msg_id_for_stream.clone(),
-                        conversation_id: conv_id_for_stream.clone(),
-                        token,
-                        done: false,
-                        error: None,
-                        token_count: None,
-                        latency_ms: None,
-                    },
+                // Gate the live token stream: backends that parse tool calls
+                // out of the raw stream (llama.cpp) can emit tool-call syntax
+                // here as plain text. The gate forwards genuine prose and
+                // suppresses any tool-call markup — prose-then-tag included —
+                // so it never reaches the bubble. `chat_stream`'s returned
+                // content is cleaned separately with `strip_tool_call_markup`
+                // before persistence.
+                let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
+                let gate_for_token = gate.clone();
+                let app_for_token = app_for_stream.clone();
+                let conv_for_token = conv_id_for_stream.clone();
+                let msg_for_token = msg_id_for_stream.clone();
+                let stream_fut = provider.chat_stream(
+                    synthesis_messages,
+                    Box::new(move |token| {
+                        // On the (unreachable) lock-poison case, forward the raw
+                        // token rather than drop content — persistence still
+                        // strips markup as the final safety net.
+                        let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
+                        if !forward.is_empty() {
+                            let _ = app_for_token.emit(
+                                "chat-stream",
+                                ChatStreamEvent {
+                                    message_id: msg_for_token.clone(),
+                                    conversation_id: conv_for_token.clone(),
+                                    token: forward,
+                                    done: false,
+                                    error: None,
+                                    token_count: None,
+                                    latency_ms: None,
+                                },
+                            );
+                        }
+                        true
+                    }),
                 );
-                true
-            }),
-        );
-        match timeout(STREAM_TIMEOUT, stream_fut).await {
-            Ok(res) => res,
-            Err(_) => Err(AppError::AiError(format!(
-                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-                STREAM_TIMEOUT.as_secs()
-            ))),
+                let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
+                    Ok(res) => res,
+                    Err(_) => Err(AppError::AiError(format!(
+                        "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+                        STREAM_TIMEOUT.as_secs()
+                    ))),
+                };
+                // Flush any prose the gate held back while waiting to see if a
+                // trailing chunk completed a tool-call tag.
+                if let Ok(mut g) = gate.lock() {
+                    let tail = g.finish();
+                    if !tail.is_empty() {
+                        let _ = app_for_stream.emit(
+                            "chat-stream",
+                            ChatStreamEvent {
+                                message_id: msg_id_for_stream.clone(),
+                                conversation_id: conv_id_for_stream.clone(),
+                                token: tail,
+                                done: false,
+                                error: None,
+                                token_count: None,
+                                latency_ms: None,
+                            },
+                        );
+                    }
+                }
+                res
+            }
         }
     };
 
@@ -1874,10 +2089,11 @@ pub async fn run_chat_turn(
 
     match stream_result {
         Ok(mut result) => {
-            // Strip hallucinated citations from the answer before persisting so
-            // a re-render after reload shows the cleaned-up text. The direct-
-            // answer path already stripped earlier; this catches the live-
-            // streaming path (and is a cheap no-op when nothing is invalid).
+            // Strip any leaked tool-call markup, then hallucinated citations,
+            // before persisting so a re-render after reload shows the cleaned-up
+            // text. The direct-answer path already stripped earlier; this catches
+            // the live-streaming path (and is a cheap no-op when nothing leaked).
+            result.content = strip_tool_call_markup(&result.content);
             result.content = strip_invalid_citations(&result.content, sources.len());
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
@@ -2108,6 +2324,117 @@ mod tests {
         }
     }
 
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    fn ai_msg(role: &str, content: &str) -> AiMessage {
+        AiMessage {
+            role: role.into(),
+            content: content.into(),
+            tool_calls: None,
+        }
+    }
+
+    fn ai_tool_call(name: &str) -> AiToolCall {
+        AiToolCall {
+            function: AiToolCallFunction {
+                name: name.into(),
+                arguments: serde_json::json!({}),
+            },
+        }
+    }
+
+    #[test]
+    fn plan_answer_reuses_a_direct_assistant_text_answer() {
+        // Normal tools-first turn: the model answered in plain text after a
+        // tool round. That text is complete — emit it as-is, no re-stream.
+        let messages = vec![
+            ai_msg("system", "…"),
+            ai_msg("user", "when do we ship?"),
+            ai_msg("assistant", "We ship in March [1]."),
+        ];
+        match plan_answer(messages) {
+            AnswerPlan::DirectText(text) => assert_eq!(text, "We ship in March [1]."),
+            AnswerPlan::StreamSynthesis(_) => panic!("expected DirectText for a complete assistant answer"),
+        }
+    }
+
+    #[test]
+    fn plan_answer_streams_synthesis_when_loop_ended_on_tool_results() {
+        // Preseeded shortcut shape: the synthetic assistant tool-call message
+        // plus the tool result, with no assistant text yet. The synthesis must
+        // be streamed, and the assistant→tool linkage (tool_calls) must survive
+        // into the streamed messages so the provider can bind the result to its
+        // call — dropping it (the old strip) orphans the tool message.
+        let mut assistant = ai_msg("assistant", "");
+        assistant.tool_calls = Some(vec![ai_tool_call("search_emails")]);
+        let messages = vec![
+            ai_msg("system", "…"),
+            ai_msg("user", "resume mis correos de hoy"),
+            assistant,
+            ai_msg("tool", "## Primary (3)\n- id=e1 …"),
+        ];
+        match plan_answer(messages) {
+            AnswerPlan::StreamSynthesis(out) => {
+                assert_eq!(out.len(), 4, "all messages carried through to the stream");
+                let carrier = &out[2];
+                assert_eq!(carrier.role, "assistant");
+                assert_eq!(
+                    carrier.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0),
+                    1,
+                    "tool_calls preserved so the tool result is not orphaned"
+                );
+                assert_eq!(out[3].role, "tool");
+            }
+            AnswerPlan::DirectText(_) => panic!("a trailing tool result is not a direct answer"),
+        }
+    }
+
+    #[test]
+    fn plan_answer_streams_when_final_assistant_text_is_blank() {
+        // An assistant message with only whitespace is not a real answer —
+        // route it through synthesis rather than emitting an empty bubble.
+        let messages = vec![ai_msg("user", "hola"), ai_msg("assistant", "   ")];
+        assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    #[test]
+    fn round_may_stream_live_suppresses_first_force_tool_round() {
+        // force_tool_use turn, nothing executed yet, nudge still available:
+        // the model might be announcing a tool call as text — do NOT stream it.
+        assert!(!round_may_stream_live(true, true, 0, 1));
+    }
+
+    #[test]
+    fn round_may_stream_live_allows_after_nudge_exhausted() {
+        // Same force-tool turn, but the one nudge is spent — accept and stream
+        // the bare-text answer instead of looping forever.
+        assert!(round_may_stream_live(true, true, 1, 1));
+    }
+
+    #[test]
+    fn round_may_stream_live_allows_once_a_tool_has_executed() {
+        // A tool already ran; the model's prose is now a genuine synthesis
+        // answer, so stream it live even on a force-tool turn.
+        assert!(round_may_stream_live(true, false, 0, 1));
+    }
+
+    #[test]
+    fn round_may_stream_live_allows_thread_bound_qna() {
+        // Thread-bound chat never forces a tool call: every round is a real
+        // answer and may stream live from the first token.
+        assert!(round_may_stream_live(false, true, 0, 1));
+    }
+
+    #[test]
+    fn plan_answer_streams_when_final_assistant_still_holds_a_tool_call() {
+        // Defensive: a trailing assistant message that still carries a tool_call
+        // is not a finished answer, even if it has some content.
+        let mut assistant = ai_msg("assistant", "let me check");
+        assistant.tool_calls = Some(vec![ai_tool_call("search_emails")]);
+        let messages = vec![ai_msg("user", "?"), assistant];
+        assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
     fn make_message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -2328,6 +2655,11 @@ Termina con un párrafo breve destacando lo más importante del día.";
         let args = &calls[0].function.arguments;
         assert!(args.get("since").is_some(), "must pass a since=today bound");
         assert!(args.get("until").is_some(), "must pass an until=tomorrow bound");
+        assert_eq!(
+            args.get("include_bodies").and_then(|v| v.as_bool()),
+            Some(true),
+            "summary shortcut must preseed full bodies so the model need not call get_email_body"
+        );
     }
 
     #[test]
@@ -2338,6 +2670,15 @@ ordenados cronológicamente. Cita cada entrada. \
 Termina con dos o tres frases sobre los temas dominantes de la semana.";
         let calls = heuristic_direct_tools(prompt).expect("week shortcut must match the button prompt");
         assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0]
+                .function
+                .arguments
+                .get("include_bodies")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "week summary shortcut must preseed full bodies too"
+        );
     }
 
     #[test]

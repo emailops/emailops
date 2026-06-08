@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolCtx, ToolError, ToolOutput};
-use crate::services::chat::{format_search_emails_output, or_fallback_search, parse_iso_date_secs};
-use crate::services::emails;
+use crate::services::chat::{
+    format_search_emails_output, format_search_emails_output_with_bodies, or_fallback_search, parse_iso_date_secs,
+};
+use crate::services::{emails, thread_clean};
 
 pub struct SearchEmailsTool;
 
@@ -56,6 +58,12 @@ impl Tool for SearchEmailsTool {
             .filter(|s| !s.is_empty());
         let since_str = args.get("since").and_then(|v| v.as_str());
         let until_str = args.get("until").and_then(|v| v.as_str());
+        // Internal, heuristic-only arg (deliberately absent from
+        // `parameters_schema`, so the LLM never sees or sets it). The summary
+        // shortcuts preseed it so each result carries its full cleaned body —
+        // letting a weak local model summarise complete emails in one pass
+        // instead of chaining a `get_email_body` call per row.
+        let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
 
         // All of query / from / to / subject empty would scan the whole
         // mailbox. Reject early so the model corrects its call instead of
@@ -114,12 +122,37 @@ impl Tool for SearchEmailsTool {
         // link the LLM later emits about these results.
         let ids = |emails: &[crate::models::Email]| -> Vec<String> { emails.iter().map(|e| e.id.clone()).collect() };
 
+        // Fetch + clean the full body of each result, keyed by id. Reuses the
+        // same cleaning pipeline as the `get_email_body` tool so the model sees
+        // bodies nearly whole (HTML/quotes/signatures stripped) rather than the
+        // raw stored payload. Bodies that fail to load are simply absent from
+        // the map; the formatter then falls back to the snippet for that row.
+        let fetch_bodies = |emails: &[crate::models::Email]| -> std::collections::HashMap<String, String> {
+            // Fair-share a tight total budget across the rows so one long
+            // newsletter can't swallow the context and derail the summary — each
+            // row only needs a gist, not the full 8000-char body.
+            let per_email = thread_clean::summary_chars_per_email(emails.len());
+            let mut map = std::collections::HashMap::new();
+            for e in emails {
+                if let Ok(body) = emails::get_email_body(ctx.db, &e.id) {
+                    if !body.is_empty() {
+                        map.insert(e.id.clone(), thread_clean::clean_email_body(&body, per_email));
+                    }
+                }
+            }
+            map
+        };
+
         match primary {
             Err(e) => Ok(ToolOutput::text(format!("Search error: {}", e))),
-            Ok(emails) if !emails.is_empty() => Ok(ToolOutput::text_with_email_refs(
-                format_search_emails_output(&emails),
-                ids(&emails),
-            )),
+            Ok(emails) if !emails.is_empty() => {
+                let body = if include_bodies {
+                    format_search_emails_output_with_bodies(&emails, &fetch_bodies(&emails))
+                } else {
+                    format_search_emails_output(&emails)
+                };
+                Ok(ToolOutput::text_with_email_refs(body, ids(&emails)))
+            }
             Ok(_) => {
                 // ── Empty-result fallback ladder ───────────────────────
                 let has_non_date_anchor =

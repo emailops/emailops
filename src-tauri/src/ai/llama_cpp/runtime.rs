@@ -382,7 +382,10 @@ use llama_cpp_2::{
     sampling::LlamaSampler,
 };
 
-use crate::ai::provider::{AiMessage, AiToolCall, AiToolCallFunction, ChatStreamResult, CompletionOptions};
+use crate::ai::provider::{
+    AiMessage, AiToolCall, AiToolCallFunction, ChatStreamResult, CompletionOptions, ToolStreamResult,
+};
+use crate::ai::stream_gate::StreamGate;
 use crate::models::error::{AppError, Result};
 
 // ── Global backend ────────────────────────────────────────────────────────────
@@ -1009,10 +1012,19 @@ impl LlamaCppRuntime {
         .map_err(|e| AppError::AiError(format!("Tool-call task panicked: {}", e)))?
         .map_err(AppError::AiError)?;
 
-        // `parsed_json` is an OpenAI-shaped assistant message:
-        //   {"role":"assistant","content":"…","tool_calls":[{"id":…,"type":"function",
-        //    "function":{"name":"…","arguments":"{…}"}}, …]}
-        let parsed: serde_json::Value = serde_json::from_str(&parsed_json)
+        Self::parse_oai_assistant_message(&parsed_json)
+    }
+
+    /// Decode an OpenAI-shaped assistant message JSON (as produced by
+    /// `parse_response_oaicompat` or the content-only fallback) into an
+    /// `AiMessage`. When tool calls are present the content is dropped — the
+    /// tool round's job is to dispatch calls, not surface prose.
+    ///
+    /// Shape:
+    ///   {"role":"assistant","content":"…","tool_calls":[{"id":…,"type":"function",
+    ///    "function":{"name":"…","arguments":"{…}"}}, …]}
+    fn parse_oai_assistant_message(parsed_json: &str) -> Result<AiMessage> {
+        let parsed: serde_json::Value = serde_json::from_str(parsed_json)
             .map_err(|e| AppError::AiError(format!("Parsed tool JSON malformed: {}", e)))?;
 
         let content = parsed.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1055,6 +1067,110 @@ impl LlamaCppRuntime {
                 tool_calls: Some(tool_calls),
             })
         }
+    }
+
+    /// Streaming tool-call round. Combines `chat_with_tools` (native tool-call
+    /// rendering + parsing) with live token streaming: the model's output is fed
+    /// through a [`StreamGate`] so any tool-call syntax is suppressed while prose
+    /// is forwarded to `on_token`. After generation the full output is parsed via
+    /// `parse_response_oaicompat`, so structured `tool_calls` survive even though
+    /// they were never streamed.
+    pub async fn chat_stream_with_tools(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        self.touch_last_used();
+        let model = self.get_chat_model().await?;
+        let temperature = 0.0f32; // greedy for deterministic tool selection
+        let max_tokens = 4096usize;
+
+        let messages_value = normalize_messages_for_oaicompat(messages);
+        let messages_json = serde_json::to_string(&messages_value)
+            .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
+        let tools_json_owned = if tools.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(tools).map_err(|e| AppError::AiError(format!("tools JSON encode: {}", e)))?)
+        };
+
+        let fallback_template = self.chat_template_fallback();
+
+        let _permit = Arc::clone(&self.inference_sem)
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
+
+        let (parsed_json, prompt_tokens, eval_tokens) =
+            tokio::task::spawn_blocking(move || -> std::result::Result<(String, u32, u32), String> {
+                let template = Self::resolve_chat_template(&model, fallback_template)?;
+
+                let params = OpenAIChatTemplateParams {
+                    messages_json: &messages_json,
+                    tools_json: tools_json_owned.as_deref(),
+                    tool_choice: Some("auto"),
+                    json_schema: None,
+                    grammar: None,
+                    reasoning_format: None,
+                    chat_template_kwargs: None,
+                    add_generation_prompt: true,
+                    use_jinja: true,
+                    parallel_tool_calls: false,
+                    enable_thinking: false,
+                    add_bos: false,
+                    add_eos: false,
+                    parse_tool_calls: true,
+                };
+
+                let tmpl_result = model
+                    .apply_chat_template_oaicompat(&template, &params)
+                    .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
+
+                let mut cb = on_token;
+                let mut gate = StreamGate::new();
+                // Generate, gating each piece: tool-call syntax is buffered and
+                // suppressed; prose is flushed live to the user's callback.
+                let gen = {
+                    let mut gated = |piece: String| -> bool {
+                        let out = gate.push(&piece);
+                        if out.is_empty() {
+                            true
+                        } else {
+                            cb(out)
+                        }
+                    };
+                    Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, Some(&mut gated))
+                };
+                let (output, prompt_t, eval_t) = gen?;
+
+                // Flush any buffered prose left at end of stream.
+                let tail = gate.finish();
+                if !tail.is_empty() {
+                    let _ = cb(tail);
+                }
+
+                let parsed = match tmpl_result.parse_response_oaicompat(&output, false) {
+                    Ok(p) => p,
+                    Err(_) => serde_json::json!({
+                        "role": "assistant",
+                        "content": output,
+                        "tool_calls": [],
+                    })
+                    .to_string(),
+                };
+                Ok((parsed, prompt_t, eval_t))
+            })
+            .await
+            .map_err(|e| AppError::AiError(format!("Streaming tool-call task panicked: {}", e)))?
+            .map_err(AppError::AiError)?;
+
+        let message = Self::parse_oai_assistant_message(&parsed_json)?;
+        Ok(ToolStreamResult {
+            message,
+            eval_count: Some(eval_tokens),
+            prompt_eval_count: Some(prompt_tokens),
+        })
     }
 
     // ── Embeddings ────────────────────────────────────────────────────────────

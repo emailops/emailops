@@ -165,7 +165,7 @@ pub async fn send_chat_message(
             .ok()
             .map(|p| p.model_name().to_string())
             .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| "gemma4:e2b".to_string())
+            .unwrap_or_else(|| "qwen3.5-4b-q4_k_m".to_string())
     } else {
         preferred_model
     };

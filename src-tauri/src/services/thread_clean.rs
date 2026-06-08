@@ -42,6 +42,29 @@ pub fn chars_per_email(num_emails: usize) -> usize {
     (THREAD_CONTEXT_BUDGET / n).clamp(DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL)
 }
 
+/// Total budget shared across ALL emails preseeded into a multi-email summary
+/// (e.g. the "resumen del día" shortcut). Deliberately far tighter than a
+/// thread's budget: a summary table only needs a one-line gist per email, and a
+/// weak local model fixates on — and gets derailed by — one long body if the
+/// first row is allowed to consume the whole context window.
+const SUMMARY_BODIES_BUDGET: usize = 6_000;
+
+/// Per-email floor for a summary excerpt — enough for a one-line gist.
+pub const MIN_SUMMARY_CHARS_PER_EMAIL: usize = 300;
+
+/// Per-email ceiling for a summary excerpt. Well below [`MAX_CHARS_PER_EMAIL`]
+/// so no single email can swallow the budget the way an 8000-char newsletter did.
+pub const MAX_SUMMARY_CHARS_PER_EMAIL: usize = 1_500;
+
+/// Pick the per-email excerpt cap when inlining N email bodies into a single
+/// summary turn. Fair-shares [`SUMMARY_BODIES_BUDGET`] across the rows so the
+/// first (often longest) email cannot crowd out the rest, clamped to
+/// `[MIN_SUMMARY_CHARS_PER_EMAIL, MAX_SUMMARY_CHARS_PER_EMAIL]`.
+pub fn summary_chars_per_email(num_emails: usize) -> usize {
+    let n = num_emails.max(1);
+    (SUMMARY_BODIES_BUDGET / n).clamp(MIN_SUMMARY_CHARS_PER_EMAIL, MAX_SUMMARY_CHARS_PER_EMAIL)
+}
+
 /// Clean a single email body. Accepts the raw body (HTML or plain text).
 ///
 /// Unlike [`crate::util::html::strip_html_for_fts`], this function preserves
@@ -495,6 +518,30 @@ mod tests {
     #[test]
     fn chars_per_email_handles_zero_without_panicking() {
         assert_eq!(chars_per_email(0), MAX_CHARS_PER_EMAIL);
+    }
+
+    #[test]
+    fn summary_chars_per_email_caps_a_single_email_well_below_full_body() {
+        // Regression: the "resumen del día" preseed used MAX_CHARS_PER_EMAIL
+        // (8000) per row, so one long newsletter ate the whole context and the
+        // model summarised only that email. A summary row needs a gist, not the
+        // full body — even a single result is capped at the summary ceiling.
+        assert_eq!(summary_chars_per_email(1), MAX_SUMMARY_CHARS_PER_EMAIL);
+        assert!(summary_chars_per_email(1) < MAX_CHARS_PER_EMAIL);
+    }
+
+    #[test]
+    fn summary_chars_per_email_fair_shares_the_budget() {
+        // No single email can dominate: the more rows, the smaller each excerpt.
+        assert_eq!(summary_chars_per_email(5), 1_200);
+        assert_eq!(summary_chars_per_email(10), 600);
+    }
+
+    #[test]
+    fn summary_chars_per_email_floors_for_many_results() {
+        // Beyond ~20 rows we stop shrinking so each email keeps a usable gist.
+        assert_eq!(summary_chars_per_email(30), MIN_SUMMARY_CHARS_PER_EMAIL);
+        assert_eq!(summary_chars_per_email(0), MAX_SUMMARY_CHARS_PER_EMAIL);
     }
 
     #[test]

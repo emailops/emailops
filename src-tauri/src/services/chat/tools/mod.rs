@@ -1579,6 +1579,96 @@ mod tests {
         assert_eq!(out, "No matching emails found.");
     }
 
+    /// The summary shortcuts preseed `include_bodies:true` so the model can
+    /// summarise emails in one pass instead of chaining a `get_email_body`
+    /// call per result (which a weak local model often emits as raw markup).
+    /// With the flag set, the tool output must inline each email's body
+    /// (excerpt) — not just the snippet.
+    #[test]
+    fn search_emails_with_include_bodies_emits_body() {
+        let db = tools_test_db();
+        // Distinctive body token that is NOT in the snippet ("snip").
+        let body = format!("INTRO line.\n{}\nSIGNOFF.", "RESUMEN_BODY_TOKEN ".repeat(30));
+        seed_email(&db, "e1", "acc", "t1", "Alice", "a@x.com", "subj", &body, 100);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "a@x.com", "include_bodies": true, "limit": 5 })),
+        );
+        assert!(
+            out.contains("RESUMEN_BODY_TOKEN"),
+            "body must be inlined when include_bodies=true; out:\n{}",
+            out
+        );
+    }
+
+    /// Regression: preseeding bodies used the full-body cap (8000 chars) per
+    /// row, so one long newsletter ate the whole context and the model
+    /// summarised only that email (ignoring the table-across-all-emails
+    /// request). Bodies are now fair-shared from a tight budget — a very long
+    /// email is excerpted, never inlined whole.
+    #[test]
+    fn search_emails_with_include_bodies_caps_a_long_email() {
+        let db = tools_test_db();
+        // 8500-char body with a sentinel near the very end. Under the old
+        // 8000-cap it would be inlined nearly whole and the sentinel would show.
+        let long_body = format!("HEAD_TOKEN {} TAIL_SENTINEL", "x ".repeat(4200));
+        seed_email(&db, "e1", "acc", "t1", "Alice", "a@x.com", "subj", &long_body, 100);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "a@x.com", "include_bodies": true, "limit": 5 })),
+        );
+        assert!(
+            out.contains("HEAD_TOKEN"),
+            "excerpt should keep the start; out:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("TAIL_SENTINEL"),
+            "long body must be capped, not inlined whole; out len {}",
+            out.chars().count()
+        );
+    }
+
+    /// Default search (no include_bodies) keeps the lean snippet-only output —
+    /// the body must NOT leak in, so normal searches stay token-cheap.
+    #[test]
+    fn search_emails_without_include_bodies_omits_body() {
+        let db = tools_test_db();
+        let body = "UNIQUE_BODY_TOKEN should not appear in default search output";
+        seed_email(&db, "e1", "acc", "t1", "Alice", "a@x.com", "subj", body, 100);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "a@x.com", "limit": 5 })),
+        );
+        assert!(
+            !out.contains("UNIQUE_BODY_TOKEN"),
+            "body must NOT be included without include_bodies; out:\n{}",
+            out
+        );
+    }
+
+    /// `include_bodies` is an internal, heuristic-only arg — it must never be
+    /// advertised to the LLM in the tool's JSON schema.
+    #[test]
+    fn search_emails_schema_hides_include_bodies() {
+        let schema = search_emails::SearchEmailsTool.parameters_schema();
+        let props = schema["properties"].as_object().expect("properties object");
+        assert!(
+            !props.contains_key("include_bodies"),
+            "include_bodies must stay out of the LLM-facing schema; got: {:?}",
+            props.keys().collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn search_emails_invalid_date_returns_error() {
         let db = tools_test_db();

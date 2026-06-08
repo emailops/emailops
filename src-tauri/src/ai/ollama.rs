@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::ai::provider::{
     AIProvider, AiMessage, AiToolCall, AiToolCallFunction, BackendCapabilities, ChatStreamResult as AiChatStreamResult,
-    CompletionOptions, CompletionResult, EmbeddingResult, ModelInfo, ModelPricing, ProviderType,
+    CompletionOptions, CompletionResult, EmbeddingResult, ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
 use crate::models::error::{AppError, Result};
 
@@ -664,6 +664,112 @@ impl OllamaClient {
         })
     }
 
+    /// Streaming chat WITH tool definitions (Ollama wire types). Streams
+    /// assistant prose via `on_token` while accumulating any `tool_calls` that
+    /// arrive in the stream. Ollama emits `tool_calls` structurally separate
+    /// from `content`, so no prose/tool-call gating is needed — a tool-call turn
+    /// simply carries empty content. Returns the accumulated assistant message
+    /// plus token stats from the final chunk.
+    async fn chat_stream_with_tools_internal(
+        &self,
+        messages: &[OllamaChatMessage],
+        tools: &[serde_json::Value],
+        mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>)> {
+        let url = format!("{}/api/chat", self.base_url);
+        let request = OllamaChatRequest {
+            model: self.model.clone(),
+            messages: messages.to_vec(),
+            stream: true,
+            think: None,
+            tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
+            options: Some(OllamaSamplingOptions::grounded()),
+            keep_alive: Some(self.keep_alive.clone()),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| AppError::AiError(format!("Failed to connect to Ollama for tool stream: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(AppError::AiError(format!(
+                "Ollama tool stream error ({}): {}",
+                status, error_text
+            )));
+        }
+
+        let mut accumulated = String::new();
+        let mut tool_calls: Vec<OllamaToolCall> = Vec::new();
+        let mut eval_count: Option<u32> = None;
+        let mut prompt_eval_count: Option<u32> = None;
+        let mut stream = response.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+
+        let finalize = |content: String, calls: Vec<OllamaToolCall>| OllamaChatMessage {
+            role: "assistant".to_string(),
+            content,
+            tool_calls: if calls.is_empty() { None } else { Some(calls) },
+            thinking: String::new(),
+        };
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| AppError::AiError(format!("Ollama tool stream read error: {}", e)))?;
+            buf.extend_from_slice(&bytes);
+
+            while let Some(idx) = buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=idx).collect();
+                let line_str = std::str::from_utf8(&line[..line.len() - 1]).unwrap_or("").trim();
+                if line_str.is_empty() {
+                    continue;
+                }
+                let parsed: OllamaChatStreamChunk = match serde_json::from_str(line_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        crate::services::logger::log(
+                            "debug",
+                            "ai",
+                            format!(
+                                "ollama.chat_stream_with_tools skipping malformed chunk: {} (err: {})",
+                                line_str, e
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                if let Some(msg) = parsed.message {
+                    if let Some(tc) = msg.tool_calls {
+                        tool_calls.extend(tc);
+                    }
+                    if !msg.content.is_empty() {
+                        accumulated.push_str(&msg.content);
+                        if !on_token(msg.content.clone()) {
+                            // Cancelled by caller — return what we have.
+                            return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                        }
+                    }
+                }
+                if parsed.eval_count.is_some() {
+                    eval_count = parsed.eval_count;
+                }
+                if parsed.prompt_eval_count.is_some() {
+                    prompt_eval_count = parsed.prompt_eval_count;
+                }
+                if parsed.done {
+                    return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                }
+            }
+        }
+
+        // Stream ended without a done marker — return what we have.
+        Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count))
+    }
+
     pub async fn parse_search_query(&self, query: &str) -> Result<ParsedSearchQuery> {
         if let Some(parsed) = self.parse_simple_query(query) {
             return Ok(parsed);
@@ -910,45 +1016,9 @@ impl AIProvider for OllamaClient {
     }
 
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
-        // Convert provider-neutral AiMessage → Ollama wire format.
-        let ollama_msgs: Vec<OllamaChatMessage> = messages
-            .iter()
-            .map(|m| OllamaChatMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-                tool_calls: m.tool_calls.as_ref().map(|tc_list| {
-                    tc_list
-                        .iter()
-                        .map(|tc| OllamaToolCall {
-                            function: OllamaToolCallFunction {
-                                name: tc.function.name.clone(),
-                                arguments: tc.function.arguments.clone(),
-                            },
-                        })
-                        .collect()
-                }),
-                thinking: String::new(),
-            })
-            .collect();
-
+        let ollama_msgs = ai_messages_to_ollama(messages);
         let result = self.chat_with_tools_internal(&ollama_msgs, tools).await?;
-
-        // Convert back to provider-neutral AiMessage.
-        Ok(AiMessage {
-            role: result.role,
-            content: result.content,
-            tool_calls: result.tool_calls.map(|tc_list| {
-                tc_list
-                    .into_iter()
-                    .map(|tc| AiToolCall {
-                        function: AiToolCallFunction {
-                            name: tc.function.name,
-                            arguments: tc.function.arguments,
-                        },
-                    })
-                    .collect()
-            }),
-        })
+        Ok(ollama_message_to_ai(result))
     }
 
     async fn chat_stream(
@@ -962,6 +1032,26 @@ impl AIProvider for OllamaClient {
             content: result.content,
             eval_count: result.eval_count,
             prompt_eval_count: result.prompt_eval_count,
+        })
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        let ollama_msgs = ai_messages_to_ollama(&messages);
+        let (result, eval_count, prompt_eval_count) = self
+            .chat_stream_with_tools_internal(&ollama_msgs, &tools, on_token)
+            .await?;
+        // `ollama_message_to_ai` clears content when tool_calls are present, so a
+        // tool-call turn never carries leaked prose in history.
+        let message = ollama_message_to_ai(result);
+        Ok(ToolStreamResult {
+            message,
+            eval_count,
+            prompt_eval_count,
         })
     }
 
@@ -1002,6 +1092,53 @@ impl AIProvider for OllamaClient {
             .await
             .map_err(|e| AppError::AiError(format!("Ollama warmup failed: {}", e)))?;
         Ok(())
+    }
+}
+
+/// Convert provider-neutral `AiMessage`s into Ollama wire messages, preserving
+/// any `tool_calls` so multi-round tool histories round-trip correctly.
+fn ai_messages_to_ollama(messages: &[AiMessage]) -> Vec<OllamaChatMessage> {
+    messages
+        .iter()
+        .map(|m| OllamaChatMessage {
+            role: m.role.clone(),
+            content: m.content.clone(),
+            tool_calls: m.tool_calls.as_ref().map(|tc_list| {
+                tc_list
+                    .iter()
+                    .map(|tc| OllamaToolCall {
+                        function: OllamaToolCallFunction {
+                            name: tc.function.name.clone(),
+                            arguments: tc.function.arguments.clone(),
+                        },
+                    })
+                    .collect()
+            }),
+            thinking: String::new(),
+        })
+        .collect()
+}
+
+/// Convert an Ollama assistant message back to provider-neutral form. When tool
+/// calls are present the content is dropped — consistent with the other
+/// backends, a tool-call turn dispatches calls rather than surfacing prose.
+fn ollama_message_to_ai(msg: OllamaChatMessage) -> AiMessage {
+    let tool_calls: Option<Vec<AiToolCall>> = msg.tool_calls.map(|tc_list| {
+        tc_list
+            .into_iter()
+            .map(|tc| AiToolCall {
+                function: AiToolCallFunction {
+                    name: tc.function.name,
+                    arguments: tc.function.arguments,
+                },
+            })
+            .collect()
+    });
+    let has_tool_calls = tool_calls.as_ref().is_some_and(|v| !v.is_empty());
+    AiMessage {
+        role: msg.role,
+        content: if has_tool_calls { String::new() } else { msg.content },
+        tool_calls,
     }
 }
 

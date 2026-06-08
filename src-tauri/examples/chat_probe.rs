@@ -139,7 +139,7 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         Some(m) => m,
         None => match db.get_preference("ai_model") {
             Ok(Some(v)) if !v.is_empty() => v,
-            _ => "gemma4:e2b".to_string(),
+            _ => "qwen3.5-4b-q4_k_m".to_string(),
         },
     };
 
