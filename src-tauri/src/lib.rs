@@ -169,11 +169,15 @@ impl AppState {
     }
 }
 
-// `run()` is the Tauri entry point. The few `.expect(...)` calls inside —
-// app_data_dir resolution, Database::new, and the final `Builder::run()` —
-// are deliberate fail-fast paths: if any of them fail, EmailOps simply
-// cannot start, and panicking with a descriptive message is more useful
-// than propagating an error to a non-existent caller.
+// `run()` is the Tauri entry point. Startup steps that EmailOps cannot
+// continue without (keychain init, data-dir resolution, opening the database)
+// route their failures through `fatal_startup_error`, which shows the user a
+// readable native dialog and exits cleanly — instead of panicking. A panic
+// here is especially bad: the setup hook runs inside macOS'
+// `applicationDidFinishLaunching`, so the panic cannot unwind across the
+// Objective-C boundary and the process `abort()`s with an opaque crash report.
+// The only remaining `.expect(...)` is the final `Builder::run()` (the event
+// loop itself failing to start has no graceful recovery).
 #[allow(clippy::expect_used)]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -190,7 +194,9 @@ pub fn run() {
     // keyring 4 requires explicit backend selection — picks the platform-native
     // credential store (macOS Keychain, Windows Credential Manager, Linux
     // Secret Service). Must run before any keyring_core::Entry::new(...) call.
-    services::keychain::init_native_store().expect("failed to initialise OS keychain backend");
+    if let Err(e) = services::keychain::init_native_store() {
+        fatal_startup_error("initialise the OS keychain", &e.to_string());
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -214,7 +220,10 @@ pub fn run() {
                     eprintln!("[startup] using EMAILOPS_DATA_DIR override: {}", p.display());
                     p
                 }
-                _ => app.path().app_data_dir().expect("Failed to get app data directory"),
+                _ => match app.path().app_data_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => fatal_startup_error("locate its data directory", &e.to_string()),
+                },
             };
             eprintln!(
                 "[startup] [{:.0}ms] app_data_dir resolved: {}",
@@ -242,7 +251,10 @@ pub fn run() {
             );
 
             let t = std::time::Instant::now();
-            let db = Database::new(app_data_dir.clone()).expect("Failed to initialize database");
+            let db = match Database::new(app_data_dir.clone()) {
+                Ok(db) => db,
+                Err(e) => fatal_startup_error("open its local database", &e.to_string()),
+            };
             eprintln!(
                 "[startup] [{:.0}ms] database initialized",
                 t.elapsed().as_secs_f64() * 1000.0
@@ -646,6 +658,73 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ── Fatal startup errors ──────────────────────────────────────────────────────
+
+/// Build the user-facing message for a fatal startup failure. Kept pure so it
+/// can be unit-tested without exiting the process.
+fn format_startup_error(stage: &str, detail: &str) -> String {
+    format!(
+        "EmailOps could not start because it failed to {stage}.\n\n\
+         This is often caused by a full startup disk or a file-permission \
+         problem. Free up disk space and try opening EmailOps again.\n\n\
+         Details: {detail}"
+    )
+}
+
+/// Show a blocking native error dialog. Best-effort: on macOS we shell out to
+/// `osascript` (which works even though our own window has not been created
+/// yet); on other platforms we rely on the stderr log written by the caller.
+#[cfg(target_os = "macos")]
+fn show_startup_error_dialog(message: &str) {
+    // Escape for an AppleScript double-quoted string literal.
+    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("display alert \"EmailOps\" message \"{escaped}\" as critical");
+    let _ = std::process::Command::new("osascript").arg("-e").arg(script).status();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_startup_error_dialog(_message: &str) {}
+
+/// Abort startup gracefully: log the reason, show the user a readable dialog,
+/// then exit with a non-zero status. Unlike a panic, `std::process::exit` does
+/// not trip the `panic_cannot_unwind` abort path when called from inside the
+/// macOS launch callback.
+fn fatal_startup_error(stage: &str, detail: &str) -> ! {
+    let message = format_startup_error(stage, detail);
+    eprintln!("[startup][fatal] {message}");
+    // The frontend window is never shown on this path, so the logger emission
+    // is mostly for parity; the native dialog is what the user actually sees.
+    services::logger::log("error", "system", message.clone());
+    show_startup_error_dialog(&message);
+    std::process::exit(1);
+}
+
+#[cfg(test)]
+mod startup_error_tests {
+    use super::format_startup_error;
+
+    #[test]
+    fn message_names_the_stage_and_includes_details() {
+        let msg = format_startup_error("open its local database", "disk I/O error (SQLITE_FULL)");
+        assert!(
+            msg.contains("open its local database"),
+            "stage must appear in the message"
+        );
+        assert!(
+            msg.contains("disk I/O error (SQLITE_FULL)"),
+            "underlying detail must appear"
+        );
+    }
+
+    #[test]
+    fn message_hints_at_disk_space() {
+        // The most common real cause is a full disk — the user-facing copy must
+        // point them at it so they can self-recover.
+        let msg = format_startup_error("locate its data directory", "permission denied");
+        assert!(msg.to_lowercase().contains("disk"), "message should hint at disk space");
+    }
 }
 
 #[cfg(test)]

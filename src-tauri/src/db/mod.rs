@@ -321,23 +321,52 @@ impl Database {
         }
         std::fs::create_dir_all(backup_dir).map_err(|e| crate::models::error::AppError::IoError(e.to_string()))?;
 
+        // Bound the directory *before* copying. A previous run that failed
+        // (e.g. a full disk) never reached the post-copy prune below, so without
+        // this an unbroken string of failures accumulates partial backups
+        // forever — exactly the ~1900-file pile seen in production.
+        Self::prune_backups(backup_dir, keep);
+
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let dest_path = backup_dir.join(format!("emailops-{timestamp}.db"));
+        // Copy into a temp file whose name does NOT match the `emailops-` prefix,
+        // so a partial copy is never mistaken for — or retained as — a real
+        // backup. Promote to the final name only once the copy is complete.
+        let tmp_path = backup_dir.join(".emailops-backup.tmp");
+        Self::remove_backup_temp(&tmp_path);
 
-        // Open a fresh source connection — avoids holding either mutex during backup.
-        let src = Connection::open(&self.db_path)?;
-        let mut dst = Connection::open(&dest_path)?;
+        let copy = (|| -> Result<()> {
+            // Open a fresh source connection — avoids holding either mutex during backup.
+            let src = Connection::open(&self.db_path)?;
+            let mut dst = Connection::open(&tmp_path)?;
+            let backup = rusqlite::backup::Backup::new(&src, &mut dst)?;
+            // step(-1) copies the entire DB in one go; for large DBs consider stepping
+            // in smaller increments to allow periodic progress events.
+            backup.run_to_completion(5, std::time::Duration::from_millis(250), None)?;
+            Ok(())
+        })();
 
-        let backup = rusqlite::backup::Backup::new(&src, &mut dst)?;
-        // step(-1) copies the entire DB in one go; for large DBs consider stepping
-        // in smaller increments to allow periodic progress events.
-        backup.run_to_completion(5, std::time::Duration::from_millis(250), None)?;
-        drop(backup);
-        drop(dst);
-        drop(src);
+        if let Err(e) = copy {
+            // Delete the partial copy so failures don't accumulate on disk.
+            Self::remove_backup_temp(&tmp_path);
+            return Err(e);
+        }
 
+        std::fs::rename(&tmp_path, &dest_path).map_err(|e| crate::models::error::AppError::IoError(e.to_string()))?;
         Self::prune_backups(backup_dir, keep);
         Ok(dest_path)
+    }
+
+    /// Remove a backup temp file plus any SQLite sidecar journals it may have
+    /// left behind. Best-effort — a missing file (or a directory occupying the
+    /// path in tests) is fine.
+    fn remove_backup_temp(tmp_path: &Path) {
+        let _ = std::fs::remove_file(tmp_path);
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let mut sidecar = tmp_path.as_os_str().to_owned();
+            sidecar.push(suffix);
+            let _ = std::fs::remove_file(PathBuf::from(sidecar));
+        }
     }
 
     fn prune_backups(backup_dir: &Path, keep: usize) {
@@ -575,6 +604,79 @@ mod ai_enabled_tests {
         let db = Database::new_for_testing().expect("create test db");
         db.set_preference("ai_enabled", "TRUE").expect("write pref");
         assert!(db.is_ai_enabled().expect("read pref"));
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    //! Regression coverage for the backup retention bug: `backup()` used to
+    //! prune *only* after a successful copy, so any failing backup (e.g. a full
+    //! disk) left a partial `emailops-*.db` file that was never cleaned up. In
+    //! production this accumulated ~1900 partial files. The contract now is:
+    //! copy into a non-`emailops-` temp file, rename on success, delete the
+    //! partial on failure, and bound the directory on every call.
+    use super::*;
+    use std::fs;
+
+    fn touch(path: &std::path::Path) {
+        fs::write(path, b"x").expect("write fixture backup");
+    }
+
+    fn backup_count(dir: &std::path::Path) -> usize {
+        fs::read_dir(dir)
+            .expect("read backup dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("emailops-"))
+            .count()
+    }
+
+    fn seed_stale_backups(dir: &std::path::Path, n: usize) {
+        for i in 0..n {
+            touch(&dir.join(format!("emailops-2020010{i:01}_00000{i:01}.db")));
+        }
+    }
+
+    #[test]
+    fn successful_backup_prunes_to_keep_and_leaves_no_temp() {
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let db = Database::new(data_dir.path().to_path_buf()).expect("open db");
+        let backup_dir = tempfile::tempdir().expect("backup dir");
+        seed_stale_backups(backup_dir.path(), 6);
+
+        let out = db.backup(backup_dir.path(), 3).expect("backup should succeed");
+
+        assert!(out.exists(), "the new backup file must exist");
+        assert_eq!(backup_count(backup_dir.path()), 3, "directory must be pruned to `keep`");
+        assert!(
+            !backup_dir.path().join(".emailops-backup.tmp").exists(),
+            "no temp file should be left behind after a successful backup"
+        );
+    }
+
+    #[test]
+    fn failed_backup_is_surfaced_and_leaves_no_partial() {
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let db = Database::new(data_dir.path().to_path_buf()).expect("open db");
+        let backup_dir = tempfile::tempdir().expect("backup dir");
+        // Force the copy to fail without making the directory read-only (which
+        // would also break pruning). Occupying the temp path with a *directory*
+        // makes the destination connection fail to open, while the backup dir
+        // itself stays writable — modelling a copy that fails mid-flight.
+        fs::create_dir(backup_dir.path().join(".emailops-backup.tmp")).expect("occupy temp path");
+        seed_stale_backups(backup_dir.path(), 6);
+
+        let result = db.backup(backup_dir.path(), 3);
+
+        assert!(
+            result.is_err(),
+            "a failed copy must be surfaced as an error, not a bogus backup"
+        );
+        // Even though the copy failed, the directory must stay bounded so a
+        // string of failures cannot accumulate unbounded partial files.
+        assert!(
+            backup_count(backup_dir.path()) <= 3,
+            "failed backups must still bound the directory to `keep`"
+        );
     }
 }
 
