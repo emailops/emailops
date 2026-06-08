@@ -140,14 +140,15 @@ The GitHub release is always created by the developer by hand. Gather and print
 everything they need to do it, so it is copy-paste ready. Verify each fact
 before printing it (don't assume):
 
-1. **Confirm the assets exist and match.** Stat both DMGs and compute their
-   SHA-256 so the developer can sanity-check the upload:
+1. **Confirm the asset exists.** Stat the stable-named DMG and compute its
+   SHA-256 so the developer can sanity-check the upload. The release attaches
+   exactly one asset, named `EmailOps-macos.dmg`, because the permanent
+   download link resolves by filename:
+   `https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`.
 
    ```bash
-   ls -la release/EmailOps-macos.dmg \
-          src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
-   shasum -a 256 release/EmailOps-macos.dmg \
-                 src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
+   ls -la release/EmailOps-macos.dmg
+   shasum -a 256 release/EmailOps-macos.dmg
    ```
 
 2. **Confirm the tag is on origin** (`git ls-remote --tags origin vX.Y.Z`) and
@@ -159,12 +160,12 @@ before printing it (don't assume):
 Then print, in your final message:
 
 - **Repo, tag (+ commit it points at), and release title** (`vX.Y.Z`).
-- **The two DMG asset paths**, noting they are byte-identical copies (same
-  SHA-256): `release/EmailOps-macos.dmg` is the permanent-`latest` stable name,
-  and `src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg`
-  is the per-release archival copy. Attaching the stable-named one is what makes
+- **The single DMG asset path**, `release/EmailOps-macos.dmg`. The filename must
+  stay exactly `EmailOps-macos.dmg` — that is what makes
   `https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`
-  resolve to this build.
+  resolve to this build. Do not rename it per-version and do not attach a second
+  versioned copy; GitHub serves the latest-download link by filename, so a
+  versioned name would not be reachable through the permanent URL.
 - **The raw release notes** (inline) plus the temp-file path.
 - **Both ways to publish**, and let the developer pick:
   - *gh CLI* (run from repo root):
@@ -173,14 +174,14 @@ Then print, in your final message:
     gh release create vX.Y.Z \
       --title "vX.Y.Z" \
       --notes-file /tmp/emailops-vX.Y.Z-notes.md \
-      release/EmailOps-macos.dmg \
-      src-tauri/target/universal-apple-darwin/release/bundle/dmg/EmailOps_X.Y.Z_universal.dmg
+      release/EmailOps-macos.dmg
     ```
 
     If `gh` is not installed, mention it (`brew install gh && gh auth login`).
   - *Web UI*: open `https://github.com/emailops/emailops/releases/new`, choose
-    the existing `vX.Y.Z` tag, set the title, paste the notes, drag in both
-    DMGs, keep "Set as the latest release" checked, and publish.
+    the existing `vX.Y.Z` tag, set the title, paste the notes, drag in
+    `release/EmailOps-macos.dmg` (keep the filename as-is), keep "Set as the
+    latest release" checked, and publish.
 
 ## Done
 

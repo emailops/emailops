@@ -598,12 +598,47 @@ mod provider_tests {
     use super::*;
     use crate::db::Database;
 
+    /// Serializes tests that mutate the process-global `OPENROUTER_API_KEY` so
+    /// they don't stomp on each other under `cargo test`'s parallel runner.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// RAII guard that removes `OPENROUTER_API_KEY` for the test body and
+    /// restores the prior value on drop. The Makefile exports the developer's
+    /// `.env.local` key into every recipe environment, so without this the
+    /// "missing key" assertion would never fire under `make check`.
+    struct ClearedOpenRouterKey(Option<String>);
+
+    impl ClearedOpenRouterKey {
+        fn new() -> Self {
+            let prev = std::env::var("OPENROUTER_API_KEY").ok();
+            std::env::remove_var("OPENROUTER_API_KEY");
+            Self(prev)
+        }
+    }
+
+    impl Drop for ClearedOpenRouterKey {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("OPENROUTER_API_KEY", value),
+                None => std::env::remove_var("OPENROUTER_API_KEY"),
+            }
+        }
+    }
+
     /// When the user has configured OpenRouter as the AI provider but not yet
     /// entered an API key, `load_provider` must return an error rather than
     /// constructing a provider with an empty key. This is the production failure
     /// mode that surfaces as "Lens run failed to start: …" in the output panel.
     #[test]
     fn load_provider_openrouter_without_key_returns_error() {
+        let _g = env_lock();
+        let _no_env_key = ClearedOpenRouterKey::new();
         let db = Database::new_for_testing().expect("test db");
         db.set_preference("ai_provider", "openrouter").unwrap();
         // No key stored — load_provider must fail with a descriptive message.
