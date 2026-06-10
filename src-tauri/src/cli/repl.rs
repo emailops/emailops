@@ -67,6 +67,7 @@ pub async fn run(session: &mut CliSession) -> Result<()> {
                 }
             }
             Ok(Signal::CtrlC) | Ok(Signal::CtrlD) => break,
+            Ok(_) => continue,
             Err(e) => {
                 eprintln!("[emailops-cli] readline error: {e}");
                 break;
