@@ -139,12 +139,11 @@ pub fn install_for_testing() -> Arc<VecLogger> {
 mod tests {
     use super::*;
 
-    // Serialize tests in this module: they all share the global LOGGER and
-    // would race otherwise.
-    fn lock() -> std::sync::MutexGuard<'static, ()> {
-        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        M.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+    // Serialize against every other seam-touching test (logger + events +
+    // emails::events). A per-module lock is insufficient: `events::emit` reads
+    // the global sink while these tests swap the global logger, so the modules
+    // must share one mutex.
+    use crate::services::events::seam_test_lock as lock;
 
     #[test]
     fn vec_logger_records_events() {

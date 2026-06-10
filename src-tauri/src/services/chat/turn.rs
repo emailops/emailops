@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{Datelike, Utc};
-use tauri::{AppHandle, Emitter};
 use tokio::time::timeout;
 
 use crate::ai::provider::{AIProvider, AiMessage};
@@ -214,31 +213,25 @@ struct DispatchedTool {
 async fn dispatch_tool(
     registry: &tools::ToolRegistry,
     db: &Arc<Database>,
-    app: Option<&AppHandle>,
     account_id: &str,
     categories: &[String],
     name: &str,
     args: serde_json::Value,
 ) -> DispatchedTool {
-    use tauri::Emitter;
     match registry.get(name, db.as_ref()) {
         Some(tool) => {
             let ctx = tools::ToolCtx {
                 db,
                 account_id,
                 categories,
-                app,
             };
             match tool.execute(&ctx, args).await {
                 Ok(out) => {
-                    if let Some(handle) = app {
-                        for eff in &out.effects {
-                            if let Err(e) = handle.emit("chat-tool-effect", eff) {
-                                // Effect dispatch failures don't poison the tool result
-                                // — the LLM still gets its text; we just log the miss.
-                                emit_log(handle, "warn", &format!("chat-tool-effect emit failed for {name}: {e}"));
-                            }
-                        }
+                    // Effects are fire-and-forget through the event seam: a
+                    // dropped effect never poisons the tool result — the LLM
+                    // still gets its text.
+                    for eff in &out.effects {
+                        crate::services::events::emit("chat-tool-effect", eff);
                     }
                     DispatchedTool {
                         text: out.text,
@@ -299,7 +292,7 @@ pub(in crate::services::chat) fn execute_tool(
         .build()
         .expect("test runtime");
     // Existing tests only assert on text — drop the refs after dispatch.
-    rt.block_on(dispatch_tool(&registry, db, None, account_id, categories, name, args))
+    rt.block_on(dispatch_tool(&registry, db, account_id, categories, name, args))
         .text
 }
 
@@ -778,7 +771,6 @@ async fn run_tool_loop(
     db: &Arc<Database>,
     registry: &Arc<tools::ToolRegistry>,
     provider: &dyn AIProvider,
-    app: &AppHandle,
     conversation_id: &str,
     message_id: &str,
     account_id: &str,
@@ -836,7 +828,6 @@ async fn run_tool_loop(
     if let Some(tool_calls) = preseeded_tool_calls {
         if !tool_calls.is_empty() {
             emit_log(
-                app,
                 "info",
                 &format!(
                     "shortcut: executing {} tool(s) directly (skipped LLM tool-choice round)",
@@ -857,17 +848,15 @@ async fn run_tool_loop(
 
                 let args_str = serde_json::to_string(args).unwrap_or_else(|_| args.to_string());
                 emit_log(
-                    app,
                     "info",
                     &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
                 );
 
                 // Tool-specific status ("Searching emails" / "Generating
                 // draft" / …) so the UI reflects what each call is doing.
-                emit_phase(app, conversation_id, message_id, phase_for_tool(name));
+                emit_phase(conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
-                let dispatched =
-                    dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
+                let dispatched = dispatch_tool(registry, db, account_id, categories, name, args.clone()).await;
                 let elapsed_ms = t_tool.elapsed().as_millis() as i64;
                 let result = dispatched.text;
                 for id in dispatched.email_refs {
@@ -882,7 +871,6 @@ async fn run_tool_loop(
                 }
 
                 emit_log(
-                    app,
                     "info",
                     &format!(
                         "tool result ← {} ({}{} chars, {}ms)",
@@ -942,7 +930,6 @@ async fn run_tool_loop(
         // the model GGUF loads (multi-second), so users would otherwise see
         // "thinking…" with no further progress until first token.
         emit_log(
-            app,
             "info",
             &format!(
                 "llm round {}: calling chat_stream_with_tools ({} msgs in context)",
@@ -955,7 +942,7 @@ async fn run_tool_loop(
         // search_emails leaves "Searching emails…" up for the whole multi-second
         // LLM round, making the turn look stuck). RunningTools is the generic
         // "the model is working" phase.
-        emit_phase(app, conversation_id, message_id, ChatPhase::RunningTools);
+        emit_phase(conversation_id, message_id, ChatPhase::RunningTools);
         let t_call = std::time::Instant::now();
 
         // Stream this round's prose to the client live UNLESS a nudge is still
@@ -967,14 +954,13 @@ async fn run_tool_loop(
         let stream_live = round_may_stream_live(force_tool_use, tool_traces.is_empty(), nudges_used, MAX_NUDGES);
         let streamed_any = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let on_token: Box<dyn FnMut(String) -> bool + Send> = if stream_live {
-            let app_for_token = app.clone();
             let conv_for_token = conversation_id.to_string();
             let msg_for_token = message_id.to_string();
             let streamed_flag = streamed_any.clone();
             Box::new(move |token: String| {
                 if !token.is_empty() {
                     streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let _ = app_for_token.emit(
+                    crate::services::events::emit(
                         "chat-stream",
                         ChatStreamEvent {
                             message_id: msg_for_token.clone(),
@@ -1001,7 +987,6 @@ async fn run_tool_loop(
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
-            app,
             "info",
             &format!(
                 "llm round {}: returned [{}ms] ({})",
@@ -1048,7 +1033,7 @@ async fn run_tool_loop(
                     output: None,
                 });
                 let msg = format!("tool-call round {} failed: {}", round, e);
-                emit_log(app, "warn", &msg);
+                emit_log("warn", &msg);
                 abort_error = Some(e.to_string());
                 break;
             }
@@ -1072,7 +1057,6 @@ async fn run_tool_loop(
             if !parsed.is_empty() {
                 let names: Vec<&str> = parsed.iter().map(|c| c.function.name.as_str()).collect();
                 emit_log(
-                    app,
                     "warn",
                     &format!(
                         "model emitted tool call as text instead of a tool_call message — \
@@ -1113,7 +1097,6 @@ async fn run_tool_loop(
                 if !round_may_stream_live(force_tool_use, tool_traces.is_empty(), nudges_used, MAX_NUDGES) {
                     nudges_used += 1;
                     emit_log(
-                        app,
                         "info",
                         "tool_loop: model returned text with no tool call \
                          and no tool has executed yet — nudging once",
@@ -1162,7 +1145,6 @@ async fn run_tool_loop(
             // because this is the main observability hook for chat retrieval.
             let args_str = serde_json::to_string(args).unwrap_or_else(|_| args.to_string());
             emit_log(
-                app,
                 "info",
                 &format!("tool call → {}({})", name, truncate_chars(&args_str, 400)),
             );
@@ -1170,9 +1152,9 @@ async fn run_tool_loop(
             // Tool-specific status ("Searching emails" / "Generating draft" /
             // …) so the UI reflects what each call is doing instead of a flat
             // "Running tools" for the whole loop.
-            emit_phase(app, conversation_id, message_id, phase_for_tool(name));
+            emit_phase(conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
-            let dispatched = dispatch_tool(registry, db, Some(app), account_id, categories, name, args.clone()).await;
+            let dispatched = dispatch_tool(registry, db, account_id, categories, name, args.clone()).await;
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
             let result = dispatched.text;
             for id in dispatched.email_refs {
@@ -1187,7 +1169,6 @@ async fn run_tool_loop(
             }
 
             emit_log(
-                app,
                 "info",
                 &format!("tool result ← {} ({} chars, {}ms)", name, result.len(), elapsed_ms),
             );
@@ -1277,7 +1258,6 @@ so plainly.",
 #[allow(clippy::too_many_arguments)]
 async fn run_thread_bound_turn(
     db: Arc<Database>,
-    app: AppHandle,
     provider: Arc<dyn AIProvider>,
     conversation_id: String,
     assistant_message_id: String,
@@ -1296,7 +1276,6 @@ async fn run_thread_bound_turn(
     const THREAD_HISTORY_TURNS: usize = 12;
 
     emit_log(
-        &app,
         "info",
         &format!(
             "thinking about thread… (model={}, msgs={})",
@@ -1347,8 +1326,8 @@ async fn run_thread_bound_turn(
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
 
-    emit_log(&app, "info", "stage: tool_loop (thread-bound)");
-    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::RunningTools);
+    emit_log("info", "stage: tool_loop (thread-bound)");
+    emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
     let t_tool_loop = std::time::Instant::now();
     // Don't force a tool call: thread-bound chat is mostly Q&A about the
     // thread, and only an explicit "draft a reply" should produce a draft.
@@ -1356,7 +1335,6 @@ async fn run_thread_bound_turn(
         &db,
         &registry,
         provider.as_ref(),
-        &app,
         &conversation_id,
         &assistant_message_id,
         &account_id,
@@ -1387,7 +1365,7 @@ async fn run_thread_bound_turn(
         }
     });
 
-    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Generating);
+    emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Generating);
     let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.failed_without_answer {
         let detail = outcome
             .error
@@ -1401,7 +1379,7 @@ async fn run_thread_bound_turn(
         // successful result (no extra round-trip to the model). Skip the emit
         // when the loop already streamed the answer live, or the bubble doubles.
         if !answer_streamed_live {
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-stream",
                 ChatStreamEvent {
                     message_id: assistant_message_id.clone(),
@@ -1424,7 +1402,6 @@ async fn run_thread_bound_turn(
         // Stream a synthesis pass, bounded by STREAM_TIMEOUT.
         let conv_id_for_stream = conversation_id.clone();
         let msg_id_for_stream = assistant_message_id.clone();
-        let app_for_stream = app.clone();
         let ai_messages: Vec<AiMessage> = outcome
             .messages
             .into_iter()
@@ -1439,7 +1416,6 @@ async fn run_thread_bound_turn(
         // synthesis path for the rationale).
         let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
         let gate_for_token = gate.clone();
-        let app_for_token = app_for_stream.clone();
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
         let stream_fut = provider.chat_stream(
@@ -1447,7 +1423,7 @@ async fn run_thread_bound_turn(
             Box::new(move |token| {
                 let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
                 if !forward.is_empty() {
-                    let _ = app_for_token.emit(
+                    crate::services::events::emit(
                         "chat-stream",
                         ChatStreamEvent {
                             message_id: msg_for_token.clone(),
@@ -1473,7 +1449,7 @@ async fn run_thread_bound_turn(
         if let Ok(mut g) = gate.lock() {
             let tail = g.finish();
             if !tail.is_empty() {
-                let _ = app_for_stream.emit(
+                crate::services::events::emit(
                     "chat-stream",
                     ChatStreamEvent {
                         message_id: msg_id_for_stream.clone(),
@@ -1501,16 +1477,16 @@ async fn run_thread_bound_turn(
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
             {
-                emit_log(&app, "error", &format!("failed to persist assistant message: {e}"));
+                emit_log("error", &format!("failed to persist assistant message: {e}"));
             }
             // Persist + ship the email/draft allowlists so the frontend chip
             // validator accepts the `draft://DRAFT_ID` the model emitted for
             // the reply instead of dropping it as hallucinated.
             if let Err(e) = db.update_chat_message_referenced_emails(&assistant_message_id, &aggregated_email_refs) {
-                emit_log(&app, "error", &format!("failed to persist email refs: {e}"));
+                emit_log("error", &format!("failed to persist email refs: {e}"));
             }
             if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
-                emit_log(&app, "error", &format!("failed to persist draft refs: {e}"));
+                emit_log("error", &format!("failed to persist draft refs: {e}"));
             }
 
             // Emit a minimal reasoning trace so the frontend receives the
@@ -1533,9 +1509,9 @@ async fn run_thread_bound_turn(
                 llm_calls: llm_calls.clone(),
             };
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
-                emit_log(&app, "error", &format!("failed to persist reasoning trace: {e}"));
+                emit_log("error", &format!("failed to persist reasoning trace: {e}"));
             }
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-trace",
                 ChatTraceEvent {
                     message_id: assistant_message_id.clone(),
@@ -1546,7 +1522,7 @@ async fn run_thread_bound_turn(
                 },
             );
 
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-stream",
                 ChatStreamEvent {
                     message_id: assistant_message_id.clone(),
@@ -1562,7 +1538,6 @@ async fn run_thread_bound_turn(
                 .map(|c| format!("{c} tokens"))
                 .unwrap_or_else(|| "? tokens".to_string());
             emit_log(
-                &app,
                 "success",
                 &format!(
                     "thread reply complete ({}, {:.1}s)",
@@ -1575,7 +1550,7 @@ async fn run_thread_bound_turn(
         Err(e) => {
             let err_text = format!("Chat failed: {e}");
             let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-stream",
                 ChatStreamEvent {
                     message_id: assistant_message_id.clone(),
@@ -1587,7 +1562,7 @@ async fn run_thread_bound_turn(
                     latency_ms: Some(latency_ms),
                 },
             );
-            emit_log(&app, "error", &err_text);
+            emit_log("error", &err_text);
             Err(e)
         }
     }
@@ -1602,7 +1577,6 @@ async fn run_thread_bound_turn(
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
-    app: AppHandle,
     conversation_id: String,
     assistant_message_id: String,
     account_id: String,
@@ -1626,7 +1600,6 @@ pub async fn run_chat_turn(
     if !system_messages.is_empty() {
         return run_thread_bound_turn(
             db,
-            app,
             provider,
             conversation_id,
             assistant_message_id,
@@ -1640,7 +1613,6 @@ pub async fn run_chat_turn(
     }
 
     emit_log(
-        &app,
         "info",
         &format!("thinking… (model={}, account={})", provider.model_name(), account_id),
     );
@@ -1655,7 +1627,7 @@ pub async fn run_chat_turn(
                 let new_title = derive_title(&user_question);
                 match db.rename_chat_conversation(&conversation_id, &new_title) {
                     Ok(_) => {
-                        let _ = app.emit(
+                        crate::services::events::emit(
                             "chat-renamed",
                             ChatRenamedEvent {
                                 conversation_id: conversation_id.clone(),
@@ -1663,11 +1635,11 @@ pub async fn run_chat_turn(
                             },
                         );
                     }
-                    Err(e) => emit_log(&app, "error", &format!("auto-title rename failed: {}", e)),
+                    Err(e) => emit_log("error", &format!("auto-title rename failed: {}", e)),
                 }
             }
             Ok(_) => {}
-            Err(e) => emit_log(&app, "error", &format!("auto-title lookup failed: {}", e)),
+            Err(e) => emit_log("error", &format!("auto-title lookup failed: {}", e)),
         }
     }
 
@@ -1676,11 +1648,10 @@ pub async fn run_chat_turn(
     // and "I can't tell where it's stuck" is the most common chat support
     // question. Per-stage timing follows on completion.
     let t_route = std::time::Instant::now();
-    emit_log(&app, "info", "stage: route");
-    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Routing);
+    emit_log("info", "stage: route");
+    emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Routing);
     let route = classify_route(&db, &user_question);
     emit_log(
-        &app,
         "info",
         &format!(
             "route: {:?} ({}) [{}ms]",
@@ -1695,25 +1666,24 @@ pub async fn run_chat_turn(
     // for anything that doesn't match, in which case the normal loop runs.
     let preseeded_tool_calls = heuristic_direct_tools(&user_question);
     if preseeded_tool_calls.is_some() {
-        emit_log(&app, "info", "shortcut: matched direct-tool pattern");
+        emit_log("info", "shortcut: matched direct-tool pattern");
     }
 
     // ── 2. Retrieve sources (skipped entirely when route == ToolsFirst) ─
     // Match by reference so we can still read `route` later when assembling the
     // final ChatTrace.
     let t_retrieve = std::time::Instant::now();
-    emit_log(&app, "info", "stage: retrieve");
+    emit_log("info", "stage: retrieve");
     let (sources, retrieval_trace): (Vec<ScoredEmail>, Option<RetrievalTrace>) = match &route.mode {
         RouteMode::ToolsFirst => {
-            emit_log(&app, "info", "retrieve: skipped (ToolsFirst route)");
+            emit_log("info", "retrieve: skipped (ToolsFirst route)");
             (Vec::new(), None)
         }
         RouteMode::RagFirst => {
-            emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Retrieving);
+            emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Retrieving);
             match retrieve_context_with_trace(
                 &db,
                 provider.as_ref(),
-                &app,
                 &account_id,
                 &user_question,
                 &categories,
@@ -1723,7 +1693,6 @@ pub async fn run_chat_turn(
             {
                 Ok((srcs, trace)) => {
                     emit_log(
-                        &app,
                         "info",
                         &format!(
                             "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
@@ -1737,7 +1706,7 @@ pub async fn run_chat_turn(
                     (srcs, Some(trace))
                 }
                 Err(e) => {
-                    emit_log(&app, "error", &format!("retrieval error: {}", e));
+                    emit_log("error", &format!("retrieval error: {}", e));
                     (Vec::new(), None)
                 }
             }
@@ -1769,10 +1738,10 @@ pub async fn run_chat_turn(
         .collect();
 
     if let Err(e) = db.insert_chat_message_sources(&assistant_message_id, &source_rows) {
-        emit_log(&app, "error", &format!("failed to persist citations: {}", e));
+        emit_log("error", &format!("failed to persist citations: {}", e));
     }
 
-    let _ = app.emit(
+    crate::services::events::emit(
         "chat-sources",
         ChatSourcesEvent {
             message_id: assistant_message_id.clone(),
@@ -1818,7 +1787,7 @@ pub async fn run_chat_turn(
                 }
             }
             Ok(None) => {}
-            Err(e) => emit_log(&app, "debug", &format!("memory header skipped: {e}")),
+            Err(e) => emit_log("debug", &format!("memory header skipped: {e}")),
         }
     }
 
@@ -1841,14 +1810,13 @@ pub async fn run_chat_turn(
         loop_answer_streamed_live,
     ) = match &route.mode {
         RouteMode::ToolsFirst => {
-            emit_log(&app, "info", "stage: tool_loop");
-            emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::RunningTools);
+            emit_log("info", "stage: tool_loop");
+            emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
             let t_tool_loop = std::time::Instant::now();
             let outcome = run_tool_loop(
                 &db,
                 &registry,
                 provider.as_ref(),
-                &app,
                 &conversation_id,
                 &assistant_message_id,
                 &account_id,
@@ -1862,7 +1830,6 @@ pub async fn run_chat_turn(
             .await;
             let elapsed = t_tool_loop.elapsed().as_millis() as i64;
             emit_log(
-                &app,
                 "info",
                 &format!(
                     "tool_loop: done ({} tool calls, {} llm rounds) [{}ms]",
@@ -1891,7 +1858,7 @@ pub async fn run_chat_turn(
             // numbered citation, and those drive `[n](citation://n)`
             // chips — `email://` / `draft://` are reserved for tool-mode
             // mentions.
-            emit_log(&app, "info", "stage: tool_loop skipped (RagFirst route)");
+            emit_log("info", "stage: tool_loop skipped (RagFirst route)");
             let msgs: Vec<AiMessage> = initial_messages
                 .into_iter()
                 .map(|(role, content)| AiMessage {
@@ -1906,8 +1873,8 @@ pub async fn run_chat_turn(
         }
     };
 
-    emit_log(&app, "info", "stage: stream");
-    emit_phase(&app, &conversation_id, &assistant_message_id, ChatPhase::Generating);
+    emit_log("info", "stage: stream");
+    emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Generating);
     let t_stream = std::time::Instant::now();
     let mut streaming_happened = false;
     // Captures the exact prompt sent to the final LLM call (dev builds only).
@@ -1948,7 +1915,7 @@ pub async fn run_chat_turn(
                 // Otherwise emit the full answer as a single stream token so the
                 // UI sees it (no extra model round-trip).
                 if !loop_answer_streamed_live {
-                    let _ = app.emit(
+                    crate::services::events::emit(
                         "chat-stream",
                         ChatStreamEvent {
                             message_id: assistant_message_id.clone(),
@@ -1978,7 +1945,6 @@ pub async fn run_chat_turn(
 
                 let conv_id_for_stream = conversation_id.clone();
                 let msg_id_for_stream = assistant_message_id.clone();
-                let app_for_stream = app.clone();
 
                 // Snapshot the final prompt in dev builds so the reasoning panel
                 // can show exactly what was sent to chat_stream. Done before the
@@ -1998,7 +1964,6 @@ pub async fn run_chat_turn(
                 // before persistence.
                 let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
                 let gate_for_token = gate.clone();
-                let app_for_token = app_for_stream.clone();
                 let conv_for_token = conv_id_for_stream.clone();
                 let msg_for_token = msg_id_for_stream.clone();
                 let stream_fut = provider.chat_stream(
@@ -2009,7 +1974,7 @@ pub async fn run_chat_turn(
                         // strips markup as the final safety net.
                         let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
                         if !forward.is_empty() {
-                            let _ = app_for_token.emit(
+                            crate::services::events::emit(
                                 "chat-stream",
                                 ChatStreamEvent {
                                     message_id: msg_for_token.clone(),
@@ -2037,7 +2002,7 @@ pub async fn run_chat_turn(
                 if let Ok(mut g) = gate.lock() {
                     let tail = g.finish();
                     if !tail.is_empty() {
-                        let _ = app_for_stream.emit(
+                        crate::services::events::emit(
                             "chat-stream",
                             ChatStreamEvent {
                                 message_id: msg_id_for_stream.clone(),
@@ -2099,7 +2064,7 @@ pub async fn run_chat_turn(
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
             {
-                emit_log(&app, "error", &format!("failed to persist assistant message: {}", e));
+                emit_log("error", &format!("failed to persist assistant message: {}", e));
             }
             // Persist the structural email-ref allowlist alongside the
             // final content. Frontend validates `email://EMAIL_ID` markdown
@@ -2107,11 +2072,11 @@ pub async fn run_chat_turn(
             // outside it gets dropped + warned. Direct-answer and re-stream
             // paths converge here so both write the refs once.
             if let Err(e) = db.update_chat_message_referenced_emails(&assistant_message_id, &aggregated_email_refs) {
-                emit_log(&app, "error", &format!("failed to persist email refs: {}", e));
+                emit_log("error", &format!("failed to persist email refs: {}", e));
             }
             // Same shape for draft refs (`draft://DRAFT_ID` chips).
             if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
-                emit_log(&app, "error", &format!("failed to persist draft refs: {}", e));
+                emit_log("error", &format!("failed to persist draft refs: {}", e));
             }
             #[cfg(feature = "tracing")]
             crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
@@ -2196,7 +2161,6 @@ pub async fn run_chat_turn(
             };
             if invalid_citations > 0 {
                 emit_log(
-                    &app,
                     "warn",
                     &format!(
                         "answer contains {} citation(s) outside the source range 1..={}",
@@ -2224,9 +2188,9 @@ pub async fn run_chat_turn(
                 llm_calls: llm_calls.clone(),
             };
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
-                emit_log(&app, "error", &format!("failed to persist reasoning trace: {}", e));
+                emit_log("error", &format!("failed to persist reasoning trace: {}", e));
             }
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-trace",
                 ChatTraceEvent {
                     message_id: assistant_message_id.clone(),
@@ -2237,7 +2201,7 @@ pub async fn run_chat_turn(
                 },
             );
 
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-stream",
                 ChatStreamEvent {
                     message_id: assistant_message_id.clone(),
@@ -2253,7 +2217,6 @@ pub async fn run_chat_turn(
                 .map(|c| format!("{} tokens", c))
                 .unwrap_or_else(|| "? tokens".to_string());
             emit_log(
-                &app,
                 "success",
                 &format!(
                     "reply complete ({}, {:.1}s, {} sources)",
@@ -2267,7 +2230,7 @@ pub async fn run_chat_turn(
         Err(e) => {
             let err_text = format!("Chat failed: {}", e);
             let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            let _ = app.emit(
+            crate::services::events::emit(
                 "chat-stream",
                 ChatStreamEvent {
                     message_id: assistant_message_id.clone(),
@@ -2279,7 +2242,7 @@ pub async fn run_chat_turn(
                     latency_ms: Some(latency_ms),
                 },
             );
-            emit_log(&app, "error", &err_text);
+            emit_log("error", &err_text);
             Err(AppError::AiError(err_text))
         }
     }

@@ -15,7 +15,6 @@ use std::time::Instant;
 use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
 use crate::evals::harness::{CaseOutcome, SourceSummary};
-use crate::evals::shared::build_mock_app;
 use crate::evals::shortcuts::case_loader::{load_shortcut_cases, ShortcutVariant};
 use crate::evals::shortcuts::judge::{ShortcutJudge, VariantScores};
 use crate::evals::shortcuts::metrics::{evaluate as run_rubric, RubricReport};
@@ -93,9 +92,6 @@ pub async fn run(cfg: ShortcutRunnerConfig) -> EvalResult<PathBuf> {
     // ── 4. Account resolution per case ──────────────────────────────────────
     let enabled_accounts = db.list_accounts()?;
 
-    // ── 5. App handle ───────────────────────────────────────────────────────
-    let app = build_mock_app()?;
-
     // ── 6. Judge ────────────────────────────────────────────────────────────
     let judge = if judge_enabled {
         Some(ShortcutJudge::new(
@@ -140,7 +136,7 @@ pub async fn run(cfg: ShortcutRunnerConfig) -> EvalResult<PathBuf> {
         let mut report_variants: Vec<ReportVariant> = Vec::new();
         for variant in &case.variants {
             eprintln!("[shortcut-eval]    → variant {}", variant.id);
-            match run_variant(db.clone(), app.clone(), &account_id, &model, variant).await {
+            match run_variant(db.clone(), &account_id, &model, variant).await {
                 Ok(outcome) => {
                     let rubric = run_rubric(&case.rubric, &outcome.assistant_content);
                     let scores = if outcome.assistant_content.trim().is_empty() {
@@ -208,7 +204,6 @@ pub async fn run(cfg: ShortcutRunnerConfig) -> EvalResult<PathBuf> {
 
 async fn run_variant(
     db: Arc<Database>,
-    app: tauri::AppHandle,
     account_id: &str,
     model: &str,
     variant: &ShortcutVariant,
@@ -235,7 +230,6 @@ async fn run_variant(
     chat::run_chat_turn(
         db.clone(),
         registry,
-        app,
         conv.id.clone(),
         assistant_msg.id.clone(),
         account_id.to_string(),

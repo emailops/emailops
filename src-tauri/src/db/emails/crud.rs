@@ -53,6 +53,9 @@ impl Database {
     /// - `Some("spam")` → `mailbox='spam' AND is_deleted=0`
     /// - `Some("deleted")` → `mailbox='trash' OR is_deleted=1`
     ///   (union: provider Trash + in-app soft-deletes)
+    ///
+    /// `category`, when set, additionally restricts the result to that Gmail
+    /// category (`primary`/`social`/`promotions`/`updates`/`forums`).
     pub fn get_emails(
         &self,
         account_id: &str,
@@ -60,6 +63,7 @@ impl Database {
         offset: i32,
         cursor: Option<(i64, &str)>,
         mailbox: Option<&str>,
+        category: Option<&str>,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let order_clause = thread_order_clause("e");
@@ -101,6 +105,13 @@ impl Database {
                 conditions.push("e.mailbox = 'inbox'".to_string());
                 conditions.push(format!("({})", latest_inbox_email_predicate("e")));
             }
+        }
+
+        // Optional Gmail-category filter, applied on top of the mailbox scope.
+        if let Some(cat) = category {
+            conditions.push(format!("e.category = ?{}", param_idx));
+            params_vec.push(Box::new(cat.to_string()));
+            param_idx += 1;
         }
 
         // Keyset pagination: skip past the cursor point
@@ -483,7 +494,7 @@ mod tests {
         // Soft-delete e1
         db.delete_email("e1").unwrap();
 
-        let emails = db.get_emails(account, 50, 0, None, None).unwrap();
+        let emails = db.get_emails(account, 50, 0, None, None, None).unwrap();
         let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
 
         assert!(
@@ -492,6 +503,23 @@ mod tests {
             ids
         );
         assert!(ids.contains(&"e2"), "non-deleted email must appear, got: {:?}", ids);
+    }
+
+    #[test]
+    fn get_emails_filters_by_category() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_email_with_category(&db, "p1", account, "thread-a", 300, "primary");
+        insert_email_with_category(&db, "promo1", account, "thread-b", 200, "promotions");
+        insert_email_with_category(&db, "promo2", account, "thread-c", 100, "promotions");
+
+        let promos = db.get_emails(account, 50, 0, None, None, Some("promotions")).unwrap();
+        let ids: Vec<&str> = promos.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["promo1", "promo2"], "only promotions, newest first");
+
+        let all = db.get_emails(account, 50, 0, None, None, None).unwrap();
+        assert_eq!(all.len(), 3, "no category filter returns every inbox email");
     }
 
     #[test]

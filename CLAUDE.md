@@ -36,6 +36,34 @@ Common development operations live in the root `Makefile`. **Before reaching for
 
 When you do need to run something the Makefile does not cover, prefer extending it (add a new target) over scattering one-off shell snippets across the codebase or your chat output — that way the next agent or developer can find it the same way.
 
+## Agent self-validation with `emailops-cli`
+
+`emailops-cli` (gated behind the `cli` cargo feature) is a headless front-end over the same `services::*` entry points the Tauri commands call — no `AppHandle`, no webview. Use it to **drive real features and assert on structured output** while developing, instead of guessing whether a change works. It operates on the real data dir (SQLite WAL → read commands are safe while the app is open; run heavy write commands — `sync`/`classify`/`embed` — with the app closed).
+
+Every command supports `--json`, which prints one **stable envelope** to stdout so you can parse a single shape regardless of success or failure (logs always go to stderr):
+
+```jsonc
+{ "ok": true,  "data": { /* result */ }, "error": null }                       // success
+{ "ok": false, "data": null, "error": { "code": "not_found", "params": {…}, "message": "…" } }  // failure
+```
+
+`error` is the same `{code, params, message}` shape `AppError` serializes to at the Tauri boundary. Exit codes are grouped by remediation: `0` ok, `2` invalid input, `3` not found, `4` auth, `5` network/sync, `6` AI, `130` cancelled, `1` otherwise — so a shell/agent can branch on failure class without parsing text.
+
+Recommended loop when validating a change:
+
+```bash
+make cli-fast ARGS="doctor --json"                 # confirm env is wired (DB, accounts, AI config) — no model load
+make cli-fast ARGS="search 'invoice' --json"       # exercise read/search paths without booting llama.cpp
+make cli-run  ARGS="chat 'what did X say?' --json --trace"  # full AI path; --trace surfaces route/retrieval/tool timings + sources under data.trace
+make cli-eval ARGS="--tier smoke --json"           # re-run chat eval cases through the shared harness (needs cli,eval)
+```
+
+- `doctor` is read-only and fast — start here to verify the CLI is pointed at a usable install.
+- `chat --trace` lets you inspect the routing decision, retrieval stats, and tool calls behind an answer (the same `ChatTrace` persisted on the assistant message), which is invaluable for diagnosing why a reply changed.
+- `eval` reuses `case_loader` + `harness` + `metrics` (heuristics only — no judge, no HTML report, and it does **not** mutate provider preferences on the DB). It runs each case in a throwaway conversation that is deleted afterwards. It does **not** replace the `examples/*_eval.rs` harnesses mandated for AI-reply changes — it's a faster inner-loop check.
+
+Prefer the `make cli-*` targets over ad-hoc `cargo run` invocations (see "Local Workflow"). The CLI shares the `Command` enum and dispatch with the interactive REPL (bare `emailops-cli`), so anything you can script you can also drive interactively.
+
 ## macOS Release Builds
 
 Use the Makefile release targets; do not hand-roll `npm run tauri build` commands for signed builds.

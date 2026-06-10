@@ -3,7 +3,6 @@ use std::sync::Arc;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
 
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
@@ -76,12 +75,12 @@ pub struct ClassificationProgress {
     pub message: String,
 }
 
-fn emit_log(_app: &AppHandle, level: &str, message: &str) {
+fn emit_log(level: &str, message: &str) {
     crate::services::logger::log(level, "classification", message);
 }
 
-fn emit_progress(app: &AppHandle, progress: &ClassificationProgress) {
-    let _ = app.emit("classification-progress", progress);
+fn emit_progress(progress: &ClassificationProgress) {
+    crate::services::events::emit("classification-progress", progress);
 }
 
 pub fn get_config(db: &Database) -> Result<ClassificationConfig> {
@@ -507,15 +506,14 @@ async fn classify_email(
 }
 
 /// Classify unclassified emails for an account (called after sync).
-pub async fn classify_new_emails(db: &Arc<Database>, app: &AppHandle, account_id: &str) -> Result<u32> {
+pub async fn classify_new_emails(db: &Arc<Database>, account_id: &str) -> Result<u32> {
     if !db.is_ai_enabled()? {
-        emit_log(app, "info", "Skipped: AI is disabled in settings (master switch off)");
+        emit_log("info", "Skipped: AI is disabled in settings (master switch off)");
         return Ok(0);
     }
     let config = get_config(db)?;
     if !config.enabled {
         emit_log(
-            app,
             "info",
             "Skipped: classification is disabled — enable it in Settings → Classification",
         );
@@ -535,7 +533,6 @@ pub async fn classify_new_emails(db: &Arc<Database>, app: &AppHandle, account_id
     }
 
     emit_log(
-        app,
         "info",
         &format!(
             "Classifying {} new emails (provider={}, model={}, rules={})",
@@ -545,11 +542,11 @@ pub async fn classify_new_emails(db: &Arc<Database>, app: &AppHandle, account_id
             rules.len()
         ),
     );
-    classify_email_ids(db, app, account_id, &email_ids, &config, &rules).await
+    classify_email_ids(db, account_id, &email_ids, &config, &rules).await
 }
 
 /// Classify unclassified emails for an account (triggered from settings "Classify Previous").
-pub async fn classify_all_emails(db: &Arc<Database>, app: &AppHandle, account_id: &str) -> Result<u32> {
+pub async fn classify_all_emails(db: &Arc<Database>, account_id: &str) -> Result<u32> {
     // Master AI switch: short-circuit silently so background tasks queued
     // before the user disabled AI don't fail loudly. Treated as "no work
     // done" so the caller's success log path is skipped naturally.
@@ -575,7 +572,6 @@ pub async fn classify_all_emails(db: &Arc<Database>, app: &AppHandle, account_id
     }
 
     emit_log(
-        app,
         "info",
         &format!(
             "Classifying {} unclassified emails (provider={}, model={}, rules={})",
@@ -585,11 +581,11 @@ pub async fn classify_all_emails(db: &Arc<Database>, app: &AppHandle, account_id
             rules.len()
         ),
     );
-    classify_email_ids(db, app, account_id, &email_ids, &config, &rules).await
+    classify_email_ids(db, account_id, &email_ids, &config, &rules).await
 }
 
 /// Reclassify ALL emails for an account (overwrites existing tags).
-pub async fn reclassify_all_emails(db: &Arc<Database>, app: &AppHandle, account_id: &str) -> Result<u32> {
+pub async fn reclassify_all_emails(db: &Arc<Database>, account_id: &str) -> Result<u32> {
     if !db.is_ai_enabled()? {
         return Ok(0);
     }
@@ -640,7 +636,6 @@ pub async fn reclassify_all_emails(db: &Arc<Database>, app: &AppHandle, account_
     }
 
     emit_log(
-        app,
         "info",
         &format!(
             "Reclassifying all {} emails (provider={}, model={}, rules={})",
@@ -650,12 +645,11 @@ pub async fn reclassify_all_emails(db: &Arc<Database>, app: &AppHandle, account_
             rules.len()
         ),
     );
-    classify_email_ids(db, app, account_id, &email_ids, &config, &rules).await
+    classify_email_ids(db, account_id, &email_ids, &config, &rules).await
 }
 
 async fn classify_email_ids(
     db: &Arc<Database>,
-    app: &AppHandle,
     account_id: &str,
     email_ids: &[String],
     config: &ClassificationConfig,
@@ -715,7 +709,7 @@ async fn classify_email_ids(
                 }
 
                 // Emit real-time update
-                let _ = app.emit(
+                crate::services::events::emit(
                     "email-classified",
                     serde_json::json!({
                         "emailId": email_id,
@@ -731,7 +725,6 @@ async fn classify_email_ids(
             Err(e) => {
                 errors += 1;
                 emit_log(
-                    app,
                     "debug",
                     &format!("Failed to classify '{}': {}", truncate_utf8(&subject, 50), e),
                 );
@@ -745,16 +738,13 @@ async fn classify_email_ids(
         }
 
         if (i + 1) % 10 == 0 || i + 1 == email_ids.len() {
-            emit_progress(
-                app,
-                &ClassificationProgress {
-                    account_id: account_id.to_string(),
-                    status: "classifying".to_string(),
-                    current: (i + 1) as i32,
-                    total,
-                    message: format!("Classified {}/{} emails", i + 1, total),
-                },
-            );
+            emit_progress(&ClassificationProgress {
+                account_id: account_id.to_string(),
+                status: "classifying".to_string(),
+                current: (i + 1) as i32,
+                total,
+                message: format!("Classified {}/{} emails", i + 1, total),
+            });
         }
     }
 
@@ -763,19 +753,15 @@ async fn classify_email_ids(
         db.set_email_classifications_batch(&write_buffer)?;
     }
 
-    emit_progress(
-        app,
-        &ClassificationProgress {
-            account_id: account_id.to_string(),
-            status: "complete".to_string(),
-            current: total,
-            total,
-            message: format!("Classification complete: {} emails classified", classified),
-        },
-    );
+    emit_progress(&ClassificationProgress {
+        account_id: account_id.to_string(),
+        status: "complete".to_string(),
+        current: total,
+        total,
+        message: format!("Classification complete: {} emails classified", classified),
+    });
 
     emit_log(
-        app,
         "success",
         &format!(
             "Classified {} emails ({} by rules, {} by AI, {} errors)",
@@ -893,7 +879,7 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
 }
 
 /// Reclassify emails affected by a rule change (runs in background).
-pub async fn reclassify_affected_emails(db: &Arc<Database>, app: &AppHandle, rule: &ClassificationRule) -> Result<u32> {
+pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &ClassificationRule) -> Result<u32> {
     if !db.is_ai_enabled()? {
         return Ok(0);
     }
@@ -903,7 +889,6 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, app: &AppHandle, rul
 
     if email_ids.is_empty() {
         emit_log(
-            app,
             "info",
             &format!("Rule '{}': no matching emails to reclassify", rule.name),
         );
@@ -911,7 +896,6 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, app: &AppHandle, rul
     }
 
     emit_log(
-        app,
         "info",
         &format!(
             "Rule '{}': reclassifying {} matching emails (provider={}, model={})",
@@ -921,7 +905,7 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, app: &AppHandle, rul
             config.model
         ),
     );
-    classify_email_ids(db, app, &rule.account_id, &email_ids, &config, &rules).await
+    classify_email_ids(db, &rule.account_id, &email_ids, &config, &rules).await
 }
 
 fn glob_to_sql_like(pattern: &str) -> String {

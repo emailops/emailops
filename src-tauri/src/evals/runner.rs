@@ -18,7 +18,6 @@ use crate::evals::harness::{run_case, CaseOutcome};
 use crate::evals::judge::{Judge, JudgeScores};
 use crate::evals::metrics::{evaluate, HeuristicReport};
 use crate::evals::report::{render, ReportCase};
-use crate::evals::shared::build_mock_app;
 use crate::evals::{EvalError, EvalResult};
 
 #[derive(Debug, Clone)]
@@ -115,10 +114,7 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     }
     eprintln!("[eval] running {} case(s)", cases.len());
 
-    // ── 6. Build a Tauri app handle for event emission ──────────────────────
-    let app = build_mock_app()?;
-
-    // ── 7. Iterate cases serially ───────────────────────────────────────────
+    // ── 6. Iterate cases serially ───────────────────────────────────────────
     let judge = if judge_enabled {
         Some(Judge::new(
             api_key.expect("api_key should be Some when judge_enabled"),
@@ -176,7 +172,7 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
         // resolves the provider from DB prefs via `load_provider`, so pin them here.
         crate::evals::shared::pin_eval_provider(&db, &model)?;
 
-        match run_case(db.clone(), app.clone(), &effective_account_id, &model, case).await {
+        match run_case(db.clone(), &effective_account_id, &model, case).await {
             Ok(outcome) => {
                 let heuristics = evaluate(case, &outcome)?;
                 // Skip the judge entirely when the answer is empty — there is

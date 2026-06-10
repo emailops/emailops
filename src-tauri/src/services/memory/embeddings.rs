@@ -25,7 +25,7 @@ pub async fn embed_pending_facts(db: &Arc<Database>, app: &AppHandle, account_id
         return Ok(0);
     }
 
-    let ai = match AiService::new(db.clone(), Some(app.clone())) {
+    let ai = match AiService::new(db.clone()) {
         Ok(svc) => svc,
         Err(e) => {
             emit_log(
@@ -94,8 +94,8 @@ pub async fn hybrid_search_facts(
         .unwrap_or_default();
 
     // Vector path — optional (requires embedding provider).
-    let vec_hits: Vec<(MemoryFact, f32)> = if let Some(app_handle) = app {
-        match AiService::new(db.clone(), Some(app_handle.clone())) {
+    let vec_hits: Vec<(MemoryFact, f32)> = if app.is_some() {
+        match AiService::new(db.clone()) {
             Ok(ai) => match ai.embed(query).await {
                 Ok(v) => db
                     .vec_search_memory_facts(&v, account_id, limit as i32 * 2)

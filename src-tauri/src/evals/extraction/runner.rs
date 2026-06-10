@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rusqlite::params;
-use tauri::AppHandle;
 
 use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
@@ -20,7 +19,6 @@ use crate::evals::extraction::judge::{EmailSummary, ExtractionJudge};
 use crate::evals::extraction::report::{render_report, ReportCase};
 use crate::evals::extraction::ExtractionKind;
 use crate::evals::json_report::{ItemResult, JsonRunReport};
-use crate::evals::shared::build_mock_app;
 use crate::evals::{EvalError, EvalResult};
 use crate::services::ai::AiService;
 use crate::services::memory::extractor;
@@ -117,8 +115,7 @@ pub async fn run(mut cfg: ExtractionRunnerConfig) -> EvalResult<PathBuf> {
 
     // 5. Build provider + AiService
     let provider = AiService::build_provider(&db, &cfg.provider_name, &cfg.model)?;
-    let app: AppHandle = build_mock_app()?;
-    let ai = AiService::with_provider(db.clone(), Some(app.clone()), provider);
+    let ai = AiService::with_provider(db.clone(), provider);
 
     // 6. Judge
     let judge = if judge_enabled {

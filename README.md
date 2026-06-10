@@ -112,6 +112,58 @@ npm run dev              # frontend-only in a browser
 
 See the `Makefile` for the full list (release/notarization targets, evaluation manifests, etc.).
 
+## Command-line interface (`emailops-cli`)
+
+`emailops-cli` is a power-user / agent-driven CLI over the same service layer the
+desktop app uses (no `AppHandle`, no webview). It operates on the **real** data
+dir, so read commands are always safe to run while the app is open (SQLite WAL);
+heavy write commands (`sync`, `classify`, `embed`) are best run with the app
+closed. It is gated behind the `cli` cargo feature, so it never compiles into
+default/release desktop builds.
+
+```bash
+make cli                                    # build the bin (with embedded llama.cpp)
+make cli-run ARGS="accounts --json"         # build + run (with llama.cpp)
+make cli-fast ARGS="search invoice --json"  # build + run, llama.cpp disabled (faster)
+make cli-fast                               # no subcommand → interactive REPL
+make cli-eval ARGS="--tier smoke --json"    # run chat eval cases (needs cli,eval)
+```
+
+**Subcommands** (each accepts the global flags `--json`, `--quiet`,
+`--data-dir <DIR>`, `--account <id|email>`, `--model <model>`):
+
+| Command | Purpose |
+|---|---|
+| `accounts` | List configured accounts |
+| `emails [--limit N] [--mailbox inbox\|sent\|spam\|trash]` | List recent emails |
+| `show <id>` | Show one email (headers + body) |
+| `search <query> [--limit N]` | Full-text search an account's mail |
+| `chat <question> [--trace]` | Ask one question; streams the answer (`--trace` adds route/retrieval/tool timings) |
+| `sync [account]` | Download new mail |
+| `classify [--all]` | Classify new (or all) emails |
+| `embed [--batch N]` | Generate search embeddings |
+| `doctor` | Read-only environment readiness report (DB, accounts, AI config) — loads no model |
+| `eval [--case ID] [--tier T]` | Run chat eval cases through the shared harness (requires the `eval` feature) |
+
+Running with **no subcommand** drops into an interactive REPL: bare text is a
+chat turn (tokens stream live), and `/`-prefixed lines map onto the same
+subcommands (`/search`, `/account`, `/sync`, `/help`, `/quit`, …).
+
+**Machine-readable output.** With `--json`, every command prints one stable
+envelope to stdout so agents and scripts can parse a single shape on success or
+failure:
+
+```jsonc
+// success
+{ "ok": true,  "data": { /* command result */ }, "error": null }
+// failure (same error shape as the Tauri boundary)
+{ "ok": false, "data": null, "error": { "code": "not_found", "params": { … }, "message": "…" } }
+```
+
+Logs go to **stderr** (so stdout stays a clean data channel); `--quiet` keeps
+only errors. The process exit code is grouped by remediation: `0` success,
+`2` invalid input, `3` not found, `4` auth, `5` network/sync, `6` AI,
+`130` cancelled, `1` otherwise.
 
 ## Bundled Model License + Attribution
 

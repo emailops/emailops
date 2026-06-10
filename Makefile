@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -61,14 +61,7 @@ demo-embed:
 
 # Launch the app against the demo DB. Auto-builds the DB + embeddings if missing.
 demo:
-	@if [ ! -f "$(EMAILOPS_DEMO_DIR)/emailops.db" ]; then \
-	  echo "[demo] no demo DB found — building one"; \
-	  $(MAKE) demo-db; \
-	fi
-	@if ! sqlite3 "$(EMAILOPS_DEMO_DIR)/emailops.db" "SELECT 1 FROM embedding_chunks LIMIT 1;" 2>/dev/null | grep -q 1; then \
-	  echo "[demo] no embeddings found — generating (needed for chat)"; \
-	  $(MAKE) demo-embed; \
-	fi
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
 	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" npm run tauri dev
 
 # ── Spanish-locale demo (same machinery, separate data dir) ──────────────────
@@ -83,14 +76,7 @@ demo-embed-es:
 	  --demo-dir "$(EMAILOPS_DEMO_DIR_ES)"
 
 demo-es:
-	@if [ ! -f "$(EMAILOPS_DEMO_DIR_ES)/emailops.db" ]; then \
-	  echo "[demo-es] no demo DB found — building one"; \
-	  $(MAKE) demo-db-es; \
-	fi
-	@if ! sqlite3 "$(EMAILOPS_DEMO_DIR_ES)/emailops.db" "SELECT 1 FROM embedding_chunks LIMIT 1;" 2>/dev/null | grep -q 1; then \
-	  echo "[demo-es] no embeddings found — generating (needed for chat)"; \
-	  $(MAKE) demo-embed-es; \
-	fi
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR_ES)" demo-db-es demo-embed-es
 	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR_ES)" npm run tauri dev
 
 # Full check (lint + typecheck + clippy + tests)
@@ -133,6 +119,44 @@ lint-fast:
 
 check-fast:
 	npm run lint && npm run typecheck && $(MAKE) test-fast && $(MAKE) clippy-fast
+
+# ── emailops-cli (power-user / agent CLI + interactive REPL) ─────────────────
+# Gated behind the `cli` cargo feature so it never compiles into default/release
+# desktop builds. `cli` builds with the embedded llama.cpp provider (needed for
+# local chat/classify/embed); `cli-fast` drops it (`--no-default-features`) for
+# fast iteration on read/search commands or when using Ollama/OpenRouter.
+#
+# Usage:
+#   make cli                                   # build the bin (with llama.cpp)
+#   make cli-run ARGS="accounts --json"        # build + run (with llama.cpp)
+#   make cli-fast ARGS="search invoice --json" # build + run (no llama.cpp)
+#   make cli-fast                              # no ARGS → interactive REPL
+cli:
+	cargo build --manifest-path src-tauri/Cargo.toml --features cli --bin emailops-cli
+
+cli-run:
+	cargo run --manifest-path src-tauri/Cargo.toml --features cli --bin emailops-cli -- $(ARGS)
+
+cli-fast:
+	cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features cli --bin emailops-cli -- $(ARGS)
+
+# Drive the CLI against the synthetic demo DB (safe for screen recordings / GIFs).
+# Auto-builds the demo DB + embeddings if missing, then runs with llama.cpp on so
+# chat works fully offline against demo data. No ARGS → interactive REPL.
+#   make cli-demo ARGS="search 'invoice' --json"
+#   make cli-demo ARGS="chat 'what did Acme say about the contract?' --trace"
+#   make cli-demo                                   # interactive REPL on demo data
+cli-demo:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features cli --bin emailops-cli -- $(ARGS)
+
+# Run chat eval cases through the CLI's `eval` subcommand (heuristics only — no
+# judge, no HTML report, no provider-pref mutation). Needs `cli,eval`; keeps
+# llama.cpp on so local models can answer.
+#   make cli-eval ARGS="--tier smoke --json"
+#   make cli-eval ARGS="--case kickoff_date_es"
+cli-eval:
+	cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval $(ARGS)
 
 # ── Provider HTTP cassettes ──────────────────────────────────────────────────
 # Record live Gmail / Microsoft Graph API responses for a connected account

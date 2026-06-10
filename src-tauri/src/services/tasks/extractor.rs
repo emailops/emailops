@@ -78,7 +78,7 @@ pub async fn extract_batch(
         &format!("Extracting tasks from {} new emails", ids.len()),
     );
 
-    let ai = match AiService::new(db.clone(), Some(app.clone())) {
+    let ai = match AiService::new(db.clone()) {
         Ok(svc) => svc,
         Err(e) => {
             emit_log(

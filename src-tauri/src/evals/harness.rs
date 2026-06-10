@@ -7,8 +7,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tauri::AppHandle;
-
 use crate::db::Database;
 use crate::evals::case_loader::EvalCase;
 use crate::evals::{EvalError, EvalResult};
@@ -49,13 +47,7 @@ pub struct SourceSummary {
 /// Returns `Err` only on infrastructure-level failures (DB unavailable,
 /// assistant row missing, etc). LLM-side failures are captured inside the
 /// assistant content / trace and reported as-is.
-pub async fn run_case(
-    db: Arc<Database>,
-    app: AppHandle,
-    account_id: &str,
-    model: &str,
-    case: &EvalCase,
-) -> EvalResult<CaseOutcome> {
+pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &EvalCase) -> EvalResult<CaseOutcome> {
     let start = Instant::now();
 
     // 1. Fresh conversation. Thread-bound cases seed it with the cleaned
@@ -92,7 +84,6 @@ pub async fn run_case(
     chat::run_chat_turn(
         db.clone(),
         registry,
-        app,
         conv.id.clone(),
         assistant_msg.id.clone(),
         account_id.to_string(),

@@ -51,6 +51,12 @@ sha2 = "0.11"
 hex = "0.4"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+# Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
+# so it never touches default/release desktop builds.
+reedline = { version = "0.43", optional = true }
+# Secure (no-echo) password prompt for `emailops-cli accounts add imap` (cli
+# feature only). Optional so it never touches default/release desktop builds.
+rpassword = { version = "7", optional = true }
 axum = "0.8"
 unicode-normalization = "0.1.25"
 regex = "1"
@@ -86,6 +92,15 @@ eval = ["tauri/test"]
 # Generate TypeScript types from Rust structs via ts-rs.
 # cargo test --features ts export_bindings
 ts = ["dep:ts-rs"]
+
+# `emailops-cli` — power-user / agent-driven command line + interactive REPL.
+# Compiles `src/cli/` and the `emailops-cli` bin. Pulls in `reedline` for the
+# REPL line editor. Gated so it never compiles into default/release desktop
+# builds (the bin is `required-features = ["cli"]`). Combine with
+# `--no-default-features` to skip the embedded llama.cpp toolchain for the
+# read/search commands:
+#   cargo run --no-default-features --features cli --bin emailops-cli -- accounts list
+cli = ["dep:reedline", "dep:rpassword"]
 
 # Embedded llama.cpp inference — enabled by default for production builds.
 # Disable with --no-default-features to skip the C++/cmake toolchain for
@@ -137,6 +152,16 @@ opt-level = 1
 
 [profile.test.package."*"]
 opt-level = 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# `emailops-cli` — feature-gated so it never compiles in default/release
+# desktop builds (satisfies the "don't add unconditional [[bin]]" guardrail).
+# The bin is a ~6-line wrapper over `emailops_lib::cli::run()`.
+# ─────────────────────────────────────────────────────────────────────────────
+[[bin]]
+name = "emailops-cli"
+path = "src/bin/emailops_cli.rs"
+required-features = ["cli"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Eval harnesses and ad-hoc tools — declared as `[[example]]` (not `[[bin]]`)

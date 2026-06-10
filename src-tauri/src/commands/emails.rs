@@ -65,6 +65,7 @@ pub async fn get_emails(
         limit.unwrap_or(50),
         offset.unwrap_or(0),
         mailbox.as_deref(),
+        None,
     )
 }
 
@@ -259,14 +260,7 @@ pub async fn generate_draft(
     state
         .ai_queue
         .submit_named(&task_label, async move {
-            match services::emails::generate_draft(
-                Some(&app_for_task),
-                &db,
-                &email_id_for_task,
-                instructions.as_deref(),
-            )
-            .await
-            {
+            match services::emails::generate_draft(&db, &email_id_for_task, instructions.as_deref()).await {
                 Ok(result) => {
                     if let Err(e) = app_for_task.emit(
                         "draft-generated",
@@ -344,7 +338,7 @@ pub async fn sync_account(app: AppHandle, state: State<'_, AppState>, account_id
         &state.db,
         &account_id,
         &state.app_data_dir,
-        app,
+        Some(app),
         state.ai_background.clone(),
         state.sync_abort_flags.clone(),
         state.sync_locks.clone(),
@@ -488,7 +482,7 @@ async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: Str
                 &db,
                 &account_id_for_task,
                 &app_data_dir,
-                app_for_task,
+                Some(app_for_task),
                 ai_background,
                 sync_abort_flags,
                 sync_locks,

@@ -107,7 +107,7 @@ pub async fn search_emails(
         let t0 = std::time::Instant::now();
         let model = db.get_preference("ai_model")?.unwrap_or_default();
         let ollama = OllamaClient::new(Some(&model));
-        let ai_service = AiService::new(db.clone(), app.clone()).ok();
+        let ai_service = AiService::new(db.clone()).ok();
         let provider_name = AiService::get_config(db)
             .map(|cfg| cfg.provider)
             .unwrap_or_else(|_| "ollama".to_string());

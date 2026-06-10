@@ -32,6 +32,32 @@ pub(super) fn insert_email(db: &Database, id: &str, account_id: &str, thread_id:
     .unwrap();
 }
 
+/// Insert a minimal email row with a specific Gmail category.
+pub(super) fn insert_email_with_category(
+    db: &Database,
+    id: &str,
+    account_id: &str,
+    thread_id: &str,
+    timestamp: i64,
+    category: &str,
+) {
+    let conn = db.connection();
+    ensure_account(&conn, account_id);
+    conn.execute(
+        "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES (?1,?2,?3,'subj','sender','s@s.com','s.com','[]','[]','snip',?4,0,?5,'inbox',0)",
+        rusqlite::params![id, account_id, thread_id, timestamp, category],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO email_bodies (email_id, body) VALUES (?1, 'body')",
+        rusqlite::params![id],
+    )
+    .unwrap();
+}
+
 /// Insert an email with full sender/subject/body fields for search tests.
 /// Manually inserts into FTS with HTML-stripped body (triggers removed).
 pub(super) fn insert_search_email(

@@ -31,7 +31,6 @@ use emailops_lib::db::Database;
 use emailops_lib::evals::case_loader::EvalCase;
 use emailops_lib::evals::db_source::{prepare_eval_db, EvalDbMode};
 use emailops_lib::evals::harness::run_case;
-use emailops_lib::evals::shared::build_mock_app;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -165,8 +164,7 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         metrics: vec![],
     };
 
-    let app = build_mock_app()?;
-    let outcome = run_case(db.clone(), app, &account_id, &model, &case).await?;
+    let outcome = run_case(db.clone(), &account_id, &model, &case).await?;
 
     // ── Output ───────────────────────────────────────────────────────────────
     if args.json {

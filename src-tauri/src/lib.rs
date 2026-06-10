@@ -31,6 +31,13 @@ pub mod util;
 #[cfg(feature = "eval")]
 pub mod evals;
 
+// `emailops-cli` power-user / agent CLI + interactive REPL. Gated behind the
+// `cli` feature so it (and the `reedline` line editor) never compiles into the
+// default/release desktop build. The `emailops-cli` bin is a thin wrapper over
+// `cli::run()`.
+#[cfg(feature = "cli")]
+pub mod cli;
+
 pub use db::Database;
 pub use models::error::{AppError, Result};
 
@@ -209,6 +216,11 @@ pub fn run() {
             // silently dropped — that's fine for the few µs of bootstrap before
             // this line.
             services::logger::install(Arc::new(services::logger::TauriLogger::new(app.handle().clone())));
+
+            // Install the production event sink so chat streaming, phases,
+            // sources, and progress events reach the frontend. Sibling of the
+            // logger install above; until this runs the global is a NoopEventSink.
+            services::events::install(Arc::new(services::events::TauriEventSink::new(app.handle().clone())));
 
             let t = std::time::Instant::now();
             // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.
@@ -449,9 +461,8 @@ pub fn run() {
             let ai_enabled = db.is_ai_enabled().unwrap_or(true);
             if onboarded && ai_enabled {
                 let db_for_warmup = db.clone();
-                let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    services::ai::AiService::warmup_from_db(&db_for_warmup, Some(&app_handle)).await;
+                    services::ai::AiService::warmup_from_db(&db_for_warmup).await;
                 });
             } else {
                 eprintln!("[startup] AI warmup skipped (onboarded={onboarded}, ai_enabled={ai_enabled})");

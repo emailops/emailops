@@ -105,7 +105,7 @@ async fn generate_reply_draft(ctx: &ToolCtx<'_>, email_id: &str, instructions: O
         Ok(None) => return ToolOutput::text(format!("Error: email {email_id} not found.")),
         Err(e) => return ToolOutput::text(format!("Error loading email: {e}")),
     };
-    let result = match emails::generate_draft(ctx.app, ctx.db, email_id, instructions).await {
+    let result = match emails::generate_draft(ctx.db, email_id, instructions).await {
         Ok(r) => r,
         Err(e) => return ToolOutput::text(format!("Draft generation failed: {e}")),
     };
@@ -179,7 +179,7 @@ async fn generate_reply_draft(ctx: &ToolCtx<'_>, email_id: &str, instructions: O
 /// New-email path: skip the inbound lookup and the thread context; the
 /// service builds a "compose new" prompt. Save and emit OpenComposer.
 async fn generate_new_draft(ctx: &ToolCtx<'_>, to: &[String], subject: &str, instructions: Option<&str>) -> ToolOutput {
-    let result = match emails::generate_new_draft(ctx.app, ctx.db, ctx.account_id, to, subject, instructions).await {
+    let result = match emails::generate_new_draft(ctx.db, ctx.account_id, to, subject, instructions).await {
         Ok(r) => r,
         Err(e) => return ToolOutput::text(format!("Draft generation failed: {e}")),
     };
@@ -241,7 +241,6 @@ mod tests {
             db,
             account_id,
             categories: &[],
-            app: None,
         }
     }
 

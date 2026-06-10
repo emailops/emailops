@@ -42,7 +42,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
-use tauri::AppHandle;
 
 use crate::db::Database;
 
@@ -55,11 +54,6 @@ pub struct ToolCtx<'a> {
     /// Active category filter for this chat turn. Empty = all categories.
     /// Today only `search_emails` consults it.
     pub categories: &'a [String],
-    /// Some during real chat turns, `None` in unit tests that don't need to
-    /// emit Tauri events. Tools that want to push a side-effect to the
-    /// frontend should return a `ToolEffect` in their `ToolOutput` instead
-    /// of calling `app.emit` directly — the loop dispatches them centrally.
-    pub app: Option<&'a AppHandle>,
 }
 
 /// What a tool returns to the chat loop.
@@ -537,7 +531,6 @@ mod tests {
             db: &db,
             account_id: "acct",
             categories: &categories,
-            app: None,
         };
         let out = tool.execute(&ctx, serde_json::json!({})).await.expect("ok");
         assert_eq!(out.text, "alpha ran");

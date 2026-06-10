@@ -88,19 +88,19 @@ pub async fn set_ai_config(
 
 #[tauri::command]
 pub async fn get_ai_usage(state: State<'_, AppState>) -> Result<AiUsageSummary, AppError> {
-    let service = AiService::new(state.db.clone(), None)?;
+    let service = AiService::new(state.db.clone())?;
     service.get_current_usage()
 }
 
 #[tauri::command]
 pub async fn reset_ai_usage(state: State<'_, AppState>) -> Result<(), AppError> {
-    let service = AiService::new(state.db.clone(), None)?;
+    let service = AiService::new(state.db.clone())?;
     service.reset_usage()
 }
 
 #[tauri::command]
 pub async fn list_ai_models(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, AppError> {
-    let service = AiService::new(state.db.clone(), None)?;
+    let service = AiService::new(state.db.clone())?;
     let models = service.list_models().await?;
     Ok(models
         .into_iter()
@@ -190,7 +190,7 @@ pub async fn set_embeddings_config(
 
 #[tauri::command]
 pub async fn check_ai_available(state: State<'_, AppState>) -> Result<bool, AppError> {
-    let service = AiService::new(state.db.clone(), None)?;
+    let service = AiService::new(state.db.clone())?;
     Ok(service.is_available().await)
 }
 

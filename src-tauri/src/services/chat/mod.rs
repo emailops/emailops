@@ -39,14 +39,13 @@ pub use turn::{build_prompt, run_chat_turn};
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use tauri::{AppHandle, Emitter};
 
 use crate::db::Database;
 use crate::models::{ChatPhase, ChatPhaseEvent, Email};
 
 // ── Logging helper ──────────────────────────────────────────────────────────
 
-pub(super) fn emit_log(_app: &AppHandle, level: &str, message: &str) {
+pub(super) fn emit_log(level: &str, message: &str) {
     crate::services::logger::log(level, "chat", message);
 }
 
@@ -55,8 +54,8 @@ pub(super) fn emit_log(_app: &AppHandle, level: &str, message: &str) {
 /// answer tokens stream. Fire-and-forget: a dropped phase event only costs a
 /// less-specific status, never correctness, so we swallow emit errors like the
 /// other one-shot chat events.
-pub(super) fn emit_phase(app: &AppHandle, conversation_id: &str, message_id: &str, phase: ChatPhase) {
-    let _ = app.emit(
+pub(super) fn emit_phase(conversation_id: &str, message_id: &str, phase: ChatPhase) {
+    crate::services::events::emit(
         "chat-phase",
         ChatPhaseEvent {
             message_id: message_id.to_string(),

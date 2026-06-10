@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter};
-
 /// Default idle window before a loaded local model is evicted from RAM.
 /// Overridable via the `chat.keep_alive_seconds` preference.
 const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
@@ -20,7 +18,6 @@ const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
     db: Arc<Database>,
-    app: Option<AppHandle>,
 }
 
 // ── Cached llama.cpp runtime ─────────────────────────────────────────────────
@@ -164,16 +161,16 @@ impl AiService {
         Ok(())
     }
 
-    pub fn new(db: Arc<Database>, app: Option<AppHandle>) -> Result<Self> {
+    pub fn new(db: Arc<Database>) -> Result<Self> {
         let provider = Self::load_provider(&db)?;
-        Ok(Self { provider, db, app })
+        Ok(Self { provider, db })
     }
 
     /// Build an `AiService` around an already-constructed provider. Used by
     /// eval harnesses that want to exercise the extraction pipeline with a
     /// specific embedded model without mutating the user's prefs.
-    pub fn with_provider(db: Arc<Database>, app: Option<AppHandle>, provider: Arc<dyn AIProvider>) -> Self {
-        Self { provider, db, app }
+    pub fn with_provider(db: Arc<Database>, provider: Arc<dyn AIProvider>) -> Self {
+        Self { provider, db }
     }
 
     pub fn provider(&self) -> &dyn AIProvider {
@@ -266,29 +263,28 @@ impl AiService {
     /// called once at app startup so the first chat turn doesn't pay the full
     /// cold-load cost. Never returns an error — failures are logged but don't
     /// block the caller.
-    pub async fn warmup_from_db(db: &Database, app: Option<&AppHandle>) {
-        fn log(_app: Option<&AppHandle>, level: &str, message: &str) {
+    pub async fn warmup_from_db(db: &Database) {
+        fn log(level: &str, message: &str) {
             crate::services::logger::log(level, "ai", message);
         }
 
         let provider = match Self::load_provider(db) {
             Ok(p) => p,
             Err(e) => {
-                log(app, "warn", &format!("AI warmup skipped: provider unavailable ({e})"));
+                log("warn", &format!("AI warmup skipped: provider unavailable ({e})"));
                 return;
             }
         };
 
         let model = provider.model_name().to_string();
-        log(app, "info", &format!("Warming up AI model ({})…", model));
+        log("info", &format!("Warming up AI model ({})…", model));
         let started = std::time::Instant::now();
         match provider.warmup().await {
             Ok(()) => log(
-                app,
                 "success",
                 &format!("AI model warmed up ({}) in {}ms", model, started.elapsed().as_millis()),
             ),
-            Err(e) => log(app, "warn", &format!("AI warmup failed ({}): {}", model, e)),
+            Err(e) => log("warn", &format!("AI warmup failed ({}): {}", model, e)),
         }
     }
 
@@ -472,9 +468,7 @@ impl AiService {
     }
 
     fn emit_ai_log(&self, event: &AiLogEvent) {
-        if let Some(app) = &self.app {
-            let _ = app.emit("ai_log", event);
-        }
+        crate::services::events::emit("ai_log", event);
     }
 
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {

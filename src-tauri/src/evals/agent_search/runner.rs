@@ -112,7 +112,7 @@ pub async fn run(cfg: RunConfig) -> EvalResult<PathBuf> {
     let accounts = db.list_accounts()?;
 
     // ── 3. AI service (optional for baseline mode but required for smart) ──
-    let ai_service = AiService::new(db.clone(), None).ok();
+    let ai_service = AiService::new(db.clone()).ok();
     if ai_service.is_none() {
         eprintln!("[agent-search-eval] WARNING: AiService unavailable — smart mode will fail");
     } else {

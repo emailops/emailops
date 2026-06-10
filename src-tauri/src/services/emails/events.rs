@@ -1,5 +1,4 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,34 +10,24 @@ pub struct SyncProgress {
     pub message: String,
 }
 
-/// Emit a Tauri `sync-progress` event to the frontend. When `app` is `None`
-/// (e.g. in integration tests) the event is silently dropped.
+/// Emit a `sync-progress` event to the frontend via the global EventSink seam.
 ///
 /// Progress events drive the UI progress bar only — they are intentionally
 /// NOT written to the output-panel log seam. The per-email "Downloading X of
 /// Y" tick fires once per message, so logging every progress update would
 /// flood the panel on a first sync. Output-panel sync lines come from the
 /// explicit (and throttled) `emit_account_log` calls instead.
-pub(super) fn emit_progress(
-    app: Option<&AppHandle>,
-    account_id: &str,
-    status: &str,
-    current: u32,
-    total: u32,
-    message: &str,
-) {
-    if let Some(a) = app {
-        let _ = a.emit(
-            "sync-progress",
-            SyncProgress {
-                account_id: account_id.to_string(),
-                status: status.to_string(),
-                current,
-                total,
-                message: message.to_string(),
-            },
-        );
-    }
+pub(super) fn emit_progress(account_id: &str, status: &str, current: u32, total: u32, message: &str) {
+    crate::services::events::emit(
+        "sync-progress",
+        SyncProgress {
+            account_id: account_id.to_string(),
+            status: status.to_string(),
+            current,
+            total,
+            message: message.to_string(),
+        },
+    );
 }
 
 /// Route to the global Logger seam. The `AppHandle` is no longer needed
@@ -56,23 +45,35 @@ pub(super) fn emit_account_log(level: &str, source: &str, account_email: &str, m
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::logger::{install, install_for_testing, NoopLogger};
+    use crate::services::events::{install as install_sink, seam_test_lock, NoopEventSink};
+    use crate::services::logger::{
+        install as install_logger, install_for_testing as install_logger_for_testing, NoopLogger,
+    };
     use std::sync::Arc;
 
-    // `emit_progress` drives the UI progress bar only. It must NOT write to the
-    // output-panel log seam: the per-email "Downloading X of Y" tick fires once
-    // per message, so logging here floods the panel during a first sync. The
-    // panel gets its sync lines from explicit (throttled) `emit_account_log`
-    // calls instead.
+    // `emit_progress` drives the UI progress bar only. It routes to the event
+    // sink (`sync-progress`) and must NOT write to the output-panel log seam:
+    // the per-email "Downloading X of Y" tick fires once per message, so logging
+    // here floods the panel during a first sync. The panel gets its sync lines
+    // from explicit (throttled) `emit_account_log` calls instead.
     #[test]
-    fn emit_progress_does_not_write_to_log_seam() {
-        let logger = install_for_testing();
-        emit_progress(None, "acc", "syncing", 1, 10, "Downloading 1 of 10 new emails");
+    fn emit_progress_routes_to_event_sink_not_log_seam() {
+        let _g = seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        let logger = install_logger_for_testing();
+
+        emit_progress("acc", "syncing", 1, 10, "Downloading 1 of 10 new emails");
+
+        // Goes to the UI event seam as a `sync-progress` event...
+        assert_eq!(sink.count("sync-progress"), 1);
+        // ...and never to the output-panel log seam.
         assert!(
             logger.events().is_empty(),
             "progress events must not hit the output-panel log seam, got: {:?}",
             logger.events()
         );
-        install(Arc::new(NoopLogger));
+
+        install_sink(Arc::new(NoopEventSink));
+        install_logger(Arc::new(NoopLogger));
     }
 }

@@ -143,7 +143,6 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
-            app: None,
         };
         let out = GetLensDataTool.execute(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.text.starts_with("Error:"));
@@ -156,7 +155,6 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
-            app: None,
         };
         let out = GetLensDataTool
             .execute(&ctx, serde_json::json!({ "lens_name": "Receipts" }))

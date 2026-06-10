@@ -19,10 +19,11 @@ All business logic for email read/write operations that cross the provider bound
 - `ai/provider.rs` — `AIProvider` trait for draft generation
 - `services/task_queue` — heavy work (sync, draft gen) is submitted here, not awaited inline
 - `services/logger` — log seam for output panel events
+- `services/events` — UI event seam (`sync-progress`); `None` AppHandle still emits via the seam
 
 ## Public surface
 
-- `sync_account(db, account_id, app_data_dir, app, ai_background, abort_flags, sync_locks) -> Result<()>`
+- `sync_account(db, account_id, app_data_dir, app: Option<AppHandle>, ai_background, abort_flags, sync_locks) -> Result<()>` — `app=None` (CLI) routes progress through the events seam and skips AppHandle-bound follow-ups (AI tasks, attachments)
 - `generate_draft(db, email_id, account_id, app, ai_queue) -> Result<String>`
 - `send_reply(db, email_id, body, from_account_id, to, cc, app) -> Result<String>` (returns sending account id for a post-send sync)
 - `send_new_email(db, account_id, to, cc, subject, body, attachments, app) -> Result<String>` (returns sending account id for a post-send sync)

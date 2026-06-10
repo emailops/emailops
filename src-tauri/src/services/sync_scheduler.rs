@@ -219,7 +219,7 @@ fn make_sync_fn(
                 &db,
                 &account_id,
                 &app_data_dir,
-                app.clone(),
+                Some(app.clone()),
                 ai_background,
                 sync_abort_flags,
                 sync_locks,

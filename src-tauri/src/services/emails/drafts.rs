@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::AppHandle;
 
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
@@ -61,7 +60,7 @@ pub struct DraftResult {
     pub sources: Vec<DraftSource>,
 }
 
-fn emit_log(_app: Option<&AppHandle>, level: &str, message: &str) {
+fn emit_log(level: &str, message: &str) {
     crate::services::logger::log(level, "drafts", message);
 }
 
@@ -69,14 +68,9 @@ fn emit_log(_app: Option<&AppHandle>, level: &str, message: &str) {
 ///
 /// Runs synchronously on the caller's tokio task. Frontend-facing callers
 /// submit this through `ai_queue` so the UI thread is not blocked while
-/// Ollama runs; the eval harness calls it directly with `app = None` so it
-/// can score drafts without a tauri runtime.
-pub async fn generate_draft(
-    app: Option<&AppHandle>,
-    db: &Arc<Database>,
-    email_id: &str,
-    instructions: Option<&str>,
-) -> Result<DraftResult> {
+/// Ollama runs; UI events flow through the global `events`/`logger` sinks, so
+/// the eval harness and CLI can call it without a tauri runtime.
+pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Option<&str>) -> Result<DraftResult> {
     let email = db
         .get_email_by_id(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
@@ -100,7 +94,6 @@ pub async fn generate_draft(
     let user_email = db.get_account(&email.account_id)?.map(|a| a.email).unwrap_or_default();
 
     emit_log(
-        app,
         "info",
         &format!("Generating draft for '{}'…", truncate_utf8(&email.subject, 60)),
     );
@@ -110,11 +103,10 @@ pub async fn generate_draft(
     // fused with RRF, deduped to one email per thread, excluding the current
     // thread). If embeddings aren't available we skip silently — the draft
     // still works without RAG, just with less stylistic grounding.
-    let sources = match retrieve_rag_sources(db, &email, &user_email, app).await {
+    let sources = match retrieve_rag_sources(db, &email, &user_email).await {
         Ok(s) => s,
         Err(e) => {
             emit_log(
-                app,
                 "warn",
                 &format!("retrieval skipped ({}); generating without precedent", e),
             );
@@ -142,8 +134,8 @@ pub async fn generate_draft(
     }
 
     // ── Model call ───────────────────────────────────────────────────────
-    emit_log(app, "info", "calling model…");
-    let ai = AiService::new(db.clone(), app.cloned())?;
+    emit_log("info", "calling model…");
+    let ai = AiService::new(db.clone())?;
     let config = AiService::get_config(db)?;
     let start = std::time::Instant::now();
     let draft = ai
@@ -176,7 +168,6 @@ pub async fn generate_draft(
         ),
     );
     emit_log(
-        app,
         "success",
         &format!("draft generated ({} chars, {}ms)", body.len(), elapsed),
     );
@@ -195,7 +186,6 @@ pub async fn generate_draft(
 /// same `DraftResult` shape so callers can save it via the existing
 /// `db.save_draft` path.
 pub async fn generate_new_draft(
-    app: Option<&AppHandle>,
     db: &Arc<Database>,
     account_id: &str,
     to: &[String],
@@ -227,7 +217,6 @@ pub async fn generate_new_draft(
         });
 
     emit_log(
-        app,
         "info",
         &format!(
             "Generating new email draft to {} subject='{}'…",
@@ -264,8 +253,8 @@ Subject: {subject}\n\n\
         prompt
     };
 
-    emit_log(app, "info", "calling model…");
-    let ai = AiService::new(db.clone(), app.cloned())?;
+    emit_log("info", "calling model…");
+    let ai = AiService::new(db.clone())?;
     let _account = db.get_account(account_id)?;
     let start = std::time::Instant::now();
     let draft = ai
@@ -282,7 +271,6 @@ Subject: {subject}\n\n\
     let elapsed = start.elapsed().as_millis();
     let body = draft.trim().to_string();
     emit_log(
-        app,
         "success",
         &format!("new draft generated ({} chars, {}ms)", body.len(), elapsed),
     );
@@ -299,16 +287,11 @@ Subject: {subject}\n\n\
 ///
 /// For each surviving thread we prefer the user's own reply (best precedent
 /// of voice) and fall back to the latest message in that thread otherwise.
-async fn retrieve_rag_sources(
-    db: &Arc<Database>,
-    email: &Email,
-    user_email: &str,
-    app: Option<&AppHandle>,
-) -> Result<Vec<DraftSource>> {
-    let ai = AiService::new(db.clone(), app.cloned())?;
+async fn retrieve_rag_sources(db: &Arc<Database>, email: &Email, user_email: &str) -> Result<Vec<DraftSource>> {
+    let ai = AiService::new(db.clone())?;
 
     let embed_text = format!("{}\n{}", email.subject, truncate_utf8(&email.snippet, 2000));
-    emit_log(app, "info", "retrieving similar threads…");
+    emit_log("info", "retrieving similar threads…");
 
     let query_vec = ai.embed(&embed_text).await?;
     let fts_query = build_fts_query(&email.subject, &email.snippet);
@@ -402,11 +385,7 @@ async fn retrieve_rag_sources(
         });
     }
 
-    emit_log(
-        app,
-        "info",
-        &format!("found {} similar threads for context", sources.len()),
-    );
+    emit_log("info", &format!("found {} similar threads for context", sources.len()));
     Ok(sources)
 }
 

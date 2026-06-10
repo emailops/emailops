@@ -23,7 +23,7 @@ pub async fn sync_account(
     db: &Arc<Database>,
     account_id: &str,
     app_data_dir: &Path,
-    app: AppHandle,
+    app: Option<AppHandle>,
     ai_background: crate::services::task_queue::TaskQueue,
     sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
@@ -93,26 +93,12 @@ pub async fn sync_account(
 
     if !account.enabled {
         db.upsert_sync_status(account_id, "idle", None, None)?;
-        emit_progress(
-            Some(&app),
-            account_id,
-            "complete",
-            0,
-            0,
-            "Account disabled — sync skipped",
-        );
+        emit_progress(account_id, "complete", 0, 0, "Account disabled — sync skipped");
         status_guard.completed = true;
         return Ok(());
     }
 
-    emit_progress(
-        Some(&app),
-        account_id,
-        "starting",
-        0,
-        0,
-        "Connecting to email provider...",
-    );
+    emit_progress(account_id, "starting", 0, 0, "Connecting to email provider...");
 
     // Notify if a token refresh is about to happen so the UI shows "Refreshing credentials..."
     if account.provider == "gmail" || account.provider == "outlook" {
@@ -122,18 +108,18 @@ pub async fn sync_account(
             .map(|exp| exp < chrono::Utc::now().timestamp() + 300)
             .unwrap_or(true);
         if needs_refresh {
-            emit_progress(Some(&app), account_id, "refreshing", 0, 0, "Refreshing credentials...");
+            emit_progress(account_id, "refreshing", 0, 0, "Refreshing credentials...");
         }
     }
 
     // Build provider — refreshes OAuth tokens if needed.
-    let email_provider = build_provider_for_account(&account, Some(app.clone())).await?;
+    let email_provider = build_provider_for_account(&account, app.clone()).await?;
 
     let result = sync_account_with_provider(
         db,
         &account,
         app_data_dir,
-        Some(app),
+        app,
         ai_background,
         sync_abort_flags,
         email_provider,
@@ -228,7 +214,6 @@ pub async fn sync_account_with_provider(
     };
 
     emit_progress(
-        app.as_ref(),
         account_id,
         "fetching",
         0,
@@ -363,7 +348,7 @@ pub async fn sync_account_with_provider(
         // their dedicated pass so a stale inbox doesn't gate sent-mail
         // recovery. This was the original 2024 → 2025 Sent gap bug:
         // a near-idle account never reached the extra-mailbox sync.
-        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), app.as_ref()).await {
+        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref()).await {
             emit_account_log(
                 "warn",
                 "sync",
@@ -376,7 +361,7 @@ pub async fn sync_account_with_provider(
         // Terminal progress event clears the UI spinner. No output-panel log
         // line: an idle sync (nothing new) should stay quiet. `current/total`
         // are 0 so the frontend skips logging this completion.
-        emit_progress(app.as_ref(), account_id, "complete", 0, 0, "Inbox up to date");
+        emit_progress(account_id, "complete", 0, 0, "Inbox up to date");
 
         if let Some(ref a) = app {
             enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "no_new").await;
@@ -386,7 +371,6 @@ pub async fn sync_account_with_provider(
     }
 
     emit_progress(
-        app.as_ref(),
         account_id,
         "syncing",
         0,
@@ -470,7 +454,6 @@ pub async fn sync_account_with_provider(
             }
 
             emit_progress(
-                app.as_ref(),
                 account_id,
                 "syncing",
                 global_done,
@@ -558,7 +541,7 @@ pub async fn sync_account_with_provider(
             all_new_ids.extend(ids_to_remove);
             synced_count += chunk_emails.len() as u32;
 
-            emit_progress(app.as_ref(), account_id, "batch", synced_count, new_count, "");
+            emit_progress(account_id, "batch", synced_count, new_count, "");
 
             if !ai_followups_kicked {
                 if let Some(ref a) = app {
@@ -741,7 +724,6 @@ pub async fn sync_account_with_provider(
     }
 
     emit_progress(
-        app.as_ref(),
         account_id,
         "complete",
         new_count,
@@ -814,7 +796,7 @@ pub async fn sync_account_with_provider(
     }
 
     // ── Secondary mailboxes: Sent / Spam / Trash ──────────────────────────────
-    if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), app.as_ref()).await {
+    if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref()).await {
         emit_account_log(
             "warn",
             "sync",
@@ -859,15 +841,12 @@ async fn enqueue_ai_followups(
     // Classification.
     {
         let db_classify = Arc::clone(db);
-        let app_classify = app.clone();
         let aid_classify = account_id.to_string();
         let email_classify = account_email.to_string();
         let task_label = format!("classify:new_emails:{}:{}", aid_classify, label_suffix);
         ai_background
             .submit_named(&task_label, async move {
-                if let Err(e) =
-                    crate::services::classification::classify_new_emails(&db_classify, &app_classify, &aid_classify)
-                        .await
+                if let Err(e) = crate::services::classification::classify_new_emails(&db_classify, &aid_classify).await
                 {
                     emit_account_log(
                         "error",
@@ -1298,7 +1277,6 @@ async fn sync_extra_mailboxes(
     account: &Account,
     account_id: &str,
     email_provider: &dyn EmailProvider,
-    app: Option<&AppHandle>,
 ) -> Result<()> {
     for mailbox in ExtraMailbox::all().iter().copied() {
         // ── Forward incremental ──────────────────────────────────────────────
@@ -1315,8 +1293,6 @@ async fn sync_extra_mailboxes(
         )
         .await;
     }
-
-    let _ = app;
 
     Ok(())
 }

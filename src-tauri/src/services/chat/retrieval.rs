@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use tauri::AppHandle;
 use tokio::time::timeout;
 
 use crate::ai::provider::AIProvider;
@@ -138,13 +137,12 @@ pub struct ScoredEmail {
 pub async fn retrieve_context(
     db: &Arc<Database>,
     provider: &dyn AIProvider,
-    app: &AppHandle,
     account_id: &str,
     query: &str,
     categories: &[String],
     k: usize,
 ) -> Result<Vec<ScoredEmail>> {
-    let (sources, _trace) = retrieve_context_with_trace(db, provider, app, account_id, query, categories, k).await?;
+    let (sources, _trace) = retrieve_context_with_trace(db, provider, account_id, query, categories, k).await?;
     Ok(sources)
 }
 
@@ -165,7 +163,6 @@ fn db_category_filter(categories: &[String]) -> Option<&[String]> {
 pub async fn retrieve_context_with_trace(
     db: &Arc<Database>,
     provider: &dyn AIProvider,
-    app: &AppHandle,
     account_id: &str,
     query: &str,
     categories: &[String],
@@ -233,7 +230,6 @@ pub async fn retrieve_context_with_trace(
         }
         Ok(Err(e)) => {
             emit_log(
-                app,
                 "warn",
                 &format!("vector search failed ({}); falling back to FTS-only", e),
             );
@@ -242,7 +238,6 @@ pub async fn retrieve_context_with_trace(
         }
         Err(_) => {
             emit_log(
-                app,
                 "warn",
                 &format!(
                     "vector search exceeded {}s; falling back to FTS-only",
@@ -271,7 +266,7 @@ pub async fn retrieve_context_with_trace(
     let fts_ms_i64 = fts_ms.round() as i64;
 
     if vector_scores.is_empty() && fts_scores.is_empty() {
-        emit_log(app, "info", "no sources matched the question");
+        emit_log("info", "no sources matched the question");
         let trace = RetrievalTrace {
             vector_hits: 0,
             fts_hits: 0,
@@ -449,7 +444,7 @@ pub async fn retrieve_context_with_trace(
     let t_rerank = std::time::Instant::now();
     let (mut results, rerank_timed_out) = if pool.len() > k {
         let tpl = crate::services::prompts::get_template(db, "chat.rerank")?;
-        rerank_candidates(provider, app, query, pool, &tpl).await
+        rerank_candidates(provider, query, pool, &tpl).await
     } else {
         (pool, false)
     };
@@ -524,7 +519,6 @@ pub async fn retrieve_context_with_trace(
             src.citation_number = (i + 1) as i32;
         }
         emit_log(
-            app,
             "debug",
             &format!("thread expansion: added {} sibling email(s)", expansion_count),
         );
@@ -535,9 +529,7 @@ pub async fn retrieve_context_with_trace(
     } else {
         categories.join(",")
     };
-    emit_log(
-        app,
-        "debug",
+    emit_log("debug",
         &format!(
             "retrieval: vec={:.0}ms fts={:.0}ms fetch={:.0}ms total={:.0}ms -> {} sources ({} expanded, {} dedup) cats={}",
             vec_ms,
@@ -631,7 +623,6 @@ async fn rewrite_query_hyde(provider: &dyn AIProvider, user_question: &str, temp
 /// score, so a partial response still helps.
 async fn rerank_candidates(
     provider: &dyn AIProvider,
-    app: &AppHandle,
     user_question: &str,
     mut candidates: Vec<ScoredEmail>,
     template: &str,
@@ -661,12 +652,11 @@ async fn rerank_candidates(
     let raw = match timeout(RERANK_TIMEOUT, fut).await {
         Ok(Ok(result)) => result.text,
         Ok(Err(e)) => {
-            emit_log(app, "debug", &format!("rerank failed ({}); keeping baseline order", e));
+            emit_log("debug", &format!("rerank failed ({}); keeping baseline order", e));
             return (candidates, false);
         }
         Err(_) => {
             emit_log(
-                app,
                 "debug",
                 &format!("rerank exceeded {}s; keeping baseline order", RERANK_TIMEOUT.as_secs()),
             );
@@ -701,11 +691,7 @@ async fn rerank_candidates(
     }
 
     if scores.is_empty() {
-        emit_log(
-            app,
-            "debug",
-            "rerank: could not parse any scores; keeping baseline order",
-        );
+        emit_log("debug", "rerank: could not parse any scores; keeping baseline order");
         return (candidates, false);
     }
 

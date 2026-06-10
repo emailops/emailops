@@ -303,7 +303,7 @@ fn get_emails_returns_correct_account_only() {
     db.insert_email(&make_email("e-2", "acc-A", 900)).expect("insert e-2");
     db.insert_email(&make_email("e-3", "acc-B", 800)).expect("insert e-3");
 
-    let emails = db.get_emails("acc-A", 50, 0, None, None).expect("get");
+    let emails = db.get_emails("acc-A", 50, 0, None, None, None).expect("get");
     assert_eq!(emails.len(), 2);
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-1") && ids.contains(&"e-2"));
@@ -314,7 +314,7 @@ fn get_emails_returns_correct_account_only() {
 fn get_emails_empty_for_unknown_account() {
     let db = test_db();
     // No emails for "acc-other" — no account needed, just expect empty.
-    let result = db.get_emails("acc-other", 50, 0, None, None).expect("get");
+    let result = db.get_emails("acc-other", 50, 0, None, None, None).expect("get");
     assert!(result.is_empty());
 }
 
@@ -327,7 +327,7 @@ fn get_emails_respects_limit() {
         db.insert_email(&make_email(&format!("e-{i}"), "acc-lim", (10 - i) * 100))
             .expect("insert");
     }
-    let emails = db.get_emails("acc-lim", 3, 0, None, None).expect("get");
+    let emails = db.get_emails("acc-lim", 3, 0, None, None, None).expect("get");
     assert_eq!(emails.len(), 3);
 }
 
@@ -340,7 +340,7 @@ fn get_emails_ordered_newest_first() {
         .expect("insert old");
     db.insert_email(&make_email("e-new", "acc-ord", 9000))
         .expect("insert new");
-    let emails = db.get_emails("acc-ord", 50, 0, None, None).expect("get");
+    let emails = db.get_emails("acc-ord", 50, 0, None, None, None).expect("get");
     assert_eq!(emails.len(), 2);
     assert_eq!(emails[0].id, "e-new", "newest first");
     assert_eq!(emails[1].id, "e-old");
@@ -1075,7 +1075,7 @@ fn get_emails_sent_view_filters_by_sender_address() {
     db.insert_email(&make_email_with("e-recv", "acc-s", 1000, "other@example.com", "inbox"))
         .unwrap();
 
-    let sent = db.get_emails("acc-s", 50, 0, None, Some("sent")).unwrap();
+    let sent = db.get_emails("acc-s", 50, 0, None, Some("sent"), None).unwrap();
     let ids: Vec<&str> = sent.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-sent"), "email sent by me must appear in sent view");
     assert!(
@@ -1093,7 +1093,7 @@ fn get_emails_spam_view_filters_by_mailbox() {
     db.insert_email(&make_email_with("e-inbox", "acc-sp", 2000, "good@example.com", "inbox"))
         .unwrap();
 
-    let spam = db.get_emails("acc-sp", 50, 0, None, Some("spam")).unwrap();
+    let spam = db.get_emails("acc-sp", 50, 0, None, Some("spam"), None).unwrap();
     let ids: Vec<&str> = spam.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-spam"), "spam mailbox email must appear in spam view");
     assert!(!ids.contains(&"e-inbox"), "inbox email must not appear in spam view");
@@ -1317,7 +1317,7 @@ async fn sync_with_provider_stores_new_emails() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-sy", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-sy", 50, 0, None, None, None).unwrap();
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
@@ -1354,7 +1354,7 @@ async fn sync_with_provider_deduplicates_existing_emails() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-dd", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-dd", 50, 0, None, None, None).unwrap();
     assert_eq!(
         emails.len(),
         2,
@@ -1403,7 +1403,7 @@ async fn sync_with_provider_incremental_uses_latest_timestamp() {
     .expect("sync_account_with_provider");
 
     // Only the new email should be added (old-1 is already there)
-    let emails = db.get_emails("acc-inc", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-inc", 50, 0, None, None, None).unwrap();
     assert_eq!(emails.len(), 2, "total must be old + new");
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"new-2"), "new email must be synced");
@@ -1437,7 +1437,7 @@ async fn sync_with_provider_no_new_emails_leaves_db_unchanged() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-noop", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-noop", 50, 0, None, None, None).unwrap();
     assert_eq!(emails.len(), 1, "no emails must be added when nothing is new");
 }
 
@@ -1511,7 +1511,7 @@ async fn inbox_incremental_watermark_is_not_poisoned_by_sent_timestamp() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-watermark", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-watermark", 50, 0, None, None, None).unwrap();
     let ids: std::collections::HashSet<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(
         ids.contains("received-new"),
@@ -1637,7 +1637,7 @@ fn delete_email_hides_it_from_get_emails() {
     db.delete_email("e-to-delete").unwrap();
 
     // get_emails must exclude the soft-deleted email
-    let emails = db.get_emails("acc-del", 50, 0, None, None).unwrap();
+    let emails = db.get_emails("acc-del", 50, 0, None, None, None).unwrap();
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(
         !ids.contains(&"e-to-delete"),

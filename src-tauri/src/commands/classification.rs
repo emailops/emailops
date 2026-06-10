@@ -38,7 +38,7 @@ pub async fn classify_previous_emails(
     state
         .ai_background
         .submit_named(&task_label, async move {
-            match classification::classify_all_emails(&db, &app, &account_id).await {
+            match classification::classify_all_emails(&db, &account_id).await {
                 Ok(count) => {
                     emit_log(&app, "success", &format!("Classified {} emails", count));
                 }
@@ -99,7 +99,7 @@ pub async fn reclassify_all_emails(
     state
         .ai_background
         .submit_named(&task_label, async move {
-            match classification::reclassify_all_emails(&db, &app, &account_id).await {
+            match classification::reclassify_all_emails(&db, &account_id).await {
                 Ok(count) => {
                     emit_log(&app, "success", &format!("Reclassified {} emails", count));
                 }
@@ -153,7 +153,7 @@ pub async fn create_classification_rule(
     state
         .ai_background
         .submit_named(&task_label, async move {
-            if let Err(e) = classification::reclassify_affected_emails(&db, &app, &rule_clone).await {
+            if let Err(e) = classification::reclassify_affected_emails(&db, &rule_clone).await {
                 emit_log(&app, "error", &format!("Reclassify after create failed: {}", e));
             }
         })
@@ -184,12 +184,12 @@ pub async fn update_classification_rule(
     state
         .ai_background
         .submit_named(&task_label, async move {
-            if let Err(e) = classification::reclassify_affected_emails(&db, &app, &new_rule).await {
+            if let Err(e) = classification::reclassify_affected_emails(&db, &new_rule).await {
                 emit_log(&app, "error", &format!("Reclassify after update failed: {}", e));
             }
             if let Some(old) = old_rule {
                 if old.sender_pattern != new_rule.sender_pattern || old.subject_pattern != new_rule.subject_pattern {
-                    if let Err(e) = classification::reclassify_affected_emails(&db, &app, &old).await {
+                    if let Err(e) = classification::reclassify_affected_emails(&db, &old).await {
                         emit_log(&app, "error", &format!("Reclassify old pattern failed: {}", e));
                     }
                 }
@@ -223,7 +223,7 @@ pub async fn delete_classification_rule(
         state
             .ai_background
             .submit_named(&task_label, async move {
-                if let Err(e) = classification::reclassify_affected_emails(&db, &app, &deleted_rule).await {
+                if let Err(e) = classification::reclassify_affected_emails(&db, &deleted_rule).await {
                     emit_log(&app, "error", &format!("Reclassify after delete failed: {}", e));
                 }
             })

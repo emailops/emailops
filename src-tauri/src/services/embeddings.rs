@@ -322,7 +322,7 @@ async fn generate_embeddings_inner(
     let label_suffix = account_label.map(|l| format!(" ({})", l)).unwrap_or_default();
     let config = AiService::get_config(db)?;
     let embedding_model = get_embedding_model(db)?;
-    let ai_service = AiService::new(db.clone(), app.clone())?;
+    let ai_service = AiService::new(db.clone())?;
 
     if !ai_service.is_available().await {
         emit_log(

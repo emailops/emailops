@@ -205,7 +205,6 @@ pub async fn send_chat_message(
             if let Err(e) = chat::run_chat_turn(
                 db,
                 registry,
-                app_for_task.clone(),
                 conv_id,
                 assistant_id,
                 account_id,

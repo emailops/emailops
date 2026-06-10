@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use crate::models::error::Result;
 use crate::models::{Draft, SaveDraftRequest};
@@ -36,6 +36,23 @@ impl Database {
             .query_map(params![account_id], row_to_draft)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(drafts)
+    }
+
+    /// Fetch a single draft by id, regardless of `status`. Used by the CLI to
+    /// surface a draft the chat assistant just created (linked via the message's
+    /// `referenced_draft_ids`). Returns `None` when no such draft exists.
+    pub fn get_draft(&self, draft_id: &str) -> Result<Option<Draft>> {
+        let conn = self.reader();
+        let draft = conn
+            .query_row(
+                "SELECT id, email_id, account_id, to_addresses_json, subject, body,
+                        ai_generated, status, created_at, updated_at
+                 FROM drafts WHERE id = ?1",
+                params![draft_id],
+                row_to_draft,
+            )
+            .optional()?;
+        Ok(draft)
     }
 
     pub fn save_draft(&self, req: &SaveDraftRequest) -> Result<Draft> {
@@ -82,5 +99,52 @@ impl Database {
             params![draft_id, account_id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_account(db: &Database, id: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, 'gmail', ?2, ?2, 0, 0, 1)",
+                params![id, format!("{id}@example.com")],
+            )
+            .expect("seed account");
+    }
+
+    fn save(db: &Database, id: &str) -> Draft {
+        seed_account(db, "acct-1");
+        db.save_draft(&SaveDraftRequest {
+            id: Some(id.to_string()),
+            email_id: None,
+            account_id: "acct-1".to_string(),
+            to_addresses: vec!["alina@example.com".to_string()],
+            subject: "Confirmar reunión".to_string(),
+            body: "Hola Alina, confirmo.".to_string(),
+        })
+        .expect("save draft")
+    }
+
+    #[test]
+    fn get_draft_round_trips_saved_fields() {
+        let db = Database::new_for_testing().expect("test db");
+        save(&db, "draft-1");
+
+        let got = db.get_draft("draft-1").expect("get_draft ok").expect("draft present");
+        assert_eq!(got.id, "draft-1");
+        assert_eq!(got.account_id, "acct-1");
+        assert_eq!(got.to_addresses, vec!["alina@example.com".to_string()]);
+        assert_eq!(got.subject, "Confirmar reunión");
+        assert_eq!(got.body, "Hola Alina, confirmo.");
+    }
+
+    #[test]
+    fn get_draft_unknown_id_is_none() {
+        let db = Database::new_for_testing().expect("test db");
+        assert!(db.get_draft("ghost").expect("get_draft ok").is_none());
     }
 }

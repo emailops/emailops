@@ -39,7 +39,6 @@ use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
 use crate::evals::email_classification::report::{render_report, ReportCase};
 use crate::evals::email_classification::{parse_label, LABELS};
-use crate::evals::shared::build_mock_app;
 use crate::evals::{EvalError, EvalResult};
 use crate::services::ai::AiService;
 
@@ -403,8 +402,7 @@ impl LlamaCppClassifier {
         // `build_provider` resolves the catalog id → GGUF path and reuses the
         // cached runtime when one is already loaded for the same paths.
         let provider = AiService::build_provider(&db, provider_name, model)?;
-        let app = build_mock_app()?;
-        let service = AiService::with_provider(db, Some(app), provider);
+        let service = AiService::with_provider(db, provider);
         Ok(Self { service })
     }
 }

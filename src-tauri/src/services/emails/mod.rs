@@ -26,8 +26,9 @@ pub fn get_emails(
     limit: i32,
     offset: i32,
     mailbox: Option<&str>,
+    category: Option<&str>,
 ) -> Result<Vec<Email>> {
-    db.get_emails(account_id, limit, offset, None, mailbox)
+    db.get_emails(account_id, limit, offset, None, mailbox, category)
 }
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
