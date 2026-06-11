@@ -463,6 +463,13 @@ pub struct ChatMessage {
     /// table (generate_email_draft / list_drafts).
     #[serde(default)]
     pub referenced_draft_ids: Vec<String>,
+    /// The exact text this user message was prompted with (memory header +
+    /// sources block + question). History replay prefers these bytes over
+    /// `content` so each turn's prompt purely extends the previous one and the
+    /// llama.cpp KV prefix cache survives across turns. `None` on
+    /// assistant/system rows and pre-migration user rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_content: Option<String>,
 }
 
 // ── Reasoning trace ────────────────────────────────────────────────────────
@@ -570,6 +577,20 @@ pub struct LlmCallTrace {
     /// True when the call returned an error / timed out.
     #[serde(default)]
     pub failed: bool,
+    /// Prompt tokens evaluated by the provider for this call (prefill size).
+    /// `None` when the provider doesn't report token counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u32>,
+    /// Wall-clock time the provider spent in prompt prefill (tokenise +
+    /// context decode) before the first sampled token. Only the embedded
+    /// llama.cpp backend reports this; HTTP providers leave it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_ms: Option<i64>,
+    /// Prompt tokens served from a reused KV-cache prefix instead of being
+    /// re-evaluated. Currently always 0 on llama.cpp (no prefix cache yet) —
+    /// the field exists so before/after numbers share one schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_prompt_tokens: Option<u32>,
     /// Messages sent to the LLM at this round, formatted for tracing.
     /// Only populated when the `tracing` feature is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -96,10 +96,10 @@ pub async fn run_eval(
     let mut case_reports: Vec<CaseReport> = Vec::with_capacity(selected.len());
 
     for c in &selected {
-        let account = c.account.as_deref().unwrap_or(&session_account);
+        let account = resolve_case_account(&session.db, c.account.as_deref(), &session_account)?;
         let model = c.model.as_deref().unwrap_or(&session.model);
 
-        let outcome = harness::run_case(session.db.clone(), account, model, c)
+        let outcome = harness::run_case(session.db.clone(), &account, model, c)
             .await
             .map_err(map_eval_err)?;
         let report = metrics::evaluate(c, &outcome).map_err(map_eval_err)?;
@@ -185,14 +185,80 @@ fn resolve_cases_dir(flag: Option<PathBuf>) -> PathBuf {
     PathBuf::from("evals/chat/cases")
 }
 
-#[cfg(all(test, feature = "eval"))]
+/// Resolve the account a case should run against: the case's `account:`
+/// override (an account id OR email — YAML authors use emails) resolved to a
+/// real account id, falling back to the session account when absent.
+///
+/// Without resolution an email override flows straight into
+/// `create_chat_conversation`, whose FOREIGN KEY on `accounts.id` rejects it.
+#[cfg(feature = "eval")]
+fn resolve_case_account(
+    db: &std::sync::Arc<crate::db::Database>,
+    case_account: Option<&str>,
+    session_account: &str,
+) -> Result<String> {
+    match case_account {
+        Some(hint) => match super::session::resolve_account(db, Some(hint))? {
+            Some(id) => Ok(id),
+            // resolve_account errs on unknown hints; None is unreachable for
+            // Some(hint), but map it defensively instead of unwrapping.
+            None => Ok(session_account.to_string()),
+        },
+        None => Ok(session_account.to_string()),
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "eval")]
 mod tests {
     use super::*;
+    use crate::db::Database;
+    use std::sync::Arc;
+
+    fn seed_account(db: &Arc<Database>, id: &str, email: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, 'gmail', ?2, ?2, 0, 0, 1)",
+                rusqlite::params![id, email],
+            )
+            .expect("seed account");
+    }
 
     #[test]
     fn resolve_cases_dir_prefers_explicit_flag() {
         let p = PathBuf::from("/tmp/explicit-cases");
         assert_eq!(resolve_cases_dir(Some(p.clone())), p);
+    }
+
+    #[test]
+    fn case_account_email_override_resolves_to_id() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "acct-1", "alex@northwindlabs.io");
+        let got = resolve_case_account(&db, Some("alex@northwindlabs.io"), "session-acct").expect("resolve");
+        assert_eq!(got, "acct-1");
+    }
+
+    #[test]
+    fn case_account_id_override_passes_through() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "acct-1", "alex@northwindlabs.io");
+        let got = resolve_case_account(&db, Some("acct-1"), "session-acct").expect("resolve");
+        assert_eq!(got, "acct-1");
+    }
+
+    #[test]
+    fn no_override_falls_back_to_session_account() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let got = resolve_case_account(&db, None, "session-acct").expect("resolve");
+        assert_eq!(got, "session-acct");
+    }
+
+    #[test]
+    fn unknown_override_is_an_error() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "acct-1", "alex@northwindlabs.io");
+        assert!(resolve_case_account(&db, Some("ghost@nowhere.io"), "session-acct").is_err());
     }
 }
 

@@ -109,23 +109,25 @@ fn tool_result_count_hint(tool_name: &str, result: &str) -> String {
     }
 }
 
-/// Assemble `(role, content)` messages to send to Ollama's /api/chat.
+/// Assemble `(role, content)` messages to send to the chat backend.
 ///
 /// Layout:
-///   system: instructions + sources block
+///   system: instructions (per-turn-stable)
 ///   user:   <older turn>
 ///   assistant: <older turn>
 ///   ...
-///   user:   <the new question>
-/// Assemble `(role, content)` chat messages.
+///   user:   sources block + the new question
 ///
 /// `system_template` is the user-editable system-prompt template — typically
 /// loaded via `prompts::get_template(db, "chat.system")`. We render it with
-/// `{{today}}`, `{{tomorrow}}`, `{{language_instruction}}` and then append
-/// the per-turn dynamic Sources block, which stays in code because its
-/// formatting (citation numbering, smart-snippet slicing, relevant-region
-/// markers) is structurally tied to retrieval and unsafe to expose to the
-/// user-editable template.
+/// `{{today}}`, `{{tomorrow}}`, `{{language_instruction}}`. The per-turn
+/// dynamic Sources block travels in the FINAL USER MESSAGE, not the system
+/// message: the llama.cpp actor reuses the [system + history] KV prefix
+/// across turns, and per-turn bytes in the system message would invalidate
+/// the whole cache every turn. The block stays in code (not the template)
+/// because its formatting (citation numbering, smart-snippet slicing,
+/// relevant-region markers) is structurally tied to retrieval and unsafe to
+/// expose to the user-editable template.
 pub fn build_prompt(
     sources: &[ScoredEmail],
     history: &[ChatMessage],
@@ -147,23 +149,21 @@ pub fn build_prompt(
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("tools_section", tools_section.to_string());
-    let rendered = crate::services::prompts::render(system_template, &tpl_vars);
+    let system = crate::services::prompts::render(system_template, &tpl_vars);
 
-    let mut system = String::with_capacity(rendered.len() + sources.len() * 1200);
-    system.push_str(&rendered);
-
+    let mut tail = String::with_capacity(user_question.len() + sources.len() * 1200 + 128);
     if sources.is_empty() {
-        system.push_str(
+        tail.push_str(
             "Sources: (none pre-retrieved for this turn — you MUST call search_emails \
 before answering any factual question about the user's mailbox.)\n",
         );
     } else {
-        system.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
+        tail.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
             let marked = mark_relevant_region(&sliced);
-            system.push_str(&format!(
+            tail.push_str(&format!(
                 "[{}] From: {} <{}>  Subject: {}  Date: {}\n    {}\n\n",
                 src.citation_number,
                 src.email.sender,
@@ -174,6 +174,8 @@ before answering any factual question about the user's mailbox.)\n",
             ));
         }
     }
+    tail.push('\n');
+    tail.push_str(user_question);
 
     let mut messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
     messages.push(("system".to_string(), system));
@@ -182,12 +184,46 @@ before answering any factual question about the user's mailbox.)\n",
     let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
     for msg in &history[start..] {
         if msg.role == "user" || msg.role == "assistant" {
-            messages.push((msg.role.clone(), msg.content.clone()));
+            // User rows replay the exact bytes they were PROMPTED with
+            // (memory header + sources + question) — not the raw question —
+            // so this turn's prompt purely extends the previous one and the
+            // llama.cpp KV prefix survives. See `ChatMessage::prompt_content`.
+            let content = match (&msg.prompt_content, msg.role.as_str()) {
+                (Some(p), "user") => p.clone(),
+                _ => msg.content.clone(),
+            };
+            messages.push((msg.role.clone(), content));
         }
     }
 
-    messages.push(("user".to_string(), user_question.to_string()));
+    messages.push(("user".to_string(), tail));
     messages
+}
+
+/// Prepend a per-turn context block (e.g. the memory header) to the final
+/// user message. Per-turn content must never land in the system message: the
+/// llama.cpp actor reuses the [system + history] KV prefix across turns, and
+/// any per-turn byte there invalidates it.
+fn prepend_to_final_user_message(messages: &mut [(String, String)], block: &str) {
+    if let Some((_, content)) = messages.last_mut() {
+        *content = format!("{block}\n\n{content}");
+    }
+}
+
+/// Persist the final user-message bytes (memory header + sources + question)
+/// onto the user row so future turns replay them byte-identically — see
+/// `ChatMessage::prompt_content`. Failure degrades to a debug log: a turn
+/// must not fail because cache-warmth metadata could not be written.
+fn persist_prompted_tail(db: &Database, user_message_id: &str, messages: &[(String, String)]) {
+    let Some((role, content)) = messages.last() else {
+        return;
+    };
+    if role != "user" {
+        return;
+    }
+    if let Err(e) = db.update_chat_message_prompt_content(user_message_id, content) {
+        emit_log("debug", &format!("prompt_content persist skipped: {e}"));
+    }
 }
 
 // ── Tool calling ────────────────────────────────────────────────────────────
@@ -767,6 +803,49 @@ fn round_may_stream_live(force_tool_use: bool, no_tool_executed_yet: bool, nudge
 /// requested tool calls, feed results back, repeat until the model gives a
 /// text-only response (or we hit MAX_TOOL_ROUNDS).
 #[allow(clippy::too_many_arguments)]
+/// Pure: assemble the trace entry for one tool-loop LLM round. `result` is
+/// `None` when the call failed. Prompt/prefill stats are copied from the
+/// provider result when the backend reports them; `input`/`output` snapshots
+/// are attached by the caller (dev builds only).
+fn build_tool_round_trace(
+    round: i32,
+    latency_ms: i64,
+    result: Option<&crate::ai::provider::ToolStreamResult>,
+) -> LlmCallTrace {
+    LlmCallTrace {
+        kind: "tool_round".to_string(),
+        round,
+        latency_ms,
+        tool_calls_requested: result
+            .and_then(|r| r.message.tool_calls.as_ref())
+            .map(|v| v.len() as i32)
+            .unwrap_or(0),
+        failed: result.is_none(),
+        prompt_tokens: result.and_then(|r| r.prompt_eval_count),
+        prefill_ms: result.and_then(|r| r.prefill_ms),
+        cached_prompt_tokens: result.and_then(|r| r.cached_prompt_tokens),
+        input: None,
+        output: None,
+    }
+}
+
+/// Pure: assemble the trace entry for the final streaming synthesis call.
+/// `result` is `None` when the stream failed or timed out.
+fn build_final_stream_trace(latency_ms: i64, result: Option<&crate::ai::provider::ChatStreamResult>) -> LlmCallTrace {
+    LlmCallTrace {
+        kind: "final_stream".to_string(),
+        round: -1,
+        latency_ms,
+        tool_calls_requested: 0,
+        failed: result.is_none(),
+        prompt_tokens: result.and_then(|r| r.prompt_eval_count),
+        prefill_ms: result.and_then(|r| r.prefill_ms),
+        cached_prompt_tokens: result.and_then(|r| r.cached_prompt_tokens),
+        input: None,
+        output: None,
+    }
+}
+
 async fn run_tool_loop(
     db: &Arc<Database>,
     registry: &Arc<tools::ToolRegistry>,
@@ -982,8 +1061,7 @@ async fn run_tool_loop(
         };
         let call_result = provider
             .chat_stream_with_tools(messages.clone(), tools.clone(), on_token)
-            .await
-            .map(|r| r.message);
+            .await;
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
@@ -993,7 +1071,10 @@ async fn run_tool_loop(
                 round,
                 call_ms,
                 match &call_result {
-                    Ok(r) => format!("{} tool_calls", r.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0)),
+                    Ok(r) => format!(
+                        "{} tool_calls",
+                        r.message.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0)
+                    ),
                     Err(e) => format!("error: {}", e),
                 }
             ),
@@ -1001,37 +1082,24 @@ async fn run_tool_loop(
 
         let response = match call_result {
             Ok(r) => {
-                let requested = r.tool_calls.as_ref().map(|v| v.len()).unwrap_or(0) as i32;
-                llm_calls.push(LlmCallTrace {
-                    kind: "tool_round".to_string(),
-                    round: round as i32,
-                    latency_ms: call_ms,
-                    tool_calls_requested: requested,
-                    failed: false,
-                    #[cfg(debug_assertions)]
-                    input: Some(input_snapshot),
-                    #[cfg(not(debug_assertions))]
-                    input: None,
-                    #[cfg(debug_assertions)]
-                    output: Some(format_response_for_trace(&r)),
-                    #[cfg(not(debug_assertions))]
-                    output: None,
-                });
-                r
+                #[allow(unused_mut)] // mutated only in debug builds (trace snapshots)
+                let mut trace = build_tool_round_trace(round as i32, call_ms, Some(&r));
+                #[cfg(debug_assertions)]
+                {
+                    trace.input = Some(input_snapshot);
+                    trace.output = Some(format_response_for_trace(&r.message));
+                }
+                llm_calls.push(trace);
+                r.message
             }
             Err(e) => {
-                llm_calls.push(LlmCallTrace {
-                    kind: "tool_round".to_string(),
-                    round: round as i32,
-                    latency_ms: call_ms,
-                    tool_calls_requested: 0,
-                    failed: true,
-                    #[cfg(debug_assertions)]
-                    input: Some(input_snapshot),
-                    #[cfg(not(debug_assertions))]
-                    input: None,
-                    output: None,
-                });
+                #[allow(unused_mut)] // mutated only in debug builds (trace snapshots)
+                let mut trace = build_tool_round_trace(round as i32, call_ms, None);
+                #[cfg(debug_assertions)]
+                {
+                    trace.input = Some(input_snapshot);
+                }
+                llm_calls.push(trace);
                 let msg = format!("tool-call round {} failed: {}", round, e);
                 emit_log("warn", &msg);
                 abort_error = Some(e.to_string());
@@ -1396,6 +1464,8 @@ async fn run_thread_bound_turn(
             content: answer,
             eval_count: None,
             prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     } else {
         // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
@@ -1572,12 +1642,15 @@ async fn run_thread_bound_turn(
 ///
 /// `assistant_message_id` must already exist in the DB (created empty by the
 /// command layer) so the frontend can subscribe to events keyed off it before
-/// any tokens arrive.
+/// any tokens arrive. `user_message_id` is this turn's user row: once the
+/// final prompt tail is assembled it is persisted there as `prompt_content`
+/// so later turns replay it byte-identically (KV prefix reuse).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
     conversation_id: String,
+    user_message_id: String,
     assistant_message_id: String,
     account_id: String,
     user_question: String,
@@ -1767,11 +1840,14 @@ pub async fn run_chat_turn(
         &tools_section,
     );
 
-    // Inject the memory header after the system prompt — but only when the
-    // user has the Memory feature enabled. Disabling it in Settings should
-    // remove `<memory>...</memory>` from the prompt entirely (the user can
-    // verify this in the reasoning panel). Pure SQLite reads → negligible
-    // latency. Errors degrade to no-header rather than failing the turn.
+    // Inject the memory header into the final user message — but only when
+    // the user has the Memory feature enabled. Disabling it in Settings
+    // should remove `<memory>...</memory>` from the prompt entirely (the
+    // user can verify this in the reasoning panel). It rides with the
+    // per-turn tail (not the system message) because it is derived from the
+    // current question and would otherwise break the cross-turn KV prefix.
+    // Pure SQLite reads → negligible latency. Errors degrade to no-header
+    // rather than failing the turn.
     let memory_enabled = db
         .get_preference("memory_enabled")
         .ok()
@@ -1780,16 +1856,15 @@ pub async fn run_chat_turn(
         .unwrap_or(false);
     if memory_enabled {
         match crate::services::memory::header::build_header(&db, &account_id, &user_question) {
-            Ok(Some(header)) => {
-                if let Some(sys) = initial_messages.iter_mut().find(|(r, _)| r == "system") {
-                    sys.1.push_str("\n\n");
-                    sys.1.push_str(&header);
-                }
-            }
+            Ok(Some(header)) => prepend_to_final_user_message(&mut initial_messages, &header),
             Ok(None) => {}
             Err(e) => emit_log("debug", &format!("memory header skipped: {e}")),
         }
     }
+
+    // The final user-message bytes are now fixed — persist them so the next
+    // turn's history replay extends this prompt instead of diverging from it.
+    persist_prompted_tail(&db, &user_message_id, &initial_messages);
 
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
@@ -1932,6 +2007,8 @@ pub async fn run_chat_turn(
                     content: answer,
                     eval_count: None,
                     prompt_eval_count: None,
+                    prefill_ms: None,
+                    cached_prompt_tokens: None,
                 })
             }
             // No direct text answer: the loop handed back tool results (a
@@ -2027,29 +2104,19 @@ pub async fn run_chat_turn(
     // Record the final-stream LLM call latency (captured regardless of success
     // so the reasoning panel can show "slow / timed out" breakdowns).
     if streaming_happened {
+        #[allow(unused_mut)] // mutated only in debug builds (trace snapshots)
+        let mut trace = build_final_stream_trace(streaming_ms, stream_result.as_ref().ok());
         // Dev-only: surface the exact prompt + streamed answer in the
         // reasoning panel so the user can copy-paste them while debugging.
         #[cfg(debug_assertions)]
-        let stream_input = final_stream_input.take();
-        #[cfg(not(debug_assertions))]
-        let stream_input: Option<String> = None;
-        #[cfg(debug_assertions)]
-        let stream_output = match &stream_result {
-            Ok(r) => Some(r.content.clone()),
-            Err(e) => Some(format!("(error) {}", e)),
-        };
-        #[cfg(not(debug_assertions))]
-        let stream_output: Option<String> = None;
-
-        llm_calls.push(LlmCallTrace {
-            kind: "final_stream".to_string(),
-            round: -1,
-            latency_ms: streaming_ms,
-            tool_calls_requested: 0,
-            failed: stream_result.is_err(),
-            input: stream_input,
-            output: stream_output,
-        });
+        {
+            trace.input = final_stream_input.take();
+            trace.output = Some(match &stream_result {
+                Ok(r) => r.content.clone(),
+                Err(e) => format!("(error) {}", e),
+            });
+        }
+        llm_calls.push(trace);
     }
 
     match stream_result {
@@ -2307,6 +2374,83 @@ mod tests {
     }
 
     #[test]
+    fn tool_round_trace_carries_prefill_stats_from_the_provider() {
+        let result = crate::ai::provider::ToolStreamResult {
+            message: AiMessage {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(vec![ai_tool_call("search_emails")]),
+            },
+            eval_count: Some(42),
+            prompt_eval_count: Some(812),
+            prefill_ms: Some(3950),
+            cached_prompt_tokens: Some(0),
+        };
+        let trace = build_tool_round_trace(2, 4280, Some(&result));
+        assert_eq!(trace.kind, "tool_round");
+        assert_eq!(trace.round, 2);
+        assert_eq!(trace.latency_ms, 4280);
+        assert_eq!(trace.tool_calls_requested, 1);
+        assert!(!trace.failed);
+        assert_eq!(trace.prompt_tokens, Some(812));
+        assert_eq!(trace.prefill_ms, Some(3950));
+        assert_eq!(trace.cached_prompt_tokens, Some(0));
+    }
+
+    #[test]
+    fn tool_round_trace_marks_failure_and_carries_no_stats() {
+        let trace = build_tool_round_trace(0, 9000, None);
+        assert!(trace.failed);
+        assert_eq!(trace.tool_calls_requested, 0);
+        assert_eq!(trace.prompt_tokens, None);
+        assert_eq!(trace.prefill_ms, None);
+        assert_eq!(trace.cached_prompt_tokens, None);
+    }
+
+    #[test]
+    fn final_stream_trace_carries_prefill_stats_from_the_provider() {
+        let result = crate::ai::provider::ChatStreamResult {
+            content: "We ship in March [1].".into(),
+            eval_count: Some(17),
+            prompt_eval_count: Some(1200),
+            prefill_ms: Some(2100),
+            cached_prompt_tokens: Some(0),
+        };
+        let trace = build_final_stream_trace(2900, Some(&result));
+        assert_eq!(trace.kind, "final_stream");
+        assert_eq!(trace.round, -1);
+        assert_eq!(trace.latency_ms, 2900);
+        assert!(!trace.failed);
+        assert_eq!(trace.prompt_tokens, Some(1200));
+        assert_eq!(trace.prefill_ms, Some(2100));
+        assert_eq!(trace.cached_prompt_tokens, Some(0));
+    }
+
+    #[test]
+    fn final_stream_trace_marks_failure_when_stream_errored() {
+        let trace = build_final_stream_trace(180_000, None);
+        assert!(trace.failed);
+        assert_eq!(trace.prompt_tokens, None);
+    }
+
+    #[test]
+    fn llm_call_trace_serializes_prefill_fields_in_camel_case_and_skips_none() {
+        let mut trace = build_tool_round_trace(0, 100, None);
+        let json = serde_json::to_value(&trace).expect("serialize");
+        assert!(json.get("promptTokens").is_none(), "None fields must be skipped");
+        assert!(json.get("prefillMs").is_none());
+        assert!(json.get("cachedPromptTokens").is_none());
+
+        trace.prompt_tokens = Some(812);
+        trace.prefill_ms = Some(3950);
+        trace.cached_prompt_tokens = Some(0);
+        let json = serde_json::to_value(&trace).expect("serialize");
+        assert_eq!(json["promptTokens"], 812);
+        assert_eq!(json["prefillMs"], 3950);
+        assert_eq!(json["cachedPromptTokens"], 0);
+    }
+
+    #[test]
     fn plan_answer_reuses_a_direct_assistant_text_answer() {
         // Normal tools-first turn: the model answered in plain text after a
         // tool round. That text is complete — emit it as-is, no re-stream.
@@ -2412,24 +2556,162 @@ mod tests {
             trace: None,
             referenced_email_ids: Vec::new(),
             referenced_draft_ids: Vec::new(),
+            prompt_content: None,
         }
     }
 
     #[test]
-    fn prompt_includes_numbered_sources() {
+    fn prompt_includes_numbered_sources_in_final_user_message() {
         let sources = vec![
             make_scored(1, "Q1 plan", "we will ship by march"),
             make_scored(2, "Invoice", "please pay by friday"),
         ];
         let msgs = build_prompt(&sources, &[], "when do we ship?", "en", tpl(), "");
         assert_eq!(msgs[0].0, "system");
+        // The per-turn sources block must NOT live in the system message —
+        // it would invalidate the cross-turn KV prefix every turn.
         let sys = &msgs[0].1;
-        assert!(sys.contains("[1] From: Alice"));
-        assert!(sys.contains("Subject: Q1 plan"));
-        assert!(sys.contains("[2] From: Alice"));
-        assert!(sys.contains("Subject: Invoice"));
-        assert_eq!(msgs.last().unwrap().0, "user");
-        assert_eq!(msgs.last().unwrap().1, "when do we ship?");
+        assert!(!sys.contains("[1] From: Alice"), "sources leaked into system: {sys}");
+        assert!(
+            !sys.contains("valid citation range"),
+            "sources header leaked into system"
+        );
+        let (last_role, last) = msgs.last().unwrap();
+        assert_eq!(last_role, "user");
+        assert!(last.contains("[1] From: Alice"));
+        assert!(last.contains("Subject: Q1 plan"));
+        assert!(last.contains("[2] From: Alice"));
+        assert!(last.contains("Subject: Invoice"));
+        assert!(last.contains("valid citation range: [1]..[2]"));
+        // The question comes AFTER the sources block, at the very end.
+        let q_pos = last.rfind("when do we ship?").expect("question missing");
+        let src_pos = last.find("[2] From: Alice").expect("sources missing");
+        assert!(q_pos > src_pos, "question must follow the sources block");
+        assert!(last.trim_end().ends_with("when do we ship?"));
+    }
+
+    #[test]
+    fn system_message_is_byte_stable_across_turns() {
+        // Different sources, question, and history must all render the SAME
+        // system message — that stability is what lets the llama.cpp actor
+        // reuse the [system + older history] KV prefix across turns.
+        let turn1 = build_prompt(
+            &[make_scored(1, "Q1 plan", "we will ship by march")],
+            &[],
+            "when do we ship?",
+            "en",
+            tpl(),
+            "TOOLS",
+        );
+        let history = vec![
+            make_message("user", "when do we ship?"),
+            make_message("assistant", "March [1]."),
+        ];
+        let turn2 = build_prompt(
+            &[make_scored(1, "Invoice", "please pay by friday")],
+            &history,
+            "and the invoice?",
+            "en",
+            tpl(),
+            "TOOLS",
+        );
+        let turn3_no_sources = build_prompt(&[], &history, "anything else?", "en", tpl(), "TOOLS");
+        assert_eq!(turn1[0], turn2[0], "system message changed between turns");
+        assert_eq!(
+            turn1[0], turn3_no_sources[0],
+            "system message depends on sources presence"
+        );
+    }
+
+    #[test]
+    fn history_replays_prompt_content_bytes_for_user_rows() {
+        // A past user turn was PROMPTED as "memory header + sources + question"
+        // but its `content` stores only the raw question. Replaying the raw
+        // question would diverge from the bytes the KV cache holds, so replay
+        // must prefer `prompt_content` when present.
+        let mut past_user = make_message("user", "when do we ship?");
+        past_user.prompt_content = Some(
+            "## What I remember\n- prefers metric\n\nSources (valid citation range: [1]..[1]):\n[1] …\n\nwhen do we ship?"
+                .to_string(),
+        );
+        let mut past_assistant = make_message("assistant", "March [1].");
+        // Assistant rows never carry prompt_content; replay keeps content even
+        // if some bug were to populate it.
+        past_assistant.prompt_content = Some("SHOULD NOT BE USED".to_string());
+        let history = vec![past_user.clone(), past_assistant];
+
+        let msgs = build_prompt(&[], &history, "and the invoice?", "en", tpl(), "");
+        let replayed_user = &msgs[1];
+        assert_eq!(replayed_user.0, "user");
+        assert_eq!(
+            replayed_user.1,
+            past_user.prompt_content.clone().unwrap(),
+            "user history row must replay the as-prompted bytes"
+        );
+        let replayed_assistant = &msgs[2];
+        assert_eq!(replayed_assistant.0, "assistant");
+        assert_eq!(replayed_assistant.1, "March [1].");
+    }
+
+    #[test]
+    fn persist_prompted_tail_stores_final_user_bytes() {
+        let db = Database::new_for_testing().expect("test db");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('a1', 'gmail', 'a@b.c', 'a', 0, 0, 1)",
+                [],
+            )
+            .expect("seed account");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db
+            .insert_chat_message(&conv.id, "user", "raw question", None)
+            .expect("user msg");
+
+        let messages = vec![
+            ("system".to_string(), "SYS".to_string()),
+            ("user".to_string(), "HEADER\n\nSources …\n\nraw question".to_string()),
+        ];
+        persist_prompted_tail(&db, &user.id, &messages);
+
+        let msgs = db.get_chat_messages(&conv.id).expect("msgs");
+        assert_eq!(msgs[0].content, "raw question", "display content untouched");
+        assert_eq!(
+            msgs[0].prompt_content.as_deref(),
+            Some("HEADER\n\nSources …\n\nraw question")
+        );
+    }
+
+    #[test]
+    fn persist_prompted_tail_ignores_non_user_tail() {
+        let db = Database::new_for_testing().expect("test db");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('a1', 'gmail', 'a@b.c', 'a', 0, 0, 1)",
+                [],
+            )
+            .expect("seed account");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db
+            .insert_chat_message(&conv.id, "user", "raw question", None)
+            .expect("user msg");
+
+        let messages = vec![("assistant".to_string(), "answer".to_string())];
+        persist_prompted_tail(&db, &user.id, &messages);
+
+        let msgs = db.get_chat_messages(&conv.id).expect("msgs");
+        assert_eq!(msgs[0].prompt_content, None);
+    }
+
+    #[test]
+    fn history_without_prompt_content_falls_back_to_content() {
+        let history = vec![
+            make_message("user", "plain question"),
+            make_message("assistant", "answer"),
+        ];
+        let msgs = build_prompt(&[], &history, "next?", "en", tpl(), "");
+        assert_eq!(msgs[1], ("user".to_string(), "plain question".to_string()));
     }
 
     #[test]
@@ -2437,15 +2719,15 @@ mod tests {
         let long_body = "x".repeat(MAX_SOURCE_BODY_CHARS * 4);
         let sources = vec![make_scored(1, "long", &long_body)];
         let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
-        let sys = &msgs[0].1;
+        let last = &msgs.last().unwrap().1;
         // Source body should be truncated (ellipsis marker present).
-        assert!(sys.contains("…"));
-        // System prompt must be meaningfully shorter than the raw body —
-        // otherwise the truncation is not taking effect.
+        assert!(last.contains("…"));
+        // The sources-bearing message must be meaningfully shorter than the
+        // raw body — otherwise the truncation is not taking effect.
         assert!(
-            sys.len() < long_body.len(),
-            "sys prompt ({}) should be shorter than untruncated body ({})",
-            sys.len(),
+            last.len() < long_body.len(),
+            "final user message ({}) should be shorter than untruncated body ({})",
+            last.len(),
             long_body.len(),
         );
     }
@@ -2454,11 +2736,11 @@ mod tests {
     fn prompt_strips_html_from_bodies() {
         let sources = vec![make_scored(1, "html email", "<p>hello <b>world</b></p>")];
         let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
-        let sys = &msgs[0].1;
-        assert!(sys.contains("hello"));
-        assert!(sys.contains("world"));
-        assert!(!sys.contains("<b>"));
-        assert!(!sys.contains("<p>"));
+        let last = &msgs.last().unwrap().1;
+        assert!(last.contains("hello"));
+        assert!(last.contains("world"));
+        assert!(!last.contains("<b>"));
+        assert!(!last.contains("<p>"));
     }
 
     #[test]
@@ -2474,7 +2756,7 @@ mod tests {
         // The oldest included turn should be turn-4 (indices 4..10 = 6 turns).
         assert_eq!(msgs[1].1, "turn-4");
         assert_eq!(msgs[6].1, "turn-9");
-        assert_eq!(msgs[7].1, "new question");
+        assert!(msgs[7].1.trim_end().ends_with("new question"));
     }
 
     #[test]
@@ -2489,13 +2771,30 @@ mod tests {
     }
 
     #[test]
-    fn prompt_empty_sources_advises_model() {
+    fn prompt_empty_sources_advises_model_in_final_user_message() {
         let msgs = build_prompt(&[], &[], "anything?", "en", tpl(), "");
-        let sys = &msgs[0].1;
         // When no sources were pre-retrieved, the prompt must push the model
-        // toward calling search_emails rather than refusing or guessing.
-        assert!(sys.contains("none pre-retrieved"));
-        assert!(sys.contains("search_emails"));
+        // toward calling search_emails rather than refusing or guessing —
+        // but from the per-turn user message, never the (stable) system one.
+        let sys = &msgs[0].1;
+        assert!(!sys.contains("none pre-retrieved"), "advisory leaked into system");
+        let last = &msgs.last().unwrap().1;
+        assert!(last.contains("none pre-retrieved"));
+        assert!(last.contains("search_emails"));
+        assert!(last.trim_end().ends_with("anything?"));
+    }
+
+    #[test]
+    fn memory_header_prepends_to_final_user_message_not_system() {
+        let mut msgs = build_prompt(&[], &[], "anything?", "en", tpl(), "");
+        prepend_to_final_user_message(&mut msgs, "<memory>user likes tables</memory>");
+        assert!(
+            !msgs[0].1.contains("<memory>"),
+            "memory header leaked into system: would break the cross-turn KV prefix"
+        );
+        let last = &msgs.last().unwrap().1;
+        assert!(last.starts_with("<memory>user likes tables</memory>"));
+        assert!(last.trim_end().ends_with("anything?"));
     }
 
     #[test]
@@ -2509,8 +2808,11 @@ mod tests {
         let msgs = build_prompt(&sources, &[], "¿cuándo fue el kickoff?", "es", tpl(), "");
         let sys = &msgs[0].1;
         assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
-        assert!(sys.contains("valid citation range: [1]..[2]"), "missing valid range");
         assert!(sys.contains("Example 1"), "missing few-shot examples");
+        // The per-turn valid range travels with the sources block in the
+        // final user message.
+        let last = &msgs.last().unwrap().1;
+        assert!(last.contains("valid citation range: [1]..[2]"), "missing valid range");
     }
 
     #[test]

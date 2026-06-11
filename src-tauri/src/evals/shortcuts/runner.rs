@@ -216,7 +216,7 @@ async fn run_variant(
     crate::evals::shared::pin_eval_provider(&db, model)?;
 
     let conv: ChatConversation = db.create_chat_conversation(account_id, "New chat")?;
-    let _user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &variant.prompt, None)?;
+    let user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &variant.prompt, None)?;
     let assistant_msg: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;
 
     let history: Vec<ChatMessage> = Vec::new();
@@ -231,6 +231,7 @@ async fn run_variant(
         db.clone(),
         registry,
         conv.id.clone(),
+        user_msg.id.clone(),
         assistant_msg.id.clone(),
         account_id.to_string(),
         variant.prompt.clone(),

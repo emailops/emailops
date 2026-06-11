@@ -6,9 +6,10 @@
 //   idempotent: BackendAlreadyInitialized is silently ignored.
 // • `LlamaModel` is `Send + Sync` (explicit unsafe impl in llama-cpp-2), so it
 //   is stored in an `Arc<LlamaModel>` and shared across requests.
-// • `LlamaContext<'_>` is NOT `Send` and borrows from the model.  Each request
-//   creates a fresh context inside a `spawn_blocking` closure; the context never
-//   crosses thread boundaries.
+// • `LlamaContext<'_>` is NOT `Send` and borrows from the model.  Chat
+//   generation runs on a persistent actor thread (actor.rs) that owns one
+//   context and reuses its KV cache across requests; embeddings still create
+//   a short-lived context inside `spawn_blocking`.
 //
 // TOOL CALLING
 // ────────────
@@ -354,34 +355,24 @@ const GEMMA4_CHAT_TEMPLATE: &str = r#"{%- macro format_parameters(properties, re
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, Semaphore};
-
-/// Cap on the dynamic per-request context window. Even on models trained for
-/// 32k+ tokens, prompt-eval time on M1 CPU/Metal scales roughly linearly with
-/// ctx, so a tighter cap is a direct latency win for the RAG chat pipeline
-/// which never needs more than ~8k in practice.
-const MAX_N_CTX: u32 = 8192;
 
 /// How often the idle-eviction background task wakes up to check if loaded
 /// models have been unused long enough to drop.
 const EVICTION_POLL_INTERVAL_SECS: u64 = 60;
 
-// `Special` and `token_to_str` are deprecated in llama-cpp-2 — the new
-// `token_to_piece` API is more flexible but not yet migrated here.
-#[allow(deprecated)]
-use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::{params::LlamaModelParams, AddBos, LlamaModel},
     openai::OpenAIChatTemplateParams,
-    sampling::LlamaSampler,
 };
 
+use super::actor::{InferenceActorHandle, OnToken};
 use crate::ai::provider::{
     AiMessage, AiToolCall, AiToolCallFunction, ChatStreamResult, CompletionOptions, ToolStreamResult,
 };
@@ -393,7 +384,7 @@ use crate::models::error::{AppError, Result};
 
 static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
 
-fn backend() -> &'static LlamaBackend {
+pub(crate) fn backend() -> &'static LlamaBackend {
     LLAMA_BACKEND.get_or_init(|| {
         // `BackendAlreadyInitialized` is not an error in practice — it means
         // the crate's global was initialised by another path (tests, etc.).
@@ -435,6 +426,10 @@ pub struct LlamaCppRuntime {
     embed_model_path: Option<PathBuf>,
     /// Lazily loaded chat model.  Initialised on first inference call.
     chat_model: Mutex<Option<Arc<LlamaModel>>>,
+    /// Persistent inference actor for the chat model. Spawned lazily together
+    /// with the model; holds the KV cache that prefix reuse depends on.
+    /// Evicted in lockstep with `chat_model`.
+    chat_actor: Mutex<Option<InferenceActorHandle>>,
     /// Lazily loaded embedding model.  Initialised on first embed call.
     embed_model: Mutex<Option<Arc<LlamaModel>>>,
     /// Ensures only one inference (chat or embed) runs at a time on this
@@ -464,6 +459,7 @@ impl LlamaCppRuntime {
             chat_model_path,
             embed_model_path,
             chat_model: Mutex::new(None),
+            chat_actor: Mutex::new(None),
             embed_model: Mutex::new(None),
             inference_sem: Arc::new(Semaphore::new(1)),
             last_used: Arc::new(AtomicI64::new(now_secs())),
@@ -512,14 +508,23 @@ impl LlamaCppRuntime {
                 // the next inference call. Use try_lock so an in-flight
                 // request is never interrupted; we'll catch it on the next
                 // poll.
-                if let Ok(mut guard) = runtime.chat_model.try_lock() {
-                    if guard.is_some() {
+                //
+                // The actor (and its KV cache) is dropped together with the
+                // chat model: dropping only one would either leave the old
+                // model's memory pinned by the actor, or pair a reloaded
+                // model with an actor still running the previous one. The
+                // actor thread exits once the last handle clone is gone.
+                if let (Ok(mut actor_guard), Ok(mut model_guard)) =
+                    (runtime.chat_actor.try_lock(), runtime.chat_model.try_lock())
+                {
+                    if actor_guard.is_some() || model_guard.is_some() {
                         crate::services::logger::log(
                             "debug",
                             "ai",
                             format!("llamacpp: evicting chat model after {}s idle", idle),
                         );
-                        *guard = None;
+                        *actor_guard = None;
+                        *model_guard = None;
                     }
                 }
                 if let Ok(mut guard) = runtime.embed_model.try_lock() {
@@ -582,6 +587,20 @@ impl LlamaCppRuntime {
         let model = Arc::new(model);
         *guard = Some(model.clone());
         Ok(model)
+    }
+
+    /// Get (or lazily spawn) the persistent inference actor for the chat
+    /// model. The actor owns the context whose KV cache is reused across
+    /// requests; it lives until evicted alongside `chat_model`.
+    async fn get_chat_actor(&self) -> Result<InferenceActorHandle> {
+        let mut guard = self.chat_actor.lock().await;
+        if let Some(actor) = guard.as_ref() {
+            return Ok(actor.clone());
+        }
+        let model = self.get_chat_model().await?;
+        let actor = InferenceActorHandle::spawn(model).map_err(AppError::AiError)?;
+        *guard = Some(actor.clone());
+        Ok(actor)
     }
 
     async fn get_embed_model(&self) -> Result<Arc<LlamaModel>> {
@@ -653,142 +672,91 @@ impl LlamaCppRuntime {
         }
     }
 
-    // ── Core generation loop ──────────────────────────────────────────────────
+    // ── Prompt rendering ──────────────────────────────────────────────────────
 
-    /// Blocking text generation.  Must be called from `spawn_blocking`.
+    /// Render the chat template on a blocking thread.
     ///
-    /// Returns `(generated_text, n_prompt_tokens, n_generated_tokens)`.
+    /// Returns the full `ChatTemplateResult` — tool paths need it afterwards
+    /// to parse the model's response (`parse_response_oaicompat`).
     ///
-    /// `on_token`: optional streaming callback; return `false` to stop early.
-    fn generate_sync(
-        model: &LlamaModel,
-        prompt: &str,
-        temperature: f32,
-        max_tokens: usize,
-        mut on_token: Option<&mut dyn FnMut(String) -> bool>,
-    ) -> std::result::Result<(String, u32, u32), String> {
-        // Tokenise FIRST so the context window is sized to fit the actual prompt.
-        // The crash this avoids:
-        //   GGML_ASSERT(n_tokens_all <= cparams.n_batch) failed
-        // llama.cpp's LlamaContextParams default leaves n_batch at 2048 and
-        // n_ubatch at 512, independent of n_ctx. A single-shot prefill of a
-        // prompt longer than n_batch/n_ubatch therefore trips the assert, so
-        // we size both to match n_ctx below.
-        let mut tokens = model
-            .str_to_token(prompt, AddBos::Always)
-            .map_err(|e| format!("Tokenisation failed: {}", e))?;
+    /// We route through apply_chat_template_oaicompat (not the simpler
+    /// apply_chat_template) because the latter uses llama.cpp's limited
+    /// built-in template renderer which can't handle Gemma 4's complex Jinja
+    /// macros → "ffi error -1", and because the oaicompat path can pass
+    /// `enable_thinking: false` (Qwen 3's template defaults it to true, which
+    /// would prepend a <think> block to every response).
+    async fn render_template(
+        model: Arc<LlamaModel>,
+        fallback_template: Option<&'static str>,
+        messages_json: String,
+        tools_json: Option<String>,
+        parse_tool_calls: bool,
+        add_generation_prompt: bool,
+    ) -> Result<llama_cpp_2::model::ChatTemplateResult> {
+        tokio::task::spawn_blocking(
+            move || -> std::result::Result<llama_cpp_2::model::ChatTemplateResult, String> {
+                let template = Self::resolve_chat_template(&model, fallback_template)?;
 
-        if tokens.is_empty() {
-            return Ok((String::new(), 0, 0));
-        }
+                let params = OpenAIChatTemplateParams {
+                    messages_json: &messages_json,
+                    tools_json: tools_json.as_deref(),
+                    tool_choice: tools_json.as_ref().map(|_| "auto"),
+                    json_schema: None,
+                    grammar: None,
+                    reasoning_format: None,
+                    chat_template_kwargs: None,
+                    add_generation_prompt,
+                    use_jinja: true,
+                    parallel_tool_calls: false,
+                    enable_thinking: false,
+                    // The actor's tokenizer adds BOS via AddBos::Always; llama.cpp
+                    // skips duplicate BOS when the rendered prompt already contains it.
+                    add_bos: false,
+                    add_eos: false,
+                    parse_tool_calls,
+                };
 
-        // Context = prompt + generation headroom, capped at the model's training
-        // context length AND at MAX_N_CTX (8k), floored at 1024 for very short
-        // prompts. The extra cap at MAX_N_CTX trades recall on pathologically
-        // long prompts for a large latency win on the common case — RAG chat
-        // prompts fit comfortably in 8k and eval time scales roughly linearly
-        // with ctx on CPU/Metal.
-        let upper = model.n_ctx_train().clamp(1024, MAX_N_CTX);
-        let n_ctx = (tokens.len() as u32 + max_tokens as u32).clamp(1024, upper);
+                model
+                    .apply_chat_template_oaicompat(&template, &params)
+                    .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))
+            },
+        )
+        .await
+        .map_err(|e| AppError::AiError(format!("Template render task panicked: {}", e)))?
+        .map_err(AppError::AiError)
+    }
 
-        // If the prompt would leave no room for generation, truncate from the
-        // start (tail bias: keep the most recent/relevant tokens). We must
-        // reserve `max_tokens` slots — not just 1 — because the KV cache is
-        // sized to `n_ctx` and every generated token consumes one slot. With
-        // only `n_ctx - 1` slots available for the prompt, generation fails
-        // on the second token with `Decode Error 1: NoKvCacheSlot`.
-        //
-        // This bit mattered more after chat_stream started routing through
-        // apply_chat_template_oaicompat, which emits slightly more role /
-        // delimiter tokens than the simpler builder did — enough to push
-        // long conversations over MAX_N_CTX and hit the previous off-by-one.
-        let max_prompt = (n_ctx as usize).saturating_sub(max_tokens).max(1);
-        if tokens.len() > max_prompt {
-            let excess = tokens.len() - max_prompt;
-            tokens.drain(0..excess);
-        }
-        let n_prompt = tokens.len();
-
-        // Size n_batch to n_ctx so the whole prompt fits in a single decode
-        // call (otherwise GGML_ASSERT(n_tokens_all <= cparams.n_batch) trips
-        // when n_prompt exceeds the default n_batch=2048).
-        //
-        // n_ubatch is the *physical* batch size — it determines how big the
-        // backend's compute graph buffers are. llama.cpp internally splits
-        // the submitted batch into ubatch-sized chunks, so n_ubatch can stay
-        // small without affecting correctness. Sizing it to n_ctx (e.g. 8k)
-        // makes Metal allocate huge per-graph buffers and is a known cause of
-        // fatal `llama_decode` failures (return < -1, mapped to "Decode Error
-        // -3: unknown" by llama-cpp-2) on Apple Silicon under memory pressure.
-        // Cap at 512 — llama.cpp's own default.
-        const N_UBATCH: u32 = 512;
-        let n_ubatch = n_ctx.min(N_UBATCH);
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(n_ctx))
-            .with_n_batch(n_ctx)
-            .with_n_ubatch(n_ubatch);
-
-        let mut ctx = model
-            .new_context(backend(), ctx_params)
-            .map_err(|e| format!("Context creation failed: {}", e))?;
-
-        // Prefill: n_batch (= n_ctx by llama.cpp default) >= n_prompt, so the
-        // whole prompt fits in one decode call without hitting the n_batch assert.
-        let mut batch = LlamaBatch::new(n_prompt, 1);
-        for (i, &token) in tokens.iter().enumerate() {
-            let want_logits = i == n_prompt - 1;
-            batch
-                .add(token, i as i32, &[0], want_logits)
-                .map_err(|e| format!("Batch add error during prefill: {}", e))?;
-        }
-        ctx.decode(&mut batch)
-            .map_err(|e| format!("Prefill decode failed: {}", e))?;
-        batch.clear();
-
-        // Sampler chain: temperature → random distribution.
-        // temperature=0 → effectively greedy via a near-zero temp; avoids a
-        // separate LlamaSampler::greedy() branch for simplicity.
-        let eff_temp = temperature.max(1e-6);
-        let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(eff_temp),
-            LlamaSampler::dist(u32::MAX), // LLAMA_DEFAULT_SEED
-        ]);
-
-        let mut output = String::new();
-        let mut n_gen = 0u32;
-
-        for i in 0..max_tokens {
-            let token = sampler.sample(&ctx, -1);
-            sampler.accept(token);
-
-            if model.is_eog_token(token) {
-                break;
+    /// Byte length of the prompt prefix that re-appears verbatim in the next
+    /// turn's render — everything except the generation header (which e.g.
+    /// Qwen under `enable_thinking=false` suffixes with an empty think block
+    /// that the next turn does NOT re-render). The actor keeps tokens past
+    /// this boundary out of the persistent seq-0 cache so the prefix stays
+    /// purely extendable on hybrid-attention caches.
+    ///
+    /// `None` (cache the whole prompt, pre-existing behavior) when the
+    /// header-less render is not a strict prefix of the full render or the
+    /// render fails — losing cache reuse is acceptable, wrong output is not.
+    async fn stable_prompt_bytes(
+        model: Arc<LlamaModel>,
+        fallback_template: Option<&'static str>,
+        messages_json: String,
+        tools_json: Option<String>,
+        full_prompt: &str,
+    ) -> Option<usize> {
+        match Self::render_template(model, fallback_template, messages_json, tools_json, false, false).await {
+            Ok(hist) if full_prompt.starts_with(&hist.prompt) && hist.prompt.len() < full_prompt.len() => {
+                Some(hist.prompt.len())
             }
-
-            let piece = {
-                #[allow(deprecated)]
-                model.token_to_str(token, Special::Tokenize).unwrap_or_default()
-            };
-
-            n_gen += 1;
-            output.push_str(&piece);
-
-            if let Some(ref mut cb) = on_token {
-                if !cb(piece) {
-                    break; // caller requested early stop
-                }
+            Ok(_) => None,
+            Err(e) => {
+                crate::services::logger::log(
+                    "debug",
+                    "ai",
+                    format!("stable-prefix render failed (caching whole prompt): {e}"),
+                );
+                None
             }
-
-            // Schedule the next decode step.
-            batch
-                .add(token, (n_prompt + i) as i32, &[0], true)
-                .map_err(|e| format!("Batch add error during generation: {}", e))?;
-            ctx.decode(&mut batch)
-                .map_err(|e| format!("Decode failed during generation: {}", e))?;
-            batch.clear();
         }
-
-        Ok((output, n_prompt as u32, n_gen))
     }
 
     // ── Public inference API ──────────────────────────────────────────────────
@@ -797,18 +765,13 @@ impl LlamaCppRuntime {
     pub async fn generate(&self, prompt: &str, opts: &CompletionOptions) -> Result<String> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
+        let actor = self.get_chat_actor().await?;
         let temperature = opts.temperature.unwrap_or(0.8) as f32;
         let max_tokens = opts.max_tokens.unwrap_or(2048) as usize;
 
         // Instruction-tuned models (Gemma 4, Llama 3, Qwen) require chat-template
         // turn tokens to produce output — a raw prompt makes the model emit EOG
         // immediately → empty response.
-        //
-        // We route through apply_chat_template_oaicompat (not the simpler
-        // apply_chat_template) because the latter uses llama.cpp's limited
-        // built-in template renderer which can't handle Gemma 4's complex Jinja
-        // macros → "ffi error -1". The oaicompat path uses the full Jinja
-        // renderer that chat_with_tools relies on.
         let messages_json = serde_json::to_string(&serde_json::json!([
             {"role": "user", "content": prompt}
         ]))
@@ -821,39 +784,17 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let (text, _, _) = tokio::task::spawn_blocking(move || -> std::result::Result<(String, u32, u32), String> {
-            let template = Self::resolve_chat_template(&model, fallback_template)?;
-
-            let params = OpenAIChatTemplateParams {
-                messages_json: &messages_json,
-                tools_json: None,
-                tool_choice: None,
-                json_schema: None,
-                grammar: None,
-                reasoning_format: None,
-                chat_template_kwargs: None,
-                add_generation_prompt: true,
-                use_jinja: true,
-                parallel_tool_calls: false,
-                enable_thinking: false,
-                add_bos: false,
-                add_eos: false,
-                parse_tool_calls: false,
-            };
-
-            let tmpl_result = model
-                .apply_chat_template_oaicompat(&template, &params)
-                .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
-
-            Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, None)
-        })
-        .await
-        .map_err(|e| AppError::AiError(format!("Generation task panicked: {}", e)))?
-        .map_err(AppError::AiError)?;
+        let tmpl = Self::render_template(model, fallback_template, messages_json, None, false, true).await?;
+        let outcome = actor
+            // One-shot completion (rewrite/rerank/extraction/warmup): never
+            // cached — its prompt would evict the reusable chat prefix.
+            .generate(tmpl.prompt, temperature, max_tokens, false, None, None)
+            .await
+            .map_err(AppError::AiError)?;
 
         // Strip any reasoning/thinking markers (Gemma 4 `<|channel>…<channel|>`,
         // Qwen `<think>…</think>`) the model leaked into the visible answer.
-        Ok(strip_reasoning(&text))
+        Ok(strip_reasoning(&outcome.text))
     }
 
     /// Streaming generation.  `on_token` is called for each piece; returning
@@ -865,15 +806,10 @@ impl LlamaCppRuntime {
     ) -> Result<ChatStreamResult> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
+        let actor = self.get_chat_actor().await?;
         let temperature = 0.8f32;
         let max_tokens = 2048usize;
 
-        // Route through apply_chat_template_oaicompat (not the simpler
-        // apply_chat_template) so we can pass `enable_thinking: false`.
-        // Qwen 3's Jinja template defaults to enable_thinking=True, which
-        // causes the model to emit a <think> block at the start of every
-        // response; the simple built-in renderer can't pass chat template
-        // kwargs, so it always triggers that default.
         let messages_value = normalize_messages_for_oaicompat(&messages);
         let messages_json = serde_json::to_string(&messages_value)
             .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
@@ -885,61 +821,57 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let (content, prompt_tokens, eval_tokens) =
-            tokio::task::spawn_blocking(move || -> std::result::Result<(String, u32, u32), String> {
-                let template = Self::resolve_chat_template(&model, fallback_template)?;
+        let tmpl = Self::render_template(
+            Arc::clone(&model),
+            fallback_template,
+            messages_json.clone(),
+            None,
+            false,
+            true,
+        )
+        .await?;
+        let stable_bytes = Self::stable_prompt_bytes(model, fallback_template, messages_json, None, &tmpl.prompt).await;
 
-                let params = OpenAIChatTemplateParams {
-                    messages_json: &messages_json,
-                    tools_json: None,
-                    tool_choice: None,
-                    json_schema: None,
-                    grammar: None,
-                    reasoning_format: None,
-                    chat_template_kwargs: None,
-                    add_generation_prompt: true,
-                    use_jinja: true,
-                    parallel_tool_calls: false,
-                    enable_thinking: false,
-                    add_bos: false,
-                    add_eos: false,
-                    parse_tool_calls: false,
-                };
-
-                let tmpl_result = model
-                    .apply_chat_template_oaicompat(&template, &params)
-                    .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
-
-                let mut cb = on_token;
-                let mut gate = ThinkingGate::new();
-                // Suppress reasoning/thinking spans from the live stream so the
-                // user never sees `<|channel>…<channel|>` / `<think>…</think>`.
-                let gen = {
-                    let mut gated = |piece: String| -> bool {
-                        let out = gate.push(&piece);
-                        if out.is_empty() {
-                            true
-                        } else {
-                            cb(out)
-                        }
-                    };
-                    Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, Some(&mut gated))
-                };
-                let (output, prompt_t, eval_t) = gen?;
-                let tail = gate.finish();
-                if !tail.is_empty() {
-                    let _ = cb(tail);
+        // Suppress reasoning/thinking spans from the live stream so the user
+        // never sees `<|channel>…<channel|>` / `<think>…</think>`. The actor
+        // invokes the callback on its own thread, so the gate travels inside
+        // the callback behind a shared handle; the end-of-stream flush happens
+        // here, caller-side, after the actor replies.
+        let gate_state = Arc::new(std::sync::Mutex::new((ThinkingGate::new(), on_token)));
+        let actor_cb: OnToken = {
+            let gate_state = Arc::clone(&gate_state);
+            Box::new(move |piece: String| {
+                let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
+                let (gate, cb) = &mut *guard;
+                let out = gate.push(&piece);
+                if out.is_empty() {
+                    true
+                } else {
+                    cb(out)
                 }
-                Ok((output, prompt_t, eval_t))
             })
+        };
+
+        let outcome = actor
+            .generate(tmpl.prompt, temperature, max_tokens, true, stable_bytes, Some(actor_cb))
             .await
-            .map_err(|e| AppError::AiError(format!("Streaming task panicked: {}", e)))?
             .map_err(AppError::AiError)?;
 
+        {
+            let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
+            let (gate, cb) = &mut *guard;
+            let tail = gate.finish();
+            if !tail.is_empty() {
+                let _ = cb(tail);
+            }
+        }
+
         Ok(ChatStreamResult {
-            content: strip_reasoning(&content),
-            eval_count: Some(eval_tokens),
-            prompt_eval_count: Some(prompt_tokens),
+            content: strip_reasoning(&outcome.text),
+            eval_count: Some(outcome.gen_tokens),
+            prompt_eval_count: Some(outcome.prompt_tokens),
+            prefill_ms: Some(outcome.prefill_ms),
+            cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
         })
     }
 
@@ -953,6 +885,7 @@ impl LlamaCppRuntime {
     pub async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
+        let actor = self.get_chat_actor().await?;
         let temperature = 0.0f32; // greedy for deterministic tool selection
                                   // 1024 truncated mid `<tool_call>...</tool_call>` on Qwen 4B, causing
                                   // parse_response_oaicompat to fail with ffi error -3. 4096 leaves
@@ -984,55 +917,37 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let parsed_json = tokio::task::spawn_blocking(move || -> std::result::Result<String, String> {
-            let template = Self::resolve_chat_template(&model, fallback_template)?;
+        let tmpl = Self::render_template(
+            Arc::clone(&model),
+            fallback_template,
+            messages_json.clone(),
+            tools_json_owned.clone(),
+            true,
+            true,
+        )
+        .await?;
+        let stable_bytes =
+            Self::stable_prompt_bytes(model, fallback_template, messages_json, tools_json_owned, &tmpl.prompt).await;
+        let outcome = actor
+            .generate(tmpl.prompt.clone(), temperature, max_tokens, true, stable_bytes, None)
+            .await
+            .map_err(AppError::AiError)?;
 
-            let params = OpenAIChatTemplateParams {
-                messages_json: &messages_json,
-                tools_json: tools_json_owned.as_deref(),
-                tool_choice: Some("auto"),
-                json_schema: None,
-                grammar: None,
-                reasoning_format: None,
-                chat_template_kwargs: None,
-                add_generation_prompt: true,
-                use_jinja: true,
-                parallel_tool_calls: false,
-                enable_thinking: false,
-                // generate_sync's tokenizer adds BOS via AddBos::Always; llama.cpp
-                // skips duplicate BOS when the rendered prompt already contains it.
-                add_bos: false,
-                add_eos: false,
-                parse_tool_calls: true,
-            };
-
-            let tmpl_result = model
-                .apply_chat_template_oaicompat(&template, &params)
-                .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
-
-            let (output, _, _) = Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, None)?;
-
-            // If the OAI-compatible parser can't grok the response (e.g. the model
-            // emitted a partial `<tool_call>` block, an unexpected wrapper, or
-            // plain JSON instead of the templated tool-call syntax), don't fail
-            // the whole call — synthesise a content-only assistant message so the
-            // downstream caller can apply its own salvage logic (the Lens
-            // extractor's `try_parse_json_object`, for instance).
-            match tmpl_result.parse_response_oaicompat(&output, false) {
-                Ok(parsed) => Ok(parsed),
-                Err(_) => {
-                    let fallback = serde_json::json!({
-                        "role": "assistant",
-                        "content": output,
-                        "tool_calls": [],
-                    });
-                    Ok(fallback.to_string())
-                }
-            }
-        })
-        .await
-        .map_err(|e| AppError::AiError(format!("Tool-call task panicked: {}", e)))?
-        .map_err(AppError::AiError)?;
+        // If the OAI-compatible parser can't grok the response (e.g. the model
+        // emitted a partial `<tool_call>` block, an unexpected wrapper, or
+        // plain JSON instead of the templated tool-call syntax), don't fail
+        // the whole call — synthesise a content-only assistant message so the
+        // downstream caller can apply its own salvage logic (the Lens
+        // extractor's `try_parse_json_object`, for instance).
+        let parsed_json = match tmpl.parse_response_oaicompat(&outcome.text, false) {
+            Ok(parsed) => parsed,
+            Err(_) => serde_json::json!({
+                "role": "assistant",
+                "content": outcome.text,
+                "tool_calls": [],
+            })
+            .to_string(),
+        };
 
         Self::parse_oai_assistant_message(&parsed_json)
     }
@@ -1105,6 +1020,7 @@ impl LlamaCppRuntime {
     ) -> Result<ToolStreamResult> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
+        let actor = self.get_chat_actor().await?;
         let temperature = 0.0f32; // greedy for deterministic tool selection
         let max_tokens = 4096usize;
 
@@ -1124,82 +1040,86 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let (parsed_json, prompt_tokens, eval_tokens) =
-            tokio::task::spawn_blocking(move || -> std::result::Result<(String, u32, u32), String> {
-                let template = Self::resolve_chat_template(&model, fallback_template)?;
+        let tmpl = Self::render_template(
+            Arc::clone(&model),
+            fallback_template,
+            messages_json.clone(),
+            tools_json_owned.clone(),
+            true,
+            true,
+        )
+        .await?;
+        let stable_bytes =
+            Self::stable_prompt_bytes(model, fallback_template, messages_json, tools_json_owned, &tmpl.prompt).await;
 
-                let params = OpenAIChatTemplateParams {
-                    messages_json: &messages_json,
-                    tools_json: tools_json_owned.as_deref(),
-                    tool_choice: Some("auto"),
-                    json_schema: None,
-                    grammar: None,
-                    reasoning_format: None,
-                    chat_template_kwargs: None,
-                    add_generation_prompt: true,
-                    use_jinja: true,
-                    parallel_tool_calls: false,
-                    enable_thinking: false,
-                    add_bos: false,
-                    add_eos: false,
-                    parse_tool_calls: true,
-                };
-
-                let tmpl_result = model
-                    .apply_chat_template_oaicompat(&template, &params)
-                    .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))?;
-
-                let mut cb = on_token;
-                let mut think_gate = ThinkingGate::new();
-                let mut gate = StreamGate::new();
-                // Generate, gating each piece through two filters: first strip
-                // reasoning spans (`<|channel>…`, `<think>…`), then suppress
-                // tool-call syntax; whatever survives is flushed live to the user.
-                let gen = {
-                    let mut gated = |piece: String| -> bool {
-                        let dereasoned = think_gate.push(&piece);
-                        if dereasoned.is_empty() {
-                            return true;
-                        }
-                        let out = gate.push(&dereasoned);
-                        if out.is_empty() {
-                            true
-                        } else {
-                            cb(out)
-                        }
-                    };
-                    Self::generate_sync(&model, &tmpl_result.prompt, temperature, max_tokens, Some(&mut gated))
-                };
-                let (output, prompt_t, eval_t) = gen?;
-
-                // Flush both gates at end of stream: the thinking gate only ever
-                // holds truncated markup (dropped), then forward buffered prose.
-                think_gate.finish();
-                let tail = gate.finish();
-                if !tail.is_empty() {
-                    let _ = cb(tail);
+        // Gate each piece through two filters: first strip reasoning spans
+        // (`<|channel>…`, `<think>…`), then suppress tool-call syntax;
+        // whatever survives is flushed live to the user. The gates travel
+        // inside the actor callback; the end-of-stream flush happens here.
+        let gate_state = Arc::new(std::sync::Mutex::new((
+            ThinkingGate::new(),
+            StreamGate::new(),
+            on_token,
+        )));
+        let actor_cb: OnToken = {
+            let gate_state = Arc::clone(&gate_state);
+            Box::new(move |piece: String| {
+                let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
+                let (think_gate, gate, cb) = &mut *guard;
+                let dereasoned = think_gate.push(&piece);
+                if dereasoned.is_empty() {
+                    return true;
                 }
-
-                let parsed = match tmpl_result.parse_response_oaicompat(&output, false) {
-                    Ok(p) => p,
-                    Err(_) => serde_json::json!({
-                        "role": "assistant",
-                        "content": output,
-                        "tool_calls": [],
-                    })
-                    .to_string(),
-                };
-                Ok((parsed, prompt_t, eval_t))
+                let out = gate.push(&dereasoned);
+                if out.is_empty() {
+                    true
+                } else {
+                    cb(out)
+                }
             })
+        };
+
+        let outcome = actor
+            .generate(
+                tmpl.prompt.clone(),
+                temperature,
+                max_tokens,
+                true,
+                stable_bytes,
+                Some(actor_cb),
+            )
             .await
-            .map_err(|e| AppError::AiError(format!("Streaming tool-call task panicked: {}", e)))?
             .map_err(AppError::AiError)?;
+
+        {
+            // Flush both gates at end of stream: the thinking gate only ever
+            // holds truncated markup (dropped), then forward buffered prose.
+            let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
+            let (think_gate, gate, cb) = &mut *guard;
+            think_gate.finish();
+            let tail = gate.finish();
+            if !tail.is_empty() {
+                let _ = cb(tail);
+            }
+        }
+
+        let parsed_json = match tmpl.parse_response_oaicompat(&outcome.text, false) {
+            Ok(p) => p,
+            Err(_) => serde_json::json!({
+                "role": "assistant",
+                "content": &outcome.text,
+                "tool_calls": [],
+            })
+            .to_string(),
+        };
 
         let message = Self::parse_oai_assistant_message(&parsed_json)?;
         Ok(ToolStreamResult {
             message,
-            eval_count: Some(eval_tokens),
-            prompt_eval_count: Some(prompt_tokens),
+            eval_count: Some(outcome.gen_tokens),
+            prompt_eval_count: Some(outcome.prompt_tokens),
+            prefill_ms: Some(outcome.prefill_ms),
+            cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
         })
     }
 

@@ -161,7 +161,7 @@ async fn run(
         user_email
     );
 
-    let ai = AiService::new(db.clone(), None)?;
+    let ai = AiService::new(db.clone())?;
     let ai_config = AiService::get_config(&db)?;
     eprintln!(
         "[draft_eval] AI provider={} model={}",
@@ -178,7 +178,7 @@ async fn run(
             pair.inbound.subject
         );
         let started = Instant::now();
-        match generate_draft(None, &db, &pair.inbound.id, None).await {
+        match generate_draft(&db, &pair.inbound.id, None).await {
             Ok(result) => {
                 let elapsed = started.elapsed().as_millis();
                 let predicted = result.body.clone();
@@ -269,7 +269,7 @@ fn sample_reply_pairs(
     let max_scan = 1000i32;
 
     while pairs.len() < n && offset < max_scan {
-        let batch = db.get_emails(account_id, batch_size, offset, None, Some("sent"))?;
+        let batch = db.get_emails(account_id, batch_size, offset, None, Some("sent"), None)?;
         if batch.is_empty() {
             break;
         }

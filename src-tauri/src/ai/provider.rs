@@ -50,6 +50,12 @@ pub struct ChatStreamResult {
     pub content: String,
     pub eval_count: Option<u32>,
     pub prompt_eval_count: Option<u32>,
+    /// Prompt prefill wall-clock time. Only reported by the embedded
+    /// llama.cpp backend; HTTP providers leave it `None`.
+    pub prefill_ms: Option<i64>,
+    /// Prompt tokens served from a reused KV-cache prefix (0 until prefix
+    /// caching lands; `None` when the backend can't know).
+    pub cached_prompt_tokens: Option<u32>,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -63,6 +69,10 @@ pub struct ToolStreamResult {
     pub message: AiMessage,
     pub eval_count: Option<u32>,
     pub prompt_eval_count: Option<u32>,
+    /// See [`ChatStreamResult::prefill_ms`].
+    pub prefill_ms: Option<i64>,
+    /// See [`ChatStreamResult::cached_prompt_tokens`].
+    pub cached_prompt_tokens: Option<u32>,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -193,6 +203,8 @@ pub trait AIProvider: Send + Sync {
             message: msg,
             eval_count: None,
             prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     }
 
@@ -469,6 +481,8 @@ impl AIProvider for FakeAiProvider {
             content: resp.content,
             eval_count: None,
             prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     }
 }

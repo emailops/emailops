@@ -180,7 +180,7 @@ fn export_fixtures(
 
     // Fetch emails
     println!("Fetching emails (limit: {})...", limit);
-    let emails = db.get_emails(account_id, limit, 0, None, None)?;
+    let emails = db.get_emails(account_id, limit, 0, None, None, None)?;
     println!("  Found {} emails", emails.len());
 
     // Embeddings now use sqlite-vec (vec0) — skip export

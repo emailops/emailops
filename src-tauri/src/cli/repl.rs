@@ -269,6 +269,7 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
         session.db.clone(),
         registry,
         conversation_id.clone(),
+        user_message.id.clone(),
         assistant_message.id.clone(),
         account_id,
         question,

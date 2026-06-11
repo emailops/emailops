@@ -174,6 +174,10 @@ pub struct ChatStreamResult {
     pub content: String,
     pub eval_count: Option<u32>,
     pub prompt_eval_count: Option<u32>,
+    /// Ollama's HTTP API does not expose prefill latency — always `None`.
+    pub prefill_ms: Option<i64>,
+    /// Ollama does not report KV-cache reuse — always `None`.
+    pub cached_prompt_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -642,6 +646,8 @@ impl OllamaClient {
                                 content: accumulated,
                                 eval_count: None,
                                 prompt_eval_count: None,
+                                prefill_ms: None,
+                                cached_prompt_tokens: None,
                             });
                         }
                     }
@@ -651,6 +657,8 @@ impl OllamaClient {
                         content: accumulated,
                         eval_count: parsed.eval_count,
                         prompt_eval_count: parsed.prompt_eval_count,
+                        prefill_ms: None,
+                        cached_prompt_tokens: None,
                     });
                 }
             }
@@ -661,6 +669,8 @@ impl OllamaClient {
             content: accumulated,
             eval_count: None,
             prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     }
 
@@ -1032,6 +1042,8 @@ impl AIProvider for OllamaClient {
             content: result.content,
             eval_count: result.eval_count,
             prompt_eval_count: result.prompt_eval_count,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     }
 
@@ -1052,6 +1064,8 @@ impl AIProvider for OllamaClient {
             message,
             eval_count,
             prompt_eval_count,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
         })
     }
 

@@ -60,7 +60,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     };
 
     // 2. User + empty assistant rows, matching the production command flow.
-    let _user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &case.question, None)?;
+    let user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &case.question, None)?;
     let assistant_msg: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;
 
     // 3. Single-turn cases: history is empty (the service re-adds the user
@@ -85,6 +85,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         db.clone(),
         registry,
         conv.id.clone(),
+        user_msg.id.clone(),
         assistant_msg.id.clone(),
         account_id.to_string(),
         case.question.clone(),

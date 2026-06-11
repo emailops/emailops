@@ -126,10 +126,13 @@ pub enum Command {
         trace: bool,
     },
 
-    /// Ask one question against your mail and stream the answer.
+    /// Ask one or more questions against your mail and stream the answers.
+    /// Multiple questions run sequentially in ONE conversation and process, so
+    /// the model stays loaded between turns (what `make cli-bench` relies on).
     Chat {
-        /// The question to ask.
-        question: String,
+        /// The question(s) to ask.
+        #[arg(required = true, num_args = 1..)]
+        questions: Vec<String>,
         /// Include the chat trace (route, retrieval, tool calls, model timings)
         /// in the result — `--json` puts it under `data.trace`; pretty mode
         /// prints a dim trace block after the answer.
@@ -409,11 +412,11 @@ mod tests {
         let cli = Cli::parse_from(["emailops-cli", "chat", "what's new?", "--trace"]);
         match cli.command {
             Some(Command::Chat {
-                question,
+                questions,
                 trace,
                 conversation,
             }) => {
-                assert_eq!(question, "what's new?");
+                assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
                 assert!(conversation.is_none());
             }
@@ -426,13 +429,31 @@ mod tests {
         let cli = Cli::parse_from(["emailops-cli", "chat", "and then?", "--conversation", "conv-123"]);
         match cli.command {
             Some(Command::Chat {
-                question, conversation, ..
+                questions,
+                conversation,
+                ..
             }) => {
-                assert_eq!(question, "and then?");
+                assert_eq!(questions, vec!["and then?".to_string()]);
                 assert_eq!(conversation.as_deref(), Some("conv-123"));
             }
             other => panic!("expected Chat, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn chat_accepts_multiple_questions() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "first?", "second?", "third?"]);
+        match cli.command {
+            Some(Command::Chat { questions, .. }) => {
+                assert_eq!(questions, vec!["first?", "second?", "third?"]);
+            }
+            other => panic!("expected Chat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_requires_at_least_one_question() {
+        assert!(Cli::try_parse_from(["emailops-cli", "chat"]).is_err());
     }
 
     #[test]

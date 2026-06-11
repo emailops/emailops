@@ -96,10 +96,10 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
         }
 
         Command::Chat {
-            question,
+            questions,
             trace,
             conversation,
-        } => run_chat(session, question, trace, conversation).await,
+        } => run_chat(session, questions, trace, conversation).await,
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -197,18 +197,29 @@ fn collect_referenced_drafts(
     Ok(drafts)
 }
 
-/// Run a single chat turn end-to-end. Tokens stream to stdout via the installed
-/// [`CliEventSink`](super::output::CliEventSink) in pretty mode; in JSON mode the
-/// final answer is read back from the DB and printed as one envelope. When
-/// `trace` is set the assistant's [`ChatTrace`] and retrieval sources are
-/// surfaced too — under `data.trace` / `data.sources` in JSON, or as a dim
-/// trace block after the answer in pretty mode.
+/// Run one or more chat turns end-to-end in a single conversation. Tokens
+/// stream to stdout via the installed
+/// [`CliEventSink`](super::output::CliEventSink) in pretty mode; in JSON mode
+/// each answer is read back from the DB and printed as one envelope at the
+/// end. When `trace` is set the assistant's [`ChatTrace`] and retrieval
+/// sources are surfaced too — under `data.trace` / `data.sources` (single
+/// question) or per entry in `data.turns` (multiple), or as a dim trace block
+/// after each answer in pretty mode.
 ///
-/// When `conversation` names an existing conversation the turn continues it
+/// When `conversation` names an existing conversation the turns continue it
 /// (its prior turns become history, so context carries across one-shot
 /// invocations — the same multi-turn behaviour as the REPL); otherwise a new
 /// conversation is created. Either way the id is returned as `conversationId`.
-async fn run_chat(session: &mut CliSession, question: String, trace: bool, conversation: Option<String>) -> Result<()> {
+///
+/// Multiple questions run sequentially in ONE process so the model stays
+/// loaded between turns — that's what makes per-turn prefill numbers
+/// comparable (`make cli-bench`).
+async fn run_chat(
+    session: &mut CliSession,
+    questions: Vec<String>,
+    trace: bool,
+    conversation: Option<String>,
+) -> Result<()> {
     let account_id = session.require_account()?;
     let model = session.model.clone();
 
@@ -219,15 +230,6 @@ async fn run_chat(session: &mut CliSession, question: String, trace: bool, conve
             .ok_or_else(|| AppError::NotFound(format!("conversation '{}' not found", id)))?,
         None => session.db.create_chat_conversation(&account_id, "New chat")?,
     };
-    let user_message = session
-        .db
-        .insert_chat_message(&conversation.id, "user", &question, None)?;
-    let assistant_message = session
-        .db
-        .insert_chat_message(&conversation.id, "assistant", "", Some(&model))?;
-
-    let mut history = session.db.get_recent_chat_turns(&conversation.id, 20)?;
-    history.retain(|m| m.id != assistant_message.id && m.id != user_message.id);
 
     let registry = Arc::new(crate::services::chat::tools::default_registry());
     let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
@@ -235,55 +237,91 @@ async fn run_chat(session: &mut CliSession, question: String, trace: bool, conve
         .map(|s| s.to_string())
         .collect();
 
-    crate::services::chat::run_chat_turn(
-        session.db.clone(),
-        registry,
-        conversation.id.clone(),
-        assistant_message.id.clone(),
-        account_id,
-        question.clone(),
-        model,
-        history,
-        categories,
-    )
-    .await?;
+    let total = questions.len();
+    let mut turns: Vec<serde_json::Value> = Vec::with_capacity(total);
 
-    let assistant = session
-        .db
-        .get_chat_messages(&conversation.id)?
-        .into_iter()
-        .find(|m| m.id == assistant_message.id);
-    let answer = assistant.as_ref().map(|m| m.content.clone()).unwrap_or_default();
-    let chat_trace = assistant.as_ref().and_then(|m| m.trace.clone());
-    let sources = assistant.as_ref().map(|m| m.sources.clone()).unwrap_or_default();
+    for (i, question) in questions.into_iter().enumerate() {
+        if session.mode == OutputMode::Pretty && total > 1 {
+            println!("\n>>> [{}/{}] {}", i + 1, total, question);
+        }
 
-    // Drafts the assistant created this turn are linked to its message via
-    // `referenced_draft_ids` and persisted in the `drafts` table; surface them so
-    // a terminal/agent user sees the draft body, not just the `draft://` chip.
-    let drafts = match assistant.as_ref() {
-        Some(m) => collect_referenced_drafts(&session.db, &m.referenced_draft_ids)?,
-        None => Vec::new(),
-    };
+        let user_message = session
+            .db
+            .insert_chat_message(&conversation.id, "user", &question, None)?;
+        let assistant_message = session
+            .db
+            .insert_chat_message(&conversation.id, "assistant", "", Some(&model))?;
+
+        let mut history = session.db.get_recent_chat_turns(&conversation.id, 20)?;
+        history.retain(|m| m.id != assistant_message.id && m.id != user_message.id);
+
+        crate::services::chat::run_chat_turn(
+            session.db.clone(),
+            registry.clone(),
+            conversation.id.clone(),
+            user_message.id.clone(),
+            assistant_message.id.clone(),
+            account_id.clone(),
+            question.clone(),
+            model.clone(),
+            history,
+            categories.clone(),
+        )
+        .await?;
+
+        let assistant = session
+            .db
+            .get_chat_messages(&conversation.id)?
+            .into_iter()
+            .find(|m| m.id == assistant_message.id);
+        let answer = assistant.as_ref().map(|m| m.content.clone()).unwrap_or_default();
+        let chat_trace = assistant.as_ref().and_then(|m| m.trace.clone());
+        let sources = assistant.as_ref().map(|m| m.sources.clone()).unwrap_or_default();
+
+        // Drafts the assistant created this turn are linked to its message via
+        // `referenced_draft_ids` and persisted in the `drafts` table; surface
+        // them so a terminal/agent user sees the draft body, not just the
+        // `draft://` chip.
+        let drafts = match assistant.as_ref() {
+            Some(m) => collect_referenced_drafts(&session.db, &m.referenced_draft_ids)?,
+            None => Vec::new(),
+        };
+
+        if session.mode == OutputMode::Json {
+            let mut turn = serde_json::json!({
+                "question": question,
+                "answer": answer,
+                "sources": sources,
+                "drafts": drafts,
+            });
+            if trace {
+                turn["trace"] = serde_json::to_value(&chat_trace)?;
+            }
+            turns.push(turn);
+        } else {
+            for draft in &drafts {
+                output::render_draft(draft);
+            }
+            if trace {
+                output::render_chat_trace(chat_trace.as_ref(), &sources);
+            }
+        }
+    }
 
     if session.mode == OutputMode::Json {
-        let mut data = serde_json::json!({
-            "question": question,
-            "answer": answer,
-            "conversationId": conversation.id,
-            "sources": sources,
-            "drafts": drafts,
-        });
-        if trace {
-            data["trace"] = serde_json::to_value(&chat_trace)?;
-        }
+        // Single question keeps the flat envelope agents already parse;
+        // multi-question runs report one entry per turn under `turns`.
+        let data = if total == 1 {
+            let mut data = turns.remove(0);
+            data["conversationId"] = serde_json::Value::String(conversation.id.clone());
+            data
+        } else {
+            serde_json::json!({
+                "conversationId": conversation.id,
+                "turns": turns,
+            })
+        };
         output::emit_ok(data)?;
-    } else {
-        for draft in &drafts {
-            output::render_draft(draft);
-        }
-        if trace {
-            output::render_chat_trace(chat_trace.as_ref(), &sources);
-        }
     }
 
     Ok(())

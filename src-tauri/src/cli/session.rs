@@ -117,7 +117,7 @@ fn default_data_dir() -> PathBuf {
 /// fall back to the single enabled account. Returns `None` (rather than
 /// erroring) when nothing can be determined, so account-free commands (e.g.
 /// `accounts`) still run.
-fn resolve_account(db: &Arc<Database>, hint: Option<&str>) -> Result<Option<String>> {
+pub(crate) fn resolve_account(db: &Arc<Database>, hint: Option<&str>) -> Result<Option<String>> {
     let accounts = db.list_accounts()?;
     match hint {
         Some(h) => {

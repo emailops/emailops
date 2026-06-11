@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -157,6 +157,12 @@ cli-demo:
 #   make cli-eval ARGS="--case kickoff_date_es"
 cli-eval:
 	cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval $(ARGS)
+
+# Multi-turn chat prefill/latency bench against the demo DB (model stays loaded
+# across turns). Logic lives in scripts/cli_bench.sh; questions overridable via
+# env: BENCH_Q2="..." make cli-bench
+cli-bench:
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
 
 # ── Provider HTTP cassettes ──────────────────────────────────────────────────
 # Record live Gmail / Microsoft Graph API responses for a connected account

@@ -18,7 +18,7 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
-const MSG_COLUMNS: &str = "id, conversation_id, role, content, model, token_count, latency_ms, created_at, trace, referenced_email_ids, referenced_draft_ids";
+const MSG_COLUMNS: &str = "id, conversation_id, role, content, model, token_count, latency_ms, created_at, trace, referenced_email_ids, referenced_draft_ids, prompt_content";
 
 fn row_to_conversation(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatConversation> {
     Ok(ChatConversation {
@@ -72,6 +72,7 @@ fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
         trace,
         referenced_email_ids,
         referenced_draft_ids,
+        prompt_content: row.get(11)?,
     })
 }
 
@@ -236,7 +237,20 @@ impl Database {
             trace: None,
             referenced_email_ids: Vec::new(),
             referenced_draft_ids: Vec::new(),
+            prompt_content: None,
         })
+    }
+
+    /// Persist the exact text a user message was prompted with (memory
+    /// header, sources block, question) so history replay can reuse the same
+    /// bytes. See `ChatMessage::prompt_content`.
+    pub fn update_chat_message_prompt_content(&self, message_id: &str, prompt_content: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "UPDATE chat_messages SET prompt_content = ?2 WHERE id = ?1",
+            params![message_id, prompt_content],
+        )?;
+        Ok(())
     }
 
     /// Persist the aggregated email-ref allowlist for a completed assistant
@@ -443,5 +457,45 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows.reverse();
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::Database;
+
+    fn db_with_account() -> Database {
+        let db = Database::new_for_testing().unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('a1', 'gmail', 'a1@ex.com', 'Test', 0)",
+                [],
+            )
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn prompt_content_round_trips_for_history_replay() {
+        let db = db_with_account();
+        let conv = db.create_chat_conversation("a1", "t").unwrap();
+
+        let msg = db.insert_chat_message(&conv.id, "user", "raw question", None).unwrap();
+        assert_eq!(msg.prompt_content, None, "insert leaves prompt_content unset");
+
+        let tail = "Sources (valid citation range: [1]..[2]):\n[1] …\n\nraw question";
+        db.update_chat_message_prompt_content(&msg.id, tail).unwrap();
+
+        let msgs = db.get_chat_messages(&conv.id).unwrap();
+        assert_eq!(msgs[0].content, "raw question", "display content untouched");
+        assert_eq!(msgs[0].prompt_content.as_deref(), Some(tail));
+
+        let turns = db.get_recent_chat_turns(&conv.id, 5).unwrap();
+        assert_eq!(
+            turns[0].prompt_content.as_deref(),
+            Some(tail),
+            "replay path sees the as-prompted bytes"
+        );
     }
 }

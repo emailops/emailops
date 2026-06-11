@@ -1,12 +1,15 @@
 // Embedded llama.cpp backend — only compiled when the `llamacpp` feature is on.
 //
 // Architecture:
-//   runtime.rs    — global LlamaBackend singleton + model load/swap
-//   streaming.rs  — spawn_blocking + mpsc bridge for async streaming
-//   embeddings.rs — encoder-mode inference + mean pooling
+//   runtime.rs    — global LlamaBackend singleton + model load/swap + API
+//   actor.rs      — persistent inference thread owning the chat context,
+//                   reuses the KV cache across requests (prefix caching)
+//   planner.rs    — pure prompt-budget / prefix-reuse planning functions
 //   errors.rs     — map llama-cpp-2 errors → AppError
 
+pub(crate) mod actor;
 pub mod errors;
+pub(crate) mod planner;
 pub mod runtime;
 
 use std::sync::Arc;

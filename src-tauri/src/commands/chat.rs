@@ -193,6 +193,7 @@ pub async fn send_chat_message(
     let registry = state.tool_registry.clone();
     let app_for_task = app.clone();
     let conv_id = conversation_id.clone();
+    let user_id = user_message.id.clone();
     let assistant_id = assistant_message.id.clone();
     let user_q = trimmed.to_string();
     let model_for_task = model.clone();
@@ -206,6 +207,7 @@ pub async fn send_chat_message(
                 db,
                 registry,
                 conv_id,
+                user_id,
                 assistant_id,
                 account_id,
                 user_q,
