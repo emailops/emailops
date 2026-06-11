@@ -587,8 +587,8 @@ pub struct LlmCallTrace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefill_ms: Option<i64>,
     /// Prompt tokens served from a reused KV-cache prefix instead of being
-    /// re-evaluated. Currently always 0 on llama.cpp (no prefix cache yet) —
-    /// the field exists so before/after numbers share one schema.
+    /// re-evaluated. Only the embedded llama.cpp backend reports this; HTTP
+    /// providers leave it `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_prompt_tokens: Option<u32>,
     /// Messages sent to the LLM at this round, formatted for tracing.

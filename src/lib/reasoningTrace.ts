@@ -14,6 +14,30 @@ export function tokensPerSecond(tokens: number | null | undefined, ms: number | 
   return tokens / (ms / 1000);
 }
 
+/** KV-cache reuse for one LLM call, ready for display. */
+export interface KvCacheStats {
+  /** Prompt tokens served from the reused KV-cache prefix. */
+  cached: number;
+  /** Total prompt tokens for the call. */
+  total: number;
+  /** Whole-number percentage of the prompt served from cache. */
+  pct: number;
+}
+
+/** Cache reuse stats for an LLM call, or null when the provider doesn't
+ *  report them (HTTP providers) — callers hide the segment entirely then.
+ *  A reported 0/N is meaningful (cold prefill) and IS returned. */
+export function kvCacheStats(call: LlmCallTrace): KvCacheStats | null {
+  if (call.cachedPromptTokens == null || !call.promptTokens) {
+    return null;
+  }
+  return {
+    cached: call.cachedPromptTokens,
+    total: call.promptTokens,
+    pct: Math.round((call.cachedPromptTokens / call.promptTokens) * 100),
+  };
+}
+
 /** One step in the turn's execution flow — either an LLM round-trip or a tool
  *  call — tagged so the panel can render a single ordered list. */
 export type FlowEntry =

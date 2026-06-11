@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatTrace, LlmCallTrace, ToolCallTrace } from '@/types';
-import { buildFlow, formatLatency, tokensPerSecond } from './reasoningTrace';
+import { buildFlow, formatLatency, kvCacheStats, tokensPerSecond } from './reasoningTrace';
 
 function makeTrace(overrides: Partial<ChatTrace> = {}): ChatTrace {
   return {
@@ -176,5 +176,33 @@ describe('buildFlow', () => {
     expect(flow[1]).toMatchObject({ kind: 'llm', call: { kind: 'tool_round', latencyMs: 35000 } });
     // ids are unique so they're safe as React keys.
     expect(new Set(flow.map((e) => e.id)).size).toBe(flow.length);
+  });
+});
+
+describe('kvCacheStats', () => {
+  it('returns cached count and percentage when the call reports cache reuse', () => {
+    expect(kvCacheStats(llmCall({ promptTokens: 4382, cachedPromptTokens: 3272 }))).toEqual({
+      cached: 3272,
+      total: 4382,
+      pct: 75,
+    });
+  });
+
+  it('returns a zero-percent stat for a cold prefill so the UI can show the miss', () => {
+    expect(kvCacheStats(llmCall({ promptTokens: 3279, cachedPromptTokens: 0 }))).toEqual({
+      cached: 0,
+      total: 3279,
+      pct: 0,
+    });
+  });
+
+  it('returns null when the provider reports no cache data (HTTP providers)', () => {
+    expect(kvCacheStats(llmCall({ promptTokens: 1200 }))).toBeNull();
+    expect(kvCacheStats(llmCall({}))).toBeNull();
+  });
+
+  it('returns null when prompt tokens are missing or zero (avoids divide-by-zero)', () => {
+    expect(kvCacheStats(llmCall({ cachedPromptTokens: 10 }))).toBeNull();
+    expect(kvCacheStats(llmCall({ promptTokens: 0, cachedPromptTokens: 0 }))).toBeNull();
   });
 });

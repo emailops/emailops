@@ -114,7 +114,10 @@
       "model": "modèle",
       "input": "entrée",
       "output": "sortie",
-      "toolCallsRequested": "{{n}} appels d'outils"
+      "toolCallsRequested": "{{n}} appels d'outils",
+      "prefill": "prefill {{latency}}",
+      "kvCacheHit": "cache KV {{cached}}/{{total}} tok ({{pct}} %)",
+      "kvCacheMiss": "cache KV 0/{{total}} tok (froid)"
     }
   },
   "sources": {

@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildFlow, formatLatency, tokensPerSecond } from '@/lib/reasoningTrace';
+import { buildFlow, formatLatency, kvCacheStats, tokensPerSecond } from '@/lib/reasoningTrace';
 import type { ChatMessage, ChatTrace, LlmCallTrace, RouteMode, ToolCallTrace } from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
@@ -84,6 +84,7 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
         ? t('chat:reasoning.trace.phase.finalStream')
         : t('chat:reasoning.trace.phase.llmCall');
   const requested = call.kind === 'tool_round' ? (call.toolCallsRequested ?? 0) : 0;
+  const kv = kvCacheStats(call);
   return (
     <li className="text-[13px] text-gray-700 py-1">
       <button
@@ -105,6 +106,19 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
         )}
         <span className="text-gray-900 min-w-[140px]">{label}</span>
         <span className="text-gray-700 tabular-nums">{formatLatency(call.latencyMs)}</span>
+        {call.prefillMs != null && (
+          <span className="text-gray-600 tabular-nums">
+            · {t('chat:reasoning.trace.prefill', { latency: formatLatency(call.prefillMs) })}
+          </span>
+        )}
+        {kv && (
+          <span className={`tabular-nums ${kv.cached > 0 ? 'text-emerald-700' : 'text-gray-500'}`}>
+            ·{' '}
+            {kv.cached > 0
+              ? t('chat:reasoning.trace.kvCacheHit', { cached: kv.cached, total: kv.total, pct: kv.pct })
+              : t('chat:reasoning.trace.kvCacheMiss', { total: kv.total })}
+          </span>
+        )}
         {requested > 0 && (
           <span className="text-gray-700">· {t('chat:reasoning.trace.toolCallsRequested', { n: requested })}</span>
         )}
