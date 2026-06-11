@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -337,6 +337,43 @@ dist-mac-intel:
 	mkdir -p release; \
 	cp "$$DMG" release/EmailOps-macos-intel.dmg; \
 	echo "Staged release/EmailOps-macos-intel.dmg (from $$(basename "$$DMG"))"
+
+# ── emailops-cli release binary (universal, signed) ──────────────────────────
+# Build a standalone `emailops-cli` to distribute alongside the desktop app so
+# power users can drive EmailOps from the terminal. Same arches as `build-mac`
+# (aarch64 + x86_64, llama.cpp on both → offline `chat` works), lipo'd into one
+# universal binary. The heavy cross-compile + signing logic lives in
+# scripts/build_cli_release.sh; signing only happens when .env.signing provides
+# APPLE_SIGNING_IDENTITY (else the binary is left unsigned for local use).
+# Requires the x86_64/aarch64 Rust targets that `bootstrap-mac` installs.
+#
+# Recommended follow-up: bundle this as a Tauri `externalBin` sidecar inside the
+# .app so the app's own notarization covers it and an in-app "install CLI to
+# PATH" action can symlink it — see docs/cli-user-guide.md.
+#
+#   make build-cli-mac      # build (+sign) → src-tauri/target/cli-release/emailops-cli
+#   make verify-cli-mac     # assert universal + signed
+#   make dist-cli-mac       # stage → release/emailops-cli (versionless)
+build-cli-mac:
+	@if [ -f .env.signing ]; then set -a; . ./.env.signing; set +a; fi; \
+	  bash scripts/build_cli_release.sh
+
+verify-cli-mac:
+	@BIN=src-tauri/target/cli-release/emailops-cli; \
+	if [ ! -x "$$BIN" ]; then echo "ERROR: $$BIN not found. Run 'make build-cli-mac' first."; exit 1; fi; \
+	echo "Verifying $$BIN"; \
+	echo "── architectures ──"; lipo -info "$$BIN" 2>&1 | sed 's/^/  /'; \
+	echo "── codesign ──"; codesign -dv --verbose=4 "$$BIN" 2>&1 | sed 's/^/  /'
+
+# Copy the freshly built universal CLI to a stable, versionless name under
+# release/ so it can be uploaded to the GitHub Release. Run after
+# `make build-cli-mac && make verify-cli-mac`.
+dist-cli-mac:
+	@BIN=src-tauri/target/cli-release/emailops-cli; \
+	if [ ! -x "$$BIN" ]; then echo "ERROR: $$BIN not found. Run 'make build-cli-mac' first."; exit 1; fi; \
+	mkdir -p release; \
+	cp "$$BIN" release/emailops-cli; \
+	echo "Staged release/emailops-cli (from $$BIN)"
 
 # Regenerate the evaluations index (manifest.json + instructions to open index.html)
 eval-index:

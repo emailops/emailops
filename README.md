@@ -121,6 +121,10 @@ heavy write commands (`sync`, `classify`, `embed`) are best run with the app
 closed. It is gated behind the `cli` cargo feature, so it never compiles into
 default/release desktop builds.
 
+> **Power users:** see [`docs/cli-user-guide.md`](docs/cli-user-guide.md) for
+> installing the standalone `emailops-cli` binary and scripting your inbox with
+> `--json` / `jq`. The notes below are the contributor (build-from-source) view.
+
 ```bash
 make cli                                    # build the bin (with embedded llama.cpp)
 make cli-run ARGS="accounts --json"         # build + run (with llama.cpp)
