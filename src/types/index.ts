@@ -294,8 +294,6 @@ export interface TagPriority {
 export interface ClassificationConfig {
   enabled: boolean;
   classifyPrevious: boolean;
-  provider: string;
-  model: string;
   intents: string[];
   topics: string[];
   /** Gmail inbox categories to classify. Empty = all. Default: ["primary"]. */
@@ -474,6 +472,15 @@ export interface LlmCallTrace {
   toolCallsRequested?: number;
   /** True if this call errored (timed out, parser failed, etc.). */
   failed?: boolean;
+  /** Prompt tokens evaluated for this call (prefill size). Absent when the
+   * provider doesn't report token counts. */
+  promptTokens?: number | null;
+  /** Wall-clock ms spent in prompt prefill before the first sampled token.
+   * Only the embedded llama.cpp backend reports this. */
+  prefillMs?: number | null;
+  /** Prompt tokens served from a reused KV-cache prefix instead of being
+   * re-evaluated. Absent when the provider doesn't report cache reuse. */
+  cachedPromptTokens?: number | null;
   /** Dev-only: full formatted prompt sent to the model for this call.
    * Populated only in debug builds (cfg(debug_assertions)). */
   input?: string | null;

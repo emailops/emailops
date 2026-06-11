@@ -66,8 +66,6 @@ export function ClassificationSettings({
 }: ClassificationSettingsProps) {
   const { t } = useTranslation(['common', 'settings']);
   const [config, setConfig] = useState<ClassificationConfig | null>(null);
-  const [models, setModels] = useState<string[]>([]);
-  const [isOpenRouterProvider, setIsOpenRouterProvider] = useState(false);
   const [intentsText, setIntentsText] = useState('');
   const [topicsText, setTopicsText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -91,43 +89,11 @@ export function ClassificationSettings({
       setConfig(cfg);
       setIntentsText(cfg.intents.join('\n'));
       setTopicsText(cfg.topics.join('\n'));
-      await loadModels(cfg.provider);
     } catch (err) {
       setError(t('settings:classification.loadFailed', { error: errorText(err) }));
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadModels = async (provider: string) => {
-    // The flag controls whether the model field renders as a free-form text
-    // input vs a dropdown. vLLM (Metal) and OpenRouter both expect the user
-    // to type a model id, so they share the same UI mode.
-    setIsOpenRouterProvider(provider === 'openrouter');
-    if (provider === 'ollama') {
-      try {
-        const ollamaModels = await api.listOllamaModels();
-        setModels(ollamaModels.filter((m) => !/(embed|nomic|bge|e5)/i.test(m)));
-      } catch {
-        setModels([]);
-      }
-    } else if (provider === 'llamacpp') {
-      try {
-        const catalog = await api.listCatalogModels();
-        setModels(catalog.filter((m) => m.kind === 'chat' && m.isLocal).map((m) => m.id));
-      } catch {
-        setModels([]);
-      }
-    } else {
-      // openrouter / unknown: free-form text input, no fixed list
-      setModels([]);
-    }
-  };
-
-  const handleProviderChange = async (newProvider: string) => {
-    if (!config) return;
-    setConfig({ ...config, provider: newProvider, model: '' });
-    await loadModels(newProvider);
   };
 
   const handleSave = async () => {
@@ -157,7 +123,6 @@ export function ClassificationSettings({
           state: updated.enabled
             ? t('settings:classification.saveLogEnabled')
             : t('settings:classification.saveLogDisabled'),
-          model: updated.model,
         }),
       );
     } catch (err) {
@@ -347,49 +312,6 @@ export function ClassificationSettings({
             </div>
             {config.categories.length === 0 && (
               <p className="text-xs text-yellow-500 mt-1">{t('settings:classification.noCategoriesSelected')}</p>
-            )}
-          </div>
-
-          {/* Model — provider selector on the left, model selector/input on the right */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:classification.model')}</label>
-            <div className="flex gap-2">
-              <select
-                value={config.provider}
-                onChange={(e) => void handleProviderChange(e.target.value)}
-                className="bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none w-36 flex-shrink-0"
-              >
-                <option value="llamacpp">{t('settings:classification.providerEmbedded')}</option>
-                <option value="ollama">{t('settings:classification.providerOllama')}</option>
-                <option value="openrouter">{t('settings:classification.providerOpenRouter')}</option>
-              </select>
-              {isOpenRouterProvider ? (
-                <input
-                  type="text"
-                  value={config.model}
-                  onChange={(e) => setConfig({ ...config, model: e.target.value })}
-                  placeholder={t('settings:classification.modelPlaceholder')}
-                  className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
-                />
-              ) : (
-                <select
-                  value={config.model}
-                  onChange={(e) => setConfig({ ...config, model: e.target.value })}
-                  className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-                >
-                  {models.length === 0 && (
-                    <option value={config.model}>{config.model || t('settings:ai.noModelsAvailable')}</option>
-                  )}
-                  {models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            {config.provider === 'llamacpp' && models.length === 0 && (
-              <p className="text-xs text-gray-500 mt-1">{t('settings:ai.noLocalModels')}</p>
             )}
           </div>
 

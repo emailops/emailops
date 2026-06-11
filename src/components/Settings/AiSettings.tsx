@@ -322,19 +322,6 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
         addLog('error', 'ai', t('settings:ai.ageCutoffSaveFailed', { error: errorText(err) }));
       }
 
-      // Sync classification config to follow the AI backend change.
-      // Only updates provider+model; intents/topics/enabled are preserved.
-      try {
-        const classifyCfg = await api.getClassificationConfig();
-        await api.setClassificationConfig({
-          ...classifyCfg,
-          provider: config.provider,
-          model: config.model,
-        });
-      } catch {
-        // Non-fatal — classification config sync failure doesn't block AI settings save
-      }
-
       // Trigger full re-index if the embedding model changed.
       const embedChanged = prevEmbedModel !== '' && prevEmbedModel !== config.embeddingModel;
       if (embedChanged) {

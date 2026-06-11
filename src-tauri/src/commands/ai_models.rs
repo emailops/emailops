@@ -226,17 +226,6 @@ pub async fn start_model_download(
                                 if no_provider {
                                     save("ai_provider", "llamacpp");
                                 }
-                                // Sync classification model if not explicitly overridden
-                                // OR if the previously chosen one isn't downloaded.
-                                let cls_model = db_clone.get_preference("classify_model").ok().flatten();
-                                let cls_missing = cls_model
-                                    .as_deref()
-                                    .map(|s| s.is_empty() || !local_chat_ids.contains(s))
-                                    .unwrap_or(true);
-                                if cls_missing {
-                                    save("classify_model", &mid);
-                                    save("classify_provider", "llamacpp");
-                                }
                                 true
                             }
                             ModelKind::Embedding if embed_missing => {

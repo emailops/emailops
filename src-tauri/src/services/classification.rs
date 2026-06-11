@@ -49,8 +49,6 @@ const DEFAULT_TOPICS: &[&str] = &[
 pub struct ClassificationConfig {
     pub enabled: bool,
     pub classify_previous: bool,
-    pub provider: String,
-    pub model: String,
     pub intents: Vec<String>,
     pub topics: Vec<String>,
     /// Gmail inbox categories to classify (empty = all). Default: ["primary"].
@@ -92,18 +90,6 @@ pub fn get_config(db: &Database) -> Result<ClassificationConfig> {
         .get_preference("classify_previous")?
         .map(|v| v == "true")
         .unwrap_or(false);
-    let provider = db.get_preference("classify_provider")?.unwrap_or_else(|| {
-        db.get_preference("ai_provider")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "llamacpp".to_string())
-    });
-    let model = db.get_preference("classify_model")?.unwrap_or_else(|| {
-        db.get_preference("ai_model")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "qwen3.5-4b-q4_k_m".to_string())
-    });
     let intents = db
         .get_preference("classify_intents")?
         .and_then(|v| serde_json::from_str(&v).ok())
@@ -120,8 +106,6 @@ pub fn get_config(db: &Database) -> Result<ClassificationConfig> {
     Ok(ClassificationConfig {
         enabled,
         classify_previous,
-        provider,
-        model,
         intents,
         topics,
         categories,
@@ -134,8 +118,12 @@ pub fn save_config(db: &Database, config: &ClassificationConfig) -> Result<()> {
         "classify_previous",
         if config.classify_previous { "true" } else { "false" },
     )?;
-    db.set_preference("classify_provider", &config.provider)?;
-    db.set_preference("classify_model", &config.model)?;
+    // Classification always uses the main AI provider/model. Purge legacy
+    // per-feature override prefs so older installs converge: a pinned
+    // classify model forced a llama.cpp runtime swap on every background
+    // classification, destroying the chat KV cache between turns.
+    db.delete_preference("classify_provider")?;
+    db.delete_preference("classify_model")?;
     db.set_preference("classify_intents", &serde_json::to_string(&config.intents)?)?;
     db.set_preference("classify_topics", &serde_json::to_string(&config.topics)?)?;
     db.set_preference("classify_categories", &serde_json::to_string(&config.categories)?)?;
@@ -427,8 +415,10 @@ async fn classify_email(
          </UNTRUSTED_EMAIL>",
     );
 
-    // Build provider for classification model (may differ from general AI model)
-    let provider = AiService::build_provider(db, &config.provider, &config.model)?;
+    // Classification uses the main AI provider/model — sharing the chat
+    // model means the one-shot completion below runs on the throwaway KV
+    // sequence and leaves the chat prompt cache warm (see llama_cpp::actor).
+    let provider = AiService::load_provider(db)?;
 
     // Classification is a simple one-shot JSON extraction — don't pass
     // `think: false` because thinking models (gemma4, deepseek-r1) produce
@@ -534,13 +524,7 @@ pub async fn classify_new_emails(db: &Arc<Database>, account_id: &str) -> Result
 
     emit_log(
         "info",
-        &format!(
-            "Classifying {} new emails (provider={}, model={}, rules={})",
-            email_ids.len(),
-            config.provider,
-            config.model,
-            rules.len()
-        ),
+        &format!("Classifying {} new emails (rules={})", email_ids.len(), rules.len()),
     );
     classify_email_ids(db, account_id, &email_ids, &config, &rules).await
 }
@@ -574,10 +558,8 @@ pub async fn classify_all_emails(db: &Arc<Database>, account_id: &str) -> Result
     emit_log(
         "info",
         &format!(
-            "Classifying {} unclassified emails (provider={}, model={}, rules={})",
+            "Classifying {} unclassified emails (rules={})",
             email_ids.len(),
-            config.provider,
-            config.model,
             rules.len()
         ),
     );
@@ -637,13 +619,7 @@ pub async fn reclassify_all_emails(db: &Arc<Database>, account_id: &str) -> Resu
 
     emit_log(
         "info",
-        &format!(
-            "Reclassifying all {} emails (provider={}, model={}, rules={})",
-            email_ids.len(),
-            config.provider,
-            config.model,
-            rules.len()
-        ),
+        &format!("Reclassifying all {} emails (rules={})", email_ids.len(), rules.len()),
     );
     classify_email_ids(db, account_id, &email_ids, &config, &rules).await
 }
@@ -898,11 +874,9 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &Classificatio
     emit_log(
         "info",
         &format!(
-            "Rule '{}': reclassifying {} matching emails (provider={}, model={})",
+            "Rule '{}': reclassifying {} matching emails",
             rule.name,
             email_ids.len(),
-            config.provider,
-            config.model
         ),
     );
     classify_email_ids(db, &rule.account_id, &email_ids, &config, &rules).await
@@ -932,4 +906,59 @@ pub fn get_email_tags_batch(db: &Database, email_ids: &[String]) -> Result<Vec<c
 
 pub fn count_unclassified(db: &Database, account_id: &str) -> Result<i32> {
     db.count_unclassified_emails(account_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> ClassificationConfig {
+        ClassificationConfig {
+            enabled: true,
+            classify_previous: false,
+            intents: vec!["request".to_string()],
+            topics: vec!["billing".to_string()],
+            categories: vec!["primary".to_string()],
+        }
+    }
+
+    #[test]
+    fn save_config_purges_legacy_model_override_prefs() {
+        let db = Database::new_for_testing().expect("create test db");
+        // Simulate a user who pinned a dedicated classification model before
+        // the override was removed.
+        db.set_preference("classify_provider", "llamacpp").unwrap();
+        db.set_preference("classify_model", "gemma-4-12b-it-qat-ud-q4_k_xl")
+            .unwrap();
+
+        save_config(&db, &test_config()).unwrap();
+
+        assert_eq!(db.get_preference("classify_provider").unwrap(), None);
+        assert_eq!(db.get_preference("classify_model").unwrap(), None);
+    }
+
+    #[test]
+    fn config_roundtrips_without_model_override() {
+        let db = Database::new_for_testing().expect("create test db");
+        let cfg = test_config();
+        save_config(&db, &cfg).unwrap();
+
+        let loaded = get_config(&db).unwrap();
+        assert!(loaded.enabled);
+        assert!(!loaded.classify_previous);
+        assert_eq!(loaded.intents, cfg.intents);
+        assert_eq!(loaded.topics, cfg.topics);
+        assert_eq!(loaded.categories, cfg.categories);
+    }
+
+    #[test]
+    fn get_config_ignores_stale_legacy_prefs() {
+        let db = Database::new_for_testing().expect("create test db");
+        // Stale rows from an older app version must not affect loading.
+        db.set_preference("classify_provider", "ollama").unwrap();
+        db.set_preference("classify_model", "some-old-model").unwrap();
+
+        let loaded = get_config(&db).unwrap();
+        assert!(!loaded.enabled); // default when unset
+    }
 }
