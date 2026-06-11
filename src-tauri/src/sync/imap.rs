@@ -779,6 +779,7 @@ impl EmailProvider for ImapClient {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
@@ -787,7 +788,7 @@ impl EmailProvider for ImapClient {
             subject,
             in_reply_to: original_message_id.filter(|s| !s.trim().is_empty()),
             body,
-            attachments: &[],
+            attachments,
         })?;
         let raw = message.formatted();
         self.smtp_send(message).await?;

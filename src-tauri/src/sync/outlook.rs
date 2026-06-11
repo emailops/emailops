@@ -395,6 +395,7 @@ impl OutlookClient {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         // Graph's `/reply` endpoint auto-preserves subject prefix, In-Reply-To,
         // References, and (with the `comment` form) the quoted thread history.
@@ -410,7 +411,7 @@ impl OutlookClient {
                 cc_emails,
                 subject,
                 body,
-                attachments: &[],
+                attachments,
             });
         let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(msg_id),);
         let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
@@ -741,6 +742,7 @@ impl EmailProvider for OutlookClient {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         self.send_reply(
             from_email,
@@ -750,6 +752,7 @@ impl EmailProvider for OutlookClient {
             original_message_id,
             subject,
             body,
+            attachments,
         )
         .await
     }

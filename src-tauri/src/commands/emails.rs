@@ -113,6 +113,7 @@ pub async fn send_reply(
     from_account_id: Option<String>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    attachments: Option<Vec<crate::sync::provider::EmailAttachment>>,
 ) -> Result<(), AppError> {
     let email_body = build_email_body(body, body_html, inline_images)?;
     let sent_account_id = services::emails::send_reply(
@@ -122,6 +123,7 @@ pub async fn send_reply(
         from_account_id.as_deref(),
         to_emails,
         cc_emails,
+        attachments.unwrap_or_default(),
         app.clone(),
     )
     .await?;

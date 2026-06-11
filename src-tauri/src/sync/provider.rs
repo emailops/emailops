@@ -225,7 +225,8 @@ pub trait EmailProvider: Send + Sync {
     ///
     /// `body` carries the plain-text part and, when the user composed in the
     /// rich editor, an HTML alternative plus any inline images referenced from
-    /// the HTML via `cid:` URIs.
+    /// the HTML via `cid:` URIs. `attachments` is for regular file attachments
+    /// only.
     async fn send_reply(
         &self,
         from_email: &str,
@@ -235,6 +236,7 @@ pub trait EmailProvider: Send + Sync {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()>;
 
     /// Send a new email (not a reply to any existing thread).
@@ -469,6 +471,7 @@ impl EmailProvider for FakeEmailProvider {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         self.sent
             .write()
@@ -481,7 +484,7 @@ impl EmailProvider for FakeEmailProvider {
                 original_message_id: original_message_id.map(str::to_string),
                 subject: subject.to_string(),
                 body: body.clone(),
-                attachments: Vec::new(),
+                attachments: attachments.to_vec(),
             });
         Ok(())
     }

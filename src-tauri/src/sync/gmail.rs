@@ -366,6 +366,7 @@ impl GmailClient {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         let normalized_subject = reply_subject(subject);
         let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
@@ -375,7 +376,7 @@ impl GmailClient {
             subject: &normalized_subject,
             in_reply_to: original_message_id.filter(|v| !v.trim().is_empty()),
             body,
-            attachments: &[],
+            attachments,
         })?;
         let raw = base64_url_encode(mime.as_bytes());
         let payload = serde_json::json!({
@@ -1195,6 +1196,7 @@ impl EmailProvider for GmailClient {
         original_message_id: Option<&str>,
         subject: &str,
         body: &EmailBody,
+        attachments: &[EmailAttachment],
     ) -> Result<()> {
         self.send_reply(
             from_email,
@@ -1204,6 +1206,7 @@ impl EmailProvider for GmailClient {
             original_message_id,
             subject,
             body,
+            attachments,
         )
         .await
     }

@@ -412,9 +412,26 @@ export function EmailView({
               setIsGeneratingDraft(false);
               draftRequestIdRef.current = null;
             }}
-            onSend={async ({ fromAccountId, toEmails, ccEmails, body: replyText, bodyHtml, inlineImages }) => {
+            onSend={async ({
+              fromAccountId,
+              toEmails,
+              ccEmails,
+              body: replyText,
+              bodyHtml,
+              inlineImages,
+              attachments,
+            }) => {
               addLog('info', 'sync', `Sending reply to ${toEmails.join(', ')}...`);
-              await api.sendReply(latestEmail.id, replyText, fromAccountId, toEmails, ccEmails, bodyHtml, inlineImages);
+              await api.sendReply(
+                latestEmail.id,
+                replyText,
+                fromAccountId,
+                toEmails,
+                ccEmails,
+                bodyHtml,
+                inlineImages,
+                attachments,
+              );
               await api.syncAccount(latestEmail.accountId);
               addLog('success', 'sync', `Reply sent to ${toEmails.join(', ')}`);
               setIsReplyOpen(false);

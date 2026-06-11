@@ -24,6 +24,7 @@ pub async fn send_reply_with_provider(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
 ) -> Result<()> {
     let email = db
@@ -55,6 +56,7 @@ pub async fn send_reply_with_provider(
             email.message_id.as_deref(),
             &email.subject,
             &body,
+            &attachments,
         )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
@@ -84,6 +86,7 @@ pub async fn send_reply(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    attachments: Vec<crate::sync::provider::EmailAttachment>,
     app: AppHandle,
 ) -> Result<String> {
     let email = db
@@ -118,6 +121,7 @@ pub async fn send_reply(
             email.message_id.as_deref(),
             &email.subject,
             &body,
+            &attachments,
         )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;

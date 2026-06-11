@@ -19,6 +19,7 @@ interface ReplyComposeProps {
     body: string;
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
+    attachments?: EmailAttachment[];
   }) => Promise<void>;
   onCancel: () => void;
   initialBody: string;
@@ -119,6 +120,8 @@ export function ReplyCompose({
   const [toRecipients, setToRecipients] = useState<string[]>(initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [showCc, setShowCc] = useState(false);
+  const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Autocomplete state
   const [toInput, setToInput] = useState('');
@@ -166,7 +169,7 @@ export function ReplyCompose({
 
   const addRecipient = (field: 'to' | 'cc', email: string) => {
     const trimmed = email.trim().toLowerCase();
-    if (!trimmed || !trimmed.includes('@')) return;
+    if (!trimmed.includes('@')) return;
     if (field === 'to') {
       if (!toRecipients.includes(trimmed)) setToRecipients([...toRecipients, trimmed]);
       setToInput('');
@@ -181,6 +184,23 @@ export function ReplyCompose({
     if (field === 'to') setToRecipients(toRecipients.filter((r) => r !== email));
     else setCcRecipients(ccRecipients.filter((r) => r !== email));
   };
+
+  const handleFiles = useCallback((files: FileList | null) => {
+    if (!files) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        const data = result.split(',')[1] ?? '';
+        setAttachments((prev) => [
+          ...prev,
+          { filename: file.name, mimeType: file.type || 'application/octet-stream', data },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
 
   const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
@@ -215,6 +235,7 @@ export function ReplyCompose({
         body: plain,
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
+        attachments,
       });
     } finally {
       setIsSending(false);
@@ -377,8 +398,53 @@ export function ReplyCompose({
         )}
       </div>
 
+      {/* Attachments */}
+      {attachments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {attachments.map((att, i) => (
+            <div
+              key={att.filename}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+            >
+              <span className="max-w-[180px] truncate">{att.filename}</span>
+              <button
+                type="button"
+                onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                className="ml-0.5 text-gray-400 hover:text-red-500"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Actions */}
-      <div className="mt-3 flex items-center justify-end gap-2">
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isSending}
+          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+          title={t('compose:attachFiles')}
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+            />
+          </svg>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+        <div className="flex-1" />
         <button
           type="button"
           onClick={onCancel}

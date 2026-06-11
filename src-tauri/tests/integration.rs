@@ -741,6 +741,7 @@ async fn fake_provider_send_reply_records_all_fields() {
             Some("orig-msg-id"),
             "Re: Hello",
             &EmailBody::plain("reply body"),
+            &[],
         )
         .await
         .unwrap();
@@ -1134,6 +1135,7 @@ async fn send_reply_with_provider_routes_to_provider() {
         None,
         None,
         None,
+        vec![],
         &provider,
     )
     .await
@@ -1162,6 +1164,7 @@ async fn send_reply_with_provider_uses_explicit_to() {
         None,
         Some(vec!["override@dest.com".to_string()]),
         None,
+        vec![],
         &provider,
     )
     .await
@@ -1170,6 +1173,42 @@ async fn send_reply_with_provider_uses_explicit_to() {
     let sent = provider.sent();
     assert_eq!(sent[0].to_emails, vec!["override@dest.com"]);
     assert_eq!(sent[0].cc_emails.len(), 0);
+}
+
+#[tokio::test]
+async fn send_reply_with_provider_forwards_attachments() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-ra", "me@example.com")).unwrap();
+    let email = make_email_with("orig-ra", "acc-ra", 1000, "sender@other.com", "inbox");
+    db.insert_email(&email).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    let attachment = EmailAttachment {
+        filename: "report.pdf".to_string(),
+        mime_type: "application/pdf".to_string(),
+        data: "QUFB".to_string(),
+        content_id: None,
+        is_inline: false,
+    };
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "orig-ra",
+        &emailops_lib::sync::provider::EmailBody::plain("see attached"),
+        None,
+        None,
+        None,
+        vec![attachment],
+        &provider,
+    )
+    .await
+    .expect("send_reply_with_provider");
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1, "exactly one message must be recorded");
+    assert_eq!(sent[0].attachments.len(), 1, "attachment must reach the provider");
+    assert_eq!(sent[0].attachments[0].filename, "report.pdf");
+    assert_eq!(sent[0].attachments[0].mime_type, "application/pdf");
+    assert!(sent[0].original_message_id.is_some() || sent[0].thread_id.is_some());
 }
 
 #[tokio::test]
@@ -1185,6 +1224,7 @@ async fn send_reply_with_provider_fails_when_email_missing() {
         None,
         None,
         None,
+        vec![],
         &provider,
     )
     .await;
@@ -1558,6 +1598,7 @@ impl EmailProvider for FailingEmailProvider {
         _original_message_id: Option<&str>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
+        _attachments: &[EmailAttachment],
     ) -> emailops_lib::models::error::Result<()> {
         Err(AppError::SyncError("Deliberate provider send failure".to_string()))
     }
@@ -1838,6 +1879,7 @@ async fn send_reply_failing_provider_returns_error() {
         None,
         None,
         None,
+        vec![],
         &FailingEmailProvider,
     )
     .await;
@@ -1905,6 +1947,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _original_message_id: Option<&str>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
+        _attachments: &[EmailAttachment],
     ) -> emailops_lib::models::error::Result<()> {
         unimplemented!()
     }

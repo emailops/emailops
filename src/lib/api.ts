@@ -223,6 +223,7 @@ export async function sendReply(
   ccEmails?: string[],
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
+  attachments?: EmailAttachment[],
 ): Promise<void> {
   return invoke('send_reply', {
     emailId,
@@ -232,6 +233,7 @@ export async function sendReply(
     ccEmails,
     bodyHtml,
     inlineImages,
+    attachments,
   });
 }
 
