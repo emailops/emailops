@@ -19,7 +19,7 @@
 import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getSafeExternalUrl } from '@/lib/emailFormatting';
+import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
 
 export interface EmailHtmlFrameProps {
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
@@ -30,6 +30,9 @@ export interface EmailHtmlFrameProps {
   scrollToFirstMatch?: boolean;
   /** Class applied to the iframe element. */
   className?: string;
+  /** Called when the user clicks a mailto: link in the body. When omitted,
+   *  mailto clicks are ignored (they are never sent to the OS handler). */
+  onMailtoLink?: (mailto: ParsedMailto) => void;
 }
 
 // Defined as a string so we can stamp it into srcDoc. Lives in `<head>` so
@@ -187,7 +190,13 @@ function buildSrcDoc(sanitizedHtml: string): string {
 </head><body>${sanitizedHtml}</body></html>`;
 }
 
-export function EmailHtmlFrame({ html, highlightQuery, scrollToFirstMatch, className }: EmailHtmlFrameProps) {
+export function EmailHtmlFrame({
+  html,
+  highlightQuery,
+  scrollToFirstMatch,
+  className,
+  onMailtoLink,
+}: EmailHtmlFrameProps) {
   const { t } = useTranslation(['common', 'inbox']);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
@@ -207,7 +216,13 @@ export function EmailHtmlFrame({ html, highlightQuery, scrollToFirstMatch, class
         setHeight((prev) => (Math.abs(prev - clamped) > 1 ? clamped : prev));
       } else if (data.type === 'link' && typeof data.href === 'string') {
         const href = data.href;
-        if (href.startsWith('#') || href.startsWith('mailto:')) return;
+        if (href.startsWith('#')) return;
+        const mailto = parseMailtoUrl(href);
+        if (mailto) {
+          onMailtoLink?.(mailto);
+          return;
+        }
+        if (href.toLowerCase().startsWith('mailto:')) return;
         const safe = getSafeExternalUrl(href);
         if (!safe) return;
         setConfirmUrl(safe);
@@ -215,7 +230,7 @@ export function EmailHtmlFrame({ html, highlightQuery, scrollToFirstMatch, class
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [onMailtoLink]);
 
   // Re-send the highlight command whenever the query or the frame contents
   // change. `srcDoc` is intentional in the dep list — when html changes the

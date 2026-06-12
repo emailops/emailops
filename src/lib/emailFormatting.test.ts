@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getSafeExternalUrl, sanitizeCssValue, sanitizeEmailHtml } from './emailFormatting';
+import { getSafeExternalUrl, parseMailtoUrl, sanitizeCssValue, sanitizeEmailHtml } from './emailFormatting';
 
 // ---------------------------------------------------------------------------
 // sanitizeCssValue
@@ -259,5 +259,59 @@ describe('getSafeExternalUrl', () => {
 
   it('returns null for mailto: URLs (not navigable externally)', () => {
     expect(getSafeExternalUrl('mailto:user@example.com')).toBeNull();
+  });
+});
+
+describe('parseMailtoUrl', () => {
+  it('parses a bare address', () => {
+    expect(parseMailtoUrl('mailto:user@example.com')).toEqual({
+      to: ['user@example.com'],
+      subject: '',
+      body: '',
+    });
+  });
+
+  it('parses multiple comma-separated addresses', () => {
+    expect(parseMailtoUrl('mailto:a@example.com,b@example.com')?.to).toEqual(['a@example.com', 'b@example.com']);
+  });
+
+  it('decodes percent-encoded addresses', () => {
+    expect(parseMailtoUrl('mailto:user%40example.com')?.to).toEqual(['user@example.com']);
+  });
+
+  it('parses subject and body query params', () => {
+    expect(parseMailtoUrl('mailto:user@example.com?subject=Hello%20there&body=First%20line%0ASecond')).toEqual({
+      to: ['user@example.com'],
+      subject: 'Hello there',
+      body: 'First line\nSecond',
+    });
+  });
+
+  it('merges to= query param addresses with the path address', () => {
+    expect(parseMailtoUrl('mailto:a@example.com?to=b@example.com')?.to).toEqual(['a@example.com', 'b@example.com']);
+  });
+
+  it('deduplicates repeated addresses case-insensitively', () => {
+    expect(parseMailtoUrl('mailto:A@Example.com,a@example.com')?.to).toEqual(['a@example.com']);
+  });
+
+  it('ignores entries that are not email addresses', () => {
+    expect(parseMailtoUrl('mailto:not-an-address,user@example.com')?.to).toEqual(['user@example.com']);
+  });
+
+  it('returns null when no valid address is present', () => {
+    expect(parseMailtoUrl('mailto:')).toBeNull();
+    expect(parseMailtoUrl('mailto:?subject=hi')).toBeNull();
+    expect(parseMailtoUrl('mailto:not-an-address')).toBeNull();
+  });
+
+  it('returns null for non-mailto URLs', () => {
+    expect(parseMailtoUrl('https://example.com')).toBeNull();
+    expect(parseMailtoUrl('javascript:alert(1)')).toBeNull();
+    expect(parseMailtoUrl('')).toBeNull();
+  });
+
+  it('survives malformed percent-encoding without throwing', () => {
+    expect(parseMailtoUrl('mailto:user@example.com?subject=%E0%A4%A')?.to).toEqual(['user@example.com']);
   });
 });

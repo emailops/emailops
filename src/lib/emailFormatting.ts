@@ -203,3 +203,58 @@ export function getSafeExternalUrl(value: string): string | null {
     return null;
   }
 }
+
+export interface ParsedMailto {
+  to: string[];
+  subject: string;
+  body: string;
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Parse a `mailto:` URL (RFC 6068) into compose-prefill fields. Returns null
+ * unless at least one valid address is present, so callers can fall through
+ * to their existing link handling for junk hrefs.
+ */
+export function parseMailtoUrl(value: string): ParsedMailto | null {
+  if (!/^mailto:/i.test(value)) return null;
+
+  const rest = value.slice('mailto:'.length);
+  const queryIdx = rest.indexOf('?');
+  const pathPart = queryIdx === -1 ? rest : rest.slice(0, queryIdx);
+  const queryPart = queryIdx === -1 ? '' : rest.slice(queryIdx + 1);
+
+  let subject = '';
+  let body = '';
+  const queryAddresses: string[] = [];
+  for (const pair of queryPart.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const key = (eq === -1 ? pair : pair.slice(0, eq)).toLowerCase();
+    const raw = eq === -1 ? '' : pair.slice(eq + 1);
+    if (key === 'subject') subject = safeDecode(raw.replace(/\+/g, ' '));
+    else if (key === 'body') body = safeDecode(raw.replace(/\+/g, ' '));
+    else if (key === 'to') queryAddresses.push(safeDecode(raw));
+  }
+
+  const to: string[] = [];
+  const seen = new Set<string>();
+  for (const chunk of [safeDecode(pathPart), ...queryAddresses]) {
+    for (const candidate of chunk.split(',')) {
+      const address = candidate.trim().toLowerCase();
+      if (!address.includes('@') || seen.has(address)) continue;
+      seen.add(address);
+      to.push(address);
+    }
+  }
+
+  if (to.length === 0) return null;
+  return { to, subject, body };
+}

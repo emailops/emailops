@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EmailHtmlFrame } from '@/components/shared/EmailHtmlFrame';
 import * as api from '@/lib/api';
-import { sanitizeEmailHtmlFull } from '@/lib/emailFormatting';
+import { plainTextToHtml } from '@/lib/composeHtml';
+import { type ParsedMailto, sanitizeEmailHtmlFull } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
+import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 
 export function EmailBody({
@@ -21,6 +23,16 @@ export function EmailBody({
 }) {
   const { t } = useTranslation(['inbox']);
   const addLog = useLogStore((s) => s.addLog);
+  const openComposeTab = useEmailStore((s) => s.openComposeTab);
+
+  // mailto: links in the body open a compose tab pre-filled from the link,
+  // sending from the account that received this email.
+  const handleMailtoLink = useCallback(
+    (mailto: ParsedMailto) => {
+      openComposeTab(accountId, mailto.to, mailto.subject, mailto.body ? plainTextToHtml(mailto.body) : '');
+    },
+    [accountId, openComposeTab],
+  );
   // Both async checks start unresolved. We defer rendering the iframe until
   // both have completed — otherwise images would briefly load with the default
   // pref (true), then flash to "stripped" once the pref resolves to false, and
@@ -139,6 +151,7 @@ export function EmailBody({
           highlightQuery={highlightQuery}
           scrollToFirstMatch={scrollToFirstMatch}
           className="email-body"
+          onMailtoLink={handleMailtoLink}
         />
       ) : (
         <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400">
