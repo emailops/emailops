@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.0] — 2026-06-16
+
+### Added
+
+- **Headless CLI (`emailops-cli`)** — power-user / agent command line over the
+  same `services::*` entry points the desktop app uses. One-shot mode for
+  scripting plus an interactive REPL. A signed universal binary now ships
+  alongside the app DMG, with a dedicated user guide under `docs/`.
+- **Reusable llama.cpp KV cache across chat turns.** Chat prefill drops ~50%
+  on follow-up questions; cache reuse and prefill latency are surfaced in the
+  reasoning trace.
+- **File attachments on email replies.**
+- **Compose opens directly from `mailto:` links** in email bodies.
+- **Classification uses the main AI model.** Drops the per-feature override
+  that forced a llama.cpp runtime swap on every background classification.
+- **`classify --id <ID>`** CLI flag for targeted single-email reclassification,
+  with the full result (priority / intent / topic / confidence / method)
+  returned in the response.
+
+### Fixed
+
+- **"AI returned empty response for classification" on Qwen 3.5.** One-shot
+  completions now prime Qwen 3 family models with the canonical
+  `<think>\n\n</think>` block, so they skip the unbounded reasoning span and
+  emit JSON directly. Confirmed on 10 real-inbox emails: 100% success at
+  ~1.8 s avg (was 30% at ~8.3 s avg before the fix).
+- **Release builds compile warning-free again.** Dev-only trace formatters
+  are now `#[cfg(debug_assertions)]`-gated alongside their call sites.
+- **Frontend CI.** `@biomejs/cli-darwin-x64` moved to `optionalDependencies`
+  so Linux `npm ci` no longer fails with `EBADPLATFORM`.
+
+### Security
+
+- Patched 5 npm advisories (2 high, 2 moderate, 1 low):
+  - **vite** 8.0.14 → 8.0.16 (Windows NTLMv2 hash disclosure via launch-editor
+    + `server.fs.deny` bypass on Windows alternate paths).
+  - **dompurify** 3.4.7 → 3.4.10 (Trusted Types policy survives `clearConfig`
+    + `SAFE_FOR_TEMPLATES` bypass inside `<template>`).
+  - **js-yaml** → 4.2.0 via npm `overrides` (merge-key quadratic-time DoS).
+  - **esbuild** → 0.28.1 via npm `overrides` (Deno-only NPM_CONFIG_REGISTRY
+    binary integrity bypass; not exercised by our Node-only build but pinned
+    for cleanliness).
+
 ## [0.5.2] — 2026-06-08
 
 ### Added
