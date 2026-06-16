@@ -8,7 +8,7 @@
 // thread but the reply body is missing" bug report.
 
 import { describe, expect, it } from 'vitest';
-import { shouldConsumePendingChatDraft } from './EmailView';
+import { prependDraftBody, shouldConsumePendingChatDraft } from './EmailView';
 
 describe('shouldConsumePendingChatDraft', () => {
   it('returns false when there is no pending draft', () => {
@@ -39,5 +39,25 @@ describe('shouldConsumePendingChatDraft', () => {
 
   it('returns false when the inbound is not part of the loaded thread', () => {
     expect(shouldConsumePendingChatDraft({ emailId: 'eml-xyz' }, ['eml-a', 'eml-b'])).toBe(false);
+  });
+});
+
+describe('prependDraftBody', () => {
+  // Regression for "reply textbox should be empty" — when the user clicks
+  // Reply (or the inline reply opens fresh on thread switch), the body must
+  // start at "" rather than a quoted snippet of the previous email. The AI
+  // draft flow still prepends on top of whatever is in the box; when that
+  // is empty the result must be exactly the draft, with no trailing newline
+  // pair that would push the cursor down on first focus.
+  it('returns the draft alone when there is no existing text', () => {
+    expect(prependDraftBody('Hi there,', '')).toBe('Hi there,');
+  });
+
+  it("preserves the user's typed text below the draft", () => {
+    expect(prependDraftBody('Suggested reply.', 'my notes')).toBe('Suggested reply.\n\nmy notes');
+  });
+
+  it('preserves multi-paragraph draft bodies verbatim', () => {
+    expect(prependDraftBody('Para one.\n\nPara two.', '')).toBe('Para one.\n\nPara two.');
   });
 });

@@ -34,6 +34,17 @@ use super::{
 /// Max conversation turns (user+assistant combined) kept in the prompt.
 const MAX_HISTORY_TURNS: usize = 6;
 
+/// `Utc::now()` routed through the `Clock` seam so eval cases can pin "today"
+/// to a specific date via `services::clock::install(FixedClock::new(...))`.
+/// Production wiring leaves `SystemClock` installed, so this is identical to
+/// `Utc::now()` for the live app. Only the date-shaping call sites that
+/// influence what the model sees go through this helper; latency/telemetry
+/// timers stay on bare `Utc::now()` / `Instant::now()` so traces remain
+/// accurate.
+fn now_utc() -> chrono::DateTime<Utc> {
+    chrono::DateTime::<Utc>::from_timestamp(crate::services::clock::current().now_secs(), 0).unwrap_or_else(Utc::now)
+}
+
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
@@ -136,8 +147,8 @@ pub fn build_prompt(
     system_template: &str,
     tools_section: &str,
 ) -> Vec<(String, String)> {
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let tomorrow = (Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let today = now_utc().format("%Y-%m-%d").to_string();
+    let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
     let language_instruction = if language.is_empty() {
         "Reply in the language the user writes in.".to_string()
     } else {
@@ -357,7 +368,7 @@ pub(in crate::services::chat) fn execute_tool(
 /// Integer-shaped parameter values are promoted to a JSON number so args
 /// like `limit=25` still match the tool's schema; everything else stays a
 /// string. Returns an empty `Vec` when no `<tool_call>` block is found.
-fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
+pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
     const OPEN: &str = "<tool_call>";
@@ -463,7 +474,7 @@ fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
 ///     tool schema)
 ///   - `true` / `false` → JSON bool
 ///   - anything else → string (kept verbatim)
-fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> Vec<crate::ai::provider::AiToolCall> {
+pub(crate) fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> Vec<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
     let is_valid_ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -474,10 +485,20 @@ fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> Vec<crate::
         // Branch 1: explicit `tool_call:` prefix — accepted regardless of
         // identifier (legacy salvage from when the registry wasn't threaded
         // through; still useful when the model invents a tool name).
+        //
+        // `.get(..len)` is boundary-safe: returns None when the byte boundary
+        // falls inside a multibyte UTF-8 character (e.g. Spanish `á` at byte
+        // 9..11 of "Aquí están…"). The old `[..len]` slice panicked there.
+        // This parser now runs on EVERY assistant turn (not just salvage), so
+        // a multibyte leading char anywhere in real output trips the boundary.
         let rest_owned;
-        let rest: &str = if trimmed_start.len() >= "tool_call:".len()
-            && trimmed_start[.."tool_call:".len()].eq_ignore_ascii_case("tool_call:")
-        {
+        let prefix_matches = trimmed_start
+            .get(.."tool_call:".len())
+            .is_some_and(|p| p.eq_ignore_ascii_case("tool_call:"));
+        let rest: &str = if prefix_matches {
+            // The `"tool_call:"` prefix is ASCII, so byte 10 is on a char
+            // boundary by construction whenever the prefix matched — slicing
+            // forward from there is safe.
             trimmed_start["tool_call:".len()..].trim_start()
         } else {
             // Branch 2: bare `name(args)` line. The whole line, after
@@ -655,14 +676,14 @@ fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider
 
     // Summary of today's emails (EN + ES).
     if has_today && has_summary && !has_week && !has_month {
-        let today = chrono::Utc::now().date_naive();
+        let today = now_utc().date_naive();
         let tomorrow = today + chrono::Duration::days(1);
         return Some(search_since_until(today, tomorrow));
     }
 
     // Summary of this week's emails (EN + ES).
     if has_week && has_summary && !has_month {
-        let now = chrono::Utc::now().date_naive();
+        let now = now_utc().date_naive();
         let days_since_monday = now.weekday().num_days_from_monday() as i64;
         let monday = now - chrono::Duration::days(days_since_monday);
         let next_monday = monday + chrono::Duration::days(7);
@@ -824,6 +845,12 @@ fn build_tool_round_trace(
         prompt_tokens: result.and_then(|r| r.prompt_eval_count),
         prefill_ms: result.and_then(|r| r.prefill_ms),
         cached_prompt_tokens: result.and_then(|r| r.cached_prompt_tokens),
+        prefix_plan: result.and_then(|r| r.prefix_plan).map(|s| s.to_string()),
+        sys_cached_before: result.and_then(|r| r.sys_cached_before),
+        sys_cached_after: result.and_then(|r| r.sys_cached_after),
+        system_prefix_tokens: result.and_then(|r| r.system_prefix_tokens),
+        stable_tokens: result.and_then(|r| r.stable_tokens),
+        dropped_front_tokens: result.and_then(|r| r.dropped_front_tokens),
         input: None,
         output: None,
     }
@@ -841,6 +868,12 @@ fn build_final_stream_trace(latency_ms: i64, result: Option<&crate::ai::provider
         prompt_tokens: result.and_then(|r| r.prompt_eval_count),
         prefill_ms: result.and_then(|r| r.prefill_ms),
         cached_prompt_tokens: result.and_then(|r| r.cached_prompt_tokens),
+        prefix_plan: result.and_then(|r| r.prefix_plan).map(|s| s.to_string()),
+        sys_cached_before: result.and_then(|r| r.sys_cached_before),
+        sys_cached_after: result.and_then(|r| r.sys_cached_after),
+        system_prefix_tokens: result.and_then(|r| r.system_prefix_tokens),
+        stable_tokens: result.and_then(|r| r.stable_tokens),
+        dropped_front_tokens: result.and_then(|r| r.dropped_front_tokens),
         input: None,
         output: None,
     }
@@ -977,24 +1010,14 @@ async fn run_tool_loop(
                 });
             }
 
-            // Shortcut path: the heuristic already chose the tool(s) and they
-            // have run, so the only work left is to synthesise the answer from
-            // their output. Skip the blocking `chat_with_tools` synthesis round
-            // and hand the tool results back so `run_chat_turn` can STREAM the
-            // synthesis — the user sees tokens within a second or two instead of
-            // staring at a status for the whole multi-second blocking call. The
-            // trailing message is a tool result, so `plan_answer` routes this
-            // into `StreamSynthesis`.
-            return ToolLoopOutcome {
-                messages,
-                failed_without_answer: false,
-                error: None,
-                aggregated_email_refs,
-                aggregated_draft_refs,
-                // Preseeded shortcuts hand tool results back for a streamed
-                // synthesis pass in the caller — the loop itself streamed nothing.
-                answer_streamed_live: false,
-            };
+            // The heuristic chose the tool(s) and they have run. Fall through
+            // into the normal tool loop rather than returning here: the model's
+            // first round sees the tool results and usually synthesises the
+            // answer directly, but it may also decide it needs a FOLLOW-UP tool
+            // (e.g. read a body with get_email_body before summarising). The
+            // loop can dispatch that follow-up and salvage tool calls the model
+            // emits as text; a tools-free synthesis pass cannot, and would strip
+            // such a leaked call into an empty answer.
         }
     }
 
@@ -1357,8 +1380,8 @@ async fn run_thread_bound_turn(
     // on top via the pure `build_thread_bound_system` helper.
     let language = crate::services::i18n::resolve_ai_language(&db)?;
     let language_instruction = format!("Reply in {}.", language.english_name());
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let tomorrow = (Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let today = now_utc().format("%Y-%m-%d").to_string();
+    let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
     let mut tpl_vars = std::collections::HashMap::new();
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
@@ -1466,6 +1489,12 @@ async fn run_thread_bound_turn(
             prompt_eval_count: None,
             prefill_ms: None,
             cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
         })
     } else {
         // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
@@ -2009,6 +2038,12 @@ pub async fn run_chat_turn(
                     prompt_eval_count: None,
                     prefill_ms: None,
                     cached_prompt_tokens: None,
+                    prefix_plan: None,
+                    sys_cached_before: None,
+                    sys_cached_after: None,
+                    system_prefix_tokens: None,
+                    stable_tokens: None,
+                    dropped_front_tokens: None,
                 })
             }
             // No direct text answer: the loop handed back tool results (a
@@ -2385,6 +2420,12 @@ mod tests {
             prompt_eval_count: Some(812),
             prefill_ms: Some(3950),
             cached_prompt_tokens: Some(0),
+            prefix_plan: Some("ColdPrefill"),
+            sys_cached_before: Some(2344),
+            sys_cached_after: Some(5151),
+            system_prefix_tokens: Some(5151),
+            stable_tokens: Some(805),
+            dropped_front_tokens: Some(0),
         };
         let trace = build_tool_round_trace(2, 4280, Some(&result));
         assert_eq!(trace.kind, "tool_round");
@@ -2415,6 +2456,12 @@ mod tests {
             prompt_eval_count: Some(1200),
             prefill_ms: Some(2100),
             cached_prompt_tokens: Some(0),
+            prefix_plan: Some("Extend"),
+            sys_cached_before: Some(2344),
+            sys_cached_after: Some(2344),
+            system_prefix_tokens: Some(2344),
+            stable_tokens: Some(1193),
+            dropped_front_tokens: Some(0),
         };
         let trace = build_final_stream_trace(2900, Some(&result));
         assert_eq!(trace.kind, "final_stream");
@@ -2540,6 +2587,114 @@ mod tests {
         assistant.tool_calls = Some(vec![ai_tool_call("search_emails")]);
         let messages = vec![ai_msg("user", "?"), assistant];
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    #[tokio::test]
+    async fn shortcut_continues_loop_so_model_can_call_a_follow_up_tool() {
+        // Regression: a preseeded shortcut (e.g. "summarise today's emails")
+        // used to run its tool and then return immediately, handing the tool
+        // results to a tools-free streaming synthesis pass. When the model
+        // answered that pass by emitting ANOTHER tool call (get_email_body) —
+        // as small models do for "summarise" queries — the synthesis path
+        // stripped the tool-call markup and shipped an EMPTY body. The fix lets
+        // the shortcut fall through into the tool loop, which can actually
+        // dispatch the follow-up tool and then synthesise prose.
+        //
+        // No event-sink install here, so the default NoopEventSink absorbs the
+        // loop's phase/log emits — no `seam_test_lock` needed.
+
+        // A scripted tool that returns fixed text regardless of its arguments.
+        struct ScriptedTool {
+            name: &'static str,
+            output: String,
+        }
+        #[async_trait::async_trait]
+        impl tools::Tool for ScriptedTool {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn description(&self) -> &'static str {
+                "scripted test tool"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text(self.output.clone()))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(ScriptedTool {
+                name: "search_emails",
+                output: "## Today\n- id=e1 RE: Weekly Jorge".to_string(),
+            }) as Arc<dyn tools::Tool>,
+            Arc::new(ScriptedTool {
+                name: "get_email_body",
+                output: "Full body: we ship on March 3rd.".to_string(),
+            }) as Arc<dyn tools::Tool>,
+        ]));
+
+        // Round 0: the model reacts to the preseeded search results by asking
+        // for a body (the exact shape that produced the empty answer). Round 1:
+        // with the body in hand it writes the final prose.
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![ai_tool_call("get_email_body")]),
+        });
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "We ship on March 3rd.".to_string(),
+            tool_calls: None,
+        });
+
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            vec![
+                ("system".to_string(), "SYS".to_string()),
+                ("user".to_string(), "summarise today's emails".to_string()),
+            ],
+            Some(vec![ai_tool_call("search_emails")]),
+            true,
+            &mut tool_traces,
+            &mut llm_calls,
+        )
+        .await;
+
+        // The loop continued past the shortcut: the follow-up get_email_body ran.
+        assert!(
+            tool_traces.iter().any(|t| t.name == "get_email_body"),
+            "expected the loop to dispatch the model's follow-up get_email_body call; traces: {:?}",
+            tool_traces.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+
+        // The final assistant message is real prose, not an empty body.
+        let last = outcome.messages.last().expect("at least one message");
+        assert_eq!(last.role, "assistant");
+        assert_eq!(last.content, "We ship on March 3rd.");
+
+        // …and that complete answer routes as DirectText — no extra synthesis
+        // pass that would re-strip a leaked tool call back into emptiness.
+        match plan_answer(outcome.messages) {
+            AnswerPlan::DirectText(text) => assert_eq!(text, "We ship on March 3rd."),
+            AnswerPlan::StreamSynthesis(_) => panic!("expected DirectText once the loop synthesised the answer"),
+        }
     }
 
     fn make_message(role: &str, content: &str) -> ChatMessage {
@@ -2954,6 +3109,67 @@ Preséntalos en una tabla markdown …";
         assert_eq!(calls[0].function.name, "list_pending_tasks");
     }
 
+    /// Serialise tests that mutate the global `services::clock` registry —
+    /// otherwise a parallel test that reads `now_secs()` may observe the
+    /// pinned date and assert the wrong thing.
+    fn clock_lock() -> std::sync::MutexGuard<'static, ()> {
+        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        M.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn build_prompt_reads_today_from_installed_clock() {
+        // Pinning the clock to 2024-01-15 must surface "2024-01-15" / "2024-01-16"
+        // in the rendered system message — proves the prompt's idea of "today"
+        // comes from the seam, not bare `Utc::now()`. This is the load-bearing
+        // guarantee for eval cases that pin `as_of:` against a static fixture.
+        let _g = clock_lock();
+        let pinned = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
+            .expect("valid date")
+            .and_hms_opt(0, 0, 0)
+            .expect("valid time");
+        let pinned_secs = pinned.and_utc().timestamp();
+        let clock = crate::services::clock::install_for_testing(pinned_secs);
+
+        let msgs = build_prompt(&[], &[], "q", "en", tpl(), "");
+        let system = &msgs[0].1;
+        assert!(
+            system.contains("2024-01-15"),
+            "system msg must reflect pinned today, got: {system}"
+        );
+        assert!(
+            system.contains("2024-01-16"),
+            "system msg must reflect pinned tomorrow, got: {system}"
+        );
+
+        // Reset so unrelated tests see the real clock again.
+        let _ = clock;
+        crate::services::clock::install(std::sync::Arc::new(crate::services::clock::SystemClock));
+    }
+
+    #[test]
+    fn direct_today_shortcut_uses_installed_clock_for_search_window() {
+        // The today-summary heuristic computes its since/until window via
+        // `now_utc().date_naive()`. Pinning the clock must produce a window
+        // anchored to the pinned day — the bug the demo_daily_summary case
+        // hit was that this window came from wall-clock and missed every
+        // email in the frozen demo dataset.
+        let _g = clock_lock();
+        let pinned = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
+            .expect("valid date")
+            .and_hms_opt(0, 0, 0)
+            .expect("valid time");
+        crate::services::clock::install_for_testing(pinned.and_utc().timestamp());
+
+        let calls = heuristic_direct_tools("summarize today's client emails")
+            .expect("today shortcut must match the demo prompt");
+        let args = &calls[0].function.arguments;
+        assert_eq!(args.get("since").and_then(|v| v.as_str()), Some("2024-01-15"));
+        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2024-01-16"));
+
+        crate::services::clock::install(std::sync::Arc::new(crate::services::clock::SystemClock));
+    }
+
     #[test]
     fn direct_shortcut_today_ignored_when_week_also_mentioned() {
         // "resumen" + "hoy" + "semana" — ambiguous; bail out of the today
@@ -3095,6 +3311,30 @@ Preséntalos en una tabla markdown …";
         // to find it" would re-invoke the search every render.
         let text = "I called search_emails(query=\"foo\", limit=25) to find it.";
         assert!(parse_python_call_tool_calls(text, &[]).is_empty());
+    }
+
+    #[test]
+    fn parse_python_call_tool_calls_does_not_panic_on_multibyte_leading_chars() {
+        // Real-world panic captured after the 0.1.147 migration when the
+        // assistant produced Spanish prose. The old `[..10]` byte slice
+        // cut through `á` (bytes 9..11 of `están`) and panicked with
+        // "byte index 10 is not a char boundary". This parser now runs on
+        // EVERY assistant turn (not just salvage), so any multibyte leading
+        // character in real prose would trigger the panic.
+        let cases = [
+            "Aquí están los últimos resultados:", // the exact byte boundary that panicked
+            "Sí — encontré 5 emails.",
+            "Café con leche",                   // single non-ASCII byte (under 10 chars total)
+            "❤️",                               // emoji (very multi-byte)
+            "α β γ tool_call: search_emails()", // Greek letters before the prefix; must NOT match
+        ];
+        for text in cases {
+            // The point of the test is "doesn't panic"; the result is
+            // expected to be empty for all of these because none are a
+            // structural `tool_call:` prefix at byte 0 of a line.
+            let calls = parse_python_call_tool_calls(text, &[]);
+            assert!(calls.is_empty(), "unexpected match for {text:?}: {calls:?}");
+        }
     }
 
     #[test]

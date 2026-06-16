@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EmailOps — KV cache visualizer</title>
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --panel: #fff;
+    --ink: #1a1a1a;
+    --muted: #5f6470;
+    --line: #d6d8de;
+    --hi: #0b6bff;
+    --reused: #2e7d32;       /* green — cached LCP */
+    --reused-soft: #c8e6c9;
+    --stable: #ef6c00;       /* orange — decoded fresh on seq 0 */
+    --stable-soft: #ffe0b2;
+    --volatile: #f9a825;     /* yellow — volatile tail on seq 1 */
+    --volatile-soft: #fff59d;
+    --anchor: #1565c0;       /* blue — seq 2 anchor */
+    --anchor-soft: #bbdefb;
+    --gen: #6a1b9a;          /* purple — seq 1 gen */
+    --gen-soft: #e1bee7;
+    --aux: #455a64;          /* slate — uncached aux */
+    --aux-soft: #cfd8dc;
+    --warn: #c62828;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    background: linear-gradient(180deg, #0d1b2a 0%, #1b263b 100%);
+    color: #f5f7fb;
+    padding: 22px 28px;
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  header .sub { color: #aeb7c4; font-size: 14px; }
+  main { padding: 18px 28px 72px; max-width: 1400px; margin: 0 auto; }
+  section.panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 22px;
+    margin-bottom: 16px;
+  }
+  section.panel h2 {
+    margin: 0 0 12px;
+    font-size: 14.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section.panel h2 button {
+    margin-left: auto;
+    font-size: 12.5px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 120px;
+    font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px;
+    resize: vertical;
+    background: #fbfbfd;
+  }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  button, select {
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 14px;
+    background: #fff;
+    cursor: pointer;
+  }
+  button.primary { background: var(--hi); color: #fff; border-color: var(--hi); }
+  button.primary:hover { filter: brightness(1.08); }
+  button:hover { background: #f0f2f6; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .drophint {
+    margin-top: 10px;
+    padding: 20px 14px;
+    border: 2px dashed var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 14px;
+    text-align: center;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .drophint.over { background: var(--reused-soft); border-color: var(--reused); color: #1b5e20; }
+  body.dragging-file .drophint {
+    border-color: var(--hi);
+    background: #e3f2fd;
+    color: var(--hi);
+  }
+
+  /* ── Concepts panel ─────────────────────────────────────────────── */
+  .concepts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px 18px; }
+  .concept-item { padding: 8px 0; border-bottom: 1px dotted var(--line); }
+  .concept-term { font-weight: 600; color: var(--ink); font-size: 14.5px; }
+  .concept-def { color: var(--muted); font-size: 13.5px; margin-top: 4px; line-height: 1.5; }
+  .concept-term .swatch {
+    display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 8px; vertical-align: middle;
+  }
+
+  /* ── Inventory ──────────────────────────────────────────────────── */
+  table.inventory {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  table.inventory th, table.inventory td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.inventory th {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  table.inventory td.name {
+    font: 13.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
+  table.inventory tr:hover { background: #f0f4ff; cursor: pointer; }
+  table.inventory tr.selected { background: #dde8ff; }
+  td.desc { color: var(--muted); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.badge-cell .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .tag.cached { background: var(--reused-soft); color: #1b5e20; }
+  .tag.uncached { background: var(--aux-soft); color: #263238; }
+  .tag.warmup { background: #eceff1; color: #455a64; }
+
+  /* ── Timeline strip ─────────────────────────────────────────────── */
+  .timeline { display: flex; flex-direction: column; gap: 14px; }
+  .call-row {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 14px;
+    background: #fcfcfd;
+    cursor: pointer;
+  }
+  .call-row.selected { border-color: var(--hi); box-shadow: 0 0 0 2px rgba(11,107,255,0.12); }
+  .call-row:hover { background: #f5f7fb; }
+  .call-head {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13.5px; margin-bottom: 8px;
+  }
+  .call-head .name {
+    font: 13.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #eef1f6; padding: 3px 8px; border-radius: 4px;
+  }
+  .call-head .plan { font-weight: 600; }
+  .call-head .plan.Extend { color: var(--reused); }
+  .call-head .plan.RestartFromAnchor { color: var(--hi); }
+  .call-head .plan.ColdPrefill { color: var(--warn); }
+  .call-head .plan.uncached { color: var(--aux); }
+  .call-head .meta { color: var(--muted); }
+  .call-head .badge {
+    margin-left: auto;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12.5px;
+  }
+  .badge.fresh { background: #e3f2fd; color: #0277bd; }
+  .badge.grown { background: var(--reused-soft); color: #1b5e20; }
+  .badge.wiped { background: #ffebee; color: var(--warn); }
+  .badge.anchor-hit { background: #e3f2fd; color: #0277bd; }
+  .badge.shrunk { background: #fff3e0; color: #ef6c00; }
+  .badge.passthrough { background: #eceff1; color: #455a64; }
+  .badge.warmup { background: #f3e5f5; color: #6a1b9a; }
+  .axis-bar {
+    position: relative;
+    height: 22px;
+    border-radius: 3px;
+    background: #eceff1;
+    overflow: hidden;
+    margin-bottom: 5px;
+  }
+  .axis-bar .seg {
+    position: absolute;
+    top: 0; bottom: 0;
+    border-right: 1px solid rgba(0,0,0,0.06);
+  }
+  .seg.reused   { background: var(--reused-soft);   }
+  .seg.stable   { background: var(--stable-soft);   }
+  .seg.volatile { background: var(--volatile-soft); }
+  .seg.anchor-line {
+    background: transparent;
+    border-right: 2px dashed var(--anchor);
+  }
+  .row-label {
+    font-size: 12px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase;
+    width: 80px; display: inline-block;
+  }
+  .axis-line {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+  }
+  .axis-line .axis-bar { flex: 1; }
+  .delta { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .delta strong { color: var(--ink); }
+  .delta.warn strong { color: var(--warn); }
+  .axis-scale {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11.5px; color: var(--muted); padding-left: 90px;
+  }
+
+  /* ── Anatomy ─────────────────────────────────────────────────────── */
+  .anatomy { display: flex; flex-direction: column; gap: 6px; }
+  .anatomy-block {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 13.5px;
+    border-left: 4px solid var(--line);
+  }
+  .anatomy-block .label { font-weight: 600; min-width: 220px; }
+  .anatomy-block .tk { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .anatomy-block .lifetime { margin-left: auto; display: flex; gap: 5px; }
+  .anatomy-block .badge-mini {
+    padding: 2px 8px; border-radius: 3px; font-size: 12px;
+  }
+  .lifetime .ok { background: var(--reused-soft); color: #1b5e20; }
+  .lifetime .no { background: #ffebee; color: var(--warn); }
+  .lifetime .var { background: #fff3e0; color: var(--stable); }
+  .lifetime .mix { background: #eceff1; color: #455a64; }
+  .anatomy-note {
+    font-size: 13px; color: var(--muted); margin-bottom: 10px;
+    padding: 10px 12px; background: #fff8e1; border-left: 3px solid var(--stable);
+    border-radius: 0 4px 4px 0; line-height: 1.5;
+  }
+
+  /* ── Comparison ──────────────────────────────────────────────────── */
+  .compare-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; font-size: 13.5px; }
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .compare-col h3 {
+    font-size: 13.5px; margin: 0 0 8px; font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .compare-summary {
+    padding: 12px 14px;
+    background: #f5f7fb;
+    border-radius: 6px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    grid-column: 1 / -1;
+  }
+  .compare-summary strong { color: var(--ink); }
+
+  /* ── Details ─────────────────────────────────────────────────────── */
+  .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .details-block h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .keyval { font-size: 13.5px; }
+  .keyval div { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dotted var(--line); }
+  .keyval div span:last-child { font-variant-numeric: tabular-nums; }
+  .keyval div span:first-child { color: var(--muted); }
+
+  /* ── Legend / footer ─────────────────────────────────────────────── */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .legend .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+  .empty-state {
+    color: var(--muted); font-size: 13.5px; padding: 14px 0; text-align: center;
+  }
+  details.collapsible summary {
+    cursor: pointer;
+    list-style: none;
+    color: var(--hi);
+    font-size: 13.5px;
+    margin-top: 6px;
+  }
+  details.collapsible summary::-webkit-details-marker { display: none; }
+  .scrollable { overflow-x: auto; }
+  code.inline {
+    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #eef1f6;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  /* User message snippet inside a timeline row */
+  .user-msg {
+    margin: 6px 0 8px;
+    padding: 8px 12px;
+    background: #f5f7fb;
+    border-left: 3px solid var(--stable);
+    border-radius: 0 4px 4px 0;
+    font-size: 13.5px;
+    color: var(--ink);
+    font-style: italic;
+    line-height: 1.5;
+  }
+  .user-msg .who {
+    font-weight: 600; font-style: normal; color: var(--muted);
+    margin-right: 8px; letter-spacing: 0.03em; font-size: 12px;
+    text-transform: uppercase;
+  }
+  /* Pseudo-code blocks */
+  pre.pseudo {
+    background: #0d1b2a; color: #e6f1ff; padding: 14px 18px;
+    border-radius: 6px; overflow-x: auto;
+    font: 13.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.6;
+    margin: 0 0 12px;
+  }
+  pre.pseudo .kw   { color: #fbb86c; }
+  pre.pseudo .fn   { color: #c5cae9; }
+  pre.pseudo .var  { color: #80deea; }
+  pre.pseudo .cmt  { color: #7a8aa0; font-style: italic; }
+  pre.pseudo .lit  { color: #ffd54f; }
+  /* Memory readout */
+  .mem-bar {
+    height: 20px; border-radius: 3px; background: #eceff1; overflow: hidden;
+    position: relative; margin: 8px 0;
+  }
+  .mem-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--anchor); }
+  .mem-bar .label {
+    position: absolute; right: 8px; top: 0; bottom: 0; display: flex;
+    align-items: center; font-size: 12px; color: var(--muted);
+  }
+  .config-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 8px 0; font-size: 13.5px;
+  }
+  .config-row label { color: var(--muted); }
+  .config-row input[type="number"] {
+    width: 100px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px;
+    font: 13.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .config-row select {
+    padding: 5px 10px; font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>KV cache visualizer</h1>
+  <div class="sub">Read llama.cpp KV-cache evolution across chat turns. Drop a bench JSON, paste actor logs, or pick a canned example.</div>
+</header>
+
+<main>
+
+<!-- ╔═══════════════════════ INPUT ═════════════════════════════ -->
+<section class="panel" id="input-panel">
+  <h2>Input</h2>
+  <textarea id="log-input" placeholder="Paste lines like:
+HH:MM:SS.mmm [info] ai: llamacpp kv: cached=3306 sys_cached_before=2344 sys_cached=0 prompt=5417 lcp=0 stable=5410 sys=5151 plan=ColdPrefill
+HH:MM:SS.mmm [info] ai: llamacpp kv: uncached prompt=1128 resident=3306 sys_cached=2344 evict=false
+… plus surrounding 'chat:' lines for naming."></textarea>
+  <div class="controls">
+    <button class="primary" id="parse-btn">Parse logs</button>
+    <button id="clear-btn">Clear</button>
+    <select id="example-picker">
+      <option value="">— Canned example —</option>
+      <option value="cold">1. Cold start (first ever call)</option>
+      <option value="extend">2. Within-conversation Extend (round 0 → round 1)</option>
+      <option value="anchor-hit">3. Cross-conversation anchor hit (same route)</option>
+      <option value="route-flip">4. Route-flip cold prefill (rag → tools)</option>
+      <option value="aux-noevict">5. Aux call that survives the resident</option>
+      <option value="aux-evict">6. Aux call that evicts the resident</option>
+    </select>
+    <span class="hint">Or drop a <code class="inline">reports/bench/kv_xconv_*.json</code> file →</span>
+  </div>
+  <div class="drophint" id="drophint">Drop a bench JSON here to load it (or paste its <code class="inline">llamacpp kv:</code> stderr lines above)</div>
+  <div class="config-row">
+    <label>Model (for cache-memory math):</label>
+    <select id="model-picker">
+      <option value="qwen3.5-4b">Qwen 3.5 4B (40L × 8 kv-heads × 128, f16)</option>
+      <option value="qwen3.5-9b">Qwen 3.5 9B (48L × 8 kv-heads × 128, f16)</option>
+      <option value="gemma-4-12b">Gemma 4 12B (48L × 16 kv-heads × 128, f16)</option>
+      <option value="custom">Custom</option>
+    </select>
+    <label>KV bytes/token:</label>
+    <input type="number" id="bytes-per-tok" value="163840" min="1024" step="1024">
+    <span class="hint" id="bytes-hint">= 160 KiB per cell · n_ctx 8192 → 1.25 GiB max KV pool</span>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════ INVENTORY ═════════════════════════ -->
+<section class="panel" id="inventory-panel">
+  <h2>Prompt inventory <span class="hint" id="inventory-count">(no data loaded)</span></h2>
+  <table class="inventory">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Kind</th>
+        <th class="num">Tokens</th>
+        <th class="num">System</th>
+        <th>Plan</th>
+        <th class="num">KV mem</th>
+        <th>Description (what's different)</th>
+      </tr>
+    </thead>
+    <tbody id="inventory-body">
+      <tr><td colspan="7" class="empty-state">Paste logs, drop a JSON, or pick an example above.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ╔═══════════════════════ TIMELINE ══════════════════════════ -->
+<section class="panel" id="timeline-panel">
+  <h2>Call timeline + cache state after each call</h2>
+  <div class="axis-scale" id="axis-scale">
+    <span>token 0</span>
+    <span>n_ctx = 8192</span>
+  </div>
+  <div class="timeline" id="timeline">
+    <div class="empty-state">No events yet.</div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════ ANATOMY ═══════════════════════════ -->
+<section class="panel" id="anatomy-panel">
+  <h2>Prompt anatomy (selected)</h2>
+  <div id="anatomy">
+    <div class="empty-state">Select a call above to see its prompt anatomy.</div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════ COMPARISON ════════════════════════ -->
+<section class="panel" id="comparison-panel">
+  <h2>Prompt comparison</h2>
+  <div class="compare-controls">
+    <span class="hint">Compare</span>
+    <select id="cmp-a"></select>
+    <span class="hint">vs</span>
+    <select id="cmp-b"></select>
+  </div>
+  <div class="compare-grid" id="compare-grid">
+    <div class="empty-state" style="grid-column:1/-1">Pick two prompts from the inventory above to compare.</div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════ DETAILS ═══════════════════════════ -->
+<section class="panel" id="details-panel">
+  <h2>Selected call — cell math &amp; diff vs previous</h2>
+  <div class="details-grid" id="details">
+    <div class="empty-state" style="grid-column:1/-1">Select a call in the timeline.</div>
+  </div>
+</section>
+
+<!-- ╔═══════════════════════ CONCEPTS (BOTTOM) ═════════════════ -->
+<section class="panel" id="concepts-panel">
+  <h2>Concepts &amp; glossary</h2>
+
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:18px; margin-bottom:14px;">
+    <div>
+      <h3 style="margin:0 0 6px; font-size:13px;">What is a KV-cache &ldquo;anchor&rdquo;?</h3>
+      <p style="margin:0; font-size:12.5px; color:var(--ink);">
+        The <strong>anchor</strong> is a never-evicted copy of the invariant
+        <em>system prefix</em> tokens (the system message + tool definitions, the
+        bytes every turn of every same-route conversation starts with).
+        It lives on its own sequence (<code class="inline">seq 2</code>) so a
+        brand-new conversation whose only commonality with the previous chat is
+        the system block can reuse those tokens <em>without</em> a partial
+        mid-sequence eviction — which hybrid-attention caches reject. When the
+        new prompt diverges from the working prefix but still matches the anchor,
+        the planner picks <code class="inline">RestartFromAnchor</code>: wipe
+        <code class="inline">seq 0</code>, copy the anchor cells back into
+        <code class="inline">seq 0</code>, decode only the divergent suffix.
+      </p>
+    </div>
+    <div>
+      <h3 style="margin:0 0 6px; font-size:13px;">What is the &ldquo;generation header&rdquo; / volatile tail?</h3>
+      <p style="margin:0; font-size:12.5px; color:var(--ink);">
+        Chat templates render a small <em>header</em> after the last message to
+        cue the model to speak. Under Qwen 3 with
+        <code class="inline">enable_thinking=false</code> that's literally
+        <code class="inline">&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n</code>.
+        The next turn renders the same assistant slot as a <em>history</em>
+        message — without the empty think block — so the header tokens that
+        were "the most recent bytes" become stale and can't be partially evicted
+        from hybrid-attention caches. We solve this by computing a
+        <strong>stable boundary</strong> (the byte length of the render with
+        <code class="inline">add_generation_prompt=false</code>), keeping
+        everything up to it on <code class="inline">seq 0</code>, and decoding
+        the volatile header tokens on <code class="inline">seq 1</code> only —
+        thrown away after generation.
+      </p>
+    </div>
+  </div>
+
+  <h3 style="margin:14px 0 6px; font-size:13px;">How the cache is consulted (pseudo-code)</h3>
+  <pre class="pseudo"><span class="cmt"># actor.rs::generate_with_cache — runs on the persistent llama-inference thread</span>
+<span class="kw">fn</span> <span class="fn">on_new_call</span>(prompt, <span class="var">cached</span>, <span class="var">cached_system</span>):
+    tokens          = tokenize(prompt)             <span class="cmt"># BOS + chat template</span>
+    stable_tok      = stable_boundary(tokens)      <span class="cmt"># excludes the gen header</span>
+    sys_tok         = system_prefix_tokens(tokens) <span class="cmt"># invariant leading bytes</span>
+
+    <span class="cmt"># ── 1. Decide the seq-0 plan (no partial mid-seq evictions allowed) ──</span>
+    lcp_seq0   = longest_common_prefix(<span class="var">cached</span>,        tokens)
+    lcp_anchor = longest_common_prefix(<span class="var">cached_system</span>, tokens)
+    plan = <span class="kw">match</span> (lcp_seq0, lcp_anchor):
+        lcp_seq0   == cached.len()        → <span class="lit">Extend</span>{reuse = lcp_seq0}      <span class="cmt"># pure suffix-append</span>
+        lcp_anchor == cached_system.len() → <span class="lit">RestartFromAnchor</span>{reuse}  <span class="cmt"># new convo, system matches</span>
+        <span class="kw">_</span>                                 → <span class="lit">ColdPrefill</span>                <span class="cmt"># wipe everything</span>
+
+    <span class="cmt"># ── 2. Apply the plan to the real KV ──</span>
+    <span class="kw">match</span> plan:
+        <span class="lit">Extend</span>            : <span class="cmt"># keep seq 0 as-is; lcp = reuse</span>
+        <span class="lit">RestartFromAnchor</span> : clear(seq=0); copy_kv(anchor → seq=0, len=reuse)
+        <span class="lit">ColdPrefill</span>       : clear(seq=0); clear(seq=2); <span class="var">cached_system</span> = []  <span class="cmt"># anchor wiped here ←</span>
+
+    <span class="cmt"># ── 3. Decode the divergent suffix on seq 0 (becomes new cache) ──</span>
+    decode(tokens[lcp .. stable_tok], <span class="var">seq</span>=0)
+    <span class="var">cached</span> = tokens[0 .. stable_tok]
+
+    <span class="cmt"># ── 4. Re-seed the anchor when the system prefix changed ──</span>
+    <span class="kw">if</span> sys_tok &gt; 0 <span class="kw">and</span> <span class="var">cached_system</span> != tokens[0 .. sys_tok]:
+        clear(seq=2); copy_kv(seq=0 → anchor, len=sys_tok)
+        <span class="var">cached_system</span> = tokens[0 .. sys_tok]
+
+    <span class="cmt"># ── 5. Volatile gen header + generation on seq 1 only ──</span>
+    copy_kv(seq=0 → seq=1)                          <span class="cmt"># cells shared via tagging, no copy cost</span>
+    decode(tokens[stable_tok .. end], <span class="var">seq</span>=1)    <span class="cmt"># gen header — thrown away next call</span>
+    output = sample_loop(<span class="var">seq</span>=1)
+
+<span class="cmt"># For aux one-shots (cache_prompt=false):</span>
+<span class="kw">fn</span> <span class="fn">on_aux_call</span>(prompt, <span class="var">cached</span>):
+    <span class="kw">if</span> aux_prompt + reserve <span class="kw">fits beside</span> cached:
+        decode(prompt, <span class="var">seq</span>=1); generate(<span class="var">seq</span>=1)     <span class="cmt"># seq 0 untouched</span>
+    <span class="kw">else</span>:
+        clear_all(); <span class="var">cached</span> = []; <span class="var">cached_system</span> = []  <span class="cmt"># sacrifice resident</span>
+        decode(prompt, <span class="var">seq</span>=1); generate(<span class="var">seq</span>=1)
+</pre>
+
+  <h3 style="margin:18px 0 8px; font-size:14.5px;">Badges in the timeline</h3>
+  <div class="concepts" id="badges-list">
+    <div class="concept-item">
+      <div class="concept-term">🌳 Anchor hit</div>
+      <div class="concept-def">
+        Fires when the actor picked <code class="inline">RestartFromAnchor</code>:
+        the new prompt diverged from <code class="inline">seq 0</code> (so it
+        can't <code class="inline">Extend</code>) but its leading tokens still
+        match the system anchor on <code class="inline">seq 2</code>. The actor
+        wipes <code class="inline">seq 0</code>, copies the anchor cells back
+        into <code class="inline">seq 0</code> (free — same cells, just retagged),
+        and decodes only the divergent suffix. <strong>The textbook good case</strong>
+        for a brand-new conversation on the same route as the previous one — you
+        save the entire system-prefix prefill (the slowest part of any LLM call
+        on M1 / CPU).
+      </div>
+    </div>
+    <div class="concept-item">
+      <div class="concept-term">🌱 Fresh</div>
+      <div class="concept-def">
+        First cached call after the cache was empty or just wiped. Nothing to
+        reuse; full prefill happens. Expected for the very first chat after a
+        model load, or right after a <code class="inline">ColdPrefill</code>.
+      </div>
+    </div>
+    <div class="concept-item">
+      <div class="concept-term">🪴 Grown</div>
+      <div class="concept-def">
+        Within-conversation Extend: the new prompt is a strict suffix-append
+        of the resident <code class="inline">seq 0</code>
+        (<code class="inline">lcp == cached.len()</code>). Reuses ~95% — only
+        the newly-appended tail (the next turn, or the tool result added
+        between rounds) gets decoded.
+      </div>
+    </div>
+    <div class="concept-item">
+      <div class="concept-term">🔥 Wiped &amp; reseeded</div>
+      <div class="concept-def">
+        <code class="inline">ColdPrefill</code> that took out a populated
+        anchor. Happens on a <strong>route flip</strong> (rag↔tools changes
+        the system message bytes) or any other system-message change. The
+        previous anchor is invalid, so the actor clears it before re-prefilling
+        seq 0, then seeds a fresh anchor from the new system prefix.
+      </div>
+    </div>
+    <div class="concept-item">
+      <div class="concept-term">❄️ Evicted resident</div>
+      <div class="concept-def">
+        An aux <code class="inline">cache_prompt=false</code> call (large
+        rerank, lens extraction, etc.) couldn't fit beside the resident chat
+        prefix in the cell budget, so the actor sacrificed seq 0 to make
+        room. The next chat turn cold-prefills from scratch — visible as a
+        cold call right after the aux row.
+      </div>
+    </div>
+    <div class="concept-item">
+      <div class="concept-term">· Passthrough</div>
+      <div class="concept-def">
+        Aux call that ran entirely on <code class="inline">seq 1</code> without
+        evicting. The resident chat prefix is untouched — the next chat turn
+        can still Extend or anchor-hit.
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin:18px 0 8px; font-size:14.5px;">All terms</h3>
+  <div class="concepts" id="concepts-list"></div>
+
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--reused-soft)"></span>cached LCP (reused, free)</span>
+    <span><span class="swatch" style="background:var(--stable-soft)"></span>decoded on seq 0 (new cache)</span>
+    <span><span class="swatch" style="background:var(--volatile-soft)"></span>volatile tail on seq 1 (thrown away)</span>
+    <span><span class="swatch" style="background:var(--anchor-soft)"></span>seq 2 anchor (system prefix)</span>
+    <span><span class="swatch" style="background:var(--aux-soft)"></span>uncached aux (one-shot on seq 1)</span>
+  </div>
+</section>
+
+</main>
+
+<script>
+'use strict';
+
+// ╔═══════════════════════════════════════════════════════════════════
+// ║ CONCEPTS — the inline glossary. Sourced from src-tauri/src/ai/
+// ║ llama_cpp/{planner,actor,runtime}.rs docstrings.
+// ╚═══════════════════════════════════════════════════════════════════
+const CONCEPTS = [
+  { term: 'KV cache', swatch: '--reused-soft', def:
+    'Per-token key/value tensors llama.cpp computed during decode(). On the next call, tokens at positions where the KV is still valid don\'t need to be decoded again — that\'s "prefill reuse". On an M1 CPU/Metal, prefill is ~80% of every multi-second LLM call, so cache reuse is the single biggest latency lever.' },
+  { term: 'Cell', def:
+    'One physical KV-storage slot. The context allocates n_ctx (here 8192) cells up front. Every token in any sequence consumes cells from this one pool.' },
+  { term: 'Sequence', def:
+    'A logical token stream tagged onto cells. llama.cpp lets you tag the same cell with multiple sequence IDs at once.' },
+  { term: 'Unified KV cache (with_kv_unified(true))', def:
+    'Mode where a cell can carry multiple seq tags simultaneously. Two sequences whose tokens match byte-for-byte share the SAME cells — they don\'t double-count against n_ctx. Diverging tokens get separate cells.' },
+  { term: 'seq 0 — working prompt', swatch: '--stable-soft', def:
+    'Holds the prompt prefix of the current chat call. Extended across turns when the new prompt purely appends to it (the "Extend" plan).' },
+  { term: 'seq 1 — generation scratch', swatch: '--gen-soft', def:
+    'Copied from seq 0 at the start of each call; the volatile generation header + sampled tokens land here. Fully cleared at the start of the next call so it never pollutes seq 0\'s reusable prefix.' },
+  { term: 'seq 2 — system anchor', swatch: '--anchor-soft', def:
+    'Never-evicted copy of the invariant system prefix. Lets a NEW conversation that shares only the system block reuse those tokens without a partial mid-sequence eviction (which hybrid-attention caches reject).' },
+  { term: 'LCP (longest common prefix)', def:
+    'How many leading tokens of the new prompt match what\'s already in the cache. Capped at new.len()-1 so at least one token decodes (you need fresh logits to sample).' },
+  { term: 'Stable boundary', def:
+    'Token index up to which the prompt re-appears verbatim in the next turn. Everything after it is the "volatile tail" — Qwen\'s <|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n with enable_thinking=false, for example. Cached on seq 1 only.' },
+  { term: 'Plan: Extend', swatch: '--reused-soft', def:
+    'New prompt purely extends the resident seq-0 prefix. Keep seq 0; decode only the new tail. This is the within-conversation case where round 0 → round 1 reuses ~95%.' },
+  { term: 'Plan: RestartFromAnchor', swatch: '--anchor-soft', def:
+    'New prompt diverges from seq 0 but matches the system anchor (seq 2). Wipe seq 0, copy the anchor back in, decode the rest. This is the cross-conversation case where chat 2 reuses chat 1\'s system prefix.' },
+  { term: 'Plan: ColdPrefill', def:
+    'New prompt matches neither seq 0 nor the anchor (route flip, or no anchor yet). Wipe seq 0 AND the (stale) anchor; re-prefill everything; re-seed the anchor afterward.' },
+  { term: 'cache_prompt = false (aux call)', swatch: '--aux-soft', def:
+    'One-shot prompts (rewrite/rerank/extraction/warmup) that would only clobber the chat prefix if they touched seq 0. They prefill + generate entirely on seq 1, leaving seq 0 untouched — unless the aux prompt + reserve doesn\'t fit in the cells left over, in which case the resident is evicted.' },
+];
+
+// ╔═══════════════════════════════════════════════════════════════════
+// ║ CANNED EXAMPLES — log snippets that exercise each scenario.
+// ╚═══════════════════════════════════════════════════════════════════
+// Each example carries an optional userMessages dict keyed by call index
+// (0-based across the whole event list) so the timeline can render the
+// "user said" snippet next to its call.
+const EXAMPLES = {
+  cold: {
+    log: `15:30:50.686 [info] ai: llamacpp kv: uncached prompt=2 resident=0 sys_cached=0 evict=false`,
+    userMessages: { 0: '(warmup — no user message; the runtime sends "hi" to force GPU buffer alloc)' },
+  },
+
+  extend: {
+    log: `15:31:23.378 [info] chat: thinking…
+15:31:23.378 [info] chat: route: ToolsFirst (heuristic matched: today) [0ms]
+15:31:23.384 [info] chat: stage: tool_loop
+15:31:23.386 [info] chat: llm round 0: calling chat_stream_with_tools (4 msgs in context)
+15:31:23.508 [info] ai: llamacpp kv: cached=0 sys_cached_before=0 sys_cached=0 prompt=5410 lcp=0 stable=5404 sys=5151 plan=ColdPrefill
+15:31:45.000 [info] chat: llm round 1: calling chat_stream_with_tools (6 msgs in context)
+15:31:45.300 [info] ai: llamacpp kv: cached=5404 sys_cached_before=5151 sys_cached=5151 prompt=7162 lcp=5404 stable=7156 sys=5151 plan=Extend { reuse: 5404 }`,
+    userMessages: {
+      0: 'Summarise the emails I have received today. Format as a table.',
+      1: '(same user turn — round 1 sees round 0\'s assistant tool_call + the search_emails tool result appended)',
+    },
+  },
+
+  'anchor-hit': {
+    log: `15:27:07.220 [info] chat: thinking…
+15:27:07.220 [info] chat: route: RagFirst [0ms]
+15:27:18.564 [info] ai: llamacpp kv: uncached prompt=1128 resident=0 sys_cached=0 evict=false
+15:27:27.409 [info] ai: llamacpp kv: cached=0 sys_cached_before=0 sys_cached=0 prompt=3313 lcp=0 stable=3306 sys=2344 plan=Extend { reuse: 0 }
+15:27:54.981 [info] chat: thinking…
+15:27:54.984 [info] chat: route: RagFirst [2ms]
+15:27:55.010 [info] ai: llamacpp kv: uncached prompt=131 resident=3306 sys_cached=2344 evict=false
+15:27:57.138 [info] ai: llamacpp kv: uncached prompt=1104 resident=3306 sys_cached=2344 evict=false
+15:28:05.767 [info] ai: llamacpp kv: cached=3306 sys_cached_before=2344 sys_cached=2344 prompt=3315 lcp=2344 stable=3308 sys=2344 plan=RestartFromAnchor { reuse: 2344 }`,
+    userMessages: {
+      0: '(rerank prompt — internal, ranks 20 retrieved candidates against the user query)',
+      1: 'What invoices have I received recently?',
+      2: '(retrieval rewrite for chat 2)',
+      3: '(rerank for chat 2 retrieval)',
+      4: 'Summarize what my unread emails are about',
+    },
+  },
+
+  'route-flip': {
+    log: `15:31:04.000 [info] chat: thinking…
+15:31:04.000 [info] chat: route: RagFirst [0ms]
+15:31:04.697 [info] ai: llamacpp kv: cached=0 sys_cached_before=0 sys_cached=0 prompt=3313 lcp=0 stable=3306 sys=2344 plan=Extend { reuse: 0 }
+15:31:23.378 [info] chat: thinking…
+15:31:23.378 [info] chat: route: ToolsFirst (heuristic matched: today) [0ms]
+15:31:23.384 [info] chat: stage: tool_loop
+15:31:23.384 [info] chat: tool call → search_emails(...)
+15:31:23.386 [info] chat: llm round 0: calling chat_stream_with_tools (4 msgs in context)
+15:31:23.508 [info] ai: llamacpp kv: cached=3306 sys_cached_before=2344 sys_cached=0 prompt=5417 lcp=0 stable=5410 sys=5151 plan=ColdPrefill`,
+    userMessages: {
+      0: 'What invoices have I received recently?',
+      1: 'Summarise the emails I have received today. Format as a markdown table with Sender | Subject | Time | Urgency | Summary.',
+    },
+  },
+
+  'aux-noevict': {
+    log: `15:27:07.220 [info] chat: thinking…
+15:27:07.220 [info] chat: route: RagFirst [0ms]
+15:27:27.409 [info] ai: llamacpp kv: cached=0 sys_cached_before=0 sys_cached=0 prompt=3313 lcp=0 stable=3306 sys=2344 plan=Extend { reuse: 0 }
+15:27:54.981 [info] chat: thinking…
+15:27:54.984 [info] chat: route: RagFirst [2ms]
+15:27:55.010 [info] ai: llamacpp kv: uncached prompt=131 resident=3306 sys_cached=2344 evict=false
+15:27:57.138 [info] ai: llamacpp kv: uncached prompt=1104 resident=3306 sys_cached=2344 evict=false`,
+    userMessages: {
+      0: 'What invoices have I received recently?',
+      1: '(retrieval rewrite — small aux, fits beside resident, no eviction)',
+      2: '(rerank — also fits, no eviction)',
+    },
+  },
+
+  'aux-evict': {
+    log: `15:27:07.220 [info] chat: thinking…
+15:27:07.220 [info] chat: route: RagFirst [0ms]
+15:27:27.409 [info] ai: llamacpp kv: cached=0 sys_cached_before=0 sys_cached=0 prompt=7100 lcp=0 stable=7094 sys=2344 plan=Extend { reuse: 0 }
+15:28:02.000 [info] ai: llamacpp kv: uncached prompt=6800 resident=7094 sys_cached=2344 evict=true`,
+    userMessages: {
+      0: '(long chat turn with many sources — fills most of n_ctx)',
+      1: '(huge extraction prompt — can\'t fit beside resident; sacrifices the chat prefix)',
+    },
+  },
+};
+
+// ╔═══════════════════════════════════════════════════════════════════
+// ║ PARSER — actor logs + chat context → ordered event list with names.
+// ╚═══════════════════════════════════════════════════════════════════
+
+const N_CTX = 8192;
+
+// Approx KV-cache bytes per token by model. Formula:
+//   2 (K+V) × num_layers × num_kv_heads × head_dim × bytes_per_elem
+// llama-cpp-2 defaults to f16 (2 bytes), so I quote f16 here. Values are
+// best-effort from the public HF configs.
+const MODEL_KV_BYTES = {
+  'qwen3.5-4b':  2 * 40 * 8  * 128 * 2,   // 163,840
+  'qwen3.5-9b':  2 * 48 * 8  * 128 * 2,   // 196,608
+  'gemma-4-12b': 2 * 48 * 16 * 128 * 2,   // 393,216
+};
+// User-overridable; defaults to qwen3.5-4b's f16 value.
+let BYTES_PER_TOK = MODEL_KV_BYTES['qwen3.5-4b'];
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024*1024) return `${(n/1024).toFixed(1)} KiB`;
+  if (n < 1024*1024*1024) return `${(n/1024/1024).toFixed(1)} MiB`;
+  return `${(n/1024/1024/1024).toFixed(2)} GiB`;
+}
+
+// Each cached event carries an optional `userMessage` field — extracted from
+// the bench JSON's input snapshot, or hardcoded on canned examples. Pure-text;
+// no markup is interpreted in the timeline render.
+
+// Prompt-kind labels for the description prefix. Each cached event resolves
+// to one of these via stage + route + round.
+const KIND_LABELS = {
+  chat_answer:   'chat answer (RagFirst final stream)',
+  tool_round:    'tool round (model decides tool calls + runs the loop)',
+  tool_synth:    'synthesis pass (no tool round answered — stream over the results)',
+  warmup:        'startup warmup (1 token, never user-visible)',
+  aux_rewrite:   'retrieval aux — query rewrite for embedding search',
+  aux_rerank:    'retrieval aux — rerank retrieved candidates',
+  aux_other:     'aux one-shot (rewrite/rerank/extraction/etc.)',
+  unknown:       'cached call (kind could not be inferred)',
+};
+
+/** Parse a multi-line log string into an ordered event[] with naming context. */
+function parseLogs(text) {
+  const lines = text.split(/\r?\n/);
+  const events = [];
+  let chatIndex = 0;
+  let route = null;
+  let stage = null;
+  let lastRound = null;
+  let auxSeen = 0;
+  let toolLoopActive = false;
+  // For naming the call that follows a `llm round K` line:
+  let pendingRound = null;
+
+  const re = {
+    chatBoundary: /chat: thinking…/,
+    route:        /chat: route: (RagFirst|ToolsFirst)/,
+    stage:        /chat: stage: (\w+)/,
+    toolLoopSkip: /chat: stage: tool_loop skipped/,
+    llmRound:     /chat: llm round (\d+)/,
+    cachedKv:     /llamacpp kv: cached=(\d+) (?:sys_cached_before=(\d+) )?sys_cached=(\d+) prompt=(\d+) lcp=(\d+) stable=(\d+) sys=(\d+) plan=(\w+)(?:\s*\{[^}]*reuse:\s*(\d+)[^}]*\})?/,
+    uncachedKv:   /llamacpp kv: uncached prompt=(\d+) resident=(\d+) sys_cached=(\d+) evict=(true|false)/,
+    timestamp:    /^(\d{2}:\d{2}:\d{2}\.\d{3})/,
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const ts = (line.match(re.timestamp) || [])[1] || null;
+
+    if (re.chatBoundary.test(line)) {
+      chatIndex++;
+      route = null;
+      stage = null;
+      lastRound = null;
+      pendingRound = null;
+      toolLoopActive = false;
+      continue;
+    }
+    let m;
+    if ((m = line.match(re.route))) {
+      route = m[1].toLowerCase().replace('first', '');  // 'rag' | 'tools'
+      if (chatIndex === 0) chatIndex = 1;  // log started mid-chat
+      continue;
+    }
+    if (re.toolLoopSkip.test(line)) { stage = 'stream'; continue; }
+    if ((m = line.match(re.stage))) {
+      stage = m[1];
+      if (stage === 'tool_loop') toolLoopActive = true;
+      continue;
+    }
+    if ((m = line.match(re.llmRound))) {
+      pendingRound = parseInt(m[1], 10);
+      continue;
+    }
+    if ((m = line.match(re.cachedKv))) {
+      const event = {
+        kind: 'cached',
+        ts,
+        chatIndex: chatIndex || 1,
+        route,
+        stage,
+        round: pendingRound,
+        cached: +m[1],
+        sysBefore: m[2] !== undefined ? +m[2] : null,
+        sysAfter: +m[3],
+        prompt: +m[4],
+        lcp: +m[5],
+        stable: +m[6],
+        sys: +m[7],
+        plan: m[8],
+        reuse: m[9] !== undefined ? +m[9] : null,
+      };
+      // Classify the kind of cached prompt (used for the description prefix
+      // and to colour the inventory row).
+      if (pendingRound !== null) event.callKind = 'tool_round';
+      else if (route === 'rag' && (stage === 'stream' || stage === null)) event.callKind = 'chat_answer';
+      else if (route === 'tools') event.callKind = 'tool_synth';
+      else event.callKind = 'unknown';
+      pendingRound = null;
+      events.push(event);
+      continue;
+    }
+    if ((m = line.match(re.uncachedKv))) {
+      auxSeen++;
+      const prompt = +m[1];
+      const ev = {
+        kind: 'uncached',
+        ts,
+        chatIndex: chatIndex || 1,
+        route,
+        stage,
+        prompt,
+        resident: +m[2],
+        sysBefore: +m[3],
+        evict: m[4] === 'true',
+        seq: auxSeen,
+      };
+      if (prompt <= 4) ev.callKind = 'warmup';
+      else if (stage === 'retrieve' && prompt < 300) ev.callKind = 'aux_rewrite';
+      else if (stage === 'retrieve') ev.callKind = 'aux_rerank';
+      else ev.callKind = 'aux_other';
+      events.push(ev);
+      continue;
+    }
+  }
+  return events;
+}
+
+/** Walk the events left-to-right; attach a short name, a description of
+ *  what's NEW vs the previous cached prompt, and a computed BEFORE/AFTER
+ *  cache state (so the timeline strip can render without any inference). */
+function deriveInventory(events) {
+  const multiChat = events.length && Math.max(...events.map(e => e.chatIndex)) > 1;
+  const prefixForChat = i => multiChat ? `c${i}` : 'c';
+  const prefixForAux  = i => multiChat ? `a${i}` : 'a';
+
+  // Per-chat counters for synth/round disambiguation
+  const auxCounters = new Map();  // chatIndex -> n
+  let lastCached = null;
+  let runCached = 0, runSys = 0;
+
+  for (const e of events) {
+    // Capture the BEFORE state from the running tracker. The log's
+    // sys_cached_before, when present, is authoritative (corrects drift if
+    // we missed lines).
+    e.cachedBefore = runCached;
+    if (e.kind === 'cached') {
+      if (e.sysBefore !== null) {
+        if (e.sysBefore !== runSys) e.driftBefore = { runSys, logSys: e.sysBefore };
+        runSys = e.sysBefore;
+      }
+      // Name: derive from route + stage + round
+      const cp = prefixForChat(e.chatIndex);
+      if (e.round !== null) {
+        e.name = `${cp}_tool_round${e.round}`;
+      } else if (e.stage === 'tool_loop' || (e.route === 'tools' && e.stage === 'stream')) {
+        e.name = `${cp}_tool_synth`;
+      } else if (e.route === 'rag') {
+        e.name = `${cp}_rag`;
+      } else {
+        // Mid-log paste with no route context: best-effort
+        e.name = `${cp}_call`;
+      }
+
+      // AFTER state: seq 0 ends at stable_tok; anchor ends at sys (after seed)
+      e.cachedAfter = e.stable;
+      e.sysAfter = e.sys > 0 ? e.sys : runSys;
+      runCached = e.cachedAfter;
+      runSys = e.sysAfter;
+
+      // What's the badge?
+      if (e.plan === 'Extend' && e.lcp > 0)         e.badge = 'grown';
+      else if (e.plan === 'Extend' && e.lcp === 0 && lastCached === null) e.badge = 'fresh';
+      else if (e.plan === 'Extend' && e.lcp === 0) e.badge = 'fresh';
+      else if (e.plan === 'RestartFromAnchor')      e.badge = 'anchor-hit';
+      else if (e.plan === 'ColdPrefill' && (e.sysBefore || 0) > 0) e.badge = 'wiped';
+      else if (e.plan === 'ColdPrefill')            e.badge = 'fresh';
+
+      // Description: what's NEW vs the previous cached prompt?
+      e.description = describeCached(e, lastCached);
+      lastCached = e;
+    } else { // uncached
+      const ap = prefixForAux(e.chatIndex);
+      const n = (auxCounters.get(e.chatIndex) || 0) + 1;
+      auxCounters.set(e.chatIndex, n);
+      if (e.sysBefore !== runSys) e.driftBefore = { runSys, logSys: e.sysBefore };
+      runSys = e.sysBefore;  // log's value is authoritative
+      // Heuristic naming
+      if (e.prompt <= 4) {
+        e.name = 'warmup';
+        e.badge = 'warmup';
+      } else if (e.stage === 'retrieve' && e.prompt < 300) {
+        e.name = `${ap}_rewrite`;
+        e.badge = 'passthrough';
+      } else if (e.stage === 'retrieve') {
+        e.name = `${ap}_rerank`;
+        e.badge = e.evict ? 'shrunk' : 'passthrough';
+      } else {
+        e.name = `${ap}${n}`;
+        e.badge = e.evict ? 'shrunk' : 'passthrough';
+      }
+      e.cachedAfter = e.evict ? 0 : runCached;
+      e.sysAfter = e.evict ? 0 : runSys;
+      runCached = e.cachedAfter;
+      runSys = e.sysAfter;
+      e.description = describeUncached(e);
+    }
+  }
+  return events;
+}
+
+function describeCached(e, prev) {
+  const kindPrefix = `[${KIND_LABELS[e.callKind] || 'cached call'}] `;
+  let body;
+  if (!prev) {
+    body = e.plan === 'ColdPrefill'
+      ? `First cached call. Decoded ${e.stable} stable tokens on seq 0; anchor seeded with ${e.sys} system tokens.`
+      : `First cached call (anchor cold). Decoded ${e.stable} stable tokens on seq 0; anchor seeded with ${e.sys} system tokens.`;
+  } else if (e.plan === 'Extend') {
+    const added = e.stable - e.lcp;
+    body = `Extends ${prev.name}: reused ${e.lcp} tokens, decoded ${added} new tokens (${guessExtensionReason(e, prev)}).`;
+  } else if (e.plan === 'RestartFromAnchor') {
+    body = `Diverges from ${prev.name} after the system block but the anchor matches: reused ${e.reuse ?? e.lcp} anchor tokens, decoded ${e.stable - (e.reuse ?? e.lcp)} new tokens (different user turn — same route).`;
+  } else if (e.plan === 'ColdPrefill') {
+    if (e.sys !== prev.sys) {
+      const delta = e.sys - prev.sys;
+      const verb = delta > 0 ? 'grew' : 'shrunk';
+      const why = (prev.route !== e.route)
+        ? `route flip (${prev.route} → ${e.route}): tools= injection ${verb === 'grew' ? 'added' : 'removed'} ~${Math.abs(delta)} tokens to/from the system message`
+        : `system message changed (sys ${prev.sys} → ${e.sys})`;
+      body = `Cold prefill — ${why}. Anchor wiped (was ${prev.sys}) and reseeded to ${e.sys}.`;
+    } else {
+      body = `Cold prefill — system bytes diverge before the anchor end. Wiped and reseeded.`;
+    }
+  } else {
+    body = '';
+  }
+  return kindPrefix + body;
+}
+
+function guessExtensionReason(e, prev) {
+  // Same call group — within-conversation tool round?
+  if (prev && prev.chatIndex === e.chatIndex && prev.round !== null && e.round !== null) {
+    return `tool round ${prev.round} → ${e.round}: assistant tool_call + tool result`;
+  }
+  if (e.lcp === 0) return 'first decode — no prefix reused yet';
+  return 'history extended with new turn';
+}
+
+function describeUncached(e) {
+  const kindPrefix = `[${KIND_LABELS[e.callKind] || 'aux call'}] `;
+  const where = e.evict
+    ? `evicted the resident chat prefix (was ${e.resident} tok) to fit beside ${e.prompt} prompt + reserve`
+    : `runs entirely on seq 1 — leaves resident ${e.resident}-tok chat prefix untouched`;
+  return kindPrefix + where + '.';
+}
+
+// ╔═══════════════════════════════════════════════════════════════════
+// ║ RENDERERS
+// ╚═══════════════════════════════════════════════════════════════════
+
+let STATE = { events: [], selectedIdx: null };
+
+function render() {
+  renderInventory();
+  renderTimeline();
+  renderCompareSelects();
+  renderSelected();
+}
+
+function renderInventory() {
+  const body = document.getElementById('inventory-body');
+  const cnt = document.getElementById('inventory-count');
+  if (!STATE.events.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty-state">Paste logs, drop a JSON, or pick an example above.</td></tr>';
+    cnt.textContent = '(no data loaded)';
+    return;
+  }
+  cnt.textContent = `(${STATE.events.length} events · ${fmtBytes(BYTES_PER_TOK * N_CTX)} max KV pool)`;
+  body.innerHTML = STATE.events.map((e, i) => {
+    const kindTag = e.kind === 'cached'
+      ? `<span class="tag cached">cached</span>`
+      : `<span class="tag ${e.callKind === 'warmup' ? 'warmup' : 'uncached'}">${e.callKind === 'warmup' ? 'warmup' : 'uncached'}</span>`;
+    const plan = e.kind === 'cached' ? e.plan : '—';
+    const planClass = e.kind === 'cached' ? e.plan : 'uncached';
+    const sys = e.kind === 'cached' ? e.sys : '—';
+    const memCells = totalCellsAfter(e);
+    return `<tr class="${i === STATE.selectedIdx ? 'selected' : ''}" data-idx="${i}">
+      <td class="name">${e.name}</td>
+      <td class="badge-cell">${kindTag}</td>
+      <td class="num">${e.prompt}</td>
+      <td class="num">${sys}</td>
+      <td><span class="plan ${planClass}">${plan}</span></td>
+      <td class="num" title="${memCells} cells × ${fmtBytes(BYTES_PER_TOK)}/cell">${fmtBytes(memCells * BYTES_PER_TOK)}</td>
+      <td class="desc">${escapeHtml(e.description || '')}</td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('tr[data-idx]').forEach(tr => {
+    tr.addEventListener('click', () => select(+tr.dataset.idx));
+  });
+}
+
+/** Approx total cells held in the KV pool AFTER an event, accounting for
+ *  the seq-0 / seq-2 overlap (unified KV shares matching leading cells). */
+function totalCellsAfter(e) {
+  const s0 = e.cachedAfter || 0;
+  const s2 = e.sysAfter || 0;
+  const overlap = Math.min(s0, s2);
+  return s0 + s2 - overlap;
+}
+
+function renderTimeline() {
+  const ax = document.getElementById('timeline');
+  if (!STATE.events.length) {
+    ax.innerHTML = '<div class="empty-state">No events yet.</div>';
+    return;
+  }
+  const pct = v => Math.max(0, Math.min(100, (v / N_CTX) * 100)).toFixed(2);
+
+  ax.innerHTML = STATE.events.map((e, i) => {
+    const selected = i === STATE.selectedIdx ? ' selected' : '';
+    const badge = e.badge ? `<span class="badge ${e.badge}">${badgeIcon(e.badge)} ${badgeText(e.badge)}</span>` : '';
+
+    const userMsgRow = e.userMessage
+      ? `<div class="user-msg"><span class="who">User:</span>${escapeHtml(e.userMessage)}</div>`
+      : '';
+    const memRow = renderMemoryRow(e);
+
+    if (e.kind === 'cached') {
+      const reusedW = pct(e.lcp);
+      const stableW = pct(e.stable - e.lcp);
+      const volatileW = pct(e.prompt - e.stable);
+      const anchorPos = pct(e.sys);
+
+      // CACHE state row (after the call)
+      const seq0W = pct(e.cachedAfter);
+      const seq2W = pct(e.sysAfter);
+
+      const delta = renderCachedDelta(e, i);
+      const kindLabel = KIND_LABELS[e.callKind] || 'cached';
+
+      return `<div class="call-row${selected}" data-idx="${i}" title="Click for details">
+        <div class="call-head">
+          <span class="name">${e.name}</span>
+          <span class="plan ${e.plan}">plan=${e.plan}${e.reuse !== null ? `{${e.reuse}}` : ''}</span>
+          <span class="meta">${kindLabel.split(' (')[0]} · prompt=${e.prompt} · stable=${e.stable} · sys=${e.sys}</span>
+          ${badge}
+        </div>
+        ${userMsgRow}
+        <div class="axis-line"><span class="row-label">prompt</span>
+          <div class="axis-bar" title="prompt=${e.prompt}  lcp=${e.lcp}  stable=${e.stable}">
+            <div class="seg reused" style="left:0; width:${reusedW}%" title="reused LCP: ${e.lcp} tok"></div>
+            <div class="seg stable" style="left:${reusedW}%; width:${stableW}%" title="decoded on seq 0: ${e.stable - e.lcp} tok"></div>
+            <div class="seg volatile" style="left:${(+reusedW + +stableW).toFixed(2)}%; width:${volatileW}%" title="volatile tail on seq 1: ${e.prompt - e.stable} tok"></div>
+            <div class="seg anchor-line" style="left:${anchorPos}%; width:1px" title="system prefix ends at token ${e.sys}"></div>
+          </div></div>
+        <div class="axis-line"><span class="row-label">seq 0</span>
+          <div class="axis-bar" title="seq 0 after: ${e.cachedAfter} tok = ${e.name} stable">
+            <div class="seg stable" style="left:0; width:${seq0W}%"></div>
+          </div></div>
+        <div class="axis-line"><span class="row-label">seq 2</span>
+          <div class="axis-bar" title="seq 2 anchor after: ${e.sysAfter} tok">
+            <div class="seg" style="background:var(--anchor-soft); left:0; width:${seq2W}%"></div>
+          </div></div>
+        ${memRow}
+        ${delta}
+      </div>`;
+    } else { // uncached
+      const auxW = pct(e.prompt);
+      const seq0W = pct(e.cachedAfter);
+      const seq2W = pct(e.sysAfter);
+      const delta = renderUncachedDelta(e, i);
+      const kindLabel = KIND_LABELS[e.callKind] || 'aux';
+      return `<div class="call-row${selected}" data-idx="${i}">
+        <div class="call-head">
+          <span class="name">${e.name}</span>
+          <span class="plan uncached">cache_prompt=false${e.evict ? ' · evict=true' : ''}</span>
+          <span class="meta">${kindLabel.split(' (')[0].split(' —')[0]} · prompt=${e.prompt} · resident=${e.resident}</span>
+          ${badge}
+        </div>
+        ${userMsgRow}
+        <div class="axis-line"><span class="row-label">prompt</span>
+          <div class="axis-bar" title="aux prompt on seq 1: ${e.prompt} tok (thrown away)">
+            <div class="seg" style="background:var(--aux-soft); left:0; width:${auxW}%"></div>
+          </div></div>
+        <div class="axis-line"><span class="row-label">seq 0</span>
+          <div class="axis-bar" title="seq 0 after: ${e.cachedAfter} tok">
+            <div class="seg stable" style="left:0; width:${seq0W}%"></div>
+          </div></div>
+        <div class="axis-line"><span class="row-label">seq 2</span>
+          <div class="axis-bar" title="seq 2 anchor after: ${e.sysAfter} tok">
+            <div class="seg" style="background:var(--anchor-soft); left:0; width:${seq2W}%"></div>
+          </div></div>
+        ${memRow}
+        ${delta}
+      </div>`;
+    }
+  }).join('');
+
+  ax.querySelectorAll('.call-row[data-idx]').forEach(el => {
+    el.addEventListener('click', () => select(+el.dataset.idx));
+  });
+}
+
+/** A small inline memory bar showing how much of the KV pool the cache holds
+ *  after this call. Same units as the inventory column. */
+function renderMemoryRow(e) {
+  const cells = totalCellsAfter(e);
+  const bytes = cells * BYTES_PER_TOK;
+  const poolBytes = N_CTX * BYTES_PER_TOK;
+  const pctFull = (cells / N_CTX * 100).toFixed(1);
+  const w = Math.min(100, +pctFull);
+  return `<div class="mem-bar" title="${cells} cells × ${fmtBytes(BYTES_PER_TOK)}/cell">
+    <div class="fill" style="width:${w}%"></div>
+    <div class="label">KV pool: ${fmtBytes(bytes)} / ${fmtBytes(poolBytes)} (${pctFull}%)</div>
+  </div>`;
+}
+
+function renderCachedDelta(e, i) {
+  // Find previous EVENT (any kind)
+  const prev = i > 0 ? STATE.events[i-1] : null;
+  if (!prev) return `<div class="delta">→ seeded cache with seq 0=${e.cachedAfter}, seq 2 anchor=${e.sysAfter}.</div>`;
+  const dC = e.cachedAfter - prev.cachedAfter;
+  const dS = e.sysAfter - prev.sysAfter;
+  const wiped = (prev.sysAfter > 0 && (e.sysBefore === 0));
+  const cls = wiped ? 'delta warn' : 'delta';
+  const parts = [];
+  parts.push(`Δ seq 0: <strong>${signed(dC)}</strong> (${prev.cachedAfter} → ${e.cachedAfter})`);
+  if (wiped) {
+    parts.push(`anchor <strong>wiped</strong> mid-call (was ${prev.sysAfter}, reseeded to ${e.sysAfter})`);
+  } else {
+    parts.push(`Δ seq 2: <strong>${signed(dS)}</strong> (${prev.sysAfter} → ${e.sysAfter})`);
+  }
+  if (e.plan === 'RestartFromAnchor') parts.push(`reused anchor for ${e.reuse} tokens (free)`);
+  if (e.driftBefore) parts.push(`⚠ log/tracker drift: sys_before log=${e.driftBefore.logSys} tracker=${e.driftBefore.runSys}`);
+  return `<div class="${cls}">${parts.join(' &middot; ')}</div>`;
+}
+
+function renderUncachedDelta(e, i) {
+  const prev = i > 0 ? STATE.events[i-1] : null;
+  if (!prev) return `<div class="delta">seq 0 and seq 2 unchanged (no resident yet).</div>`;
+  const parts = [];
+  if (e.evict) {
+    parts.push(`<strong>evicted</strong> resident — seq 0: ${prev.cachedAfter} → 0, seq 2: ${prev.sysAfter} → 0`);
+  } else {
+    parts.push(`seq 0 unchanged (${prev.cachedAfter}), seq 2 unchanged (${prev.sysAfter})`);
+  }
+  return `<div class="delta${e.evict ? ' warn' : ''}">${parts.join(' &middot; ')}</div>`;
+}
+
+function renderSelected() {
+  const det = document.getElementById('details');
+  const ana = document.getElementById('anatomy');
+  if (STATE.selectedIdx === null || !STATE.events[STATE.selectedIdx]) {
+    det.innerHTML = '<div class="empty-state" style="grid-column:1/-1">Select a call in the timeline.</div>';
+    ana.innerHTML = '<div class="empty-state">Select a call above to see its prompt anatomy.</div>';
+    return;
+  }
+  const e = STATE.events[STATE.selectedIdx];
+
+  // ── cell math ─────────────────────────────────────────────
+  if (e.kind === 'cached') {
+    const decoded = e.prompt - e.lcp;
+    const reusedCells = e.lcp;
+    const seq0Cells = e.cachedAfter;
+    const seq2Cells = e.sysAfter;
+    // overlap between seq 0 and seq 2 = min(seq0, seq2) if the leading
+    // tokens match — which is the case for Extend / RestartFromAnchor;
+    // for ColdPrefill after reseeding the anchor lives at positions [0,sys)
+    // on the new seq 0, so the overlap is also min(seq0, seq2).
+    const overlap = Math.min(seq0Cells, seq2Cells);
+    const disjoint = seq0Cells + seq2Cells - 2*overlap;
+    const free = N_CTX - (seq0Cells + seq2Cells - overlap);
+    const totalCells = seq0Cells + seq2Cells - overlap;
+    const memUsed = totalCells * BYTES_PER_TOK;
+    const memPool = N_CTX * BYTES_PER_TOK;
+    det.innerHTML = `
+      <div class="details-block">
+        <h3>Cell math (after the call)</h3>
+        <div class="keyval">
+          <div><span>seq 0 (working prompt prefix)</span><span>${seq0Cells} cells &nbsp;·&nbsp; ${fmtBytes(seq0Cells * BYTES_PER_TOK)}</span></div>
+          <div><span>seq 2 (system anchor)</span><span>${seq2Cells} cells &nbsp;·&nbsp; ${fmtBytes(seq2Cells * BYTES_PER_TOK)}</span></div>
+          <div><span>shared cells (seq 0 ∩ seq 2)</span><span>${overlap} cells</span></div>
+          <div><span>disjoint cells</span><span>${disjoint} cells</span></div>
+          <div><span>total cells in use</span><span>${totalCells} / ${N_CTX} cells &nbsp;·&nbsp; ${fmtBytes(memUsed)} / ${fmtBytes(memPool)}</span></div>
+          <div><span>free cells</span><span>${free} cells &nbsp;·&nbsp; ${fmtBytes(free * BYTES_PER_TOK)}</span></div>
+          <div><span>reused from cache (LCP)</span><span>${reusedCells} tok</span></div>
+          <div><span>fresh decode on seq 0</span><span>${e.stable - e.lcp} tok</span></div>
+          <div><span>volatile tail on seq 1</span><span>${e.prompt - e.stable} tok</span></div>
+        </div>
+        <div class="mem-bar" title="Total KV cells used after this call">
+          <div class="fill" style="width:${Math.min(100, (totalCells/N_CTX*100)).toFixed(1)}%"></div>
+          <div class="label">${(totalCells/N_CTX*100).toFixed(1)}% of n_ctx</div>
+        </div>
+      </div>
+      <div class="details-block">
+        <h3>Plan reasoning</h3>
+        <div class="keyval">
+          <div><span>plan</span><span>${e.plan}${e.reuse !== null ? `{reuse:${e.reuse}}` : ''}</span></div>
+          <div><span>cached_before (seq 0)</span><span>${e.cached}</span></div>
+          <div><span>sys_cached_before (seq 2)</span><span>${e.sysBefore !== null ? e.sysBefore : '?'}</span></div>
+          <div><span>LCP(cached, new)</span><span>${e.lcp}</span></div>
+          <div><span>system prefix tokens (sys)</span><span>${e.sys}</span></div>
+          <div><span>stable boundary</span><span>${e.stable}</span></div>
+          <div><span>volatile tail size</span><span>${e.prompt - e.stable}</span></div>
+        </div>
+        <details class="collapsible"><summary>Why this plan?</summary>
+          <div style="font-size:11.5px; color:var(--muted); margin-top:6px;">${planRationale(e)}</div>
+        </details>
+      </div>
+    `;
+  } else {
+    det.innerHTML = `
+      <div class="details-block">
+        <h3>Aux call (uncached)</h3>
+        <div class="keyval">
+          <div><span>prompt tokens</span><span>${e.prompt}</span></div>
+          <div><span>resident (seq 0 before)</span><span>${e.resident}</span></div>
+          <div><span>sys_cached (seq 2 before)</span><span>${e.sysBefore}</span></div>
+          <div><span>evict resident?</span><span>${e.evict}</span></div>
+          <div><span>fits beside resident?</span><span>${e.evict ? 'NO — evicted to fit' : 'yes'}</span></div>
+        </div>
+      </div>
+      <div class="details-block">
+        <h3>Why aux runs on seq 1 only</h3>
+        <div style="font-size:11.5px; color:var(--muted);">
+          One-shot prompts (warmup, rewrite, rerank, extractions) whose NEXT call wouldn't extend the
+          current one. Caching them onto seq 0 would only evict what IS reusable. Runs entirely on seq 1
+          (the generation scratch sequence), which is cleared at the start of the following call.
+          Evicts the resident chat prefix only if the aux prompt + a generation reserve can't fit
+          beside it in the cell budget.
+        </div>
+      </div>
+    `;
+  }
+
+  // ── anatomy ───────────────────────────────────────────────
+  ana.innerHTML = renderAnatomy(e);
+}
+
+function planRationale(e) {
+  if (e.plan === 'Extend') {
+    return `LCP(cached=${e.cached}, new tokens) = ${e.lcp}. Since lcp == cached.len() (=${e.cached}) and at least one
+    new token remains, the resident seq-0 prefix is a strict prefix of the new prompt. Keep seq 0; decode
+    only [${e.lcp}, ${e.stable}) on it.`;
+  }
+  if (e.plan === 'RestartFromAnchor') {
+    return `LCP(cached=${e.cached}, new) < cached.len(), so seq 0 has diverging tail bytes — can't Extend.
+    LCP(cached_system=${e.sysBefore !== null ? e.sysBefore : '?'}, new) = ${e.reuse ?? e.lcp}, which equals
+    cached_system.len() — the anchor's full prefix matches. Wipe seq 0, copy anchor back in, decode the rest.`;
+  }
+  if (e.plan === 'ColdPrefill') {
+    return `Neither seq 0 nor seq 2 are a prefix of the new prompt (system bytes diverged — likely a route flip).
+    Wipe both, re-prefill seq 0 from scratch, reseed the anchor afterward with the new system prefix
+    (${e.sys} tokens).`;
+  }
+  return '';
+}
+
+function renderAnatomy(e) {
+  if (e.kind !== 'cached') {
+    return `<div style="font-size:13.5px; color:var(--muted)">
+      Uncached aux: a ${e.prompt}-token prompt runs entirely on seq 1, generates a response, and is thrown away.
+      No anatomy panel (the prompt structure doesn't matter for cache reuse — it never touches seq 0).
+    </div>`;
+  }
+  const stable = e.stable;
+  const sys = e.sys;
+  const volatile = e.prompt - e.stable;
+
+  // When loaded from bench JSON, the trace doesn't carry the system-prefix
+  // boundary (sys=0). Don't pretend the system block is empty — merge the
+  // system + user into one "stable region" block and tell the user why.
+  const noSysInfo = sys === 0 && stable > 0;
+  const blocks = noSysInfo ? [
+    { color: 'var(--anchor)', label: 'stable region (system + user, boundary unknown)', tk: stable,
+      stableTurn: 'mix', stableConv: 'mix', stableRoute: 'mix' },
+    { color: 'var(--volatile)', label: 'volatile generation header (<|im_start|>assistant…)', tk: volatile,
+      stableTurn: 'no', stableConv: 'no', stableRoute: 'no' },
+  ] : [
+    { color: 'var(--anchor)',   label: 'system message + tools= injection', tk: sys,
+      stableTurn: 'ok', stableConv: 'var', stableRoute: 'no' },
+    { color: 'var(--stable)',   label: 'final user turn (memory + sources + question)', tk: stable - sys,
+      stableTurn: 'no', stableConv: 'no', stableRoute: 'no' },
+    { color: 'var(--volatile)', label: 'volatile generation header (<|im_start|>assistant…)', tk: volatile,
+      stableTurn: 'no', stableConv: 'no', stableRoute: 'no' },
+  ];
+
+  const sym = v => v === 'ok' ? '✓' : v === 'var' ? '∼' : v === 'mix' ? '?' : '✗';
+  const note = noSysInfo
+    ? `<div class="anatomy-note">⚠ Loaded from a bench JSON — the trace doesn't include the system/user token boundary, so this prompt's first ${stable} tokens are shown as one merged block. Paste the matching <code class="inline">llamacpp kv: …</code> stderr lines for an exact system-vs-user decomposition.</div>`
+    : '';
+
+  return `<div class="anatomy">${note}${blocks.map(b => `
+    <div class="anatomy-block" style="border-left-color:${b.color}">
+      <span class="label">${b.label}</span>
+      <span class="tk">${b.tk} tok</span>
+      <span class="lifetime">
+        <span class="badge-mini ${b.stableTurn}" title="stable across turns within same chat?">turns:${sym(b.stableTurn)}</span>
+        <span class="badge-mini ${b.stableConv}" title="stable across conversations (same route)?">conv:${sym(b.stableConv)}</span>
+        <span class="badge-mini ${b.stableRoute}" title="stable across routes (rag↔tools)?">route:${sym(b.stableRoute)}</span>
+      </span>
+    </div>`).join('')}
+    <div style="font-size:12px; color:var(--muted); margin-top:8px">
+      Lifetime badges: <strong>turns</strong> = re-appears in next turn within same chat,
+      <strong>conv</strong> = stable across conversations on the same route,
+      <strong>route</strong> = stable across route flips (rag↔tools).
+      ✓ stable · ∼ usually stable · ? unknown (bench JSON) · ✗ not stable.
+    </div>
+  </div>`;
+}
+
+function renderCompareSelects() {
+  const a = document.getElementById('cmp-a');
+  const b = document.getElementById('cmp-b');
+  const cached = STATE.events.filter(e => e.kind === 'cached');
+  if (cached.length < 2) {
+    a.innerHTML = '<option>—</option>';
+    b.innerHTML = '<option>—</option>';
+    document.getElementById('compare-grid').innerHTML =
+      '<div class="empty-state" style="grid-column:1/-1">Need at least 2 cached calls to compare.</div>';
+    return;
+  }
+  const opts = cached.map(e => `<option value="${STATE.events.indexOf(e)}">${e.name}</option>`).join('');
+  a.innerHTML = opts;
+  b.innerHTML = opts;
+  // Default: pick the two prompts straddling the most recent ColdPrefill, if any
+  let aIdx = STATE.events.indexOf(cached[0]);
+  let bIdx = STATE.events.indexOf(cached[cached.length-1]);
+  for (let i = cached.length - 1; i >= 1; i--) {
+    if (cached[i].plan === 'ColdPrefill') {
+      aIdx = STATE.events.indexOf(cached[i-1]);
+      bIdx = STATE.events.indexOf(cached[i]);
+      break;
+    }
+  }
+  a.value = aIdx;
+  b.value = bIdx;
+  a.onchange = b.onchange = renderComparison;
+  renderComparison();
+}
+
+function renderComparison() {
+  const aIdx = +document.getElementById('cmp-a').value;
+  const bIdx = +document.getElementById('cmp-b').value;
+  const A = STATE.events[aIdx];
+  const B = STATE.events[bIdx];
+  const grid = document.getElementById('compare-grid');
+  if (!A || !B || A.kind !== 'cached' || B.kind !== 'cached') {
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">Select two cached calls.</div>';
+    return;
+  }
+  const summary = compareSummary(A, B);
+  grid.innerHTML = `
+    <div class="compare-summary">${summary}</div>
+    <div class="compare-col">
+      <h3>${A.name}</h3>
+      ${renderAnatomy(A)}
+    </div>
+    <div class="compare-col">
+      <h3>${B.name}</h3>
+      ${renderAnatomy(B)}
+    </div>
+  `;
+}
+
+function compareSummary(A, B) {
+  const parts = [];
+  parts.push(`<strong>${A.name}</strong> vs <strong>${B.name}</strong>:`);
+  const dSys = B.sys - A.sys;
+  const dStable = B.stable - A.stable;
+  if (dSys !== 0) {
+    parts.push(`system <strong>${dSys > 0 ? '+' : ''}${dSys}</strong> tokens (${A.sys} → ${B.sys})`);
+  } else {
+    parts.push(`identical system prefix length`);
+  }
+  if (A.route !== B.route) parts.push(`route flip <strong>${A.route} → ${B.route}</strong>`);
+  if (A.chatIndex !== B.chatIndex) parts.push(`different chats (c${A.chatIndex} vs c${B.chatIndex})`);
+  parts.push(`stable Δ ${dStable > 0 ? '+' : ''}${dStable} tok`);
+  // What can be reused if cache held A and we're about to send B?
+  if (A.route === B.route) {
+    parts.push(`→ on the same route, B can <strong>RestartFromAnchor</strong> against A's anchor (saves ~${A.sys} tokens of prefill).`);
+  } else {
+    parts.push(`→ on a route flip, A's anchor doesn't help B: system bytes diverge inside the tools= block, so B <strong>ColdPrefills</strong> and wipes A's anchor.`);
+  }
+  return parts.join(' · ');
+}
+
+// ╔═══════════════════════════════════════════════════════════════════
+// ║ HELPERS
+// ╚═══════════════════════════════════════════════════════════════════
+
+function badgeIcon(b) {
+  return { fresh:'🌱', grown:'🪴', wiped:'🔥', 'anchor-hit':'🌳', shrunk:'❄️', passthrough:'·', warmup:'⊙' }[b] || '';
+}
+function badgeText(b) {
+  return { fresh:'fresh', grown:'grown', wiped:'wiped & reseeded', 'anchor-hit':'anchor hit',
+           shrunk:'evicted resident', passthrough:'passthrough', warmup:'warmup' }[b] || b;
+}
+function signed(n) { return (n > 0 ? '+' : '') + n; }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function select(i) {
+  STATE.selectedIdx = i;
+  render();
+}
+
+function loadEvents(events) {
+  STATE.events = events;
+  STATE.selectedIdx = events.length ? events.length - 1 : null;
+  render();
+}
+
+// ── Concepts panel render
+(function renderConcepts() {
+  const el = document.getElementById('concepts-list');
+  el.innerHTML = CONCEPTS.map(c => {
+    const swatch = c.swatch ? `<span class="swatch" style="background:var(${c.swatch})"></span>` : '';
+    return `<div class="concept-item">
+      <div class="concept-term">${swatch}${escapeHtml(c.term)}</div>
+      <div class="concept-def">${escapeHtml(c.def)}</div>
+    </div>`;
+  }).join('');
+})();
+
+function applyUserMessages(events, userMessages) {
+  if (!userMessages) return events;
+  events.forEach((e, i) => {
+    if (userMessages[i] !== undefined) e.userMessage = userMessages[i];
+  });
+  return events;
+}
+
+// ── Wire up controls
+document.getElementById('parse-btn').addEventListener('click', () => {
+  const text = document.getElementById('log-input').value;
+  loadEvents(deriveInventory(parseLogs(text)));
+});
+document.getElementById('clear-btn').addEventListener('click', () => {
+  document.getElementById('log-input').value = '';
+  loadEvents([]);
+});
+document.getElementById('example-picker').addEventListener('change', (ev) => {
+  const k = ev.target.value;
+  if (!k || !EXAMPLES[k]) return;
+  const ex = EXAMPLES[k];
+  document.getElementById('log-input').value = ex.log;
+  const events = applyUserMessages(deriveInventory(parseLogs(ex.log)), ex.userMessages);
+  loadEvents(events);
+});
+
+// Model picker → recompute memory math
+function updateBytesPerTok(b) {
+  BYTES_PER_TOK = b;
+  document.getElementById('bytes-per-tok').value = b;
+  document.getElementById('bytes-hint').textContent =
+    `= ${fmtBytes(b)} per cell · n_ctx ${N_CTX} → ${fmtBytes(b * N_CTX)} max KV pool`;
+  if (STATE.events.length) render();
+}
+document.getElementById('model-picker').addEventListener('change', (ev) => {
+  const v = ev.target.value;
+  if (v !== 'custom' && MODEL_KV_BYTES[v]) updateBytesPerTok(MODEL_KV_BYTES[v]);
+});
+document.getElementById('bytes-per-tok').addEventListener('change', (ev) => {
+  const v = parseInt(ev.target.value, 10);
+  if (Number.isFinite(v) && v > 0) {
+    document.getElementById('model-picker').value = 'custom';
+    updateBytesPerTok(v);
+  }
+});
+updateBytesPerTok(BYTES_PER_TOK);  // initialize the hint text
+
+// ── Drag & drop for bench JSON
+// Two layers: (1) document-level handlers preventDefault on EVERY dragover/
+// drop so the browser never tries to navigate to a file:// URL (which fails
+// with "Unsafe attempt to load URL" because file: is a unique origin),
+// (2) drophint-level handlers do the actual highlighting.
+const drop = document.getElementById('drophint');
+
+function isFileDrag(ev) {
+  return ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files');
+}
+
+document.addEventListener('dragenter', ev => {
+  if (isFileDrag(ev)) { ev.preventDefault(); document.body.classList.add('dragging-file'); }
+});
+document.addEventListener('dragover', ev => {
+  if (isFileDrag(ev)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; }
+});
+document.addEventListener('dragleave', ev => {
+  // Only clear when the drag leaves the viewport (relatedTarget is null).
+  if (!ev.relatedTarget) document.body.classList.remove('dragging-file');
+});
+document.addEventListener('drop', async ev => {
+  if (!isFileDrag(ev)) return;
+  ev.preventDefault();
+  document.body.classList.remove('dragging-file');
+  drop.classList.remove('over');
+  const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (!f) return;
+  await handleDroppedFile(f);
+});
+
+// Drophint-only handlers just add the local "over" highlight on top of the
+// document-level outline so the user gets confirmation they hit the target.
+['dragenter','dragover'].forEach(t => drop.addEventListener(t, ev => {
+  if (isFileDrag(ev)) drop.classList.add('over');
+}));
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+
+async function handleDroppedFile(f) {
+  let text;
+  try {
+    text = await f.text();
+  } catch (e) {
+    alert(`Could not read file "${f.name}": ${e.message}`);
+    return;
+  }
+  // Try JSON first; on parse error fall back to treating it as log text.
+  try {
+    const j = JSON.parse(text);
+    const events = eventsFromBenchJson(j);
+    if (events.length) {
+      loadEvents(deriveInventory(events));
+      document.getElementById('log-input').value =
+        `// loaded ${events.length} events from ${f.name} (bench JSON)`;
+      return;
+    }
+    alert(`No "data.turns[].trace.llmCalls" found in ${f.name}. Treating as raw log.`);
+  } catch (_e) {
+    // not JSON — fall through
+  }
+  document.getElementById('log-input').value = text;
+  loadEvents(deriveInventory(parseLogs(text)));
+}
+
+/** Convert a CLI bench JSON envelope (from `make cli-kv-xconv`) into the
+ *  same event shape the log parser produces. The bench JSON lacks the
+ *  per-call seq breakdown — we approximate stable, sys, and plan from
+ *  cachedPromptTokens (= lcp) and the call's route/kind. Coarser than
+ *  parsing logs but works as a one-click drop. */
+function eventsFromBenchJson(j) {
+  const turns = (j && j.data && j.data.turns) || [];
+  const events = [];
+  turns.forEach((t, ti) => {
+    const route = (t.route && t.route.mode) ? String(t.route.mode).toLowerCase().replace('first','') : 'rag';
+    const calls = (t.trace && t.trace.llmCalls) || [];
+    calls.forEach((c, ci) => {
+      // Heuristic: stable ≈ promptTokens - 7 (Qwen volatile gen-header tail).
+      const stable = Math.max(0, c.promptTokens - 7);
+      const lcp = c.cachedPromptTokens || 0;
+      const plan = lcp === 0 ? (route === 'tools' && ti > 0 ? 'ColdPrefill' : 'Extend') :
+                   (lcp === c.promptTokens - 7 ? 'Extend' : 'RestartFromAnchor');
+      // Extract the user message from the rendered input snapshot. The
+      // trace's input string ends with the final user message (after the
+      // Sources block on rag turns, or after the tool history on tool
+      // rounds). Take the last ~300 chars as a preview.
+      let userMessage = null;
+      if (typeof c.input === 'string' && c.input.length > 0) {
+        const trimmed = c.input.replace(/\s+$/, '');
+        // Find the LAST '[user]' marker — handles cases where multiple user
+        // messages appear in history.
+        const lastUserIdx = trimmed.lastIndexOf('[user]');
+        const tail = lastUserIdx >= 0 ? trimmed.slice(lastUserIdx + 6) : trimmed;
+        // Drop the Sources / memory blocks (everything before the LAST blank
+        // line, which usually separates them from the question).
+        const lastBlank = tail.lastIndexOf('\n\n');
+        let userPart = lastBlank >= 0 ? tail.slice(lastBlank + 2).trim() : tail.trim();
+        if (userPart.length > 300) userPart = userPart.slice(0, 300) + '…';
+        userMessage = userPart;
+      }
+      const callKind = c.kind === 'tool_round' ? 'tool_round'
+                      : route === 'rag' ? 'chat_answer'
+                      : 'tool_synth';
+      events.push({
+        kind: 'cached',
+        ts: null,
+        chatIndex: ti + 1,
+        route,
+        stage: c.kind === 'tool_round' ? 'tool_loop' : 'stream',
+        round: c.round >= 0 ? c.round : null,
+        callKind,
+        cached: 0,  // unknown from bench
+        sysBefore: null,
+        sysAfter: 0,
+        prompt: c.promptTokens || 0,
+        lcp,
+        stable,
+        sys: 0,  // unknown without the kv: log
+        plan,
+        reuse: lcp,
+        prefillMs: c.prefillMs,
+        userMessage,
+      });
+    });
+  });
+  return events;
+}
+
+// Concepts default: visible always (toggle just no-ops the dropdown UI for v0)
+</script>
+</body>
+</html>

@@ -6,10 +6,49 @@
 
 use std::path::Path;
 
+use chrono::NaiveDate;
 use serde::Deserialize;
 
 use crate::evals::{EvalError, EvalResult};
 use crate::models::RouteMode;
+
+/// What "today" means for a case at run time. The chat path reads
+/// `services::clock::current()` to format date strings into the system prompt
+/// and to compute the search window for the today/this-week shortcuts; the
+/// harness installs a `FixedClock` derived from this value so cases that
+/// depend on "today" can run deterministically against a static fixture (the
+/// demo DB) without drifting as wall-clock advances.
+///
+/// YAML shapes:
+/// ```yaml
+/// as_of: "2024-01-15"   # pin to a literal UTC date
+/// as_of: latest         # resolve to MAX(received_at) in the case's account inbox
+/// ```
+/// `as_of` is optional — absent means "use the system clock", preserving the
+/// pre-existing behaviour for every case that didn't opt in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsOf {
+    /// Pin to an explicit UTC date.
+    Date(NaiveDate),
+    /// Resolve to the newest email's date in the case's account inbox at run
+    /// start. Keeps cases robust against demo-DB regeneration where the
+    /// dataset's "today" floats with wall-clock at generation time.
+    Latest,
+}
+
+impl<'de> serde::Deserialize<'de> for AsOf {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        let trimmed = raw.trim();
+        if trimmed.eq_ignore_ascii_case("latest") {
+            Ok(AsOf::Latest)
+        } else {
+            NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+                .map(AsOf::Date)
+                .map_err(|e| serde::de::Error::custom(format!("invalid as_of {trimmed:?}: {e}")))
+        }
+    }
+}
 
 /// Metrics the judge can run for a case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -82,6 +121,12 @@ pub struct EvalCase {
     /// Metrics the judge should run for this case.
     #[serde(default)]
     pub metrics: Vec<MetricKind>,
+
+    /// Pin "today" for this case so time-dependent prompts (e.g. "summarize
+    /// today's emails") resolve deterministically against a static fixture.
+    /// See [`AsOf`] for the YAML shapes.
+    #[serde(default)]
+    pub as_of: Option<AsOf>,
 }
 
 fn default_category() -> String {
@@ -125,4 +170,80 @@ pub fn load_cases(dir: &Path) -> EvalResult<Vec<EvalCase>> {
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_case(yaml: &str) -> EvalCase {
+        let cases: Vec<EvalCase> = serde_yaml::from_str(yaml).expect("parse yaml");
+        cases.into_iter().next().expect("at least one case")
+    }
+
+    #[test]
+    fn as_of_defaults_to_none() {
+        let c = parse_case(
+            r#"
+- id: t
+  question: "q"
+"#,
+        );
+        assert_eq!(c.as_of, None);
+    }
+
+    #[test]
+    fn as_of_accepts_iso_date() {
+        let c = parse_case(
+            r#"
+- id: t
+  question: "q"
+  as_of: "2024-01-15"
+"#,
+        );
+        assert_eq!(c.as_of, Some(AsOf::Date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap())));
+    }
+
+    #[test]
+    fn as_of_accepts_latest_sentinel() {
+        let c = parse_case(
+            r#"
+- id: t
+  question: "q"
+  as_of: latest
+"#,
+        );
+        assert_eq!(c.as_of, Some(AsOf::Latest));
+    }
+
+    /// Regression guard: the public `user_queries.yaml` must parse with the
+    /// AsOf-extended schema. If someone reformats the YAML in a way that
+    /// breaks deserialisation (e.g. mistyping `as_of: latest` as `as_of:
+    /// :latest`), this fires at build time instead of at `make cli-eval` time.
+    #[test]
+    fn public_user_queries_yaml_parses_with_as_of_field() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("evals/chat/cases");
+        let cases = load_cases(&dir).expect("public user_queries.yaml must parse");
+        let demo_daily = cases
+            .iter()
+            .find(|c| c.id == "demo_daily_summary")
+            .expect("demo_daily_summary case must be present in the public YAML");
+        assert_eq!(
+            demo_daily.as_of,
+            Some(AsOf::Latest),
+            "demo_daily_summary must pin as_of: latest so today resolves against the demo fixture"
+        );
+    }
+
+    #[test]
+    fn as_of_rejects_garbage() {
+        let result: std::result::Result<Vec<EvalCase>, _> = serde_yaml::from_str(
+            r#"
+- id: t
+  question: "q"
+  as_of: "not-a-date"
+"#,
+        );
+        assert!(result.is_err(), "expected parse failure for garbage as_of value");
+    }
 }

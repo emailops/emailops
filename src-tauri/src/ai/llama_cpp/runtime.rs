@@ -11,352 +11,50 @@
 //   context and reuses its KV cache across requests; embeddings still create
 //   a short-lived context inside `spawn_blocking`.
 //
-// TOOL CALLING
-// ────────────
-// llama-cpp-2 0.1.144+ exposes apply_chat_template_oaicompat which renders the
-// model's native Jinja template with a proper tools= parameter and parses the
-// response into structured tool_calls — no custom prompt injection needed.
+// TOOL CALLING (post llama-cpp-2 0.1.147)
+// ───────────────────────────────────────
+// llama-cpp-2 0.1.147 removed the `apply_chat_template_oaicompat` / `parse_
+// response_oaicompat` helpers that we used to lean on for tool-call rendering
+// and parsing. We now drive both ends ourselves:
 //
-// FALLBACK CHAT TEMPLATES
-// ────────────────────────
-// Some GGUF builds (notably mradermacher's Gemma 4 builds) omit the
-// tokenizer.chat_template metadata key.  When chat_template(None) returns None
-// we fall back to a built-in template keyed by model family, derived from the
-// model filename.  The fallback string is passed to LlamaChatTemplate::new()
-// and handed to apply_chat_template_oaicompat / apply_chat_template as if it
-// were embedded.
-
-// ── Built-in fallback templates ───────────────────────────────────────────────
-
-/// Official Gemma 4 Jinja chat template (google/gemma-4-E2B-it, gemma-4-E4B-it).
-/// Contains '<|tool_call>call:' which llama.cpp uses for Gemma4 format detection.
-/// Source: https://huggingface.co/google/gemma-4-E2B-it/resolve/main/chat_template.jinja
-const GEMMA4_CHAT_TEMPLATE: &str = r#"{%- macro format_parameters(properties, required) -%}
-    {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}
-    {%- set ns = namespace(found_first=false) -%}
-    {%- for key, value in properties | dictsort -%}
-        {%- set add_comma = false -%}
-        {%- if key not in standard_keys -%}
-            {%- if ns.found_first %},{% endif -%}
-            {%- set ns.found_first = true -%}
-            {{ key }}:{
-            {%- if value['description'] -%}
-                description:<|"|>{{ value['description'] }}<|"|>
-                {%- set add_comma = true -%}
-            {%- endif -%}
-            {%- if value['type'] | upper == 'STRING' -%}
-                {%- if value['enum'] -%}
-                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                    enum:{{ format_argument(value['enum']) }}
-                {%- endif -%}
-            {%- elif value['type'] | upper == 'ARRAY' -%}
-                {%- if value['items'] is mapping and value['items'] -%}
-                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                    items:{
-                    {%- set ns_items = namespace(found_first=false) -%}
-                    {%- for item_key, item_value in value['items'] | dictsort -%}
-                        {%- if item_value is not none -%}
-                            {%- if ns_items.found_first %},{% endif -%}
-                            {%- set ns_items.found_first = true -%}
-                            {%- if item_key == 'properties' -%}
-                                properties:{
-                                {%- if item_value is mapping -%}
-                                    {{- format_parameters(item_value, value['items']['required'] | default([])) -}}
-                                {%- endif -%}
-                                }
-                            {%- elif item_key == 'required' -%}
-                                required:[
-                                {%- for req_item in item_value -%}
-                                    <|"|>{{- req_item -}}<|"|>
-                                    {%- if not loop.last %},{% endif -%}
-                                {%- endfor -%}
-                                ]
-                            {%- elif item_key == 'type' -%}
-                                {%- if item_value is string -%}
-                                    type:{{ format_argument(item_value | upper) }}
-                                {%- else -%}
-                                    type:{{ format_argument(item_value | map('upper') | list) }}
-                                {%- endif -%}
-                            {%- else -%}
-                                {{ item_key }}:{{ format_argument(item_value) }}
-                            {%- endif -%}
-                        {%- endif -%}
-                    {%- endfor -%}
-                    }
-                {%- endif -%}
-            {%- endif -%}
-            {%- if value['nullable'] %}
-                {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                nullable:true
-            {%- endif -%}
-            {%- if value['type'] | upper == 'OBJECT' -%}
-                {%- if value['properties'] is defined and value['properties'] is mapping -%}
-                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                    properties:{
-                    {{- format_parameters(value['properties'], value['required'] | default([])) -}}
-                    }
-                {%- elif value is mapping -%}
-                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                    properties:{
-                    {{- format_parameters(value, value['required'] | default([])) -}}
-                    }
-                {%- endif -%}
-                {%- if value['required'] -%}
-                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-                    required:[
-                    {%- for item in value['required'] | default([]) -%}
-                        <|"|>{{- item -}}<|"|>
-                        {%- if not loop.last %},{% endif -%}
-                    {%- endfor -%}
-                    ]
-                {%- endif -%}
-            {%- endif -%}
-            {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}
-            type:<|"|>{{ value['type'] | upper }}<|"|>}
-        {%- endif -%}
-    {%- endfor -%}
-{%- endmacro -%}
-{%- macro format_function_declaration(tool_data) -%}
-    declaration:{{- tool_data['function']['name'] -}}{description:<|"|>{{- tool_data['function']['description'] -}}<|"|>
-    {%- set params = tool_data['function']['parameters'] -%}
-    {%- if params -%}
-        ,parameters:{
-        {%- if params['properties'] -%}
-            properties:{ {{- format_parameters(params['properties'], params['required']) -}} },
-        {%- endif -%}
-        {%- if params['required'] -%}
-            required:[
-            {%- for item in params['required'] -%}
-                <|"|>{{- item -}}<|"|>
-                {{- ',' if not loop.last -}}
-            {%- endfor -%}
-            ],
-        {%- endif -%}
-        {%- if params['type'] -%}
-            type:<|"|>{{- params['type'] | upper -}}<|"|>}
-        {%- endif -%}
-    {%- endif -%}
-    {%- if 'response' in tool_data['function'] -%}
-        {%- set response_declaration = tool_data['function']['response'] -%}
-        ,response:{
-        {%- if response_declaration['description'] -%}
-            description:<|"|>{{- response_declaration['description'] -}}<|"|>,
-        {%- endif -%}
-        {%- if response_declaration['type'] | upper == 'OBJECT' -%}
-            type:<|"|>{{- response_declaration['type'] | upper -}}<|"|>}
-        {%- endif -%}
-    {%- endif -%}
-    }
-{%- endmacro -%}
-{%- macro format_argument(argument, escape_keys=True) -%}
-    {%- if argument is string -%}
-        {{- '<|"|>' + argument + '<|"|>' -}}
-    {%- elif argument is boolean -%}
-        {{- 'true' if argument else 'false' -}}
-    {%- elif argument is mapping -%}
-        {{- '{' -}}
-        {%- set ns = namespace(found_first=false) -%}
-        {%- for key, value in argument | dictsort -%}
-            {%- if ns.found_first %},{% endif -%}
-            {%- set ns.found_first = true -%}
-            {%- if escape_keys -%}
-                {{- '<|"|>' + key + '<|"|>' -}}
-            {%- else -%}
-                {{- key -}}
-            {%- endif -%}
-            :{{- format_argument(value, escape_keys=escape_keys) -}}
-        {%- endfor -%}
-        {{- '}' -}}
-    {%- elif argument is sequence -%}
-        {{- '[' -}}
-        {%- for item in argument -%}
-            {{- format_argument(item, escape_keys=escape_keys) -}}
-            {%- if not loop.last %},{% endif -%}
-        {%- endfor -%}
-        {{- ']' -}}
-    {%- else -%}
-        {{- argument -}}
-    {%- endif -%}
-{%- endmacro -%}
-{%- macro strip_thinking(text) -%}
-    {%- set ns = namespace(result='') -%}
-    {%- for part in text.split('<channel|>') -%}
-        {%- if '<|channel>' in part -%}
-            {%- set ns.result = ns.result + part.split('<|channel>')[0] -%}
-        {%- else -%}
-            {%- set ns.result = ns.result + part -%}
-        {%- endif -%}
-    {%- endfor -%}
-    {{- ns.result | trim -}}
-{%- endmacro -%}
-{%- macro format_tool_response_block(tool_name, response) -%}
-    {{- '<|tool_response>' -}}
-    {%- if response is mapping -%}
-        {{- 'response:' + tool_name + '{' -}}
-        {%- for key, value in response | dictsort -%}
-            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}
-            {%- if not loop.last %},{% endif -%}
-        {%- endfor -%}
-        {{- '}' -}}
-    {%- else -%}
-        {{- 'response:' + tool_name + '{value:' + format_argument(response, escape_keys=False) + '}' -}}
-    {%- endif -%}
-    {{- '<tool_response|>' -}}
-{%- endmacro -%}
-{%- set ns = namespace(prev_message_type=None) -%}
-{%- set loop_messages = messages -%}
-{{- bos_token -}}
-{%- if (enable_thinking is defined and enable_thinking) or tools or messages[0]['role'] in ['system', 'developer'] -%}
-    {{- '<|turn>system\n' -}}
-    {%- if enable_thinking is defined and enable_thinking -%}
-        {{- '<|think|>\n' -}}
-        {%- set ns.prev_message_type = 'think' -%}
-    {%- endif -%}
-    {%- if messages[0]['role'] in ['system', 'developer'] -%}
-        {{- messages[0]['content'] | trim -}}
-        {%- set loop_messages = messages[1:] -%}
-    {%- endif -%}
-    {%- if tools -%}
-        {%- for tool in tools %}
-            {{- '<|tool>' -}}
-            {{- format_function_declaration(tool) | trim -}}
-            {{- '<tool|>' -}}
-        {%- endfor %}
-        {%- set ns.prev_message_type = 'tool' -%}
-    {%- endif -%}
-    {{- '<turn|>\n' -}}
-{%- endif %}
-{%- set ns_turn = namespace(last_user_idx=-1) -%}
-{%- for i in range(loop_messages | length) -%}
-    {%- if loop_messages[i]['role'] == 'user' -%}
-        {%- set ns_turn.last_user_idx = i -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- for message in loop_messages -%}
-    {%- if message['role'] != 'tool' -%}
-    {%- set ns.prev_message_type = None -%}
-    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
-    {%- set prev_nt = namespace(role=None, found=false) -%}
-    {%- if loop.index0 > 0 -%}
-        {%- for j in range(loop.index0 - 1, -1, -1) -%}
-            {%- if not prev_nt.found -%}
-                {%- if loop_messages[j]['role'] != 'tool' -%}
-                    {%- set prev_nt.role = loop_messages[j]['role'] -%}
-                    {%- set prev_nt.found = true -%}
-                {%- endif -%}
-            {%- endif -%}
-        {%- endfor -%}
-    {%- endif -%}
-    {%- set continue_same_model_turn = (role == 'model' and prev_nt.role == 'assistant') -%}
-    {%- if not continue_same_model_turn -%}
-        {{- '<|turn>' + role + '\n' }}
-    {%- endif -%}
-    {%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}
-    {%- if thinking_text and loop.index0 > ns_turn.last_user_idx and message.get('tool_calls') -%}
-        {{- '<|channel>thought\n' + thinking_text + '\n<channel|>' -}}
-    {%- endif -%}
-            {%- if message['tool_calls'] -%}
-                {%- for tool_call in message['tool_calls'] -%}
-                    {%- set function = tool_call['function'] -%}
-                    {{- '<|tool_call>call:' + function['name'] + '{' -}}
-                    {%- if function['arguments'] is mapping -%}
-                        {%- set ns_args = namespace(found_first=false) -%}
-                        {%- for key, value in function['arguments'] | dictsort -%}
-                            {%- if ns_args.found_first %},{% endif -%}
-                            {%- set ns_args.found_first = true -%}
-                            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}
-                        {%- endfor -%}
-                    {%- elif function['arguments'] is string -%}
-                        {{- function['arguments'] -}}
-                    {%- endif -%}
-                    {{- '}<tool_call|>' -}}
-                {%- endfor -%}
-                {%- set ns.prev_message_type = 'tool_call' -%}
-            {%- endif -%}
-            {%- set ns_tr_out = namespace(flag=false) -%}
-            {%- if message.get('tool_responses') -%}
-                {%- for tool_response in message['tool_responses'] -%}
-                    {{- format_tool_response_block(tool_response['name'] | default('unknown'), tool_response['response']) -}}
-                    {%- set ns_tr_out.flag = true -%}
-                    {%- set ns.prev_message_type = 'tool_response' -%}
-                {%- endfor -%}
-            {%- elif message.get('tool_calls') -%}
-                {%- set ns_tool_scan = namespace(stopped=false) -%}
-                {%- for k in range(loop.index0 + 1, loop_messages | length) -%}
-                    {%- if ns_tool_scan.stopped -%}
-                    {%- elif loop_messages[k]['role'] != 'tool' -%}
-                        {%- set ns_tool_scan.stopped = true -%}
-                    {%- else -%}
-                        {%- set follow = loop_messages[k] -%}
-                        {%- set ns_tname = namespace(name=follow.get('name') | default('unknown')) -%}
-                        {%- for tc in message['tool_calls'] -%}
-                            {%- if tc.get('id') == follow.get('tool_call_id') -%}
-                                {%- set ns_tname.name = tc['function']['name'] -%}
-                            {%- endif -%}
-                        {%- endfor -%}
-                        {%- set tool_body = follow.get('content') -%}
-                        {%- if tool_body is string -%}
-                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}
-                        {%- elif tool_body is sequence and tool_body is not string -%}
-                            {%- set ns_txt = namespace(s='') -%}
-                            {%- for part in tool_body -%}
-                                {%- if part.get('type') == 'text' -%}
-                                    {%- set ns_txt.s = ns_txt.s + (part.get('text') | default('')) -%}
-                                {%- endif -%}
-                            {%- endfor -%}
-                            {{- format_tool_response_block(ns_tname.name, ns_txt.s) -}}
-                        {%- else -%}
-                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}
-                        {%- endif -%}
-                        {%- set ns_tr_out.flag = true -%}
-                        {%- set ns.prev_message_type = 'tool_response' -%}
-                    {%- endif -%}
-                {%- endfor -%}
-            {%- endif -%}
-            {%- if message['content'] is string -%}
-                {%- if role == 'model' -%}
-                    {{- strip_thinking(message['content']) -}}
-                {%- else -%}
-                    {{- message['content'] | trim -}}
-                {%- endif -%}
-            {%- elif message['content'] is sequence -%}
-                {%- for item in message['content'] -%}
-                    {%- if item['type'] == 'text' -%}
-                        {%- if role == 'model' -%}
-                            {{- strip_thinking(item['text']) -}}
-                        {%- else -%}
-                            {{- item['text'] | trim -}}
-                        {%- endif -%}
-                    {%- elif item['type'] == 'image' -%}
-                        {{- '<|image|>' -}}
-                        {%- set ns.prev_message_type = 'image' -%}
-                    {%- elif item['type'] == 'audio' -%}
-                        {{- '<|audio|>' -}}
-                        {%- set ns.prev_message_type = 'audio' -%}
-                    {%- elif item['type'] == 'video' -%}
-                        {{- '<|video|>' -}}
-                        {%- set ns.prev_message_type = 'video' -%}
-                    {%- endif -%}
-                {%- endfor -%}
-            {%- endif -%}
-        {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}
-            {{- '<|tool_response>' -}}
-        {%- elif not (ns_tr_out.flag and not message.get('content')) -%}
-            {{- '<turn|>\n' -}}
-        {%- endif -%}
-    {%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}
-    {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}
-        {{- '<|turn>model\n' -}}
-    {%- endif -%}
-{%- endif -%}"#;
+//   • Rendering: `apply_chat_template` (the plain variant) takes a
+//     `&[LlamaChatMessage]` and an `add_ass: bool` and produces the wire
+//     prompt. We render each assistant turn that carries `tool_calls` by
+//     embedding them in the content text as `<tool_call>{json}</tool_call>`
+//     blocks — the same syntax Qwen 3 emits and the model is taught to
+//     produce via the system-prompt format instructions
+//     (see `src/services/prompts/defaults.rs`, CHAT_SYSTEM).
+//   • Parsing: `tool_parser::parse_qwen_tool_calls` extracts the same
+//     `<tool_call>{json}</tool_call>` blocks back out of the model's output.
+//     A two-step fallback to `parse_xml_tool_calls` and
+//     `parse_python_call_tool_calls` (in `services/chat/turn.rs`) catches
+//     malformed shapes from less-aligned models.
+//
+// We also lose the OAI helpers' `enable_thinking: false` flag; Qwen 3 now
+// emits non-empty `<think>` blocks. The existing `strip_reasoning` filter
+// removes them post-hoc, and `ThinkingGate` suppresses them mid-stream.
+//
+// CHAT TEMPLATE SOURCE
+// ────────────────────
+// We rely on the embedded `tokenizer.chat_template` from the GGUF. Bartowski's
+// builds always have one; mradermacher's stripped Gemma 4 builds do NOT — we
+// removed the hand-rolled `GEMMA4_CHAT_TEMPLATE` fallback in the 0.1.147
+// migration. If a user with a stripped GGUF reports a regression we can
+// re-add a fallback in a follow-up.
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// One-shot flag for the Gemma 4 chat-template fallback log. `render_template`
+/// is called up to four times per chat turn (full prompt, stable-prompt probe,
+/// and two system-prefix probes), and emitting the substitution log on each
+/// invocation drowns the output panel. We log on the first occurrence per
+/// process: the diagnostic value is "this build is exercising the fallback",
+/// which only needs to land once.
+static GEMMA4_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 
 use tokio::sync::{Mutex, Semaphore};
 
@@ -368,28 +66,88 @@ use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{params::LlamaModelParams, AddBos, LlamaModel},
-    openai::OpenAIChatTemplateParams,
+    model::{params::LlamaModelParams, AddBos, LlamaChatMessage, LlamaModel},
 };
 
 use super::actor::{InferenceActorHandle, OnToken};
-use crate::ai::provider::{
-    AiMessage, AiToolCall, AiToolCallFunction, ChatStreamResult, CompletionOptions, ToolStreamResult,
-};
+use super::tool_parser::parse_qwen_tool_calls;
+use crate::ai::provider::{AiMessage, AiToolCall, ChatStreamResult, CompletionOptions, ToolStreamResult};
 use crate::ai::stream_gate::StreamGate;
 use crate::ai::thinking_filter::{strip_reasoning, ThinkingGate};
 use crate::models::error::{AppError, Result};
+use crate::services::chat::{parse_python_call_tool_calls, parse_xml_tool_calls};
 
 // ── Global backend ────────────────────────────────────────────────────────────
 
 static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
 
+/// Pure predicate deciding which llama.cpp/ggml log levels survive in debug
+/// builds. INFO/DEBUG are backend-init chatter (Metal device probing, residency
+/// sets, KV-cache sizing) that floods the terminal on every model load; WARN and
+/// ERROR carry the decode-failure breadcrumbs (Metal command-buffer error, OOM,
+/// NaN) we rely on when diagnosing an opaque "Decode Error". Keep only the latter.
+fn debug_log_level_enabled(level: llama_cpp_sys_2::ggml_log_level) -> bool {
+    matches!(
+        level,
+        llama_cpp_sys_2::GGML_LOG_LEVEL_WARN | llama_cpp_sys_2::GGML_LOG_LEVEL_ERROR
+    )
+}
+
+/// C log callback installed in debug builds: forwards WARN/ERROR lines to stderr
+/// verbatim (matching llama.cpp's default handler) and drops everything quieter.
+unsafe extern "C" fn debug_filtered_log(
+    level: llama_cpp_sys_2::ggml_log_level,
+    text: *const std::os::raw::c_char,
+    _user_data: *mut std::os::raw::c_void,
+) {
+    if !debug_log_level_enabled(level) || text.is_null() {
+        return;
+    }
+    // SAFETY: llama.cpp guarantees `text` is a NUL-terminated C string for the
+    // duration of the call.
+    let msg = unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy();
+    eprint!("{msg}");
+}
+
+/// C log callback that drops every line — release builds and `LLAMA_SILENT=1`.
+unsafe extern "C" fn void_log(
+    _level: llama_cpp_sys_2::ggml_log_level,
+    _text: *const std::os::raw::c_char,
+    _user_data: *mut std::os::raw::c_void,
+) {
+}
+
+/// Install the global llama.cpp / ggml log handler.
+///
+/// This MUST run before `LlamaBackend::init()`: the Metal device probe
+/// (`ggml_metal_device_init`, residency-set setup, KV-cache sizing) is emitted
+/// *during* `llama_backend_init` → `ggml_backend_load_all`, so a handler
+/// registered afterwards (e.g. `LlamaBackend::void_logs`) never sees those
+/// lines and they leak to stderr. Setting the C callback up front filters them.
+///
+/// - Release / `LLAMA_SILENT=1`: drop everything (`void_log`).
+/// - Debug: keep WARN/ERROR decode breadcrumbs, drop the INFO/DEBUG init noise.
+fn install_log_callback() {
+    let silent = cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1");
+    let cb: llama_cpp_sys_2::ggml_log_callback = Some(if silent { void_log } else { debug_filtered_log });
+    // SAFETY: registering a global C log callback with a static fn and a null
+    // user_data pointer. `llama_log_set` also sets ggml's callback, but we set
+    // both explicitly (ggml last) so the Metal backend's logs are covered
+    // regardless of upstream ordering changes.
+    unsafe {
+        llama_cpp_sys_2::llama_log_set(cb, std::ptr::null_mut());
+        llama_cpp_sys_2::ggml_log_set(cb, std::ptr::null_mut());
+    }
+}
+
 pub(crate) fn backend() -> &'static LlamaBackend {
     LLAMA_BACKEND.get_or_init(|| {
+        // Filter llama.cpp/ggml stderr *before* init so the Metal device-probe
+        // chatter emitted inside `LlamaBackend::init()` is already suppressed.
+        install_log_callback();
         // `BackendAlreadyInitialized` is not an error in practice — it means
         // the crate's global was initialised by another path (tests, etc.).
-        #[allow(unused_mut)]
-        let mut b = LlamaBackend::init().unwrap_or_else(|_| {
+        LlamaBackend::init().unwrap_or_else(|_| {
             // If the backend was already initialised, we still need a proof token.
             // Create a dummy one — the backend itself remains intact.
             // SAFETY: We're in a single-threaded init context; the backend IS
@@ -397,20 +155,7 @@ pub(crate) fn backend() -> &'static LlamaBackend {
             // Fail-fast: backend is required for any inference; no recovery possible.
             #[allow(clippy::expect_used)]
             LlamaBackend::init().expect("LlamaBackend unexpectedly unavailable")
-        });
-        // Silence llama.cpp's chatty stderr in release builds, but keep it
-        // in debug builds — when `llama_decode` returns a fatal error it
-        // logs the actual reason (Metal command-buffer error, OOM, NaN, etc.)
-        // to stderr just before returning. Voiding logs in dev hides those
-        // breadcrumbs and leaves only the opaque "Decode Error -3: unknown".
-        // Set LLAMA_SILENT=1 to suppress logs in debug builds (e.g. eval runs).
-        #[cfg(not(debug_assertions))]
-        b.void_logs();
-        #[cfg(debug_assertions)]
-        if std::env::var("LLAMA_SILENT").as_deref() == Ok("1") {
-            b.void_logs();
-        }
-        b
+        })
     })
 }
 
@@ -639,90 +384,71 @@ impl LlamaCppRuntime {
         Ok(model)
     }
 
-    // ── Chat template helpers ─────────────────────────────────────────────────
-
-    /// Returns a built-in fallback Jinja template for models whose GGUF doesn't
-    /// embed one, keyed by family name derived from the chat model path.
-    fn chat_template_fallback(&self) -> Option<&'static str> {
-        let stem = self.chat_model_path.as_ref()?.file_stem()?.to_str()?.to_lowercase();
-        if stem.contains("gemma-4") || stem.contains("gemma4") {
-            Some(GEMMA4_CHAT_TEMPLATE)
-        } else {
-            None
-        }
-    }
-
-    /// Resolve the model's chat template, falling back to a built-in one when
-    /// the GGUF omits `tokenizer.chat_template`.
-    fn resolve_chat_template(
-        model: &LlamaModel,
-        fallback: Option<&str>,
-    ) -> std::result::Result<llama_cpp_2::model::LlamaChatTemplate, String> {
-        match model.chat_template(None) {
-            Ok(t) => Ok(t),
-            Err(_) => {
-                let tmpl = fallback.ok_or_else(|| {
-                    "Model has no embedded chat template. Use a GGUF build that \
-                     includes tokenizer.chat_template (e.g. bartowski's builds)."
-                        .to_string()
-                })?;
-                llama_cpp_2::model::LlamaChatTemplate::new(tmpl)
-                    .map_err(|e| format!("Built-in fallback template is invalid: {}", e))
-            }
-        }
-    }
-
     // ── Prompt rendering ──────────────────────────────────────────────────────
 
     /// Render the chat template on a blocking thread.
     ///
-    /// Returns the full `ChatTemplateResult` — tool paths need it afterwards
-    /// to parse the model's response (`parse_response_oaicompat`).
+    /// Uses the plain `apply_chat_template` (the only chat-template entry
+    /// point in llama-cpp-2 0.1.147+). Returns the wire prompt as `String`.
     ///
-    /// We route through apply_chat_template_oaicompat (not the simpler
-    /// apply_chat_template) because the latter uses llama.cpp's limited
-    /// built-in template renderer which can't handle Gemma 4's complex Jinja
-    /// macros → "ffi error -1", and because the oaicompat path can pass
-    /// `enable_thinking: false` (Qwen 3's template defaults it to true, which
-    /// would prepend a <think> block to every response).
+    /// The `apply_chat_template` API takes `&[LlamaChatMessage]`
+    /// (role + content) and an `add_ass` boolean. It deliberately doesn't
+    /// accept tools or template kwargs — those used to be the OAI-compat
+    /// layer's job, which 0.1.147 removed. We carry tool calls into the
+    /// content text via `to_llama_chat_messages` so the model still sees the
+    /// conversation history correctly; the system prompt teaches it the wire
+    /// format via `CHAT_SYSTEM` in `services/prompts/defaults.rs`.
     async fn render_template(
         model: Arc<LlamaModel>,
-        fallback_template: Option<&'static str>,
-        messages_json: String,
-        tools_json: Option<String>,
-        parse_tool_calls: bool,
+        messages: Vec<AiMessage>,
         add_generation_prompt: bool,
-    ) -> Result<llama_cpp_2::model::ChatTemplateResult> {
-        tokio::task::spawn_blocking(
-            move || -> std::result::Result<llama_cpp_2::model::ChatTemplateResult, String> {
-                let template = Self::resolve_chat_template(&model, fallback_template)?;
-
-                let params = OpenAIChatTemplateParams {
-                    messages_json: &messages_json,
-                    tools_json: tools_json.as_deref(),
-                    tool_choice: tools_json.as_ref().map(|_| "auto"),
-                    json_schema: None,
-                    grammar: None,
-                    reasoning_format: None,
-                    chat_template_kwargs: None,
-                    add_generation_prompt,
-                    use_jinja: true,
-                    parallel_tool_calls: false,
-                    enable_thinking: false,
-                    // The actor's tokenizer adds BOS via AddBos::Always; llama.cpp
-                    // skips duplicate BOS when the rendered prompt already contains it.
-                    add_bos: false,
-                    add_eos: false,
-                    parse_tool_calls,
-                };
-
-                model
-                    .apply_chat_template_oaicompat(&template, &params)
-                    .map_err(|e| format!("apply_chat_template_oaicompat failed: {}", e))
-            },
-        )
+    ) -> Result<String> {
+        tokio::task::spawn_blocking(move || -> std::result::Result<String, String> {
+            let template = model
+                .chat_template(None)
+                .map_err(|e| format!("model lacks embedded chat template: {e}"))?;
+            let chat = to_llama_chat_messages(&messages)?;
+            match model.apply_chat_template(&template, &chat, add_generation_prompt) {
+                Ok(s) => Ok(s),
+                // ffi error -1 = llama.cpp's `llama_chat_apply_template` returned
+                // "template not supported": its string-pattern detector did not
+                // recognise the embedded Jinja. The Gemma 4 family (unsloth's
+                // `<|turn>…<turn|>` + `<|channel>…<channel|>` delimiters) is the
+                // first one we ship that trips this — substitute a hand-rolled
+                // render whose byte output matches the official Jinja for the
+                // chat-only path we use. Other failures (NulError, FromUtf8Error,
+                // FfiError with a non-(-1) code) propagate so they get surfaced
+                // instead of silently producing a wrong-shape prompt.
+                Err(e) => {
+                    let text = e.to_string();
+                    if text.contains("ffi error -1") {
+                        // Surface the substitution so debug runs (LLAMA_SILENT off)
+                        // record which template family the GGUF carries. One log
+                        // per render is fine — these calls are rare relative to
+                        // token generation.
+                        let tmpl_str = template.to_str().unwrap_or("");
+                        if looks_like_gemma4_template(tmpl_str) {
+                            // Each chat turn calls `render_template` up to four times
+                            // (full prompt + three probes), so logging unconditionally
+                            // floods the output panel. Log the substitution exactly
+                            // once per process — it's a "build is exercising the
+                            // fallback" signal, not per-call diagnostic.
+                            if !GEMMA4_FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {
+                                crate::services::logger::log(
+                                    "debug",
+                                    "ai",
+                                    "llamacpp: apply_chat_template returned ffi error -1; using hand-rolled Gemma 4 template render (subsequent renders are silent)",
+                                );
+                            }
+                            return Ok(render_gemma4_chat_template(&messages, add_generation_prompt));
+                        }
+                    }
+                    Err(format!("apply_chat_template failed: {text}"))
+                }
+            }
+        })
         .await
-        .map_err(|e| AppError::AiError(format!("Template render task panicked: {}", e)))?
+        .map_err(|e| AppError::AiError(format!("Template render task panicked: {e}")))?
         .map_err(AppError::AiError)
     }
 
@@ -736,17 +462,9 @@ impl LlamaCppRuntime {
     /// `None` (cache the whole prompt, pre-existing behavior) when the
     /// header-less render is not a strict prefix of the full render or the
     /// render fails — losing cache reuse is acceptable, wrong output is not.
-    async fn stable_prompt_bytes(
-        model: Arc<LlamaModel>,
-        fallback_template: Option<&'static str>,
-        messages_json: String,
-        tools_json: Option<String>,
-        full_prompt: &str,
-    ) -> Option<usize> {
-        match Self::render_template(model, fallback_template, messages_json, tools_json, false, false).await {
-            Ok(hist) if full_prompt.starts_with(&hist.prompt) && hist.prompt.len() < full_prompt.len() => {
-                Some(hist.prompt.len())
-            }
+    async fn stable_prompt_bytes(model: Arc<LlamaModel>, messages: Vec<AiMessage>, full_prompt: &str) -> Option<usize> {
+        match Self::render_template(model, messages, false).await {
+            Ok(hist) if full_prompt.starts_with(&hist) && hist.len() < full_prompt.len() => Some(hist.len()),
             Ok(_) => None,
             Err(e) => {
                 crate::services::logger::log(
@@ -757,6 +475,120 @@ impl LlamaCppRuntime {
                 None
             }
         }
+    }
+
+    /// Byte length of the INVARIANT system prefix — the leading system
+    /// message(s) plus the opening of the first user turn, which is identical
+    /// for every conversation that takes the same route. The actor pins these
+    /// tokens on the never-evicted anchor sequence so a brand-new conversation
+    /// can reuse the system prefix without a partial KV eviction.
+    ///
+    /// We cannot render the system message(s) alone — most chat templates
+    /// reject a conversation with no user turn (`apply_chat_template_oaicompat`
+    /// returns ffi error -3). Instead we render two prompts that share the
+    /// system block but whose first user byte differs, then take the longest
+    /// common prefix: that is exactly the span from the start of the prompt up
+    /// to (but not including) the first user-content byte — the invariant
+    /// region — and it is template-agnostic.
+    ///
+    /// `None` when there is no leading system message, the rendered prefix is
+    /// not a strict prefix of the full prompt, or rendering fails — losing
+    /// anchor reuse is acceptable, wrong output is not.
+    async fn system_prefix_bytes(model: Arc<LlamaModel>, messages: &[AiMessage], full_prompt: &str) -> Option<usize> {
+        // Every `return None` path is annotated with a one-line diagnostic log
+        // at info level so the chat reasoning trace's
+        // "anchor wiped and NOT reseeded — sys_tok=0" message has a paired
+        // explanation in the output panel. Branch names are stable so they
+        // can be grepped from a bench run's stderr.
+        let log_none = |reason: &str| {
+            crate::services::logger::log(
+                "info",
+                "ai",
+                format!("llamacpp sys_prefix_bytes: returned None ({reason}) — anchor will not be seeded this call"),
+            );
+        };
+
+        let sys_only: Vec<AiMessage> = messages.iter().take_while(|m| m.role == "system").cloned().collect();
+        if sys_only.is_empty() {
+            let first_role = messages.first().map(|m| m.role.as_str()).unwrap_or("(none)");
+            log_none(&format!("no leading system message (first role={first_role})"));
+            return None;
+        }
+        let probe = |marker: &str| -> Vec<AiMessage> {
+            let mut msgs = sys_only.clone();
+            msgs.push(AiMessage {
+                role: "user".to_string(),
+                content: marker.to_string(),
+                tool_calls: None,
+            });
+            msgs
+        };
+        let a = match Self::render_template(Arc::clone(&model), probe("A"), false).await {
+            Ok(r) => r,
+            Err(e) => {
+                log_none(&format!("probe A render failed: {e}"));
+                return None;
+            }
+        };
+        let b = match Self::render_template(model, probe("B"), false).await {
+            Ok(r) => r,
+            Err(e) => {
+                log_none(&format!("probe B render failed: {e}"));
+                return None;
+            }
+        };
+        let lcp = a
+            .as_bytes()
+            .iter()
+            .zip(b.as_bytes())
+            .take_while(|(x, y)| x == y)
+            .count();
+        // Snap back to a UTF-8 boundary so downstream `&prompt[..len]` is valid.
+        let mut len = lcp;
+        while len > 0 && !a.is_char_boundary(len) {
+            len -= 1;
+        }
+        if len == 0 {
+            log_none(&format!(
+                "probe LCP collapsed to 0 (raw lcp={lcp}, A.len={}, B.len={}) — templates diverge at the first byte",
+                a.len(),
+                b.len()
+            ));
+            return None;
+        }
+        if len >= full_prompt.len() {
+            log_none(&format!(
+                "probe LCP {len} ≥ full_prompt.len() {} — nothing left to decode after the system prefix",
+                full_prompt.len()
+            ));
+            return None;
+        }
+        if !full_prompt.is_char_boundary(len) {
+            log_none(&format!(
+                "full_prompt is not on a char boundary at byte {len} (probe lcp={lcp})"
+            ));
+            return None;
+        }
+        if full_prompt.as_bytes()[..len] != a.as_bytes()[..len] {
+            // The render with add_generation_prompt=true (full_prompt) doesn't
+            // share its first `len` bytes with the probe render (which used
+            // add_generation_prompt=false). This means the chat template's
+            // output isn't a clean superset of the no-gen-prompt render — e.g.
+            // a template branch that gates the SYSTEM block on later messages
+            // or on `add_generation_prompt` itself. Surface enough context that
+            // the next debugging session can spot the divergence.
+            let div = full_prompt
+                .as_bytes()
+                .iter()
+                .zip(a.as_bytes())
+                .take_while(|(x, y)| x == y)
+                .count();
+            log_none(&format!(
+                "full_prompt does NOT share probe A's first {len} bytes — diverges at byte {div}"
+            ));
+            return None;
+        }
+        Some(len)
     }
 
     // ── Public inference API ──────────────────────────────────────────────────
@@ -772,23 +604,37 @@ impl LlamaCppRuntime {
         // Instruction-tuned models (Gemma 4, Llama 3, Qwen) require chat-template
         // turn tokens to produce output — a raw prompt makes the model emit EOG
         // immediately → empty response.
-        let messages_json = serde_json::to_string(&serde_json::json!([
-            {"role": "user", "content": prompt}
-        ]))
-        .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
-
-        let fallback_template = self.chat_template_fallback();
+        let messages = vec![AiMessage {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+            tool_calls: None,
+        }];
 
         let _permit = Arc::clone(&self.inference_sem)
             .acquire_owned()
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let tmpl = Self::render_template(model, fallback_template, messages_json, None, false, true).await?;
+        let mut prompt_str = Self::render_template(Arc::clone(&model), messages, true).await?;
+        // One-shot completions (classification, rewrite, rerank, summary
+        // extraction) need raw payload, not reasoning. With the OAI helpers'
+        // `enable_thinking=false` flag gone, Qwen 3 family models default to
+        // emitting unbounded `<think>…</think>` spans that swallow the entire
+        // token budget — `strip_reasoning` then collapses the reply to "" and
+        // every caller surfaces "AI returned empty response …". `/no_think`
+        // in the user message is ignored by some Qwen 3 GGUFs (notably
+        // `qwen3.5-4b-q4_k_m`), so emulate the canonical chat-template
+        // behaviour: append an empty closed `<think>` block after the
+        // generation header. Qwen 3 reads this as "thinking already done,
+        // emit the answer now" and goes straight to the payload.
+        if self.chat_model_path.as_ref().is_some_and(|p| is_qwen3_model_path(p)) {
+            prompt_str.push_str("<think>\n\n</think>\n\n");
+        }
         let outcome = actor
             // One-shot completion (rewrite/rerank/extraction/warmup): never
-            // cached — its prompt would evict the reusable chat prefix.
-            .generate(tmpl.prompt, temperature, max_tokens, false, None, None)
+            // cached — its prompt would evict the reusable chat prefix. No
+            // anchoring either (cache_prompt=false runs entirely on seq 1).
+            .generate(prompt_str, temperature, max_tokens, false, None, None, None)
             .await
             .map_err(AppError::AiError)?;
 
@@ -810,27 +656,14 @@ impl LlamaCppRuntime {
         let temperature = 0.8f32;
         let max_tokens = 2048usize;
 
-        let messages_value = normalize_messages_for_oaicompat(&messages);
-        let messages_json = serde_json::to_string(&messages_value)
-            .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
-
-        let fallback_template = self.chat_template_fallback();
-
         let _permit = Arc::clone(&self.inference_sem)
             .acquire_owned()
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let tmpl = Self::render_template(
-            Arc::clone(&model),
-            fallback_template,
-            messages_json.clone(),
-            None,
-            false,
-            true,
-        )
-        .await?;
-        let stable_bytes = Self::stable_prompt_bytes(model, fallback_template, messages_json, None, &tmpl.prompt).await;
+        let prompt_str = Self::render_template(Arc::clone(&model), messages.clone(), true).await?;
+        let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.clone(), &prompt_str).await;
+        let system_bytes = Self::system_prefix_bytes(model, &messages, &prompt_str).await;
 
         // Suppress reasoning/thinking spans from the live stream so the user
         // never sees `<|channel>…<channel|>` / `<think>…</think>`. The actor
@@ -853,7 +686,15 @@ impl LlamaCppRuntime {
         };
 
         let outcome = actor
-            .generate(tmpl.prompt, temperature, max_tokens, true, stable_bytes, Some(actor_cb))
+            .generate(
+                prompt_str,
+                temperature,
+                max_tokens,
+                true,
+                stable_bytes,
+                system_bytes,
+                Some(actor_cb),
+            )
             .await
             .map_err(AppError::AiError)?;
 
@@ -872,150 +713,71 @@ impl LlamaCppRuntime {
             prompt_eval_count: Some(outcome.prompt_tokens),
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
+            prefix_plan: outcome.prefix_plan,
+            sys_cached_before: Some(outcome.sys_cached_before),
+            sys_cached_after: Some(outcome.sys_cached_after),
+            system_prefix_tokens: Some(outcome.system_prefix_tokens),
+            stable_tokens: Some(outcome.stable_tokens),
+            dropped_front_tokens: Some(outcome.dropped_front_tokens),
         })
     }
 
     /// Non-streaming tool-call round.
     ///
-    /// Renders the prompt through llama.cpp's OpenAI-compatible template path,
-    /// which activates the model's *native* tool-call formatting (e.g. Llama
-    /// 3.1's `<|python_tag|>{…}` or Qwen's `<tool_call>…</tool_call>`), and
-    /// parses the response with `parse_response_oaicompat` so each model family
-    /// uses its own tool-call grammar without custom prompting.
-    pub async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+    /// Renders the prompt with the model's native chat template and extracts
+    /// any `<tool_call>{json}</tool_call>` blocks the model emitted via
+    /// `parse_qwen_tool_calls` (primary), falling back to the more permissive
+    /// `parse_xml_tool_calls` / `parse_python_call_tool_calls` salvage parsers
+    /// for model families that emit a different syntax. The `tools` argument
+    /// is no longer plumbed into the template (the 0.1.147 plain
+    /// `apply_chat_template` doesn't accept one) — the model sees the tool
+    /// catalogue via the system prompt's `tools_section` template variable.
+    pub async fn chat_with_tools(&self, messages: &[AiMessage], _tools: &[serde_json::Value]) -> Result<AiMessage> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
         let temperature = 0.0f32; // greedy for deterministic tool selection
-                                  // 1024 truncated mid `<tool_call>...</tool_call>` on Qwen 4B, causing
-                                  // parse_response_oaicompat to fail with ffi error -3. 4096 leaves
-                                  // headroom for tool-calls that include thinking traces or wide
-                                  // structured schemas (e.g. Lens extraction with many fields).
+                                  // 4096 leaves headroom for tool-calls that include thinking traces
+                                  // or wide structured schemas (e.g. Lens extraction with many fields).
         let max_tokens = 4096usize;
-
-        // Messages are already in OpenAI shape via AiMessage's serde derive
-        // (role / content / tool_calls). Tools come in as OpenAI function-tool
-        // JSON from `tool_definitions()`, so we can hand them through directly.
-        //
-        // llama.cpp's common_chat_msgs_parse_oaicompat validator (chat.cpp:307)
-        // requires each tool_call to carry `"type": "function"` and works best
-        // when assistant↔tool messages correlate via `id`/`tool_call_id`. Our
-        // AiToolCall doesn't carry those, so synthesise them here.
-        let messages_value = normalize_messages_for_oaicompat(messages);
-        let messages_json = serde_json::to_string(&messages_value)
-            .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
-        let tools_json_owned = if tools.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(tools).map_err(|e| AppError::AiError(format!("tools JSON encode: {}", e)))?)
-        };
-
-        let fallback_template = self.chat_template_fallback();
 
         let _permit = Arc::clone(&self.inference_sem)
             .acquire_owned()
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let tmpl = Self::render_template(
-            Arc::clone(&model),
-            fallback_template,
-            messages_json.clone(),
-            tools_json_owned.clone(),
-            true,
-            true,
-        )
-        .await?;
-        let stable_bytes =
-            Self::stable_prompt_bytes(model, fallback_template, messages_json, tools_json_owned, &tmpl.prompt).await;
+        let prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
+        let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.to_vec(), &prompt_str).await;
+        let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
         let outcome = actor
-            .generate(tmpl.prompt.clone(), temperature, max_tokens, true, stable_bytes, None)
+            .generate(
+                prompt_str,
+                temperature,
+                max_tokens,
+                true,
+                stable_bytes,
+                system_bytes,
+                None,
+            )
             .await
             .map_err(AppError::AiError)?;
 
-        // If the OAI-compatible parser can't grok the response (e.g. the model
-        // emitted a partial `<tool_call>` block, an unexpected wrapper, or
-        // plain JSON instead of the templated tool-call syntax), don't fail
-        // the whole call — synthesise a content-only assistant message so the
-        // downstream caller can apply its own salvage logic (the Lens
-        // extractor's `try_parse_json_object`, for instance).
-        let parsed_json = match tmpl.parse_response_oaicompat(&outcome.text, false) {
-            Ok(parsed) => parsed,
-            Err(_) => serde_json::json!({
-                "role": "assistant",
-                "content": outcome.text,
-                "tool_calls": [],
-            })
-            .to_string(),
-        };
-
-        Self::parse_oai_assistant_message(&parsed_json)
+        Ok(extract_tool_calls(&outcome.text))
     }
 
     /// Decode an OpenAI-shaped assistant message JSON (as produced by
     /// `parse_response_oaicompat` or the content-only fallback) into an
     /// `AiMessage`. When tool calls are present the content is dropped — the
-    /// tool round's job is to dispatch calls, not surface prose.
-    ///
-    /// Shape:
-    ///   {"role":"assistant","content":"…","tool_calls":[{"id":…,"type":"function",
-    ///    "function":{"name":"…","arguments":"{…}"}}, …]}
-    fn parse_oai_assistant_message(parsed_json: &str) -> Result<AiMessage> {
-        let parsed: serde_json::Value = serde_json::from_str(parsed_json)
-            .map_err(|e| AppError::AiError(format!("Parsed tool JSON malformed: {}", e)))?;
-
-        let content = strip_reasoning(parsed.get("content").and_then(|v| v.as_str()).unwrap_or(""));
-
-        let tool_calls: Vec<AiToolCall> = parsed
-            .get("tool_calls")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|tc| {
-                        let f = tc.get("function")?;
-                        let name = f.get("name")?.as_str()?.to_string();
-                        // OpenAI encodes `arguments` as a JSON-encoded string; some
-                        // backends return a JSON object directly. Normalise to Value.
-                        let args = match f.get("arguments") {
-                            Some(serde_json::Value::String(s)) => {
-                                serde_json::from_str(s).unwrap_or(serde_json::Value::Object(Default::default()))
-                            }
-                            Some(v) => v.clone(),
-                            None => serde_json::Value::Object(Default::default()),
-                        };
-                        Some(AiToolCall {
-                            function: AiToolCallFunction { name, arguments: args },
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        if tool_calls.is_empty() {
-            Ok(AiMessage {
-                role: "assistant".to_string(),
-                content,
-                tool_calls: None,
-            })
-        } else {
-            Ok(AiMessage {
-                role: "assistant".to_string(),
-                content: String::new(),
-                tool_calls: Some(tool_calls),
-            })
-        }
-    }
-
     /// Streaming tool-call round. Combines `chat_with_tools` (native tool-call
-    /// rendering + parsing) with live token streaming: the model's output is fed
-    /// through a [`StreamGate`] so any tool-call syntax is suppressed while prose
-    /// is forwarded to `on_token`. After generation the full output is parsed via
-    /// `parse_response_oaicompat`, so structured `tool_calls` survive even though
-    /// they were never streamed.
+    /// parsing via `parse_qwen_tool_calls` + salvage chain) with live token
+    /// streaming: the model's output is fed through a [`StreamGate`] so any
+    /// `<tool_call>` syntax is suppressed while prose is forwarded to
+    /// `on_token`. After generation we re-parse the full output to extract
+    /// the structured `tool_calls`, which were never streamed.
     pub async fn chat_stream_with_tools(
         &self,
         messages: &[AiMessage],
-        tools: &[serde_json::Value],
+        _tools: &[serde_json::Value],
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
         self.touch_last_used();
@@ -1024,33 +786,14 @@ impl LlamaCppRuntime {
         let temperature = 0.0f32; // greedy for deterministic tool selection
         let max_tokens = 4096usize;
 
-        let messages_value = normalize_messages_for_oaicompat(messages);
-        let messages_json = serde_json::to_string(&messages_value)
-            .map_err(|e| AppError::AiError(format!("messages JSON encode: {}", e)))?;
-        let tools_json_owned = if tools.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(tools).map_err(|e| AppError::AiError(format!("tools JSON encode: {}", e)))?)
-        };
-
-        let fallback_template = self.chat_template_fallback();
-
         let _permit = Arc::clone(&self.inference_sem)
             .acquire_owned()
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let tmpl = Self::render_template(
-            Arc::clone(&model),
-            fallback_template,
-            messages_json.clone(),
-            tools_json_owned.clone(),
-            true,
-            true,
-        )
-        .await?;
-        let stable_bytes =
-            Self::stable_prompt_bytes(model, fallback_template, messages_json, tools_json_owned, &tmpl.prompt).await;
+        let prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
+        let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.to_vec(), &prompt_str).await;
+        let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
 
         // Gate each piece through two filters: first strip reasoning spans
         // (`<|channel>…`, `<think>…`), then suppress tool-call syntax;
@@ -1081,11 +824,12 @@ impl LlamaCppRuntime {
 
         let outcome = actor
             .generate(
-                tmpl.prompt.clone(),
+                prompt_str,
                 temperature,
                 max_tokens,
                 true,
                 stable_bytes,
+                system_bytes,
                 Some(actor_cb),
             )
             .await
@@ -1103,23 +847,19 @@ impl LlamaCppRuntime {
             }
         }
 
-        let parsed_json = match tmpl.parse_response_oaicompat(&outcome.text, false) {
-            Ok(p) => p,
-            Err(_) => serde_json::json!({
-                "role": "assistant",
-                "content": &outcome.text,
-                "tool_calls": [],
-            })
-            .to_string(),
-        };
-
-        let message = Self::parse_oai_assistant_message(&parsed_json)?;
+        let message = extract_tool_calls(&outcome.text);
         Ok(ToolStreamResult {
             message,
             eval_count: Some(outcome.gen_tokens),
             prompt_eval_count: Some(outcome.prompt_tokens),
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
+            prefix_plan: outcome.prefix_plan,
+            sys_cached_before: Some(outcome.sys_cached_before),
+            sys_cached_after: Some(outcome.sys_cached_after),
+            system_prefix_tokens: Some(outcome.system_prefix_tokens),
+            stable_tokens: Some(outcome.stable_tokens),
+            dropped_front_tokens: Some(outcome.dropped_front_tokens),
         })
     }
 
@@ -1227,70 +967,321 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-// ── OpenAI-compat message normalization ───────────────────────────────────────
+// ── Message conversion / tool-call extraction ────────────────────────────────
 
-/// Reshape `AiMessage`s into the JSON shape llama.cpp's
-/// `common_chat_msgs_parse_oaicompat` expects:
-///   • every `tool_calls[*]` carries `"type": "function"` and a stable `"id"`;
-///   • `arguments` is emitted as a JSON-encoded string (OpenAI spec);
-///   • `role: "tool"` messages receive a matching `"tool_call_id"` so
-///     assistant→tool correlation survives the round trip.
+/// Convert our provider-neutral `AiMessage` representation into the typed
+/// `LlamaChatMessage` shape that `apply_chat_template` accepts. Tool calls and
+/// tool results are inlined into the content text using Qwen's
+/// `<tool_call>{json}</tool_call>` syntax so the model's render of the
+/// conversation history matches what we taught it to produce in the system
+/// prompt.
 ///
-/// IDs are synthesised as `call_<round>_<idx>` in message order — good enough
-/// because we only live within a single `run_tool_loop` invocation.
-fn normalize_messages_for_oaicompat(messages: &[AiMessage]) -> serde_json::Value {
+/// Returns `Err` if any message contains a null byte (CString refuses them);
+/// this is theoretically impossible for messages coming through the chat
+/// pipeline because we strip null bytes at sanitisation time, but we surface
+/// the error properly rather than silently dropping content.
+fn to_llama_chat_messages(messages: &[AiMessage]) -> std::result::Result<Vec<LlamaChatMessage>, String> {
     let mut out = Vec::with_capacity(messages.len());
-    // IDs produced by the most recent assistant `tool_calls`. Consumed in order
-    // by subsequent `role: "tool"` messages so each tool result is bound to
-    // the call that requested it.
-    let mut pending_ids: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-    let mut call_counter: usize = 0;
-
     for msg in messages {
-        let mut obj = serde_json::Map::new();
-        obj.insert("role".into(), serde_json::Value::String(msg.role.clone()));
+        let content = match msg.role.as_str() {
+            "assistant" => match &msg.tool_calls {
+                Some(calls) if !calls.is_empty() => render_assistant_tool_calls(&msg.content, calls),
+                _ => msg.content.clone(),
+            },
+            _ => msg.content.clone(),
+        };
+        out.push(LlamaChatMessage::new(msg.role.clone(), content).map_err(|e| {
+            format!(
+                "invalid chat message (role={}, len={}): {e}",
+                msg.role,
+                msg.content.len()
+            )
+        })?);
+    }
+    Ok(out)
+}
 
-        match msg.role.as_str() {
-            "assistant" if msg.tool_calls.as_ref().map(|v| !v.is_empty()).unwrap_or(false) => {
-                // Assistant tool-call turn.
-                obj.insert("content".into(), serde_json::Value::String(msg.content.clone()));
-                let mut calls_out = Vec::new();
-                // Infallible by construction: guard above ensures tool_calls is Some(non-empty).
-                #[allow(clippy::unwrap_used)]
-                for tc in msg.tool_calls.as_ref().unwrap() {
-                    let id = format!("call_{}", call_counter);
-                    call_counter += 1;
-                    pending_ids.push_back(id.clone());
-
-                    // arguments → JSON-encoded string (OpenAI spec).
-                    let args_str = serde_json::to_string(&tc.function.arguments).unwrap_or_else(|_| "{}".to_string());
-
-                    calls_out.push(serde_json::json!({
-                        "id": id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": args_str,
-                        }
-                    }));
-                }
-                obj.insert("tool_calls".into(), serde_json::Value::Array(calls_out));
-            }
-            "tool" => {
-                // Tool-result turn. Bind to the next pending assistant call id.
-                obj.insert("content".into(), serde_json::Value::String(msg.content.clone()));
-                if let Some(id) = pending_ids.pop_front() {
-                    obj.insert("tool_call_id".into(), serde_json::Value::String(id));
-                }
-            }
-            _ => {
-                // Plain system/user/assistant turn.
-                obj.insert("content".into(), serde_json::Value::String(msg.content.clone()));
-            }
+/// Render an assistant turn's tool calls into the `<tool_call>{json}</tool_call>`
+/// syntax that mirrors how Qwen 3 emits them. Embeds the calls AFTER any
+/// pre-existing `content` so models see a coherent "I'll do X, here is the
+/// call" structure when they read it back from history.
+fn render_assistant_tool_calls(content: &str, calls: &[AiToolCall]) -> String {
+    let mut buf = String::with_capacity(content.len() + calls.len() * 64);
+    if !content.is_empty() {
+        buf.push_str(content);
+        if !content.ends_with('\n') {
+            buf.push('\n');
         }
+    }
+    for tc in calls {
+        buf.push_str("<tool_call>");
+        let payload = serde_json::json!({
+            "name": tc.function.name,
+            "arguments": tc.function.arguments,
+        });
+        if let Ok(s) = serde_json::to_string(&payload) {
+            buf.push_str(&s);
+        }
+        buf.push_str("</tool_call>");
+    }
+    buf
+}
 
-        out.push(serde_json::Value::Object(obj));
+/// Parse the model's final text output into an `AiMessage`, with any
+/// tool-call blocks lifted into the structured `tool_calls` field.
+///
+/// Strategy: try the Qwen-native `<tool_call>{json}</tool_call>` parser
+/// (`parse_qwen_tool_calls`) first; fall back to the existing Hermes-style
+/// `parse_xml_tool_calls` and Python-call-literal `parse_python_call_tool_calls`
+/// salvage parsers if Qwen-style finds nothing. When ANY parser produces a
+/// non-empty list, treat the turn as a tool-call turn and zero out the prose
+/// content (the tool round's job is to dispatch, not to surface the JSON
+/// markup back to the user).
+fn extract_tool_calls(text: &str) -> AiMessage {
+    let stripped = strip_reasoning(text);
+    let mut tool_calls = parse_qwen_tool_calls(&stripped);
+    if tool_calls.is_empty() {
+        tool_calls = parse_xml_tool_calls(&stripped);
+    }
+    if tool_calls.is_empty() {
+        // Python-call fallback requires the list of known tool names so it
+        // doesn't false-positive on prose like "see `search_emails(...)` for
+        // details". We don't have the registry here, so the empty allowlist
+        // restricts this branch to the explicit `tool_call:` prefix form.
+        tool_calls = parse_python_call_tool_calls(&stripped, &[]);
+    }
+    if tool_calls.is_empty() {
+        AiMessage {
+            role: "assistant".to_string(),
+            content: stripped,
+            tool_calls: None,
+        }
+    } else {
+        AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(tool_calls),
+        }
+    }
+}
+
+/// True when the chat-model GGUF on disk is a Qwen 3 family build (Qwen 3 or
+/// Qwen 3.5, instruct or base). The OAI-compat layer's `enable_thinking=false`
+/// flag is no longer plumbed through `apply_chat_template`, and the
+/// in-message `/no_think` directive is silently ignored by some Qwen 3 GGUFs
+/// (notably `qwen3.5-4b-q4_k_m`). The caller uses this flag to manually
+/// append the canonical "thinking disabled" priming block after the assistant
+/// generation header so one-shot completions don't get swallowed by an
+/// unbounded `<think>…</think>` span.
+fn is_qwen3_model_path(path: &std::path::Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name.starts_with("qwen3")
+}
+
+/// True when the GGUF-embedded chat template is the Gemma 4 family — uses
+/// `<|turn>` / `<turn|>` / `<|channel>` / `<channel|>` instead of the
+/// Gemma 2/3 `<start_of_turn>` / `<end_of_turn>` delimiters. llama.cpp's
+/// `llama_chat_apply_template` only recognises the older marker pair and
+/// returns "template not supported" (ffi error -1) on these new templates;
+/// the caller uses this flag to decide whether to substitute the hand-rolled
+/// fallback render below.
+fn looks_like_gemma4_template(template_src: &str) -> bool {
+    template_src.contains("<|turn>") && template_src.contains("<channel|>")
+}
+
+/// Hand-rolled Gemma 4 chat template render.
+///
+/// Mirrors the exact byte output of the official Gemma 4 Jinja template for
+/// the plain-text, single-modal, no-tools chat path that EmailOps actually
+/// uses. Unsupported template branches (image / audio / video items, the tool
+/// catalogue macros, `enable_thinking=true`) are out of scope — this exists
+/// only to keep drafts and chat working on Gemma 4 12B until llama.cpp ships
+/// a built-in pattern for this template family.
+///
+/// Shape (matches Jinja2 ground truth):
+///   per message:   "<|turn>{role}\n{content}<turn|>\n"
+///                  where role: user → "user", assistant → "model",
+///                              system → "system", tool → "tool_response"
+///   if add_generation_prompt:
+///                  "<|turn>model\n<|channel>thought\n<channel|>"
+fn render_gemma4_chat_template(messages: &[AiMessage], add_generation_prompt: bool) -> String {
+    let mut out = String::new();
+    for msg in messages {
+        let role = match msg.role.as_str() {
+            "assistant" => "model",
+            "tool" => "tool_response",
+            other => other, // "user", "system", and anything else pass through
+        };
+        let content = match msg.role.as_str() {
+            "assistant" => match &msg.tool_calls {
+                Some(calls) if !calls.is_empty() => render_assistant_tool_calls(&msg.content, calls),
+                _ => msg.content.clone(),
+            },
+            _ => msg.content.clone(),
+        };
+        out.push_str("<|turn>");
+        out.push_str(role);
+        out.push('\n');
+        out.push_str(&content);
+        out.push_str("<turn|>\n");
+    }
+    if add_generation_prompt {
+        out.push_str("<|turn>model\n<|channel>thought\n<channel|>");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> AiMessage {
+        AiMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+        }
     }
 
-    serde_json::Value::Array(out)
+    #[test]
+    fn debug_log_filter_drops_info_keeps_warn_error() {
+        use llama_cpp_sys_2::{GGML_LOG_LEVEL_DEBUG, GGML_LOG_LEVEL_ERROR, GGML_LOG_LEVEL_INFO, GGML_LOG_LEVEL_WARN};
+        // Chatty backend-init lines (Metal device probe, KV sizing) are INFO/DEBUG.
+        assert!(!debug_log_level_enabled(GGML_LOG_LEVEL_INFO));
+        assert!(!debug_log_level_enabled(GGML_LOG_LEVEL_DEBUG));
+        // Decode-failure breadcrumbs ride in on WARN/ERROR — keep them in debug.
+        assert!(debug_log_level_enabled(GGML_LOG_LEVEL_WARN));
+        assert!(debug_log_level_enabled(GGML_LOG_LEVEL_ERROR));
+    }
+
+    #[test]
+    fn is_qwen3_model_path_detects_qwen3_ggufs() {
+        use std::path::PathBuf;
+        // The catalog ids that ship as defaults.
+        assert!(is_qwen3_model_path(&PathBuf::from(
+            "/models/chat/qwen3.5-4b-q4_k_m.gguf"
+        )));
+        assert!(is_qwen3_model_path(&PathBuf::from(
+            "/models/chat/qwen3.5-9b-q4_k_m.gguf"
+        )));
+        assert!(is_qwen3_model_path(&PathBuf::from("Qwen3-14B-Instruct.gguf")));
+        // Older Qwen families don't get the thinking-disable primer — they
+        // never had a `<think>` mode to begin with.
+        assert!(!is_qwen3_model_path(&PathBuf::from(
+            "/models/chat/qwen2.5-7b-instruct.gguf"
+        )));
+        // Other thinking families need a different priming shape (Gemma 4
+        // uses `<|channel>`, DeepSeek-R1 uses `<think>` but ships with the
+        // closed-block hint already in the template).
+        assert!(!is_qwen3_model_path(&PathBuf::from(
+            "/models/chat/gemma-4-12b-it-qat-ud-q4_k_xl.gguf"
+        )));
+        assert!(!is_qwen3_model_path(&PathBuf::from(
+            "/models/chat/deepseek-r1-distill-llama-8b.gguf"
+        )));
+        assert!(!is_qwen3_model_path(&PathBuf::from("")));
+    }
+
+    #[test]
+    fn looks_like_gemma4_template_detects_new_markers() {
+        // Real Gemma 4 templates contain both `<|turn>` and `<channel|>`.
+        assert!(looks_like_gemma4_template(
+            "{{- '<|turn>user\n' -}}{{- '<channel|>' -}}"
+        ));
+        // Gemma 2/3 templates use a completely different delimiter pair.
+        assert!(!looks_like_gemma4_template(
+            "{{ '<start_of_turn>user' }}{{ '<end_of_turn>' }}"
+        ));
+        // Chatml uses `<|im_start|>` etc. — must not false-positive.
+        assert!(!looks_like_gemma4_template("<|im_start|>user<|im_end|>"));
+        // Empty template never looks like Gemma 4.
+        assert!(!looks_like_gemma4_template(""));
+    }
+
+    #[test]
+    fn render_gemma4_user_only_with_gen_prompt() {
+        // Ground truth from rendering the actual GGUF-embedded Jinja with
+        // Python jinja2: single user turn + add_generation_prompt=true →
+        // "<|turn>user\nHello!<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        let out = render_gemma4_chat_template(&[msg("user", "Hello!")], true);
+        assert_eq!(
+            out,
+            "<|turn>user\nHello!<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        );
+    }
+
+    #[test]
+    fn render_gemma4_system_plus_user_with_gen_prompt() {
+        // Ground truth: system prefix is emitted via `<|turn>system\n…<turn|>`
+        // when present, NOT merged into the first user turn (Gemma 4 differs
+        // from Gemma 2/3 on this point).
+        let out = render_gemma4_chat_template(&[msg("system", "You are helpful."), msg("user", "Hi!")], true);
+        assert_eq!(
+            out,
+            "<|turn>system\nYou are helpful.<turn|>\n<|turn>user\nHi!<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        );
+    }
+
+    #[test]
+    fn render_gemma4_assistant_role_is_renamed_to_model() {
+        // Ground truth: `assistant` → `model`. Other roles pass through.
+        let out = render_gemma4_chat_template(&[msg("user", "A"), msg("assistant", "B"), msg("user", "C")], true);
+        assert_eq!(
+            out,
+            "<|turn>user\nA<turn|>\n<|turn>model\nB<turn|>\n<|turn>user\nC<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        );
+    }
+
+    #[test]
+    fn render_gemma4_without_gen_prompt_omits_model_header() {
+        // The probe paths (`stable_prompt_bytes`, `system_prefix_bytes`) call
+        // the render with add_generation_prompt=false; the result must end at
+        // the last `<turn|>\n` with no model/channel suffix.
+        let out = render_gemma4_chat_template(&[msg("user", "A")], false);
+        assert_eq!(out, "<|turn>user\nA<turn|>\n");
+    }
+
+    #[test]
+    fn render_gemma4_tool_role_becomes_tool_response() {
+        // Tool messages map to the `tool_response` role used by the Gemma 4
+        // template's tool-handling branch.
+        let out = render_gemma4_chat_template(&[msg("tool", "ok")], false);
+        assert_eq!(out, "<|turn>tool_response\nok<turn|>\n");
+    }
+
+    #[test]
+    fn render_gemma4_assistant_tool_calls_inlined_in_content() {
+        // Assistant turns carrying tool_calls are rendered with the calls
+        // inlined into the content text (same convention as the Qwen path),
+        // so the model reads back a coherent history.
+        let asst = AiMessage {
+            role: "assistant".to_string(),
+            content: "I'll look it up.".to_string(),
+            tool_calls: Some(vec![AiToolCall {
+                function: crate::ai::provider::AiToolCallFunction {
+                    name: "search_emails".to_string(),
+                    arguments: serde_json::json!({"q": "x"}),
+                },
+            }]),
+        };
+        let out = render_gemma4_chat_template(&[asst], false);
+        assert!(out.starts_with("<|turn>model\nI'll look it up.\n<tool_call>"));
+        assert!(out.contains("\"name\":\"search_emails\""));
+        assert!(out.ends_with("</tool_call><turn|>\n"));
+    }
+
+    #[test]
+    fn render_gemma4_preserves_newlines_in_content() {
+        // Multi-line prompts (the draft-generation case) must keep their
+        // internal `\n` characters intact — the model trained on that shape.
+        let out = render_gemma4_chat_template(&[msg("user", "line one\nline two")], true);
+        assert_eq!(
+            out,
+            "<|turn>user\nline one\nline two<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+        );
+    }
 }

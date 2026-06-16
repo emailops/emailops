@@ -165,6 +165,7 @@ mod tests {
             model: "test-model".to_string(),
             mode: OutputMode::Json,
             quiet: true,
+            log_quiet: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             data_dir: PathBuf::from("/tmp/emailops-cli-test"),
             conversation_id: None,
         }

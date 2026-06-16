@@ -46,6 +46,85 @@ pub(crate) fn plan_stable_boundary(full: &[LlamaToken], stable: &[LlamaToken], l
     common.max(lcp).min(full.len())
 }
 
+/// What to do with the working prompt sequence (seq 0) for a `cache_prompt`
+/// request, given its current token mirror, the system-anchor mirror (seq 2),
+/// and the new prompt's tokens. The anchor lets a DIVERGING prompt still reuse
+/// the invariant system prefix without a partial mid-sequence eviction (which
+/// hybrid-attention caches reject) — we fully evict seq 0 and rebuild its head
+/// by copying the anchor, then decode only the divergent suffix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefixPlan {
+    /// `new` purely extends the resident seq-0 prefix: keep seq 0, decode
+    /// tokens `[reuse..]` on it. No eviction (the within-conversation case).
+    Extend { reuse: usize },
+    /// `new` diverges from seq 0 but the system anchor (seq 2) is a prefix of
+    /// it: fully evict seq 0, copy the anchor back into seq 0, then decode
+    /// `[reuse..]`. `reuse` == the anchor length (the new-conversation case).
+    RestartFromAnchor { reuse: usize },
+    /// No reuse possible (anchor absent or itself diverged): full re-prefill.
+    ColdPrefill,
+}
+
+/// Decide the seq-0 strategy for a `cache_prompt` request.
+///
+/// Pure extension wins first (it reuses the MOST, including within-turn
+/// history); only on divergence do we fall back to the system anchor, and only
+/// to a cold prefill when even the anchor's system prefix no longer matches
+/// (e.g. a route flip that re-renders the system message).
+pub(crate) fn plan_cached_prefix(
+    cached: &[LlamaToken],
+    cached_system: &[LlamaToken],
+    new: &[LlamaToken],
+) -> PrefixPlan {
+    let reuse = plan_prefix_reuse(cached, new);
+    if reuse == cached.len() {
+        // All resident seq-0 tokens matched and at least one new token remains
+        // to decode (the cap guarantees the latter) — a pure suffix-append.
+        return PrefixPlan::Extend { reuse };
+    }
+    let anchor = plan_prefix_reuse(cached_system, new);
+    if !cached_system.is_empty() && anchor == cached_system.len() {
+        return PrefixPlan::RestartFromAnchor { reuse: anchor };
+    }
+    PrefixPlan::ColdPrefill
+}
+
+/// Whether applying `plan` to seq 0 leaves the system anchor (seq 2) sharing its
+/// cells with seq 0. The anchor overlaps seq 0 only while seq 0 still holds the
+/// system prefix: `Extend` keeps it, `RestartFromAnchor` rebuilds from it. On
+/// `ColdPrefill` seq 0 is re-prefilled with content that diverges at position 0,
+/// so on a unified KV cache the anchor's cells become DISJOINT and count against
+/// `n_ctx` — a long cold prompt then overflows with `NoKvCacheSlot`. The anchor
+/// is also stale in that case (the system prefix itself diverged), so the actor
+/// drops it before the cold prefill and reseeds it afterwards.
+pub(crate) fn anchor_shares_cells_with_seq0(plan: PrefixPlan) -> bool {
+    !matches!(plan, PrefixPlan::ColdPrefill)
+}
+
+/// Whether the seq-2 system anchor must be (re)seeded for this prompt, and the
+/// token length of the system prefix it should hold.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AnchorSeed {
+    /// Copy the system prefix `[0, sys_len)` from seq 0 onto seq 2. `false`
+    /// when the anchor already holds exactly this system prefix.
+    pub reseed: bool,
+    /// Token length of the system prefix (clamped to the prompt length).
+    pub sys_len: usize,
+}
+
+/// Plan system-anchor maintenance: reseed when the anchor is empty or holds a
+/// different system prefix than the current prompt (the route-flip case), so
+/// the never-evicted anchor always mirrors the live system message.
+pub(crate) fn plan_anchor_seed(cached_system: &[LlamaToken], new: &[LlamaToken], sys_len: usize) -> AnchorSeed {
+    let sys_len = sys_len.min(new.len());
+    let matches = cached_system.len() == sys_len
+        && cached_system.iter().zip(new.iter()).take_while(|(a, b)| a == b).count() == sys_len;
+    AnchorSeed {
+        reseed: !matches,
+        sys_len,
+    }
+}
+
 /// How to fit a prompt plus generation into a fixed `n_ctx` window.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PromptBudget {
@@ -204,6 +283,145 @@ mod tests {
         ];
         for (prompt_len, max_tokens, n_ctx, resident, want, label) in cases {
             let got = plan_uncached_budget(*prompt_len, *max_tokens, *n_ctx, *resident);
+            assert_eq!(&got, want, "{label}");
+        }
+    }
+
+    #[test]
+    fn cached_prefix_table() {
+        // (cached, cached_system, new, expected, label)
+        let cases: &[(&[i32], &[i32], &[i32], PrefixPlan, &str)] = &[
+            (
+                &[1, 2, 3],
+                &[1, 2],
+                &[1, 2, 3, 4, 5],
+                PrefixPlan::Extend { reuse: 3 },
+                "pure extension reuses the whole seq-0 prefix (within-conversation)",
+            ),
+            (
+                &[],
+                &[],
+                &[1, 2, 3],
+                PrefixPlan::Extend { reuse: 0 },
+                "first ever call: empty seq 0 'extends' from nothing",
+            ),
+            (
+                &[1, 2, 8, 9],
+                &[1, 2],
+                &[1, 2, 3, 4, 5],
+                PrefixPlan::RestartFromAnchor { reuse: 2 },
+                "diverges after the system prefix: restart from the anchor (new conversation)",
+            ),
+            (
+                &[1, 2, 8, 9],
+                &[1, 2],
+                &[1, 2],
+                PrefixPlan::ColdPrefill,
+                "anchor equals the whole new prompt: no token left to decode, cannot reuse",
+            ),
+            (
+                &[7, 7, 7],
+                &[7, 7],
+                &[1, 2, 3, 4],
+                PrefixPlan::ColdPrefill,
+                "system prefix itself diverged (route flip): cold",
+            ),
+            (
+                &[1, 2, 8, 9],
+                &[],
+                &[1, 2, 3, 4],
+                PrefixPlan::ColdPrefill,
+                "no anchor seeded yet and seq 0 diverges: cold",
+            ),
+            (
+                &[1, 2, 3, 4],
+                &[1, 2],
+                &[1, 2, 3],
+                PrefixPlan::RestartFromAnchor { reuse: 2 },
+                "new is a strict prefix of seq 0 (shorter): not an extension, fall to anchor",
+            ),
+        ];
+        for (cached, cached_system, new, want, label) in cases {
+            let got = plan_cached_prefix(&toks(cached), &toks(cached_system), &toks(new));
+            assert_eq!(&got, want, "{label}");
+        }
+    }
+
+    #[test]
+    fn anchor_shares_cells_table() {
+        // The never-evicted system anchor (seq 2) only overlaps seq 0's cells
+        // while seq 0 still holds the system prefix — true for Extend (keeps it)
+        // and RestartFromAnchor (rebuilds it by copying the anchor). On
+        // ColdPrefill seq 0 is re-prefilled with content that diverges at
+        // position 0, so on a unified KV cache the anchor's cells become
+        // disjoint and count against n_ctx: a long cold prompt overflows with
+        // NoKvCacheSlot. The actor must therefore drop the (now-stale) anchor
+        // before a cold prefill and reseed it afterward.
+        assert!(anchor_shares_cells_with_seq0(PrefixPlan::Extend { reuse: 5 }));
+        assert!(anchor_shares_cells_with_seq0(PrefixPlan::Extend { reuse: 0 }));
+        assert!(anchor_shares_cells_with_seq0(PrefixPlan::RestartFromAnchor {
+            reuse: 3
+        }));
+        assert!(!anchor_shares_cells_with_seq0(PrefixPlan::ColdPrefill));
+    }
+
+    #[test]
+    fn anchor_seed_table() {
+        // (cached_system, new, sys_len, expected, label)
+        let cases: &[(&[i32], &[i32], usize, AnchorSeed, &str)] = &[
+            (
+                &[],
+                &[1, 2, 3, 4],
+                2,
+                AnchorSeed {
+                    reseed: true,
+                    sys_len: 2,
+                },
+                "empty anchor: seed it with the system prefix",
+            ),
+            (
+                &[1, 2],
+                &[1, 2, 3, 4],
+                2,
+                AnchorSeed {
+                    reseed: false,
+                    sys_len: 2,
+                },
+                "anchor already holds this system prefix: no-op",
+            ),
+            (
+                &[9, 9],
+                &[1, 2, 3, 4],
+                2,
+                AnchorSeed {
+                    reseed: true,
+                    sys_len: 2,
+                },
+                "anchor holds a different system prefix (route flip): reseed",
+            ),
+            (
+                &[1, 2],
+                &[1, 2, 3, 4],
+                3,
+                AnchorSeed {
+                    reseed: true,
+                    sys_len: 3,
+                },
+                "system prefix grew: anchor too short, reseed",
+            ),
+            (
+                &[1, 2, 3, 4],
+                &[1, 2],
+                3,
+                AnchorSeed {
+                    reseed: true,
+                    sys_len: 2,
+                },
+                "sys_len clamped to the (shorter) prompt length",
+            ),
+        ];
+        for (cached_system, new, sys_len, want, label) in cases {
+            let got = plan_anchor_seed(&toks(cached_system), &toks(new), *sys_len);
             assert_eq!(&got, want, "{label}");
         }
     }

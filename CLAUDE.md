@@ -40,6 +40,8 @@ When you do need to run something the Makefile does not cover, prefer extending 
 
 ## Agent self-validation with `emailops-cli`
 
+**When the user reports a bug in chat, drafts, classification, lenses, retrieval, memory, or any other AI feature, drive the fix through the `fix-ai-bug` skill** (`.claude/skills/fix-ai-bug/SKILL.md`). It codifies the loop in this section — frame → CLI repro → root-cause → fix (with confirmation gated to genuine design forks) → re-run until green → gated graduation into `private-evals/` — and reports back in a chat-style format that hides the raw `--trace` payload by default. Invoke it whenever a bug report lands, even from a screenshot or trace fragment.
+
 `emailops-cli` (gated behind the `cli` cargo feature) is a headless front-end over the same `services::*` entry points the Tauri commands call — no `AppHandle`, no webview. Use it to **drive real features and assert on structured output** while developing, instead of guessing whether a change works. It operates on the real data dir (SQLite WAL → read commands are safe while the app is open; run heavy write commands — `sync`/`classify`/`embed` — with the app closed).
 
 Every command supports `--json`, which prints one **stable envelope** to stdout so you can parse a single shape regardless of success or failure (logs always go to stderr):
@@ -81,6 +83,7 @@ Use the Makefile release targets; do not hand-roll `npm run tauri build` command
 - All email data stored locally in SQLite
 - OAuth tokens stored in OS keychain (not plain files)
 - No telemetry, no cloud sync, no external API calls except to email providers or AI providers (only when user chooses to use remote LLMs)
+- **NEVER include real names, email addresses, subjects, or other personal data from the developer's mailbox in git-tracked files** — not in test fixtures, not in code comments, not in regression test cases, not in commit messages, not in PR descriptions. When a real-world failure surfaces a personal-data string, paraphrase it into a synthetic equivalent that preserves the technical shape (length, multibyte boundaries, regex pattern, etc.) but drops the identifying content. Real bench output goes under `src-tauri/reports/` which is gitignored — keep it there.
 
 ### Separation of Concerns
 - Tauri commands are thin wrappers that delegate to service modules

@@ -10,6 +10,8 @@
 //! Plus the per-command pretty/JSON renderers.
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -25,16 +27,28 @@ use super::OutputMode;
 
 /// Logger backend for the CLI: prints `HH:MM:SS.mmm [level] source: message` to
 /// stderr. The wall-clock prefix makes it easy to read timings off a chat trace
-/// (e.g. how long model load or a tool call took). In `--quiet` mode only
-/// `error`-level lines survive.
+/// (e.g. how long model load or a tool call took). When quiet only `error`-level
+/// lines survive.
+///
+/// Verbosity is held in a shared [`AtomicBool`] (not a plain field) so the chat
+/// paths can flip it per-turn: a chat without `--trace` suppresses the diagnostic
+/// app-log stream (route / retrieval / kv / stage lines) so stdout stays the
+/// clean answer channel, and re-enables it for `--trace`.
 pub struct CliLogger {
-    quiet: bool,
+    quiet: Arc<AtomicBool>,
 }
 
 impl CliLogger {
-    pub fn new(quiet: bool) -> Self {
+    pub fn new(quiet: Arc<AtomicBool>) -> Self {
         Self { quiet }
     }
+}
+
+/// Whether a log line at `level` should be emitted under the current quiet
+/// setting. Errors always pass; everything else is suppressed when quiet. Pure
+/// so the gating is unit-testable without capturing stderr.
+fn should_emit(quiet: bool, level: &str) -> bool {
+    !quiet || level == "error"
 }
 
 /// Format one log line with a local-time prefix. Pure so the formatting is
@@ -45,7 +59,7 @@ fn format_log_line(now: chrono::DateTime<chrono::Local>, level: &str, source: &s
 
 impl Logger for CliLogger {
     fn log(&self, event: AppLogEvent) {
-        if self.quiet && event.level != "error" {
+        if !should_emit(self.quiet.load(Ordering::Relaxed), &event.level) {
             return;
         }
         eprintln!(
@@ -493,6 +507,22 @@ mod tests {
     #[test]
     fn truncate_leaves_short_strings_untouched() {
         assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn should_emit_passes_everything_when_not_quiet() {
+        assert!(should_emit(false, "info"));
+        assert!(should_emit(false, "debug"));
+        assert!(should_emit(false, "error"));
+    }
+
+    #[test]
+    fn should_emit_suppresses_non_errors_when_quiet() {
+        assert!(!should_emit(true, "info"));
+        assert!(!should_emit(true, "debug"));
+        assert!(!should_emit(true, "success"));
+        // Errors always survive so failures never go silent.
+        assert!(should_emit(true, "error"));
     }
 
     #[test]

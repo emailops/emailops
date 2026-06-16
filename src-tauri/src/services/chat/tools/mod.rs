@@ -320,6 +320,30 @@ impl ToolRegistry {
             out.push_str(&line);
             out.push('\n');
         }
+
+        // Qwen 3 expects the tool catalogue as a structured `<tools>…</tools>`
+        // JSON block. Before the llama-cpp-2 0.1.147 migration this was
+        // injected by the Jinja template's `tools=` parameter; the plain
+        // `apply_chat_template` API no longer accepts that, so we render it
+        // ourselves into the system prompt. Without this, Qwen 3 emits
+        // inconsistent tool-call shapes (sometimes `tool_call: name(args)`,
+        // sometimes `<tool_call>{…}</tool_call>` with the `name` field
+        // dropped) and turns silently fail to produce an answer.
+        let defs = self.definitions(db);
+        if !defs.is_empty() {
+            out.push_str("\n<tools>\n");
+            // One JSON object per line — easier for the model to read and
+            // matches the format Qwen 3 was trained on (line-delimited JSON
+            // inside the wrapper tags).
+            for def in &defs {
+                if let Ok(s) = serde_json::to_string(def) {
+                    out.push_str(&s);
+                    out.push('\n');
+                }
+            }
+            out.push_str("</tools>\n");
+        }
+
         out
     }
 }
@@ -567,22 +591,38 @@ mod tests {
         let registry = ToolRegistry::with_tools(vec![Arc::new(FakeToolWithSummary)]);
         let section = registry.render_system_prompt_section(&db);
         assert!(section.starts_with("Tools:\n"));
+
+        // Split the rendering into its two distinct regions: the human-readable
+        // `Tools:` summary block (kept terse for the model's quick-reference
+        // reading) and the structured `<tools>` JSON catalogue (consumed by
+        // Qwen 3 as its training-pinned tool-call schema, MUST include the
+        // full description for correct tool selection).
+        let (summary, structured) = section.split_once("<tools>").unwrap_or((section.as_str(), ""));
+
         // Required arg has no `?`; optional arg has `?` suffix. Order
         // follows serde_json::Map's default sort, so just assert presence.
-        assert!(section.contains("fake_summary("), "missing tool name: {section}");
-        assert!(section.contains("limit?"), "missing optional arg: {section}");
+        assert!(summary.contains("fake_summary("), "missing tool name: {summary}");
+        assert!(summary.contains("limit?"), "missing optional arg: {summary}");
         assert!(
-            section.contains(", q)") || section.contains("(q,") || section.contains("(q)"),
-            "missing required arg without ?: {section}"
+            summary.contains(", q)") || summary.contains("(q,") || summary.contains("(q)"),
+            "missing required arg without ?: {summary}"
         );
-        // Uses the prompt_summary, not the long description.
+        // Conversational summary uses the SHORT prompt_summary.
         assert!(
-            section.contains("short summary for the system prompt"),
-            "wrong summary; got: {section}"
+            summary.contains("short summary for the system prompt"),
+            "wrong summary; got: {summary}"
         );
+        // The full description must NOT leak into the conversational block —
+        // that's the original tightness goal of this test.
         assert!(
-            !section.contains("full long description"),
-            "leaked description into prompt: {section}"
+            !summary.contains("full long description"),
+            "leaked description into conversational summary: {summary}"
+        );
+        // …but the structured <tools> block IS expected to carry it (Qwen
+        // selects tools based on the long description, so this is correct).
+        assert!(
+            structured.contains("full long description"),
+            "structured tools block missing description: {structured}"
         );
     }
 
@@ -596,6 +636,47 @@ mod tests {
         let section = registry.render_system_prompt_section(&db);
         assert!(section.contains("fake_summary"));
         assert!(!section.contains("hidden"), "gated tool leaked: {section}");
+    }
+
+    #[test]
+    fn render_system_prompt_section_includes_qwen_tools_block() {
+        // Qwen 3 was trained to consume a `<tools>…</tools>` JSON block in the
+        // system message; without it (lost when llama-cpp-2 0.1.147 dropped the
+        // OAI compat layer that used to inject this via the Jinja template) the
+        // model emits inconsistent tool-call shapes turn-to-turn. Asserts both:
+        //   1. The wrapper tags are present.
+        //   2. The JSON shape inside matches the OAI function-tool format
+        //      (`{"type":"function","function":{"name":…,…}}`), since that is
+        //      the format the model's training pinned.
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(FakeToolWithSummary)]);
+        let section = registry.render_system_prompt_section(&db);
+        assert!(section.contains("<tools>\n"), "missing opening tag: {section}");
+        assert!(section.contains("\n</tools>"), "missing closing tag: {section}");
+        // The inner JSON must keep the `{type, function:{name, description, parameters}}`
+        // OAI shape — that's what Qwen 3 expects as the tool-call training schema.
+        assert!(
+            section.contains(r#""type":"function""#),
+            "missing function-tool wrapper: {section}"
+        );
+        assert!(
+            section.contains(r#""name":"fake_summary""#),
+            "missing tool name in JSON block: {section}"
+        );
+    }
+
+    #[test]
+    fn render_system_prompt_section_omits_tools_block_when_registry_empty() {
+        // No tools enabled → no <tools> wrapper (avoids an empty block that
+        // would just confuse the model).
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![]);
+        let section = registry.render_system_prompt_section(&db);
+        assert!(
+            !section.contains("<tools>"),
+            "empty registry leaked tools tag: {section}"
+        );
+        assert!(!section.contains("</tools>"));
     }
 
     #[test]

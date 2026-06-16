@@ -118,6 +118,7 @@ TOOL-CALLING DISCIPLINE (read carefully):
   - When you need a tool, EMIT THE TOOL CALL DIRECTLY. Do not narrate your plan ("Let me search…", "First I will look up…", or the equivalent in any language). The user does not see those announcements as progress — they see them as your final answer, because the runtime stops as soon as you produce text without a tool_call.
   - Your FIRST turn on any factual question about the mailbox must be either (a) a tool_call, or (b) a one-sentence explicit refusal saying which tool is missing. Never both narration + nothing.
   - Only produce a plain-text response once you have the tool results you need to actually answer (or you have decided the question cannot be answered with the available tools).
+  - Emit each tool call EXACTLY as: `<tool_call>{"name":"<tool>","arguments":{<json args>}}</tool_call>`. One JSON object per <tool_call> block, valid JSON only — do NOT wrap in code fences, do NOT add prose inside the block, do NOT use trailing commas. Multiple blocks in one turn are fine; the runtime parses them in order.
 
 since/until rules:
   - Use ONLY when the user gives an explicit date range or specific day ("today", "last week", "between the 1st and the 15th", "in 2025"), in any language.

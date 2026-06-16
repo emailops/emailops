@@ -386,7 +386,7 @@ export function ReplyCompose({
           onChange={setBodyHtml}
           disabled={isLoadingDraft}
           placeholder={isLoadingDraft ? 'Generating draft…' : 'Write your reply...'}
-          contentClassName="min-h-[180px]"
+          contentClassName="min-h-[180px] max-h-[40vh] overflow-y-auto"
         />
         {isLoadingDraft && (
           <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4">

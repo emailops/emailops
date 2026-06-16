@@ -89,6 +89,40 @@ describe('chatStore processing phase', () => {
   });
 });
 
+describe('chatStore selectConversation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Simulate having navigated away mid-turn: the `done` stream event for the
+    // backgrounded conversation is dropped by handleStreamToken's conversation
+    // guard, so the streaming flags are still set when the user returns.
+    useChatStore.setState({
+      activeConversationId: 'conv-2',
+      streamingMessageId: 'msg-1',
+      streamingPhase: 'runningTools',
+      messages: [],
+      error: null,
+    });
+  });
+
+  it('clears stale streaming state when opening a past conversation', async () => {
+    const saved = { ...assistantMessage('msg-1'), content: 'the saved reply' };
+    vi.mocked(api.getChatMessages).mockResolvedValue([saved]);
+
+    await useChatStore.getState().selectConversation('conv-1');
+
+    expect(useChatStore.getState().messages).toEqual([saved]);
+    expect(useChatStore.getState().streamingMessageId).toBeNull();
+    expect(useChatStore.getState().streamingPhase).toBeNull();
+  });
+
+  it('clears stale streaming state when deselecting the conversation', async () => {
+    await useChatStore.getState().selectConversation(null);
+
+    expect(useChatStore.getState().streamingMessageId).toBeNull();
+    expect(useChatStore.getState().streamingPhase).toBeNull();
+  });
+});
+
 describe('chatStore sendMessage preserves an early phase', () => {
   beforeEach(() => {
     vi.clearAllMocks();

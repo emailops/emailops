@@ -143,6 +143,13 @@ pub enum Command {
         /// context across one-shot invocations (multi-turn).
         #[arg(long, value_name = "ID")]
         conversation: Option<String>,
+        /// Run each question in its OWN new conversation (instead of one shared
+        /// conversation), all within this single process so the model + KV cache
+        /// stay loaded. Use this to measure cross-conversation prompt-cache reuse
+        /// (the first LLM round of chat N reusing chat N-1's resident prefix).
+        /// Ignored together with `--conversation`.
+        #[arg(long)]
+        fresh: bool,
     },
 
     /// Download new mail for an account.
@@ -156,6 +163,10 @@ pub enum Command {
         /// Re-classify every email, not just new ones.
         #[arg(long)]
         all: bool,
+        /// Classify exactly the given email id (skips the queue scan). Useful
+        /// for reproducing classifier failures on a known-bad message.
+        #[arg(long, value_name = "ID", conflicts_with = "all")]
+        id: Option<String>,
     },
 
     /// Generate search embeddings for pending emails.
@@ -289,13 +300,35 @@ mod tests {
     #[test]
     fn classify_all_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "classify", "--all"]);
-        assert!(matches!(cli.command, Some(Command::Classify { all: true })));
+        assert!(matches!(cli.command, Some(Command::Classify { all: true, id: None })));
     }
 
     #[test]
     fn classify_defaults_to_new_only() {
         let cli = Cli::parse_from(["emailops-cli", "classify"]);
-        assert!(matches!(cli.command, Some(Command::Classify { all: false })));
+        assert!(matches!(cli.command, Some(Command::Classify { all: false, id: None })));
+    }
+
+    #[test]
+    fn classify_id_targets_single_email() {
+        // `--id <id>` reproduces classifier failures on a specific message
+        // without scanning the whole unclassified queue.
+        let cli = Cli::parse_from(["emailops-cli", "classify", "--id", "abc123"]);
+        match cli.command {
+            Some(Command::Classify { all, id }) => {
+                assert!(!all);
+                assert_eq!(id.as_deref(), Some("abc123"));
+            }
+            other => panic!("expected Classify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_id_and_all_are_mutually_exclusive() {
+        // Either re-run the whole queue (`--all`) or a single message (`--id`),
+        // never both: avoids ambiguity about which path runs.
+        let err = Cli::try_parse_from(["emailops-cli", "classify", "--all", "--id", "abc"]);
+        assert!(err.is_err(), "clap should reject --all together with --id");
     }
 
     #[test]
@@ -415,10 +448,12 @@ mod tests {
                 questions,
                 trace,
                 conversation,
+                fresh,
             }) => {
                 assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
                 assert!(conversation.is_none());
+                assert!(!fresh);
             }
             other => panic!("expected Chat, got {other:?}"),
         }
@@ -435,6 +470,24 @@ mod tests {
             }) => {
                 assert_eq!(questions, vec!["and then?".to_string()]);
                 assert_eq!(conversation.as_deref(), Some("conv-123"));
+            }
+            other => panic!("expected Chat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_fresh_flag_is_off_by_default() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "what's new?"]);
+        assert!(matches!(cli.command, Some(Command::Chat { fresh: false, .. })));
+    }
+
+    #[test]
+    fn chat_fresh_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "a?", "b?", "--fresh"]);
+        match cli.command {
+            Some(Command::Chat { questions, fresh, .. }) => {
+                assert_eq!(questions, vec!["a?", "b?"]);
+                assert!(fresh);
             }
             other => panic!("expected Chat, got {other:?}"),
         }

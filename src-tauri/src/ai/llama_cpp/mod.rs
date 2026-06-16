@@ -11,6 +11,7 @@ pub(crate) mod actor;
 pub mod errors;
 pub(crate) mod planner;
 pub mod runtime;
+pub(crate) mod tool_parser;
 
 use std::sync::Arc;
 

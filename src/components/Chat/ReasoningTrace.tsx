@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildFlow, formatLatency, kvCacheStats, tokensPerSecond } from '@/lib/reasoningTrace';
+import { buildFlow, cacheAction, formatLatency, kvCacheStats, tokensPerSecond } from '@/lib/reasoningTrace';
 import type { ChatMessage, ChatTrace, LlmCallTrace, RouteMode, ToolCallTrace } from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
@@ -85,12 +85,21 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
         : t('chat:reasoning.trace.phase.llmCall');
   const requested = call.kind === 'tool_round' ? (call.toolCallsRequested ?? 0) : 0;
   const kv = kvCacheStats(call);
+  const action = cacheAction(call);
+  // Map CacheAction.kind → an icon + a tone color shown next to the plan name.
+  // Mirrors the visualizer's badges so the two surfaces share a vocabulary.
+  const actionStyle: Record<string, { icon: string; tone: string }> = {
+    extend: { icon: '🪴', tone: 'text-emerald-700' },
+    'anchor-hit': { icon: '🌳', tone: 'text-sky-700' },
+    wiped: { icon: '🔥', tone: 'text-red-600' },
+    'cold-fresh': { icon: '🌱', tone: 'text-gray-600' },
+  };
   return (
     <li className="text-[13px] text-gray-700 py-1">
       <button
         type="button"
         onClick={() => hasIO && setOpen((v) => !v)}
-        className={`flex items-baseline gap-1 w-full text-left ${hasIO ? 'hover:text-gray-900' : 'cursor-default'}`}
+        className={`flex items-baseline gap-1 w-full text-left flex-wrap ${hasIO ? 'hover:text-gray-900' : 'cursor-default'}`}
       >
         {hasIO ? (
           <svg
@@ -117,6 +126,11 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
             {kv.cached > 0
               ? t('chat:reasoning.trace.kvCacheHit', { cached: kv.cached, total: kv.total, pct: kv.pct })
               : t('chat:reasoning.trace.kvCacheMiss', { total: kv.total })}
+          </span>
+        )}
+        {action && (
+          <span className={`tabular-nums ${actionStyle[action.kind]?.tone ?? 'text-gray-600'}`} title={action.detail}>
+            · {actionStyle[action.kind]?.icon ?? ''} {action.detail}
           </span>
         )}
         {requested > 0 && (

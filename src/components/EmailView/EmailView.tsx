@@ -1,5 +1,4 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { format } from 'date-fns';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
@@ -25,10 +24,19 @@ interface EmailViewProps {
   onOpenInTab?: () => void;
 }
 
-function buildReplyTemplate(email: Email): string {
-  const sentAt = format(new Date(email.timestamp * 1000), 'PPpp');
-  const quotedLines = (email.snippet || '').split('\n').map((line) => `> ${line}`);
-  return ['', '', `On ${sentAt}, ${email.sender} <${email.senderEmail}> wrote:`, ...quotedLines].join('\n');
+/**
+ * Combine an AI/chat-generated draft body with whatever the user (or a
+ * previous draft event) has already typed into the inline reply. The body
+ * lands on top so the suggestion is visible above the cursor; the user's
+ * prior text stays below, separated by a blank line. When `existing` is
+ * empty we return just `body` so the textbox doesn't open with a trailing
+ * pair of newlines.
+ *
+ * Exported (and tested directly) so changes to the spacing rules don't
+ * need to mount the full EmailView to verify.
+ */
+export function prependDraftBody(body: string, existing: string): string {
+  return existing ? `${body}\n\n${existing}` : body;
 }
 
 /**
@@ -114,10 +122,9 @@ export function EmailView({
         draftRequestIdRef.current = null;
         setIsGeneratingDraft(false);
         setDraftSources(event.payload.sources ?? []);
-        // Prepend the AI body above the existing quoted template so the
-        // user sees the suggested reply at the top and can still review
-        // the quoted history below.
-        setReplyBody((existing) => `${event.payload.body}\n\n${existing}`);
+        // Prepend the AI body above anything the user has already typed,
+        // so the suggested reply sits at the top of the textbox.
+        setReplyBody((existing) => prependDraftBody(event.payload.body, existing));
         addLog('success', 'ai', `AI draft ready (${event.payload.sources?.length ?? 0} sources)`);
       });
       unlistenFail = await listen<DraftFailedEvent>('draft-failed', (event) => {
@@ -176,7 +183,7 @@ export function EmailView({
     }
 
     setIsReplyOpen(false);
-    setReplyBody(buildReplyTemplate(latestEmailForEffect));
+    setReplyBody('');
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -200,7 +207,7 @@ export function EmailView({
       return;
     setReplyMode('reply');
     const draft = pendingChatDraft!;
-    setReplyBody((existing) => `${draft.body}\n\n${existing}`);
+    setReplyBody((existing) => prependDraftBody(draft.body, existing));
     setIsReplyOpen(true);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -269,7 +276,7 @@ export function EmailView({
             <button
               onClick={() => {
                 setReplyMode('reply');
-                setReplyBody(buildReplyTemplate(latestEmail));
+                setReplyBody('');
                 setIsReplyOpen((value) => !value);
               }}
               className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
@@ -279,7 +286,7 @@ export function EmailView({
             <button
               onClick={() => {
                 setReplyMode('reply-all');
-                setReplyBody(buildReplyTemplate(latestEmail));
+                setReplyBody('');
                 setIsReplyOpen((value) => !value);
               }}
               className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
@@ -292,7 +299,7 @@ export function EmailView({
                   // AI Draft always opens in reply-all so the suggested body
                   // lands in a compose with every thread participant prefilled.
                   setReplyMode('reply-all');
-                  setReplyBody(buildReplyTemplate(latestEmail));
+                  setReplyBody('');
                   setDraftSources([]);
                   setIsReplyOpen(true);
                   setIsGeneratingDraft(true);
@@ -407,7 +414,7 @@ export function EmailView({
             draftSources={draftSources}
             onCancel={() => {
               setIsReplyOpen(false);
-              setReplyBody(buildReplyTemplate(latestEmail));
+              setReplyBody('');
               setDraftSources([]);
               setIsGeneratingDraft(false);
               draftRequestIdRef.current = null;

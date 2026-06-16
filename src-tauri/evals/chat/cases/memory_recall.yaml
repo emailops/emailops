@@ -1,11 +1,22 @@
 # Public synthetic memory-recall eval examples.
 # Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
 
+# Exercises the `list_pending_tasks` shortcut path: the prompt must hit BOTH
+# the tools-first keyword classifier (`routing.rs::TOOLS_FIRST_KEYWORDS`)
+# AND the pending-tasks heuristic in `turn.rs::heuristic_direct_tools`,
+# otherwise the route falls through to RagFirst and the model never calls
+# the tool. `list all my pending tasks` satisfies both:
+#   - "list all" → ToolsFirst route
+#   - "my pending" → list_pending_tasks shortcut
+# The demo DB seeds 5 pending tasks for alex@northwindlabs.io, so the tool
+# returns real rows and the model has something to summarise. The original
+# "what client follow-ups are pending?" wording matched neither classifier
+# and produced an empty answer.
 - id: demo_memory_pending_tasks
-  question: "what client follow-ups are pending?"
+  question: "list all my pending tasks"
   account: "alex@northwindlabs.io"
   category: memory_tasks
-  tier: full
+  tier: smoke
   expected_route: tools_first
   expected_tools_called: ["list_pending_tasks"]
   expected_answer_contains: []

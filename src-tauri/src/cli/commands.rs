@@ -99,7 +99,8 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             questions,
             trace,
             conversation,
-        } => run_chat(session, questions, trace, conversation).await,
+            fresh,
+        } => run_chat(session, questions, trace, conversation, fresh).await,
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -142,17 +143,42 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             Ok(())
         }
 
-        Command::Classify { all } => {
+        Command::Classify { all, id } => {
             let account = session.require_account()?;
-            let count = if all {
-                crate::services::classification::classify_all_emails(&session.db, &account).await?
+            // The single-id path returns the persisted tags so the caller can
+            // see what was decided (priority / intent / topic / confidence /
+            // method) without a follow-up sqlite query. The batch paths still
+            // return just a count — exposing per-email rows there would dump
+            // hundreds of objects on a real mailbox.
+            if let Some(email_id) = id {
+                let outcome =
+                    crate::services::classification::classify_email_by_id(&session.db, &account, &email_id).await?;
+                let count = if outcome.is_some() { 1u32 } else { 0u32 };
+                if session.mode == OutputMode::Json {
+                    output::emit_ok(serde_json::json!({
+                        "classified": count,
+                        "result": outcome,
+                    }))?;
+                } else if let Some(o) = outcome {
+                    let conf = o.confidence.map(|c| format!("{:.2}", c)).unwrap_or_else(|| "—".into());
+                    println!(
+                        "Classified {} as priority={} intent={} topic={} (confidence={}, method={})",
+                        o.email_id, o.priority, o.intent, o.topic, conf, o.method
+                    );
+                } else {
+                    println!("Email {email_id} not classified (master switch off, disabled, or skipped).");
+                }
             } else {
-                crate::services::classification::classify_new_emails(&session.db, &account).await?
-            };
-            if session.mode == OutputMode::Json {
-                output::emit_ok(serde_json::json!({ "classified": count }))?;
-            } else {
-                println!("Classified {count} email(s).");
+                let count = if all {
+                    crate::services::classification::classify_all_emails(&session.db, &account).await?
+                } else {
+                    crate::services::classification::classify_new_emails(&session.db, &account).await?
+                };
+                if session.mode == OutputMode::Json {
+                    output::emit_ok(serde_json::json!({ "classified": count }))?;
+                } else {
+                    println!("Classified {count} email(s).");
+                }
             }
             Ok(())
         }
@@ -219,17 +245,30 @@ async fn run_chat(
     questions: Vec<String>,
     trace: bool,
     conversation: Option<String>,
+    fresh: bool,
 ) -> Result<()> {
     let account_id = session.require_account()?;
     let model = session.model.clone();
 
-    let conversation = match conversation {
+    // The per-turn diagnostic app-log stream (route / retrieval / kv / stage)
+    // is "the trace" for chat: keep stdout a clean answer channel and only
+    // surface it when `--trace` is passed (errors always pass through).
+    session.apply_chat_log_quiet(trace);
+
+    // `fresh` starts a brand-new conversation per question (cross-conversation
+    // cache-reuse measurement); otherwise all questions share one conversation
+    // (the default multi-turn behaviour). `--conversation` always pins one
+    // existing conversation, so it wins over `--fresh`.
+    let pinned = conversation.is_some();
+    let mut conversation = match &conversation {
         Some(id) => session
             .db
-            .get_chat_conversation(&id)?
+            .get_chat_conversation(id)?
             .ok_or_else(|| AppError::NotFound(format!("conversation '{}' not found", id)))?,
         None => session.db.create_chat_conversation(&account_id, "New chat")?,
     };
+    // `--conversation` pins one conversation, so it wins over `--fresh`.
+    let fresh = fresh && !pinned;
 
     let registry = Arc::new(crate::services::chat::tools::default_registry());
     let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
@@ -243,6 +282,13 @@ async fn run_chat(
     for (i, question) in questions.into_iter().enumerate() {
         if session.mode == OutputMode::Pretty && total > 1 {
             println!("\n>>> [{}/{}] {}", i + 1, total, question);
+        }
+
+        // In `--fresh` mode every question after the first opens its own new
+        // conversation so no prior history is carried over — only the resident
+        // model/KV cache is shared across them.
+        if fresh && i > 0 {
+            conversation = session.db.create_chat_conversation(&account_id, "New chat")?;
         }
 
         let user_message = session
@@ -357,6 +403,7 @@ mod tests {
             model: "test-model".to_string(),
             mode: OutputMode::Json,
             quiet: true,
+            log_quiet: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             data_dir: PathBuf::from("/tmp/emailops-cli-test"),
             conversation_id: None,
         }

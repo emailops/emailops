@@ -582,50 +582,41 @@ impl Database {
                 return Ok(Vec::new());
             }
 
-            // ── Step 2: PK-lookup to get thread_ids with filters ──────────────
-            // Build filter conditions for the PK lookup (category, is_deleted, date).
-            // We reuse the conditions from cte_conditions but replace match_e with e.
-            let mut pk_conditions: Vec<String> = vec!["e.account_id = ?1".to_string(), "e.is_deleted = 0".to_string()];
-            let mut pk_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
-
-            // Category filter
-            if let Some(cats) = categories.filter(|c| !c.is_empty()) {
-                let start_idx = pk_params.len() + 1;
-                let phs: Vec<String> = (0..cats.len()).map(|i| format!("?{}", start_idx + i)).collect();
-                pk_conditions.push(format!("e.category IN ({})", phs.join(", ")));
-                for cat in cats {
-                    pk_params.push(Box::new(cat.clone()));
-                }
-            }
-
-            // Date filters
-            if let Some(after) = after_timestamp {
-                pk_conditions.push(format!("e.timestamp >= ?{}", pk_params.len() + 1));
-                pk_params.push(Box::new(after));
-            }
-            if let Some(before) = before_timestamp {
-                pk_conditions.push(format!("e.timestamp <= ?{}", pk_params.len() + 1));
-                pk_params.push(Box::new(before));
-            }
-
-            // email ID IN list
-            let id_start = pk_params.len() + 1;
+            // ── Step 2: intersect the from-matches with the remaining filters ─
+            // The from filter is already satisfied by `email_ids` from Step 1.
+            // Every OTHER filter (residual keyword FTS, to, subject, category,
+            // date, tag) lives in `cte_conditions` against the `match_e` alias.
+            // The old code only re-applied category/date here, silently dropping
+            // the keyword/to/subject/tag filters — so `from:x <keyword>` returned
+            // all of x's mail. Re-apply the full `cte_where` (renamed to the `e`
+            // alias) and intersect with the Step 1 ids so both sides apply.
+            //
+            // Params: bind the entire `params_vec`. The from-block params are not
+            // referenced by this query, but leaving them in place keeps every
+            // `?N` in `cte_where` pointing at the right value. The Step 1 ids are
+            // appended after `params_vec`, so they occupy the highest indices and
+            // SQLite's positional-parameter count stays consistent.
+            let e_where = cte_where.replace("match_e", "e");
+            let id_start = params_vec.len() + 1;
             let id_phs: Vec<String> = (0..email_ids.len()).map(|i| format!("?{}", id_start + i)).collect();
-            pk_conditions.push(format!("e.id IN ({})", id_phs.join(",")));
-            for eid in &email_ids {
-                pk_params.push(Box::new(eid.clone()));
-            }
-
-            let pk_where = pk_conditions.join(" AND ");
-            // Step 2 now returns the fully-filtered email IDs (after category /
-            // date / is_deleted filters) instead of DISTINCT thread_ids. Step 3
-            // picks the latest MATCHING email per thread — a thread containing
-            // alice's email + the user's later reply must return alice's row,
-            // not the reply's. Using thread_id alone in Step 3 ignored whether
-            // the latest email matched the filter, producing the wrong row.
-            let matched_sql = format!("SELECT e.id FROM emails e WHERE {}", pk_where);
+            // Step 2 returns the fully-filtered email IDs (after every non-from
+            // filter) instead of DISTINCT thread_ids. Step 3 then picks the
+            // latest MATCHING email per thread — a thread containing alice's
+            // email + the user's later reply must return alice's row, not the
+            // reply's. Using thread_id alone in Step 3 ignored whether the latest
+            // email matched the filter, producing the wrong row.
+            let matched_sql = format!(
+                "SELECT e.id FROM emails e WHERE {} AND e.id IN ({})",
+                e_where,
+                id_phs.join(",")
+            );
             let mut matched_stmt = conn.prepare(&matched_sql)?;
-            let pk_refs: Vec<&dyn rusqlite::ToSql> = pk_params.iter().map(|p| p.as_ref()).collect();
+            let id_boxes: Vec<Box<dyn rusqlite::ToSql>> = email_ids
+                .iter()
+                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::ToSql>)
+                .collect();
+            let mut pk_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            pk_refs.extend(id_boxes.iter().map(|p| p.as_ref()));
             let matched_ids: Vec<String> = matched_stmt
                 .query_map(pk_refs.as_slice(), |row| row.get(0))?
                 .filter_map(|r| r.ok())
@@ -901,6 +892,92 @@ mod tests {
         assert!(
             ids.contains(&"e1"),
             "case-insensitive from: must find the mixed-case sender, got: {:?}",
+            ids
+        );
+    }
+
+    // Regression: a `from:` filter combined with a residual keyword
+    // (e.g. `from:alice@example.com presupuesto`) must intersect both — return
+    // only the sender's emails that ALSO match the keyword. The from_match fast
+    // path used to re-apply only category/date filters in its Step 2 PK lookup,
+    // silently dropping the keyword (and to/subject/tag) filters, so every email
+    // from the sender came back regardless of the keyword.
+    #[test]
+    fn search_from_filter_plus_keyword_intersects_both() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        // Same sender, two threads — only one mentions the keyword.
+        insert_search_email(
+            &db,
+            "e1",
+            account,
+            "thread-budget",
+            "Alice Smith",
+            "alice@example.com",
+            "Re: presupuesto Q3",
+            "adjunto el presupuesto revisado",
+            100,
+        );
+        insert_search_email(
+            &db,
+            "e2",
+            account,
+            "thread-lunch",
+            "Alice Smith",
+            "alice@example.com",
+            "Lunch tomorrow?",
+            "want to grab lunch",
+            200,
+        );
+        // Different sender that DOES mention the keyword — must not match the from filter.
+        insert_search_email(
+            &db,
+            "e3",
+            account,
+            "thread-other",
+            "Bob Jones",
+            "bob@other.com",
+            "presupuesto draft",
+            "here is the presupuesto",
+            300,
+        );
+
+        let results = db
+            .search_emails(
+                account,
+                "presupuesto",
+                None,
+                Some("alice@example.com"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+            )
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(
+            ids.contains(&"e1"),
+            "from:alice + 'presupuesto' must return her budget email, got: {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&"e2"),
+            "from:alice + 'presupuesto' must NOT return her unrelated lunch email, got: {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&"e3"),
+            "from:alice + 'presupuesto' must NOT return Bob's email, got: {:?}",
+            ids
+        );
+        assert_eq!(
+            results.len(),
+            1,
+            "exactly one email matches both filters, got: {:?}",
             ids
         );
     }

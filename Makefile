@@ -152,17 +152,61 @@ cli-demo:
 
 # Run chat eval cases through the CLI's `eval` subcommand (heuristics only — no
 # judge, no HTML report, no provider-pref mutation). Needs `cli,eval`; keeps
-# llama.cpp on so local models can answer.
+# llama.cpp on so local models can answer. Auto-builds the demo DB + embeddings
+# if missing and points `EMAILOPS_DATA_DIR` at the demo dir so case `account:`
+# overrides like `alex@northwindlabs.io` resolve.
+#
+# Pinned to `--cases-dir src-tauri/evals/chat/cases` (the PUBLIC cases) so the
+# demo-DB run never tries to use `private-evals/chat/cases/`, whose cases
+# target the developer's real mailbox accounts (e.g. `gerodp@gmail.com`) that
+# don't exist in the demo DB. The CLI's auto-resolver prefers `private-evals/`
+# when present (see `cli/eval.rs:resolve_cases_dir`), which would otherwise
+# blow up with "account 'gerodp@gmail.com' not found in DB" the moment the
+# user runs `make cli-eval` with private cases on disk.
 #   make cli-eval ARGS="--tier smoke --json"
 #   make cli-eval ARGS="--case kickoff_date_es"
 cli-eval:
-	cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval $(ARGS)
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval --cases-dir src-tauri/evals/chat/cases $(ARGS)
 
 # Multi-turn chat prefill/latency bench against the demo DB (model stays loaded
 # across turns). Logic lives in scripts/cli_bench.sh; questions overridable via
 # env: BENCH_Q2="..." make cli-bench
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
+
+# Cross-conversation KV-cache reuse probe: two DIFFERENT questions, each in its
+# own fresh conversation, one process. Shows whether chat 2's first LLM round
+# reuses the system prefix resident from chat 1. Logic in scripts/cli_kv_xconv.sh.
+#   make cli-kv-xconv
+cli-kv-xconv:
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_kv_xconv.sh
+
+# Same bench against the user's REAL data + account + question, sourced from
+# .env.local (gitignored). Used to reproduce KV-cache bugs that only show up
+# on real mailboxes / specific prompts. See .env.local.example for the env
+# vars and scripts/cli_kv_personal.sh for the logic.
+#   make cli-kv-personal
+cli-kv-personal:
+	scripts/cli_kv_personal.sh
+
+# Ad-hoc chat query against the user's real mailbox. Inherits EMAILOPS_DATA_DIR
+# and EMAILOPS_PERSONAL_ACCOUNT from .env.local (gitignored) so nothing
+# sensitive lands in a tracked file; the question itself stays on the
+# developer's terminal (and in shell history) — never committed.
+#   make cli-ask Q='cuáles son los últimos correos de <persona>?'
+cli-ask:
+	@[ -n "$(Q)" ] || (echo "Usage: make cli-ask Q='your question'" >&2; exit 1)
+	@[ -n "$(EMAILOPS_PERSONAL_ACCOUNT)" ] || (echo "Set EMAILOPS_PERSONAL_ACCOUNT in .env.local (see .env.local.example)" >&2; exit 1)
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DATA_DIR)" cargo run --manifest-path src-tauri/Cargo.toml \
+	  --features cli --bin emailops-cli -- --account "$(EMAILOPS_PERSONAL_ACCOUNT)" \
+	  chat --fresh --trace "$(Q)"
+
+# Open the single-file KV-cache visualizer in the default browser.
+# Drop a kv_xconv_*.json onto the page, paste actor logs, or pick a canned
+# example. See tools/kv_viz/README.md for what each panel shows.
+kv-viz:
+	open tools/kv_viz/index.html
 
 # ── Provider HTTP cassettes ──────────────────────────────────────────────────
 # Record live Gmail / Microsoft Graph API responses for a connected account
@@ -338,42 +382,49 @@ dist-mac-intel:
 	cp "$$DMG" release/EmailOps-macos-intel.dmg; \
 	echo "Staged release/EmailOps-macos-intel.dmg (from $$(basename "$$DMG"))"
 
-# ── emailops-cli release binary (universal, signed) ──────────────────────────
+# ── emailops-cli release binary (universal, signed + notarized) ──────────────
 # Build a standalone `emailops-cli` to distribute alongside the desktop app so
 # power users can drive EmailOps from the terminal. Same arches as `build-mac`
 # (aarch64 + x86_64, llama.cpp on both → offline `chat` works), lipo'd into one
-# universal binary. The heavy cross-compile + signing logic lives in
-# scripts/build_cli_release.sh; signing only happens when .env.signing provides
-# APPLE_SIGNING_IDENTITY (else the binary is left unsigned for local use).
+# universal binary. The heavy cross-compile + signing/notarization logic lives
+# in scripts/build_cli_release.sh; signing happens when .env.signing provides
+# APPLE_SIGNING_IDENTITY, and the binary is wrapped in a notarized + stapled
+# .dmg when the full notary credential set (APPLE_ID / APPLE_PASSWORD /
+# APPLE_TEAM_ID) is present. The .dmg is the distributable — a bare Mach-O can't
+# be stapled, so we staple the container so it verifies offline.
 # Requires the x86_64/aarch64 Rust targets that `bootstrap-mac` installs.
 #
-# Recommended follow-up: bundle this as a Tauri `externalBin` sidecar inside the
-# .app so the app's own notarization covers it and an in-app "install CLI to
-# PATH" action can symlink it — see docs/cli-user-guide.md.
-#
-#   make build-cli-mac      # build (+sign) → src-tauri/target/cli-release/emailops-cli
-#   make verify-cli-mac     # assert universal + signed
-#   make dist-cli-mac       # stage → release/emailops-cli (versionless)
+#   make build-cli-mac      # build → sign → notarize → staple .dmg
+#   make verify-cli-mac     # assert universal + signed + stapled
+#   make dist-cli-mac       # stage → release/EmailOps-CLI-macos.dmg (versionless)
 build-cli-mac:
 	@if [ -f .env.signing ]; then set -a; . ./.env.signing; set +a; fi; \
 	  bash scripts/build_cli_release.sh
 
 verify-cli-mac:
 	@BIN=src-tauri/target/cli-release/emailops-cli; \
+	DMG=src-tauri/target/cli-release/EmailOps-CLI.dmg; \
 	if [ ! -x "$$BIN" ]; then echo "ERROR: $$BIN not found. Run 'make build-cli-mac' first."; exit 1; fi; \
 	echo "Verifying $$BIN"; \
 	echo "── architectures ──"; lipo -info "$$BIN" 2>&1 | sed 's/^/  /'; \
-	echo "── codesign ──"; codesign -dv --verbose=4 "$$BIN" 2>&1 | sed 's/^/  /'
+	echo "── codesign ──"; codesign -dv --verbose=4 "$$BIN" 2>&1 | sed 's/^/  /'; \
+	if [ -f "$$DMG" ]; then \
+		echo "Verifying $$DMG"; \
+		echo "── stapler ──"; xcrun stapler validate "$$DMG" 2>&1 | sed 's/^/  /'; \
+		echo "── spctl ──"; spctl -a -t open --context context:primary-signature -vv "$$DMG" 2>&1 | sed 's/^/  /'; \
+	else \
+		echo "── .dmg ── not built (notary env was incomplete at build time)"; \
+	fi
 
-# Copy the freshly built universal CLI to a stable, versionless name under
+# Copy the freshly built notarized CLI .dmg to a stable, versionless name under
 # release/ so it can be uploaded to the GitHub Release. Run after
 # `make build-cli-mac && make verify-cli-mac`.
 dist-cli-mac:
-	@BIN=src-tauri/target/cli-release/emailops-cli; \
-	if [ ! -x "$$BIN" ]; then echo "ERROR: $$BIN not found. Run 'make build-cli-mac' first."; exit 1; fi; \
+	@DMG=src-tauri/target/cli-release/EmailOps-CLI.dmg; \
+	if [ ! -f "$$DMG" ]; then echo "ERROR: $$DMG not found. Run 'make build-cli-mac' first (with notary creds in .env.signing)."; exit 1; fi; \
 	mkdir -p release; \
-	cp "$$BIN" release/emailops-cli; \
-	echo "Staged release/emailops-cli (from $$BIN)"
+	cp "$$DMG" release/EmailOps-CLI-macos.dmg; \
+	echo "Staged release/EmailOps-CLI-macos.dmg (from $$DMG)"
 
 # Regenerate the evaluations index (manifest.json + instructions to open index.html)
 eval-index:

@@ -16,6 +16,10 @@ rubric:
 
 variants:
   - id: v0_demo
+    # Dropped "client" from the prompt: the demo dataset doesn't model
+    # client/non-client relationships, so requiring "client emails"
+    # specifically turned this variant into an LLM content judgement rather
+    # than a routing/format check.
     description: "Synthetic demo prompt"
     prompt: |
-      Summarize the client emails received today. Return a markdown table with | Sender | Subject | Urgency | Summary | and cite each row.
+      Summarize the emails received today. Return a markdown table with | Sender | Subject | Urgency | Summary | and cite each row.

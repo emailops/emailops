@@ -591,6 +591,39 @@ pub struct LlmCallTrace {
     /// providers leave it `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_prompt_tokens: Option<u32>,
+    /// Which `PrefixPlan` the actor picked for this call (embedded llama.cpp
+    /// only). One of `"Extend" | "RestartFromAnchor" | "ColdPrefill"`. HTTP
+    /// providers and old persisted traces leave it `None`. Tells the UI the
+    /// *why* behind a cold prefill — route flip, anchor stale, etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_plan: Option<String>,
+    /// Token length of the system anchor (seq 2) BEFORE this call ran. Lets
+    /// the UI mark "anchor wiped" when `sys_cached_before > 0` AND the plan
+    /// is `ColdPrefill`. Embedded llama.cpp only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sys_cached_before: Option<u32>,
+    /// Token length of the system anchor AFTER this call ran. Differs from
+    /// `sys_cached_before` on route-flip cold prefills (wipe + reseed) or
+    /// system-message growth. Embedded llama.cpp only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sys_cached_after: Option<u32>,
+    /// Token length of the invariant system prefix used for this call (the
+    /// `sys_tok` boundary computed from `system_prefix_bytes`). Embedded
+    /// llama.cpp only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prefix_tokens: Option<u32>,
+    /// Token boundary up to which seq 0 holds the stable prompt prefix.
+    /// Everything past it is the volatile generation header decoded on seq 1
+    /// only. Embedded llama.cpp only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_tokens: Option<u32>,
+    /// Tokens dropped from the FRONT of the prompt to fit n_ctx. Non-zero
+    /// when the prompt grew past `n_ctx − generation reserve` and the actor
+    /// had to truncate. Distinct cause of cold prefills from anchor failure
+    /// — the UI shows a dedicated "out-of-context" message when this fires.
+    /// Embedded llama.cpp only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dropped_front_tokens: Option<u32>,
     /// Messages sent to the LLM at this round, formatted for tracing.
     /// Only populated when the `tracing` feature is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]

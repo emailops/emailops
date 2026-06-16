@@ -63,6 +63,22 @@ struct ClassificationResponse {
     confidence: Option<f64>,
 }
 
+/// Tag set assigned to a single email by `classify_email_by_id`. Mirrors the
+/// `email_tags` rows the classifier persists so the CLI / agent caller doesn't
+/// have to re-query the DB to see what was decided.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationOutcome {
+    pub email_id: String,
+    pub intent: String,
+    pub topic: String,
+    pub priority: String,
+    pub confidence: Option<f64>,
+    /// `"rule"` when a regex match short-circuited the AI call (confidence
+    /// pinned to 1.0), `"ai"` when the LLM produced the tags.
+    pub method: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationProgress {
@@ -420,13 +436,14 @@ async fn classify_email(
     // sequence and leaves the chat prompt cache warm (see llama_cpp::actor).
     let provider = AiService::load_provider(db)?;
 
-    // Classification is a simple one-shot JSON extraction — don't pass
-    // `think: false` because thinking models (gemma4, deepseek-r1) produce
-    // empty responses when thinking is explicitly disabled. Using `None`
-    // routes through /api/generate which lets the model work naturally.
+    // Classification is a one-shot JSON extraction. With thinking suppressed
+    // at the runtime layer (llama_cpp/runtime.rs primes Qwen 3 with a closed
+    // `<think>` block before generation; Ollama honours `think: None` on the
+    // wire), the payload is just the ~30-token JSON object — 256 leaves
+    // comfortable headroom without inviting the model to ramble.
     let opts = CompletionOptions {
         temperature: Some(0.0),
-        max_tokens: Some(150),
+        max_tokens: Some(256),
         think: None,
     };
 
@@ -527,6 +544,72 @@ pub async fn classify_new_emails(db: &Arc<Database>, account_id: &str) -> Result
         &format!("Classifying {} new emails (rules={})", email_ids.len(), rules.len()),
     );
     classify_email_ids(db, account_id, &email_ids, &config, &rules).await
+}
+
+/// Classify exactly one email by id, bypassing the unclassified-queue scan.
+/// Honours the account's rule set and the global AI/classification toggles so
+/// behaviour mirrors `classify_new_emails`, then re-reads the persisted tags
+/// so the caller (CLI, agent) sees what the classifier decided. `Ok(None)`
+/// means the inner loop skipped this email (master switch off, classification
+/// disabled, or the email was missing / errored mid-batch).
+pub async fn classify_email_by_id(
+    db: &Arc<Database>,
+    account_id: &str,
+    email_id: &str,
+) -> Result<Option<ClassificationOutcome>> {
+    if !db.is_ai_enabled()? {
+        emit_log("info", "Skipped: AI is disabled in settings (master switch off)");
+        return Ok(None);
+    }
+    let config = get_config(db)?;
+    if !config.enabled {
+        emit_log(
+            "info",
+            "Skipped: classification is disabled — enable it in Settings → Classification",
+        );
+        return Ok(None);
+    }
+    seed_default_rules(db, account_id)?;
+    let rules = db.get_enabled_classification_rules(account_id)?;
+    let classified = classify_email_ids(db, account_id, &[email_id.to_string()], &config, &rules).await?;
+    if classified == 0 {
+        return Ok(None);
+    }
+    read_classification_outcome(db, email_id)
+}
+
+/// Reassemble a `ClassificationOutcome` from the persisted `email_tags` rows.
+/// Returns `None` when any of the three required tags (priority / intent /
+/// topic) is missing — that shape is only possible mid-write, so we treat it
+/// as "no result to report" rather than fabricating partial output.
+fn read_classification_outcome(db: &Arc<Database>, email_id: &str) -> Result<Option<ClassificationOutcome>> {
+    let tags = db.get_email_tags(email_id)?;
+    let mut intent = None;
+    let mut topic = None;
+    let mut priority = None;
+    let mut confidence: Option<f64> = None;
+    for tag in tags {
+        match tag.tag_type.as_str() {
+            "intent" => {
+                intent = Some(tag.tag_value);
+                confidence = confidence.or(tag.confidence);
+            }
+            "topic" => topic = Some(tag.tag_value),
+            "priority" => priority = Some(tag.tag_value),
+            _ => {}
+        }
+    }
+    match (intent, topic, priority) {
+        (Some(intent), Some(topic), Some(priority)) => Ok(Some(ClassificationOutcome {
+            email_id: email_id.to_string(),
+            method: if confidence == Some(1.0) { "rule" } else { "ai" },
+            intent,
+            topic,
+            priority,
+            confidence,
+        })),
+        _ => Ok(None),
+    }
 }
 
 /// Classify unclassified emails for an account (triggered from settings "Classify Previous").

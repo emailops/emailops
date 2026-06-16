@@ -35,6 +35,12 @@ pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, 
 #[allow(unused_imports)]
 pub(crate) use retrieval::{smart_body_slice, MAX_SOURCE_BODY_CHARS};
 pub use turn::{build_prompt, run_chat_turn};
+// Tool-call salvage parsers — used as the secondary/tertiary fallback by the
+// embedded llama.cpp tool-call parsing chain (`ai/llama_cpp/runtime.rs`) after
+// `parse_qwen_tool_calls` (the primary). Only the llamacpp feature consumes
+// them, so the re-export is gated to keep the no-feature build quiet.
+#[cfg(feature = "llamacpp")]
+pub(crate) use turn::{parse_python_call_tool_calls, parse_xml_tool_calls};
 
 use std::sync::Arc;
 

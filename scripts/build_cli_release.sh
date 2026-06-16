@@ -7,9 +7,13 @@
 # single universal Mach-O. When APPLE_SIGNING_IDENTITY is set (the Makefile
 # sources it from .env.signing) the binary is codesigned with the hardened
 # runtime and the app's entitlements, matching how the .app itself is signed.
-# Notarization of the standalone binary is intentionally left out — the
-# recommended long-term path is to ship the CLI as a Tauri `externalBin`
-# sidecar so the .app's own notarization covers it.
+#
+# When the full notarization env is also present (APPLE_ID / APPLE_PASSWORD /
+# APPLE_TEAM_ID), the signed binary is wrapped in a .dmg, submitted to Apple's
+# notary service, and the ticket is STAPLED to the .dmg. We staple a .dmg (not
+# the bare binary) because `stapler` only accepts container formats — a stapled
+# .dmg verifies offline, which matters for an offline-first tool. The .dmg is
+# the distributable; the bare binary is left next to it for local use.
 
 set -euo pipefail
 
@@ -22,6 +26,7 @@ FEATURES="${CLI_RELEASE_FEATURES:-cli}"
 
 OUT_DIR="$ROOT/src-tauri/target/cli-release"
 OUT_BIN="$OUT_DIR/emailops-cli"
+OUT_DMG="$OUT_DIR/EmailOps-CLI.dmg"
 
 mkdir -p "$OUT_DIR"
 
@@ -47,6 +52,41 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     "$OUT_BIN"
 else
   echo "[build-cli] APPLE_SIGNING_IDENTITY not set — leaving binary UNSIGNED (fine for local use)"
+fi
+
+# ── package + notarize + staple a .dmg ───────────────────────────────────────
+# Only when the full notary credential set is available. notarytool requires the
+# payload (the binary) to already be signed with the hardened runtime + secure
+# timestamp, which the codesign step above provides.
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ] && \
+   [ -n "${APPLE_ID:-}" ] && \
+   [ -n "${APPLE_PASSWORD:-}" ] && \
+   [ -n "${APPLE_TEAM_ID:-}" ]; then
+  echo "[build-cli] packaging .dmg"
+  STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE"' EXIT
+  cp "$OUT_BIN" "$STAGE/emailops-cli"
+  rm -f "$OUT_DMG"
+  hdiutil create -volname "EmailOps CLI" -srcfolder "$STAGE" \
+    -ov -format UDZO "$OUT_DMG"
+
+  echo "[build-cli] signing .dmg ($APPLE_SIGNING_IDENTITY)"
+  codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$OUT_DMG"
+
+  echo "[build-cli] notarizing .dmg (submitting to Apple — can take a few minutes)"
+  xcrun notarytool submit "$OUT_DMG" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" \
+    --wait
+
+  echo "[build-cli] stapling notarization ticket to .dmg"
+  xcrun stapler staple "$OUT_DMG"
+  xcrun stapler validate "$OUT_DMG"
+
+  echo "[build-cli] done → $OUT_DMG (notarized + stapled)"
+else
+  echo "[build-cli] notary env incomplete (need APPLE_SIGNING_IDENTITY + APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID) — skipping .dmg packaging"
 fi
 
 echo "[build-cli] done → $OUT_BIN"

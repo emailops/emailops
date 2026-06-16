@@ -25,30 +25,33 @@ Why you might want it:
 
 ## Installation
 
-### Option A — standalone release binary (recommended)
+### Option A — standalone release .dmg (recommended)
 
-Download `emailops-cli` from the latest EmailOps release and drop it on your
-`PATH`:
+Download `EmailOps-CLI-macos.dmg` from the latest EmailOps release, mount it, and
+drop the binary on your `PATH`:
 
 ```bash
-# once downloaded to ~/Downloads/emailops-cli
-chmod +x ~/Downloads/emailops-cli
-mv ~/Downloads/emailops-cli /usr/local/bin/emailops-cli
+# once downloaded to ~/Downloads/EmailOps-CLI-macos.dmg
+hdiutil attach ~/Downloads/EmailOps-CLI-macos.dmg
+cp /Volumes/EmailOps\ CLI/emailops-cli /usr/local/bin/emailops-cli
+hdiutil detach /Volumes/EmailOps\ CLI
 
 emailops-cli doctor          # confirm it sees your data + accounts
 ```
 
-It's a universal binary (Apple Silicon + Intel), signed with a Developer ID. The
-first time macOS Gatekeeper may ask you to allow it.
+The `.dmg` ships a universal binary (Apple Silicon + Intel), signed with a
+Developer ID and notarized + stapled — so Gatekeeper clears it without a prompt,
+and the check works offline.
 
 ### Option B — build it yourself
 
 From a checkout of the repo:
 
 ```bash
-make build-cli-mac           # universal binary → src-tauri/target/cli-release/emailops-cli
-make dist-cli-mac            # stage it → release/emailops-cli
-cp release/emailops-cli /usr/local/bin/
+make build-cli-mac           # universal binary → notarized + stapled .dmg
+make dist-cli-mac            # stage it → release/EmailOps-CLI-macos.dmg
+hdiutil attach release/EmailOps-CLI-macos.dmg
+cp /Volumes/EmailOps\ CLI/emailops-cli /usr/local/bin/
 ```
 
 Contributors iterating on the CLI itself should use the `make cli-*` dev targets

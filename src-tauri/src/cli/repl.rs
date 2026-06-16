@@ -231,6 +231,20 @@ async fn chat_command(session: &mut CliSession, args: &[&str]) -> Result<()> {
     chat_turn(session, question, trace).await
 }
 
+/// Restores the logger verbosity gate to the session default when dropped, so a
+/// `/chat` turn's `--trace`-scoped log suppression never leaks into the next
+/// REPL command — including when the turn returns early with an error.
+struct LogQuietGuard {
+    gate: Arc<std::sync::atomic::AtomicBool>,
+    restore_to: bool,
+}
+
+impl Drop for LogQuietGuard {
+    fn drop(&mut self) {
+        self.gate.store(self.restore_to, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Run a chat turn in the session's current conversation, creating one on the
 /// first turn (or after `/new`). Tokens stream live via the installed sink. The
 /// conversation id is carried on [`CliSession`] across turns, so successive
@@ -239,6 +253,15 @@ async fn chat_command(session: &mut CliSession, args: &[&str]) -> Result<()> {
 async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> Result<()> {
     let account_id = session.require_account()?;
     let model = session.model.clone();
+
+    // Gate the diagnostic app-log stream on `--trace` (see `run_chat`); the
+    // guard restores the session default on every exit path so later /sync,
+    // /search, etc. keep their progress logs even if the turn errors out.
+    session.apply_chat_log_quiet(trace);
+    let _restore = LogQuietGuard {
+        gate: session.log_quiet.clone(),
+        restore_to: session.quiet,
+    };
 
     let conversation_id = match &session.conversation_id {
         Some(id) => id.clone(),
@@ -409,6 +432,7 @@ mod tests {
             model: "test-model".to_string(),
             mode: OutputMode::Pretty,
             quiet: true,
+            log_quiet: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             data_dir: std::path::PathBuf::from("/tmp/emailops-cli-test"),
             conversation_id: None,
         }

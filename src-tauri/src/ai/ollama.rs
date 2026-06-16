@@ -1044,6 +1044,12 @@ impl AIProvider for OllamaClient {
             prompt_eval_count: result.prompt_eval_count,
             prefill_ms: None,
             cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
         })
     }
 
@@ -1066,6 +1072,12 @@ impl AIProvider for OllamaClient {
             prompt_eval_count,
             prefill_ms: None,
             cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
         })
     }
 

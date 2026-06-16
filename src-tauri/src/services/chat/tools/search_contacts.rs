@@ -14,11 +14,11 @@ impl Tool for SearchContactsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Resolve a person hint (informal name, partial email, company + first name) to actual contacts in the user's mailbox. Returns each match's full email address, display name, total email count and last-seen date. Call this BEFORE search_emails whenever the user names someone informally — then feed the resulting email into search_emails as `from`."
+        "Disambiguate a person hint to an email address. Use only when the name alone is ambiguous (single first name, partial email fragment, role like \"CEO of acme\"). For full names, search_emails(from=\"Full Name\") matches display-name substrings directly — no pre-lookup needed."
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "resolve a person hint (\"alice from emailops\") to email addresses. Call this BEFORE search_emails when the user names someone informally, then feed the email into search_emails(from=...)."
+        "disambiguate an unclear name (\"alice\", \"smith@\") to an email address. Skip for full names — search_emails(from=…) matches display names."
     }
 
     fn parameters_schema(&self) -> Value {

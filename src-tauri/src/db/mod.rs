@@ -27,6 +27,24 @@ pub mod trusted_senders;
 /// sync and filter stats queries run in parallel.
 const READ_POOL_SIZE: usize = 4;
 
+/// Whether `Database::new` prints its per-step `[db-init]` startup timings to
+/// stderr. The timings are dev-only (the `timed!` macro is
+/// `#[cfg(debug_assertions)]`). Defaults to on so desktop dev builds keep them;
+/// the CLI flips it off unless a `--trace` command asked for diagnostics — see
+/// `cli::startup_timing_enabled`.
+#[cfg(debug_assertions)]
+static DB_INIT_TIMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Enable/disable the `[db-init]` startup-timing stream (see [`DB_INIT_TIMING`]).
+/// Must be called before [`Database::new`]. A no-op in release builds, where the
+/// timings are compiled out entirely.
+pub fn set_db_init_timing(enabled: bool) {
+    #[cfg(debug_assertions)]
+    DB_INIT_TIMING.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(debug_assertions))]
+    let _ = enabled;
+}
+
 pub struct Database {
     db_path: PathBuf,
     write_conn: Mutex<Connection>,
@@ -73,14 +91,17 @@ impl Database {
             ($label:expr, $expr:expr) => {{
                 let _t = std::time::Instant::now();
                 let _r = $expr;
-                // Startup timing runs before the logger seam is installed, so
-                // it can only go to stderr — gate it to debug builds.
+                // Startup timing runs before the logger seam is installed, so it
+                // can only go to stderr — gate it to debug builds, and let the
+                // CLI silence it (DB_INIT_TIMING) unless `--trace` is set.
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "[db-init] [{:.0}ms] {}",
-                    _t.elapsed().as_secs_f64() * 1000.0,
-                    $label
-                );
+                if DB_INIT_TIMING.load(std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!(
+                        "[db-init] [{:.0}ms] {}",
+                        _t.elapsed().as_secs_f64() * 1000.0,
+                        $label
+                    );
+                }
                 _r
             }};
         }

@@ -73,8 +73,15 @@ sys-locale = "0.3"
 # Eval harness deps (used by examples/chat_eval.rs)
 serde_yaml = "0.9"
 tera = "1"
-# Embedded llama.cpp (optional — enabled via the `llamacpp` feature)
-llama-cpp-2 = { version = "0.1.146", optional = true, default-features = false }
+# Embedded llama.cpp (optional — enabled via the `llamacpp` feature).
+# Pinned to the 0.1.147 git tag (not crates.io) because the maintainer
+# hasn't published 0.1.147 yet. Cargo auto-clones the llama.cpp submodule
+# from this dep, so no extra workflow setup needed.
+llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs.git", tag = "0.1.147", optional = true, default-features = false }
+# Raw FFI symbols (llama_log_set / ggml_log_set + GGML_LOG_LEVEL_* constants) so
+# we can install a level-filtering log callback. Same git tag as llama-cpp-2, so
+# Cargo unifies it with the copy llama-cpp-2 already pulls in (no second build).
+llama-cpp-sys-2 = { git = "https://github.com/utilityai/llama-cpp-rs.git", tag = "0.1.147", optional = true, default-features = false }
 # TypeScript type generation (optional — enabled via the `ts` feature)
 # cargo test --features ts -- export_bindings → writes src/types/generated/*.ts
 ts-rs = { version = "12", optional = true }
@@ -106,7 +113,7 @@ cli = ["dep:reedline", "dep:rpassword"]
 # Disable with --no-default-features to skip the C++/cmake toolchain for
 # fast iteration or CI jobs that only need Ollama/OpenRouter.
 default = ["llamacpp"]
-llamacpp = ["dep:llama-cpp-2"]
+llamacpp = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
 
 # Phoenix (Arize AI) observability via OpenTelemetry OTLP.
 # Local development only — never enabled in default or release builds.
@@ -160,7 +167,7 @@ opt-level = 1
 # ─────────────────────────────────────────────────────────────────────────────
 [[bin]]
 name = "emailops-cli"
-path = "src/bin/emailops_cli.rs"
+path = "src/cli_main.rs"
 required-features = ["cli"]
 
 # ─────────────────────────────────────────────────────────────────────────────

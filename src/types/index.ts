@@ -481,6 +481,29 @@ export interface LlmCallTrace {
   /** Prompt tokens served from a reused KV-cache prefix instead of being
    * re-evaluated. Absent when the provider doesn't report cache reuse. */
   cachedPromptTokens?: number | null;
+  /** Which `PrefixPlan` the actor took for this call: `"Extend"` (within-
+   *  conversation suffix-append), `"RestartFromAnchor"` (different prompt
+   *  but the system anchor matched — the cross-conversation good case), or
+   *  `"ColdPrefill"` (anchor stale / route flip / first call). Embedded
+   *  llama.cpp only; HTTP providers and old persisted traces leave it null. */
+  prefixPlan?: string | null;
+  /** Token length of the system anchor (seq 2) BEFORE this call. When this
+   *  is > 0 and the plan is `ColdPrefill`, the anchor was wiped mid-call —
+   *  the route-flip failure mode the UI surfaces with a 🔥 badge. */
+  sysCachedBefore?: number | null;
+  /** Token length of the system anchor AFTER this call. */
+  sysCachedAfter?: number | null;
+  /** Length of the invariant system prefix the actor used (the `sys_tok`
+   *  boundary from `system_prefix_bytes`). 0 when no anchor info was passed. */
+  systemPrefixTokens?: number | null;
+  /** Token boundary up to which seq 0 holds the stable prompt prefix.
+   *  Everything past it is the volatile generation header on seq 1. */
+  stableTokens?: number | null;
+  /** Tokens dropped from the FRONT of the prompt to fit n_ctx. Non-zero
+   *  when the prompt grew past `n_ctx − generation reserve` and had to be
+   *  truncated. When this is > 0, the cold prefill is caused by running
+   *  out of context, not by anchor / sys_prefix_bytes failures. */
+  droppedFrontTokens?: number | null;
   /** Dev-only: full formatted prompt sent to the model for this call.
    * Populated only in debug builds (cfg(debug_assertions)). */
   input?: string | null;

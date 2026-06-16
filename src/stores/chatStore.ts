@@ -152,11 +152,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   selectConversation: async (id) => {
+    // Clear streaming flags from a turn left behind in another conversation:
+    // its `done` event is dropped by handleStreamToken's conversation guard,
+    // so a stale streamingMessageId would make the freshly loaded copy of that
+    // message render as still processing.
     if (!id) {
-      set({ activeConversationId: null, messages: [] });
+      set({ activeConversationId: null, messages: [], streamingMessageId: null, streamingPhase: null });
       return;
     }
-    set({ activeConversationId: id, isLoadingMessages: true, messages: [], error: null });
+    set({
+      activeConversationId: id,
+      isLoadingMessages: true,
+      messages: [],
+      error: null,
+      streamingMessageId: null,
+      streamingPhase: null,
+    });
     try {
       const messages = await api.getChatMessages(id);
       // If the user switched conversations again before this resolved, ignore.

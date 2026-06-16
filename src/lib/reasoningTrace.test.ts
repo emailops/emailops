@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatTrace, LlmCallTrace, ToolCallTrace } from '@/types';
-import { buildFlow, formatLatency, kvCacheStats, tokensPerSecond } from './reasoningTrace';
+import { buildFlow, cacheAction, formatLatency, kvCacheStats, tokensPerSecond } from './reasoningTrace';
 
 function makeTrace(overrides: Partial<ChatTrace> = {}): ChatTrace {
   return {
@@ -161,6 +161,69 @@ describe('buildFlow', () => {
     expect(flowLabels(trace)).toEqual(['llm:final_stream:-1', 'tool:orphan']);
   });
 
+  it('places salvaged tools after their LLM round even when toolCallsRequested=0', () => {
+    // Salvage path: the LLM emits the tool call as plain text (XML or python-call
+    // form), so the structured `tool_calls` field is empty when the trace is
+    // built → toolCallsRequested=0. The loop then parses the text and dispatches
+    // the tool anyway, pushing it onto trace.toolCalls with the right round.
+    // The bug was the FE clustering those tools at the end because it counted
+    // on `toolCallsRequested`. Modern matching by `tool.round` fixes it.
+    const trace = makeTrace({
+      toolCalls: [toolCall('search_emails', 0), toolCall('get_email_body', 1)],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 0 }), // salvaged
+        llmCall({ kind: 'tool_round', round: 1, toolCallsRequested: 0 }), // salvaged
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
+    });
+
+    expect(flowLabels(trace)).toEqual([
+      'llm:tool_round:0',
+      'tool:search_emails',
+      'llm:tool_round:1',
+      'tool:get_email_body',
+      'llm:final_stream:-1',
+    ]);
+  });
+
+  it('places multiple salvaged tools at the same round after the round that issued them', () => {
+    // The screenshot bug: 5 search_emails calls at rounds 0-4 (model kept re-
+    // calling search instead of answering). Each round had salvaged tool calls,
+    // so toolCallsRequested=0 on every LLM row. Without round-matching the FE
+    // dumped all 5 tools at the end of the panel.
+    const trace = makeTrace({
+      toolCalls: [
+        toolCall('search_emails', 0),
+        toolCall('search_emails', 1),
+        toolCall('search_emails', 2),
+        toolCall('search_emails', 3),
+        toolCall('search_emails', 4),
+      ],
+      llmCalls: [
+        llmCall({ kind: 'tool_round', round: 0, toolCallsRequested: 0 }),
+        llmCall({ kind: 'tool_round', round: 1, toolCallsRequested: 0 }),
+        llmCall({ kind: 'tool_round', round: 2, toolCallsRequested: 0 }),
+        llmCall({ kind: 'tool_round', round: 3, toolCallsRequested: 0 }),
+        llmCall({ kind: 'tool_round', round: 4, toolCallsRequested: 0 }),
+        llmCall({ kind: 'final_stream', round: -1 }),
+      ],
+    });
+
+    expect(flowLabels(trace)).toEqual([
+      'llm:tool_round:0',
+      'tool:search_emails',
+      'llm:tool_round:1',
+      'tool:search_emails',
+      'llm:tool_round:2',
+      'tool:search_emails',
+      'llm:tool_round:3',
+      'tool:search_emails',
+      'llm:tool_round:4',
+      'tool:search_emails',
+      'llm:final_stream:-1',
+    ]);
+  });
+
   it('returns an empty flow when there are no LLM or tool calls', () => {
     expect(buildFlow(makeTrace())).toEqual([]);
   });
@@ -176,6 +239,100 @@ describe('buildFlow', () => {
     expect(flow[1]).toMatchObject({ kind: 'llm', call: { kind: 'tool_round', latencyMs: 35000 } });
     // ids are unique so they're safe as React keys.
     expect(new Set(flow.map((e) => e.id)).size).toBe(flow.length);
+  });
+});
+
+describe('cacheAction', () => {
+  it('returns null when the provider did not report a plan (HTTP / legacy)', () => {
+    expect(cacheAction(llmCall({}))).toBeNull();
+  });
+
+  it('reports "extend" with the unchanged anchor for an in-conversation continuation', () => {
+    const action = cacheAction(llmCall({ prefixPlan: 'Extend', sysCachedBefore: 2344, sysCachedAfter: 2344 }));
+    expect(action).toEqual({
+      kind: 'extend',
+      detail: 'extended seq 0 · anchor unchanged (2344 tok)',
+    });
+  });
+
+  it('reports "cold-fresh" for an Extend that seeds the anchor for the first time', () => {
+    // First cached call after model load (or after an aux call evicted both):
+    // cached was [], anchor was []. Plan picks Extend{0}, but plan_anchor_seed
+    // fires after decoding and seeds the anchor for the first time — the
+    // "anchor went 0→N during Extend" case. Use the cold-fresh icon so the
+    // seed event is visible instead of being labelled "unchanged".
+    const action = cacheAction(llmCall({ prefixPlan: 'Extend', sysCachedBefore: 0, sysCachedAfter: 4642 }));
+    expect(action).toEqual({
+      kind: 'cold-fresh',
+      detail: 'extended seq 0 · anchor seeded for the first time (4642 tok)',
+    });
+  });
+
+  it('reports "anchor-hit" for the cross-conversation good case', () => {
+    const action = cacheAction(
+      llmCall({ prefixPlan: 'RestartFromAnchor', sysCachedBefore: 2344, sysCachedAfter: 2344 }),
+    );
+    expect(action).toEqual({
+      kind: 'anchor-hit',
+      detail: 'anchor hit: reused 2344 tokens (cross-conversation) · anchor unchanged (2344 tok)',
+    });
+  });
+
+  it('reports "wiped" for the route-flip cold prefill (anchor resized + reseeded)', () => {
+    const action = cacheAction(llmCall({ prefixPlan: 'ColdPrefill', sysCachedBefore: 2344, sysCachedAfter: 5151 }));
+    expect(action).toEqual({
+      kind: 'wiped',
+      detail: 'cold prefill · anchor resized 2344→5151 tok ↑',
+    });
+  });
+
+  it('reports "cold-fresh" for the very first cached call when no anchor was set', () => {
+    const action = cacheAction(llmCall({ prefixPlan: 'ColdPrefill', sysCachedBefore: 0, sysCachedAfter: 2344 }));
+    expect(action).toEqual({
+      kind: 'cold-fresh',
+      detail: 'cold prefill · anchor seeded for the first time (2344 tok)',
+    });
+  });
+
+  it('flags the "wiped and NOT reseeded" regression visibly (anchor went non-zero → 0)', () => {
+    // The runtime quirk in the user's trace: a ColdPrefill drops the anchor and
+    // then plan_anchor_seed doesn't put one back because system_prefix_bytes
+    // returned None for that call (sys_tok=0). Surface this loudly — it's the
+    // bug worth chasing next.
+    const action = cacheAction(llmCall({ prefixPlan: 'ColdPrefill', sysCachedBefore: 4642, sysCachedAfter: 0 }));
+    expect(action).toEqual({
+      kind: 'wiped',
+      detail: 'cold prefill · anchor wiped (was 4642 tok) and NOT reseeded — runtime returned sys_tok=0',
+    });
+  });
+
+  it('explains an Extend that never had an anchor (sys_tok=0 every call)', () => {
+    const action = cacheAction(llmCall({ prefixPlan: 'Extend', sysCachedBefore: 0, sysCachedAfter: 0 }));
+    expect(action).toEqual({
+      kind: 'extend',
+      detail: 'extended seq 0 · no anchor seeded (sys_tok=0 — system prefix not detected this call)',
+    });
+  });
+
+  it('flags front-truncation as the cause when droppedFrontTokens > 0 (out-of-context)', () => {
+    // The today-summary scenario from the personal bench: prompt grew past
+    // n_ctx, actor truncated, cache becomes structurally non-reusable across
+    // rounds (each round drops a different amount → leading bytes shift).
+    // This message overrides the generic "anchor wiped — sys_tok=0" string
+    // because the user-actionable cause is "out of context", not "cache bug".
+    const action = cacheAction(
+      llmCall({
+        prefixPlan: 'ColdPrefill',
+        sysCachedBefore: 4642,
+        sysCachedAfter: 0,
+        droppedFrontTokens: 137,
+      }),
+    );
+    expect(action).toEqual({
+      kind: 'wiped',
+      detail:
+        'out of context: front-truncated by 137 tokens — leading bytes rewrote, cache cannot follow (anchor not seeded)',
+    });
   });
 });
 

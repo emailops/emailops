@@ -45,7 +45,7 @@ pub struct AiToolCallFunction {
 }
 
 /// Result from a streaming chat completion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChatStreamResult {
     pub content: String,
     pub eval_count: Option<u32>,
@@ -56,6 +56,28 @@ pub struct ChatStreamResult {
     /// Prompt tokens served from a reused KV-cache prefix (0 until prefix
     /// caching lands; `None` when the backend can't know).
     pub cached_prompt_tokens: Option<u32>,
+    /// Which `PrefixPlan` the actor took for this call (embedded llama.cpp
+    /// only). `"Extend" | "RestartFromAnchor" | "ColdPrefill"`. HTTP providers
+    /// leave it `None`.
+    pub prefix_plan: Option<&'static str>,
+    /// Token length of the system anchor BEFORE this call ran. Lets the trace
+    /// detect "anchor was wiped mid-call" (`sys_cached_before > 0` and
+    /// `prefix_plan == ColdPrefill`). Embedded llama.cpp only.
+    pub sys_cached_before: Option<u32>,
+    /// Token length of the system anchor AFTER this call ran. Embedded
+    /// llama.cpp only.
+    pub sys_cached_after: Option<u32>,
+    /// Token length of the invariant system prefix in this call's prompt.
+    /// Embedded llama.cpp only.
+    pub system_prefix_tokens: Option<u32>,
+    /// Token boundary up to which seq 0 holds the stable prompt prefix.
+    /// Embedded llama.cpp only.
+    pub stable_tokens: Option<u32>,
+    /// Tokens dropped from the FRONT of the prompt to fit `n_ctx`. Non-zero
+    /// when the prompt exceeded the prompt budget — that's the real cause of
+    /// cold prefills on long chats (the leading bytes change every turn),
+    /// distinct from "anchor / plan failure". Embedded llama.cpp only.
+    pub dropped_front_tokens: Option<u32>,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -73,6 +95,18 @@ pub struct ToolStreamResult {
     pub prefill_ms: Option<i64>,
     /// See [`ChatStreamResult::cached_prompt_tokens`].
     pub cached_prompt_tokens: Option<u32>,
+    /// See [`ChatStreamResult::prefix_plan`].
+    pub prefix_plan: Option<&'static str>,
+    /// See [`ChatStreamResult::sys_cached_before`].
+    pub sys_cached_before: Option<u32>,
+    /// See [`ChatStreamResult::sys_cached_after`].
+    pub sys_cached_after: Option<u32>,
+    /// See [`ChatStreamResult::system_prefix_tokens`].
+    pub system_prefix_tokens: Option<u32>,
+    /// See [`ChatStreamResult::stable_tokens`].
+    pub stable_tokens: Option<u32>,
+    /// See [`ChatStreamResult::dropped_front_tokens`].
+    pub dropped_front_tokens: Option<u32>,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -205,6 +239,12 @@ pub trait AIProvider: Send + Sync {
             prompt_eval_count: None,
             prefill_ms: None,
             cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
         })
     }
 
@@ -483,6 +523,12 @@ impl AIProvider for FakeAiProvider {
             prompt_eval_count: None,
             prefill_ms: None,
             cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
         })
     }
 }

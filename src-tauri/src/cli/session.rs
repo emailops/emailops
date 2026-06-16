@@ -9,13 +9,14 @@
 //! directly — no `AppHandle` required.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
 use super::output::CliLogger;
-use super::{Cli, OutputMode};
+use super::{Cli, Command, OutputMode};
 
 /// State shared across one CLI invocation (one-shot) or one REPL session.
 pub struct CliSession {
@@ -27,11 +28,37 @@ pub struct CliSession {
     pub model: String,
     pub mode: OutputMode,
     pub quiet: bool,
+    /// Shared verbosity gate for the installed [`CliLogger`]. Flipped per chat
+    /// turn so a chat without `--trace` suppresses the diagnostic app-log stream
+    /// (route / retrieval / kv / stage lines) while non-chat commands keep their
+    /// progress logs. `--quiet` is the hard floor (see [`chat_log_quiet`]).
+    pub log_quiet: Arc<AtomicBool>,
     /// Directory the DB lives in — needed by `sync_account`.
     pub data_dir: PathBuf,
     /// Current REPL conversation id (carried across turns). Unused in one-shot
     /// mode.
     pub conversation_id: Option<String>,
+}
+
+/// Whether the diagnostic app-log stream should be suppressed for a chat turn.
+/// Chat treats those lines as "the trace", so they only surface with `--trace`;
+/// a global `--quiet` keeps them suppressed regardless. Pure so the rule is
+/// unit-testable without installing a logger.
+pub(crate) fn chat_log_quiet(global_quiet: bool, trace: bool) -> bool {
+    global_quiet || !trace
+}
+
+/// Whether `Database::new`'s `[db-init]` startup-timing stream should print for
+/// this invocation. Those lines are diagnostics too, so they only surface when a
+/// command explicitly asked for a trace (`chat`/`search --trace`); every other
+/// invocation — including the bare-REPL launch — keeps startup silent. Pure so
+/// the rule is unit-testable. Mirrors [`chat_log_quiet`] for startup-time logs
+/// that predate the logger seam.
+pub(crate) fn startup_timing_enabled(command: Option<&Command>) -> bool {
+    matches!(
+        command,
+        Some(Command::Chat { trace: true, .. }) | Some(Command::Search { trace: true, .. })
+    )
 }
 
 impl CliSession {
@@ -42,11 +69,17 @@ impl CliSession {
         // store to be initialised first, exactly as the desktop app does.
         crate::services::keychain::init_native_store()?;
 
+        // Silence `Database::new`'s `[db-init]` startup timings unless a
+        // `--trace` command asked for diagnostics. Must precede `Database::new`.
+        crate::db::set_db_init_timing(startup_timing_enabled(cli.command.as_ref()));
+
         let data_dir = resolve_data_dir(cli.data_dir.clone());
         let db = Arc::new(Database::new(data_dir.clone())?);
 
-        // Logs go to stderr so stdout stays a clean data/JSON channel.
-        crate::services::logger::install(Arc::new(CliLogger::new(cli.quiet)));
+        // Logs go to stderr so stdout stays a clean data/JSON channel. The gate
+        // is shared with the session so chat turns can flip it per `--trace`.
+        let log_quiet = Arc::new(AtomicBool::new(cli.quiet));
+        crate::services::logger::install(Arc::new(CliLogger::new(log_quiet.clone())));
         // One-shot mode streams chat tokens straight to stdout; the REPL swaps
         // in a ChannelEventSink per turn (see `repl`).
         crate::services::events::install(Arc::new(super::output::CliEventSink::new(mode)));
@@ -60,9 +93,26 @@ impl CliSession {
             model,
             mode,
             quiet: cli.quiet,
+            log_quiet,
             data_dir,
             conversation_id: None,
         })
+    }
+
+    /// Gate the diagnostic app-log stream for a chat turn on `--trace`: a chat
+    /// without it stays quiet (only the streamed answer + errors reach the
+    /// terminal); `--trace` re-enables the full stream. Honours the `--quiet`
+    /// floor via [`chat_log_quiet`].
+    pub fn apply_chat_log_quiet(&self, trace: bool) {
+        self.log_quiet
+            .store(chat_log_quiet(self.quiet, trace), Ordering::Relaxed);
+    }
+
+    /// Restore the logger to the session default (the global `--quiet` flag), so
+    /// non-chat work that follows a chat turn (notably in the REPL) keeps its
+    /// progress logs.
+    pub fn restore_log_quiet(&self) {
+        self.log_quiet.store(self.quiet, Ordering::Relaxed);
     }
 
     /// Account id for commands that require one. Produces a precise error when
@@ -175,6 +225,92 @@ mod tests {
                 rusqlite::params![id, email, enabled as i32],
             )
             .expect("seed account");
+    }
+
+    fn session_with_quiet(quiet: bool) -> CliSession {
+        CliSession {
+            db: Arc::new(Database::new_for_testing().expect("test db")),
+            account: None,
+            model: "test-model".to_string(),
+            mode: OutputMode::Pretty,
+            quiet,
+            log_quiet: Arc::new(AtomicBool::new(quiet)),
+            data_dir: PathBuf::from("/tmp/emailops-cli-test"),
+            conversation_id: None,
+        }
+    }
+
+    #[test]
+    fn apply_chat_log_quiet_suppresses_without_trace_then_restores() {
+        let session = session_with_quiet(false);
+        // Default chat (no --trace) suppresses the diagnostic stream …
+        session.apply_chat_log_quiet(false);
+        assert!(session.log_quiet.load(Ordering::Relaxed));
+        // … and restoring returns to the session default (logs on).
+        session.restore_log_quiet();
+        assert!(!session.log_quiet.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn apply_chat_log_quiet_shows_stream_with_trace() {
+        let session = session_with_quiet(false);
+        session.apply_chat_log_quiet(true);
+        assert!(!session.log_quiet.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn apply_chat_log_quiet_keeps_quiet_floor_even_with_trace() {
+        let session = session_with_quiet(true);
+        session.apply_chat_log_quiet(true);
+        assert!(session.log_quiet.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn startup_timing_on_only_for_trace_commands() {
+        assert!(startup_timing_enabled(Some(&Command::Chat {
+            questions: vec!["q".into()],
+            trace: true,
+            conversation: None,
+            fresh: false,
+        })));
+        assert!(startup_timing_enabled(Some(&Command::Search {
+            query: "q".into(),
+            limit: 25,
+            offset: 0,
+            trace: true,
+        })));
+    }
+
+    #[test]
+    fn startup_timing_off_without_trace_and_for_repl() {
+        assert!(!startup_timing_enabled(Some(&Command::Chat {
+            questions: vec!["q".into()],
+            trace: false,
+            conversation: None,
+            fresh: false,
+        })));
+        assert!(!startup_timing_enabled(Some(&Command::Doctor)));
+        // Bare invocation (REPL) → command is None → startup stays silent.
+        assert!(!startup_timing_enabled(None));
+    }
+
+    #[test]
+    fn chat_log_quiet_suppresses_logs_without_trace() {
+        // Default chat: no --trace, no --quiet → suppress the diagnostic stream.
+        assert!(chat_log_quiet(false, false));
+    }
+
+    #[test]
+    fn chat_log_quiet_shows_logs_with_trace() {
+        // --trace re-enables the full app-log stream.
+        assert!(!chat_log_quiet(false, true));
+    }
+
+    #[test]
+    fn chat_log_quiet_global_quiet_is_a_hard_floor() {
+        // --quiet wins even when --trace is set.
+        assert!(chat_log_quiet(true, true));
+        assert!(chat_log_quiet(true, false));
     }
 
     #[test]
