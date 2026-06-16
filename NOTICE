@@ -5,7 +5,17 @@ This product includes software and model artifacts from third parties.
 Licensing details and required attributions are documented in:
 
 - LICENSE
+- THIRD_PARTY_LICENSES.md
 - MODEL_LICENSES.md
+
+Embedded third-party software in default desktop distributions:
+
+- llama.cpp / ggml — MIT — Copyright (c) 2023-2026 The ggml authors
+  Source: https://github.com/ggml-org/llama.cpp
+- llama-cpp-rs (llama-cpp-2, llama-cpp-sys-2) — MIT OR Apache-2.0 — Copyright (c) Dial AI
+  Source: https://github.com/utilityai/llama-cpp-rs
+
+See THIRD_PARTY_LICENSES.md for full license texts.
 
 Bundled model artifact in macOS distributions:
 
