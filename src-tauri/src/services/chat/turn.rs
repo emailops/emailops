@@ -48,8 +48,10 @@ fn now_utc() -> chrono::DateTime<Utc> {
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
-/// output back to the LLM. Always compiled so dev builds (without the
-/// `tracing` feature) can still capture LLM I/O for the in-app debug panel.
+/// output back to the LLM. Gated to `debug_assertions` because every call
+/// site is too (the reasoning panel only renders in dev builds); compiling
+/// the body in release would trigger a `dead_code` warning.
+#[cfg(debug_assertions)]
 fn format_messages_for_trace(messages: &[crate::ai::provider::AiMessage]) -> String {
     // No truncation: the reasoning panel needs the FULL prompt so the
     // developer can copy-paste it verbatim into a llama.cpp / Ollama prompt
@@ -76,7 +78,8 @@ fn format_messages_for_trace(messages: &[crate::ai::provider::AiMessage]) -> Str
 }
 
 /// Format a tool-round response for the reasoning panel (and Phoenix tracing
-/// when enabled). Always compiled — see `format_messages_for_trace`.
+/// when enabled). Dev-only — see `format_messages_for_trace`.
+#[cfg(debug_assertions)]
 fn format_response_for_trace(response: &crate::ai::provider::AiMessage) -> String {
     // No truncation — see format_messages_for_trace. Full response capture
     // makes the reasoning panel copy-paste reproducible.
