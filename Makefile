@@ -202,6 +202,19 @@ cli-ask:
 	  --features cli --bin emailops-cli -- --account "$(EMAILOPS_PERSONAL_ACCOUNT)" \
 	  chat --fresh --trace "$(Q)"
 
+# Probe the "planner" idea: turn ONE query into a search_emails filter via the
+# query_plan_probe example (one model completion, no chat tool-loop), printing
+# the filter + latency. An exploratory diagnostic — see examples/query_plan_probe.rs.
+# Defaults to the REAL DB (the example resolves the prod DB + the single enabled
+# account / ai_model pref). Pass a query with Q=...; override the model with
+# MODEL=...; pass extra flags (--account, --prod-db) via ARGS. No Q → synthetic set.
+#   make plan-probe Q='last 3 emails I sent to alex'
+#   make plan-probe Q='emails I sent' MODEL=qwen3.5-9b-q4_k_m
+#   make plan-probe ARGS='--prod-db .emailops-demo-data/emailops.db --account ulises@emailopslabs.dev'
+plan-probe:
+	cargo run --manifest-path src-tauri/Cargo.toml --features eval --example query_plan_probe -- \
+	  $(if $(MODEL),--model $(MODEL),) $(ARGS) $(if $(Q),"$(Q)",)
+
 # Open the single-file KV-cache visualizer in the default browser.
 # Drop a kv_xconv_*.json onto the page, paste actor logs, or pick a canned
 # example. See tools/kv_viz/README.md for what each panel shows.

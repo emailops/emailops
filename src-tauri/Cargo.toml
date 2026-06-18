@@ -205,6 +205,13 @@ name = "attachment_reextract"
 required-features = ["eval"]
 
 [[example]]
+# Probe the "planner" idea: a tiny prompt → search_emails filter via
+# AIProvider::complete (no full chat path). Measures correctness + latency.
+#   cargo run --features eval --example query_plan_probe -- "emails I sent"
+name = "query_plan_probe"
+required-features = ["eval"]
+
+[[example]]
 name = "chat_shortcut_eval"
 required-features = ["eval"]
 
