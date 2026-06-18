@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{AppLogEvent, Attachment, AttachmentRule};
+use crate::models::{Account, AppLogEvent, Attachment, AttachmentRule};
 use crate::services::emails::build_provider;
 use crate::sync::provider::{AttachmentInfo, EmailProvider};
 
@@ -175,6 +175,61 @@ pub fn matches_rule(rule: &AttachmentRule, sender_email: &str, subject: &str) ->
 }
 
 // --- Attachment processing during sync ---
+
+/// Re-fetch a single message from its provider and re-extract its attachment
+/// metadata into `email_attachment_meta`. Repairs emails whose attachments were
+/// missed at original sync time — incremental sync skips already-stored messages,
+/// so a normal re-sync never revisits them, leaving the gap permanent.
+///
+/// Returns the attachment infos the provider reports for the message (so callers
+/// can show what was found / recovered). Idempotent: the batch upsert is
+/// `ON CONFLICT(email_id, filename) DO NOTHING`, so re-running never duplicates.
+/// `app` may be `None` (CLI / example / test contexts).
+pub async fn reextract_email_attachments(
+    db: &Arc<Database>,
+    account: &Account,
+    email_id: &str,
+    app: Option<AppHandle>,
+) -> Result<Vec<AttachmentInfo>> {
+    let provider = build_provider(account, app).await?;
+    reextract_with_provider(db, provider.as_ref(), &account.id, email_id).await
+}
+
+/// Provider-injected core (trait seam) so the upsert behaviour is unit-testable
+/// with a fake provider. `get_message` fetches the full MIME payload
+/// (format=full) and runs the same `collect_attachment_infos` the sync path uses
+/// — so this both repairs and diagnoses (an empty result means the parser missed
+/// the part, not that the original fetch was incomplete).
+pub(crate) async fn reextract_with_provider(
+    db: &Arc<Database>,
+    provider: &dyn EmailProvider,
+    account_id: &str,
+    email_id: &str,
+) -> Result<Vec<AttachmentInfo>> {
+    let (_email, _category, infos) = provider.get_message(email_id).await?;
+    if !infos.is_empty() {
+        // The 7-tuple shape is the existing contract of
+        // `insert_email_attachment_metas_batch`; mirror it here rather than
+        // invent a parallel struct just for this one call.
+        #[allow(clippy::type_complexity)]
+        let metas: Vec<(String, String, String, String, String, i64, Option<String>)> = infos
+            .iter()
+            .map(|i| {
+                (
+                    email_id.to_string(),
+                    account_id.to_string(),
+                    i.attachment_id.clone(),
+                    i.filename.clone(),
+                    i.mime_type.clone(),
+                    i.size,
+                    i.inline_data.clone(),
+                )
+            })
+            .collect();
+        db.insert_email_attachment_metas_batch(&metas)?;
+    }
+    Ok(infos)
+}
 
 pub async fn process_attachments_for_email(
     db: &Arc<Database>,
@@ -934,6 +989,79 @@ mod tests {
         assert_eq!(stored.len(), 1);
         let on_disk = std::fs::read(tmp.path().join(&stored[0].file_path)).expect("read on-disk attachment");
         assert_eq!(on_disk, payload, "decoded bytes must match original payload");
+    }
+
+    /// Regression: an email synced WITHOUT its attachment (0 meta rows, despite
+    /// the message having one) is repaired by re-fetching + re-extracting — the
+    /// row count goes 0 → 1, and re-running is idempotent (no duplicate).
+    #[tokio::test]
+    async fn reextract_with_provider_backfills_missing_attachment() {
+        use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let account_id = "acc-gmail";
+        make_account(&db, account_id, "gmail", "me@gmail.example");
+        let email = make_email(account_id, "msg-missing-att", "sender@example.com", "RE: docs");
+        db.insert_email(&email).expect("insert email");
+
+        // Precondition: the bug state — email present, zero attachment rows.
+        assert_eq!(db.get_email_attachment_metas(&email.id).expect("metas").len(), 0);
+
+        // On re-fetch the provider DOES report the attachment.
+        let fake = FakeEmailProvider::new("me@gmail.example", "Me");
+        fake.add_message(
+            email.clone(),
+            EmailCategory::Primary,
+            vec![AttachmentInfo {
+                attachment_id: "att-123".into(),
+                filename: "report.pdf".into(),
+                mime_type: "application/pdf".into(),
+                size: 103_823,
+                inline_data: None,
+            }],
+        );
+
+        let found = reextract_with_provider(&db, &fake, account_id, &email.id)
+            .await
+            .expect("reextract");
+        assert_eq!(found.len(), 1);
+
+        let metas = db.get_email_attachment_metas(&email.id).expect("metas after");
+        assert_eq!(metas.len(), 1, "the missing attachment must be backfilled");
+        assert_eq!(metas[0].filename, "report.pdf");
+        assert_eq!(metas[0].provider_attachment_id, "att-123");
+
+        // Idempotent — ON CONFLICT(email_id, filename) DO NOTHING.
+        reextract_with_provider(&db, &fake, account_id, &email.id)
+            .await
+            .expect("reextract again");
+        assert_eq!(
+            db.get_email_attachment_metas(&email.id).expect("metas").len(),
+            1,
+            "re-running must not duplicate rows"
+        );
+    }
+
+    /// When the provider also reports zero attachments, re-extract is a no-op
+    /// (the gap would be in the parser, not a missed fetch) — and never errors.
+    #[tokio::test]
+    async fn reextract_with_provider_noop_when_provider_has_none() {
+        use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let account_id = "acc-gmail";
+        make_account(&db, account_id, "gmail", "me@gmail.example");
+        let email = make_email(account_id, "msg-no-att", "sender@example.com", "no attachments");
+        db.insert_email(&email).expect("insert email");
+
+        let fake = FakeEmailProvider::new("me@gmail.example", "Me");
+        fake.add_message(email.clone(), EmailCategory::Primary, vec![]);
+
+        let found = reextract_with_provider(&db, &fake, account_id, &email.id)
+            .await
+            .expect("reextract");
+        assert!(found.is_empty());
+        assert_eq!(db.get_email_attachment_metas(&email.id).expect("metas").len(), 0);
     }
 
     // ── Retroactive rule application — regression tests ─────────────────────

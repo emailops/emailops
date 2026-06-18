@@ -582,6 +582,7 @@ pub fn run() {
             commands::attachments::apply_rule_retroactively,
             commands::attachments::open_attachment_externally,
             commands::attachments::get_email_attachment_metas,
+            commands::attachments::reextract_email_attachments,
             commands::attachments::fetch_email_attachment_bytes,
             commands::attachments::open_email_attachment_meta,
             commands::classification::get_classification_config,

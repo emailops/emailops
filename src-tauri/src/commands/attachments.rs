@@ -309,6 +309,27 @@ pub async fn get_email_attachment_metas(
     state.db.get_email_attachment_metas(&email_id)
 }
 
+/// Re-fetch a single message from its provider and re-extract its attachment
+/// metadata into the DB. Repairs emails whose attachments were missed at sync
+/// time: incremental sync skips already-stored messages, so a normal re-sync
+/// never revisits them and the gap is otherwise permanent. Returns the email's
+/// attachment metas after the re-extract so the UI can refresh in place.
+#[tauri::command]
+pub async fn reextract_email_attachments(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+) -> Result<Vec<EmailAttachmentMeta>, AppError> {
+    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    let account = state
+        .db
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    services::attachments::reextract_email_attachments(&state.db, &account, &email_id, Some(app)).await?;
+    state.db.get_email_attachment_metas(&email_id)
+}
+
 /// Fetch attachment bytes from the provider and return them as a base64 string.
 /// The frontend uses this for on-demand downloads when the file is not cached locally.
 #[tauri::command]

@@ -198,6 +198,13 @@ name = "chat_probe"
 required-features = ["eval"]
 
 [[example]]
+# Diagnose / repair an email whose attachments were missed at sync time —
+# re-fetch the message + re-extract via EmailProvider::get_message.
+#   cargo run --release --features eval --example attachment_reextract -- --email-id <id> --repair
+name = "attachment_reextract"
+required-features = ["eval"]
+
+[[example]]
 name = "chat_shortcut_eval"
 required-features = ["eval"]
 
