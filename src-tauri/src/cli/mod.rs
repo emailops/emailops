@@ -20,6 +20,7 @@ mod config;
 mod doctor;
 mod eval;
 mod output;
+mod render;
 mod repl;
 mod session;
 
@@ -41,12 +42,61 @@ pub enum OutputMode {
     Json,
 }
 
+/// How human-facing output should be styled. Resolved **once** at bootstrap so
+/// the styling decision never leaks token-cost into the agent (`--json`) or
+/// piped paths: ANSI color, aligned-table re-rendering, live preview and cursor
+/// redraw all live strictly in [`RenderStyle::Rich`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderStyle {
+    /// `--json`: one structured envelope, no styling at all. The agent contract.
+    Json,
+    /// Pretty **and** an interactive TTY (with `NO_COLOR` unset): full color,
+    /// aligned tables, dim live preview + redraw to a clean render.
+    Rich,
+    /// Pretty but piped / redirected, or `NO_COLOR` set: plain text, no ANSI, no
+    /// cursor control. Keeps captured output free of escape-code bloat (the
+    /// `chat … > file` / forgot-`--json` footgun).
+    Plain,
+}
+
+impl RenderStyle {
+    /// Whether ANSI color may be emitted (Rich only).
+    pub fn color(self) -> bool {
+        matches!(self, RenderStyle::Rich)
+    }
+
+    /// Whether interactive cursor control (live preview, redraw, spinner) is
+    /// allowed (Rich only — requires a real TTY).
+    pub fn interactive(self) -> bool {
+        matches!(self, RenderStyle::Rich)
+    }
+}
+
+/// Resolve the human-output style from the `--json` flag, whether stdout is an
+/// interactive terminal, and whether `NO_COLOR` is set. Pure so the policy is
+/// unit-testable without a real TTY: `--json` always wins (agents pay nothing);
+/// otherwise Rich requires a TTY with color allowed, and everything else (piped
+/// output, `NO_COLOR`) degrades to Plain.
+pub(crate) fn resolve_render_style(json: bool, stdout_is_tty: bool, no_color: bool) -> RenderStyle {
+    if json {
+        RenderStyle::Json
+    } else if stdout_is_tty && !no_color {
+        RenderStyle::Rich
+    } else {
+        RenderStyle::Plain
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "emailops-cli",
     about = "Power-user / agent command line for EmailOps.",
     long_about = "Drive EmailOps from the terminal: list/search/show mail, sync, chat, \
-                  classify, and embed. Run with no subcommand to enter an interactive REPL.",
+                  classify, and embed. Run with no subcommand to enter an interactive REPL.\n\n\
+                  Output: pass --json for the stable, unstyled envelope (the agent contract — \
+                  no color or table re-rendering, so no token bloat). Without --json, human output \
+                  is styled (aligned tables, color) only on an interactive terminal; piped/redirected \
+                  output and NO_COLOR fall back to plain text with zero escape codes.",
     version
 )]
 pub struct Cli {
@@ -72,6 +122,20 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "MODEL")]
     pub model: Option<String>,
 
+    /// Override a prompt template for THIS run only (not persisted, never
+    /// touches the DB). Repeatable. Format: `<prompt-id>=<file>`. Ids come from
+    /// the prompt registry — e.g. `chat.system`, `chat.query_rewrite`,
+    /// `chat.rerank`, `classify.email`, `memory.tasks`, `memory.facts`. The
+    /// file is read verbatim and rendered with the usual `{{variables}}`, so a
+    /// custom `chat.system` can still use `{{user_identity}}`, `{{today}}`,
+    /// `{{tools_section}}`, etc. Lets you A/B prompts without editing code.
+    #[arg(long = "prompt", global = true, value_name = "ID=FILE")]
+    pub prompt_override: Vec<String>,
+
+    /// Shorthand for `--prompt chat.system=<file>`.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub system_prompt: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -90,9 +154,9 @@ pub enum Command {
     /// List recent emails for an account.
     Emails {
         /// Max emails to return.
-        #[arg(long, default_value_t = 50)]
+        #[arg(long, default_value_t = 25)]
         limit: i32,
-        /// Skip this many emails before returning (for paging: page 2 = `--offset 50`).
+        /// Skip this many emails before returning (for paging: page 2 = `--offset 25`).
         #[arg(long, default_value_t = 0)]
         offset: i32,
         /// Mailbox filter: inbox | sent | spam | trash.
@@ -180,6 +244,10 @@ pub enum Command {
     /// fast — loads no AI model.
     Doctor,
 
+    /// Dashboard stats per account: local/sent/server email totals, per-category
+    /// counts, and classified / embeddings / memory / tasks coverage.
+    Stats,
+
     /// Get/set CLI-local preferences (e.g. the default account).
     Config {
         #[command(subcommand)]
@@ -239,16 +307,100 @@ async fn run_async(cli: Cli, mode: OutputMode) -> crate::models::error::Result<(
     // Bootstrap: keychain → data dir → DB → install logger + event sink.
     let mut session = CliSession::bootstrap(&cli, mode)?;
 
+    // Run-scoped prompt overrides (--prompt id=file / --system-prompt file).
+    // Installed after bootstrap so the logger is up and validation errors flow
+    // through the standard envelope. No-op when neither flag is passed.
+    let overrides = build_prompt_overrides(&cli.prompt_override, cli.system_prompt.as_deref())?;
+    if !overrides.is_empty() {
+        let mut ids: Vec<&str> = overrides.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        crate::services::logger::log(
+            "info",
+            "prompts",
+            format!("run-scoped prompt override active: {}", ids.join(", ")),
+        );
+        crate::services::prompts::install_overrides(overrides);
+    }
+
     match cli.command.clone() {
         Some(command) => commands::dispatch(&mut session, command).await,
         None => repl::run(&mut session).await,
     }
 }
 
+/// Build the run-scoped prompt-override map from the CLI flags. Validates each
+/// id against the prompt registry (a typo errors instead of silently doing
+/// nothing) and reads each template file verbatim. `--system-prompt` is sugar
+/// for `--prompt chat.system=<file>`.
+fn build_prompt_overrides(
+    specs: &[String],
+    system_prompt: Option<&std::path::Path>,
+) -> crate::models::error::Result<std::collections::HashMap<String, String>> {
+    use crate::models::error::AppError;
+    let mut out = std::collections::HashMap::new();
+
+    let mut add = |id: &str, path: &std::path::Path| -> crate::models::error::Result<()> {
+        if crate::services::prompts::registry::lookup(id).is_none() {
+            return Err(AppError::InvalidInput(format!(
+                "unknown prompt id '{id}' — run `emailops-cli` prompt ids include chat.system, chat.query_rewrite, chat.rerank, classify.email, memory.tasks, memory.facts"
+            )));
+        }
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| AppError::InvalidInput(format!("cannot read prompt file {}: {e}", path.display())))?;
+        if text.trim().is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "prompt file {} is empty",
+                path.display()
+            )));
+        }
+        out.insert(id.to_string(), text);
+        Ok(())
+    };
+
+    if let Some(path) = system_prompt {
+        add("chat.system", path)?;
+    }
+    for spec in specs {
+        let (id, path) = spec
+            .split_once('=')
+            .ok_or_else(|| AppError::InvalidInput(format!("--prompt expects ID=FILE, got '{spec}'")))?;
+        add(id.trim(), std::path::Path::new(path.trim()))?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn render_style_json_wins_even_on_a_tty() {
+        // Agents pass --json; they must never get styling regardless of TTY.
+        assert_eq!(resolve_render_style(true, true, false), RenderStyle::Json);
+        assert_eq!(resolve_render_style(true, false, true), RenderStyle::Json);
+        assert!(!RenderStyle::Json.color());
+        assert!(!RenderStyle::Json.interactive());
+    }
+
+    #[test]
+    fn render_style_rich_only_on_tty_with_color() {
+        let s = resolve_render_style(false, true, false);
+        assert_eq!(s, RenderStyle::Rich);
+        assert!(s.color());
+        assert!(s.interactive());
+    }
+
+    #[test]
+    fn render_style_plain_when_piped_or_no_color() {
+        // Piped (not a TTY) → Plain even though color isn't disabled.
+        assert_eq!(resolve_render_style(false, false, false), RenderStyle::Plain);
+        // NO_COLOR set on a TTY → Plain (no ANSI, no redraw).
+        let s = resolve_render_style(false, true, true);
+        assert_eq!(s, RenderStyle::Plain);
+        assert!(!s.color());
+        assert!(!s.interactive());
+    }
 
     #[test]
     fn cli_definition_is_valid() {
@@ -375,6 +527,21 @@ mod tests {
     }
 
     #[test]
+    fn stats_command_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "stats"]);
+        assert!(matches!(cli.command, Some(Command::Stats)));
+    }
+
+    #[test]
+    fn emails_limit_defaults_to_25() {
+        let cli = Cli::parse_from(["emailops-cli", "emails"]);
+        match cli.command {
+            Some(Command::Emails { limit, .. }) => assert_eq!(limit, 25),
+            other => panic!("expected Emails, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn search_trace_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "search", "invoice", "--trace"]);
         match cli.command {
@@ -396,7 +563,7 @@ mod tests {
                 category,
                 ..
             }) => {
-                assert_eq!(limit, 50);
+                assert_eq!(limit, 25);
                 assert_eq!(mailbox.as_deref(), Some("sent"));
                 assert!(category.is_none());
             }
@@ -414,7 +581,7 @@ mod tests {
                 category,
                 ..
             }) => {
-                assert_eq!(limit, 50);
+                assert_eq!(limit, 25);
                 assert!(mailbox.is_none());
                 assert_eq!(category.as_deref(), Some("promotions"));
             }
@@ -653,5 +820,58 @@ mod tests {
         assert!(matches!(with.command, Some(Command::Sync { account: Some(a) }) if a == "me@example.com"));
         let without = Cli::parse_from(["emailops-cli", "sync"]);
         assert!(matches!(without.command, Some(Command::Sync { account: None })));
+    }
+
+    #[test]
+    fn prompt_override_flags_parse_as_global() {
+        // Both flags are global, so they attach before OR after the subcommand.
+        let cli = Cli::parse_from([
+            "emailops-cli",
+            "--system-prompt",
+            "/tmp/sys.txt",
+            "chat",
+            "hi",
+            "--prompt",
+            "chat.rerank=/tmp/rr.txt",
+        ]);
+        assert_eq!(cli.system_prompt.as_deref(), Some(std::path::Path::new("/tmp/sys.txt")));
+        assert_eq!(cli.prompt_override, vec!["chat.rerank=/tmp/rr.txt".to_string()]);
+    }
+
+    #[test]
+    fn build_prompt_overrides_rejects_unknown_id_and_bad_spec() {
+        // Unknown prompt id → loud error, not a silent no-op.
+        assert!(build_prompt_overrides(&["not.a.prompt=/tmp/x".into()], None).is_err());
+        // Missing '=' → error.
+        assert!(build_prompt_overrides(&["chat.system".into()], None).is_err());
+    }
+
+    #[test]
+    fn build_prompt_overrides_reads_files_and_maps_system_shorthand() {
+        let dir = std::env::temp_dir();
+        let sys = dir.join("emailops_test_sys_prompt.txt");
+        let rr = dir.join("emailops_test_rerank_prompt.txt");
+        std::fs::write(&sys, "CUSTOM SYSTEM {{today}}").expect("write sys");
+        std::fs::write(&rr, "CUSTOM RERANK").expect("write rr");
+
+        let map = build_prompt_overrides(&[format!("chat.rerank={}", rr.display())], Some(sys.as_path()))
+            .expect("overrides build");
+
+        assert_eq!(
+            map.get("chat.system").map(String::as_str),
+            Some("CUSTOM SYSTEM {{today}}")
+        );
+        assert_eq!(map.get("chat.rerank").map(String::as_str), Some("CUSTOM RERANK"));
+
+        let _ = std::fs::remove_file(&sys);
+        let _ = std::fs::remove_file(&rr);
+    }
+
+    #[test]
+    fn build_prompt_overrides_rejects_empty_file() {
+        let path = std::env::temp_dir().join("emailops_test_empty_prompt.txt");
+        std::fs::write(&path, "   \n").expect("write empty");
+        assert!(build_prompt_overrides(&[], Some(path.as_path())).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 }

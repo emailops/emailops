@@ -11,7 +11,7 @@
 //! key `prompt.<id>`. "Reset to default" simply deletes that row.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use regex::Regex;
 use serde::Serialize;
@@ -30,10 +30,58 @@ fn pref_key(id: &str) -> String {
     format!("prompt.{id}")
 }
 
-/// Return the template the user wants for `id` — their override if any, or the
-/// built-in default. Errors only on database failure.
+// ── Process-level (run-scoped) overrides ─────────────────────────────────────
+//
+// In-memory overrides that take precedence over BOTH the persisted
+// `user_preferences` override and the registry default — without touching the
+// DB. The desktop app never installs any, so `get_template` behaves exactly as
+// before there. `emailops-cli` populates this from `--prompt <id>=<file>` /
+// `--system-prompt <file>` so a developer can A/B a prompt for a single run
+// without editing code or mutating their real database.
+
+fn overrides() -> &'static RwLock<HashMap<String, String>> {
+    static O: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+    O.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Install run-scoped prompt overrides (id → template text), replacing any
+/// previously installed set. Ids are NOT validated here — the caller (CLI)
+/// validates against the registry before calling so a typo errors loudly.
+pub fn install_overrides(map: HashMap<String, String>) {
+    if let Ok(mut guard) = overrides().write() {
+        *guard = map;
+    }
+}
+
+/// Drop all run-scoped overrides. Used by tests; harmless in production.
+pub fn clear_overrides() {
+    if let Ok(mut guard) = overrides().write() {
+        guard.clear();
+    }
+}
+
+/// Ids currently overridden in-memory (for surfacing in logs / traces).
+pub fn overridden_ids() -> Vec<String> {
+    overrides()
+        .read()
+        .map(|g| {
+            let mut ids: Vec<String> = g.keys().cloned().collect();
+            ids.sort();
+            ids
+        })
+        .unwrap_or_default()
+}
+
+/// Return the template the user wants for `id`: a run-scoped in-memory override
+/// if installed, else their persisted override, else the built-in default.
+/// Errors only on an unknown id or database failure.
 pub fn get_template(db: &Database, id: &str) -> Result<String> {
     let def = registry::lookup(id).ok_or_else(|| AppError::NotFound(format!("unknown prompt id: {id}")))?;
+    if let Ok(guard) = overrides().read() {
+        if let Some(override_text) = guard.get(id) {
+            return Ok(override_text.clone());
+        }
+    }
     if let Some(override_text) = db.get_preference(&pref_key(id))? {
         return Ok(override_text);
     }

@@ -84,7 +84,7 @@ pub async fn run_account(session: &CliSession, action: Option<AccountAction>) ->
     match action.unwrap_or(AccountAction::List) {
         AccountAction::List => {
             let accounts = crate::services::accounts::list_accounts(&session.db)?;
-            output::render_accounts(&accounts, session.mode)
+            output::render_accounts(&accounts, session.style)
         }
         AccountAction::Add { provider } => add_account(session, provider).await,
     }

@@ -10,7 +10,7 @@ use crate::models::error::{AppError, Result};
 
 use super::output;
 use super::session::CliSession;
-use super::{Command, OutputMode};
+use super::{Command, OutputMode, RenderStyle};
 
 /// Execute one parsed command against the session.
 pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> {
@@ -32,7 +32,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                 mailbox.as_deref(),
                 category.as_deref(),
             )?;
-            output::render_emails(&emails, session.mode)
+            output::render_emails(&emails, session.style)
         }
 
         Command::Show { id } => {
@@ -40,8 +40,25 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                 .db
                 .get_email_by_id(&id)?
                 .ok_or_else(|| AppError::NotFound(format!("email '{}' not found", id)))?;
-            let body = crate::services::emails::get_email_body(&session.db, &id)?;
-            output::render_email(&email, &body, session.mode)
+            // JSON keeps the single-email contract agents rely on.
+            if session.style == RenderStyle::Json {
+                let body = crate::services::emails::get_email_body(&session.db, &id)?;
+                return output::render_email(&email, &body, session.style);
+            }
+            // Pretty: visualize the whole thread, each message body indented.
+            let thread = crate::services::emails::get_thread(&session.db, &email.account_id, &email.thread_id)?;
+            let account_email = session.db.get_account(&email.account_id)?.map(|a| a.email);
+            let mut msgs: Vec<(crate::models::Email, String)> = Vec::with_capacity(thread.len());
+            for e in thread {
+                let body = crate::services::emails::get_email_body(&session.db, &e.id)?;
+                msgs.push((e, body));
+            }
+            if msgs.is_empty() {
+                // Thread lookup came back empty — fall back to the single email.
+                let body = crate::services::emails::get_email_body(&session.db, &id)?;
+                return output::render_email(&email, &body, session.style);
+            }
+            output::render_thread(&msgs, &email.id, account_email.as_deref(), session.style)
         }
 
         Command::Search {
@@ -78,10 +95,10 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                         }
                     }))
                 } else {
-                    output::render_emails(&emails, session.mode)
+                    output::render_emails(&emails, session.style)
                 }
             } else {
-                output::render_emails(&emails, session.mode)?;
+                output::render_emails(&emails, session.style)?;
                 if trace {
                     output::render_search_trace(
                         &result.search_method,
@@ -89,6 +106,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                         result.parsed_query.as_ref(),
                         shown,
                         total,
+                        session.style.color(),
                     );
                 }
                 Ok(())
@@ -201,6 +219,12 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             super::doctor::render(&report, session.mode)
         }
 
+        Command::Stats => {
+            // Same per-account aggregates as the app's dashboard cards.
+            let dashboards = crate::services::dashboard::collect_dashboards(&session.db)?;
+            output::render_stats(&dashboards, session.style)
+        }
+
         Command::Config { action } => super::config::run_config(session, action),
 
         Command::Eval { case, tier, cases_dir } => super::eval::run_eval(session, case, tier, cases_dir).await,
@@ -210,7 +234,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
 /// Resolve the [`Draft`](crate::models::Draft)s named by an assistant message's
 /// `referenced_draft_ids` into full draft records. Ids with no matching row
 /// (e.g. a since-deleted draft) are skipped rather than erroring.
-fn collect_referenced_drafts(
+pub(super) fn collect_referenced_drafts(
     db: &crate::db::Database,
     referenced_draft_ids: &[String],
 ) -> Result<Vec<crate::models::Draft>> {
@@ -345,11 +369,15 @@ async fn run_chat(
             }
             turns.push(turn);
         } else {
+            // Re-render the finished answer as aligned, styled markdown — in Rich
+            // mode this replaces the dim live preview the sink just cleared; in
+            // Plain mode it's the answer's first (ANSI-free) appearance.
+            output::render_final_answer(&answer, session.style);
             for draft in &drafts {
-                output::render_draft(draft);
+                output::render_draft(draft, session.style.color());
             }
             if trace {
-                output::render_chat_trace(chat_trace.as_ref(), &sources);
+                output::render_chat_trace(chat_trace.as_ref(), &sources, session.style.color());
             }
         }
     }
@@ -402,6 +430,7 @@ mod tests {
             account: account.map(str::to_string),
             model: "test-model".to_string(),
             mode: OutputMode::Json,
+            style: crate::cli::RenderStyle::Json,
             quiet: true,
             log_quiet: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             data_dir: PathBuf::from("/tmp/emailops-cli-test"),

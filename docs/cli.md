@@ -14,7 +14,7 @@ default or release desktop builds. Logic lives in `src-tauri/src/cli/`; the bin
 (`src-tauri/src/bin/emailops_cli.rs`) is a thin wrapper.
 
 It operates on the **real** data directory. SQLite runs in WAL mode, so read
-commands (`accounts`, `emails`, `show`, `search`, `doctor`, `config get/list`)
+commands (`accounts`, `emails`, `show`, `search`, `stats`, `doctor`, `config get/list`)
 are safe to run while the desktop app is open. Run heavy **write** commands
 (`sync`, `classify`, `embed`) with the app closed to avoid contention.
 
@@ -176,23 +176,31 @@ List recent emails for the resolved account.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--limit <N>` | `50` | Max emails to return. |
-| `--offset <N>` | `0` | Skip this many emails before returning — for paging (page 2 of a 50-row list = `--offset 50`). |
+| `--limit <N>` | `25` | Max emails to return. |
+| `--offset <N>` | `0` | Skip this many emails before returning — for paging (page 2 of a 25-row list = `--offset 25`). |
 | `--mailbox <M>` | — | `inbox` \| `sent` \| `spam` \| `trash`. |
 | `--category <C>` | — | Gmail category: `primary` \| `social` \| `promotions` \| `updates` \| `forums`. |
 
+The pretty (non-JSON) table leads with each thread's most-recent message date
+(`YYYY-MM-DD HH:mm`, local time), followed by the read marker, sender, subject,
+and id.
+
 ```bash
 make cli-fast ARGS="emails --mailbox inbox --category promotions --limit 20 --json"
-make cli-fast ARGS="emails --limit 50 --offset 50 --json"   # page 2
+make cli-fast ARGS="emails --limit 25 --offset 25 --json"   # page 2
 ```
 
 ### `show <id>`
-Show a single email (headers + body). In pretty mode the body is rendered as
-readable plain text (HTML is stripped to text); in `--json` the raw stored body
-is returned as the source of truth.
+Show the email's **thread**. In pretty mode the whole conversation is rendered
+chronologically — a heading, then one block per message (position, date, sender,
+`(you)` for your own messages, `▶` marking the id you asked for) with each body
+**indented** under its header and HTML stripped to readable text. In `--json`
+the command keeps its single-email contract: it returns just the requested
+message with the raw stored body as the source of truth.
 
 ```bash
-make cli-fast ARGS="show <email-id> --json"
+make cli-fast ARGS="show <email-id>"          # pretty: full thread, indented bodies
+make cli-fast ARGS="show <email-id> --json"   # JSON: the single requested email
 ```
 
 ### `search <query>`
@@ -284,6 +292,18 @@ install.
 make cli-fast ARGS="doctor --json"
 ```
 
+### `stats`
+The same per-account aggregates as the app's dashboard cards: local email count,
+sent count, cached server total (when fetched), per-category counts, and
+pipeline coverage — classified, embeddings, memory, and task extraction (each as
+`done / eligible`). Read-only; loads no AI model and ignores `--account` (it
+reports every account). `--json` emits the full `AccountDashboard` array.
+
+```bash
+make cli-fast ARGS="stats"
+make cli-fast ARGS="stats --json"
+```
+
 ### `config <get|set|unset|list> ...`
 Get/set CLI-local preferences. Values live in the shared SQLite
 `user_preferences` table under a `cli_` namespace, so they never collide with
@@ -332,9 +352,11 @@ make cli-fast        # no ARGS
 ```
 
 **Every action is an explicit slash-command** — bare text does *not* silently
-start a chat (it's rejected with a hint pointing at `/chat`). This keeps the
-REPL and the one-shot CLI on the same `Command` enum so behaviour never
-diverges.
+start a chat (it's rejected with a hint pointing at `/chat`). The one exception:
+a bare line that is a single token matching a real email id runs `/show <id>`,
+so you can paste an id straight from an `/emails` or `/search` listing to open
+it. This keeps the REPL and the one-shot CLI on the same `Command` enum so
+behaviour never diverges.
 
 - **`/chat <question> [--trace]`** → a multi-turn chat in the current
   conversation; tokens stream live to stdout. `--trace` prints the route /
@@ -345,8 +367,8 @@ diverges.
   `emailops-cli chat`, which always starts a new conversation unless you pass
   `--conversation <ID>`.)
 - **other `/`-prefixed** → slash-commands. `/search <query> [--trace]`,
-  `/accounts`, `/emails`, `/show`, `/sync`, `/classify`, `/embed`, and `/config`
-  map onto the **same `Command` enum** as the one-shot CLI. Session commands:
+  `/accounts`, `/emails`, `/show`, `/sync`, `/classify`, `/embed`, `/stats`, and
+  `/config` map onto the **same `Command` enum** as the one-shot CLI. Session commands:
   `/account [<id|email>]` (show/switch), `/model [<name>]`, `/new` (fresh
   conversation), `/help`, `/quit`. Switching with `/account <id|email>` is
   **persisted as the CLI default** (same `cli_default_account` preference

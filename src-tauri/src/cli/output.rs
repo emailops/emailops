@@ -11,7 +11,7 @@
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -19,11 +19,12 @@ use serde_json::Value;
 use crate::ai::ollama::ParsedSearchQuery;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, AppLogEvent, ChatMessageSource, ChatTrace, Draft, Email};
+use crate::services::dashboard::AccountDashboard;
 use crate::services::events::EventSink;
 use crate::services::logger::Logger;
 use crate::services::search::SearchMethod;
 
-use super::OutputMode;
+use super::{render, OutputMode, RenderStyle};
 
 /// Logger backend for the CLI: prints `HH:MM:SS.mmm [level] source: message` to
 /// stderr. The wall-clock prefix makes it easy to read timings off a chat trace
@@ -69,35 +70,101 @@ impl Logger for CliLogger {
     }
 }
 
-/// Event-sink backend for one-shot CLI runs. In pretty mode it streams
-/// `chat-stream` tokens to stdout as they arrive; in JSON mode it stays silent
-/// so the command owns stdout and emits a single JSON document.
+/// Event-sink backend for chat streaming. Behaviour is gated on [`RenderStyle`]
+/// so the agent (`--json`) and piped (`Plain`) paths never pay for styling:
+///   - **Json** / **Plain** — silent. The command owns stdout: Json prints one
+///     envelope; Plain prints the final clean render once (see
+///     [`render_final_answer`]).
+///   - **Rich** — streams `chat-stream` tokens to stdout in a **dim** live
+///     preview, accumulating the raw text. On `done` it closes the dim style and
+///     clears the preview region (cursor up + clear-down), leaving the cursor at
+///     the preview's start so the caller can print the aligned, colored render in
+///     its place. If the preview is taller than the viewport (would have
+///     scrolled), it drops to a fresh line instead of corrupting scrollback.
 pub struct CliEventSink {
-    mode: OutputMode,
+    style: RenderStyle,
+    /// Rich-only: the streamed markdown accumulated this turn, used to size the
+    /// preview-clear on `done`. `Mutex` because `emit` takes `&self` (the sink is
+    /// installed behind an `Arc`).
+    preview: Mutex<String>,
+    /// Whether the dim SGR is currently open, so it is reset exactly once.
+    dim_open: AtomicBool,
 }
 
 impl CliEventSink {
-    pub fn new(mode: OutputMode) -> Self {
-        Self { mode }
+    pub fn new(style: RenderStyle) -> Self {
+        Self {
+            style,
+            preview: Mutex::new(String::new()),
+            dim_open: AtomicBool::new(false),
+        }
+    }
+
+    /// Clear the dim live preview accumulated this turn, leaving the cursor where
+    /// the preview began (Rich only). The caller then prints the clean render in
+    /// its place. Falls back to a fresh line when the preview is taller than the
+    /// viewport (cursor-up would be unreliable past a scroll).
+    fn clear_preview(&self) {
+        let preview = std::mem::take(&mut *self.preview.lock().unwrap_or_else(PoisonError::into_inner));
+        let (width, height) = render::term_size();
+        let rows = render::count_visual_rows(&preview, width);
+        let mut out = std::io::stdout();
+        if rows < height {
+            // Move to the start of the preview block, then clear to end of screen.
+            if rows > 1 {
+                let _ = write!(out, "\x1b[{}F", rows - 1); // cursor up (rows-1), col 0
+            } else {
+                let _ = write!(out, "\r");
+            }
+            let _ = write!(out, "\x1b[0J"); // erase from cursor to end of screen
+        } else {
+            // Too tall to reposition safely — keep the preview, start fresh below.
+            let _ = writeln!(out);
+        }
+        let _ = out.flush();
     }
 }
 
 impl EventSink for CliEventSink {
     fn emit(&self, name: &str, payload: Value) {
-        if self.mode == OutputMode::Json {
-            return;
-        }
-        if name != "chat-stream" {
+        // Only the Rich (interactive TTY) path streams a live preview. Json and
+        // Plain stay silent so stdout is a clean envelope / final-render channel.
+        if self.style != RenderStyle::Rich || name != "chat-stream" {
             return;
         }
         if let Some(token) = payload.get("token").and_then(Value::as_str) {
+            // Open the dim style once; the whole preview is transient.
+            if !self.dim_open.swap(true, Ordering::Relaxed) {
+                print!("\x1b[2m");
+            }
             print!("{token}");
+            self.preview
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push_str(token);
             let _ = std::io::stdout().flush();
         }
         if payload.get("done").and_then(Value::as_bool) == Some(true) {
-            println!();
+            if self.dim_open.swap(false, Ordering::Relaxed) {
+                print!("\x1b[0m"); // reset the dim style before clearing
+            }
+            self.clear_preview();
         }
     }
+}
+
+/// Print a finished chat answer for the human (pretty) paths, replacing the dim
+/// live preview the [`CliEventSink`] just cleared (Rich) or printing it for the
+/// first time (Plain). Markdown is re-rendered through `termimad`: aligned
+/// tables, styled headers/lists, internal `email://` links collapsed to labels.
+/// No-op in Json mode (the command emits its own envelope).
+pub fn render_final_answer(answer: &str, style: RenderStyle) {
+    if style == RenderStyle::Json || answer.is_empty() {
+        return;
+    }
+    let (width, _) = render::term_size();
+    print!("{}", render::render_answer(answer, style.color(), width));
+    let _ = std::io::stdout().flush();
 }
 
 /// The stable success envelope: `{ ok: true, data, error: null }`. Agents parse
@@ -151,39 +218,83 @@ pub fn exit_code(err: &AppError) -> u8 {
     }
 }
 
-pub fn render_accounts(accounts: &[Account], mode: OutputMode) -> Result<()> {
-    if mode == OutputMode::Json {
+pub fn render_accounts(accounts: &[Account], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
         return emit_ok(accounts);
     }
     if accounts.is_empty() {
         println!("(no accounts configured)");
         return Ok(());
     }
+    let color = style.color();
     for a in accounts {
-        let flag = if a.enabled { " " } else { "✗" };
-        println!("{} {:<24} {:<8} {}", flag, a.email, a.provider, a.id);
+        // Disabled accounts get a red ✗ marker; the provider + id are secondary.
+        let flag = if a.enabled {
+            " ".to_string()
+        } else {
+            paint("✗", "31", color)
+        };
+        println!(
+            "{} {:<24} {} {}",
+            flag,
+            a.email,
+            paint(&format!("{:<8}", a.provider), "2", color),
+            dim(&a.id, color)
+        );
     }
     Ok(())
 }
 
-pub fn render_emails(emails: &[Email], mode: OutputMode) -> Result<()> {
-    if mode == OutputMode::Json {
+/// Format a Unix-seconds timestamp as `YYYY-MM-DD HH:mm` in local time for the
+/// emails list's leading date column. For the threaded `emails` view this is the
+/// timestamp of the latest message shown for the thread (the thread's most
+/// recent activity). Returns a fixed-width placeholder if the timestamp is out
+/// of range — never expected for real rows, but keeps columns aligned.
+fn format_thread_date(ts: i64) -> String {
+    use chrono::TimeZone;
+    match chrono::Local.timestamp_opt(ts, 0).single() {
+        Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+        None => "????-??-?? ??:??".to_string(),
+    }
+}
+
+pub fn render_emails(emails: &[Email], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
         return emit_ok(emails);
     }
     if emails.is_empty() {
         println!("(no emails)");
         return Ok(());
     }
+    let color = style.color();
     for e in emails {
-        let read = if e.is_read { " " } else { "•" };
+        // Unread rows get a cyan • and a bold subject; the date and id are dim so
+        // the sender/subject stay the focus.
+        let read = if e.is_read {
+            " ".to_string()
+        } else {
+            paint("•", "36", color)
+        };
         let subject = truncate(&e.subject, 60);
-        println!("{} {:<28} {:<60} {}", read, truncate(&e.sender, 28), subject, e.id);
+        let subject = if e.is_read {
+            format!("{subject:<60}")
+        } else {
+            paint(&format!("{subject:<60}"), "1", color)
+        };
+        println!(
+            "{} {} {:<28} {} {}",
+            dim(&format_thread_date(e.timestamp), color),
+            read,
+            truncate(&e.sender, 28),
+            subject,
+            dim(&e.id, color)
+        );
     }
     Ok(())
 }
 
-pub fn render_email(email: &Email, body: &str, mode: OutputMode) -> Result<()> {
-    if mode == OutputMode::Json {
+pub fn render_email(email: &Email, body: &str, style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
         let doc = serde_json::json!({
             "id": email.id,
             "threadId": email.thread_id,
@@ -200,18 +311,152 @@ pub fn render_email(email: &Email, body: &str, mode: OutputMode) -> Result<()> {
         });
         return emit_ok(doc);
     }
-    println!("Subject: {}", email.subject);
-    println!("From:    {} <{}>", email.sender, email.sender_email);
+    let color = style.color();
+    // Header labels are dim so the values (subject, sender, …) read first.
+    println!("{} {}", dim("Subject:", color), paint(&email.subject, "1", color));
+    println!("{}    {} <{}>", dim("From:", color), email.sender, email.sender_email);
     if !email.recipients.is_empty() {
-        println!("To:      {}", email.recipients.join(", "));
+        println!("{}      {}", dim("To:", color), email.recipients.join(", "));
     }
     if !email.cc.is_empty() {
-        println!("Cc:      {}", email.cc.join(", "));
+        println!("{}      {}", dim("Cc:", color), email.cc.join(", "));
     }
-    println!("Mailbox: {}   Category: {}", email.mailbox, email.category);
-    println!("Id:      {}", email.id);
+    println!(
+        "{} {}   {} {}",
+        dim("Mailbox:", color),
+        email.mailbox,
+        dim("Category:", color),
+        email.category
+    );
+    println!("{}      {}", dim("Id:", color), dim(&email.id, color));
     println!();
     println!("{}", body_for_display(body));
+    Ok(())
+}
+
+/// Indent every non-empty line of `text` by `prefix`, leaving blank lines
+/// blank. Used by the thread view so each message body sits visually under its
+/// header. Pure so the indentation behaviour is unit-testable.
+fn indent_lines(text: &str, prefix: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render an email thread for the pretty `show` view: a heading plus one block
+/// per message in chronological order, each body **indented** so the
+/// conversation reads as a thread. `focus_id` is the message the user asked for
+/// (marked ▶); `account_email` (when known) tags the user's own messages with
+/// "(you)". JSON `show` keeps its single-email contract, so this is pretty-only.
+pub fn render_thread(
+    msgs: &[(Email, String)],
+    focus_id: &str,
+    account_email: Option<&str>,
+    style: RenderStyle,
+) -> Result<()> {
+    let color = style.color();
+    if msgs.is_empty() {
+        println!("(no messages)");
+        return Ok(());
+    }
+    let n = msgs.len();
+    let count = if n > 1 {
+        dim(&format!("   ({n} messages)"), color)
+    } else {
+        String::new()
+    };
+    println!(
+        "{} {}{}",
+        dim("Thread:", color),
+        paint(&msgs[0].0.subject, "1", color),
+        count
+    );
+
+    for (i, (e, body)) in msgs.iter().enumerate() {
+        println!();
+        let is_you = matches!(account_email, Some(acc) if acc.eq_ignore_ascii_case(&e.sender_email));
+        let marker = if e.id == focus_id {
+            paint("▶", "36", color)
+        } else {
+            dim("·", color)
+        };
+        let who = if is_you {
+            format!("{} {}", e.sender, dim("(you)", color))
+        } else {
+            e.sender.clone()
+        };
+        println!(
+            "{} {} {}  {}",
+            marker,
+            dim(&format!("[{}/{}]", i + 1, n), color),
+            dim(&format_thread_date(e.timestamp), color),
+            who,
+        );
+        println!("{}", indent_lines(&body_for_display(body), "    "));
+    }
+    Ok(())
+}
+
+/// Render dashboard-style stats — the same numbers as the app's dashboard cards
+/// — one block per account: local/sent/server totals, pipeline coverage
+/// (classified / embeddings / memory / tasks), and per-category counts.
+pub fn render_stats(dashboards: &[AccountDashboard], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(dashboards);
+    }
+    if dashboards.is_empty() {
+        println!("(no accounts configured)");
+        return Ok(());
+    }
+    let color = style.color();
+    for (i, d) in dashboards.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        println!("{} {}", dim("Account:", color), paint(&d.account.email, "1", color));
+        let mut totals = format!(
+            "  {} {}   {} {}",
+            dim("emails:", color),
+            d.synced_count,
+            dim("sent:", color),
+            d.sent_count
+        );
+        if let Some(server_total) = d.server_total {
+            totals.push_str(&format!("   {} {}", dim("server total:", color), server_total));
+        }
+        println!("{totals}");
+        println!(
+            "  {} {}/{}   {} {}/{}",
+            dim("classified:", color),
+            d.classified_count,
+            d.classified_eligible,
+            dim("embeddings:", color),
+            d.embedded_count,
+            d.embedded_eligible
+        );
+        println!(
+            "  {} {}/{}   {} {}/{}",
+            dim("memory:", color),
+            d.memory_analyzed_count,
+            d.memory_eligible,
+            dim("tasks:", color),
+            d.task_analyzed_count,
+            d.task_eligible
+        );
+        if !d.category_counts.is_empty() {
+            println!("  {}", dim("by category:", color));
+            for c in &d.category_counts {
+                println!("    {:<12} {}", c.category, c.count);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -330,65 +575,133 @@ fn html_to_text(html: &str) -> String {
     normalize_lines(&crate::util::html::decode_html_entities(&out))
 }
 
-/// Collapse intra-line whitespace, drop runs of blank lines down to one, and
-/// trim leading/trailing blank lines.
+/// Collapse intra-line whitespace and drop blank lines entirely, so HTML that
+/// wraps every line in its own block element (common in marketing email) renders
+/// compact (single-spaced) instead of double-spaced. Plain-text bodies bypass
+/// this path (see [`body_for_display`]), so their intentional blank lines stay.
 fn normalize_lines(s: &str) -> String {
-    let mut out: Vec<String> = Vec::new();
-    let mut prev_blank = true; // skip leading blanks
-    for raw in s.split('\n') {
-        let line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        let blank = line.is_empty();
-        if blank && prev_blank {
-            continue;
+    s.split('\n')
+        .map(|raw| raw.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Collapse a list of citation numbers into a compact, comma-separated string
+/// with consecutive runs folded into `a-b` ranges, e.g. `[1,2,7,8,9]` →
+/// `"1,2,7-9"`. Input is sorted and de-duplicated first. Pure / unit-testable.
+fn collapse_citation_ranges(nums: &[i32]) -> String {
+    let mut sorted: Vec<i32> = nums.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let start = sorted[i];
+        let mut end = start;
+        while i + 1 < sorted.len() && sorted[i + 1] == end + 1 {
+            end = sorted[i + 1];
+            i += 1;
         }
-        out.push(line);
-        prev_blank = blank;
+        // Only fold runs of 3+ into an `a-b` range; a bare pair stays "a,b"
+        // (no shorter, and clearer) — so [1,2,7,8,9] → "1,2,7-9".
+        if start == end {
+            parts.push(start.to_string());
+        } else if end == start + 1 {
+            parts.push(start.to_string());
+            parts.push(end.to_string());
+        } else {
+            parts.push(format!("{start}-{end}"));
+        }
+        i += 1;
     }
-    while out.last().is_some_and(|l| l.is_empty()) {
-        out.pop();
+    parts.join(",")
+}
+
+/// Build the `sources:` lines of a chat trace, grouping sources that share the
+/// same (subject, sender) onto one line prefixed with their collapsed citation
+/// numbers, e.g. `[1,2,7-9] EmailOps weekly stats — EmailOps Labs`. A real
+/// answer often cites several emails from the same thread/sender, so the raw
+/// per-citation list repeats the same subject many times; grouping keeps the
+/// block scannable. First-seen order is preserved. Pure / unit-testable.
+fn format_trace_sources(sources: &[ChatMessageSource]) -> Vec<String> {
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut nums: std::collections::HashMap<(String, String), Vec<i32>> = std::collections::HashMap::new();
+    for s in sources {
+        let key = (s.subject.clone(), s.sender.clone());
+        if !nums.contains_key(&key) {
+            order.push(key.clone());
+        }
+        nums.entry(key).or_default().push(s.citation_number);
     }
-    out.join("\n")
+    order
+        .into_iter()
+        .map(|(subject, sender)| {
+            let cites = collapse_citation_ranges(nums.get(&(subject.clone(), sender.clone())).map_or(&[][..], |v| v));
+            format!("  [{}] {} — {}", cites, truncate(&subject, 50), sender)
+        })
+        .collect()
+}
+
+/// Wrap `s` in an ANSI SGR `code` (e.g. `"2"` dim, `"36"` cyan, `"31"` red) when
+/// `color` is set; otherwise return it unchanged so Plain/piped output stays
+/// free of escape codes. The single chokepoint for all CLI coloring.
+fn paint(s: &str, code: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[{code}m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Shorthand for the dim style — the trace block and secondary metadata.
+fn dim(s: &str, color: bool) -> String {
+    paint(s, "2", color)
 }
 
 /// Pretty-print the chat trace as a dim block on stderr (keeping stdout the
 /// clean answer channel). Renders route, retrieval stats, tool calls, model
-/// timings, and the retrieval sources. Called only when `chat --trace` is set
-/// in pretty mode.
-pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource]) {
-    eprintln!("\n── trace ──────────────────────────────");
+/// timings, and the (de-duplicated) retrieval sources. Called only when
+/// `chat --trace` is set in pretty mode. `color` enables ANSI dim styling (Rich
+/// terminals); Plain/piped callers pass `false` for escape-code-free output.
+pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource], color: bool) {
+    let mut lines: Vec<String> = Vec::new();
     match trace {
         Some(t) => {
-            eprintln!(
+            lines.push(format!(
                 "route:     {:?} ({}, {})",
                 t.route.mode, t.route.classifier, t.route.reason
-            );
+            ));
             if let Some(r) = &t.retrieval {
-                eprintln!(
+                lines.push(format!(
                     "retrieval: {} vec + {} fts → top {} ({} ms){}",
                     r.vector_hits,
                     r.fts_hits,
                     r.fused_top_k,
                     r.elapsed_ms,
                     if r.vector_fallback { ", vector fallback" } else { "" }
-                );
+                ));
             }
             for tc in &t.tool_calls {
-                eprintln!(
+                lines.push(format!(
                     "tool:      {} ({} ms, {} chars)",
                     tc.name, tc.elapsed_ms, tc.result_chars
-                );
+                ));
             }
-            eprintln!("model:     {} ({} ms total)", t.model, t.total_elapsed_ms);
+            lines.push(format!("model:     {} ({} ms total)", t.model, t.total_elapsed_ms));
         }
-        None => eprintln!("(no trace recorded)"),
+        None => lines.push("(no trace recorded)".to_string()),
     }
     if !sources.is_empty() {
-        eprintln!("sources:");
-        for s in sources {
-            eprintln!("  [{}] {} — {}", s.citation_number, truncate(&s.subject, 50), s.sender);
-        }
+        lines.push("sources:".to_string());
+        lines.extend(format_trace_sources(sources));
     }
-    eprintln!("───────────────────────────────────────");
+
+    eprintln!("\n{}", dim("── trace ──────────────────────────────", color));
+    for line in &lines {
+        eprintln!("{}", dim(line, color));
+    }
+    eprintln!("{}", dim("───────────────────────────────────────", color));
 }
 
 /// Build the body lines of a `search --trace` block. Pure (no I/O) so the line
@@ -456,12 +769,13 @@ pub fn render_search_trace(
     parsed: Option<&ParsedSearchQuery>,
     shown: usize,
     total: usize,
+    color: bool,
 ) {
-    eprintln!("\n── search trace ───────────────────────");
+    eprintln!("\n{}", dim("── search trace ───────────────────────", color));
     for line in format_search_trace_lines(method, ai_available, parsed, shown, total) {
-        eprintln!("{line}");
+        eprintln!("{}", dim(&line, color));
     }
-    eprintln!("───────────────────────────────────────");
+    eprintln!("{}", dim("───────────────────────────────────────", color));
 }
 
 /// Build the header lines (To / Subject / Id) of a draft block. Pure (no I/O) so
@@ -481,13 +795,14 @@ fn format_draft_header_lines(draft: &Draft) -> Vec<String> {
 
 /// Print a draft the chat assistant just created as a block on **stdout** (it's
 /// answer content, not a diagnostic). The body is HTML→text rendered like the
-/// `show` view. Called after the streamed answer in pretty/REPL mode.
-pub fn render_draft(draft: &Draft) {
-    println!("\n── draft ──────────────────────────────");
+/// `show` view. Called after the streamed answer in pretty/REPL mode. `color`
+/// dims the box borders on a Rich terminal; Plain/piped callers pass `false`.
+pub fn render_draft(draft: &Draft, color: bool) {
+    println!("\n{}", dim("── draft ──────────────────────────────", color));
     for line in format_draft_header_lines(draft) {
         println!("{line}");
     }
-    println!("───────────────────────────────────────");
+    println!("{}", dim("───────────────────────────────────────", color));
     println!("{}", body_for_display(&draft.body));
 }
 
@@ -534,6 +849,82 @@ mod tests {
             .expect("valid local time");
         let line = format_log_line(ts, "info", "chat", "stage: route");
         assert_eq!(line, "14:05:06.000 [info] chat: stage: route");
+    }
+
+    #[test]
+    fn collapse_citation_ranges_folds_consecutive_runs() {
+        assert_eq!(collapse_citation_ranges(&[1, 2, 7, 8, 9]), "1,2,7-9");
+        assert_eq!(collapse_citation_ranges(&[3]), "3");
+        // Unsorted / duplicated input is normalized first.
+        assert_eq!(collapse_citation_ranges(&[9, 7, 8, 2, 1, 2]), "1,2,7-9");
+        assert_eq!(collapse_citation_ranges(&[]), "");
+    }
+
+    fn source(citation: i32, subject: &str, sender: &str) -> ChatMessageSource {
+        ChatMessageSource {
+            citation_number: citation,
+            email_id: format!("eml-{citation}"),
+            relevance_score: None,
+            subject: subject.to_string(),
+            sender: sender.to_string(),
+            sender_email: String::new(),
+            timestamp: 0,
+            body_excerpt: None,
+        }
+    }
+
+    #[test]
+    fn format_trace_sources_groups_repeated_subject_sender() {
+        // Five citations of the same weekly-stats thread plus two distinct ones,
+        // interleaved — grouped onto one line each, in first-seen order.
+        let sources = vec![
+            source(1, "Weekly stats", "Metrics Bot"),
+            source(2, "Weekly stats", "Metrics Bot"),
+            source(3, "Onboarding question", "Nadia"),
+            source(7, "Weekly stats", "Metrics Bot"),
+            source(8, "Weekly stats", "Metrics Bot"),
+            source(9, "Weekly stats", "Metrics Bot"),
+        ];
+        let lines = format_trace_sources(&sources);
+        assert_eq!(lines.len(), 2, "two distinct (subject,sender) groups");
+        assert_eq!(lines[0], "  [1,2,7-9] Weekly stats — Metrics Bot");
+        assert_eq!(lines[1], "  [3] Onboarding question — Nadia");
+    }
+
+    #[test]
+    fn dim_emits_ansi_only_when_color() {
+        assert_eq!(dim("x", false), "x");
+        assert_eq!(dim("x", true), "\x1b[2mx\x1b[0m");
+    }
+
+    #[test]
+    fn paint_is_identity_without_color_and_wraps_with_color() {
+        // The whole no-ANSI-in-Plain guarantee rests on this: every colored span
+        // routes through `paint`, which is the identity when color is off.
+        assert_eq!(paint("hello", "36", false), "hello");
+        assert_eq!(paint("hello", "36", true), "\x1b[36mhello\x1b[0m");
+    }
+
+    #[test]
+    fn indent_lines_indents_nonblank_lines_only() {
+        let body = "Hi Ulises,\n\nLooking now — rolling back.\n— Marisol";
+        assert_eq!(
+            indent_lines(body, "    "),
+            "    Hi Ulises,\n\n    Looking now — rolling back.\n    — Marisol"
+        );
+        // Empty input stays empty (no stray prefix).
+        assert_eq!(indent_lines("", "    "), "");
+    }
+
+    #[test]
+    fn format_thread_date_renders_local_yyyy_mm_dd_hh_mm() {
+        use chrono::TimeZone;
+        // Build the instant via Local and format via Local → tz-independent.
+        let dt = chrono::Local
+            .with_ymd_and_hms(2026, 6, 9, 14, 5, 6)
+            .single()
+            .expect("valid local time");
+        assert_eq!(format_thread_date(dt.timestamp()), "2026-06-09 14:05");
     }
 
     #[test]
@@ -603,6 +994,17 @@ mod tests {
         assert!(out.contains("a & b"), "entities decoded: {out:?}");
         assert!(out.contains("c"));
         assert!(!out.starts_with('\n') && !out.ends_with('\n'), "trimmed: {out:?}");
+    }
+
+    #[test]
+    fn body_for_display_single_spaces_block_per_line_html() {
+        // Marketing emails wrap each line in its own block (<div>/<p>/table
+        // cells), which previously left a blank line between every line. The
+        // HTML→text view should render compact: line breaks, no blank lines.
+        let html = "<div>96</div><div>Hi Gero,</div><p>Net</p><p>Profit p/mo: $78</p>";
+        let out = body_for_display(html);
+        assert!(!out.contains("\n\n"), "no blank lines between lines: {out:?}");
+        assert_eq!(out, "96\nHi Gero,\nNet\nProfit p/mo: $78");
     }
 
     fn sample_draft(to: Vec<&str>) -> Draft {

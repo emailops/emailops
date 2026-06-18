@@ -8,6 +8,7 @@
 //! backends. From that point on the command handlers call `services::*`
 //! directly — no `AppHandle` required.
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
 use super::output::CliLogger;
-use super::{Cli, Command, OutputMode};
+use super::{resolve_render_style, Cli, Command, OutputMode, RenderStyle};
 
 /// State shared across one CLI invocation (one-shot) or one REPL session.
 pub struct CliSession {
@@ -27,6 +28,11 @@ pub struct CliSession {
     pub account: Option<String>,
     pub model: String,
     pub mode: OutputMode,
+    /// Resolved human-output styling for this invocation (see [`RenderStyle`]).
+    /// `--json` → `Json` (no styling); pretty on a TTY → `Rich`; pretty piped or
+    /// `NO_COLOR` → `Plain`. Drives ANSI color, table re-rendering, and the chat
+    /// live-preview/redraw, all of which stay out of the agent/piped paths.
+    pub style: RenderStyle,
     pub quiet: bool,
     /// Shared verbosity gate for the installed [`CliLogger`]. Flipped per chat
     /// turn so a chat without `--trace` suppresses the diagnostic app-log stream
@@ -73,6 +79,14 @@ impl CliSession {
         // `--trace` command asked for diagnostics. Must precede `Database::new`.
         crate::db::set_db_init_timing(startup_timing_enabled(cli.command.as_ref()));
 
+        // Resolve the human-output style once: stdout TTY + NO_COLOR gate the
+        // styling so agents (`--json`) and piped captures never pay for ANSI.
+        let style = resolve_render_style(
+            mode == OutputMode::Json,
+            std::io::stdout().is_terminal(),
+            std::env::var_os("NO_COLOR").is_some(),
+        );
+
         let data_dir = resolve_data_dir(cli.data_dir.clone());
         let db = Arc::new(Database::new(data_dir.clone())?);
 
@@ -82,7 +96,7 @@ impl CliSession {
         crate::services::logger::install(Arc::new(CliLogger::new(log_quiet.clone())));
         // One-shot mode streams chat tokens straight to stdout; the REPL swaps
         // in a ChannelEventSink per turn (see `repl`).
-        crate::services::events::install(Arc::new(super::output::CliEventSink::new(mode)));
+        crate::services::events::install(Arc::new(super::output::CliEventSink::new(style)));
 
         let account = resolve_account(&db, cli.account.as_deref())?;
         let model = resolve_model(&db, cli.model.clone());
@@ -92,6 +106,7 @@ impl CliSession {
             account,
             model,
             mode,
+            style,
             quiet: cli.quiet,
             log_quiet,
             data_dir,
@@ -233,6 +248,7 @@ mod tests {
             account: None,
             model: "test-model".to_string(),
             mode: OutputMode::Pretty,
+            style: RenderStyle::Plain,
             quiet,
             log_quiet: Arc::new(AtomicBool::new(quiet)),
             data_dir: PathBuf::from("/tmp/emailops-cli-test"),

@@ -13,8 +13,12 @@
 //!     `/model`, `/new`, `/help`, `/quit` manage session state. Switching account
 //!     via `/account <id|email>` is persisted as the CLI default, so the next
 //!     launch resolves it automatically.
-//!   - **bare text** → rejected with a hint pointing at `/chat`.
+//!   - **a bare email id** (a single token matching a real id) → runs
+//!     `/show <id>`, so pasting an id from an `/emails` / `/search` listing acts
+//!     like "click to open".
+//!   - **other bare text** → rejected with a hint pointing at `/chat`.
 
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
@@ -29,9 +33,16 @@ use super::{Cli, Command, OutputMode};
 /// Run the interactive shell until EOF / `/quit`.
 pub async fn run(session: &mut CliSession) -> Result<()> {
     // The REPL always streams chat tokens to stdout, regardless of a stray
-    // global `--json` flag — interactive output is inherently human-facing.
-    crate::services::events::install(Arc::new(CliEventSink::new(OutputMode::Pretty)));
+    // global `--json` flag — interactive output is inherently human-facing. Drop
+    // any `Json` style the same way (recompute from TTY + NO_COLOR), so the REPL
+    // is Rich on a terminal and Plain when its stdout is piped.
     session.mode = OutputMode::Pretty;
+    session.style = super::resolve_render_style(
+        false,
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    );
+    crate::services::events::install(Arc::new(CliEventSink::new(session.style)));
 
     println!(
         "EmailOps interactive shell. Every action is a slash-command (e.g. /chat, /search). \
@@ -60,9 +71,16 @@ pub async fn run(session: &mut CliSession) -> Result<()> {
                     if let Err(e) = handle_slash(session, rest).await {
                         eprintln!("error: {e}");
                     }
+                } else if bare_line_is_id_candidate(line) && session.db.get_email_by_id(line).ok().flatten().is_some() {
+                    // A bare line that is a single token matching a real email id
+                    // acts like "click to open": paste/type an id from the
+                    // `/emails` or `/search` listing and it runs `/show <id>`.
+                    if let Err(e) = handle_slash(session, &format!("show {line}")).await {
+                        eprintln!("error: {e}");
+                    }
                 } else {
-                    // Every action is an explicit slash-command — bare text does
-                    // not silently start a chat. Point the user at /chat.
+                    // Other bare text does not silently start a chat. Point the
+                    // user at /chat.
                     eprintln!("commands start with '/'. to chat, use: /chat {line}   (try /help)");
                 }
             }
@@ -77,6 +95,14 @@ pub async fn run(session: &mut CliSession) -> Result<()> {
 
     println!("bye.");
     Ok(())
+}
+
+/// Whether a bare (non-slash) REPL line could be an email id: a single,
+/// non-empty token with no whitespace. The caller still verifies the id exists
+/// before running `show`, so a single non-id word falls through to the chat hint
+/// rather than erroring.
+fn bare_line_is_id_candidate(line: &str) -> bool {
+    !line.is_empty() && !line.contains(char::is_whitespace)
 }
 
 /// Split a slash-command line into tokens, respecting single/double quotes so a
@@ -302,15 +328,28 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
     )
     .await?;
 
+    // Read the finished assistant message back so we can re-render the answer as
+    // aligned, styled markdown (replacing the dim live preview the sink cleared),
+    // surface any drafts it created, and — with `--trace` — the route/retrieval
+    // block.
+    let assistant = session
+        .db
+        .get_chat_messages(&conversation_id)?
+        .into_iter()
+        .find(|m| m.id == assistant_message.id);
+    let answer = assistant.as_ref().map(|m| m.content.clone()).unwrap_or_default();
+    super::output::render_final_answer(&answer, session.style);
+
+    if let Some(m) = assistant.as_ref() {
+        for draft in commands::collect_referenced_drafts(&session.db, &m.referenced_draft_ids)? {
+            super::output::render_draft(&draft, session.style.color());
+        }
+    }
+
     if trace {
-        let assistant = session
-            .db
-            .get_chat_messages(&conversation_id)?
-            .into_iter()
-            .find(|m| m.id == assistant_message.id);
         let chat_trace = assistant.as_ref().and_then(|m| m.trace.clone());
         let sources = assistant.as_ref().map(|m| m.sources.clone()).unwrap_or_default();
-        super::output::render_chat_trace(chat_trace.as_ref(), &sources);
+        super::output::render_chat_trace(chat_trace.as_ref(), &sources, session.style.color());
     }
 
     Ok(())
@@ -323,10 +362,11 @@ fn print_help() {
          \x20 /accounts [add <gmail|outlook|imap …>]  list accounts, or add one\n\
          \x20 /emails [--limit N] [--offset N] [--mailbox M] [--category C]   list recent emails\n\
          \x20 /search <query> [--limit N] [--offset N] [--trace]   full-text search\n\
-         \x20 /show <id>        show one email\n\
+         \x20 /show <id>        show one email (or just paste an id on its own to open it)\n\
          \x20 /sync [account]   download new mail\n\
          \x20 /classify [--all] classify emails\n\
          \x20 /embed [--batch N] generate embeddings\n\
+         \x20 /stats            dashboard stats per account (emails, categories, embeddings…)\n\
          \x20 /config <get|set|unset|list> [key] [value]  manage CLI preferences\n\
          \x20 /account [<id|email>]  show or switch the working account (switch is saved as default)\n\
          \x20 /model [<name>]   show or set the AI model\n\
@@ -353,6 +393,15 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_line_id_candidate_accepts_single_token_rejects_phrases() {
+        assert!(bare_line_is_id_candidate("demo_12e75795718f4f29"));
+        assert!(bare_line_is_id_candidate("18f9c0a1b2c3d4e5"));
+        assert!(!bare_line_is_id_candidate("")); // empty
+        assert!(!bare_line_is_id_candidate("what invoices arrived")); // a phrase → chat hint
+        assert!(!bare_line_is_id_candidate("show me")); // two tokens
+    }
 
     #[test]
     fn tokenize_splits_on_whitespace() {
@@ -431,6 +480,7 @@ mod tests {
             account: None,
             model: "test-model".to_string(),
             mode: OutputMode::Pretty,
+            style: crate::cli::RenderStyle::Rich,
             quiet: true,
             log_quiet: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             data_dir: std::path::PathBuf::from("/tmp/emailops-cli-test"),
