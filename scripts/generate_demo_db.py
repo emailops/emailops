@@ -43,7 +43,8 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -71,17 +72,23 @@ class Account:
     name: str
 
 
+# English demo persona: Ulises — a freelance software-engineer consultant who
+# also maintains EmailOps (a local-first AI email client) as an open-source side
+# project under the "EmailOps Labs" banner. Both the consulting work and the OSS
+# project land in the work account. Account IDs are kept stable (`docs/cli.md`
+# and `make cli-demo` examples reference them); only provider/email/name change.
+# `imap` is privacy-aligned (no big-tech mail host) and a valid provider.
 ACCOUNT_WORK = Account(
     id="demo-acct-work",
-    provider="gmail",
-    email="alex@northwindlabs.io",
-    name="Alex Reyes (Northwind Labs)",
+    provider="imap",
+    email="ulises@emailopslabs.dev",
+    name="Ulises · EmailOps Labs",
 )
 ACCOUNT_PERSONAL = Account(
     id="demo-acct-personal",
-    provider="outlook",
-    email="demo-alex.reyes@outlook.com",
-    name="Alex Reyes",
+    provider="imap",
+    email="ulises@fastmail.com",
+    name="Ulises",
 )
 
 # Spanish-locale variant. Same personas, Spanish-flavored email/name. Account ids
@@ -102,8 +109,11 @@ ACCOUNT_PERSONAL_ES = Account(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Email templates (sender, subject, body, category, mailbox, tags)
-# Bodies are short — realistic for a SaaS founder's inbox.
+# LEGACY (UNUSED) — old SaaS-founder English templates. The English demo now
+# uses the curated `Thread`-based content further below (WORK_THREADS_EN etc.);
+# these two lists are no longer referenced by any locale and are kept only as a
+# format reference for the weight-based path the Spanish demo still uses. Safe to
+# delete. Synthetic data — no real mailbox content.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # (sender_name, sender_email, subject, body, category, weight)
@@ -505,6 +515,17 @@ PERSONAL_TEMPLATES_ES: list[tuple[str, str, str, str, str, int]] = [
 # ──────────────────────────────────────────────────────────────────────────────
 
 INTENT_BY_KEYWORD: list[tuple[str, str]] = [
+    # Prospect / lead language → "request" (listed first so a proposal inquiry
+    # that also mentions pricing or asks a question still tags as a request).
+    ("proposal", "request"),
+    ("project inquiry", "request"),
+    ("looking for", "request"),
+    ("freelance", "request"),
+    ("availability", "request"),
+    ("estimate", "request"),
+    ("quote", "request"),
+    ("scope of work", "request"),
+    ("engagement", "request"),
     # English
     ("invoice", "billing"),
     ("bill", "billing"),
@@ -554,6 +575,22 @@ INTENT_BY_KEYWORD: list[tuple[str, str]] = [
 ]
 
 TOPIC_BY_SENDER_SUBSTR: list[tuple[str, str]] = [
+    # EU indie / privacy-first stack (EmailOps Labs persona)
+    ("hetzner", "operations"),
+    ("fly.io", "operations"),
+    ("scaleway", "operations"),
+    ("borgbase", "operations"),
+    ("fastmail", "operations"),
+    ("porkbun", "operations"),
+    ("plausible", "marketing"),
+    ("codeberg", "project"),
+    ("forgejo", "project"),
+    ("glitchtip", "operations"),
+    ("plane", "project"),
+    ("opencollective", "finance"),
+    ("liberapay", "finance"),
+    ("emailopslabs.dev", "project"),
+    # Legacy SaaS stack (still used by the Spanish demo)
     ("stripe", "billing"),
     ("aws", "billing"),
     ("vercel", "operations"),
@@ -597,6 +634,468 @@ def infer_topic(sender_email: str) -> str:
     return "operations"
 
 
+def epoch_for(year: int, month: int, day: int) -> int:
+    """Unix epoch seconds for a fixed calendar date (UTC midday). Used for the
+    date-anchored demo content (2025 prospect leads, Q1 invoices, weekly stats)
+    so date-filtered queries are answerable regardless of when the DB is built."""
+    return int(datetime(year, month, day, 12, 0, tzinfo=timezone.utc).timestamp())
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# English demo content — Ulises, a freelance software-engineer consultant who
+# also maintains EmailOps (a local-first AI email client) as an open-source side
+# project under the "EmailOps Labs" banner.
+#
+# Unlike the legacy weight-based templates (still used by the Spanish demo),
+# every conversation here is authored once as a `Thread`: one subject, one
+# thread_id, an explicit message list. This guarantees a conversation is never
+# split across multiple threads — and that two unrelated threads never share a
+# subject and read as merged.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Thread:
+    sender_name: str
+    sender_email: str
+    subject: str
+    category: str
+    msgs: list[tuple[str, str]]   # (who, body); who in {"them", "me"}
+    mailbox: str = "inbox"
+    days_ago: int = 7
+    read: bool = True
+
+
+WORK_THREADS_EN: list[Thread] = [
+    # ── Client consulting: Faro Logistics ──────────────────────────────────
+    Thread("Marisol Vega", "marisol@farologistics.com",
+           "Sprint 5 demo recap + next milestone", "primary",
+           [("them",
+             "Hi Ulises,\n\nThanks for the sprint 5 demo today — the live "
+             "order-tracking view looked great. Could you send a short recap "
+             "and what's planned for the next milestone?\n\nMarisol"),
+            ("me",
+             "Hi Marisol,\n\nRecap: we shipped the order-tracking view, the CSV "
+             "export, and the webhook retry queue. Next milestone (M6): the "
+             "carrier rate API and the admin audit log — targeting two weeks.\n\n"
+             "Best,\nUlises")],
+           days_ago=4),
+    Thread("Marisol Vega", "marisol@farologistics.com",
+           "Production bug: orders stuck in 'processing'", "primary",
+           [("them",
+             "Ulises — since this morning a few orders are stuck in "
+             "'processing' and never move to 'shipped'. Customers are emailing "
+             "us. Can you take a look ASAP?\n\nMarisol"),
+            ("me",
+             "Looking now — the carrier webhook is timing out on retries. "
+             "Rolling back the queue change and adding a longer timeout. Will "
+             "confirm shortly.\n\nUlises"),
+            ("them",
+             "Thank you — they're moving again. Appreciate the fast turnaround.")],
+           days_ago=2, read=False),
+    # ── Client consulting: Lumen Health ────────────────────────────────────
+    Thread("Tomás Iglesias", "tomas@lumenhealth.eu",
+           "Proposal accepted — let's start the Rust API", "primary",
+           [("them",
+             "Hi Ulises,\n\nGood news: the team approved your proposal for the "
+             "patient-records API rewrite in Rust. Signed SOW attached. Can we "
+             "kick off Monday?\n\nTomás\nCTO, Lumen Health")],
+           days_ago=9),
+    Thread("Tomás Iglesias", "tomas@lumenhealth.eu",
+           "API latency on the /search endpoint", "primary",
+           [("them",
+             "Hey Ulises — /search p95 latency jumped to ~1.8s after the last "
+             "deploy. Profiling points at the patient index query. Can you look "
+             "this week?\n\nTomás"),
+            ("me",
+             "On it — looks like a missing composite index on (org_id, "
+             "updated_at). Adding a migration plus a query fix, and I'll "
+             "benchmark before deploying.\n\nUlises")],
+           days_ago=5),
+    # ── Client consulting: Bahía Studio ────────────────────────────────────
+    Thread("Carla Méndez", "carla@bahiastudio.co",
+           "Invoice #2026-014 — May milestone", "primary",
+           [("me",
+             "Hi Carla,\n\nAttached is invoice #2026-014 for the May milestone "
+             "(mobile redesign + performance pass): €2,400, net 15. Thanks for "
+             "a smooth sprint!\n\nUlises")],
+           mailbox="sent", days_ago=6),
+    Thread("Carla Méndez", "carla@bahiastudio.co",
+           "Mobile nav overlapping the footer", "primary",
+           [("them",
+             "Ulises — on iOS Safari the bottom nav overlaps the footer on the "
+             "pricing page (screenshot attached). Small, but it looks broken.\n\n"
+             "Carla"),
+            ("me",
+             "Fixed — it was a safe-area-inset issue. Pushed to staging; can you "
+             "confirm on your device?\n\nUlises")],
+           days_ago=3),
+    # ── Dev tooling notifications (standalone, indie/self-hosted stack) ─────
+    Thread("Codeberg", "notifications@codeberg.org",
+           "[faro-logistics/dashboard] PR #58: carrier rate API", "updates",
+           [("them",
+             "Marisol Vega approved your pull request:\n\nfeat(rates): integrate "
+             "carrier rate API with caching\n\n+412 −96 across 9 files. Ready to "
+             "merge.")],
+           days_ago=1),
+    Thread("Fly.io", "noreply@fly.io",
+           "Deploy succeeded: lumen-api (production)", "updates",
+           [("them",
+             "Your deployment of lumen-api to production finished "
+             "successfully.\n\nRegion: fra (Frankfurt)\nImage: lumen-api:2026.06\n"
+             "Duration: 38s")],
+           days_ago=1),
+    Thread("GlitchTip", "alerts@glitchtip.com",
+           "[Faro] New error: NullReferenceException in OrderService", "updates",
+           [("them",
+             "A new issue was seen 6 times in the last hour.\n\n"
+             "NullReferenceException: order.carrier is null\n"
+             "at OrderService.markShipped (services/order.ts:88)")],
+           days_ago=2),
+    Thread("Plane", "no-reply@plane.so",
+           "Carla assigned you 'Polish empty states' on the Bahía board",
+           "updates",
+           [("them",
+             "Carla Méndez assigned you a work item:\n\nPolish empty states "
+             "(pricing + dashboard)\nDue: end of week\nProject: Bahía Studio "
+             "website")],
+           days_ago=2),
+    # ── EmailOps OSS maintenance ───────────────────────────────────────────
+    Thread("Codeberg", "notifications@codeberg.org",
+           "[emailops/emailops] PR #131: Add Proton Bridge IMAP support",
+           "updates",
+           [("them",
+             "A new contributor opened a pull request:\n\nfeat(imap): support "
+             "Proton Bridge local IMAP\n\n+318 −12 across 7 files. Author: "
+             "lena-vasquez. Tests included.")],
+           days_ago=2),
+    Thread("Open Collective", "no-reply@opencollective.com",
+           "EmailOps has a new monthly backer", "updates",
+           [("them",
+             "Good news! EmailOps has a new monthly backer.\n\nSupporter: "
+             "anonymous\nAmount: $25/month\nNote: 'Love that it runs the model "
+             "locally. Keep going!'")],
+           days_ago=4),
+    Thread("Diego Salas", "diego@proton.me",
+           "EmailOps is on the Lobsters front page 🎉", "primary",
+           [("them",
+             "Saw EmailOps trending on Lobsters this morning — congrats! The "
+             "'local-first email with on-device AI' angle is really resonating "
+             "in the comments. Might be worth a blog post while it's hot.\n\n"
+             "Diego")],
+           days_ago=6),
+    # ── Newsletters (indie / dev) ──────────────────────────────────────────
+    Thread("This Week in Rust", "noreply@this-week-in-rust.org",
+           "This Week in Rust #599", "promotions",
+           [("them",
+             "This week:\n\n• Async drop, revisited\n• A deep dive into rustc "
+             "query caching\n• Crate of the week: sqlite-vec bindings")],
+           days_ago=3),
+    Thread("Console.dev", "hi@console.dev",
+           "Console #210 — tools for developers", "promotions",
+           [("them",
+             "This week's picks:\n\n• A local-first sync engine for desktop "
+             "apps\n• An open-source error tracker you can self-host\n• A "
+             "privacy-first analytics tool")],
+           days_ago=5),
+    Thread("Hacker Newsletter", "kale@hackernewsletter.com",
+           "Hacker Newsletter #648", "promotions",
+           [("them",
+             "Top stories:\n\n• Show HN: a local-first email client with "
+             "on-device AI\n• SQLite as an application file format, ten years "
+             "on\n• The case against per-user telemetry")],
+           days_ago=6),
+    # ── Cold outreach / spam (authored explicitly, not random) ─────────────
+    Thread("Brad Whitfield", "brad@talentrocket.io",
+           "Senior Rust role — $200k, fully remote", "promotions",
+           [("them",
+             "Hi Ulises,\n\nCame across your profile — we're hiring senior Rust "
+             "engineers for a well-funded startup. $180–220k + equity, fully "
+             "remote. Open to a quick chat?\n\nBrad")],
+           mailbox="spam", days_ago=4),
+    Thread("Megan Cole", "megan@b2bleads.co",
+           "Re: Re: following up", "promotions",
+           [("them",
+             "Ulises — bumping this in case it got buried. Still happy to send "
+             "the case study on AI lead scoring.\n\nMegan")],
+           mailbox="spam", days_ago=7),
+]
+
+
+PERSONAL_THREADS_EN: list[Thread] = [
+    Thread("Mom", "elena@proton.me",
+           "Tía Carmen's birthday next weekend", "primary",
+           [("them",
+             "Hi mijo,\n\nDon't forget — Tía Carmen turns 70 on Saturday. "
+             "Dinner at her place at 7. Can you bring the wine? Something "
+             "nice.\n\nLove,\nMom")],
+           days_ago=3, read=False),
+    Thread("Sara", "sara@proton.me",
+           "Coffee Saturday?", "primary",
+           [("them",
+             "Hey! Back in town this weekend. Free Saturday morning? There's a "
+             "new spot with wood-fired pastries. My treat.\n\nSara")],
+           days_ago=2),
+    Thread("Bookshop.org", "orders@bookshop.org",
+           "Your order has shipped", "updates",
+           [("them",
+             "Your order of 'Working in Public' has shipped from your local "
+             "independent bookstore and should arrive Friday.")],
+           days_ago=4),
+    Thread("Bandcamp", "noreply@bandcamp.com",
+           "New release from an artist you follow", "promotions",
+           [("them",
+             "An artist you follow just released a new album. Stream it, or grab "
+             "the vinyl to support them directly.")],
+           days_ago=5),
+    Thread("Casa Marina", "reservas@casamarina.pt",
+           "Your stay in Lisbon is confirmed", "updates",
+           [("them",
+             "Your booking is confirmed.\n\nCheck-in: Friday\nCheck-out: "
+             "Monday\nTotal: €420 (paid directly to the host)")],
+           days_ago=6),
+    Thread("OnePatient", "noreply@onepatient.health",
+           "Annual checkup reminder", "updates",
+           [("them",
+             "Hi Ulises, you're due for your annual physical. Please book a time "
+             "using the patient portal.")],
+           days_ago=8),
+]
+
+
+# Prospect / lead inquiries, dated with ABSOLUTE (year, month, day) so the demo
+# query "which requests from prospects did I receive in 2025?" is answerable.
+# A couple of 2026 leads keep the year filter selective. Faro/Lumen/Bahía are
+# the same contacts as the active clients above — the leads that converted.
+# (sender_name, sender_email, subject, body, (year, month, day))
+PROSPECTS_EN: list[tuple[str, str, str, str, tuple[int, int, int]]] = [
+    ("Marisol Vega", "marisol@farologistics.com",
+     "Project inquiry: real-time logistics dashboard",
+     "Hi Ulises,\n\nWe're a logistics startup and need help building a "
+     "real-time order-tracking dashboard (React + a Rust backend). We saw your "
+     "work on EmailOps and would like to request a proposal for a 2–3 month "
+     "engagement starting in Q2. Are you available?\n\nMarisol Vega, Faro "
+     "Logistics",
+     (2025, 3, 12)),
+    ("Tomás Iglesias", "tomas@lumenhealth.eu",
+     "Looking for a Rust contractor — patient-records API",
+     "Hello,\n\nWe're evaluating a rewrite of our patient-records service in "
+     "Rust and are looking for an experienced contractor. I'd like to request "
+     "your availability and a rough estimate. Privacy and compliance matter a "
+     "lot to us.\n\nTomás Iglesias, CTO, Lumen Health",
+     (2025, 5, 20)),
+    ("Carla Méndez", "carla@bahiastudio.co",
+     "Request for proposal: marketing site rebuild",
+     "Hi Ulises,\n\nWe'd like to request a proposal to rebuild our marketing "
+     "site with a focus on performance and accessibility. Timeline is flexible. "
+     "What would the scope and pricing look like?\n\nCarla, Bahía Studio",
+     (2025, 7, 8)),
+    ("Priya Nair", "priya@nimbus-notes.app",
+     "Freelance help with an on-device AI feature",
+     "Hi Ulises,\n\nWe loved how EmailOps runs models locally. We're a notes "
+     "app and want to add an on-device summarization feature. I'd like to "
+     "request a short consulting engagement (~6 weeks) and an estimate.\n\n"
+     "Priya, Nimbus Notes",
+     (2025, 9, 15)),
+    ("Janos Kovacs", "janos@privacyhub.eu",
+     "Project inquiry: migrate analytics to self-hosted",
+     "Hello Ulises,\n\nWe want to move off a third-party analytics SaaS to a "
+     "self-hosted, privacy-first setup. I'd like to request a proposal and a "
+     "quote to scope the migration. A Q1 2026 start would be ideal.\n\nJanos, "
+     "PrivacyHub",
+     (2025, 11, 3)),
+    ("Aiko Tanaka", "aiko@deltaforge.io",
+     "Quick question on availability for a contract",
+     "Hi Ulises,\n\nWe have a 3-month Rust contract (an event-driven backend) "
+     "and are looking for availability in early 2026. I'd like to request a "
+     "proposal — would you be open to it?\n\nAiko, DeltaForge",
+     (2025, 12, 9)),
+    # 2026 leads — keep the "in 2025" filter selective.
+    ("Marco Bianchi", "marco@offlinefirst.app",
+     "Project inquiry: local-first sync engine",
+     "Hi Ulises,\n\nWe're building an offline-first app and need help with a "
+     "local-first sync engine. I'd like to request a proposal for a short "
+     "engagement — are you available?\n\nMarco",
+     (2026, 2, 18)),
+    ("Helena Roth", "helena@graystack.io",
+     "Looking for a Rust consultant",
+     "Hello,\n\nWe're looking for a Rust consultant for a 2-month engagement. "
+     "I'd like to request a quote — what's your availability and rate?\n\n"
+     "Helena",
+     (2026, 4, 22)),
+]
+
+
+# EmailOps user-support questions (the inbox owner maintains EmailOps). The
+# first is the canonical "how to add an email account" question the demo drafts
+# a reply to. (sender_name, sender_email, subject, body, days_ago, read)
+SUPPORT_EN: list[tuple[str, str, str, str, int, bool]] = [
+    ("Nadia Brunner", "nadia.brunner@proton.me",
+     "How do I add a new email account in EmailOps?",
+     "Hi,\n\nI just installed EmailOps and I love that the AI runs locally. One "
+     "thing I can't figure out: how do I add a second email account? I have a "
+     "Fastmail (IMAP) account and a work mailbox I'd like to manage together. "
+     "Is there a settings page for that?\n\nThanks for building this!\nNadia",
+     1, False),
+    ("Kwame Boateng", "kwame@mailbox.org",
+     "Can EmailOps use my own Ollama models?",
+     "Hello,\n\nGreat app. Can I point EmailOps at my own Ollama instance, or is "
+     "it only the embedded llama.cpp model? Running everything locally is "
+     "exactly what I want.\n\nKwame",
+     2, True),
+    ("Hiroshi Tan", "hiro@tutanota.com",
+     "Search doesn't find emails in archived folders",
+     "Hi,\n\nWhen I search, results don't seem to include archived emails. Is "
+     "that expected, or a bug? Happy to share logs.\n\nHiroshi",
+     3, True),
+]
+
+
+# Weekly EmailOps metrics digests — drive ~13 standalone weekly emails spanning
+# the last 3 months so "how have downloads/stats progressed?" has a clear trend.
+STATS_EN: dict = {
+    "sender_name": "EmailOps Labs Metrics",
+    "sender_email": "metrics@emailopslabs.dev",
+    "weeks": 13,
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# English population — coherent threads + date-anchored prospect / support /
+# stats inserters. Each forces an explicit mailbox and (where relevant) absolute
+# dates, so demo-critical emails never get swept into spam/trash or undated.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _insert_thread(conn: sqlite3.Connection, account: Account, thread: Thread) -> None:
+    """Insert one Thread as a single conversation: all messages share one
+    thread_id, replies are Re:-prefixed with ascending timestamps, and the
+    sender alternates between the counterparty ('them') and the owner ('me')."""
+    thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+    # Accumulate a strictly-increasing timestamp so messages stay in
+    # chronological order — a fresh random per message (base + i*rand) could
+    # otherwise place a later reply before an earlier one, scrambling the thread
+    # and picking the wrong "latest" message as the thread representative.
+    ts = now_s() - thread.days_ago * 86400
+    for i, (who, body) in enumerate(thread.msgs):
+        if who == "me":
+            s_name, s_email = account.name, account.email
+        else:
+            s_name, s_email = thread.sender_name, thread.sender_email
+        if i == 0 or thread.subject.lower().startswith("re:"):
+            subject = thread.subject
+        else:
+            subject = f"Re: {thread.subject}"
+        if i > 0:
+            ts += 3600 * RNG.randint(3, 30)
+        read = thread.read if i == 0 else True
+        email_id = insert_email(
+            conn,
+            account=account,
+            sender_name=s_name,
+            sender_email=s_email,
+            subject=subject,
+            body=body,
+            timestamp=ts,
+            is_read=read,
+            mailbox=thread.mailbox,
+            category=thread.category,
+            thread_id=thread_id,
+        )
+        insert_tags(conn, email_id, subject, body, s_email)
+
+
+def populate_conversations(conn: sqlite3.Connection, locale: Locale) -> None:
+    for account, threads in (
+        (locale.work, locale.work_threads or []),
+        (locale.personal, locale.personal_threads or []),
+    ):
+        for thread in threads:
+            _insert_thread(conn, account, thread)
+
+
+def populate_prospect_requests(conn: sqlite3.Connection, locale: Locale) -> None:
+    for name, email, subject, body, (year, month, day) in locale.prospects:
+        email_id = insert_email(
+            conn,
+            account=locale.work,
+            sender_name=name,
+            sender_email=email,
+            subject=subject,
+            body=body,
+            timestamp=epoch_for(year, month, day),
+            is_read=True,
+            mailbox="inbox",
+            category="primary",
+        )
+        insert_tags(conn, email_id, subject, body, email)
+
+
+def populate_support_emails(conn: sqlite3.Connection, locale: Locale) -> None:
+    for name, email, subject, body, days_ago, read in locale.support:
+        email_id = insert_email(
+            conn,
+            account=locale.work,
+            sender_name=name,
+            sender_email=email,
+            subject=subject,
+            body=body,
+            timestamp=now_s() - days_ago * 86400,
+            is_read=read,
+            mailbox="inbox",
+            category="primary",
+        )
+        insert_tags(conn, email_id, subject, body, email)
+
+
+def populate_stats_digests(conn: sqlite3.Connection, locale: Locale) -> None:
+    cfg = locale.stats
+    if not cfg:
+        return
+    weeks = cfg["weeks"]
+    # idx 0 = oldest week → weeks-1 = newest; every metric rises steadily.
+    weekly_dl = [180 + i * 38 + (i % 3) * 12 for i in range(weeks)]
+    cumulative, running = [], 3850
+    for v in weekly_dl:
+        running += v
+        cumulative.append(running)
+    stars = [286 + i * 11 for i in range(weeks)]
+    active = [1420 + i * 64 for i in range(weeks)]
+    visitors = [840 + i * 47 for i in range(weeks)]
+    for w in range(weeks):                       # w=0 = newest week
+        idx = weeks - 1 - w
+        ts = now_s() - (3 + w * 7) * 86400
+        date_label = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        subject = f"EmailOps weekly download & usage stats — week of {date_label}"
+        body = (
+            f"Here's the weekly EmailOps growth and download report (week of "
+            f"{date_label}).\n\n"
+            f"This week the EmailOps app was downloaded {weekly_dl[idx]} times "
+            f"(Codeberg releases + emailops.app), bringing total downloads to "
+            f"{cumulative[idx]}. Estimated active installs: {active[idx]}. "
+            f"Codeberg stars: {stars[idx]}. Website visitors (Plausible): "
+            f"{visitors[idx]}.\n\n"
+            "Overall, downloads, active users, and other stats continue to grow "
+            "steadily week over week. These figures come from download counts "
+            "and privacy-preserving Plausible analytics — no per-user tracking."
+        )
+        email_id = insert_email(
+            conn,
+            account=locale.work,
+            sender_name=cfg["sender_name"],
+            sender_email=cfg["sender_email"],
+            subject=subject,
+            body=body,
+            timestamp=ts,
+            is_read=True,
+            mailbox="inbox",
+            # Primary (not updates) so the rag_first chat route — which scopes to
+            # DEFAULT_RAG_CATEGORIES = ["primary"] — can retrieve the weekly
+            # metrics when asked how downloads/stats progressed.
+            category="primary",
+        )
+        insert_tags(conn, email_id, subject, body, cfg["sender_email"])
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Locale bundle — everything that differs between en/es lives here. Functions
 # below take a `Locale` so the rest of the schema/inserts can be locale-agnostic.
@@ -630,6 +1129,15 @@ class Locale:
     attachment_rules: list[tuple[str, str | None, str | None, str | None, list[str]]]
     # The output language pref the app uses for AI responses in the chat.
     ai_output_language: str        # "English" | "Spanish"
+    # EN-only coherent content. When `work_threads` is set the build uses the
+    # thread-based path (populate_conversations + prospect/support/stats
+    # inserters); otherwise it falls back to the legacy weight-based
+    # `work_templates`/`personal_templates` path (the Spanish demo).
+    work_threads: list[Thread] | None = None
+    personal_threads: list[Thread] = field(default_factory=list)
+    prospects: list = field(default_factory=list)
+    support: list = field(default_factory=list)
+    stats: dict | None = None
 
 
 def now_plus_days(days: int) -> int:
@@ -645,34 +1153,39 @@ def now_plus_days(days: int) -> int:
 # ──────────────────────────────────────────────────────────────────────────────
 
 INVOICE_TEMPLATES_EN: list[tuple[str, str, str, str, str, int, str, int]] = [
-    ("AWS Billing", "no-reply-aws@amazon.com",
-     "Your AWS bill for {month} is now available",
-     "Hello Alex,\n\nYour AWS bill for {month} 2026 is ${amount}. The PDF invoice is attached "
-     "and the breakdown is available in the Billing Console.",
-     "updates", 3, "aws-invoice-{month_short}.pdf", 184_231),
-    ("Google Workspace", "workspace-noreply@google.com",
-     "Your Google Workspace invoice for {month}",
-     "Hello,\n\nAttached is your Google Workspace invoice for {month} 2026.\n\n"
-     "Subtotal: $148.00\nTax: $13.32\nTotal: $161.32",
-     "updates", 3, "google-workspace-{month_short}.pdf", 92_104),
-    ("Notion Billing", "team@mail.notion.so",
-     "Your Notion invoice for {month}",
-     "Hi Alex,\n\nThanks for using Notion. Your invoice for {month} 2026 is attached.\n\n"
-     "Plan: Business\nSeats: 18\nTotal: $144.00",
-     "updates", 3, "notion-invoice-{month_short}.pdf", 64_512),
-    ("Anthropic Billing", "billing@anthropic.com",
-     "Anthropic receipt for {month}",
-     "Thank you for using Anthropic. Your usage receipt for {month} 2026 is attached.\n\n"
-     "API spend: $214.18",
-     "updates", 2, "anthropic-receipt-{month_short}.pdf", 39_204),
-    ("Linear", "billing@linear.app",
-     "Linear invoice — {month} 2026",
-     "Your Linear Business plan invoice for {month} 2026 is attached.\n\nSeats: 12\nTotal: $96.00",
-     "updates", 2, "linear-invoice-{month_short}.pdf", 28_540),
-    ("Stripe", "invoicing@stripe.com",
-     "Stripe fees invoice — {month} 2026",
-     "Your monthly Stripe processing fees invoice is attached.\n\nVolume: $42,818.20\nFees: $1,242.73",
-     "updates", 2, "stripe-fees-{month_short}.pdf", 71_220),
+    # EU indie / privacy-first provider stack. Weight 5 → monthly invoices for
+    # Jan–May 2026, so Q1 (Jan/Feb/Mar) is a clear, selective subset of "all
+    # invoices". Porkbun is an annual domain renewal (weight 1 → January).
+    ("Hetzner", "billing@hetzner.com",
+     "Your Hetzner Cloud invoice for {month} 2026",
+     "Hi Ulises,\n\nYour Hetzner Cloud invoice for {month} 2026 is attached.\n\n"
+     "Servers: 2 × CPX31 (Falkenstein)\nThe full breakdown is in the PDF.",
+     "updates", 5, "hetzner-invoice-{month_short}.pdf", 128_004),
+    ("Fastmail", "billing@fastmail.com",
+     "Your Fastmail receipt for {month} 2026",
+     "Hello,\n\nThanks for using Fastmail. Your receipt for {month} 2026 is attached.\n\n"
+     "Plan: Standard (1 user)",
+     "updates", 5, "fastmail-receipt-{month_short}.pdf", 54_210),
+    ("Fly.io", "billing@fly.io",
+     "Fly.io invoice — {month} 2026",
+     "Your Fly.io usage invoice for {month} 2026 is attached.\n\n"
+     "Apps: lumen-api, bahia-site",
+     "updates", 5, "flyio-invoice-{month_short}.pdf", 61_880),
+    ("Plausible", "billing@plausible.io",
+     "Your Plausible Analytics invoice — {month} 2026",
+     "Hi Ulises,\n\nYour Plausible Analytics invoice for {month} 2026 is attached.\n\n"
+     "Plan: Growth (privacy-first, no cookies)",
+     "updates", 5, "plausible-invoice-{month_short}.pdf", 33_140),
+    ("BorgBase", "billing@borgbase.com",
+     "BorgBase invoice for {month} 2026",
+     "Your BorgBase backup invoice for {month} 2026 is attached.\n\n"
+     "Repositories: 3 · 250 GB",
+     "updates", 5, "borgbase-invoice-{month_short}.pdf", 27_902),
+    ("Porkbun", "support@porkbun.com",
+     "Porkbun domain renewal receipt — {month} 2026",
+     "Your domain renewal receipt is attached.\n\n"
+     "Domain: emailopslabs.dev (1 year)",
+     "updates", 1, "porkbun-receipt-{month_short}.pdf", 24_500),
 ]
 
 INVOICE_TEMPLATES_ES: list[tuple[str, str, str, str, str, int, str, int]] = [
@@ -720,12 +1233,12 @@ INVOICE_AMOUNTS_ES = ["1.847,12", "2.104,55", "1.612,40", "2.318,09", "1.950,27"
 # Attachment rules — the demo shows that incoming invoices with PDFs are
 # auto-classified into the Attachments view, grouped by vendor tag.
 ATTACHMENT_RULES_EN: list[tuple[str, str | None, str | None, str | None, list[str]]] = [
-    ("AWS Invoices",       "no-reply-aws@amazon.com",   "AWS bill",       "%.pdf", ["invoice", "aws"]),
-    ("Google Workspace",   "workspace-noreply@google.com", "Google Workspace invoice", "%.pdf", ["invoice", "google"]),
-    ("Notion Invoices",    "team@mail.notion.so",       "Notion invoice", "%.pdf", ["invoice", "notion"]),
-    ("Anthropic Receipts", "billing@anthropic.com",     "Anthropic receipt", "%.pdf", ["invoice", "anthropic"]),
-    ("Linear Invoices",    "billing@linear.app",        "Linear invoice", "%.pdf", ["invoice", "linear"]),
-    ("Stripe Fees",        "invoicing@stripe.com",      "Stripe fees",    "%.pdf", ["invoice", "stripe"]),
+    ("Hetzner Invoices",   "billing@hetzner.com",  "Hetzner Cloud invoice",      "%.pdf", ["invoice", "hetzner"]),
+    ("Fastmail Receipts",  "billing@fastmail.com", "Fastmail receipt",           "%.pdf", ["invoice", "fastmail"]),
+    ("Fly.io Invoices",    "billing@fly.io",       "Fly.io invoice",             "%.pdf", ["invoice", "fly"]),
+    ("Plausible Invoices", "billing@plausible.io", "Plausible Analytics invoice", "%.pdf", ["invoice", "plausible"]),
+    ("BorgBase Invoices",  "billing@borgbase.com", "BorgBase invoice",           "%.pdf", ["invoice", "borgbase"]),
+    ("Porkbun Receipts",   "support@porkbun.com",  "Porkbun domain renewal",     "%.pdf", ["invoice", "porkbun"]),
 ]
 
 ATTACHMENT_RULES_ES: list[tuple[str, str | None, str | None, str | None, list[str]]] = [
@@ -742,60 +1255,76 @@ LOCALE_EN = Locale(
     code="en",
     work=ACCOUNT_WORK,
     personal=ACCOUNT_PERSONAL,
-    work_templates=WORK_TEMPLATES,
-    personal_templates=PERSONAL_TEMPLATES,
+    # EN uses the thread-based path (work_threads, below). The legacy template
+    # fields are unused for English but kept empty to satisfy the dataclass.
+    work_templates=[],
+    personal_templates=[],
     invoice_templates=INVOICE_TEMPLATES_EN,
-    user_first_name="Alex",
+    user_first_name="Ulises",
     sent_subject_prefix="Re: ",
     reply_first=(
         "Thanks for flagging — taking a look now and will follow up later today.\n\n"
-        "Best,\nAlex"
+        "Best,\nUlises"
     ),
     reply_followup=(
         "Appreciate the quick response. Standing by — let me know if you need "
-        "anything else from our side."
+        "anything else from my side."
     ),
-    sent_short="Thanks — looking into this and will get back to you shortly.\n\n— Alex",
+    sent_short="Thanks — looking into this and will get back to you shortly.\n\n— Ulises",
     tasks=[
-        ("Reply to Daniel re: enterprise plan",
-         "Audit log + EU data residency questions for Helix Robotics",
-         "high", "Helix Robotics", now_plus_days(2)),
-        ("Approve Q2 pricing experiment",
-         "Marco needs the scope locked before Thursday's planning",
-         "high", "Northwind Labs", now_plus_days(1)),
-        ("Decide on Lena's renewal counter (Orbit Freight)",
-         "12% discount for 3y commit vs 2y flat",
-         "normal", "Orbit Freight", now_plus_days(3)),
-        ("Review PR #284 (Stripe webhook idempotency)",
-         None, "normal", "Northwind Labs", None),
-        ("Book annual physical", "Dr. Park reminder", "low", None, now_plus_days(14)),
+        ("Reply to Nadia re: adding a second email account",
+         "EmailOps user asking how to add an IMAP/Fastmail account",
+         "high", "EmailOps Labs", now_plus_days(1)),
+        ("Fix Faro production bug: orders stuck in 'processing'",
+         "Carrier webhook timing out on retries",
+         "high", "Faro Logistics", now_plus_days(1)),
+        ("Send proposal to Janos (PrivacyHub) — analytics migration",
+         "Self-hosted, privacy-first analytics migration; Q1 start",
+         "normal", "PrivacyHub", now_plus_days(3)),
+        ("Review contributor PR #131 (Proton Bridge IMAP)",
+         None, "normal", "EmailOps Labs", None),
+        ("Invoice Bahía Studio for the May milestone",
+         "€2,400, net 15", "normal", "Bahía Studio", now_plus_days(2)),
+        ("Book annual physical", "OnePatient reminder", "low", None, now_plus_days(14)),
     ],
     memory_facts=[
-        ("contact", "daniel.osei@helixrobotics.com",
-         "Daniel Osei is VP of Engineering at Helix Robotics, evaluating Northwind for a 60-seat rollout.",
-         "Helix Robotics"),
-        ("contact", "lena.park@orbitfreight.co",
-         "Lena Park (Orbit Freight) is negotiating a multi-year renewal; legal will only sign 2y flat or 3y at 12% discount.",
-         "Orbit Freight"),
-        ("contact", "maya@brightpath.studio",
-         "Maya Klein leads design at Brightpath Studio and is the primary champion for our product internally.",
-         "Brightpath Studio"),
-        ("domain", "northstar.vc",
-         "Northstar VC led Northwind Labs' seed round; Jordan Wei is our partner contact.",
-         "Northstar VC"),
         ("user", "self",
-         "Alex Reyes is CEO/cofounder of Northwind Labs, a Series A SaaS company headquartered remote-first.",
-         "Northwind Labs"),
-        ("project", "q2-pricing",
-         "Q2 pricing experiment is owned by Marco; scope needs to be locked before Thursday's planning.",
-         "Northwind Labs"),
+         "Ulises is a freelance software engineer/consultant (Rust + TypeScript) "
+         "and the maintainer of EmailOps, a local-first AI email client, under "
+         "the EmailOps Labs banner.",
+         "EmailOps Labs"),
+        ("contact", "marisol@farologistics.com",
+         "Marisol Vega leads Faro Logistics; Ulises built their real-time "
+         "order-tracking dashboard (React + Rust).",
+         "Faro Logistics"),
+        ("contact", "tomas@lumenhealth.eu",
+         "Tomás Iglesias is CTO of Lumen Health; engaged Ulises for a "
+         "privacy-focused patient-records API rewrite in Rust.",
+         "Lumen Health"),
+        ("contact", "carla@bahiastudio.co",
+         "Carla Méndez runs Bahía Studio; Ulises handles their marketing-site "
+         "performance and mobile fixes.",
+         "Bahía Studio"),
+        ("project", "emailops",
+         "EmailOps is an open-source, local-first AI email client; AI runs "
+         "on-device via llama.cpp by default. Funded via Open Collective backers.",
+         "EmailOps Labs"),
+        ("domain", "farologistics.com",
+         "Faro Logistics is an active consulting client (logistics dashboard).",
+         "Faro Logistics"),
     ],
     attachments=[
-        # Non-invoice attachments only — invoices are handled by invoice_templates.
-        ("Senior eng candidate%", "Rafael_Mendes_CV.pdf",  312_054),
+        # Non-invoice attachment — a prospect's project brief. Invoices are
+        # handled separately by invoice_templates (with real PDFs on disk).
+        ("Request for proposal%", "project-brief.pdf", 224_118),
     ],
     attachment_rules=ATTACHMENT_RULES_EN,
     ai_output_language="English",
+    work_threads=WORK_THREADS_EN,
+    personal_threads=PERSONAL_THREADS_EN,
+    prospects=PROSPECTS_EN,
+    support=SUPPORT_EN,
+    stats=STATS_EN,
 )
 
 LOCALE_ES = Locale(
@@ -1487,9 +2016,10 @@ def _invoice_payload(
     invoice_lbl = "Factura nº" if es else "Invoice #"
     issue_lbl = "Fecha de emisión" if es else "Issue date"
     bill_to_lbl = "Facturar a" if es else "Bill to"
-    bill_to_val = "Viento Norte S.L. — jose@vientonorte.io" if es else "Northwind Labs Inc. — alex@northwindlabs.io"
+    bill_to_val = "Viento Norte S.L. — jose@vientonorte.io" if es else "EmailOps Labs — ulises@emailopslabs.dev"
     subtotal_lbl = "Subtotal" if es else "Subtotal"
-    tax_lbl = "IVA (21%)" if es else "Tax (8.875%)"
+    # EU B2B providers mostly reverse-charge VAT (0%); keep the label neutral.
+    tax_lbl = "IVA (21%)" if es else "Tax / VAT"
     total_lbl = "Total" if es else "Total"
     cur = "€" if es else "$"
 
@@ -1501,7 +2031,47 @@ def _invoice_payload(
     ]
 
     # Catalog of line items per vendor. Amounts are stable so PDFs reproduce.
+    # The EU indie vendors (Hetzner…Porkbun) are EN-only and carry their own
+    # currency symbol inline (€ for German/EU vendors, $ otherwise); VAT is 0
+    # under EU reverse-charge for a one-person business. The legacy AWS…Stripe
+    # entries are kept so the Spanish demo still renders.
     table = {
+        "Hetzner": {
+            "en": ([
+                ("Cloud server CPX31 × 2 (Falkenstein)", "€35.78"),
+                ("Volume storage 100 GB", "€4.80"),
+                ("Floating IPv4", "€1.19"),
+            ], "€41.77", "€0.00 (reverse charge)", "€41.77"),
+        },
+        "Fastmail": {
+            "en": ([
+                ("Standard plan × 1 user", "$5.00"),
+            ], "$5.00", "$0.00", "$5.00"),
+        },
+        "Fly.io": {
+            "en": ([
+                ("Shared-cpu-1x compute", "$18.40"),
+                ("Postgres (256 MB)", "$7.00"),
+                ("Outbound bandwidth", "$3.21"),
+            ], "$28.61", "$0.00", "$28.61"),
+        },
+        "Plausible": {
+            "en": ([
+                ("Analytics — Growth (10k pageviews/mo)", "€9.00"),
+            ], "€9.00", "€0.00 (reverse charge)", "€9.00"),
+        },
+        "BorgBase": {
+            "en": ([
+                ("Backup storage 250 GB", "$6.00"),
+                ("3 repositories", "$0.00"),
+            ], "$6.00", "$0.00", "$6.00"),
+        },
+        "Porkbun": {
+            "en": ([
+                ("Domain renewal — emailopslabs.dev (1 yr)", "$11.06"),
+                ("WHOIS privacy", "$0.00"),
+            ], "$11.06", "$0.00", "$11.06"),
+        },
         "AWS Billing": {
             "es": ([
                 ("EC2 — instancias compute (us-east-1)", f"1.214,30 {cur}"),
@@ -1635,7 +2205,15 @@ def populate_invoice_emails(
     now = now_s()
 
     for sender_name, sender_email, subject, body, category, filename, _hinted_size in items:
-        timestamp = pick_timestamp_within_days(45)
+        # EN bills monthly across Jan–May 2026, so "invoices from Q1" (Jan/Feb/
+        # Mar) is a clear, selective subset. The month is recoverable from the
+        # filename token. ES keeps the legacy relative dates.
+        if locale.code == "en":
+            month_label = _month_label_from_filename(filename, locale.code)
+            month_num = INVOICE_MONTHS_EN.index(month_label) + 1
+            timestamp = epoch_for(2026, month_num, RNG.randint(2, 6))
+        else:
+            timestamp = pick_timestamp_within_days(45)
         # Invoices skew "already seen" — they're transactional notifications.
         is_read = RNG.random() < 0.85
 
@@ -1812,7 +2390,15 @@ def main() -> int:
             insert_ai_config(conn)
             insert_preferences(conn, locale)
             rule_ids = insert_attachment_rules(conn, locale)
-            populate_emails(conn, locale)
+            if locale.work_threads is not None:
+                # English: curated, coherent threads + date-anchored content.
+                populate_conversations(conn, locale)
+                populate_prospect_requests(conn, locale)
+                populate_support_emails(conn, locale)
+                populate_stats_digests(conn, locale)
+            else:
+                # Spanish (and any future locale): legacy weight-based path.
+                populate_emails(conn, locale)
             populate_invoice_emails(conn, locale, rule_ids, demo_dir)
             insert_attachments_meta(conn, locale)
             insert_pending_tasks(conn, locale)

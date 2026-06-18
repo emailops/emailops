@@ -19,7 +19,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DEMO_DIR="${EMAILOPS_DEMO_DIR:-$PWD/.emailops-demo-data}"
-ACCOUNT="${XCONV_ACCOUNT:-alex@northwindlabs.io}"
+ACCOUNT="${XCONV_ACCOUNT:-ulises@emailopslabs.dev}"
 Q1="${XCONV_Q1:-What invoices have I received recently?}"
 Q2="${XCONV_Q2:-Summarize what my unread emails are about}"
 

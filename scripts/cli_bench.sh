@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 DEMO_DIR="${EMAILOPS_DEMO_DIR:-$PWD/.emailops-demo-data}"
 # The generated demo DB has two enabled accounts; the work one holds the
 # invoice/project mail the default questions target.
-ACCOUNT="${BENCH_ACCOUNT:-alex@northwindlabs.io}"
+ACCOUNT="${BENCH_ACCOUNT:-ulises@emailopslabs.dev}"
 Q1="${BENCH_Q1:-What invoices have I received recently?}"
 Q2="${BENCH_Q2:-Who sent the most recent one and what is it about?}"
 Q3="${BENCH_Q3:-Summarize what my unread emails are about}"
