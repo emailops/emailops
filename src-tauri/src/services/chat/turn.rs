@@ -147,6 +147,7 @@ pub fn build_prompt(
     history: &[ChatMessage],
     user_question: &str,
     language: &str,
+    user_email: &str,
     system_template: &str,
     tools_section: &str,
 ) -> Vec<(String, String)> {
@@ -158,10 +159,33 @@ pub fn build_prompt(
         format!("Reply in {language}.")
     };
 
+    // Self-reference resolution: the model has no innate notion of who "I"/"me"
+    // is, so it cannot turn "emails I sent" into a from-filter on its own. Hand
+    // it the active account address and tell it how to map first-person
+    // sender/recipient references onto search_emails' `from`/`to` arguments.
+    // Built here (not hard-coded in the template) so an empty address — no
+    // account on the turn — degrades to a blank line instead of leaking a
+    // placeholder. Mirrors how `language_instruction` is assembled.
+    let user_identity = if user_email.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "YOUR USER'S IDENTITY: you are assisting {user_email}. \"I\", \"me\", and \"my\" in the \
+question refer to THIS address. Map first-person mail references onto search_emails filters — issue \
+the call, never answer from memory:\n  \
+- The user is the AUTHOR (\"emails I sent\", \"sent by me\", \"my sent mail\", \"correos que envié\", \
+or the equivalent in any language) → search_emails with from={user_email} (NEVER to).\n  \
+- The user is the RECIPIENT (\"sent to me\", \"emails I received\", \"in my inbox\", or the \
+equivalent) → search_emails with to={user_email} (NEVER from).\n  \
+Do not swap from and to: \"I sent\" is always from, \"sent to me\" is always to."
+        )
+    };
+
     let mut tpl_vars = std::collections::HashMap::new();
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("language_instruction", language_instruction);
+    tpl_vars.insert("user_identity", user_identity);
     tpl_vars.insert("tools_section", tools_section.to_string());
     let system = crate::services::prompts::render(system_template, &tpl_vars);
 
@@ -635,6 +659,17 @@ fn parse_python_value(raw: &str) -> serde_json::Value {
 // caller feeds these calls as the "virtual round 0" into `run_tool_loop`, so
 // the first real LLM pass is the one that *summarises* the tool results —
 // exactly the work the LLM is actually good at.
+/// Whether the tools-first query planner runs. Defaults ON; set the
+/// `chat.planner_enabled` preference to `"false"` to disable (falls back to the
+/// model's own tool-choice round).
+fn planner_enabled(db: &Arc<Database>) -> bool {
+    db.get_preference("chat.planner_enabled")
+        .ok()
+        .flatten()
+        .map(|v| v != "false")
+        .unwrap_or(true)
+}
+
 fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider::AiToolCall>> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
     let q = user_question.trim().to_lowercase();
@@ -1769,9 +1804,49 @@ pub async fn run_chat_turn(
     // Heuristic shortcut: recognise common phrasings and pre-seed the tool
     // call so we can skip the LLM's tool-choice round entirely. Returns None
     // for anything that doesn't match, in which case the normal loop runs.
-    let preseeded_tool_calls = heuristic_direct_tools(&user_question);
+    let mut preseeded_tool_calls = heuristic_direct_tools(&user_question);
     if preseeded_tool_calls.is_some() {
         emit_log("info", "shortcut: matched direct-tool pattern");
+    }
+
+    // The active account address resolves first-person references ("emails I
+    // sent") in both the query planner below and the system prompt's identity
+    // line. A lookup failure degrades gracefully (no from/to resolution, no
+    // identity line) rather than failing the turn.
+    let user_email = db
+        .get_account(&account_id)
+        .ok()
+        .flatten()
+        .map(|a| a.email)
+        .unwrap_or_default();
+
+    // Query planner (tools-first fast path): when no heuristic matched and the
+    // route is tools-first, ask the model — in ONE small completion on the
+    // already-loaded chat provider, so no model swap — to turn the question into
+    // a single search_emails filter. A concrete filter is pre-seeded as round-0
+    // (the chat model then goes straight to synthesis, skipping the slow
+    // tool-choice round); anything else (a write/draft/multi-step ask, an
+    // unparseable reply, a provider error) defers to the normal loop. Gated by
+    // the `chat.planner_enabled` preference (default on).
+    if preseeded_tool_calls.is_none() && route.mode == RouteMode::ToolsFirst && planner_enabled(&db) {
+        let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
+        let today = now_utc().format("%Y-%m-%d").to_string();
+        let t_plan = std::time::Instant::now();
+        match super::planner::plan_search(provider.as_ref(), &template, &user_email, &today, &user_question).await {
+            super::planner::Plan::Search(plan) => {
+                emit_log(
+                    "info",
+                    &format!("planner: pre-seeded search_emails [{}ms]", t_plan.elapsed().as_millis()),
+                );
+                preseeded_tool_calls = Some(vec![plan.into_tool_call()]);
+            }
+            super::planner::Plan::Defer => {
+                emit_log(
+                    "debug",
+                    &format!("planner: deferred to model loop [{}ms]", t_plan.elapsed().as_millis()),
+                );
+            }
+        }
     }
 
     // ── 2. Retrieve sources (skipped entirely when route == ToolsFirst) ─
@@ -1863,11 +1938,14 @@ pub async fn run_chat_turn(
     // function-calling menu. Disabling a feature in Settings instantly
     // removes its tools from BOTH places — no template edit needed.
     let tools_section = registry.render_system_prompt_section(db.as_ref());
+    // `user_email` was resolved earlier (before the query planner) and feeds the
+    // system prompt's first-person identity line here.
     let mut initial_messages = build_prompt(
         &sources,
         &history,
         &user_question,
         ai_language.english_name(),
+        &user_email,
         &system_template,
         &tools_section,
     );
@@ -2724,7 +2802,7 @@ mod tests {
             make_scored(1, "Q1 plan", "we will ship by march"),
             make_scored(2, "Invoice", "please pay by friday"),
         ];
-        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
         assert_eq!(msgs[0].0, "system");
         // The per-turn sources block must NOT live in the system message —
         // it would invalidate the cross-turn KV prefix every turn.
@@ -2758,6 +2836,7 @@ mod tests {
             &[],
             "when do we ship?",
             "en",
+            "",
             tpl(),
             "TOOLS",
         );
@@ -2770,10 +2849,11 @@ mod tests {
             &history,
             "and the invoice?",
             "en",
+            "",
             tpl(),
             "TOOLS",
         );
-        let turn3_no_sources = build_prompt(&[], &history, "anything else?", "en", tpl(), "TOOLS");
+        let turn3_no_sources = build_prompt(&[], &history, "anything else?", "en", "", tpl(), "TOOLS");
         assert_eq!(turn1[0], turn2[0], "system message changed between turns");
         assert_eq!(
             turn1[0], turn3_no_sources[0],
@@ -2798,7 +2878,7 @@ mod tests {
         past_assistant.prompt_content = Some("SHOULD NOT BE USED".to_string());
         let history = vec![past_user.clone(), past_assistant];
 
-        let msgs = build_prompt(&[], &history, "and the invoice?", "en", tpl(), "");
+        let msgs = build_prompt(&[], &history, "and the invoice?", "en", "", tpl(), "");
         let replayed_user = &msgs[1];
         assert_eq!(replayed_user.0, "user");
         assert_eq!(
@@ -2868,7 +2948,7 @@ mod tests {
             make_message("user", "plain question"),
             make_message("assistant", "answer"),
         ];
-        let msgs = build_prompt(&[], &history, "next?", "en", tpl(), "");
+        let msgs = build_prompt(&[], &history, "next?", "en", "", tpl(), "");
         assert_eq!(msgs[1], ("user".to_string(), "plain question".to_string()));
     }
 
@@ -2876,7 +2956,7 @@ mod tests {
     fn prompt_trims_body_length() {
         let long_body = "x".repeat(MAX_SOURCE_BODY_CHARS * 4);
         let sources = vec![make_scored(1, "long", &long_body)];
-        let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "");
         let last = &msgs.last().unwrap().1;
         // Source body should be truncated (ellipsis marker present).
         assert!(last.contains("…"));
@@ -2893,7 +2973,7 @@ mod tests {
     #[test]
     fn prompt_strips_html_from_bodies() {
         let sources = vec![make_scored(1, "html email", "<p>hello <b>world</b></p>")];
-        let msgs = build_prompt(&sources, &[], "?", "en", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "");
         let last = &msgs.last().unwrap().1;
         assert!(last.contains("hello"));
         assert!(last.contains("world"));
@@ -2908,7 +2988,7 @@ mod tests {
             let role = if i % 2 == 0 { "user" } else { "assistant" };
             history.push(make_message(role, &format!("turn-{}", i)));
         }
-        let msgs = build_prompt(&[], &history, "new question", "en", tpl(), "");
+        let msgs = build_prompt(&[], &history, "new question", "en", "", tpl(), "");
         // system + 6 history turns + user question = 8
         assert_eq!(msgs.len(), 8);
         // The oldest included turn should be turn-4 (indices 4..10 = 6 turns).
@@ -2924,13 +3004,13 @@ mod tests {
             make_message("user", "hi"),
             make_message("assistant", "hello"),
         ];
-        let msgs = build_prompt(&[], &history, "next", "en", tpl(), "");
+        let msgs = build_prompt(&[], &history, "next", "en", "", tpl(), "");
         assert!(msgs.iter().all(|(_, c)| c != "do not surface me"));
     }
 
     #[test]
     fn prompt_empty_sources_advises_model_in_final_user_message() {
-        let msgs = build_prompt(&[], &[], "anything?", "en", tpl(), "");
+        let msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "");
         // When no sources were pre-retrieved, the prompt must push the model
         // toward calling search_emails rather than refusing or guessing —
         // but from the per-turn user message, never the (stable) system one.
@@ -2944,7 +3024,7 @@ mod tests {
 
     #[test]
     fn memory_header_prepends_to_final_user_message_not_system() {
-        let mut msgs = build_prompt(&[], &[], "anything?", "en", tpl(), "");
+        let mut msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "");
         prepend_to_final_user_message(&mut msgs, "<memory>user likes tables</memory>");
         assert!(
             !msgs[0].1.contains("<memory>"),
@@ -2956,6 +3036,40 @@ mod tests {
     }
 
     #[test]
+    fn prompt_injects_account_email_for_self_reference() {
+        // When an account address is supplied, the system prompt must hand it
+        // to the model and tell it to map first-person sender/recipient
+        // references onto search_emails' from/to filters — otherwise the model
+        // cannot resolve "emails I sent" into a filter at all.
+        let msgs = build_prompt(&[], &[], "emails I sent", "en", "me@acme.com", tpl(), "");
+        let sys = &msgs[0].1;
+        assert!(
+            sys.contains("me@acme.com"),
+            "account email missing from system prompt: {sys}"
+        );
+        assert!(
+            sys.contains("from=me@acme.com"),
+            "missing from-filter guidance for self-reference: {sys}"
+        );
+        assert!(
+            sys.contains("to=me@acme.com"),
+            "missing to-filter guidance for self-reference: {sys}"
+        );
+    }
+
+    #[test]
+    fn prompt_omits_identity_line_without_account_email() {
+        // No account on the turn → no leaked placeholder, no dangling sentence.
+        let msgs = build_prompt(&[], &[], "hello", "en", "", tpl(), "");
+        let sys = &msgs[0].1;
+        assert!(!sys.contains("{{user_identity}}"), "placeholder leaked: {sys}");
+        assert!(
+            !sys.contains("YOUR USER'S IDENTITY"),
+            "identity guidance present despite no account email: {sys}"
+        );
+    }
+
+    #[test]
     fn prompt_advertises_citation_contract_and_few_shots() {
         // The new prompt rewrite must surface (a) the strict citation rule,
         // (b) the valid citation range, and (c) at least one few-shot example.
@@ -2963,7 +3077,7 @@ mod tests {
             make_scored(1, "Kickoff", "reunión el martes 3 de marzo"),
             make_scored(2, "Proposal", "monthly fee drop to $1.5k"),
         ];
-        let msgs = build_prompt(&sources, &[], "¿cuándo fue el kickoff?", "es", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "¿cuándo fue el kickoff?", "es", "", tpl(), "");
         let sys = &msgs[0].1;
         assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
         assert!(sys.contains("Example 1"), "missing few-shot examples");
@@ -2980,7 +3094,7 @@ mod tests {
         // The dynamic `Tools:` section is now rendered from the registry —
         // build it the same way `run_chat_turn` does and feed it in.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "hola", "es", tpl(), &tools_section);
+        let msgs = build_prompt(&[], &[], "hola", "es", "", tpl(), &tools_section);
         let sys = &msgs[0].1;
         // App identity so the model never claims it lacks mailbox access.
         assert!(sys.contains("EmailOps"));
@@ -3005,7 +3119,7 @@ mod tests {
         // Drafts default to ON; confirm the LLM sees `generate_email_draft`
         // so it actually calls the tool instead of inventing a draft inline.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "draft a reply", "en", tpl(), &tools_section);
+        let msgs = build_prompt(&[], &[], "draft a reply", "en", "", tpl(), &tools_section);
         let sys = &msgs[0].1;
         assert!(
             sys.contains("generate_email_draft"),
@@ -3053,7 +3167,7 @@ mod tests {
         // Lenses default OFF — confirm the section omits them entirely so a
         // user who never enabled the feature doesn't get tool calls for it.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "show me invoices lens", "en", tpl(), &tools_section);
+        let msgs = build_prompt(&[], &[], "show me invoices lens", "en", "", tpl(), &tools_section);
         let sys = &msgs[0].1;
         assert!(!sys.contains("get_lens_data"), "lens tool leaked when feature off");
         assert!(!sys.contains("list_lenses"), "lens tool leaked when feature off");
@@ -3134,7 +3248,7 @@ Preséntalos en una tabla markdown …";
         let pinned_secs = pinned.and_utc().timestamp();
         let clock = crate::services::clock::install_for_testing(pinned_secs);
 
-        let msgs = build_prompt(&[], &[], "q", "en", tpl(), "");
+        let msgs = build_prompt(&[], &[], "q", "en", "", tpl(), "");
         let system = &msgs[0].1;
         assert!(
             system.contains("2024-01-15"),

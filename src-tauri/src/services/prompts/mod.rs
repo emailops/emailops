@@ -206,6 +206,35 @@ pub fn render(template: &str, vars: &HashMap<&str, String>) -> String {
 mod tests {
     use super::*;
 
+    /// Serialise tests that mutate the process-global override map so a
+    /// parallel test reading `get_template` can't observe a half-installed set.
+    fn override_guard() -> std::sync::MutexGuard<'static, ()> {
+        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        M.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn installed_override_beats_db_and_default() {
+        let _g = override_guard();
+        let db = crate::db::Database::new_for_testing().expect("test db");
+        // Persisted override would normally win over the default…
+        set_template(&db, "chat.system", "FROM_DB").expect("set db override");
+        // …but an in-memory run-scoped override beats even that.
+        install_overrides(HashMap::from([("chat.system".to_string(), "FROM_MEMORY".to_string())]));
+        assert_eq!(get_template(&db, "chat.system").expect("tpl"), "FROM_MEMORY");
+        assert_eq!(overridden_ids(), vec!["chat.system".to_string()]);
+
+        // Clearing falls back to the DB override, then to the default.
+        clear_overrides();
+        assert_eq!(get_template(&db, "chat.system").expect("tpl"), "FROM_DB");
+        reset_template(&db, "chat.system").expect("reset");
+        assert_eq!(
+            get_template(&db, "chat.system").expect("tpl"),
+            defaults::CHAT_SYSTEM,
+            "with no override the default must surface"
+        );
+    }
+
     #[test]
     fn render_substitutes_simple_vars() {
         let mut v = HashMap::new();

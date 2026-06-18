@@ -8,13 +8,13 @@
 # the tool. `list all my pending tasks` satisfies both:
 #   - "list all" → ToolsFirst route
 #   - "my pending" → list_pending_tasks shortcut
-# The demo DB seeds 5 pending tasks for alex@northwindlabs.io, so the tool
-# returns real rows and the model has something to summarise. The original
-# "what client follow-ups are pending?" wording matched neither classifier
-# and produced an empty answer.
+# The demo DB seeds 6 open pending tasks for ulises@emailopslabs.dev, so the
+# tool returns real rows and the model has something to summarise. A wording
+# like "what client follow-ups are pending?" matches neither classifier and
+# produces an empty answer.
 - id: demo_memory_pending_tasks
   question: "list all my pending tasks"
-  account: "alex@northwindlabs.io"
+  account: "ulises@emailopslabs.dev"
   category: memory_tasks
   tier: smoke
   expected_route: tools_first

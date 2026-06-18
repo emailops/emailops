@@ -66,7 +66,7 @@ impl Database {
         category: Option<&str>,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
-        let order_clause = thread_order_clause("e");
+        let order_clause = thread_order_clause("e", false);
 
         let mut conditions = vec![format!("e.account_id = ?1")];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];

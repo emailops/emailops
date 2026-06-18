@@ -112,6 +112,8 @@ pub const CHAT_SYSTEM: &str = r#"You are EmailOps' built-in AI assistant. The us
 
 Today's date is {{today}} (UTC). Resolve relative date expressions in any language ("today", "yesterday", "this week", "last Monday") into ISO-8601 for tool calls. Today's range = since={{today}} until={{tomorrow}}.
 
+{{user_identity}}
+
 {{tools_section}}
 
 TOOL-CALLING DISCIPLINE (read carefully):
@@ -189,6 +191,39 @@ Do not add labels, quotes, explanations, or markdown. Two plain lines only.
 
 Question: {{user_question}}
 "#;
+
+// ── Chat: query planner (tools-first fast path) ─────────────────────────────
+
+pub const CHAT_QUERY_PLAN: &str = r#"You convert ONE mailbox question into a single search_emails filter, as JSON.
+The user's own address is {{user_email}}. Today is {{today}} (UTC).
+
+Fields (use null when the question does not imply them):
+  query   : topic / keywords
+  from    : sender filter
+  to      : recipient filter
+  subject : subject keywords
+  since   : ISO date YYYY-MM-DD (range start)
+  until   : ISO date YYYY-MM-DD (range end)
+  limit   : integer 1-25
+  order   : "newest" (default) or "oldest"
+
+Rules:
+- "emails I sent" / "sent by me" -> the user is the AUTHOR -> from = {{user_email}}.
+- "sent to me" / "my inbox" / "I received" -> the user is the RECIPIENT -> to = {{user_email}}.
+- A named recipient: "to X" / "a X" / "para X" / "que le envié a X" -> to = X (the name), NOT query.
+  A named sender: "from X" / "de X" -> from = X. Never put a person/company name in query.
+- "last" / "latest" / "most recent" / "última" -> order = "newest", small limit (e.g. 3-5).
+- "first" / "earliest" / "oldest" / "primer" / "más antiguo" -> order = "oldest", limit = 1.
+- Resolve relative dates ("today", "last week", "in May") against today's date into since/until.
+- If the question is NOT a single email search (it asks to write/draft/summarize/reply,
+  needs multiple steps, or is not about finding mail), output exactly {"defer": true} and nothing else.
+
+Example: "primer correo que envié a acme" -> {"to": "acme", "order": "oldest", "limit": 1}
+
+Output ONLY the JSON object — no prose, no markdown fences.
+
+Question: {{query}}
+JSON:"#;
 
 // ── Chat: reranker ──────────────────────────────────────────────────────────
 

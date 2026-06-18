@@ -46,6 +46,29 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "find the email",
     "open thread",
     "get thread",
+    // Self-reference — the user is the sender or recipient (EN). These resolve
+    // to a from/to filter on the user's own address (see build_prompt's
+    // user_identity block), which semantic RAG can't target — force the tool
+    // loop. Routing a false positive to ToolsFirst is cheap.
+    "sent by me",
+    "i sent",
+    "i've sent",
+    "i have sent",
+    "my sent",
+    "sent to me",
+    "i received",
+    "i've received",
+    "i have received",
+    // Self-reference (ES)
+    "enviados",
+    "envié",
+    "envie",
+    "que envié",
+    "me enviaron",
+    "me enviaste",
+    "recibí",
+    "recibi",
+    "me llegaron",
     // Listings / counts (EN)
     "how many",
     "count of",
@@ -275,6 +298,27 @@ mod tests {
             "draft a reply to John about the invoice",
             "compose an email to billing@acme.com",
             "write a reply to the support thread",
+        ] {
+            let res = heuristic_route(q);
+            assert!(res.is_some(), "expected ToolsFirst for: {}", q);
+            assert_eq!(res.unwrap().0, RouteMode::ToolsFirst, "query: {}", q);
+        }
+    }
+
+    #[test]
+    fn heuristic_routes_self_reference_to_tools() {
+        // First-person sender/recipient queries must hit the tool loop so the
+        // model resolves "I"/"me" into a from/to filter on the user's own
+        // address (see build_prompt's user_identity block). In RagFirst these
+        // never reliably surface via semantic retrieval. EN + ES.
+        for q in [
+            "emails sent by me",
+            "show emails I've sent",
+            "what have I sent to the design team",
+            "messages sent to me this morning",
+            "correos enviados por mí",
+            "qué le envié a marisol",
+            "qué correos me enviaron",
         ] {
             let res = heuristic_route(q);
             assert!(res.is_some(), "expected ToolsFirst for: {}", q);

@@ -33,7 +33,8 @@ impl Tool for SearchEmailsTool {
                 "subject": { "type": "string", "description": "Filter by subject keywords (FTS5 match on subject column)." },
                 "since": { "type": "string", "description": "Only return emails on or after this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: '2026-04-17' for today." },
                 "until": { "type": "string", "description": "Only return emails strictly before this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: use until='2026-04-18' together with since='2026-04-17' to get today's emails only." },
-                "limit": { "type": "integer", "description": "Max number of results to return. Default 20, max 25. Use 25 for 'all X' / 'todas' queries, 5 for 'latest X' / 'última'." }
+                "limit": { "type": "integer", "description": "Max number of results to return. Default 20, max 25. Use 25 for 'all X' / 'todas' queries, 5 for 'latest X' / 'última'." },
+                "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." }
             },
             "required": []
         })
@@ -64,6 +65,14 @@ impl Tool for SearchEmailsTool {
         // letting a weak local model summarise complete emails in one pass
         // instead of chaining a `get_email_body` call per row.
         let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
+        // Sort direction: "oldest" (ascending) is the only way to surface the
+        // FIRST email matching a filter ("primer correo", "first email I sent to
+        // X"). Anything other than "oldest" keeps the default newest-first.
+        let ascending = args
+            .get("order")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().eq_ignore_ascii_case("oldest"))
+            == Some(true);
 
         // All of query / from / to / subject empty would scan the whole
         // mailbox. Reject early so the model corrects its call instead of
@@ -121,6 +130,7 @@ impl Tool for SearchEmailsTool {
             until_ts,
             None,
             limit,
+            ascending,
         );
 
         // Each successful branch below builds `ToolOutput::text_with_email_refs`
@@ -177,6 +187,7 @@ impl Tool for SearchEmailsTool {
                         None,
                         None,
                         limit,
+                        ascending,
                     );
                     match &retry {
                         Ok(emails) if !emails.is_empty() => {
