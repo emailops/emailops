@@ -43,7 +43,7 @@
     "@tiptap/pm": "^3.23.6",
     "@tiptap/react": "^3.23.6",
     "@tiptap/starter-kit": "^3.23.6",
-    "date-fns": "^3.6.0",
+    "date-fns": "^4.4.0",
     "dompurify": "^3.4.10",
     "i18next": "^26.3.0",
     "react": "^19.2.6",
