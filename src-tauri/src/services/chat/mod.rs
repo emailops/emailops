@@ -19,6 +19,7 @@
 pub mod tools;
 
 mod conversations;
+mod planner;
 mod retrieval;
 mod routing;
 mod turn;
@@ -268,6 +269,7 @@ pub(crate) fn or_fallback_search(
             None,
             None,
             limit,
+            false,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);

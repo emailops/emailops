@@ -75,8 +75,11 @@ pub fn search_emails_filtered(
     before_timestamp: Option<i64>,
     tag_filters: Option<&[String]>,
     limit: i32,
+    // `true` returns oldest-first — needed to answer "first / primer correo".
+    // Default callers pass `false` (newest-first, the historical behaviour).
+    ascending: bool,
 ) -> Result<Vec<Email>> {
-    db.search_emails(
+    db.search_emails_ordered(
         account_id,
         query,
         categories,
@@ -87,5 +90,6 @@ pub fn search_emails_filtered(
         before_timestamp,
         tag_filters,
         limit,
+        ascending,
     )
 }

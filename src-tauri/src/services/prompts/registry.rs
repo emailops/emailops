@@ -133,6 +133,10 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
         description: "Reply-language instruction (default: 'Reply in the language the user writes in.').",
     },
     VariableDef {
+        name: "user_identity",
+        description: "Active account address plus guidance for mapping first-person sender/recipient references (\"emails I sent\", \"sent to me\") onto search_emails' from/to filters. Blank when no account is on the turn.",
+    },
+    VariableDef {
         name: "tools_section",
         description: "`Tools:` section auto-generated from the registry; lists the tools the LLM may call this turn, honouring Settings feature flags.",
     },
@@ -151,6 +155,21 @@ const CHAT_RERANK_VARS: &[VariableDef] = &[
     VariableDef {
         name: "candidates",
         description: "Numbered candidate list with subject + smart-snippet body slices.",
+    },
+];
+
+const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "user_email",
+        description: "The active account's address — used to resolve first-person sender/recipient references into from/to filters.",
+    },
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD, for resolving relative date ranges.",
+    },
+    VariableDef {
+        name: "query",
+        description: "The raw user question being planned into a search_emails filter.",
     },
 ];
 
@@ -219,6 +238,15 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_RERANK,
         variables: CHAT_RERANK_VARS,
+    },
+    PromptDef {
+        id: "chat.query_plan",
+        label: "Chat — query planner",
+        description: "Internal fast-path that turns a tools-first question into a single search_emails filter (or defers) before the model round.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_QUERY_PLAN,
+        variables: CHAT_QUERY_PLAN_VARS,
     },
 ];
 

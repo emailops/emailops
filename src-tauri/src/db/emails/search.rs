@@ -113,7 +113,7 @@ impl Database {
         offset: i32,
     ) -> Result<FilteredEmailsResult> {
         let conn = self.reader();
-        let order_clause = thread_order_clause("e");
+        let order_clause = thread_order_clause("e", false);
 
         // ── Tag filter: drive from email_tags (small result set) ─────────────
         // Tags are selective — few emails match. Drive from the tag index, find
@@ -270,6 +270,7 @@ impl Database {
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
         limit: i32,
+        ascending: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut conditions: Vec<String> = vec!["e.account_id = ?1".to_string(), "e.is_deleted = 0".to_string()];
@@ -297,9 +298,10 @@ impl Database {
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
-            "SELECT {cols} FROM emails e WHERE {where} ORDER BY e.timestamp DESC, e.id DESC LIMIT ?{limit_idx}",
+            "SELECT {cols} FROM emails e WHERE {where} ORDER BY {order} LIMIT ?{limit_idx}",
             cols = EMAIL_COLUMNS,
             where = where_clause,
+            order = thread_order_clause("e", ascending),
             limit_idx = param_idx,
         );
         params_vec.push(Box::new(limit));
@@ -327,6 +329,7 @@ impl Database {
     /// - `subject:` routes through the FTS5 subject column rather than `LIKE '%value%'`.
     /// - The correlated NOT EXISTS predicate (find latest in thread) only evaluates for
     ///   the small set of emails in matching threads, not for every row in the account.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_emails(
         &self,
         account_id: &str,
@@ -340,6 +343,73 @@ impl Database {
         tag_filters: Option<&[String]>,
         limit: i32,
     ) -> Result<Vec<Email>> {
+        // Default ordering is newest-first (the long-standing behaviour every
+        // existing caller relies on). "First / oldest" queries use
+        // `search_emails_ordered(.., true)`.
+        self.search_emails_inner(
+            account_id,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+            false,
+        )
+    }
+
+    /// Same as [`search_emails`](Self::search_emails) but with an explicit sort
+    /// direction. `ascending == true` returns oldest-first — the only way to
+    /// surface the *first* email matching a filter ("primer correo", "first email
+    /// I sent to X"). Default callers should keep using `search_emails` (newest).
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_emails_ordered(
+        &self,
+        account_id: &str,
+        query: &str,
+        categories: Option<&[String]>,
+        from_filter: Option<&str>,
+        to_filter: Option<&str>,
+        subject_filter: Option<&str>,
+        after_timestamp: Option<i64>,
+        before_timestamp: Option<i64>,
+        tag_filters: Option<&[String]>,
+        limit: i32,
+        ascending: bool,
+    ) -> Result<Vec<Email>> {
+        self.search_emails_inner(
+            account_id,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+            ascending,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn search_emails_inner(
+        &self,
+        account_id: &str,
+        query: &str,
+        categories: Option<&[String]>,
+        from_filter: Option<&str>,
+        to_filter: Option<&str>,
+        subject_filter: Option<&str>,
+        after_timestamp: Option<i64>,
+        before_timestamp: Option<i64>,
+        tag_filters: Option<&[String]>,
+        limit: i32,
+        ascending: bool,
+    ) -> Result<Vec<Email>> {
         // ── Date-only fast path (no text filters) ────────────────────────────────
         // When there are no text-based filters (keyword, from, to, subject, tag),
         // thread deduplication is wrong: the user wants ALL emails in the window,
@@ -352,11 +422,18 @@ impl Database {
             || tag_filters.map(|t| !t.is_empty()).unwrap_or(false);
 
         if !has_text_filter {
-            return self.search_emails_by_date(account_id, categories, after_timestamp, before_timestamp, limit);
+            return self.search_emails_by_date(
+                account_id,
+                categories,
+                after_timestamp,
+                before_timestamp,
+                limit,
+                ascending,
+            );
         }
 
         let conn = self.reader();
-        let order_clause = thread_order_clause("e");
+        let order_clause = thread_order_clause("e", ascending);
 
         // ── CTE: find thread_ids that contain a matching email ────────────────────
         // All filter conditions apply to the same email row (`match_e`) so that
@@ -979,6 +1056,88 @@ mod tests {
             1,
             "exactly one email matches both filters, got: {:?}",
             ids
+        );
+    }
+
+    #[test]
+    fn search_emails_ordered_ascending_returns_oldest_first() {
+        // Regression for "primer correo / first email": the only way to surface
+        // the FIRST matching email is ascending sort. Default stays newest-first.
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_search_email(
+            &db,
+            "old",
+            account,
+            "t-old",
+            "Alice",
+            "alice@example.com",
+            "First",
+            "b",
+            100,
+        );
+        insert_search_email(
+            &db,
+            "mid",
+            account,
+            "t-mid",
+            "Alice",
+            "alice@example.com",
+            "Second",
+            "b",
+            200,
+        );
+        insert_search_email(
+            &db,
+            "new",
+            account,
+            "t-new",
+            "Alice",
+            "alice@example.com",
+            "Third",
+            "b",
+            300,
+        );
+
+        let newest = db
+            .search_emails(
+                account,
+                "",
+                None,
+                Some("alice@example.com"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                1,
+            )
+            .unwrap();
+        assert_eq!(
+            newest.first().map(|e| e.id.as_str()),
+            Some("new"),
+            "default search_emails must stay newest-first"
+        );
+
+        let oldest = db
+            .search_emails_ordered(
+                account,
+                "",
+                None,
+                Some("alice@example.com"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                1,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            oldest.first().map(|e| e.id.as_str()),
+            Some("old"),
+            "ascending must surface the oldest (first) matching email"
         );
     }
 

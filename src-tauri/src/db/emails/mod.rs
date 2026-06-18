@@ -179,8 +179,9 @@ pub(super) fn latest_inbox_email_predicate(alias: &str) -> String {
     )
 }
 
-pub(super) fn thread_order_clause(alias: &str) -> String {
-    format!("{alias}.timestamp DESC, {alias}.id DESC")
+pub(super) fn thread_order_clause(alias: &str, ascending: bool) -> String {
+    let dir = if ascending { "ASC" } else { "DESC" };
+    format!("{alias}.timestamp {dir}, {alias}.id {dir}")
 }
 
 /// Sanitize a user query for FTS5 MATCH.

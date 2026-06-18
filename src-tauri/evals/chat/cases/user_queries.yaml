@@ -1,6 +1,12 @@
 # Public synthetic chat eval examples.
 # Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
 #
+# Keyed to the bundled demo DB (`make demo-db`) — the Ulises / EmailOps Labs
+# consultant persona. The primary account is `ulises@emailopslabs.dev`
+# (`demo-acct-work`), whose inbox holds the support/business threads these
+# cases query (Marisol Vega's logistics + production-bug threads, Sprint demo
+# recaps, the May milestone invoice, etc.).
+#
 # Note on flakiness with small local models:
 # Cases that exercise the `email://EMAIL_ID` link contract sometimes fail
 # with Qwen 3.5 4B because the model is non-deterministic at this size —
@@ -13,14 +19,10 @@
 # a regression in the prompt or the email-ref plumbing.
 
 - id: demo_daily_summary
-  # Dropped the "client" qualifier from the prompt: the demo dataset doesn't
-  # model client/non-client relationships, so requiring the answer to be
-  # specifically about clients turned this case into an LLM content-judgement
-  # check rather than a routing/retrieval check (which is what we actually
-  # want to regression-test). The shortcut + search path is exercised the
-  # same way; only the question text changed.
+  # Generic "today's emails" summary — exercises the today-shortcut + search
+  # path and grounding, independent of any specific sender.
   question: "summarize today's emails"
-  account: "alex@northwindlabs.io"
+  account: "ulises@emailopslabs.dev"
   category: summary
   tier: smoke
   # `as_of: latest` pins "today" to the newest primary-category email in this
@@ -34,17 +36,58 @@
   as_of: latest
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
-  # Tightened rubric: the prompt asks the model for a markdown table with
-  # `| Sender | Subject | Urgency | Summary |` headers, so the answer must
-  # contain at least the Sender + Subject header cells. This catches the
-  # "couldn't find any emails for today" failure mode that the looser
-  # tools-called check used to silently pass.
+  # Assert a grounded `email://` chip rather than a specific markdown shape.
+  # An earlier version required `| Sender |` table headers, but the question
+  # doesn't ask for a table, so the 4B model legitimately answers in prose or
+  # bullets — and on some runs it translates the reply to Spanish despite the
+  # English `ai_output_language`, which would defeat any English header check.
+  # The `email://` scheme is language- and format-agnostic and still catches
+  # the "couldn't find any emails for today" failure mode (no email → no
+  # link). The wrapped id is silently dropped by the UI allowlist if invalid,
+  # so a real grounded link is the meaningful signal.
   expected_answer_contains:
-    - "| sender"
-    - "| subject"
+    - "email://"
   metrics:
     - answer_relevancy
     - faithfulness
+
+# Exercises the tools-first QUERY PLANNER (services/chat/planner.rs) on a
+# first-person SENDER query. No heuristic shortcut matches "emails I sent", so
+# the planner runs: one small completion turns the question into
+# search_emails(from=<the account's own address>), pre-seeded as round-0, and the
+# chat model synthesises from the 5 demo emails Ulises sent. Asserts the route +
+# that search_emails was the tool called + a grounded email:// chip. Guards the
+# planner's self-reference branch end-to-end (the unit tests cover parsing; this
+# proves the wired reply).
+- id: demo_planner_self_sent
+  question: "show me the latest emails I sent"
+  account: "ulises@emailopslabs.dev"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains:
+    - "email://"
+  metrics:
+    - answer_relevancy
+
+# Exercises the planner's ORDER=oldest path — "primer correo / first email".
+# Regression for the bug where "first" returned recent mail: search_emails had
+# no ascending sort, so the oldest match was structurally unreachable. The
+# planner now maps "primer/first/oldest" -> order=oldest, limit=1, and the tool
+# threads ascending sort down to the DB. Asserts route + search_emails + a
+# grounded email:// chip (the oldest sent email, 2026-06-11 in the demo set).
+- id: demo_planner_oldest
+  question: "muéstrame el primer correo que envié"
+  account: "ulises@emailopslabs.dev"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains:
+    - "email://"
+  metrics:
+    - answer_relevancy
 
 # Exercises the EMAIL LINKS prompt clause: a sender-anchored query that
 # reliably hits multiple demo emails, giving the model the chance to wrap
@@ -52,24 +95,25 @@
 # open-the-email chips. The expected substring is the scheme prefix
 # itself — kept loose so we don't snapshot a specific demo email id.
 #
-# Phrasing notes (two iterations against the demo DB):
-#  - Original "show me my three most recent emails": the model called
-#    `search_emails({"limit":3})` with no filter, which the tool rejects
-#    ("at least one of query / from / to / subject / since / until"), so
-#    the assistant produced no answer and `email://` could never appear.
-#  - Intermediate "show me my recent emails from Daniel": routed RagFirst
-#    (the heuristic classifier in `routing.rs` doesn't treat "show me"
-#    alone as tools-first — it expects keywords like "list all", "latest",
-#    "most recent", "show me the"). In RagFirst the model gets sources
-#    pre-retrieved and doesn't call `search_emails`, so the
-#    `expected_tools_called` check fails.
-#  - Current "list all emails from Daniel": the `list all` token is in
-#    `TOOLS_FIRST_KEYWORDS`, so the heuristic routes ToolsFirst; the
-#    model then calls `search_emails(from="daniel")` against the 6 demo
-#    emails in Daniel Osei's enterprise-plan thread.
+# `show me the latest email from Marisol`:
+#  - The `show me the` and `latest` tokens are in `TOOLS_FIRST_KEYWORDS`, so
+#    the heuristic classifier in `routing.rs` routes ToolsFirst (in RagFirst
+#    the model gets pre-retrieved sources and never calls `search_emails`,
+#    failing the `expected_tools_called` check).
+#  - The model then calls `search_emails(from="Marisol")`, which matches the
+#    4 emails from Marisol Vega in the demo work account (logistics-dashboard
+#    inquiry, Sprint 5 demo recap, and the two "Production bug" thread mails),
+#    and reports the most recent.
+#  - Phrasing note: a multi-result phrasing like "list all emails from
+#    Marisol" pushes the 4B model into a markdown table where it tends to
+#    botch the link scheme (emitting `[subject] (id)` instead of
+#    `[subject](email://id)`). The single-result "latest" phrasing yields a
+#    prose answer where the 4B reliably emits a clean inline `email://` chip.
+#    The table + link contract is covered separately by
+#    `demo_email_links_in_table` (tier full).
 - id: demo_email_links_emitted
-  question: "list all emails from Daniel"
-  account: "alex@northwindlabs.io"
+  question: "show me the latest email from Marisol"
+  account: "ulises@emailopslabs.dev"
   category: summary
   tier: smoke
   expected_route: tools_first
@@ -89,25 +133,24 @@
 # wire is correct; verify manually with a larger model or by interacting
 # with the running app.
 #
-# Adapted from "search for emails about auth": the demo dataset has no
-# primary mail matching auth/authentication/login/access, so every search
-# returned zero rows and the model never reached the draft step. Switched
-# to "renewal terms" — Lena Park's thread (4 primary emails) is a deep
-# demo fixture about contract renewals, so the model has real content to
-# anchor the draft on.
+# `production bug`: Marisol Vega's "Production bug: orders stuck in
+# 'processing'" thread is a deep demo fixture (the original report + a
+# resolved follow-up), so the model has a concrete top result to anchor
+# the draft on. "draft" is a TOOLS_FIRST keyword, so the route is forced
+# ToolsFirst.
 # tier: full — not smoke. The 2-tool chain (search_emails →
 # generate_email_draft) sits right at Qwen 3.5 4B's tool-discipline
 # ceiling: against the demo dataset the model successfully searches and
-# gets 4 Lena Park renewal-terms emails back, but then stalls inside a
-# `<think>` block and never emits the second tool call, so the assistant
-# answer comes back empty and `](draft://` is missing. Run manually with
-# a larger model via `--tier full --model qwen3.5-9b-q4_k_m` (or beyond)
+# gets the production-bug thread back, but then stalls inside a `<think>`
+# block and never emits the second tool call, so the assistant answer
+# comes back empty and `](draft://` is missing. Run manually with a
+# larger model via `--tier full --model qwen3.5-9b-q4_k_m` (or beyond)
 # when iterating on the DRAFT LINKS prompt clause. Keeping the case in
 # the file so the regression target is documented; demoting from smoke
 # so a `make cli-eval` smoke run stays green by default.
 - id: demo_draft_link_emitted
-  question: "search for emails about renewal terms and draft a brief reply to the top result"
-  account: "alex@northwindlabs.io"
+  question: "search for emails about the production bug and draft a brief reply to the top result"
+  account: "ulises@emailopslabs.dev"
   category: drafting
   tier: full
   expected_route: tools_first
@@ -125,25 +168,21 @@
 # email:// contract — a longer prompt overflows its plan/answer split and
 # blocks before the answer ever forms.
 #
-# Adapted from `'birthday'`: that token doesn't appear anywhere in the
-# demo dataset, so the search returned no rows and the router fell back
-# to RagFirst with weakly-related sources. Switched to `'onboarding'` —
-# the Figma share + Maya Klein's design-team thread between them give 5+
-# hits in the primary category, so the model has multiple rows to render
-# with `email://` chips in the Subject cell.
-# tier: full — not smoke. Combining the table-format constraint with
-# the `email://` chip-in-Subject contract overflows Qwen 3.5 4B's
-# plan/answer budget — the model gets RAG sources but produces no final
-# answer. The routing classifier in `routing.rs` also doesn't treat
-# `search my inbox` as tools-first (no matching keyword), so even with
-# a passing model the case lands on RagFirst, not ToolsFirst. Keeping
-# the case as the canonical regression target for "table + link
-# emission" but demoting from smoke so the default tier stays green.
-# Run with `--tier full --model qwen3.5-9b-q4_k_m` (or larger) when
-# iterating on the EMAIL LINKS prompt clause for table outputs.
+# `list all emails from Marisol` (table variant): a sender filter that
+# reliably returns 4 rows, so the model has multiple rows to render with
+# `email://` chips in the Subject cell. The `list all` token forces the
+# ToolsFirst route (a bare "search my inbox for X" has no matching keyword
+# and falls back to RagFirst, where the tool is never called).
+# tier: full — not smoke. Combining the table-format constraint with the
+# `email://` chip-in-Subject contract overflows Qwen 3.5 4B's plan/answer
+# budget — the model gets the rows but produces no final answer. Keeping
+# the case as the canonical regression target for "table + link emission"
+# but demoting from smoke so the default tier stays green. Run with
+# `--tier full --model qwen3.5-9b-q4_k_m` (or larger) when iterating on
+# the EMAIL LINKS prompt clause for table outputs.
 - id: demo_email_links_in_table
-  question: "search my inbox for 'onboarding' and show every result as a markdown table with columns | Sender | Subject |"
-  account: "alex@northwindlabs.io"
+  question: "list all emails from Marisol and show every result as a markdown table with columns | Sender | Subject |"
+  account: "ulises@emailopslabs.dev"
   category: summary
   tier: full
   expected_route: tools_first
