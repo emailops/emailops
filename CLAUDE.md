@@ -42,6 +42,8 @@ When you do need to run something the Makefile does not cover, prefer extending 
 
 **When the user reports a bug in chat, drafts, classification, lenses, retrieval, memory, or any other AI feature, drive the fix through the `fix-ai-bug` skill** (`.claude/skills/fix-ai-bug/SKILL.md`). It codifies the loop in this section — frame → CLI repro → root-cause → fix (with confirmation gated to genuine design forks) → re-run until green → gated graduation into `private-evals/` — and reports back in a chat-style format that hides the raw `--trace` payload by default. Invoke it whenever a bug report lands, even from a screenshot or trace fragment.
 
+**When the user wants to add a new AI feature or change an existing AI surface** (a new chat tool, a planner/route, a prompt edit, a shortcut fast-path, a classifier/extractor, or a retrieval/draft/memory tweak), **drive the work through the `build-ai-feature` skill** (`.claude/skills/build-ai-feature/SKILL.md`). It runs the build loop — frame → pick the seam → check setup/config fit (context budget + KV-prefix prompt cache) → CLI baseline → TDD the pure planner → wire the thin executor (+ frontend toggle/gating) → mandatory eval gate → gated eval-case graduation — and reports a chat-style before/after delta.
+
 `emailops-cli` (gated behind the `cli` cargo feature) is a headless front-end over the same `services::*` entry points the Tauri commands call — no `AppHandle`, no webview. Use it to **drive real features and assert on structured output** while developing, instead of guessing whether a change works. It operates on the real data dir (SQLite WAL → read commands are safe while the app is open; run heavy write commands — `sync`/`classify`/`embed` — with the app closed).
 
 Every command supports `--json`, which prints one **stable envelope** to stdout so you can parse a single shape regardless of success or failure (logs always go to stderr):
@@ -52,6 +54,8 @@ Every command supports `--json`, which prints one **stable envelope** to stdout 
 ```
 
 `error` is the same `{code, params, message}` shape `AppError` serializes to at the Tauri boundary. Exit codes are grouped by remediation: `0` ok, `2` invalid input, `3` not found, `4` auth, `5` network/sync, `6` AI, `130` cancelled, `1` otherwise — so a shell/agent can branch on failure class without parsing text.
+
+**Always drive the CLI with `--json` from an agent.** The `--json` envelope is unstyled by contract — no ANSI color, no markdown/table re-rendering, no live-preview redraw — so it never adds presentation tokens to your context. Human (pretty) output is the opposite: chat answers are re-rendered through a terminal markdown renderer (aligned tables, styled prose) and lists/traces are colorized, but **only** on an interactive TTY (`RenderStyle::Rich`). Pretty output that is piped/redirected, or run with `NO_COLOR`, degrades to plain text with zero escape codes (`RenderStyle::Plain`). The styling lives entirely in `src-tauri/src/cli/render.rs` + the pretty renderers in `cli/output.rs`; it cannot leak into the `--json` path.
 
 Recommended loop when validating a change:
 
