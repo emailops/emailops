@@ -2260,8 +2260,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -3225,9 +3225,9 @@ dependencies = [
 
 [[package]]
 name = "keyring"
-version = "4.1.1"
+version = "4.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ee5140534876dd3450719b506cfbb77397e640910fc39b6e7011c133291e15a"
+checksum = "8fef88805a7ddbc8f9cf52bfa8dba90b3f80dff23a1e1533cd4f1d8e8d448fc8"
 dependencies = [
  "apple-native-keyring-store",
  "db-keystore",
@@ -5317,7 +5317,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
