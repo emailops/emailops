@@ -64,16 +64,10 @@ use llama_cpp_2::{
 };
 
 use super::planner::{
-    anchor_shares_cells_with_seq0, plan_anchor_seed, plan_cached_prefix, plan_prompt_budget, plan_stable_boundary,
-    plan_uncached_budget, PrefixPlan,
+    anchor_shares_cells_with_seq0, effective_n_ctx, plan_anchor_seed, plan_cached_prefix, plan_prompt_budget,
+    plan_stable_boundary, plan_uncached_budget, PrefixPlan,
 };
 use super::runtime::backend;
-
-/// Cap on the persistent context window. Even on models trained for 32k+
-/// tokens, prompt-eval time on M1 CPU/Metal scales roughly linearly with the
-/// number of attended tokens, and the KV allocation scales with n_ctx — 8k is
-/// plenty for the RAG chat pipeline and keeps the resident cache bounded.
-const MAX_N_CTX: u32 = 8192;
 
 /// Physical batch size. llama.cpp splits submitted batches into ubatch-sized
 /// chunks internally; sizing this to n_ctx makes Metal allocate huge per-graph
@@ -160,12 +154,14 @@ pub(crate) struct InferenceActorHandle {
 
 impl InferenceActorHandle {
     /// Spawn the actor thread for `model`. The context is created lazily on
-    /// the thread itself (it cannot be sent across).
-    pub(crate) fn spawn(model: Arc<LlamaModel>) -> std::result::Result<Self, String> {
+    /// the thread itself (it cannot be sent across). `n_ctx_override` is the
+    /// user's configured context window (`0` = auto); the actor resolves the
+    /// effective window via [`effective_n_ctx`] once the model is known.
+    pub(crate) fn spawn(model: Arc<LlamaModel>, n_ctx_override: u32) -> std::result::Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel::<GenRequest>();
         std::thread::Builder::new()
             .name("llama-inference".into())
-            .spawn(move || actor_loop(&model, &rx))
+            .spawn(move || actor_loop(&model, &rx, n_ctx_override))
             .map_err(|e| format!("Failed to spawn inference thread: {}", e))?;
         Ok(Self { tx })
     }
@@ -202,10 +198,12 @@ impl InferenceActorHandle {
     }
 }
 
-fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>) {
-    let n_ctx = model.n_ctx_train().clamp(1024, MAX_N_CTX);
+fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32) {
+    let n_ctx = effective_n_ctx(n_ctx_override, model.n_ctx_train());
     // n_batch = n_ctx so a full-window prompt fits in a single decode call
-    // (GGML_ASSERT(n_tokens_all <= cparams.n_batch) trips otherwise).
+    // (GGML_ASSERT(n_tokens_all <= cparams.n_batch) trips otherwise). n_ubatch
+    // stays pinned at N_UBATCH so a large window doesn't blow up the per-graph
+    // Metal buffers — that cap is the real memory mitigation, not n_batch.
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(n_ctx))
         .with_n_batch(n_ctx)

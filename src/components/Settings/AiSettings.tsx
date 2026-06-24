@@ -22,6 +22,46 @@ interface AiSettingsProps {
 }
 
 /**
+ * Header close affordance. Module-scoped for the same reason as {@link Shell} —
+ * a render-body component would remount on every parent render.
+ */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button onClick={onClose} className="text-gray-400 hover:text-gray-200 p-1">
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * Wrap the settings body so it can render either as its own modal (legacy
+ * callers) or embedded inside the tabbed SettingsDialog.
+ *
+ * Embedded mode uses `flex-1 min-h-0` (NOT `h-full`) so the flex algorithm
+ * allocates the remaining height inside SettingsDialog's panel column — sibling
+ * header + this panel share the column. With `h-full` the panel overflows the
+ * parent and the footer's Save/Test buttons get clipped beneath the dialog edge.
+ *
+ * Defined at module scope, NOT inside `AiSettings`: a component declared in the
+ * render body gets a fresh identity every render, so React would unmount and
+ * remount this whole subtree (and reset the body's scroll position) on every
+ * state change.
+ */
+function Shell({ embedded, children }: { embedded: boolean; children: React.ReactNode }) {
+  return embedded ? (
+    <div className="flex flex-col flex-1 min-h-0 w-full">{children}</div>
+  ) : (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * AI configuration screen. Owns provider selection, model + key state,
  * download orchestration, and assorted preferences (routing mode, keep-alive,
  * output language, chat prompts). Provider-specific UI lives in panel
@@ -49,6 +89,10 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   // Cap on how far back AI processing (embeddings + classification) reaches.
   // Stored as days in the `ai_max_email_age_days` preference. 0 = no limit.
   const [aiMaxEmailAgeDays, setAiMaxEmailAgeDays] = useState<number>(365);
+  // Context window (tokens) for the embedded llama.cpp chat model. Stored in
+  // `chat.n_ctx`; an unset pref (or stored 0 = auto) shows the default 8192.
+  // The backend clamps the saved value to [1024, model-trained-context].
+  const [nCtx, setNCtx] = useState<number>(8192);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -203,6 +247,20 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
       } catch {
         setKeepAliveMinutes(30);
       }
+
+      // Context window (tokens) for the embedded model — default 8192. A stored
+      // 0 means "auto"; surface it as the default so the input is never blank.
+      try {
+        const raw = await api.getPref('chat.n_ctx');
+        if (raw != null && raw.trim() !== '') {
+          const n = parseInt(raw, 10);
+          setNCtx(Number.isFinite(n) && n >= 1024 ? n : 8192);
+        } else {
+          setNCtx(8192);
+        }
+      } catch {
+        setNCtx(8192);
+      }
     } catch (err) {
       setError(t('settings:ai.loadFailed', { error: errorText(err) }));
     } finally {
@@ -322,6 +380,18 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
         addLog('error', 'ai', t('settings:ai.ageCutoffSaveFailed', { error: errorText(err) }));
       }
 
+      // Save context window (tokens) for the embedded model. Clamp to the
+      // backend-accepted floor so the validator never rejects the write; the
+      // per-model upper clamp happens at actor-spawn time.
+      if (config.provider === 'llamacpp') {
+        try {
+          const tokens = Number.isFinite(nCtx) ? Math.max(1024, Math.round(nCtx)) : 8192;
+          await api.setPref('chat.n_ctx', String(tokens));
+        } catch (err) {
+          addLog('error', 'ai', t('settings:ai.contextWindowSaveFailed', { error: errorText(err) }));
+        }
+      }
+
       // Trigger full re-index if the embedding model changed.
       const embedChanged = prevEmbedModel !== '' && prevEmbedModel !== config.embeddingModel;
       if (embedChanged) {
@@ -361,42 +431,13 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
     }
   };
 
-  // ── Render helpers ─────────────────────────────────────────────────────────
-
-  const CloseButton = () => (
-    <button onClick={onClose} className="text-gray-400 hover:text-gray-200 p-1">
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-      </svg>
-    </button>
-  );
-
-  // Wrap children so this component can be rendered either as its own modal
-  // (legacy callers) or embedded inside the tabbed SettingsDialog.
-  //
-  // Embedded mode uses `flex-1 min-h-0` (NOT `h-full`) so the flex algorithm
-  // allocates the remaining height inside SettingsDialog's panel column —
-  // sibling header + this panel both share the column. With `h-full` the
-  // panel overflows the parent and the footer's Save/Test buttons get
-  // clipped beneath the dialog edge.
-  const Shell = ({ children }: { children: React.ReactNode }) =>
-    embedded ? (
-      <div className="flex flex-col flex-1 min-h-0 w-full">{children}</div>
-    ) : (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-        <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
-          {children}
-        </div>
-      </div>
-    );
-
   if (loading && !config) {
     return (
-      <Shell>
+      <Shell embedded={embedded}>
         {!embedded && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
             <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton />
+            <CloseButton onClose={onClose} />
           </div>
         )}
         <p className="text-gray-400 text-sm p-6">{t('common:state.loading')}</p>
@@ -406,11 +447,11 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
 
   if (!config) {
     return (
-      <Shell>
+      <Shell embedded={embedded}>
         {!embedded && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
             <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton />
+            <CloseButton onClose={onClose} />
           </div>
         )}
         <div className="p-6">
@@ -430,12 +471,12 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
 
   return (
     <>
-      <Shell>
+      <Shell embedded={embedded}>
         {!embedded && (
           /* Header */
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
             <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton />
+            <CloseButton onClose={onClose} />
           </div>
         )}
 
@@ -539,6 +580,9 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
                 onKeepAliveChange={setKeepAliveMinutes}
                 aiMaxEmailAgeDays={aiMaxEmailAgeDays}
                 onMaxEmailAgeDaysChange={setAiMaxEmailAgeDays}
+                nCtx={nCtx}
+                onNCtxChange={setNCtx}
+                showContextWindow={config.provider === 'llamacpp'}
                 aiOutputLanguage={aiOutputLanguage}
                 onOutputLanguageChange={setAiOutputLanguage}
               />

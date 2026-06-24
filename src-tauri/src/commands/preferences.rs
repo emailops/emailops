@@ -27,6 +27,21 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "unsupported ai_output_language_v2 value: {value} (expected en/es/fr/de or empty)"
         )));
+    } else if key == "chat.n_ctx" {
+        // Embedded llama.cpp context window. `0` = auto. Any other value must be
+        // a token count in a generous absolute range; the real per-model clamp
+        // to `[floor, model-trained]` happens at actor-spawn time in
+        // `planner::effective_n_ctx`, so this only rejects nonsense early.
+        const N_CTX_PREF_MIN: u32 = 1024;
+        const N_CTX_PREF_MAX: u32 = 131_072;
+        let parsed = value.parse::<u32>().map_err(|_| {
+            AppError::InvalidInput(format!("chat.n_ctx must be a whole number of tokens, got: {value}"))
+        })?;
+        if parsed != 0 && !(N_CTX_PREF_MIN..=N_CTX_PREF_MAX).contains(&parsed) {
+            return Err(AppError::InvalidInput(format!(
+                "chat.n_ctx must be 0 (auto) or between {N_CTX_PREF_MIN} and {N_CTX_PREF_MAX}, got: {parsed}"
+            )));
+        }
     }
     Ok(())
 }
@@ -41,7 +56,10 @@ pub async fn set_pref(app: AppHandle, state: State<'_, AppState>, key: String, v
     // the LogPanel itself, and any other listener re-read the live config.
     // Background tasks always resolve the provider on execution, so they
     // automatically pick up the new backend on their next run.
-    if matches!(key.as_str(), "ai_provider" | "ai_model" | "ai_embedding_model") {
+    if matches!(
+        key.as_str(),
+        "ai_provider" | "ai_model" | "ai_embedding_model" | "chat.n_ctx"
+    ) {
         let _ = app.emit("ai-config-updated", serde_json::Value::Null);
     }
     Ok(())
@@ -115,5 +133,34 @@ mod tests {
         // Non-language prefs must not be language-validated.
         assert!(validate_pref("ai_provider", "openrouter").is_ok());
         assert!(validate_pref("ui_density", "comfortable").is_ok());
+    }
+
+    #[test]
+    fn validate_pref_accepts_valid_n_ctx() {
+        // 0 = auto sentinel; the floor, a mid value, and the absolute ceiling.
+        for v in ["0", "1024", "8192", "32768", "131072"] {
+            assert!(validate_pref("chat.n_ctx", v).is_ok(), "should accept {v}");
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_out_of_range_n_ctx() {
+        // Below the floor (but non-zero) and above the absolute ceiling.
+        for v in ["1", "1023", "200000"] {
+            let err = validate_pref("chat.n_ctx", v).unwrap_err();
+            assert!(
+                matches!(err, AppError::InvalidInput(_)),
+                "should reject {v} as InvalidInput"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_non_numeric_n_ctx() {
+        let err = validate_pref("chat.n_ctx", "lots").unwrap_err();
+        match err {
+            AppError::InvalidInput(msg) => assert!(msg.contains("chat.n_ctx")),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
     }
 }

@@ -15,6 +15,14 @@ interface AiSharedPreferencesProps {
   aiMaxEmailAgeDays: number;
   onMaxEmailAgeDaysChange: (days: number) => void;
   /**
+   * Context window (tokens) for the embedded llama.cpp chat model. Only shown
+   * when {@link showContextWindow} is true — the other backends manage their
+   * own context. Stored in the `chat.n_ctx` preference.
+   */
+  nCtx: number;
+  onNCtxChange: (tokens: number) => void;
+  showContextWindow: boolean;
+  /**
    * Stored value of `ai_output_language_v2`. The empty string is the
    * "Same as UI" sentinel — resolved server-side to the active `ui_language`.
    */
@@ -37,6 +45,9 @@ export function AiSharedPreferences({
   onKeepAliveChange,
   aiMaxEmailAgeDays,
   onMaxEmailAgeDaysChange,
+  nCtx,
+  onNCtxChange,
+  showContextWindow,
   aiOutputLanguage,
   onOutputLanguageChange,
 }: AiSharedPreferencesProps) {
@@ -78,6 +89,25 @@ export function AiSharedPreferences({
           className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
         />
       </div>
+
+      {/* Context window — embedded llama.cpp only */}
+      {showContextWindow && (
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.contextWindow')}</label>
+          <p className="text-xs text-gray-500 mb-2">{t('settings:ai.contextWindowHelp')}</p>
+          <input
+            type="number"
+            min={1024}
+            step={1024}
+            value={nCtx}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (Number.isFinite(v)) onNCtxChange(v);
+            }}
+            className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+          />
+        </div>
+      )}
 
       {/* AI processing age cutoff */}
       <div>

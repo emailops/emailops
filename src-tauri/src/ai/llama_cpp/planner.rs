@@ -13,6 +13,40 @@ use llama_cpp_2::token::LlamaToken;
 /// over cutting the prompt.
 pub(crate) const GEN_RESERVE_TOKENS: usize = 1024;
 
+/// Lower bound on the context window. A window below this leaves no room for a
+/// useful RAG prompt + generation reserve, so we floor every model (and every
+/// user override) here.
+pub(crate) const N_CTX_FLOOR: u32 = 1024;
+
+/// Default upper bound on the context window when the user has NOT set an
+/// explicit override. Even on models trained for 32k+ tokens, prompt-eval time
+/// on M1 CPU/Metal scales roughly linearly with the number of attended tokens,
+/// and the KV allocation scales with n_ctx — 8k is plenty for the RAG chat
+/// pipeline and keeps the resident cache bounded by default. A user who needs
+/// more can override it up to the model's own trained context (see
+/// [`effective_n_ctx`]); this is only the auto/default ceiling, not a hard cap.
+pub(crate) const DEFAULT_N_CTX_CAP: u32 = 8192;
+
+/// Resolve the context window the actor should create its `LlamaContext` with.
+///
+/// - `override_ctx == 0` (unset / "auto") preserves the historical behaviour:
+///   the model's trained context clamped into `[N_CTX_FLOOR, DEFAULT_N_CTX_CAP]`.
+/// - `override_ctx > 0` honours the user's explicit choice, clamped into
+///   `[N_CTX_FLOOR, n_ctx_train]` — it may exceed `DEFAULT_N_CTX_CAP`, but never
+///   the window the model was actually trained for (going past that degrades
+///   quality via RoPE over-extension and wastes KV memory).
+pub(crate) fn effective_n_ctx(override_ctx: u32, n_ctx_train: u32) -> u32 {
+    // The model's own ceiling can never go below the floor, even for a model
+    // reporting a tiny trained context — the floor wins so the context is
+    // always usable.
+    let model_cap = n_ctx_train.max(N_CTX_FLOOR);
+    if override_ctx == 0 {
+        n_ctx_train.clamp(N_CTX_FLOOR, DEFAULT_N_CTX_CAP)
+    } else {
+        override_ctx.clamp(N_CTX_FLOOR, model_cap)
+    }
+}
+
 /// How many leading tokens of `new` can reuse KV entries computed for
 /// `cached` (the token sequence currently materialised in the context).
 ///
@@ -204,6 +238,29 @@ mod tests {
 
     fn toks(ids: &[i32]) -> Vec<LlamaToken> {
         ids.iter().map(|&i| LlamaToken(i)).collect()
+    }
+
+    #[test]
+    fn effective_n_ctx_table() {
+        // (override_ctx, n_ctx_train, expected, label)
+        let cases: &[(u32, u32, u32, &str)] = &[
+            (0, 32768, 8192, "auto: large model clamps down to the default cap"),
+            (0, 4096, 4096, "auto: small model uses its own trained context"),
+            (0, 512, 1024, "auto: tiny model floored to N_CTX_FLOOR"),
+            (16384, 32768, 16384, "override above the default cap is honoured"),
+            (
+                40000,
+                32768,
+                32768,
+                "override above trained context clamps to the model cap",
+            ),
+            (200, 32768, 1024, "override below the floor clamps up to N_CTX_FLOOR"),
+            (8192, 8192, 8192, "override equal to trained context passes through"),
+            (4096, 512, 1024, "override on a tiny model floored to N_CTX_FLOOR"),
+        ];
+        for &(override_ctx, train, expected, label) in cases {
+            assert_eq!(effective_n_ctx(override_ctx, train), expected, "{label}");
+        }
     }
 
     #[test]

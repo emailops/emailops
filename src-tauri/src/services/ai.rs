@@ -48,6 +48,7 @@ fn get_or_create_llamacpp_runtime(
     chat_path: Option<std::path::PathBuf>,
     embed_path: Option<std::path::PathBuf>,
     keep_alive_secs: u32,
+    n_ctx_override: u32,
 ) -> Arc<crate::ai::llama_cpp::runtime::LlamaCppRuntime> {
     use crate::ai::llama_cpp::runtime::LlamaCppRuntime;
 
@@ -57,16 +58,19 @@ fn get_or_create_llamacpp_runtime(
     // Reuse when the paths match exactly. A `None` path on either side means
     // the user hasn't configured that model yet; we still treat matching
     // `None`s as a cache hit so repeated calls before the user picks a
-    // model don't thrash.
+    // model don't thrash. Push the live preferences onto the reused runtime —
+    // `set_n_ctx_override` respawns the actor if the window changed.
     if let Some(existing) = guard.as_ref() {
         if existing.chat_path == chat_path && existing.embed_path == embed_path {
             existing.runtime.set_keep_alive_secs(keep_alive_secs);
+            existing.runtime.set_n_ctx_override(n_ctx_override);
             return Arc::clone(&existing.runtime);
         }
     }
 
     let runtime = LlamaCppRuntime::new(chat_path.clone(), embed_path.clone());
     runtime.set_keep_alive_secs(keep_alive_secs);
+    runtime.set_n_ctx_override(n_ctx_override);
     *guard = Some(CachedLlamaCppRuntime {
         chat_path,
         embed_path,
@@ -90,6 +94,20 @@ pub fn load_keep_alive_secs(db: &Database) -> u32 {
     } else {
         raw.max(60)
     }
+}
+
+/// Read the `chat.n_ctx` preference: the user's configured context window for
+/// the embedded llama.cpp chat model. `0` (or unset / unparseable) means
+/// "auto" — let the runtime pick the model's trained context capped at the
+/// default. The hard `[floor, model-trained]` clamp lives in
+/// `planner::effective_n_ctx`, so this reader only sanitises garbage to `0`.
+#[cfg(feature = "llamacpp")]
+pub fn load_n_ctx_override(db: &Database) -> u32 {
+    db.get_preference("chat.n_ctx")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 /// Format `keep_alive_secs` for Ollama's `keep_alive` field. Ollama accepts
@@ -210,7 +228,8 @@ impl AiService {
                 // Reuse the cached runtime when (chat_path, embed_path) match
                 // an earlier load — avoids reloading the multi-GB GGUF every
                 // turn. See CachedLlamaCppRuntime above.
-                let runtime = get_or_create_llamacpp_runtime(chat_path, embed_path, keep_alive_secs);
+                let runtime =
+                    get_or_create_llamacpp_runtime(chat_path, embed_path, keep_alive_secs, load_n_ctx_override(db));
                 Ok(Arc::new(LlamaCppBackend::new(
                     runtime,
                     model.to_string(),
@@ -245,7 +264,8 @@ impl AiService {
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
                 let (chat_path, embed_path) = llamacpp_model_paths(db, &config.model, &config.embedding_model);
-                let runtime = get_or_create_llamacpp_runtime(chat_path, embed_path, keep_alive_secs);
+                let runtime =
+                    get_or_create_llamacpp_runtime(chat_path, embed_path, keep_alive_secs, load_n_ctx_override(db));
                 Ok(Arc::new(LlamaCppBackend::new(
                     runtime,
                     config.model,

@@ -190,6 +190,12 @@ pub struct LlamaCppRuntime {
     /// `LlamaCppRuntime::new`; callable sites override via
     /// `with_keep_alive`.
     keep_alive_secs: Arc<AtomicU32>,
+    /// User-configured context window for the chat actor's `LlamaContext`.
+    /// `0` = auto (the model's trained context, capped at the default). Read
+    /// when the actor is (re)spawned in `get_chat_actor`; `set_n_ctx_override`
+    /// drops the live actor on change so the next request rebuilds the context
+    /// with the new window.
+    n_ctx_override: Arc<AtomicU32>,
 }
 
 impl LlamaCppRuntime {
@@ -209,6 +215,7 @@ impl LlamaCppRuntime {
             inference_sem: Arc::new(Semaphore::new(1)),
             last_used: Arc::new(AtomicI64::new(now_secs())),
             keep_alive_secs: Arc::new(AtomicU32::new(30 * 60)),
+            n_ctx_override: Arc::new(AtomicU32::new(0)),
         });
         Self::spawn_eviction_task(&runtime);
         runtime
@@ -217,6 +224,22 @@ impl LlamaCppRuntime {
     /// Override the idle-eviction window. 0 pins the model forever.
     pub fn set_keep_alive_secs(&self, secs: u32) {
         self.keep_alive_secs.store(secs, Ordering::Relaxed);
+    }
+
+    /// Set the configured chat context window (`0` = auto). The window is baked
+    /// into the `LlamaContext` at actor-spawn time, so when the value actually
+    /// changes we drop the live actor — best-effort via `try_lock`, since the
+    /// only contender is an in-flight inference, and an in-flight request keeps
+    /// the old window for its own duration; the *next* `get_chat_actor` reads
+    /// the new value and rebuilds the context. This mirrors the idle-eviction
+    /// task, which drops the same actor handle.
+    pub fn set_n_ctx_override(&self, n_ctx: u32) {
+        let prev = self.n_ctx_override.swap(n_ctx, Ordering::Relaxed);
+        if prev != n_ctx {
+            if let Ok(mut guard) = self.chat_actor.try_lock() {
+                *guard = None;
+            }
+        }
     }
 
     fn touch_last_used(&self) {
@@ -343,7 +366,8 @@ impl LlamaCppRuntime {
             return Ok(actor.clone());
         }
         let model = self.get_chat_model().await?;
-        let actor = InferenceActorHandle::spawn(model).map_err(AppError::AiError)?;
+        let n_ctx_override = self.n_ctx_override.load(Ordering::Relaxed);
+        let actor = InferenceActorHandle::spawn(model, n_ctx_override).map_err(AppError::AiError)?;
         *guard = Some(actor.clone());
         Ok(actor)
     }
