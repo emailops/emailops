@@ -70,6 +70,24 @@ pub static CATALOG: &[CatalogModel] = &[
         bundled: false,
     },
     CatalogModel {
+        id: "qwen3.5-4b-q8_0",
+        display_name: "Qwen 3.5 4B Q8",
+        kind: ModelKind::Chat,
+        // bartowski/Qwen_Qwen3.5-4B-GGUF/main · Qwen_Qwen3.5-4B-Q8_0.gguf
+        // Upstream Content-Length (x-linked-size) and x-linked-etag (LFS sha256).
+        // Higher-fidelity sibling of qwen3.5-4b-q4_k_m: ~4.6 GB of weights vs 3.0,
+        // so peak RAM (weights + f16 KV + activations) lands ~12 GB.
+        size_bytes: 4_622_131_168,
+        context_window: 262_144,
+        sha256: "5c74c0ede371924357dff0cb6ba145bd67208b9b2389ded681adfff3f7608db7",
+        url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q8_0.gguf",
+        license: "apache-2.0",
+        min_ram_gb: 12,
+        recommended: false,
+        supports_tools: true,
+        bundled: false,
+    },
+    CatalogModel {
         id: "qwen3.5-9b-q4_k_m",
         display_name: "Qwen 3.5 9B",
         kind: ModelKind::Chat,
@@ -159,6 +177,32 @@ pub fn embedding_models() -> impl Iterator<Item = &'static CatalogModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qwen3_5_4b_q8_entry_is_present_and_correct() {
+        let entry = find("qwen3.5-4b-q8_0").expect("Qwen 3.5 4B Q8_0 must be in the catalog");
+        assert_eq!(entry.kind, ModelKind::Chat);
+        assert_eq!(
+            entry.url,
+            "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q8_0.gguf"
+        );
+        // Authoritative values from the HuggingFace `resolve` endpoint headers:
+        // x-linked-size (Content-Length) and x-linked-etag (LFS sha256).
+        assert_eq!(entry.size_bytes, 4_622_131_168);
+        assert_eq!(
+            entry.sha256,
+            "5c74c0ede371924357dff0cb6ba145bd67208b9b2389ded681adfff3f7608db7"
+        );
+        assert_eq!(entry.context_window, 262_144);
+        assert_eq!(entry.license, "apache-2.0");
+        assert!(entry.supports_tools, "Qwen 3.5 4B Q8 must support tool-calling");
+        // Q8 weights (~4.6 GB) + f16 KV + activations → ~12 GB peak, vs 8 for Q4.
+        assert_eq!(entry.min_ram_gb, 12);
+        assert!(
+            !entry.recommended,
+            "Q4 stays the recommended default; Q8 is the opt-in higher-fidelity sibling"
+        );
+    }
 
     #[test]
     fn qwen3_5_9b_q4_entry_is_present_and_correct() {
