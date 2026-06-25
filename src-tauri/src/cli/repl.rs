@@ -169,16 +169,13 @@ async fn handle_slash(session: &mut CliSession, rest: &str) -> Result<()> {
                 Ok(())
             }
         },
-        "model" => {
-            match args.first() {
-                Some(m) => {
-                    session.model = (*m).to_string();
-                    println!("model set to {}", session.model);
-                }
-                None => println!("current model: {}", session.model),
+        "model" => match args.first() {
+            Some(m) => switch_model(session, m),
+            None => {
+                println!("{}", format_model_menu(&session.model));
+                Ok(())
             }
-            Ok(())
-        }
+        },
         // Explicit multi-turn chat (same as bare text), so `/chat … --trace`
         // works without diverging into the one-shot `Command::Chat` path (which
         // would start a fresh conversation each call).
@@ -228,6 +225,30 @@ fn switch_account(session: &mut CliSession, hint: &str) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Switch the chat model. The choice is persisted to the `ai_model` preference —
+/// the same key `AiService::get_config`/`load_provider` read to build the chat
+/// provider — so the next `/chat` turn actually runs the chosen model. Updating
+/// only `session.model` is not enough: `run_chat_turn` ignores its `model`
+/// argument and always loads the provider (and thus the model) from this pref.
+fn switch_model(session: &mut CliSession, name: &str) -> Result<()> {
+    let model = name.trim().to_string();
+    if model.is_empty() {
+        eprintln!("usage: /model <name>");
+        return Ok(());
+    }
+    session.db.set_preference("ai_model", &model)?;
+    session.model = model.clone();
+    // A model the user typed by hand may not be a catalog entry (e.g. an Ollama
+    // tag). That's allowed — the provider resolves it — but flag it so a typo'd
+    // catalog id doesn't silently fall through to a "model not found" at runtime.
+    if crate::ai::model_catalog::find(&model).is_some() {
+        println!("model set to {model} — saved");
+    } else {
+        println!("model set to {model} — saved (not in the download catalog; run /model to list known ones)");
+    }
+    Ok(())
 }
 
 /// Split `/chat` arguments into the question text and a `--trace` flag. Pure so
@@ -355,6 +376,44 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
     Ok(())
 }
 
+/// Render the `/model` (no-arg) menu: every chat model in the catalog, one per
+/// line, with the active one marked by `*`. Pure (returns a `String`) so the
+/// layout is unit-testable without capturing stdout. `selected` is the session's
+/// current model id; if it isn't a catalog entry (e.g. an Ollama model the user
+/// typed by hand), it's still surfaced on its own line so the user can see what
+/// is actually active.
+fn format_model_menu(selected: &str) -> String {
+    use crate::ai::model_catalog;
+
+    let models: Vec<&model_catalog::CatalogModel> = model_catalog::chat_models().collect();
+    let id_width = models.iter().map(|m| m.id.len()).max().unwrap_or(0);
+
+    let mut out = String::from("available chat models (* = current):\n");
+    let mut selected_in_catalog = false;
+    for m in &models {
+        let marker = if m.id == selected {
+            selected_in_catalog = true;
+            '*'
+        } else {
+            ' '
+        };
+        let tag = if m.recommended { " (recommended)" } else { "" };
+        out.push_str(&format!(
+            "  {marker} {id:<id_width$}  {name}{tag}\n",
+            id = m.id,
+            name = m.display_name,
+        ));
+    }
+    if !selected_in_catalog {
+        out.push_str(&format!(
+            "  * {selected:<id_width$}  (current; not in the download catalog)\n"
+        ));
+    }
+    // Drop the trailing newline so the caller's `println!` adds exactly one.
+    out.pop();
+    out
+}
+
 fn print_help() {
     println!(
         "Commands (every action is a slash-command):\n\
@@ -369,7 +428,7 @@ fn print_help() {
          \x20 /stats            dashboard stats per account (emails, categories, embeddings…)\n\
          \x20 /config <get|set|unset|list> [key] [value]  manage CLI preferences\n\
          \x20 /account [<id|email>]  show or switch the working account (switch is saved as default)\n\
-         \x20 /model [<name>]   show or set the AI model\n\
+         \x20 /model [<name>]   list available models (no arg) or set the AI model\n\
          \x20 /new              start a fresh conversation\n\
          \x20 /help             show this help\n\
          \x20 /quit             exit"
@@ -464,6 +523,49 @@ mod tests {
         assert!(trace);
     }
 
+    #[test]
+    fn model_menu_lists_every_chat_model_and_marks_current() {
+        let menu = format_model_menu("qwen3.5-9b-q4_k_m");
+        // Every chat model in the catalog is listed.
+        for m in crate::ai::model_catalog::chat_models() {
+            assert!(menu.contains(m.id), "menu must list {}", m.id);
+        }
+        // The current model is marked with '*', a non-current one is not.
+        assert!(
+            menu.contains("* qwen3.5-9b-q4_k_m"),
+            "current model must be marked: {menu}"
+        );
+        assert!(
+            !menu.contains("* qwen3.5-4b-q8_0"),
+            "non-current model must not be marked: {menu}"
+        );
+        // The recommended default is tagged.
+        assert!(
+            menu.contains("(recommended)"),
+            "recommended model must be tagged: {menu}"
+        );
+    }
+
+    #[test]
+    fn model_menu_surfaces_current_model_absent_from_catalog() {
+        // A model the user typed by hand (e.g. an Ollama tag) isn't in the
+        // download catalog, but the menu still shows it as the active one.
+        let menu = format_model_menu("llama3:8b");
+        assert!(
+            menu.contains("* llama3:8b"),
+            "off-catalog current model must show: {menu}"
+        );
+        assert!(
+            menu.contains("not in the download catalog"),
+            "off-catalog note must show: {menu}"
+        );
+        // No catalog entry is marked current in this case (only the synthetic line is).
+        assert!(
+            crate::ai::model_catalog::chat_models().all(|m| !menu.contains(&format!("* {}", m.id))),
+            "no catalog model should be marked when current is off-catalog: {menu}"
+        );
+    }
+
     fn seed_account(db: &Arc<crate::db::Database>, id: &str, email: &str) {
         db.connection()
             .execute(
@@ -486,6 +588,30 @@ mod tests {
             data_dir: std::path::PathBuf::from("/tmp/emailops-cli-test"),
             conversation_id: None,
         }
+    }
+
+    #[test]
+    fn switch_model_persists_to_ai_model_pref() {
+        let db = Arc::new(crate::db::Database::new_for_testing().expect("test db"));
+        let mut session = test_session(db.clone());
+
+        switch_model(&mut session, "gemma-4-12b-it-qat-ud-q4_k_xl").expect("switch model");
+
+        // In-memory model updated …
+        assert_eq!(session.model, "gemma-4-12b-it-qat-ud-q4_k_xl");
+        // … and persisted to the `ai_model` pref that load_provider/get_config
+        // actually read. Regression: /model used to update only session.model,
+        // which run_chat_turn ignores — so the chat kept running the old model.
+        assert_eq!(
+            db.get_preference("ai_model").expect("pref"),
+            Some("gemma-4-12b-it-qat-ud-q4_k_xl".to_string())
+        );
+        // get_config — the exact path load_provider uses to pick the model —
+        // now reflects the choice, so the next chat turn runs it.
+        assert_eq!(
+            crate::services::ai::AiService::get_config(&db).expect("config").model,
+            "gemma-4-12b-it-qat-ud-q4_k_xl"
+        );
     }
 
     #[test]

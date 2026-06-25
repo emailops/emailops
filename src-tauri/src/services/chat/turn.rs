@@ -1727,9 +1727,12 @@ pub async fn run_chat_turn(
 ) -> Result<()> {
     let turn_start = std::time::Instant::now();
 
-    // Build the configured AI provider from DB preferences. Falls back to
-    // Ollama if the provider preference is missing or unrecognised.
-    let provider = AiService::load_provider(&db)?;
+    // Build the configured AI provider from DB preferences, but let the
+    // per-turn `model` argument (CLI `--model`, REPL `/model`, eval case model)
+    // override the stored `ai_model` so the requested model actually drives the
+    // runtime. Falls back to the preference when `model` is empty, and to Ollama
+    // if the provider preference is missing or unrecognised.
+    let provider = AiService::load_provider_with_model(&db, Some(&model))?;
 
     // ── Thread-bound short-circuit ─────────────────────────────────────
     // If the conversation was seeded with an email thread (system-role

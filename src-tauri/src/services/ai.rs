@@ -243,7 +243,21 @@ impl AiService {
     }
 
     pub fn load_provider(db: &Database) -> Result<Arc<dyn AIProvider>> {
-        let config = Self::get_config(db)?;
+        Self::load_provider_with_model(db, None)
+    }
+
+    /// Like [`load_provider`](Self::load_provider), but selects `model_override`
+    /// (when `Some` and non-empty) instead of the configured `ai_model`
+    /// preference. The chat turn passes its per-turn model here so an explicit
+    /// CLI `--model` / REPL `/model` actually drives the runtime, rather than
+    /// silently falling back to the stored preference. A `None` or blank
+    /// override keeps the configured model. The provider (Ollama / OpenRouter /
+    /// llama.cpp) is still chosen by the `ai_provider` preference.
+    pub fn load_provider_with_model(db: &Database, model_override: Option<&str>) -> Result<Arc<dyn AIProvider>> {
+        let mut config = Self::get_config(db)?;
+        if let Some(m) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
+            config.model = m.to_string();
+        }
         let keep_alive_secs = load_keep_alive_secs(db);
         let ollama_keep_alive = format_ollama_keep_alive(keep_alive_secs);
 
@@ -676,6 +690,44 @@ mod provider_tests {
         let entry = crate::ai::model_catalog::find(&cfg.model).expect("default chat model must be in catalog");
         assert_eq!(entry.kind, crate::ai::model_catalog::ModelKind::Chat);
         assert!(entry.supports_tools, "default chat model must support tools");
+    }
+
+    /// An explicit per-turn model overrides the stored `ai_model` preference, so
+    /// a chat turn started with CLI `--model` / REPL `/model` actually runs the
+    /// requested model instead of silently falling back to the preference.
+    #[test]
+    fn load_provider_with_model_overrides_pref_model() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_model", "qwen3.5-4b-q8_0").unwrap();
+
+        let provider =
+            AiService::load_provider_with_model(&db, Some("gemma-4-12b-it-qat-ud-q4_k_xl")).expect("provider");
+
+        assert_eq!(provider.model_name(), "gemma-4-12b-it-qat-ud-q4_k_xl");
+    }
+
+    /// A `None` or blank override keeps the configured `ai_model` — so the
+    /// desktop / eval callers (which pass the preference's own value) are
+    /// unaffected, and an empty model never blanks out the selection.
+    #[test]
+    fn load_provider_with_model_none_or_blank_uses_pref() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_model", "qwen3.5-4b-q8_0").unwrap();
+
+        assert_eq!(
+            AiService::load_provider_with_model(&db, None)
+                .expect("provider")
+                .model_name(),
+            "qwen3.5-4b-q8_0"
+        );
+        assert_eq!(
+            AiService::load_provider_with_model(&db, Some("   "))
+                .expect("provider")
+                .model_name(),
+            "qwen3.5-4b-q8_0"
+        );
     }
 }
 
