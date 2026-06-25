@@ -27,8 +27,10 @@ use crate::util::html::decode_html_entities;
 pub const DEFAULT_MAX_CHARS_PER_EMAIL: usize = 2000;
 
 /// Per-email ceiling. A single-message "chat about this email" shows the body
-/// nearly whole instead of clipping it at the floor.
-pub const MAX_CHARS_PER_EMAIL: usize = 8000;
+/// nearly whole instead of clipping it at the floor. Also the cap applied by
+/// the `get_email_body` chat tool, so a long newsletter comes back whole rather
+/// than sliced in half.
+pub const MAX_CHARS_PER_EMAIL: usize = 16000;
 
 /// Total budget shared across the thread; the per-email cap is this divided by
 /// the message count, clamped to `[DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL]`.
@@ -77,6 +79,18 @@ pub fn clean_email_body(body: &str, max_chars: usize) -> String {
     let de_signed = strip_signature(&de_quoted);
     let collapsed = collapse_whitespace(&de_signed);
     truncate_chars(&collapsed, max_chars)
+}
+
+/// Render an email body as readable plain text **without** dropping any
+/// content. This is the full-fidelity sibling of [`clean_email_body`]: it
+/// converts HTML to text, strips invisible spacer characters, and collapses
+/// runs of blank lines — but it deliberately keeps quoted replies, signatures,
+/// and the entire body length intact. Use it where the user asked to see the
+/// whole message (e.g. the CLI `show` command), not a context-budgeted excerpt.
+pub fn body_to_plain_text(body: &str) -> String {
+    let text = to_plain_text(body);
+    let visible = strip_invisible_chars(&text);
+    collapse_whitespace(&visible)
 }
 
 /// Remove zero-width / invisible formatting characters that newsletters stuff
@@ -499,11 +513,54 @@ mod tests {
         assert_eq!(cleaned, "First.\n\nSecond.\n\nThird.");
     }
 
+    // ── body_to_plain_text (the `show` full-fidelity de-HTML path) ──────────
+
+    #[test]
+    fn body_to_plain_text_strips_html_tags_and_style() {
+        let body = "<html><body><p>Hello <b>world</b></p><style>.x{color:red}</style><p>Bye</p></body></html>";
+        let out = body_to_plain_text(body);
+        assert!(out.contains("Hello world"), "got: {out:?}");
+        assert!(out.contains("Bye"));
+        assert!(!out.contains('<'), "tags leaked: {out:?}");
+        assert!(!out.contains("color:red"), "style leaked: {out:?}");
+    }
+
+    #[test]
+    fn body_to_plain_text_preserves_quotes_and_signature() {
+        // Unlike clean_email_body, `show` must keep the FULL message — quoted
+        // replies and signatures included — so the user sees everything.
+        let body = "Thanks, that works.\n\nOn Wed, Apr 15, 2026 at 10:00 AM, Alice wrote:\n> Are you free Wednesday?\n\n-- \nAlice Smith";
+        let out = body_to_plain_text(body);
+        assert!(out.contains("Thanks, that works."));
+        assert!(out.contains("Are you free Wednesday?"), "quote stripped: {out:?}");
+        assert!(out.contains("Alice Smith"), "signature stripped: {out:?}");
+    }
+
+    #[test]
+    fn body_to_plain_text_collapses_blank_runs_keeps_paragraphs() {
+        assert_eq!(body_to_plain_text("First.\n\n\n\nSecond."), "First.\n\nSecond.");
+    }
+
+    #[test]
+    fn body_to_plain_text_does_not_truncate_long_bodies() {
+        let long = "abcdefghij".repeat(500); // 5000 chars, no tags/blank lines
+        let out = body_to_plain_text(&long);
+        assert_eq!(out.chars().count(), 5000);
+        assert!(!out.ends_with('…'));
+    }
+
+    #[test]
+    fn body_to_plain_text_passes_plain_text_through() {
+        assert_eq!(body_to_plain_text("Just a plain note."), "Just a plain note.");
+        assert_eq!(body_to_plain_text(""), "");
+    }
+
     #[test]
     fn chars_per_email_is_generous_for_single_email_threads() {
         // A "chat about this email" with one message should show it nearly whole,
-        // not clip it at the old 2000-char floor.
-        assert_eq!(chars_per_email(1), MAX_CHARS_PER_EMAIL);
+        // not clip it at the old 2000-char floor. A single email gets the whole
+        // shared budget (12000) — below the 16000 ceiling, so the budget binds.
+        assert_eq!(chars_per_email(1), THREAD_CONTEXT_BUDGET);
         assert_eq!(chars_per_email(2), 6000);
     }
 
@@ -517,7 +574,7 @@ mod tests {
 
     #[test]
     fn chars_per_email_handles_zero_without_panicking() {
-        assert_eq!(chars_per_email(0), MAX_CHARS_PER_EMAIL);
+        assert_eq!(chars_per_email(0), THREAD_CONTEXT_BUDGET);
     }
 
     #[test]

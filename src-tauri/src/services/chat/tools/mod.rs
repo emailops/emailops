@@ -1845,13 +1845,13 @@ mod tests {
     /// Regression: `get_email_body` used to clip the body at a hard 3000-char
     /// cap (truncate_chars), which sliced long emails mid-sentence. It now
     /// reuses `thread_clean::clean_email_body` with the single-email ceiling
-    /// (`MAX_CHARS_PER_EMAIL` = 8000), matching the "chat about this email"
+    /// (`MAX_CHARS_PER_EMAIL` = 16000), matching the "chat about this email"
     /// path — so a 5000-char body comes back whole.
     #[test]
     fn get_email_body_returns_full_body_not_clipped_at_old_3000_cap() {
         let db = tools_test_db();
         // 5000 chars of unbroken plain text — beyond the old 3000 cap but under
-        // the 8000 ceiling, so the cleaner returns it intact (no "…" marker).
+        // the ceiling, so the cleaner returns it intact (no "…" marker).
         let long_body = "x".repeat(5000);
         seed_email(&db, "e1", "acc", "t1", "A", "a@x.com", "subj", &long_body, 1);
         let out = execute_tool(
@@ -1868,7 +1868,37 @@ mod tests {
         );
         assert!(
             !out.ends_with('…'),
-            "5000-char body is under the 8000 ceiling — should not be truncated; out len {}",
+            "5000-char body is under the ceiling — should not be truncated; out len {}",
+            out.chars().count()
+        );
+    }
+
+    /// Regression: a long newsletter (e.g. a 100 KB Substack issue that cleans
+    /// to ~10 K chars of plain text) was clipped at the old 8000-char ceiling,
+    /// so the model only saw the first half of the email. The ceiling is now
+    /// 16000, so a 10 000-char body comes back whole.
+    #[test]
+    fn get_email_body_returns_long_newsletter_whole_past_old_8000_ceiling() {
+        let db = tools_test_db();
+        // 10 000 chars of unbroken plain text — past the old 8000 ceiling but
+        // under the new 16000 one, so it must survive intact (no "…" marker).
+        let long_body = "y".repeat(10_000);
+        seed_email(&db, "e1", "acc", "t1", "A", "a@x.com", "subj", &long_body, 1);
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "get_email_body",
+            &arg(serde_json::json!({ "email_id": "e1" })),
+        );
+        assert!(
+            out.chars().count() >= 10_000,
+            "10 000-char body must not be clipped at the old 8000 ceiling; got {} chars",
+            out.chars().count()
+        );
+        assert!(
+            !out.ends_with('…'),
+            "10 000-char body is under the 16000 ceiling — should not be truncated; out len {}",
             out.chars().count()
         );
     }
