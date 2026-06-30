@@ -90,6 +90,7 @@
       },
       "phase": {
         "toolRound": "LLM · Tool-Runde {{n}}",
+        "planner": "LLM · Planer",
         "finalStream": "LLM · finale Antwort",
         "llmCall": "LLM-Aufruf"
       },

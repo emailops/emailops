@@ -214,7 +214,9 @@ Rules:
   A named sender: "from X" / "de X" -> from = X. Never put a person/company name in query.
 - "last" / "latest" / "most recent" / "última" -> order = "newest", small limit (e.g. 3-5).
 - "first" / "earliest" / "oldest" / "primer" / "más antiguo" -> order = "oldest", limit = 1.
-- Resolve relative dates ("today", "last week", "in May") against today's date into since/until.
+- "this week" / "esta semana" -> since = {{this_week_since}}, until = {{this_week_until}} (week starts Monday; until is end-exclusive).
+- "last week" / "semana pasada" -> since = {{last_week_since}}, until = {{last_week_until}}.
+- Other relative dates ("today", "yesterday", "in May") -> resolve against {{today}} into since/until.
 - If the question is NOT a single email search (it asks to write/draft/summarize/reply,
   needs multiple steps, or is not about finding mail), output exactly {"defer": true} and nothing else.
 

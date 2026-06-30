@@ -171,6 +171,22 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
         name: "query",
         description: "The raw user question being planned into a search_emails filter.",
     },
+    VariableDef {
+        name: "this_week_since",
+        description: "Monday of the current week (YYYY-MM-DD) — deterministic 'this week' range start.",
+    },
+    VariableDef {
+        name: "this_week_until",
+        description: "Next Monday (YYYY-MM-DD, end-exclusive) — deterministic 'this week' range end.",
+    },
+    VariableDef {
+        name: "last_week_since",
+        description: "Monday of the previous week (YYYY-MM-DD) — deterministic 'last week' range start.",
+    },
+    VariableDef {
+        name: "last_week_until",
+        description: "Monday of the current week (YYYY-MM-DD, end-exclusive) — deterministic 'last week' range end.",
+    },
 ];
 
 // ── Registry table ──────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::db::Database;
-use crate::models::{RouteDecision, RouteMode};
+use crate::models::{ChatMessage, RouteDecision, RouteMode};
 
 // ── Routing (RAG vs tools-first) ────────────────────────────────────────────
 
@@ -200,6 +200,64 @@ pub(super) fn heuristic_route(user_question: &str) -> Option<(RouteMode, Vec<Str
     }
 }
 
+/// The most recent prior USER question in the conversation history, if any.
+///
+/// `history` excludes the current turn (both call sites strip the just-inserted
+/// user + assistant rows — see `commands/chat.rs` and `cli/repl.rs`), so the
+/// last `role == "user"` row is the genuine previous turn. We read `content`
+/// (the raw question), not `prompt_content` (which carries the sources block).
+fn most_recent_prior_user_question(history: &[ChatMessage]) -> Option<&str> {
+    history
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+}
+
+/// Decide the `auto`-mode route from the current question and the previous
+/// user question (`None` on the first turn). Pure so the routing is
+/// unit-testable without a `Database`.
+///
+/// 1. If the current question carries its own tool-first signal → `ToolsFirst`
+///    (unchanged single-turn behavior).
+/// 2. Otherwise, if this is a follow-up AND the previous user turn was
+///    tool-first-bound → inherit `ToolsFirst`. A context-dependent follow-up
+///    like "resume la de ReinoIA" carries no date/recency keyword of its own,
+///    so history-blind routing sent it to `RagFirst`, where a semantic search
+///    over the bare follow-up string drops the prior date window and the
+///    referent. Routing it to the tool loop lets the model — which receives
+///    the full conversation history in its prompt — resolve "la de ReinoIA"
+///    and re-issue `search_emails` with the right sender/date filters.
+/// 3. Otherwise → `RagFirst` (open-ended question, or a follow-up to another
+///    open-ended turn).
+fn auto_route(user_question: &str, prev_user_question: Option<&str>) -> RouteDecision {
+    if let Some((mode, matched)) = heuristic_route(user_question) {
+        return RouteDecision {
+            mode,
+            reason: format!("heuristic matched: {}", matched.join(", ")),
+            matched_keywords: matched,
+            classifier: "heuristic".to_string(),
+        };
+    }
+    if let Some((_, prev_matched)) = prev_user_question.and_then(heuristic_route) {
+        return RouteDecision {
+            mode: RouteMode::ToolsFirst,
+            reason: format!(
+                "follow-up inherits tools-first from previous turn (matched: {})",
+                prev_matched.join(", ")
+            ),
+            matched_keywords: prev_matched,
+            classifier: "heuristic_followup".to_string(),
+        };
+    }
+    RouteDecision {
+        mode: RouteMode::RagFirst,
+        reason: "no tool-first keywords matched; RAG first".to_string(),
+        matched_keywords: Vec::new(),
+        classifier: "heuristic".to_string(),
+    }
+}
+
 /// Pick a retrieval strategy for this turn based on the user's configured
 /// `chat.routing_mode` preference and a cheap keyword heuristic.
 ///
@@ -207,9 +265,10 @@ pub(super) fn heuristic_route(user_question: &str) -> Option<(RouteMode, Vec<Str
 ///   - `always_rag`  → always `RagFirst` (pre-Fix-B behavior; useful for A/B).
 ///   - `always_tools` → always `ToolsFirst` (debug / eval comparison).
 ///   - `auto`        → heuristic-driven: `ToolsFirst` when a keyword matches,
-///     otherwise `RagFirst`. Keeps RAG for open-ended questions.
-///     This is the default when the preference is unset.
-pub(super) fn classify_route(db: &Arc<Database>, user_question: &str) -> RouteDecision {
+///     otherwise `RagFirst`. Keeps RAG for open-ended questions. A
+///     context-dependent follow-up inherits the previous turn's tool-first
+///     route (see [`auto_route`]). This is the default when unset.
+pub(super) fn classify_route(db: &Arc<Database>, user_question: &str, history: &[ChatMessage]) -> RouteDecision {
     let mode_pref = db
         .get_preference("chat.routing_mode")
         .ok()
@@ -223,23 +282,7 @@ pub(super) fn classify_route(db: &Arc<Database>, user_question: &str) -> RouteDe
             matched_keywords: Vec::new(),
             classifier: "forced".to_string(),
         },
-        "auto" => {
-            if let Some((mode, matched)) = heuristic_route(user_question) {
-                RouteDecision {
-                    mode,
-                    reason: format!("heuristic matched: {}", matched.join(", ")),
-                    matched_keywords: matched,
-                    classifier: "heuristic".to_string(),
-                }
-            } else {
-                RouteDecision {
-                    mode: RouteMode::RagFirst,
-                    reason: "no tool-first keywords matched; RAG first".to_string(),
-                    matched_keywords: Vec::new(),
-                    classifier: "heuristic".to_string(),
-                }
-            }
-        }
+        "auto" => auto_route(user_question, most_recent_prior_user_question(history)),
         _ => RouteDecision {
             mode: RouteMode::RagFirst,
             reason: "default: RAG first (set chat.routing_mode=auto to enable tool routing)".to_string(),
@@ -366,5 +409,88 @@ mod tests {
         assert_eq!(mode, RouteMode::ToolsFirst);
         let (mode, _) = heuristic_route("invoices in december").unwrap();
         assert_eq!(mode, RouteMode::ToolsFirst);
+    }
+
+    // ── History-aware follow-up routing ─────────────────────────────────
+
+    fn user_msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: "c1".into(),
+            role: "user".into(),
+            content: content.into(),
+            model: None,
+            token_count: None,
+            latency_ms: None,
+            created_at: 0,
+            sources: Vec::new(),
+            trace: None,
+            referenced_email_ids: Vec::new(),
+            referenced_draft_ids: Vec::new(),
+            prompt_content: None,
+        }
+    }
+
+    fn assistant_msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: "assistant".into(),
+            ..user_msg(content)
+        }
+    }
+
+    #[test]
+    fn followup_inherits_tools_first_from_prior_tools_turn() {
+        // Reproduces the reported bug: turn 1 ("recibí ayer") is date-bound →
+        // ToolsFirst. The follow-up "resume la de ReinoIA" carries no
+        // date/recency keyword of its own, so history-blind routing sent it to
+        // RagFirst, where a semantic search dropped the date window and the
+        // referent. It must inherit ToolsFirst so the tool loop can resolve it.
+        let d = auto_route("resume la de ReinoIA", Some("que newsletters recibí ayer"));
+        assert_eq!(d.mode, RouteMode::ToolsFirst);
+        assert_eq!(d.classifier, "heuristic_followup");
+        assert!(d.reason.contains("follow-up inherits tools-first"));
+    }
+
+    #[test]
+    fn followup_with_own_signal_routes_on_its_own_keywords() {
+        // A follow-up that carries its own tool-first signal classifies on that
+        // signal, not the inherited one — classifier stays "heuristic".
+        let d = auto_route("cuántos llegaron hoy", Some("resumen del proyecto"));
+        assert_eq!(d.mode, RouteMode::ToolsFirst);
+        assert_eq!(d.classifier, "heuristic");
+        assert!(d.matched_keywords.iter().any(|k| k == "hoy"));
+    }
+
+    #[test]
+    fn followup_after_open_ended_turn_stays_rag() {
+        // The previous turn was open-ended (no tool-first keyword) and the
+        // follow-up has no signal either — nothing to inherit, stays RagFirst.
+        let d = auto_route("y sobre el presupuesto?", Some("qué opina el equipo del proyecto"));
+        assert_eq!(d.mode, RouteMode::RagFirst);
+    }
+
+    #[test]
+    fn first_turn_with_no_history_is_unchanged() {
+        // No prior turn → behavior identical to the pre-fix single-turn path.
+        let d = auto_route("resume la de ReinoIA", None);
+        assert_eq!(d.mode, RouteMode::RagFirst);
+    }
+
+    #[test]
+    fn most_recent_prior_user_question_picks_last_user_row() {
+        let history = vec![
+            user_msg("que newsletters recibí ayer"),
+            assistant_msg("aquí están los newsletters de ayer…"),
+        ];
+        assert_eq!(
+            most_recent_prior_user_question(&history),
+            Some("que newsletters recibí ayer")
+        );
+    }
+
+    #[test]
+    fn most_recent_prior_user_question_none_when_no_user_rows() {
+        assert_eq!(most_recent_prior_user_question(&[]), None);
+        assert_eq!(most_recent_prior_user_question(&[assistant_msg("hi")]), None);
     }
 }

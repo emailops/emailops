@@ -346,6 +346,30 @@ impl ToolRegistry {
 
         out
     }
+
+    /// `(name, property keys, required keys)` per AVAILABLE tool — used to infer
+    /// the target of a NAMELESS tool-call block from its argument keys (Qwen 3.6
+    /// under no-think batches body reads but drops the function name).
+    pub fn arg_key_schemas(&self, db: &Database) -> Vec<(&'static str, Vec<String>, Vec<String>)> {
+        self.tools
+            .values()
+            .filter(|t| t.is_available(db))
+            .map(|t| {
+                let schema = t.parameters_schema();
+                let props = schema
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                let required = schema
+                    .get("required")
+                    .and_then(|r| r.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                (t.name(), props, required)
+            })
+            .collect()
+    }
 }
 
 /// Derive the `name, name?, …` parenthesised arg list from a JSON Schema

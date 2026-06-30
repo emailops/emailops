@@ -82,7 +82,9 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
       ? t('chat:reasoning.trace.phase.toolRound', { n: call.round })
       : call.kind === 'final_stream'
         ? t('chat:reasoning.trace.phase.finalStream')
-        : t('chat:reasoning.trace.phase.llmCall');
+        : call.kind === 'planner'
+          ? t('chat:reasoning.trace.phase.planner')
+          : t('chat:reasoning.trace.phase.llmCall');
   const requested = call.kind === 'tool_round' ? (call.toolCallsRequested ?? 0) : 0;
   const kv = kvCacheStats(call);
   const action = cacheAction(call);

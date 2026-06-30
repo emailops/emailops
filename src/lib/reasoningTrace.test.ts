@@ -64,6 +64,20 @@ describe('buildFlow', () => {
     expect(flowLabels(trace)).toEqual(['tool:search_emails', 'llm:tool_round:0']);
   });
 
+  it('leads the flow with the planner LLM call, ahead of the preseeded tool', () => {
+    // The planner (round -2) decides the preseeded search, so execution order is
+    // planner → preseed tool → synthesis round.
+    const trace = makeTrace({
+      toolCalls: [toolCall('search_emails', -1)],
+      llmCalls: [
+        llmCall({ kind: 'planner', round: -2, latencyMs: 1200, toolCallsRequested: 0 }),
+        llmCall({ kind: 'tool_round', round: 0, latencyMs: 35000, toolCallsRequested: 0 }),
+      ],
+    });
+
+    expect(flowLabels(trace)).toEqual(['llm:planner:-2', 'tool:search_emails', 'llm:tool_round:0']);
+  });
+
   it('places a normal-loop tool right after the round that requested it', () => {
     const trace = makeTrace({
       totalElapsedMs: 77000,

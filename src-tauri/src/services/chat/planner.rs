@@ -161,6 +161,38 @@ fn extract_json_object(text: &str) -> Option<serde_json::Map<String, serde_json:
     }
 }
 
+/// Monday-anchored week boundaries (ISO `YYYY-MM-DD`, end-exclusive) derived
+/// deterministically from `today`. "This week" is the calendar week starting
+/// Monday and containing `today`; "last week" is the preceding one. Injected
+/// into the planner prompt so week math never depends on the model counting
+/// weekdays from a bare date (which it gets wrong).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct WeekBounds {
+    pub this_since: String,
+    pub this_until: String,
+    pub last_since: String,
+    pub last_until: String,
+}
+
+/// Compute Monday-anchored week bounds from an ISO `today` string. Returns
+/// `None` when `today` is not a valid `YYYY-MM-DD` date.
+pub(crate) fn week_bounds(today: &str) -> Option<WeekBounds> {
+    use chrono::{Datelike, Duration, NaiveDate};
+    let d = NaiveDate::parse_from_str(today.trim(), "%Y-%m-%d").ok()?;
+    // Monday = 0 … Sunday = 6.
+    let offset = d.weekday().num_days_from_monday() as i64;
+    let this_monday = d - Duration::days(offset);
+    let next_monday = this_monday + Duration::days(7);
+    let last_monday = this_monday - Duration::days(7);
+    let fmt = |dt: NaiveDate| dt.format("%Y-%m-%d").to_string();
+    Some(WeekBounds {
+        this_since: fmt(this_monday),
+        this_until: fmt(next_monday),
+        last_since: fmt(last_monday),
+        last_until: fmt(this_monday),
+    })
+}
+
 /// Render the planner prompt from its registry template, substituting the
 /// per-turn variables. Pure (no DB / no I/O) so it is unit-testable; the executor
 /// fetches the template via `prompts::get_template`.
@@ -169,6 +201,26 @@ pub(crate) fn render_planner_prompt(template: &str, user_email: &str, today: &st
     vars.insert("user_email", user_email.to_string());
     vars.insert("today", today.to_string());
     vars.insert("query", query.to_string());
+    // Deterministic Monday-anchored week ranges so "this week" / "last week"
+    // never rely on the model's weekday arithmetic. Empty on an unparseable
+    // date — the template's generic relative-date rule still applies.
+    let wb = week_bounds(today);
+    vars.insert(
+        "this_week_since",
+        wb.as_ref().map(|w| w.this_since.clone()).unwrap_or_default(),
+    );
+    vars.insert(
+        "this_week_until",
+        wb.as_ref().map(|w| w.this_until.clone()).unwrap_or_default(),
+    );
+    vars.insert(
+        "last_week_since",
+        wb.as_ref().map(|w| w.last_since.clone()).unwrap_or_default(),
+    );
+    vars.insert(
+        "last_week_until",
+        wb.as_ref().map(|w| w.last_until.clone()).unwrap_or_default(),
+    );
     crate::services::prompts::render(template, &vars)
 }
 
@@ -203,6 +255,41 @@ mod tests {
             Plan::Search(p) => p,
             Plan::Defer => panic!("expected Search, got Defer for: {text}"),
         }
+    }
+
+    #[test]
+    fn week_bounds_anchors_on_monday() {
+        // 2026-06-30 is a Tuesday; its week starts Monday 2026-06-29.
+        let w = week_bounds("2026-06-30").expect("valid date");
+        assert_eq!(w.this_since, "2026-06-29");
+        assert_eq!(w.this_until, "2026-07-06", "end-exclusive: next Monday");
+        assert_eq!(w.last_since, "2026-06-22");
+        assert_eq!(w.last_until, "2026-06-29");
+    }
+
+    #[test]
+    fn week_bounds_on_monday_and_sunday() {
+        // Monday: the week starts on that day.
+        let mon = week_bounds("2026-06-29").expect("valid");
+        assert_eq!(mon.this_since, "2026-06-29");
+        assert_eq!(mon.this_until, "2026-07-06");
+        // Sunday: still the same week starting the prior Monday.
+        let sun = week_bounds("2026-07-05").expect("valid");
+        assert_eq!(sun.this_since, "2026-06-29");
+        assert_eq!(sun.this_until, "2026-07-06");
+    }
+
+    #[test]
+    fn week_bounds_rejects_bad_date() {
+        assert!(week_bounds("not-a-date").is_none());
+        assert!(week_bounds("").is_none());
+    }
+
+    #[test]
+    fn render_planner_prompt_injects_week_ranges() {
+        let tmpl = "this={{this_week_since}}..{{this_week_until}} last={{last_week_since}}..{{last_week_until}}";
+        let out = render_planner_prompt(tmpl, "me@x.com", "2026-06-30", "this week");
+        assert_eq!(out, "this=2026-06-29..2026-07-06 last=2026-06-22..2026-06-29");
     }
 
     #[test]

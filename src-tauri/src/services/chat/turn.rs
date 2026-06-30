@@ -267,7 +267,14 @@ fn persist_prompted_tail(db: &Database, user_message_id: &str, messages: &[(Stri
 // ── Tool calling ────────────────────────────────────────────────────────────
 
 /// Maximum tool-call round-trips before we force the model to answer.
-const MAX_TOOL_ROUNDS: usize = 5;
+// Headroom for models that fetch incrementally (Qwen 3.6 35B-A3B emits one
+// get_email_body per round and sometimes burns a round on a malformed
+// search_emails({}) call). A multi-email tabulation needs ~1 search + N body
+// reads + 1 synthesis round; too low a cap forces a tools-free synthesis pass
+// that incremental fetchers tend to fill with another <tool_call> (gated to an
+// empty reply). The plan_answer closing instruction is the safety net when the
+// cap is still hit; this keeps the common case finishing in-loop.
+const MAX_TOOL_ROUNDS: usize = 10;
 
 /// Per-tool dispatch result: the text the LLM sees plus the structural
 /// allowlists this tool contributed (email ids + draft ids). Callers fold
@@ -415,10 +422,18 @@ pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToo
         let block = &text[after_open..close];
         cursor = close + CLOSE.len();
 
-        // Function name: <function=NAME>...
+        // A <tool_call> block carries one of two shapes:
+        //   1. Hermes function-XML: <function=NAME><parameter=K>V</parameter>…
+        //   2. JSON body: {"name":…,"arguments":…} — Qwen 3.6's shape.
+        // With no <function=> sub-element, treat the block as JSON.
         let fn_start = match block.find(FN_OPEN) {
             Some(s) => s + FN_OPEN.len(),
-            None => continue,
+            None => {
+                if let Some(call) = parse_json_tool_call_block(block.trim()) {
+                    out.push(call);
+                }
+                continue;
+            }
         };
         let fn_end = match block[fn_start..].find('>') {
             Some(e) => fn_start + e,
@@ -469,6 +484,181 @@ pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToo
         });
     }
     out
+}
+
+/// Parse the JSON body of a `<tool_call>{…}</tool_call>` block (Qwen 3.6's
+/// shape, as opposed to the `<function=>` Hermes form). Mirrors the leniency
+/// of the runtime's native Qwen parser: hoists a `name` nested inside
+/// `arguments` when there is no top-level one, and defaults missing
+/// `arguments` to an empty object. Returns `None` when the block is not a
+/// well-formed object or carries no resolvable tool name.
+fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    let value: serde_json::Value = serde_json::from_str(inner).ok()?;
+    let obj = value.as_object()?;
+    let mut arguments = obj
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let name = match obj.get("name").and_then(|v| v.as_str()) {
+        Some(n) => n.to_string(),
+        None => {
+            // Salvage the flattened `{"arguments":{…,"name":"<tool>"}}` shape
+            // by hoisting the nested name out of the args we dispatch.
+            let args_obj = arguments.as_object_mut()?;
+            match args_obj.remove("name") {
+                Some(serde_json::Value::String(n)) => n,
+                _ => return None,
+            }
+        }
+    };
+    Some(AiToolCall {
+        function: AiToolCallFunction { name, arguments },
+    })
+}
+
+/// (tool name, its parameter property keys, its required keys). The shape
+/// needed to infer which tool a nameless tool-call block targets.
+pub(crate) type ToolArgKeys = (&'static str, Vec<String>, Vec<String>);
+
+/// Tiebreak when several tools share the most-specific schema for a nameless
+/// call. The only real collision today is `get_email_body` vs `get_attachments`
+/// — both take exactly `{email_id}`. An unnamed batched `email_id` call (Qwen
+/// 3.6 reading emails to answer a question) is overwhelmingly a body read;
+/// `get_attachments` is niche and the model names it explicitly when it means
+/// it. Earlier entries win.
+const INFER_TIEBREAK_PREFERENCE: &[&str] = &["get_email_body", "search_emails"];
+
+/// Infer which tool a nameless tool-call block targets from its argument keys.
+///
+/// Qwen 3.6 under no-think batches body reads but drops the function name,
+/// emitting `<tool_call>{"arguments":{"email_id":"…"}}</tool_call>`. We recover
+/// the target by matching the call's argument keys against each tool's schema:
+/// every key must be a valid property of the tool, AND all of the tool's
+/// required params must be present. Returns the name only when EXACTLY one tool
+/// matches — ambiguous (e.g. empty args) or unmatched blocks yield `None`, so we
+/// never dispatch a guess.
+fn infer_tool_from_arg_keys(arg_keys: &[String], tools: &[ToolArgKeys]) -> Option<&'static str> {
+    use std::collections::HashSet;
+    // No keys = no signal. Bare `<tool_call>{}` could be any zero-arg tool.
+    if arg_keys.is_empty() {
+        return None;
+    }
+    let keyset: HashSet<&str> = arg_keys.iter().map(String::as_str).collect();
+    // A tool is a candidate when every supplied key is one of its properties
+    // AND all of its required params are supplied.
+    let mut candidates: Vec<(&'static str, usize)> = tools
+        .iter()
+        .filter(|(_, props, required)| {
+            let props_set: HashSet<&str> = props.iter().map(String::as_str).collect();
+            keyset.iter().all(|k| props_set.contains(k)) && required.iter().all(|r| keyset.contains(r.as_str()))
+        })
+        .map(|(name, props, _)| (*name, props.len()))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    // Disambiguate by specificity: a tool whose whole schema is just the keys
+    // supplied (e.g. get_email_body = {email_id}) is a far better fit than one
+    // that merely lists those keys among many optionals (generate_email_draft
+    // also takes an optional `email_id`). Smallest property set wins.
+    candidates.sort_by_key(|(_, n)| *n);
+    let smallest = candidates[0].1;
+    let tied: Vec<&'static str> = candidates
+        .iter()
+        .take_while(|(_, n)| *n == smallest)
+        .map(|(name, _)| *name)
+        .collect();
+    if tied.len() == 1 {
+        return Some(tied[0]);
+    }
+    // Several tools share the most-specific schema (get_email_body vs
+    // get_attachments, both {email_id}). Break the tie by preference; if none of
+    // the tied tools is preferred, the call is genuinely ambiguous — don't guess.
+    INFER_TIEBREAK_PREFERENCE.iter().copied().find(|p| tied.contains(p))
+}
+
+/// Salvage NAMELESS `<tool_call>{json}</tool_call>` blocks by inferring each
+/// block's tool from its argument keys (see [`infer_tool_from_arg_keys`]).
+/// Companion to the named-call parsers — only runs when those find nothing, so
+/// blocks that already carry a name never reach here.
+fn parse_unnamed_tool_calls(text: &str, tools: &[ToolArgKeys]) -> Vec<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+    const OPEN: &str = "<tool_call>";
+    const CLOSE: &str = "</tool_call>";
+
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel_open) = text[cursor..].find(OPEN) {
+        let after_open = cursor + rel_open + OPEN.len();
+        let Some(rel_close) = text[after_open..].find(CLOSE) else {
+            break;
+        };
+        let close = after_open + rel_close;
+        let inner = text[after_open..close].trim();
+        cursor = close + CLOSE.len();
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(inner) else {
+            continue;
+        };
+        let Some(obj) = value.as_object() else { continue };
+        // A resolvable top-level name means a named parser already handled it.
+        if obj.get("name").and_then(|v| v.as_str()).is_some() {
+            continue;
+        }
+        // Qwen wraps args under `arguments`; some emitters drop the wrapper and
+        // put bare args at the top level. Support both.
+        let mut arguments = match obj.get("arguments") {
+            Some(a) => a.clone(),
+            None => value.clone(),
+        };
+        let Some(args_obj) = arguments.as_object() else {
+            continue;
+        };
+        let keys: Vec<String> = args_obj.keys().filter(|k| k.as_str() != "name").cloned().collect();
+        if let Some(name) = infer_tool_from_arg_keys(&keys, tools) {
+            // Drop any stray `name` key from the dispatched args.
+            if let Some(o) = arguments.as_object_mut() {
+                o.remove("name");
+            }
+            out.push(AiToolCall {
+                function: AiToolCallFunction {
+                    name: name.to_string(),
+                    arguments,
+                },
+            });
+        }
+    }
+    out
+}
+
+/// Canonical, argument-order-independent key for a tool call (`name|args`), so
+/// two calls that differ only in JSON key order are recognised as the same.
+/// Used by the tool loop to spot a model re-issuing an identical call instead
+/// of answering.
+fn tool_call_key(tc: &crate::ai::provider::AiToolCall) -> String {
+    format!("{}|{}", tc.function.name, canonical_json(&tc.function.arguments))
+}
+
+/// Stable string form of a JSON value with object keys sorted (recursively).
+fn canonical_json(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let body = keys
+                .into_iter()
+                .map(|k| format!("{k}:{}", canonical_json(&map[k])))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{body}}}")
+        }
+        serde_json::Value::Array(arr) => {
+            format!("[{}]", arr.iter().map(canonical_json).collect::<Vec<_>>().join(","))
+        }
+        other => other.to_string(),
+    }
 }
 
 /// Salvage Python-call-style tool calls embedded in plain assistant text.
@@ -817,13 +1007,30 @@ enum AnswerPlan {
     StreamSynthesis(Vec<AiMessage>),
 }
 
+/// Closing instruction appended to a synthesis pass (the loop ended on tool
+/// results — a preseeded shortcut, or a run that hit `MAX_TOOL_ROUNDS` while
+/// still fetching). Without it, models that fetch incrementally (Qwen 3.6
+/// 35B-A3B emits one `get_email_body` per round) keep emitting another
+/// `<tool_call>` in the tools-free synthesis stream; the stream gate strips
+/// that markup, leaving the user an EMPTY reply. This forces a prose answer
+/// from whatever was already gathered. Bilingual so it lands regardless of the
+/// system prompt's reply language.
+const SYNTHESIS_CLOSING_INSTRUCTION: &str =
+    "Ya tienes toda la información necesaria en los resultados de las tools anteriores. \
+NO llames a ninguna tool más ni escribas etiquetas <tool_call>. Responde AHORA a la pregunta del usuario \
+usando solo esa información; si falta algún dato, responde con lo que tengas.\n\n\
+You already have all the information you need in the tool results above. Do NOT call any more tools or emit \
+<tool_call> markup. Answer the user's question NOW using only that information; if something is missing, \
+answer with what you have.";
+
 /// Decide how to produce the answer from the tool loop's final message list.
 /// Pure so the routing is unit-testable without a provider or `AppHandle`.
 ///
 /// A trailing assistant message with real text and no pending tool_calls is a
 /// finished answer; anything else (a tool result, a still-open tool call, a
-/// blank assistant turn) needs a streamed synthesis pass.
-fn plan_answer(final_messages: Vec<AiMessage>) -> AnswerPlan {
+/// blank assistant turn) needs a streamed synthesis pass — to which we append
+/// an explicit "stop calling tools, answer now" instruction.
+fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
     let is_direct = final_messages
         .last()
         .map(|m| {
@@ -837,6 +1044,13 @@ fn plan_answer(final_messages: Vec<AiMessage>) -> AnswerPlan {
         let content = final_messages.last().map(|m| m.content.clone()).unwrap_or_default();
         AnswerPlan::DirectText(content)
     } else {
+        // Force a prose answer from the gathered results instead of another
+        // `<tool_call>` (which the synthesis gate would strip to empty).
+        final_messages.push(AiMessage {
+            role: "user".to_string(),
+            content: SYNTHESIS_CLOSING_INSTRUCTION.to_string(),
+            tool_calls: None,
+        });
         AnswerPlan::StreamSynthesis(final_messages)
     }
 }
@@ -917,6 +1131,31 @@ fn build_final_stream_trace(latency_ms: i64, result: Option<&crate::ai::provider
     }
 }
 
+/// Trace entry for the pre-loop query planner (`plan_search`). Surfaced in the
+/// flow timeline so the planner LLM call is visible (`kind: "planner"`, sorted
+/// before round 0 via `round: -2`) instead of hidden behind a log line.
+/// `outcome` is `"search"` or `"defer"`.
+fn build_planner_trace(latency_ms: i64, outcome: &str) -> LlmCallTrace {
+    LlmCallTrace {
+        kind: "planner".to_string(),
+        round: -2,
+        latency_ms,
+        tool_calls_requested: 0,
+        failed: false,
+        prompt_tokens: None,
+        prefill_ms: None,
+        cached_prompt_tokens: None,
+        prefix_plan: None,
+        sys_cached_before: None,
+        sys_cached_after: None,
+        system_prefix_tokens: None,
+        stable_tokens: None,
+        dropped_front_tokens: None,
+        input: None,
+        output: Some(format!("planner: {outcome}")),
+    }
+}
+
 async fn run_tool_loop(
     db: &Arc<Database>,
     registry: &Arc<tools::ToolRegistry>,
@@ -968,6 +1207,12 @@ async fn run_tool_loop(
     // Same shape for drafts (`draft://DRAFT_ID` chips).
     let mut aggregated_draft_refs: Vec<String> = Vec::new();
     let mut seen_draft_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Canonical keys of tool calls already executed this turn. Some models
+    // (qwen3.5-9b observed) re-issue the SAME search every round instead of
+    // answering, burning the whole MAX_TOOL_ROUNDS budget on identical calls;
+    // a round that only repeats executed calls makes no progress, so we break
+    // to synthesis instead of re-running it.
+    let mut executed_tool_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Preseeded round 0: execute heuristic-detected tool calls directly ──
     // For shortcut queries like "summary of today's emails" we already know
@@ -1183,6 +1428,13 @@ async fn run_tool_loop(
                 parsed = parse_python_call_tool_calls(&response.content, &known_tools);
                 kind = "python-call";
             }
+            if parsed.is_empty() {
+                // Nameless `<tool_call>{"arguments":{…}}` blocks (Qwen 3.6
+                // batched no-think): infer each tool from its argument keys.
+                let schemas = registry.arg_key_schemas(db);
+                parsed = parse_unnamed_tool_calls(&response.content, &schemas);
+                kind = "inferred-name";
+            }
             if !parsed.is_empty() {
                 let names: Vec<&str> = parsed.iter().map(|c| c.function.name.as_str()).collect();
                 emit_log(
@@ -1261,11 +1513,28 @@ async fn run_tool_loop(
             }
         };
 
+        // No-progress guard: if every call this round was already executed with
+        // identical args, the model is spinning (re-searching instead of
+        // answering). Break to synthesis from the results we already have rather
+        // than waste the rest of the round budget on duplicates.
+        if tool_calls
+            .iter()
+            .all(|tc| executed_tool_keys.contains(&tool_call_key(tc)))
+        {
+            emit_log(
+                "info",
+                "tool_loop: model repeated already-executed tool call(s) with no new args \
+                 — synthesising from existing results instead of looping",
+            );
+            break;
+        }
+
         // Push the assistant's tool-call message so the history stays coherent.
         had_any_answer = true;
         messages.push(response);
 
         for tc in &tool_calls {
+            executed_tool_keys.insert(tool_call_key(tc));
             let name = &tc.function.name;
             let args = &tc.function.arguments;
 
@@ -1793,7 +2062,7 @@ pub async fn run_chat_turn(
     let t_route = std::time::Instant::now();
     emit_log("info", "stage: route");
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Routing);
-    let route = classify_route(&db, &user_question);
+    let route = classify_route(&db, &user_question, &history);
     emit_log(
         "info",
         &format!(
@@ -1831,23 +2100,24 @@ pub async fn run_chat_turn(
     // tool-choice round); anything else (a write/draft/multi-step ask, an
     // unparseable reply, a provider error) defers to the normal loop. Gated by
     // the `chat.planner_enabled` preference (default on).
+    // Trace entry for the planner LLM call, prepended to `llm_calls` below so it
+    // shows in the flow timeline ahead of the tool rounds.
+    let mut planner_trace: Option<LlmCallTrace> = None;
     if preseeded_tool_calls.is_none() && route.mode == RouteMode::ToolsFirst && planner_enabled(&db) {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
         let today = now_utc().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
-        match super::planner::plan_search(provider.as_ref(), &template, &user_email, &today, &user_question).await {
+        let plan = super::planner::plan_search(provider.as_ref(), &template, &user_email, &today, &user_question).await;
+        let plan_ms = t_plan.elapsed().as_millis() as i64;
+        match plan {
             super::planner::Plan::Search(plan) => {
-                emit_log(
-                    "info",
-                    &format!("planner: pre-seeded search_emails [{}ms]", t_plan.elapsed().as_millis()),
-                );
+                emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
+                planner_trace = Some(build_planner_trace(plan_ms, "search"));
                 preseeded_tool_calls = Some(vec![plan.into_tool_call()]);
             }
             super::planner::Plan::Defer => {
-                emit_log(
-                    "debug",
-                    &format!("planner: deferred to model loop [{}ms]", t_plan.elapsed().as_millis()),
-                );
+                emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
+                planner_trace = Some(build_planner_trace(plan_ms, "defer"));
             }
         }
     }
@@ -1982,6 +2252,10 @@ pub async fn run_chat_turn(
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+    // The planner ran before the loop; surface it first in the timeline.
+    if let Some(pt) = planner_trace.take() {
+        llm_calls.push(pt);
+    }
 
     // Run the tool loop only on the ToolsFirst path. RagFirst is strictly
     // sources-only: no tool definitions exposed, no tool loop, single LLM
@@ -2613,7 +2887,11 @@ mod tests {
         ];
         match plan_answer(messages) {
             AnswerPlan::StreamSynthesis(out) => {
-                assert_eq!(out.len(), 4, "all messages carried through to the stream");
+                assert_eq!(
+                    out.len(),
+                    5,
+                    "all messages carried through, plus the appended closing instruction"
+                );
                 let carrier = &out[2];
                 assert_eq!(carrier.role, "assistant");
                 assert_eq!(
@@ -2622,8 +2900,41 @@ mod tests {
                     "tool_calls preserved so the tool result is not orphaned"
                 );
                 assert_eq!(out[3].role, "tool");
+                // The closing instruction is appended last so the synthesis
+                // writes prose instead of another <tool_call>.
+                assert_eq!(out[4].role, "user");
+                assert!(
+                    out[4].content.to_lowercase().contains("tool"),
+                    "closing instruction must tell the model to stop calling tools"
+                );
+                assert!(out[4].tool_calls.is_none());
             }
             AnswerPlan::DirectText(_) => panic!("a trailing tool result is not a direct answer"),
+        }
+    }
+
+    #[test]
+    fn plan_answer_appends_closing_instruction_when_loop_hit_max_rounds() {
+        // The exact Qwen 3.6 failure: the loop exhausted MAX_TOOL_ROUNDS still
+        // fetching bodies (trailing message is a tool result, no assistant
+        // text). The synthesis must carry a closing "stop calling tools, answer
+        // now" instruction or the model emits another <tool_call> that the gate
+        // strips, leaving an empty reply.
+        let mut assistant = ai_msg("assistant", "");
+        assistant.tool_calls = Some(vec![ai_tool_call("get_email_body")]);
+        let messages = vec![
+            ai_msg("user", "lista todas las rondas de los últimos 5 correos de itnig"),
+            assistant,
+            ai_msg("tool", "## body of email 5 …"),
+        ];
+        match plan_answer(messages) {
+            AnswerPlan::StreamSynthesis(out) => {
+                let last = out.last().expect("synthesis carries at least the closing instruction");
+                assert_eq!(last.role, "user");
+                assert!(last.content.to_lowercase().contains("tool"));
+                assert!(last.tool_calls.is_none());
+            }
+            AnswerPlan::DirectText(_) => panic!("a run that ended on a tool result needs synthesis"),
         }
     }
 
@@ -3359,6 +3670,176 @@ Preséntalos en una tabla markdown …";
         let calls = parse_xml_tool_calls(text);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "ok");
+    }
+
+    // Qwen 3.6 (35B-A3B) emits the OTHER `<tool_call>` shape: a JSON body
+    // `{"name":…,"arguments":…}` inside the tags, with no `<function=>`
+    // sub-element. When this leaks as text (e.g. a tools-free synthesis pass),
+    // the salvage must still recover it — otherwise the markup is stripped and
+    // the user gets an empty reply.
+
+    #[test]
+    fn parse_xml_tool_calls_handles_json_body_inside_tool_call() {
+        let text = r#"<tool_call>{"name":"get_email_body","arguments":{"email_id":"19e9151c42eba1e7"}}</tool_call>"#;
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments["email_id"], "19e9151c42eba1e7");
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_handles_json_body_with_nested_name() {
+        // Qwen 3.6's exact final-round output: `name` nested inside
+        // `arguments`, no top-level `name`. Hoist it so the call dispatches
+        // and strip it from the args the tool receives.
+        let text = r#"<tool_call>{"arguments":{"email_id":"19e9151c42eba1e7","name":"get_email_body"}}</tool_call>"#;
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments["email_id"], "19e9151c42eba1e7");
+        assert!(
+            calls[0].function.arguments.get("name").is_none(),
+            "nested name must be stripped from dispatched args"
+        );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_json_body_defaults_missing_arguments_to_empty() {
+        let text = r#"<tool_call>{"name":"list_drafts"}</tool_call>"#;
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "list_drafts");
+        assert!(calls[0]
+            .function
+            .arguments
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(false));
+    }
+
+    // ── Repeated-tool-call detection (no-progress loop guard) ───────────
+
+    fn tc(name: &str, args: serde_json::Value) -> crate::ai::provider::AiToolCall {
+        use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+        AiToolCall {
+            function: AiToolCallFunction {
+                name: name.to_string(),
+                arguments: args,
+            },
+        }
+    }
+
+    #[test]
+    fn tool_call_key_is_argument_order_independent() {
+        // qwen3.5-9b re-issued the same search every round; the key must match
+        // regardless of the order the model serialised the args in.
+        let a = tc(
+            "search_emails",
+            serde_json::json!({"since":"2026-06-30","limit":25,"include_bodies":true}),
+        );
+        let b = tc(
+            "search_emails",
+            serde_json::json!({"limit":25,"include_bodies":true,"since":"2026-06-30"}),
+        );
+        assert_eq!(tool_call_key(&a), tool_call_key(&b));
+    }
+
+    #[test]
+    fn tool_call_key_differs_on_name_or_args() {
+        let base = tc("search_emails", serde_json::json!({"limit":25}));
+        assert_ne!(
+            tool_call_key(&base),
+            tool_call_key(&tc("search_emails", serde_json::json!({"limit":5}))),
+            "different args → different key"
+        );
+        assert_ne!(
+            tool_call_key(&base),
+            tool_call_key(&tc("get_email_body", serde_json::json!({"limit":25}))),
+            "different tool → different key"
+        );
+    }
+
+    // ── Nameless tool-call inference (Qwen 3.6 batched no-think) ─────────
+    //
+    // Under no-think Qwen 3.6 batches body reads but drops the function name:
+    //   <tool_call>{"arguments":{"email_id":"…"}}</tool_call>
+    // We recover the target by matching argument keys to a unique tool schema.
+
+    fn tool_schemas_fixture() -> Vec<ToolArgKeys> {
+        vec![
+            ("get_email_body", vec!["email_id".into()], vec!["email_id".into()]),
+            (
+                "search_emails",
+                vec!["query".into(), "from".into(), "to".into(), "limit".into()],
+                vec![],
+            ),
+            // generate_email_draft ALSO takes an optional `email_id` (no required
+            // params) → a naive subset match makes {email_id} ambiguous;
+            // specificity (smallest schema) drops it.
+            (
+                "generate_email_draft",
+                vec!["email_id".into(), "to".into(), "subject".into(), "instructions".into()],
+                vec![],
+            ),
+            // get_attachments has the SAME single-key schema as get_email_body —
+            // an irreducible tie that only the preference order can break.
+            ("get_attachments", vec!["email_id".into()], vec!["email_id".into()]),
+            ("list_drafts", vec!["limit".into()], vec![]),
+        ]
+    }
+
+    #[test]
+    fn infer_tool_from_unique_arg_keys() {
+        let tools = tool_schemas_fixture();
+        // {email_id} fits get_email_body, generate_email_draft AND get_attachments.
+        // generate_email_draft loses on specificity; get_email_body beats the
+        // equally-specific get_attachments via the preference tiebreak.
+        assert_eq!(
+            infer_tool_from_arg_keys(&["email_id".into()], &tools),
+            Some("get_email_body")
+        );
+        // {query} fits only search_emails.
+        assert_eq!(
+            infer_tool_from_arg_keys(&["query".into()], &tools),
+            Some("search_emails")
+        );
+    }
+
+    #[test]
+    fn infer_tool_refuses_ambiguous_or_unknown() {
+        let tools = tool_schemas_fixture();
+        // Empty args match every no-required tool → ambiguous → None.
+        assert_eq!(infer_tool_from_arg_keys(&[], &tools), None);
+        // A key no tool declares → None (don't dispatch a guess).
+        assert_eq!(infer_tool_from_arg_keys(&["nonsense".into()], &tools), None);
+        // Missing a required key → no match.
+        assert_eq!(
+            infer_tool_from_arg_keys(&["from".into()], &tools),
+            Some("search_emails"),
+            "from is a valid search_emails property with no unmet required"
+        );
+    }
+
+    #[test]
+    fn parse_unnamed_tool_calls_recovers_qwen36_batched_bodies() {
+        // The exact failing output: five nameless get_email_body blocks.
+        let text = "<tool_call>{\"arguments\":{\"email_id\":\"19efda3692fed705\"}}\n</tool_call>\
+                    <tool_call>{\"arguments\":{\"email_id\":\"19ed97b980f720e0\"}}\n</tool_call>\
+                    <tool_call>{\"arguments\":{\"email_id\":\"19eb56f57e174e7e\"}}\n</tool_call>";
+        let calls = parse_unnamed_tool_calls(text, &tool_schemas_fixture());
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|c| c.function.name == "get_email_body"));
+        assert_eq!(calls[0].function.arguments["email_id"], "19efda3692fed705");
+        assert_eq!(calls[2].function.arguments["email_id"], "19eb56f57e174e7e");
+    }
+
+    #[test]
+    fn parse_unnamed_tool_calls_skips_blocks_it_cannot_resolve() {
+        // Named blocks are left for the named parsers; unresolvable args are dropped.
+        let text = "<tool_call>{\"name\":\"get_email_body\",\"arguments\":{\"email_id\":\"a\"}}</tool_call>\
+                    <tool_call>{\"arguments\":{\"mystery\":\"x\"}}</tool_call>";
+        let calls = parse_unnamed_tool_calls(text, &tool_schemas_fixture());
+        assert!(calls.is_empty(), "named block skipped, unknown-arg block refused");
     }
 
     // ── Python-call tool-call rescue ────────────────────────────────────

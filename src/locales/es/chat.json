@@ -90,6 +90,7 @@
       },
       "phase": {
         "toolRound": "LLM · ronda de herramientas {{n}}",
+        "planner": "LLM · planificador",
         "finalStream": "LLM · respuesta final",
         "llmCall": "Llamada al LLM"
       },

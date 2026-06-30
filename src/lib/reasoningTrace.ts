@@ -139,6 +139,11 @@ export function buildFlow(trace: ChatTrace): FlowEntry[] {
   const preseeded = toolCalls.filter((tc) => tc.round < 0);
   const looped = toolCalls.filter((tc) => tc.round >= 0);
 
+  // The query planner runs before everything (it decides the preseeded search),
+  // so its LLM call leads the timeline ahead of the preseeded tool.
+  const plannerCalls = llmCalls.filter((c) => c.kind === 'planner');
+  const loopCalls = llmCalls.filter((c) => c.kind !== 'planner');
+
   const entries: FlowEntry[] = [];
   let id = 0;
   const emitTool = (call: ToolCallTrace) => {
@@ -146,7 +151,11 @@ export function buildFlow(trace: ChatTrace): FlowEntry[] {
     id += 1;
   };
 
-  // Preseeded shortcut tools ran before any LLM call.
+  for (const call of plannerCalls) {
+    entries.push({ kind: 'llm', id: `${call.kind}-${call.round}`, call });
+  }
+
+  // Preseeded shortcut tools ran before any loop LLM call.
   for (const call of preseeded) {
     emitTool(call);
   }
@@ -160,7 +169,7 @@ export function buildFlow(trace: ChatTrace): FlowEntry[] {
   let cursor = 0;
   const consumed = new Set<number>();
 
-  for (const call of llmCalls) {
+  for (const call of loopCalls) {
     entries.push({ kind: 'llm', id: `${call.kind}-${call.round}`, call });
     if (call.kind !== 'tool_round') continue;
 

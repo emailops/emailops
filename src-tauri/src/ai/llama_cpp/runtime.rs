@@ -641,19 +641,10 @@ impl LlamaCppRuntime {
 
         let mut prompt_str = Self::render_template(Arc::clone(&model), messages, true).await?;
         // One-shot completions (classification, rewrite, rerank, summary
-        // extraction) need raw payload, not reasoning. With the OAI helpers'
-        // `enable_thinking=false` flag gone, Qwen 3 family models default to
-        // emitting unbounded `<think>…</think>` spans that swallow the entire
-        // token budget — `strip_reasoning` then collapses the reply to "" and
-        // every caller surfaces "AI returned empty response …". `/no_think`
-        // in the user message is ignored by some Qwen 3 GGUFs (notably
-        // `qwen3.5-4b-q4_k_m`), so emulate the canonical chat-template
-        // behaviour: append an empty closed `<think>` block after the
-        // generation header. Qwen 3 reads this as "thinking already done,
-        // emit the answer now" and goes straight to the payload.
-        if self.chat_model_path.as_ref().is_some_and(|p| is_qwen3_model_path(p)) {
-            prompt_str.push_str("<think>\n\n</think>\n\n");
-        }
+        // extraction) need raw payload, not reasoning — disable thinking so an
+        // unbounded `<think>…</think>` span can't swallow the token budget and
+        // collapse the reply to "". See `no_think_priming`.
+        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
         let outcome = actor
             // One-shot completion (rewrite/rerank/extraction/warmup): never
             // cached — its prompt would evict the reusable chat prefix. No
@@ -685,9 +676,14 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let prompt_str = Self::render_template(Arc::clone(&model), messages.clone(), true).await?;
+        let mut prompt_str = Self::render_template(Arc::clone(&model), messages.clone(), true).await?;
         let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.clone(), &prompt_str).await;
         let system_bytes = Self::system_prefix_bytes(model, &messages, &prompt_str).await;
+        // Disable thinking on the chat answer pass too — on long/multi-email
+        // prompts the generation reserve shrinks to GEN_RESERVE_TOKENS and an
+        // unbounded `<think>` span would consume it, yielding an empty reply.
+        // Appended after the prefix byte counts so the cache anchor is intact.
+        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
 
         // Suppress reasoning/thinking spans from the live stream so the user
         // never sees `<|channel>…<channel|>` / `<think>…</think>`. The actor
@@ -770,9 +766,12 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
+        let mut prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
         let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.to_vec(), &prompt_str).await;
         let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
+        // Disable thinking on tool-call rounds — keeps the reserve for the
+        // tool call / answer instead of an unbounded `<think>` span.
+        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
         let outcome = actor
             .generate(
                 prompt_str,
@@ -815,9 +814,12 @@ impl LlamaCppRuntime {
             .await
             .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
 
-        let prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
+        let mut prompt_str = Self::render_template(Arc::clone(&model), messages.to_vec(), true).await?;
         let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.to_vec(), &prompt_str).await;
         let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
+        // Disable thinking on the streaming tool-call round — see
+        // `no_think_priming`; prevents the unbounded-`<think>` empty-reply path.
+        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
 
         // Gate each piece through two filters: first strip reasoning spans
         // (`<|channel>…`, `<think>…`), then suppress tool-call syntax;
@@ -1106,6 +1108,25 @@ fn is_qwen3_model_path(path: &std::path::Path) -> bool {
     name.starts_with("qwen3")
 }
 
+/// The empty closed `<think></think>` block that puts a Qwen 3 family model
+/// into no-think mode — Qwen reads it as "thinking already done, emit the
+/// answer now" and skips the (otherwise unbounded) reasoning span. Returns an
+/// empty string for non-Qwen models.
+///
+/// Why this matters for CHAT (not just one-shot completions): on a near-full
+/// context window the prompt-budget planner shrinks the generation reserve to
+/// `GEN_RESERVE_TOKENS` (1024). A reasoning model then spends that whole reserve
+/// inside `<think>…` and `strip_reasoning` collapses the reply to "" — an empty
+/// answer on long/multi-email prompts. Priming no-think keeps the answer inside
+/// the reserve. Append it AFTER the cached-prefix byte counts are computed: it
+/// lands at the generation point (prompt tail), so it never shifts the prefix.
+fn no_think_priming(model_path: Option<&std::path::Path>) -> &'static str {
+    match model_path {
+        Some(p) if is_qwen3_model_path(p) => "<think>\n\n</think>\n\n",
+        _ => "",
+    }
+}
+
 /// True when the GGUF-embedded chat template is the Gemma 4 family — uses
 /// `<|turn>` / `<turn|>` / `<|channel>` / `<channel|>` instead of the
 /// Gemma 2/3 `<start_of_turn>` / `<end_of_turn>` delimiters. llama.cpp's
@@ -1208,6 +1229,19 @@ mod tests {
             "/models/chat/deepseek-r1-distill-llama-8b.gguf"
         )));
         assert!(!is_qwen3_model_path(&PathBuf::from("")));
+    }
+
+    #[test]
+    fn no_think_priming_only_for_qwen3() {
+        use std::path::PathBuf;
+        // Qwen 3 family (incl. 3.6 MoE) gets the closed think block so an
+        // unbounded `<think>` span can't swallow the generation reserve.
+        let qwen = PathBuf::from("/models/chat/qwen3.6-35b-a3b-ud-q4_k_xl.gguf");
+        assert_eq!(no_think_priming(Some(qwen.as_path())), "<think>\n\n</think>\n\n");
+        // Non-Qwen and absent paths prime nothing.
+        let gemma = PathBuf::from("/models/chat/gemma-4-12b-it-qat-ud-q4_k_xl.gguf");
+        assert_eq!(no_think_priming(Some(gemma.as_path())), "");
+        assert_eq!(no_think_priming(None), "");
     }
 
     #[test]
