@@ -96,23 +96,35 @@ fn resolve_categories(state: &AppState, requested: Option<Vec<String>>) -> Vec<S
             .get_preference("chat.default_categories")
             .ok()
             .flatten()
-            .map(|s| {
-                s.split(',')
-                    .map(|t| t.trim().to_lowercase())
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| {
-                crate::services::chat::DEFAULT_RAG_CATEGORIES
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-            }),
+            .map(|s| s.split(',').map(|t| t.to_string()).collect::<Vec<_>>())
+            .unwrap_or_default(),
     };
-    candidate
+    normalize_categories(candidate)
+}
+
+/// Lower-case, drop unknown values, and fall back to the default scope (primary)
+/// when nothing valid remains. Pure so it is unit-testable.
+///
+/// The empty fallback is the important part: an empty category list must NEVER
+/// reach the tool layer, because `search_emails` treats empty scope as "no
+/// filter → ALL categories" (`tools/search_emails.rs`). Without this, a stray
+/// empty selection (a corrupt pref, a `[]` from the UI before the pref loads)
+/// silently widens a Primary-scoped chat to every category — the "I see Updates
+/// even though only Primary is selected" bug.
+fn normalize_categories(candidate: Vec<String>) -> Vec<String> {
+    let filtered: Vec<String> = candidate
         .into_iter()
+        .map(|c| c.trim().to_lowercase())
         .filter(|c| VALID_CATEGORIES.contains(&c.as_str()))
-        .collect()
+        .collect();
+    if filtered.is_empty() {
+        crate::services::chat::DEFAULT_RAG_CATEGORIES
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        filtered
+    }
 }
 
 #[tauri::command]
@@ -226,4 +238,43 @@ pub async fn send_chat_message(
         user_message,
         assistant_message,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_categories;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn keeps_a_valid_single_scope() {
+        assert_eq!(normalize_categories(v(&["primary"])), v(&["primary"]));
+    }
+
+    #[test]
+    fn empty_falls_back_to_primary_not_everything() {
+        // The whole point: empty must NOT become "all categories" downstream.
+        assert_eq!(normalize_categories(v(&[])), v(&["primary"]));
+    }
+
+    #[test]
+    fn all_invalid_falls_back_to_primary() {
+        assert_eq!(normalize_categories(v(&["bogus", "spam"])), v(&["primary"]));
+    }
+
+    #[test]
+    fn lowercases_and_drops_unknowns_keeping_valid() {
+        assert_eq!(
+            normalize_categories(v(&["Updates", "PROMOTIONS", "nope"])),
+            v(&["updates", "promotions"])
+        );
+    }
+
+    #[test]
+    fn preserves_a_full_explicit_all_selection() {
+        let all = v(&["primary", "updates", "promotions", "social", "forums"]);
+        assert_eq!(normalize_categories(all.clone()), all);
+    }
 }
