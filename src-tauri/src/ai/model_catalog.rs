@@ -135,6 +135,25 @@ pub static CATALOG: &[CatalogModel] = &[
         supports_tools: true,
         bundled: false,
     },
+    CatalogModel {
+        id: "qwen3.6-35b-a3b-ud-q4_k_xl",
+        display_name: "Qwen 3.6 35B A3B",
+        kind: ModelKind::Chat,
+        // unsloth/Qwen3.6-35B-A3B-GGUF/main · Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+        // Authoritative size + sha256 from the HuggingFace tree API (file `size`
+        // and `lfs.oid`); single file, not split.
+        // MoE: 35B total params, ~3B active per token — dense-35B memory footprint
+        // (all experts resident) but ~3B-class decode speed.
+        size_bytes: 22_360_456_160,
+        context_window: 262_144,
+        sha256: "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
+        url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+        license: "apache-2.0",
+        min_ram_gb: 32,
+        recommended: false,
+        supports_tools: true,
+        bundled: false,
+    },
     // ── Embedding models ─────────────────────────────────────────────────────
     CatalogModel {
         // Ships inside the .app via tauri.conf.json `bundle.resources` and is
@@ -260,6 +279,34 @@ mod tests {
         assert!(entry.supports_tools, "Gemma 4 12B must support tool-calling");
         assert_eq!(entry.license, "gemma");
         assert_eq!(entry.min_ram_gb, 16, "Gemma 4 12B QAT runs in 16 GB+");
+    }
+
+    #[test]
+    fn qwen3_6_35b_a3b_entry_is_present_and_correct() {
+        let entry = find("qwen3.6-35b-a3b-ud-q4_k_xl").expect("Qwen 3.6 35B A3B UD-Q4_K_XL must be in the catalog");
+        assert_eq!(entry.kind, ModelKind::Chat);
+        assert_eq!(
+            entry.url,
+            "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+        );
+        // Authoritative values from the HuggingFace tree API: file `size` and
+        // `lfs.oid` (sha256) for Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf (single file, ~22.4 GB).
+        assert_eq!(entry.size_bytes, 22_360_456_160);
+        assert_eq!(
+            entry.sha256,
+            "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450"
+        );
+        assert_eq!(entry.context_window, 262_144);
+        assert_eq!(entry.license, "apache-2.0");
+        assert!(entry.supports_tools, "Qwen 3.6 35B A3B must support tool-calling");
+        // 35B-A3B MoE: all experts stay resident (~22.4 GB of weights) even though
+        // only ~3B activate per token, so peak RAM (weights + KV + activations)
+        // needs 32 GB+ — matches upstream's "32 GB+" Mac guidance.
+        assert_eq!(entry.min_ram_gb, 32);
+        assert!(
+            !entry.recommended,
+            "the 4B Q4 stays the recommended default; the 35B A3B is an opt-in heavy model"
+        );
     }
 
     #[test]
