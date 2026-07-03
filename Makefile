@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -140,6 +140,11 @@ cli-run:
 cli-fast:
 	cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features cli --bin emailops-cli -- $(ARGS)
 
+# Build an optimized (unsigned) emailops-cli and symlink it onto your PATH for
+# local use. Override the dir with PREFIX=~/.local/bin. Logic in scripts/.
+install-cli:
+	bash scripts/install_cli.sh
+
 # Drive the CLI against the synthetic demo DB (safe for screen recordings / GIFs).
 # Auto-builds the demo DB + embeddings if missing, then runs with llama.cpp on so
 # chat works fully offline against demo data. No ARGS → interactive REPL.
@@ -264,7 +269,7 @@ install:
 deploy:
 	cargo build --release --features eval --example chat_eval --manifest-path src-tauri/Cargo.toml
 	npm run tauri build
-	cp -r src-tauri/target/release/bundle/macos/EmailOps.app /Applications/
+	bash scripts/install_to_applications.sh src-tauri/target/release/bundle/macos/EmailOps.app
 
 # Security audit
 audit:
