@@ -268,7 +268,7 @@ install:
 # Deploy (build + install to /Applications on macOS)
 deploy:
 	cargo build --release --features eval --example chat_eval --manifest-path src-tauri/Cargo.toml
-	npm run tauri build
+	npm run tauri build -- --bundles app
 	bash scripts/install_to_applications.sh src-tauri/target/release/bundle/macos/EmailOps.app
 
 # Security audit
