@@ -87,7 +87,19 @@ export function DraftsView({ accountId, accounts, onOpenComposeTab }: DraftsView
         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
           {drafts.map((draft) => (
             <div key={draft.id} className="px-6 py-4 hover:bg-gray-50 transition-colors flex items-start gap-4">
-              <div className="flex-1 min-w-0">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpenComposeTab(draft)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenComposeTab(draft);
+                  }
+                }}
+                className="flex-1 min-w-0 cursor-pointer"
+                title={t('compose:drafts.continueEditing')}
+              >
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-sm font-medium text-gray-900 truncate">{draft.subject || '(no subject)'}</span>
                   <span className="text-xs text-gray-400 flex-shrink-0">

@@ -50,15 +50,28 @@ export interface Email {
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
 export type EmailCategory = 'primary' | 'social' | 'updates' | 'forums' | 'promotions';
 
+export interface DraftAttachment {
+  id: string;
+  draftId: string;
+  filePath: string;
+  filename: string;
+  mimeType: string;
+}
+
 export interface Draft {
   id: string;
   emailId: string | null;
   accountId: string;
   toAddresses: string[];
+  ccAddresses: string[];
   subject: string;
   body: string;
+  bodyHtml: string | null;
   aiGenerated: boolean;
   status: 'draft' | 'sent';
+  /** Id of the matching draft in the provider's Drafts folder, or null when local-only. */
+  providerDraftId: string | null;
+  attachments: DraftAttachment[];
   createdAt: number;
   updatedAt: number;
 }

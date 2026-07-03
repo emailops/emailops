@@ -207,6 +207,7 @@ fn build_email_body(
         // Footer language is resolved from the user's UI preference in the send
         // service; default here keeps this builder free of DB access.
         language: crate::services::i18n::Language::default(),
+        append_footer: true,
     })
 }
 

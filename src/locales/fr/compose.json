@@ -13,6 +13,7 @@
   "bodyPlaceholder": "Rédigez votre message…",
   "openInTab": "Ouvrir dans un onglet",
   "attachFiles": "Joindre des fichiers",
+  "attachFromDraftHint": "Les pièces jointes de ce brouillon ont été ajoutées depuis la CLI - supprimez-les pour joindre de nouveaux fichiers ici",
   "sameDomain": "même domaine",
   "yourReply": "votre réponse",
   "body": "Message",

@@ -17,7 +17,7 @@ use base64::{
 };
 use serde_json::{json, Value};
 
-use crate::sync::provider::{email_footer_html, email_footer_plain, EmailAttachment, EmailBody};
+use crate::sync::provider::{EmailAttachment, EmailBody};
 
 /// Inputs needed to assemble a Graph send payload.
 pub struct OutlookSendParams<'a> {
@@ -37,6 +37,13 @@ pub fn build_send_mail_payload(params: &OutlookSendParams<'_>) -> Value {
     })
 }
 
+/// Build the JSON body for creating/updating a draft: the bare Graph `Message`
+/// resource. `POST /me/messages` creates it as a draft; `PATCH /me/messages/{id}`
+/// updates it. Callers pass a footer-free body (drafts add the footer at send).
+pub fn build_draft_payload(params: &OutlookSendParams<'_>) -> Value {
+    build_message_object(params)
+}
+
 /// Build the JSON body for `POST /me/messages/{id}/reply`.
 ///
 /// The `/reply` endpoint accepts an optional `message` override containing
@@ -50,7 +57,7 @@ pub fn build_reply_payload(params: &OutlookSendParams<'_>) -> Value {
         })
     } else {
         json!({
-            "comment": format!("{}{}", params.body.text, email_footer_plain(params.body.language)),
+            "comment": format!("{}{}", params.body.text, params.body.footer_plain()),
             "message": {
                 "toRecipients": build_recipients(params.to_emails),
                 "ccRecipients": build_recipients(params.cc_emails),
@@ -85,12 +92,12 @@ fn build_body_object(body: &EmailBody) -> Value {
     if let Some(html) = &body.html {
         json!({
             "contentType": "HTML",
-            "content": format!("{}{}", html, email_footer_html(body.language)),
+            "content": format!("{}{}", html, body.footer_html()),
         })
     } else {
         json!({
             "contentType": "Text",
-            "content": format!("{}{}", body.text, email_footer_plain(body.language)),
+            "content": format!("{}{}", body.text, body.footer_plain()),
         })
     }
 }
@@ -170,6 +177,19 @@ mod tests {
             body,
             attachments,
         }
+    }
+
+    #[test]
+    fn draft_payload_is_bare_message_and_omits_footer_when_disabled() {
+        let to = vec!["a@b.com".to_string()];
+        let body = EmailBody::plain("draft body").without_footer();
+        let payload = build_draft_payload(&params(&body, &[], &to));
+        // Bare Message resource — no sendMail wrapper.
+        assert!(payload["message"].is_null());
+        assert!(payload["saveToSentItems"].is_null());
+        assert_eq!(payload["subject"], "hello");
+        let content = payload["body"]["content"].as_str().unwrap();
+        assert_eq!(content, "draft body", "footer must be suppressed for drafts");
     }
 
     #[test]

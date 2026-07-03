@@ -71,6 +71,13 @@ struct GraphMessageRef {
     conversation_id: Option<String>,
 }
 
+/// Drafts-folder listing: full `Message` resources (with body + recipients),
+/// unlike [`GraphMessageList`] which carries only lightweight refs.
+#[derive(Debug, Deserialize)]
+struct GraphMessageDraftList {
+    value: Vec<GraphMessage>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GraphMessage {
     id: String,
@@ -450,6 +457,96 @@ impl OutlookClient {
         Ok(())
     }
 
+    // ── Drafts ───────────────────────────────────────────────────────────────
+
+    pub async fn create_draft(
+        &self,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let payload =
+            crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
+                to_emails,
+                cc_emails,
+                subject,
+                body,
+                attachments,
+            });
+        // POST to /me/messages creates the message as a draft.
+        let url = format!("{}/me/messages", self.base_url);
+        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let msg: GraphMessage = response.json().await?;
+        Ok(msg.id)
+    }
+
+    pub async fn update_draft(
+        &self,
+        provider_draft_id: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let payload =
+            crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
+                to_emails,
+                cc_emails,
+                subject,
+                body,
+                attachments,
+            });
+        let url = format!(
+            "{}/me/messages/{}",
+            self.base_url,
+            urlencoding::encode(provider_draft_id)
+        );
+        let response = self
+            .send_request_with_retry("update draft", |client, token| {
+                client.patch(&url).bearer_auth(token).json(&payload)
+            })
+            .await?;
+        let msg: GraphMessage = response.json().await?;
+        Ok(msg.id)
+    }
+
+    pub async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/me/messages/{}",
+            self.base_url,
+            urlencoding::encode(provider_draft_id)
+        );
+        self.send_request_with_retry("delete draft", |client, token| client.delete(&url).bearer_auth(token))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
+        let url = format!("{}/me/mailFolders/drafts/messages?$top=100", self.base_url);
+        let response = self.send_get_with_retry(&url, "list drafts").await?;
+        let list: GraphMessageDraftList = response.json().await?;
+        let mut out = Vec::new();
+        for msg in list.value {
+            let provider_draft_id = msg.id.clone();
+            let (email, _cat) = parse_message(msg);
+            // Graph draft bodies are HTML; split so the composer renders the
+            // rich source instead of escaping it as literal text.
+            let (body, body_html) = crate::util::html::split_draft_body(&email.body);
+            out.push(crate::models::ProviderDraft {
+                provider_draft_id,
+                to_addresses: email.recipients,
+                cc_addresses: email.cc,
+                subject: email.subject,
+                body,
+                body_html,
+            });
+        }
+        Ok(out)
+    }
+
     // ── Attachment bytes ─────────────────────────────────────────────────────
 
     pub async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -772,6 +869,41 @@ impl EmailProvider for OutlookClient {
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
         self.fetch_attachment_bytes(message_id, attachment_id).await
+    }
+
+    async fn create_draft(
+        &self,
+        _from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        self.create_draft(to_emails, cc_emails, subject, body, attachments)
+            .await
+    }
+
+    async fn update_draft(
+        &self,
+        provider_draft_id: &str,
+        _from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        self.update_draft(provider_draft_id, to_emails, cc_emails, subject, body, attachments)
+            .await
+    }
+
+    async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        self.delete_draft(provider_draft_id).await
+    }
+
+    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
+        self.list_drafts().await
     }
 }
 

@@ -70,6 +70,31 @@ struct GmailMessage {
     internal_date: String,
 }
 
+/// Draft resource where we only need the draft `id`. Used for `drafts.create`,
+/// `drafts.update`, and `drafts.list` entries — all of which return the nested
+/// `message` in MINIMAL format (no `payload`). Deserializing that partial
+/// message into the full [`GmailMessage`] fails, so those paths must decode the
+/// id alone (serde ignores the extra `message` field). Read with
+/// `format=full` — see [`GmailDraft`] — when the message body is actually needed.
+#[derive(Debug, Deserialize)]
+struct GmailDraftId {
+    id: String,
+}
+
+/// Full draft resource, decoded only from a `format=full` fetch where the
+/// nested `message` carries a complete payload.
+#[derive(Debug, Deserialize)]
+struct GmailDraft {
+    #[allow(dead_code)]
+    id: String,
+    message: Option<GmailMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GmailDraftList {
+    drafts: Option<Vec<GmailDraftId>>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GmailPayload {
     headers: Vec<GmailHeader>,
@@ -423,6 +448,102 @@ impl GmailClient {
         }
 
         Ok(())
+    }
+
+    /// Build the base64url-encoded MIME + `{message:{raw}}` payload shared by
+    /// draft create and update.
+    fn draft_payload(
+        &self,
+        from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<serde_json::Value> {
+        let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
+            from_email,
+            to_emails,
+            cc_emails,
+            subject,
+            in_reply_to: None,
+            body,
+            attachments,
+        })?;
+        let raw = base64_url_encode(mime.as_bytes());
+        Ok(serde_json::json!({ "message": { "raw": raw } }))
+    }
+
+    async fn create_draft(
+        &self,
+        from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
+        let url = format!("{}/users/me/drafts", self.base_url);
+        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let draft: GmailDraftId = response.json().await?;
+        Ok(draft.id)
+    }
+
+    async fn update_draft(
+        &self,
+        provider_draft_id: &str,
+        from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
+        let url = format!("{}/users/me/drafts/{}", self.base_url, provider_draft_id);
+        let response = self
+            .send_request_with_retry("update draft", |client, token| {
+                client.put(&url).bearer_auth(token).json(&payload)
+            })
+            .await?;
+        let draft: GmailDraftId = response.json().await?;
+        Ok(draft.id)
+    }
+
+    async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        let url = format!("{}/users/me/drafts/{}", self.base_url, provider_draft_id);
+        self.send_request_with_retry("delete draft", |client, token| client.delete(&url).bearer_auth(token))
+            .await?;
+        Ok(())
+    }
+
+    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
+        // Page 1 only (maxResults=100) — the Drafts folder is small in practice
+        // and the pull pass is best-effort.
+        let url = format!("{}/users/me/drafts?maxResults=100", self.base_url);
+        let response = self.send_get_with_retry(&url, "list drafts").await?;
+        let list: GmailDraftList = response.json().await?;
+        let mut out = Vec::new();
+        for entry in list.drafts.unwrap_or_default() {
+            let full_url = format!("{}/users/me/drafts/{}?format=full", self.base_url, entry.id);
+            let full_resp = self.send_get_with_retry(&full_url, "get draft").await?;
+            let full: GmailDraft = full_resp.json().await?;
+            let Some(msg) = full.message else { continue };
+            let (email, _cat, _atts) = self.parse_message(msg).await?;
+            // The parsed body is HTML; split it so the composer renders the rich
+            // source instead of escaping it as literal text.
+            let (body, body_html) = crate::util::html::split_draft_body(&email.body);
+            out.push(crate::models::ProviderDraft {
+                provider_draft_id: entry.id,
+                to_addresses: email.recipients,
+                cc_addresses: email.cc,
+                subject: email.subject,
+                body,
+                body_html,
+            });
+        }
+        Ok(out)
     }
 
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
@@ -1228,6 +1349,49 @@ impl EmailProvider for GmailClient {
         self.fetch_attachment_bytes(message_id, attachment_id).await
     }
 
+    async fn create_draft(
+        &self,
+        from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        self.create_draft(from_email, to_emails, cc_emails, subject, body, attachments)
+            .await
+    }
+
+    async fn update_draft(
+        &self,
+        provider_draft_id: &str,
+        from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        self.update_draft(
+            provider_draft_id,
+            from_email,
+            to_emails,
+            cc_emails,
+            subject,
+            body,
+            attachments,
+        )
+        .await
+    }
+
+    async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        self.delete_draft(provider_draft_id).await
+    }
+
+    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
+        self.list_drafts().await
+    }
+
     async fn batch_get_messages(
         &self,
         message_ids: &[&str],
@@ -1954,6 +2118,35 @@ mod tests {
             ]),
         );
         assert_eq!(client.find_body_part(&payload, "text/html").unwrap(), "<p>first</p>");
+    }
+
+    #[test]
+    fn create_draft_response_decodes_from_minimal_message() {
+        // `drafts.create` / `drafts.update` return the message in MINIMAL format
+        // (no `payload`/`snippet`/`internalDate`). The response decode must only
+        // depend on the draft `id`, or serde fails with "error decoding response
+        // body" on an otherwise-successful 2xx.
+        let body = serde_json::json!({
+            "id": "r-abc123",
+            "message": { "id": "m1", "threadId": "t1", "labelIds": ["DRAFT"] }
+        });
+        let draft: GmailDraftId = serde_json::from_value(body).expect("minimal draft decodes");
+        assert_eq!(draft.id, "r-abc123");
+    }
+
+    #[test]
+    fn draft_list_decodes_from_minimal_entries() {
+        // `drafts.list` entries also carry a minimal `message` (id + threadId).
+        let body = serde_json::json!({
+            "drafts": [
+                { "id": "r-1", "message": { "id": "m1", "threadId": "t1" } },
+                { "id": "r-2", "message": { "id": "m2", "threadId": "t2" } }
+            ],
+            "resultSizeEstimate": 2
+        });
+        let list: GmailDraftList = serde_json::from_value(body).expect("minimal list decodes");
+        let ids: Vec<_> = list.drafts.unwrap_or_default().into_iter().map(|d| d.id).collect();
+        assert_eq!(ids, vec!["r-1", "r-2"]);
     }
 
     #[test]

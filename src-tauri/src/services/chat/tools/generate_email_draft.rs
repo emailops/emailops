@@ -215,8 +215,12 @@ async fn generate_reply_draft(
         email_id: Some(email_id.to_string()),
         account_id: inbound.account_id.clone(),
         to_addresses: vec![inbound.sender_email.clone()],
+        cc_addresses: Vec::new(),
         subject,
         body: result.body.clone(),
+        body_html: None,
+        provider_draft_id: None,
+        attachments: None,
     };
     match emails::save_draft(ctx.db, &req) {
         Ok(draft) => {
@@ -282,8 +286,12 @@ async fn generate_new_draft(ctx: &ToolCtx<'_>, to: &[String], subject: &str, ins
         email_id: None,
         account_id: ctx.account_id.to_string(),
         to_addresses: to.to_vec(),
+        cc_addresses: Vec::new(),
         subject: subject.to_string(),
         body: result.body.clone(),
+        body_html: None,
+        provider_draft_id: None,
+        attachments: None,
     };
     match emails::save_draft(ctx.db, &req) {
         Ok(draft) => {

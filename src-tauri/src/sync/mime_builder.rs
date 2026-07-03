@@ -32,7 +32,7 @@ use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::Message as LettreMessage;
 
 use crate::models::error::{AppError, Result};
-use crate::sync::provider::{email_footer_html, email_footer_plain, EmailAttachment, EmailBody};
+use crate::sync::provider::{EmailAttachment, EmailBody};
 
 /// Inputs needed to assemble an outgoing message. `in_reply_to` carries the
 /// original `Message-ID` for reply threading (e.g. `<abc@gmail.com>`); pass
@@ -65,7 +65,7 @@ pub fn build_send_mime(params: &SendMimeParams<'_>) -> Result<String> {
 pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage> {
     let builder = base_builder(params)?;
 
-    let body_text = format!("{}{}", params.body.text, email_footer_plain(params.body.language));
+    let body_text = format!("{}{}", params.body.text, params.body.footer_plain());
 
     let msg = match (params.body.html.as_deref(), params.attachments.is_empty()) {
         // Plain text, no attachments — lettre infers `text/plain; charset=utf-8`.
@@ -87,7 +87,7 @@ pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage
 
         // HTML + (optional inline images) + (optional attachments).
         (Some(html), _) => {
-            let body_html = format!("{}{}", html, email_footer_html(params.body.language));
+            let body_html = format!("{}{}", html, params.body.footer_html());
             let alternative = MultiPart::alternative_plain_html(body_text, body_html);
 
             let inline_images = &params.body.inline_images;
@@ -224,6 +224,19 @@ mod tests {
         assert!(mime.contains("hi there"));
         // Footer always appended (default English, brand "EmailOps").
         assert!(mime.contains("Sent with EmailOps"), "footer must be appended");
+    }
+
+    #[test]
+    fn without_footer_suppresses_the_footer() {
+        // Drafts push footer-free bodies so a push→pull→send round-trip does not
+        // bake the "Sent with EmailOps" line in twice.
+        let body = EmailBody::plain("draft body").without_footer();
+        let mime = p(&body, &[]);
+        assert!(mime.contains("draft body"));
+        assert!(
+            !mime.contains("Sent with EmailOps"),
+            "footer must be suppressed for footer-free bodies, got:\n{mime}"
+        );
     }
 
     #[test]

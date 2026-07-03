@@ -1,8 +1,15 @@
 use async_trait::async_trait;
 
-use crate::models::error::Result;
-use crate::models::Email;
+use crate::models::error::{AppError, Result};
+use crate::models::{Email, ProviderDraft};
 use crate::services::i18n::Language;
+
+/// Whether a provider (identified by its `accounts.provider` string) supports
+/// server-side drafts we can push to / pull from. Gmail and Outlook expose
+/// draft APIs; IMAP does not in our implementation, so its drafts stay local.
+pub fn provider_supports_drafts(provider: &str) -> bool {
+    matches!(provider, "gmail" | "outlook")
+}
 
 /// An attachment to include in an outgoing email.
 ///
@@ -52,6 +59,11 @@ pub struct EmailBody {
     /// layer. Resolved from the user's UI-language preference in the send
     /// service; defaults to English so direct constructions stay deterministic.
     pub language: Language,
+    /// Whether the "Sent with EmailOps" footer is appended when this body is
+    /// serialized. The footer belongs to the *send* action, so drafts pushed to
+    /// the provider set this `false` — otherwise a push→pull→send round-trip
+    /// would bake the footer in twice. Defaults to `true`.
+    pub append_footer: bool,
 }
 
 impl EmailBody {
@@ -62,6 +74,7 @@ impl EmailBody {
             html: None,
             inline_images: Vec::new(),
             language: Language::default(),
+            append_footer: true,
         }
     }
 
@@ -72,6 +85,7 @@ impl EmailBody {
             html: Some(html.into()),
             inline_images: Vec::new(),
             language: Language::default(),
+            append_footer: true,
         }
     }
 
@@ -80,6 +94,33 @@ impl EmailBody {
     pub fn with_language(mut self, language: Language) -> Self {
         self.language = language;
         self
+    }
+
+    /// Suppress the "Sent with EmailOps" footer (builder-style). Used when
+    /// pushing a draft to the provider — the footer is added at send time.
+    pub fn without_footer(mut self) -> Self {
+        self.append_footer = false;
+        self
+    }
+
+    /// The plain-text footer to append when serializing this body — empty when
+    /// `append_footer` is disabled.
+    pub fn footer_plain(&self) -> String {
+        if self.append_footer {
+            email_footer_plain(self.language)
+        } else {
+            String::new()
+        }
+    }
+
+    /// The HTML footer to append when serializing this body — empty when
+    /// `append_footer` is disabled.
+    pub fn footer_html(&self) -> String {
+        if self.append_footer {
+            email_footer_html(self.language)
+        } else {
+            String::new()
+        }
     }
 
     /// True when this body has an HTML alternative the provider should serialize.
@@ -298,6 +339,59 @@ pub trait EmailProvider: Send + Sync {
         }
         Ok(results)
     }
+
+    // ── Drafts ────────────────────────────────────────────────────────────
+    //
+    // Providers that support server-side drafts (Gmail, Outlook) override
+    // these; callers gate the create/update/delete calls behind
+    // `provider_supports_drafts(account.provider)`, so the "unsupported"
+    // defaults below only fire if a provider is mis-wired. `list_drafts`
+    // defaults to empty (the pull pass is best-effort) rather than erroring.
+
+    /// Create a draft in the provider's Drafts folder. Returns the provider's
+    /// draft id, which the caller stores locally to keep the two in sync.
+    async fn create_draft(
+        &self,
+        _from_email: &str,
+        _to_emails: &[String],
+        _cc_emails: &[String],
+        _subject: &str,
+        _body: &EmailBody,
+        _attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        Err(AppError::InvalidInput(
+            "drafts are not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Update an existing provider draft in place. Returns the (possibly new)
+    /// provider draft id.
+    async fn update_draft(
+        &self,
+        _provider_draft_id: &str,
+        _from_email: &str,
+        _to_emails: &[String],
+        _cc_emails: &[String],
+        _subject: &str,
+        _body: &EmailBody,
+        _attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        Err(AppError::InvalidInput(
+            "drafts are not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Delete a draft from the provider's Drafts folder.
+    async fn delete_draft(&self, _provider_draft_id: &str) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "drafts are not supported by this provider".to_string(),
+        ))
+    }
+
+    /// List drafts currently in the provider's Drafts folder, for the pull pass.
+    async fn list_drafts(&self) -> Result<Vec<ProviderDraft>> {
+        Ok(Vec::new())
+    }
 }
 
 // ── Fake provider for tests ──────────────────────────────────────────────────
@@ -319,6 +413,12 @@ pub struct FakeEmailProvider {
     sent: std::sync::RwLock<Vec<FakeSentMessage>>,
     /// Bytes returned by `fetch_attachment_bytes`, keyed by `(message_id, attachment_id)`.
     attachment_bytes: std::sync::RwLock<std::collections::HashMap<(String, String), Vec<u8>>>,
+    /// Server-side drafts, keyed by provider draft id. Populated by
+    /// `create_draft`/`update_draft`, read by `list_drafts`, and used by tests
+    /// to assert push/pull behaviour.
+    drafts: std::sync::RwLock<std::collections::HashMap<String, ProviderDraft>>,
+    /// Monotonic counter for deterministic fake draft ids (no `Math.random`).
+    draft_seq: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -351,7 +451,29 @@ impl FakeEmailProvider {
             messages: std::sync::RwLock::new(Vec::new()),
             sent: std::sync::RwLock::new(Vec::new()),
             attachment_bytes: std::sync::RwLock::new(std::collections::HashMap::new()),
+            drafts: std::sync::RwLock::new(std::collections::HashMap::new()),
+            draft_seq: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Seed a draft as if it already exists in the provider's Drafts folder.
+    /// Used by pull tests that need the provider to have drafts the app hasn't
+    /// created itself.
+    pub fn add_provider_draft(&self, draft: ProviderDraft) {
+        self.drafts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(draft.provider_draft_id.clone(), draft);
+    }
+
+    /// Snapshot of the provider-side drafts, for test assertions.
+    pub fn provider_drafts(&self) -> Vec<ProviderDraft> {
+        self.drafts
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Add a message to the fake mailbox. Ordering reflects insertion order;
@@ -526,6 +648,69 @@ impl EmailProvider for FakeEmailProvider {
                     "Fake attachment bytes not configured: {message_id}/{attachment_id}"
                 ))
             })
+    }
+
+    async fn create_draft(
+        &self,
+        _from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        _attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let id = format!("fake-draft-{seq}");
+        let draft = ProviderDraft {
+            provider_draft_id: id.clone(),
+            to_addresses: to_emails.to_vec(),
+            cc_addresses: cc_emails.to_vec(),
+            subject: subject.to_string(),
+            body: body.text.clone(),
+            body_html: body.html.clone(),
+        };
+        self.drafts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.clone(), draft);
+        Ok(id)
+    }
+
+    async fn update_draft(
+        &self,
+        provider_draft_id: &str,
+        _from_email: &str,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        _attachments: &[EmailAttachment],
+    ) -> Result<String> {
+        let draft = ProviderDraft {
+            provider_draft_id: provider_draft_id.to_string(),
+            to_addresses: to_emails.to_vec(),
+            cc_addresses: cc_emails.to_vec(),
+            subject: subject.to_string(),
+            body: body.text.clone(),
+            body_html: body.html.clone(),
+        };
+        self.drafts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(provider_draft_id.to_string(), draft);
+        Ok(provider_draft_id.to_string())
+    }
+
+    async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        self.drafts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(provider_draft_id);
+        Ok(())
+    }
+
+    async fn list_drafts(&self) -> Result<Vec<ProviderDraft>> {
+        Ok(self.provider_drafts())
     }
 }
 

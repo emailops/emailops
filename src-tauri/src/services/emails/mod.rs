@@ -1,3 +1,4 @@
+mod compose;
 mod drafts;
 mod events;
 mod html_sanitizer;
@@ -12,6 +13,9 @@ use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
+pub use compose::{
+    compose_draft, delete_draft, plan_compose, pull_provider_drafts, send_draft, ComposeInput, ComposePlan,
+};
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub use events::SyncProgress;
 pub use html_sanitizer::sanitize_outgoing_html;

@@ -158,9 +158,46 @@ pub fn strip_html_tags(text: &str) -> String {
     out
 }
 
+/// Split a provider's draft body into `(plain_text, body_html)`.
+///
+/// Provider `list_drafts` responses hand us the message body as HTML (Outlook
+/// always, Gmail after `parse_message` reassembles it). The drafts table and
+/// the composer expect the split shape: `body` = plain text (previews, search)
+/// and `body_html` = the rich source the editor renders. Storing HTML in `body`
+/// with `body_html = None` makes the composer fall back to escaping the HTML as
+/// literal text — the raw `<html><head>…` bug.
+///
+/// A body with no `<` is already plain text: return it as-is with `None` so the
+/// composer wraps it itself (preserving newlines via its own text→HTML path).
+pub fn split_draft_body(body: &str) -> (String, Option<String>) {
+    if body.contains('<') {
+        (strip_html_for_fts(body), Some(body.to_string()))
+    } else {
+        (body.to_string(), None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_draft_body_keeps_html_and_derives_plain() {
+        let html = "<html><head><style>.x{color:red}</style></head><body><div>Hola</div><div>Mundo</div></body></html>";
+        let (plain, body_html) = split_draft_body(html);
+        // Rich source preserved verbatim for the editor.
+        assert_eq!(body_html.as_deref(), Some(html));
+        // Plain rendering drops tags + style blocks, so previews aren't HTML soup.
+        assert_eq!(plain, "Hola Mundo");
+        assert!(!plain.contains('<'));
+    }
+
+    #[test]
+    fn split_draft_body_leaves_plain_text_alone() {
+        let (plain, body_html) = split_draft_body("just plain text");
+        assert_eq!(plain, "just plain text");
+        assert_eq!(body_html, None);
+    }
 
     #[test]
     fn decodes_named_entities() {

@@ -960,9 +960,18 @@ function AppInner() {
             <DraftsView
               accountId={activeAccountId}
               accounts={accounts}
-              onOpenComposeTab={(draft) =>
-                openComposeTab(draft.accountId, draft.toAddresses, draft.subject, plainTextToHtml(draft.body))
-              }
+              onOpenComposeTab={(draft) => {
+                // Compose tabs render inside the inbox/mail pane, not the drafts
+                // view — switch back so the opened tab is actually visible.
+                setViewMode('inbox');
+                openComposeTab(
+                  draft.accountId,
+                  draft.toAddresses,
+                  draft.subject,
+                  draft.bodyHtml ?? plainTextToHtml(draft.body),
+                  { draftId: draft.id, ccAddresses: draft.ccAddresses, attachments: draft.attachments },
+                );
+              }}
             />
           ) : viewMode === 'chat' ? (
             <ChatView accountId={activeAccountId} onNavigateToInbox={() => setViewMode('inbox')} />

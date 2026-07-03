@@ -23,6 +23,7 @@ import type {
   CreateLensInput,
   CreatePendingTaskRequest,
   Draft,
+  DraftAttachment,
   Email,
   EmailAttachmentMeta,
   EmailCategory,
@@ -865,17 +866,45 @@ export async function listDrafts(accountId: string): Promise<Draft[]> {
   return invoke('list_drafts', { accountId });
 }
 
+export async function getDraft(draftId: string): Promise<Draft | null> {
+  return invoke('get_draft', { draftId });
+}
+
+export async function listDraftAttachments(draftId: string): Promise<DraftAttachment[]> {
+  return invoke('list_draft_attachments', { draftId });
+}
+
+export interface DraftAttachmentInput {
+  filePath: string;
+  filename?: string | null;
+  mimeType?: string | null;
+}
+
 export interface SaveDraftRequest {
   id?: string;
   emailId?: string | null;
   accountId: string;
   toAddresses: string[];
+  ccAddresses?: string[];
   subject: string;
   body: string;
+  bodyHtml?: string | null;
+  providerDraftId?: string | null;
+  attachments?: DraftAttachmentInput[];
 }
 
+/**
+ * Save (create or upsert) a draft. When the account's provider supports
+ * server-side drafts (Gmail/Outlook), the backend also pushes it to the
+ * provider's Drafts folder — best-effort, never blocking the local save.
+ */
 export async function saveDraft(req: SaveDraftRequest): Promise<Draft> {
   return invoke('save_draft', { req });
+}
+
+/** Send a saved draft, then remove it locally and from the provider. */
+export async function sendDraft(draftId: string, accountId: string): Promise<void> {
+  return invoke('send_draft', { draftId, accountId });
 }
 
 export async function deleteDraft(draftId: string, accountId: string): Promise<void> {

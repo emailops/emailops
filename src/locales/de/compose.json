@@ -13,6 +13,7 @@
   "bodyPlaceholder": "Schreibe deine Nachricht…",
   "openInTab": "In Tab öffnen",
   "attachFiles": "Dateien anhängen",
+  "attachFromDraftHint": "Die Anhänge dieses Entwurfs wurden über die CLI hinzugefügt - entfernen Sie sie, um hier neue Dateien anzuhängen",
   "sameDomain": "gleiche Domain",
   "yourReply": "deine Antwort",
   "body": "Nachricht",

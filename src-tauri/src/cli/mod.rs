@@ -248,6 +248,45 @@ pub enum Command {
     /// counts, and classified / embeddings / memory / tasks coverage.
     Stats,
 
+    /// Compose an email. Saves it as a draft by default (and pushes it to the
+    /// provider's Drafts folder when supported); pass `--send` to deliver now.
+    Compose {
+        /// Recipient address (repeatable): `--to a@x.com --to b@y.com`.
+        #[arg(long, value_name = "EMAIL")]
+        to: Vec<String>,
+        /// Cc address (repeatable).
+        #[arg(long, value_name = "EMAIL")]
+        cc: Vec<String>,
+        /// Subject line.
+        #[arg(long, default_value = "")]
+        subject: String,
+        /// Body text. Mutually exclusive with `--body-file`.
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read the body from a file instead of `--body`.
+        #[arg(long, value_name = "FILE", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Attach a file by path (repeatable). Stored as a reference; bytes are
+        /// read at send / provider-push time.
+        #[arg(long = "attach", value_name = "FILE")]
+        attach: Vec<PathBuf>,
+        /// Send immediately instead of saving as a draft.
+        #[arg(long)]
+        send: bool,
+        /// Update an existing draft (by id) instead of creating a new one.
+        #[arg(long, value_name = "ID")]
+        draft: Option<String>,
+    },
+
+    /// List saved drafts for an account.
+    Drafts,
+
+    /// Show a single draft (recipients, subject, body, attachments).
+    Draft {
+        /// Draft id.
+        id: String,
+    },
+
     /// Get/set CLI-local preferences (e.g. the default account).
     Config {
         #[command(subcommand)]

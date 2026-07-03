@@ -543,8 +543,12 @@ fn make_draft(account_id: &str) -> SaveDraftRequest {
         email_id: None,
         account_id: account_id.to_string(),
         to_addresses: vec!["recipient@example.com".to_string()],
+        cc_addresses: Vec::new(),
         subject: "Draft Subject".to_string(),
         body: "Draft body text.".to_string(),
+        body_html: None,
+        provider_draft_id: None,
+        attachments: None,
     }
 }
 
@@ -598,8 +602,12 @@ fn save_draft_roundtrips_fields() {
         email_id: None,
         account_id: "acc-d".to_string(),
         to_addresses: vec!["a@x.com".to_string(), "b@y.com".to_string()],
+        cc_addresses: Vec::new(),
         subject: "Hello".to_string(),
         body: "World".to_string(),
+        body_html: None,
+        provider_draft_id: None,
+        attachments: None,
     };
     let draft = db.save_draft(&req).unwrap();
     assert_eq!(draft.subject, "Hello");
@@ -655,8 +663,12 @@ fn save_draft_with_multiple_recipients_roundtrips() {
         email_id: None,
         account_id: "acc-d".to_string(),
         to_addresses: vec!["x@a.com".to_string(), "y@b.com".to_string(), "z@c.com".to_string()],
+        cc_addresses: Vec::new(),
         subject: "Multi-recipient".to_string(),
         body: "body".to_string(),
+        body_html: None,
+        provider_draft_id: None,
+        attachments: None,
     };
     let draft = db.save_draft(&req).unwrap();
     assert_eq!(draft.to_addresses.len(), 3);

@@ -1,8 +1,14 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
-import type { EmailAttachment, RecipientSuggestion } from '@/lib/api';
+import type { DraftAttachmentInput, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
+import {
+  type ComposeDraftState,
+  createDraftAutosaver,
+  type DraftAutosaver,
+  shouldAutosaveDraft,
+} from '@/lib/composeDraft';
 import { prepareOutgoingHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import type { ComposeTab } from '@/stores/emailStore';
@@ -36,9 +42,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
-  const [ccRecipients, setCcRecipients] = useState<string[]>([]);
-  const [showCc, setShowCc] = useState(false);
+  const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
+  const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
   const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  // File-path attachments carried from the draft (e.g. added via the CLI).
+  // Shown as chips; preserved across auto-saves; sent via send_draft.
+  const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentInput[]>(() =>
+    (tab.attachments ?? []).map((a) => ({ filePath: a.filePath, filename: a.filename, mimeType: a.mimeType })),
+  );
+  const hasDraftAttachments = draftAttachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
@@ -46,6 +58,16 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
+  // Auto-save, seeded with this tab's backing draft id when editing an existing
+  // draft so saves upsert that row instead of spawning duplicates.
+  const autosaverRef = useRef<DraftAutosaver | null>(null);
+  if (autosaverRef.current === null) {
+    autosaverRef.current = createDraftAutosaver(
+      api.saveDraft,
+      (err) => addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
+      tab.draftId,
+    );
+  }
 
   const allRecipients = [...toRecipients, ...ccRecipients];
   const contextDomain = (() => {
@@ -77,6 +99,39 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     },
     [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
   );
+
+  // Debounced auto-save ~0.8s after the last edit. Upserts the backing draft
+  // (and pushes to the provider's Drafts folder on Gmail/Outlook).
+  useEffect(() => {
+    const prepared = prepareOutgoingHtml(bodyHtml);
+    const state: ComposeDraftState = {
+      accountId: fromAccountId,
+      toAddresses: toRecipients,
+      ccAddresses: ccRecipients,
+      subject,
+      plainBody: prepared.plainText,
+      bodyHtml,
+      // Manage (and thus preserve) the draft's file-path attachments across
+      // saves. When there are none, leave the field undefined so a text-only
+      // save doesn't clear anything.
+      attachments: hasDraftAttachments ? draftAttachments : undefined,
+      isSending,
+      sent,
+    };
+    if (!shouldAutosaveDraft(state)) return;
+    const handle = window.setTimeout(() => void autosaverRef.current?.save(state), 800);
+    return () => window.clearTimeout(handle);
+  }, [
+    toRecipients,
+    ccRecipients,
+    subject,
+    bodyHtml,
+    fromAccountId,
+    isSending,
+    sent,
+    draftAttachments,
+    hasDraftAttachments,
+  ]);
 
   const addRecipient = (field: 'to' | 'cc', email: string) => {
     const trimmed = extractEmail(email);
@@ -140,6 +195,18 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     setSendError(null);
     setIsSending(true);
     try {
+      if (hasDraftAttachments) {
+        // The draft's file-path attachments live on disk, not as base64 here —
+        // send through the draft so the backend reads their bytes (and removes
+        // the draft, local + provider, afterwards). Flush pending edits first.
+        const draftId = await autosaverRef.current?.flush();
+        if (!draftId) throw new Error('draft not yet saved');
+        await api.sendDraft(draftId, fromAccountId);
+        addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
+        setSent(true);
+        setTimeout(onClose, 1200);
+        return;
+      }
       await api.sendNewEmail(
         fromAccountId,
         toRecipients,
@@ -152,6 +219,10 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       );
       addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
       setSent(true);
+      // Drop the backing draft (local + provider copy) now that it's sent, so it
+      // doesn't linger in Drafts or get re-pulled on the next sync.
+      const draftId = await autosaverRef.current?.flush();
+      if (draftId) api.deleteDraft(draftId, fromAccountId).catch(() => {});
       setTimeout(onClose, 1200);
     } catch (err) {
       setSendError(errorText(err));
@@ -304,8 +375,32 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           contentClassName="min-h-[300px]"
         />
 
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || draftAttachments.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">
+            {draftAttachments.map((att, i) => (
+              <div
+                key={att.filePath}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-primary-50 border border-primary-200 rounded-lg text-xs text-primary-700"
+                title={att.filePath}
+              >
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                  />
+                </svg>
+                <span className="max-w-[180px] truncate">{att.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => setDraftAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  className="ml-0.5 text-primary-400 hover:text-red-500"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
             {attachments.map((att, i) => (
               <div
                 key={att.filename}
@@ -341,9 +436,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={isSending || sent}
+          disabled={isSending || sent || hasDraftAttachments}
           className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
-          title={t('compose:attachFiles')}
+          title={hasDraftAttachments ? t('compose:attachFromDraftHint') : t('compose:attachFiles')}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path

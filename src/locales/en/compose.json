@@ -13,6 +13,7 @@
   "bodyPlaceholder": "Write your message…",
   "openInTab": "Open in tab",
   "attachFiles": "Attach files",
+  "attachFromDraftHint": "This draft's attachments were added from the CLI - remove them to attach new files here",
   "sameDomain": "same domain",
   "yourReply": "your reply",
   "body": "Message",

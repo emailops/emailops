@@ -13,6 +13,7 @@
   "bodyPlaceholder": "Escribe tu mensaje…",
   "openInTab": "Abrir en pestaña",
   "attachFiles": "Adjuntar archivos",
+  "attachFromDraftHint": "Los adjuntos de este borrador se añadieron desde la CLI; quítalos para adjuntar nuevos archivos aquí",
   "sameDomain": "mismo dominio",
   "yourReply": "tu respuesta",
   "body": "Mensaje",

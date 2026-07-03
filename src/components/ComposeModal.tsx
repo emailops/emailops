@@ -4,6 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import type { EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
+import {
+  type ComposeDraftState,
+  createDraftAutosaver,
+  type DraftAutosaver,
+  shouldAutosaveDraft,
+} from '@/lib/composeDraft';
 import { prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
@@ -82,6 +88,15 @@ export function ComposeModal({
   const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
+  // Serializes debounced auto-saves so this composer upserts one draft row
+  // instead of piling up rows (it tracks the id across saves and injects the
+  // freshest one at execution time — see createDraftAutosaver).
+  const autosaverRef = useRef<DraftAutosaver | null>(null);
+  if (autosaverRef.current === null) {
+    autosaverRef.current = createDraftAutosaver(api.saveDraft, (err) =>
+      addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
+    );
+  }
 
   const allRecipients = [...toRecipients, ...ccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
@@ -209,6 +224,31 @@ export function ComposeModal({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose, isSending]);
 
+  // Debounced auto-save: persist the draft ~0.8s after the last edit. The
+  // backend upserts by id and, on Gmail/Outlook, pushes to the provider's
+  // Drafts folder. Failures are non-fatal — the user keeps composing.
+  useEffect(() => {
+    const prepared = prepareOutgoingHtml(bodyHtml);
+    const state: ComposeDraftState = {
+      // The autosaver owns the draft id and injects it at execution time, so
+      // this snapshot leaves it undefined.
+      draftId: undefined,
+      accountId: fromAccountId,
+      toAddresses: toRecipients,
+      ccAddresses: ccRecipients,
+      subject,
+      plainBody: prepared.plainText,
+      bodyHtml,
+      isSending,
+      sent,
+    };
+    if (!shouldAutosaveDraft(state)) return;
+    const handle = window.setTimeout(() => {
+      void autosaverRef.current?.save(state);
+    }, 800);
+    return () => window.clearTimeout(handle);
+  }, [toRecipients, ccRecipients, subject, bodyHtml, fromAccountId, isSending, sent]);
+
   const handleSend = async () => {
     // Include a valid address still sitting in the input box (typed but not
     // tokenized) so it isn't silently dropped from the outgoing message.
@@ -232,6 +272,13 @@ export function ComposeModal({
       );
       addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
       setSent(true);
+      // Drop the auto-saved draft (local + provider copy) now that it's sent,
+      // so it doesn't linger in Drafts or get re-pulled on the next sync.
+      // flush() waits for any in-flight autosave so we delete the real row.
+      const draftId = await autosaverRef.current?.flush();
+      if (draftId) {
+        api.deleteDraft(draftId, fromAccountId).catch(() => {});
+      }
       setTimeout(onClose, 1200);
     } catch (err) {
       setSendError(errorText(err));

@@ -225,9 +225,119 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             output::render_stats(&dashboards, session.style)
         }
 
+        Command::Compose {
+            to,
+            cc,
+            subject,
+            body,
+            body_file,
+            attach,
+            send,
+            draft,
+        } => run_compose(session, to, cc, subject, body, body_file, attach, send, draft).await,
+
+        Command::Drafts => {
+            let account = session.require_account()?;
+            let drafts = crate::services::emails::list_drafts(&session.db, &account)?;
+            output::render_drafts(&drafts, session.style)
+        }
+
+        Command::Draft { id } => {
+            let draft = session
+                .db
+                .get_draft(&id)?
+                .ok_or_else(|| AppError::NotFound(format!("draft '{}' not found", id)))?;
+            output::render_draft_detail(&draft, session.style)
+        }
+
         Command::Config { action } => super::config::run_config(session, action),
 
         Command::Eval { case, tier, cases_dir } => super::eval::run_eval(session, case, tier, cases_dir).await,
+    }
+}
+
+/// Compose flow shared by the one-shot command and the REPL: resolve the body,
+/// save the draft (pushing to the provider when supported), and optionally send.
+#[allow(clippy::too_many_arguments)]
+async fn run_compose(
+    session: &mut CliSession,
+    to: Vec<String>,
+    cc: Vec<String>,
+    subject: String,
+    body: Option<String>,
+    body_file: Option<std::path::PathBuf>,
+    attach: Vec<std::path::PathBuf>,
+    send: bool,
+    draft_id: Option<String>,
+) -> Result<()> {
+    let account_id = session.require_account()?;
+    let account = session
+        .db
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("account '{}' not found", account_id)))?;
+
+    // Body: --body-file wins if given, else --body, else empty.
+    let body = match body_file {
+        Some(path) => std::fs::read_to_string(&path)
+            .map_err(|e| AppError::InvalidInput(format!("cannot read --body-file {}: {e}", path.display())))?,
+        None => body.unwrap_or_default(),
+    };
+
+    let attachments: Vec<crate::models::DraftAttachmentInput> = attach
+        .iter()
+        .map(|p| crate::models::DraftAttachmentInput {
+            file_path: p.to_string_lossy().to_string(),
+            filename: None,
+            mime_type: None,
+        })
+        .collect();
+
+    let input = crate::services::emails::ComposeInput {
+        draft_id,
+        account_id: account_id.clone(),
+        email_id: None,
+        to: to.clone(),
+        cc,
+        subject: subject.clone(),
+        body,
+        body_html: None,
+        // CLI compose explicitly manages the attachment set (`--attach`), so
+        // always send `Some` — omitting `--attach` on an update clears them.
+        attachments: Some(attachments),
+    };
+
+    // Build a provider when the account supports server-side drafts, or when we
+    // are about to send (which always needs one). `--send` propagates a build
+    // error; a draft-only save degrades to local-only.
+    let supports_drafts = crate::sync::provider::provider_supports_drafts(&account.provider);
+    let provider = if send {
+        Some(crate::services::emails::build_provider(&account, None).await?)
+    } else if supports_drafts {
+        crate::services::emails::build_provider(&account, None).await.ok()
+    } else {
+        None
+    };
+
+    let saved = crate::services::emails::compose_draft(&session.db, &account, input, provider.as_deref()).await?;
+
+    if send {
+        // A provider is guaranteed here (built above or we returned early).
+        let provider = provider.ok_or_else(|| AppError::SyncError("provider unavailable for send".to_string()))?;
+        crate::services::emails::send_draft(&session.db, &account, &saved.id, provider.as_ref()).await?;
+        if session.mode == OutputMode::Json {
+            output::emit_ok(serde_json::json!({
+                "sent": true,
+                "to": to,
+                "subject": subject,
+            }))
+        } else {
+            println!("Sent to {}.", to.join(", "));
+            Ok(())
+        }
+    } else if session.mode == OutputMode::Json {
+        output::emit_ok(saved)
+    } else {
+        output::render_draft_detail(&saved, session.style)
     }
 }
 
@@ -501,8 +611,12 @@ mod tests {
             email_id: None,
             account_id: account_id.to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
+            cc_addresses: Vec::new(),
             subject: "Confirmar reunión".to_string(),
             body: "Hola Alina".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
         })
         .expect("save draft");
     }

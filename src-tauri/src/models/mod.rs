@@ -343,10 +343,20 @@ pub struct Draft {
     pub email_id: Option<String>,
     pub account_id: String,
     pub to_addresses: Vec<String>,
+    #[serde(default)]
+    pub cc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub body_html: Option<String>,
     pub ai_generated: bool,
     pub status: String,
+    /// Id of the matching draft in the provider's Drafts folder (Gmail/Graph),
+    /// or `None` for a local-only draft (never pushed, or unsupported provider).
+    #[serde(default)]
+    pub provider_draft_id: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<DraftAttachment>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -358,8 +368,57 @@ pub struct SaveDraftRequest {
     pub email_id: Option<String>,
     pub account_id: String,
     pub to_addresses: Vec<String>,
+    #[serde(default)]
+    pub cc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub body_html: Option<String>,
+    /// Carried through on upsert so a pull/re-save keeps the provider link.
+    #[serde(default)]
+    pub provider_draft_id: Option<String>,
+    /// Attachment set to persist. `None` means "leave the draft's attachments
+    /// untouched" (so a text-only auto-save from the composer can't wipe files);
+    /// `Some(list)` replaces them (an empty list clears them).
+    #[serde(default)]
+    pub attachments: Option<Vec<DraftAttachmentInput>>,
+}
+
+/// A draft attachment as stored/read: a reference to a file on disk. The bytes
+/// are loaded lazily at provider-push / send time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAttachment {
+    pub id: String,
+    pub draft_id: String,
+    pub file_path: String,
+    pub filename: String,
+    pub mime_type: String,
+}
+
+/// Attachment input on save: the caller supplies the file path; filename and
+/// mime type default from the path when omitted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAttachmentInput {
+    pub file_path: String,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
+/// A draft as seen on the provider side, produced by `EmailProvider::list_drafts`
+/// and consumed by the pull/reconcile pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDraft {
+    pub provider_draft_id: String,
+    pub to_addresses: Vec<String>,
+    pub cc_addresses: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    pub body_html: Option<String>,
 }
 
 // AI config and usage types

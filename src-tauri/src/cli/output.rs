@@ -334,6 +334,79 @@ pub fn render_email(email: &Email, body: &str, style: RenderStyle) -> Result<()>
     Ok(())
 }
 
+pub fn render_drafts(drafts: &[Draft], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(drafts);
+    }
+    if drafts.is_empty() {
+        println!("(no drafts)");
+        return Ok(());
+    }
+    let color = style.color();
+    for d in drafts {
+        // A tiny badge marks provider-synced drafts (↑) vs local-only ( ).
+        let synced = if d.provider_draft_id.is_some() {
+            paint("↑", "36", color)
+        } else {
+            " ".to_string()
+        };
+        let subject = truncate(
+            if d.subject.is_empty() {
+                "(no subject)"
+            } else {
+                &d.subject
+            },
+            50,
+        );
+        println!(
+            "{} {} {:<50} {} {}",
+            dim(&format_thread_date(d.updated_at), color),
+            synced,
+            paint(&format!("{subject:<50}"), "1", color),
+            dim(&truncate(&d.to_addresses.join(", "), 28), color),
+            dim(&d.id, color),
+        );
+    }
+    Ok(())
+}
+
+/// Full single-draft view for the `draft <id>` and `compose` commands: headers
+/// (incl. provider link + attachments) then the body. JSON emits the raw draft.
+pub fn render_draft_detail(draft: &Draft, style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(draft);
+    }
+    let color = style.color();
+    println!(
+        "{} {}",
+        dim("Subject:", color),
+        paint(
+            if draft.subject.is_empty() {
+                "(no subject)"
+            } else {
+                &draft.subject
+            },
+            "1",
+            color
+        )
+    );
+    println!("{}      {}", dim("To:", color), draft.to_addresses.join(", "));
+    if !draft.cc_addresses.is_empty() {
+        println!("{}      {}", dim("Cc:", color), draft.cc_addresses.join(", "));
+    }
+    if let Some(pid) = &draft.provider_draft_id {
+        println!("{} {}", dim("Provider:", color), dim(pid, color));
+    }
+    if !draft.attachments.is_empty() {
+        let names: Vec<&str> = draft.attachments.iter().map(|a| a.filename.as_str()).collect();
+        println!("{} {}", dim("Attach:", color), names.join(", "));
+    }
+    println!("{}      {}", dim("Id:", color), dim(&draft.id, color));
+    println!();
+    println!("{}", body_for_display(&draft.body));
+    Ok(())
+}
+
 /// Indent every non-empty line of `text` by `prefix`, leaving blank lines
 /// blank. Used by the thread view so each message body sits visually under its
 /// header. Pure so the indentation behaviour is unit-testable.
@@ -1013,10 +1086,14 @@ mod tests {
             email_id: None,
             account_id: "acct-1".to_string(),
             to_addresses: to.into_iter().map(String::from).collect(),
+            cc_addresses: Vec::new(),
             subject: "Confirmar reunión Alina".to_string(),
             body: "Hola Alina".to_string(),
+            body_html: None,
             ai_generated: true,
             status: "draft".to_string(),
+            provider_draft_id: None,
+            attachments: Vec::new(),
             created_at: 0,
             updated_at: 0,
         }

@@ -95,8 +95,12 @@ mod tests {
             email_id: None,
             account_id: "acc".to_string(),
             to_addresses: vec!["a@x.com".to_string()],
+            cc_addresses: Vec::new(),
             subject: "First".to_string(),
             body: "body".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
         })
         .unwrap();
         let ctx = ToolCtx {
@@ -119,8 +123,12 @@ mod tests {
                 email_id: None,
                 account_id: "acc".to_string(),
                 to_addresses: vec![format!("a{i}@x.com")],
+                cc_addresses: Vec::new(),
                 subject: format!("Draft {i}"),
                 body: "body".to_string(),
+                body_html: None,
+                provider_draft_id: None,
+                attachments: None,
             })
             .unwrap();
         }

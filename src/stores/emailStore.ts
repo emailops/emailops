@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import type { ActiveFilter, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
+import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
 const PAGE_SIZE = 50;
 
@@ -73,11 +73,19 @@ export interface ComposeTab {
   id: string;
   accountId: string;
   toAddresses: string[];
+  /** Cc recipients. Present when editing a draft that had a Cc list. */
+  ccAddresses?: string[];
   subject: string;
   /** Rich-text HTML body. Maximizing from the compose modal hands the
    *  editor's HTML straight to the tab so formatting and inline images
    *  survive the switch. */
   bodyHtml: string;
+  /** Backing draft row id when this tab was opened to edit an existing draft.
+   *  Auto-save upserts this row instead of creating a new one. */
+  draftId?: string;
+  /** File-path attachments carried over from the draft being edited, so the tab
+   *  can display them, preserve them across auto-saves, and send them. */
+  attachments?: DraftAttachment[];
 }
 
 export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
@@ -123,7 +131,13 @@ interface EmailStore {
   consumePendingChatDraft: () => void;
   openTab: (email: Email, focusId?: string) => Promise<void>;
   openAttachmentTab: (meta: EmailAttachmentMeta) => Promise<void>;
-  openComposeTab: (accountId: string, toAddresses?: string[], subject?: string, bodyHtml?: string) => void;
+  openComposeTab: (
+    accountId: string,
+    toAddresses?: string[],
+    subject?: string,
+    bodyHtml?: string,
+    opts?: { draftId?: string; ccAddresses?: string[]; attachments?: DraftAttachment[] },
+  ) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string | null) => void;
   fetchEmails: (
@@ -251,9 +265,19 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  openComposeTab: (accountId, toAddresses = [], subject = '', bodyHtml = '') => {
+  openComposeTab: (accountId, toAddresses = [], subject = '', bodyHtml = '', opts) => {
     const id = `compose-${Date.now()}`;
-    const newTab: ComposeTab = { type: 'compose', id, accountId, toAddresses, subject, bodyHtml };
+    const newTab: ComposeTab = {
+      type: 'compose',
+      id,
+      accountId,
+      toAddresses,
+      ccAddresses: opts?.ccAddresses,
+      subject,
+      bodyHtml,
+      draftId: opts?.draftId,
+      attachments: opts?.attachments,
+    };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: id }));
   },
 

@@ -272,8 +272,7 @@ export function Sidebar({
                   {t('sidebar:attachments')}
                 </button>
               </li>
-              {/* Drafts entry hidden temporarily — re-enable to restore the drafts view. */}
-              {/* <li>
+              <li>
                 <button
                   onClick={() => onSetViewMode('drafts')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
@@ -288,9 +287,9 @@ export function Sidebar({
                       d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                     />
                   </svg>
-                  Drafts
+                  {t('sidebar:drafts')}
                 </button>
-              </li> */}
+              </li>
               <li>
                 <button
                   onClick={() => onSetViewMode('sent')}
