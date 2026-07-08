@@ -44,6 +44,7 @@
     "generate": "Generar con IA",
     "generating": "Generando…",
     "generatingLong": "Generando borrador… buscando hilos similares",
+    "newTitle": "Redacta este correo con IA a partir de los destinatarios, el asunto y las notas que hayas escrito",
     "rewrite": "Reescribir",
     "shorten": "Más corto",
     "expand": "Más largo",

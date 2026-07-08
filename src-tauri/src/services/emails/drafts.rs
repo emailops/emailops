@@ -8,6 +8,7 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::Email;
 use crate::services::ai::AiService;
+use crate::services::i18n::Language;
 use crate::services::retrieval::{
     dedup_by_thread, fetch_fts, fetch_vector, fuse_rrf, FtsRequest, Ranking, VectorRequest, DEFAULT_RRF_K,
 };
@@ -175,6 +176,62 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
     Ok(DraftResult { body, sources })
 }
 
+/// Validate and normalize the recipient list + subject for a new-email draft.
+///
+/// Pure: trims each recipient, drops blanks, and rejects an empty recipient
+/// set or empty subject. Extracted from `generate_new_draft` so the guard is
+/// unit-tested without a DB or model call — both the chat tool and the compose
+/// `generate_new_draft` command rely on it to reject bad input before any AI
+/// work is queued.
+fn clean_new_draft_inputs(to: &[String], subject: &str) -> Result<(Vec<String>, String)> {
+    let to_clean: Vec<String> = to
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if to_clean.is_empty() {
+        return Err(AppError::InvalidInput("at least one recipient required".into()));
+    }
+    let subject = subject.trim();
+    if subject.is_empty() {
+        return Err(AppError::InvalidInput("subject required".into()));
+    }
+    Ok((to_clean, subject.to_string()))
+}
+
+/// Assemble the new-email draft prompt.
+///
+/// Pure so the language directive is unit-tested without a DB or model call.
+/// The key line is `Write the entire email in {language}.` — sourced from
+/// `resolve_ai_language`, the same explicit-language convention the chat,
+/// classification, task, and memory prompts use. The previous soft "Match the
+/// language of the subject" hint let the model default to English even when the
+/// user had explicitly chosen another output language.
+fn build_new_draft_prompt(
+    persona: &str,
+    style: &str,
+    language: Language,
+    to: &[String],
+    subject: &str,
+    instructions_section: &str,
+) -> String {
+    format!(
+        "You are an email assistant for {persona}.\n\
+Writing style: {style}\n\
+Write the entire email in {lang}.\n\n\
+Compose a NEW email (not a reply). There is no prior thread to reference.\n\n\
+Recipients: {recipients}\n\
+Subject: {subject}\n\n\
+{instructions_section}Write the body only (no subject line, no greeting headers, no signature):",
+        persona = persona,
+        style = style,
+        lang = language.english_name(),
+        recipients = to.join(", "),
+        subject = subject,
+        instructions_section = instructions_section,
+    )
+}
+
 /// Generate a draft for a brand-new email (no existing thread). Used by the
 /// chat `generate_email_draft` tool when the user asks for a new message
 /// rather than a reply ("draft a new email to billing@stripe…").
@@ -192,18 +249,8 @@ pub async fn generate_new_draft(
     subject: &str,
     instructions: Option<&str>,
 ) -> Result<DraftResult> {
-    let to_clean: Vec<String> = to
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if to_clean.is_empty() {
-        return Err(AppError::InvalidInput("at least one recipient required".into()));
-    }
-    let subject = subject.trim();
-    if subject.is_empty() {
-        return Err(AppError::InvalidInput("subject required".into()));
-    }
+    let (to_clean, subject) = clean_new_draft_inputs(to, subject)?;
+    let subject = subject.as_str();
 
     let persona = db
         .get_preference("draft_persona")?
@@ -230,22 +277,15 @@ pub async fn generate_new_draft(
         _ => String::new(),
     };
 
+    // Honor the user's explicit AI output language (ai_output_language_v2 →
+    // ai_output_language → ui_language → English), same as chat / classify /
+    // tasks / memory. A short subject alone left the model defaulting to
+    // English despite an explicit `es` preference.
+    let language = crate::services::i18n::resolve_ai_language(db)?;
+
     // Distinct from the reply template because the model needs to be told
     // there's no inbound thread — otherwise small models hallucinate one.
-    let prompt = format!(
-        "You are an email assistant for {persona}.\n\
-Writing style: {style}\n\
-Language: Match the language of the subject and instructions.\n\n\
-Compose a NEW email (not a reply). There is no prior thread to reference.\n\n\
-Recipients: {recipients}\n\
-Subject: {subject}\n\n\
-{instructions_section}Write the body only (no subject line, no greeting headers, no signature):",
-        persona = persona,
-        style = style,
-        recipients = to_clean.join(", "),
-        subject = subject,
-        instructions_section = instructions_section,
-    );
+    let prompt = build_new_draft_prompt(&persona, &style, language, &to_clean, subject, &instructions_section);
 
     let prompt = if prompt.len() > MAX_PROMPT_CHARS {
         truncate_utf8(&prompt, MAX_PROMPT_CHARS).to_string()
@@ -534,6 +574,108 @@ mod tests {
             snippet: "Test snippet".to_string(),
             sent_by_user: sender_email == "me@example.com",
         }
+    }
+
+    // ── build_new_draft_prompt ─────────────────────────────────────────────
+
+    use crate::services::i18n::Language;
+
+    #[test]
+    fn build_new_draft_prompt_injects_resolved_language_spanish() {
+        let prompt = build_new_draft_prompt(
+            "a CTO",
+            "concise",
+            Language::Es,
+            &["x@y.com".to_string()],
+            "Facturas",
+            "",
+        );
+        assert!(
+            prompt.contains("in Spanish"),
+            "must instruct the model to write in the resolved language (Spanish); got:\n{prompt}"
+        );
+    }
+
+    #[test]
+    fn build_new_draft_prompt_injects_resolved_language_english() {
+        let prompt = build_new_draft_prompt(
+            "a CTO",
+            "concise",
+            Language::En,
+            &["x@y.com".to_string()],
+            "Invoices",
+            "",
+        );
+        assert!(
+            prompt.contains("in English"),
+            "English pref must yield an English directive"
+        );
+    }
+
+    #[test]
+    fn build_new_draft_prompt_does_not_hardcode_language_match_hint() {
+        // The old vague "Match the language of the subject" line let the model
+        // default to English despite an explicit es preference — it must be
+        // gone in favour of the deterministic directive.
+        let prompt = build_new_draft_prompt("p", "s", Language::Es, &["x@y.com".to_string()], "Facturas", "");
+        assert!(
+            !prompt.contains("Match the language"),
+            "the soft subject-matching hint must be replaced by the explicit directive"
+        );
+    }
+
+    #[test]
+    fn build_new_draft_prompt_includes_recipients_subject_and_instructions() {
+        let prompt = build_new_draft_prompt(
+            "p",
+            "s",
+            Language::En,
+            &["a@b.com".to_string(), "c@d.com".to_string()],
+            "Kickoff",
+            "Additional instructions: be brief\n\n",
+        );
+        assert!(
+            prompt.contains("a@b.com, c@d.com"),
+            "recipients must be joined into the prompt"
+        );
+        assert!(prompt.contains("Kickoff"), "subject must appear");
+        assert!(prompt.contains("be brief"), "instructions section must be spliced in");
+    }
+
+    // ── clean_new_draft_inputs ─────────────────────────────────────────────
+
+    #[test]
+    fn clean_new_draft_inputs_trims_and_keeps_valid_recipients() {
+        let (to, subject) = clean_new_draft_inputs(&["  a@x.com ".to_string(), "b@y.com".to_string()], "  Hello  ")
+            .expect("valid input must pass");
+        assert_eq!(to, vec!["a@x.com".to_string(), "b@y.com".to_string()]);
+        assert_eq!(subject, "Hello", "subject must be trimmed");
+    }
+
+    #[test]
+    fn clean_new_draft_inputs_drops_blank_recipients() {
+        let (to, _) = clean_new_draft_inputs(&["".to_string(), "   ".to_string(), "keep@x.com".to_string()], "S")
+            .expect("one valid recipient is enough");
+        assert_eq!(to, vec!["keep@x.com".to_string()], "blank recipients must be filtered");
+    }
+
+    #[test]
+    fn clean_new_draft_inputs_rejects_empty_recipient_set() {
+        let err = clean_new_draft_inputs(&[], "Subject").expect_err("no recipients must fail");
+        assert!(matches!(err, AppError::InvalidInput(_)), "must be InvalidInput");
+    }
+
+    #[test]
+    fn clean_new_draft_inputs_rejects_all_blank_recipients() {
+        let err =
+            clean_new_draft_inputs(&["  ".to_string(), "".to_string()], "Subject").expect_err("all-blank must fail");
+        assert!(matches!(err, AppError::InvalidInput(_)), "must be InvalidInput");
+    }
+
+    #[test]
+    fn clean_new_draft_inputs_rejects_empty_subject() {
+        let err = clean_new_draft_inputs(&["a@x.com".to_string()], "   ").expect_err("blank subject must fail");
+        assert!(matches!(err, AppError::InvalidInput(_)), "must be InvalidInput");
     }
 
     // ── build_fts_query ────────────────────────────────────────────────────

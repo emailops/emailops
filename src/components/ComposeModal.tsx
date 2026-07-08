@@ -1,8 +1,9 @@
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
-import type { EmailAttachment, RecipientSuggestion } from '@/lib/api';
+import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
@@ -10,7 +11,7 @@ import {
   type DraftAutosaver,
   shouldAutosaveDraft,
 } from '@/lib/composeDraft';
-import { prepareOutgoingHtml } from '@/lib/composeHtml';
+import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
@@ -97,6 +98,50 @@ export function ComposeModal({
       addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
     );
   }
+
+  // AI draft state. The request id is held in a ref so the event listener
+  // (registered once on mount) matches the right response without re-binding
+  // each time a draft is requested — same pattern as EmailView's AI Draft.
+  const draftRequestIdRef = useRef<string | null>(null);
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
+
+  useEffect(() => {
+    api
+      .getPref('ai_drafts_enabled')
+      .then((val) => setAiDraftsEnabled(val !== 'false'))
+      .catch(() => setAiDraftsEnabled(true));
+  }, []);
+
+  // Subscribe once to draft-generated / draft-failed. Filter on the current
+  // request id so a stale event (or one meant for the reply-side AI Draft)
+  // doesn't overwrite this composer's body.
+  useEffect(() => {
+    let unlistenGen: UnlistenFn | undefined;
+    let unlistenFail: UnlistenFn | undefined;
+    void (async () => {
+      unlistenGen = await listen<DraftGeneratedEvent>('draft-generated', (event) => {
+        if (event.payload.requestId !== draftRequestIdRef.current) return;
+        draftRequestIdRef.current = null;
+        setIsGeneratingDraft(false);
+        // Replace the body with the generated draft (the typed text was the
+        // brief, sent as instructions). Convert plain text → HTML so the
+        // rich-text editor renders line breaks correctly.
+        setBodyHtml(plainTextToHtml(event.payload.body));
+        addLog('success', 'ai', 'AI draft ready');
+      });
+      unlistenFail = await listen<DraftFailedEvent>('draft-failed', (event) => {
+        if (event.payload.requestId !== draftRequestIdRef.current) return;
+        draftRequestIdRef.current = null;
+        setIsGeneratingDraft(false);
+        addLog('error', 'ai', `AI draft failed: ${event.payload.error}`);
+      });
+    })();
+    return () => {
+      unlistenGen?.();
+      unlistenFail?.();
+    };
+  }, [addLog]);
 
   const allRecipients = [...toRecipients, ...ccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
@@ -284,6 +329,29 @@ export function ComposeModal({
       setSendError(errorText(err));
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // Recipients + subject are the minimum the backend needs to draft a new
+  // email; the subject is always part of the brief on that side.
+  const canDraftWithAi = mergePendingRecipient(toRecipients, toInput).length > 0 && !!subject.trim();
+
+  const handleDraftWithAI = async () => {
+    const to = mergePendingRecipient(toRecipients, toInput);
+    if (to.length === 0 || !subject.trim()) return;
+    // Whatever the user has already typed in the body becomes the freeform
+    // brief for the model (subject is folded in backend-side). Empty is fine —
+    // the model then drafts purely from recipients + subject.
+    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    setIsGeneratingDraft(true);
+    addLog('info', 'ai', 'Requesting AI draft…');
+    try {
+      const requestId = await api.generateNewDraft(fromAccountId, to, subject.trim(), brief || null);
+      draftRequestIdRef.current = requestId;
+    } catch (err) {
+      setIsGeneratingDraft(false);
+      draftRequestIdRef.current = null;
+      addLog('error', 'ai', `Failed to start AI draft: ${errorText(err)}`);
     }
   };
 
@@ -598,6 +666,29 @@ export function ComposeModal({
               />
             </svg>
           </button>
+          {aiDraftsEnabled && (
+            <button
+              type="button"
+              onClick={handleDraftWithAI}
+              disabled={isSending || sent || isGeneratingDraft || !canDraftWithAi}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title={t('compose:aiDraft.newTitle')}
+            >
+              {isGeneratingDraft ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-b-2 border-white" />
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 17.657l.707.707M12 21v-1m-3-7a3 3 0 116 0c0 1.657-1.5 2.5-1.5 4h-3c0-1.5-1.5-2.343-1.5-4z"
+                  />
+                </svg>
+              )}
+              {isGeneratingDraft ? t('compose:aiDraft.generating') : t('compose:aiDraft.generate')}
+            </button>
+          )}
           <div className="flex-1" />
           <button
             type="button"

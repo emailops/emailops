@@ -306,6 +306,85 @@ pub async fn generate_draft(
     Ok(request_id)
 }
 
+/// Kick off AI draft generation for a brand-new email (no thread to reply to).
+///
+/// Mirrors `generate_draft` but drives `services::emails::generate_new_draft`
+/// from the compose window's recipients + subject (+ optional freeform brief
+/// carried in `instructions`). Returns a `request_id` immediately and runs the
+/// work on `ai_queue`; the frontend listens for the same `draft-generated`
+/// (success) / `draft-failed` (error) events, keyed by `request_id`. `email_id`
+/// is empty on those events since there is no inbound message to reference.
+#[tauri::command]
+pub async fn generate_new_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    to: Vec<String>,
+    subject: String,
+    instructions: Option<String>,
+) -> Result<String, AppError> {
+    // Same hard gate as `generate_draft`: honor the master AI switch and the
+    // per-feature drafts toggle so a disabled feature can't be driven from the
+    // compose window either.
+    if !state.db.is_ai_enabled()? {
+        return Err(AppError::AiDisabled);
+    }
+    if !state.db.is_ai_drafts_enabled()? {
+        return Err(AppError::InvalidInput("AI drafts are disabled".into()));
+    }
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let db = state.db.clone();
+    let app_for_task = app.clone();
+    let request_id_for_task = request_id.clone();
+    let task_label = format!("new-draft:{}", account_id);
+
+    state
+        .ai_queue
+        .submit_named(&task_label, async move {
+            match services::emails::generate_new_draft(&db, &account_id, &to, &subject, instructions.as_deref()).await {
+                Ok(result) => {
+                    if let Err(e) = app_for_task.emit(
+                        "draft-generated",
+                        DraftGeneratedEvent {
+                            request_id: request_id_for_task.clone(),
+                            email_id: String::new(),
+                            body: result.body,
+                            sources: result.sources,
+                        },
+                    ) {
+                        emit_log(
+                            &app_for_task,
+                            "error",
+                            "drafts",
+                            &format!("failed to emit draft-generated: {}", e),
+                        );
+                    }
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    emit_log(
+                        &app_for_task,
+                        "error",
+                        "drafts",
+                        &format!("new draft generation failed: {}", message),
+                    );
+                    let _ = app_for_task.emit(
+                        "draft-failed",
+                        DraftFailedEvent {
+                            request_id: request_id_for_task.clone(),
+                            email_id: String::new(),
+                            error: message,
+                        },
+                    );
+                }
+            }
+        })
+        .await;
+
+    Ok(request_id)
+}
+
 #[tauri::command]
 pub async fn redownload_email(app: AppHandle, state: State<'_, AppState>, email_id: String) -> Result<Email, AppError> {
     services::emails::redownload_email(&state.db, &email_id, &state.app_data_dir, app).await

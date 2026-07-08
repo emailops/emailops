@@ -331,6 +331,24 @@ export async function generateDraft(emailId: string, instructions?: string | nul
   return invoke('generate_draft', { emailId, instructions });
 }
 
+/**
+ * Kick off AI draft generation for a brand-new email (no thread to reply to).
+ * Drives the compose window's recipients + subject, plus an optional freeform
+ * brief (`instructions` — typically whatever the user has jotted in the body).
+ *
+ * Same async contract as `generateDraft`: returns a `requestId` immediately;
+ * the draft arrives via the `draft-generated` / `draft-failed` events keyed by
+ * that id (with an empty `emailId`, since there is no inbound message).
+ */
+export async function generateNewDraft(
+  accountId: string,
+  to: string[],
+  subject: string,
+  instructions?: string | null,
+): Promise<string> {
+  return invoke('generate_new_draft', { accountId, to, subject, instructions });
+}
+
 export async function redownloadEmail(emailId: string): Promise<Email> {
   return invoke('redownload_email', { emailId });
 }

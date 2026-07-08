@@ -515,6 +515,7 @@ pub fn run() {
             commands::emails::send_reply,
             commands::emails::send_new_email,
             commands::emails::generate_draft,
+            commands::emails::generate_new_draft,
             commands::emails::redownload_email,
             commands::emails::start_redownload_empty_emails,
             commands::emails::sync_account,
