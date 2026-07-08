@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from './composeHtml';
+import { htmlToPlainText, plainTextToHtml, plainTextToParagraphsHtml, prepareOutgoingHtml } from './composeHtml';
 
 describe('prepareOutgoingHtml', () => {
   it('passes through HTML with no images unchanged (modulo serialization)', () => {
@@ -112,5 +112,23 @@ describe('plainTextToHtml', () => {
 
   it('handles ampersands without double-escaping', () => {
     expect(plainTextToHtml('Tom & Jerry')).toBe('<p>Tom &amp; Jerry</p>');
+  });
+});
+
+describe('plainTextToParagraphsHtml', () => {
+  it('wraps each line in its own <p>', () => {
+    expect(plainTextToParagraphsHtml('a\nb')).toBe('<p>a</p><p>b</p>');
+  });
+
+  it('preserves a blank line as an empty paragraph (visible spacing)', () => {
+    expect(plainTextToParagraphsHtml('a\n\nb')).toBe('<p>a</p><p></p><p>b</p>');
+  });
+
+  it('preserves multiple blank lines', () => {
+    expect(plainTextToParagraphsHtml('a\n\n\nb')).toBe('<p>a</p><p></p><p></p><p>b</p>');
+  });
+
+  it('escapes HTML special characters', () => {
+    expect(plainTextToParagraphsHtml('<b> & </b>')).toBe('<p>&lt;b&gt; &amp; &lt;/b&gt;</p>');
   });
 });

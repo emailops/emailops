@@ -53,6 +53,20 @@
     "toneCasual": "Casual",
     "toneFriendly": "Friendly"
   },
+  "feedback": {
+    "general": {
+      "subject": "General EmailOps Feedback",
+      "body": "Thanks for taking a minute — answer whatever's easy and ignore the rest.\n\nWhat were you trying to get done in EmailOps?\n\nWhat got in your way, if anything?\n\nIf you used the AI (chat, classification, drafts) — was it useful, useless, or wrong? An example helps.\n\nIf you could change one thing, what would it be?\n\nHonestly: how would you feel if EmailOps disappeared tomorrow? (not bothered / a little annoyed / really disappointed)\n\nCan I reply with a follow-up question? (yes / no)\n\n— technical info, helps me debug — delete this if you'd rather not share —\nVersion: {{version}} · {{os}} · AI provider: {{aiProvider}}"
+    },
+    "bug": {
+      "subject": "EmailOps Bug Report",
+      "body": "What were you doing when it happened? (rough steps are fine)\n\nWhat did you expect?\n\nWhat happened instead?\n\nDoes it happen every time, or just once?\n\n(You can attach logs if you like — but please skim them first, they may contain email addresses or subjects.)\n\n— technical info — delete if you'd rather not share —\nVersion: {{version}} · {{os}} · AI provider: {{aiProvider}}"
+    },
+    "idea": {
+      "subject": "EmailOps idea",
+      "body": "What's the idea?\n\nWhat would it let you do that you can't today?\n\nHow often would you run into this?"
+    }
+  },
   "drafts": {
     "title": "Drafts",
     "empty": "No drafts saved",

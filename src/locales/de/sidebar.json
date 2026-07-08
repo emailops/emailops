@@ -36,6 +36,12 @@
   "lenses": "Linsen",
   "collapseLenses": "Linsen einklappen",
   "expandLenses": "Linsen ausklappen",
+  "feedback": {
+    "button": "Feedback geben",
+    "general": "Allgemeines Feedback",
+    "bug": "Fehler melden",
+    "idea": "Idee"
+  },
   "accountActions": {
     "sync": "Jetzt synchronisieren",
     "syncEmails": "E-Mails synchronisieren",

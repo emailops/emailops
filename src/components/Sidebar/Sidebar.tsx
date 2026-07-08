@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { FeedbackType } from '@/lib/feedback';
 import { useAiStore } from '@/stores/aiStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
+import { FeedbackMenu } from './FeedbackMenu';
 import { SmartFilters } from './SmartFilters';
 
 function CollapseChevron({ open }: { open: boolean }) {
@@ -48,6 +50,7 @@ interface SidebarProps {
   onSync: () => void;
   onOpenSearch: () => void;
   onCompose: () => void;
+  onGiveFeedback: (type: FeedbackType) => void;
   onOpenAppSettings: () => void;
   isSyncing: boolean;
   viewMode: ViewMode;
@@ -80,6 +83,7 @@ export function Sidebar({
   onSync,
   onOpenSearch,
   onCompose,
+  onGiveFeedback,
   onOpenAppSettings,
   isSyncing,
   viewMode,
@@ -180,6 +184,9 @@ export function Sidebar({
           <span>{t('sidebar:search')}</span>
           <kbd className="ml-auto text-xs bg-gray-700 px-1.5 py-0.5 rounded">{t('sidebar:searchShortcut')}</kbd>
         </button>
+
+        {/* Give Feedback */}
+        <FeedbackMenu onSelect={onGiveFeedback} />
       </div>
 
       <nav className="flex-1 p-4 space-y-6 overflow-y-auto">

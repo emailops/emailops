@@ -36,6 +36,12 @@
   "lenses": "Lentes",
   "collapseLenses": "Contraer lentes",
   "expandLenses": "Expandir lentes",
+  "feedback": {
+    "button": "Enviar comentarios",
+    "general": "Comentarios generales",
+    "bug": "Informe de error",
+    "idea": "Idea"
+  },
   "accountActions": {
     "sync": "Sincronizar ahora",
     "syncEmails": "Sincronizar correos",

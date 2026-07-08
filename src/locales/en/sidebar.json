@@ -36,6 +36,12 @@
   "lenses": "Lenses",
   "collapseLenses": "Collapse lenses",
   "expandLenses": "Expand lenses",
+  "feedback": {
+    "button": "Give feedback",
+    "general": "General feedback",
+    "bug": "Bug report",
+    "idea": "Idea"
+  },
   "accountActions": {
     "sync": "Sync now",
     "syncEmails": "Sync emails",

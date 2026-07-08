@@ -36,6 +36,12 @@
   "lenses": "Filtres dynamiques",
   "collapseLenses": "Réduire les filtres",
   "expandLenses": "Développer les filtres",
+  "feedback": {
+    "button": "Donner un avis",
+    "general": "Retour général",
+    "bug": "Signaler un bug",
+    "idea": "Idée"
+  },
   "accountActions": {
     "sync": "Synchroniser",
     "syncEmails": "Synchroniser les courriels",

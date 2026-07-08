@@ -53,6 +53,20 @@
     "toneCasual": "Décontracté",
     "toneFriendly": "Cordial"
   },
+  "feedback": {
+    "general": {
+      "subject": "Retour général sur EmailOps",
+      "body": "Merci de prendre une minute — répondez à ce qui est facile et ignorez le reste.\n\nQu'essayiez-vous de faire dans EmailOps ?\n\nQu'est-ce qui vous a gêné, le cas échéant ?\n\nSi vous avez utilisé l'IA (chat, classification, brouillons) — était-elle utile, inutile ou erronée ? Un exemple aide.\n\nSi vous pouviez changer une seule chose, quelle serait-elle ?\n\nHonnêtement : comment vous sentiriez-vous si EmailOps disparaissait demain ? (ça m'est égal / un peu contrarié / vraiment déçu)\n\nPuis-je vous répondre avec une question de suivi ? (oui / non)\n\n— informations techniques, m'aident à déboguer — supprimez-les si vous préférez ne pas les partager —\nVersion : {{version}} · {{os}} · Fournisseur d'IA : {{aiProvider}}"
+    },
+    "bug": {
+      "subject": "Rapport de bug EmailOps",
+      "body": "Que faisiez-vous quand c'est arrivé ? (quelques étapes approximatives suffisent)\n\nÀ quoi vous attendiez-vous ?\n\nQue s'est-il passé à la place ?\n\nCela arrive-t-il à chaque fois, ou une seule fois ?\n\n(Vous pouvez joindre des journaux si vous le souhaitez — mais parcourez-les d'abord, ils peuvent contenir des adresses e-mail ou des objets.)\n\n— informations techniques — supprimez-les si vous préférez ne pas les partager —\nVersion : {{version}} · {{os}} · Fournisseur d'IA : {{aiProvider}}"
+    },
+    "idea": {
+      "subject": "Idée pour EmailOps",
+      "body": "Quelle est l'idée ?\n\nQue vous permettrait-elle de faire que vous ne pouvez pas aujourd'hui ?\n\nÀ quelle fréquence en auriez-vous besoin ?"
+    }
+  },
   "drafts": {
     "title": "Brouillons",
     "empty": "Aucun brouillon enregistré",

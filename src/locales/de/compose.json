@@ -53,6 +53,20 @@
     "toneCasual": "Locker",
     "toneFriendly": "Freundlich"
   },
+  "feedback": {
+    "general": {
+      "subject": "Allgemeines Feedback zu EmailOps",
+      "body": "Danke, dass du dir eine Minute nimmst — beantworte, was leichtfällt, und ignoriere den Rest.\n\nWas wolltest du in EmailOps erledigen?\n\nWas stand dir dabei im Weg, falls überhaupt etwas?\n\nFalls du die KI genutzt hast (Chat, Klassifizierung, Entwürfe) — war sie nützlich, nutzlos oder falsch? Ein Beispiel hilft.\n\nWenn du eine einzige Sache ändern könntest, welche wäre das?\n\nEhrlich: Wie würdest du dich fühlen, wenn EmailOps morgen verschwinden würde? (wäre mir egal / etwas verärgert / wirklich enttäuscht)\n\nDarf ich mit einer Rückfrage antworten? (ja / nein)\n\n— technische Infos, helfen mir beim Debuggen — lösche sie, wenn du sie lieber nicht teilst —\nVersion: {{version}} · {{os}} · KI-Anbieter: {{aiProvider}}"
+    },
+    "bug": {
+      "subject": "EmailOps-Fehlerbericht",
+      "body": "Was hast du gemacht, als es passiert ist? (grobe Schritte genügen)\n\nWas hast du erwartet?\n\nWas ist stattdessen passiert?\n\nPassiert es jedes Mal oder nur einmal?\n\n(Du kannst Protokolle anhängen, wenn du magst — aber sieh sie vorher durch, sie können E-Mail-Adressen oder Betreffzeilen enthalten.)\n\n— technische Infos — lösche sie, wenn du sie lieber nicht teilst —\nVersion: {{version}} · {{os}} · KI-Anbieter: {{aiProvider}}"
+    },
+    "idea": {
+      "subject": "Idee für EmailOps",
+      "body": "Was ist die Idee?\n\nWas könntest du damit tun, was heute nicht geht?\n\nWie oft würdest du darauf stoßen?"
+    }
+  },
   "drafts": {
     "title": "Entwürfe",
     "empty": "Keine Entwürfe gespeichert",

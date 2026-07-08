@@ -169,3 +169,22 @@ export function plainTextToHtml(text: string): string {
   const paragraphs = escaped.split(/\n{2,}/);
   return paragraphs.map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 }
+
+/**
+ * Like `plainTextToHtml`, but preserves every blank line as an empty paragraph
+ * so the exact vertical spacing survives into the editor. Unlike
+ * `plainTextToHtml` (which collapses runs of blank lines into a single
+ * paragraph gap that Tiptap renders with no visible space), this keeps blank
+ * lines between lines of text — used for templated bodies such as the feedback
+ * form, where blank lines are the answer space between questions.
+ */
+export function plainTextToParagraphsHtml(text: string): string {
+  return text
+    .split('\n')
+    .map((line) =>
+      line.length === 0
+        ? '<p></p>'
+        : `<p>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`,
+    )
+    .join('');
+}

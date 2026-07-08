@@ -53,6 +53,20 @@
     "toneCasual": "Informal",
     "toneFriendly": "Amigable"
   },
+  "feedback": {
+    "general": {
+      "subject": "Comentarios generales sobre EmailOps",
+      "body": "Gracias por dedicar un minuto — responde lo que te resulte fácil e ignora el resto.\n\n¿Qué intentabas hacer en EmailOps?\n\n¿Qué te lo dificultó, si es que hubo algo?\n\nSi usaste la IA (chat, clasificación, borradores) — ¿fue útil, inútil o incorrecta? Un ejemplo ayuda.\n\nSi pudieras cambiar una sola cosa, ¿cuál sería?\n\nSinceramente: ¿cómo te sentirías si EmailOps desapareciera mañana? (no me importaría / un poco molesto / muy decepcionado)\n\n¿Puedo responderte con una pregunta de seguimiento? (sí / no)\n\n— información técnica, me ayuda a depurar — bórrala si prefieres no compartirla —\nVersión: {{version}} · {{os}} · Proveedor de IA: {{aiProvider}}"
+    },
+    "bug": {
+      "subject": "Informe de error de EmailOps",
+      "body": "¿Qué estabas haciendo cuando ocurrió? (unos pasos aproximados bastan)\n\n¿Qué esperabas que pasara?\n\n¿Qué pasó en su lugar?\n\n¿Ocurre siempre o solo una vez?\n\n(Puedes adjuntar registros si quieres — pero échales un vistazo antes, pueden contener direcciones de correo o asuntos.)\n\n— información técnica — bórrala si prefieres no compartirla —\nVersión: {{version}} · {{os}} · Proveedor de IA: {{aiProvider}}"
+    },
+    "idea": {
+      "subject": "Idea para EmailOps",
+      "body": "¿Cuál es la idea?\n\n¿Qué te permitiría hacer que hoy no puedes?\n\n¿Con qué frecuencia te encontrarías con esto?"
+    }
+  },
   "drafts": {
     "title": "Borradores",
     "empty": "No hay borradores guardados",

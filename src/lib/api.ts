@@ -1,4 +1,6 @@
+import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
+import { arch as osArch, platform as osPlatform, version as osVersion } from '@tauri-apps/plugin-os';
 import type {
   Account,
   AccountDashboard,
@@ -632,6 +634,28 @@ export async function openEmailAttachmentMeta(accountId: string, metaId: string)
 // AI provider commands
 export async function getAiConfig(): Promise<AiConfig> {
   return invoke('get_ai_config');
+}
+
+/** App + OS facts for the feedback email's "technical info" line. */
+export interface AppDiagnostics {
+  appVersion: string;
+  osPlatform: string;
+  osVersion: string;
+  arch: string;
+}
+
+/**
+ * Gather app version (from the bundle) and OS platform/version/arch (from the
+ * `os` plugin). The `os` plugin functions read values injected at startup, so
+ * they are synchronous; only `getVersion()` is async.
+ */
+export async function getAppDiagnostics(): Promise<AppDiagnostics> {
+  return {
+    appVersion: await getVersion(),
+    osPlatform: osPlatform(),
+    osVersion: osVersion(),
+    arch: osArch(),
+  };
 }
 
 export async function setAiConfig(

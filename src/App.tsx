@@ -38,10 +38,12 @@ import { useAttachments } from '@/hooks/useAttachments';
 import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
+import { i18n } from '@/i18n';
 import * as api from '@/lib/api';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
-import { plainTextToHtml } from '@/lib/composeHtml';
+import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
+import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { planViewChange } from '@/lib/viewNavigation';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
@@ -483,6 +485,35 @@ function AppInner() {
     }
   }, [accountErrorAccountId, activeAccountId, accounts, reauthenticateAccount, clearError, syncAccount, addLog]);
 
+  // Open a compose tab pre-filled with a feedback email in the current UI
+  // language. Runtime facts (app version, OS, AI provider) are gathered here
+  // and interpolated into the localized body's "technical info" line.
+  const handleGiveFeedback = useCallback(
+    async (type: FeedbackType) => {
+      if (!activeAccountId) return;
+      try {
+        const [diag, ai] = await Promise.all([api.getAppDiagnostics(), api.getAiConfig()]);
+        // Use the i18next singleton so the fully-qualified `compose:` keys type-
+        // check without widening this component's `t` namespace binding.
+        const { to, subject, body } = buildFeedbackEmail(type, (key, options) => i18n.t(key, options), {
+          appVersion: diag.appVersion,
+          osPlatform: diag.osPlatform,
+          osVersion: diag.osVersion,
+          arch: diag.arch,
+          aiProvider: ai.provider,
+          aiModel: ai.model,
+        });
+        setViewMode('inbox');
+        // Preserve the template's blank lines (answer space between questions)
+        // as empty paragraphs rather than collapsing them.
+        openComposeTab(activeAccountId, [to], subject, plainTextToParagraphsHtml(body));
+      } catch (error) {
+        addLog('error', 'system', `Failed to open feedback email: ${errorText(error)}`);
+      }
+    },
+    [activeAccountId, openComposeTab, addLog],
+  );
+
   // Keep the memory store (tasks + badge counts) in sync with the active
   // account. Runs once per account switch — individual refreshes after user
   // actions are driven by the store itself.
@@ -902,6 +933,7 @@ function AppInner() {
           onToggleAccountEnabled={setAccountEnabled}
           onSync={handleSync}
           onCompose={() => setIsComposeOpen(true)}
+          onGiveFeedback={handleGiveFeedback}
           onOpenSearch={() => setIsSearchOpen(true)}
           onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)}
           onOpenAppSettings={() => setSettingsTab('appearance')}
