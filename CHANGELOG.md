@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.1] — 2026-07-08
+
+### Added
+
+- **Give feedback button** in the sidebar — opens a pre-filled email
+  (general feedback / bug report / idea) to hello@getemailops.com in the user's
+  chosen UI language, with the app version, OS, and active AI provider/model
+  auto-filled into a "technical info" line.
+- **Draft-with-AI button in compose** — generates a draft from the recipients,
+  subject, and notes, honoring the configured output language.
+- **Compose + provider drafts with Gmail / Outlook sync** — drafts saved locally
+  push to the provider on save and pull back on sync.
+- **Qwen 3.6 35B A3B** and **Qwen 3.5 4B Q8** chat models added to the local
+  catalog.
+- **Configurable embedded context window (`n_ctx`)** for the llama.cpp runtime.
+- **Model-backed query planner** with oldest-first email search.
+- **Styled CLI terminal output** plus run-scoped prompt overrides.
+
+### Fixed
+
+- **Chat category scope no longer widens beyond the current selection.**
+- **Raised the `get_email_body` cap to 16,000 characters** so long emails are no
+  longer truncated for the model.
+- **Chat model selection from the CLI is honored** (`/model` and `--model`).
+- **Sync re-extracts attachments** that were missed at their original sync time.
+
+### Changed
+
+- **Hardened chat**: no-think fast path, tool-call salvage, and planner dates +
+  trace surfaced in the reasoning trace.
+
+### Security
+
+- Patched 5 RustSec advisories via dependency bumps:
+  - **ammonia** 4.1.2 → 4.1.3 — mXSS via MathML `annotation-xml` encoding strip
+    (RUSTSEC-2026-0193). ammonia is the email-HTML sanitizer, so this is
+    directly relevant.
+  - **plist** 1.9.0 → 1.10.0, pulling **quick-xml** 0.39.4 → 0.41.0 — quadratic
+    parse time on duplicate attributes + unbounded namespace-declaration
+    allocation (RUSTSEC-2026-0194 / RUSTSEC-2026-0195, both high).
+  - **quinn-proto** 0.11.14 → 0.11.16 — remote memory exhaustion from unbounded
+    out-of-order stream reassembly (RUSTSEC-2026-0185, high).
+  - **crossbeam-epoch** 0.9.18 → 0.9.20 — invalid pointer dereference in the
+    `fmt::Pointer` impl (RUSTSEC-2026-0204).
+
 ## [0.6.0] — 2026-06-16
 
 ### Added
