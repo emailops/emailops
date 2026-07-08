@@ -64,8 +64,8 @@ use llama_cpp_2::{
 };
 
 use super::planner::{
-    anchor_shares_cells_with_seq0, effective_n_ctx, plan_anchor_seed, plan_cached_prefix, plan_prompt_budget,
-    plan_stable_boundary, plan_uncached_budget, PrefixPlan,
+    anchor_shares_cells_with_seq0, effective_n_ctx, plan_anchor_seed, plan_auto_n_ctx_cap, plan_cached_prefix,
+    plan_n_ctx_suggestion, plan_prompt_budget, plan_stable_boundary, plan_uncached_budget, PrefixPlan,
 };
 use super::runtime::backend;
 
@@ -199,7 +199,27 @@ impl InferenceActorHandle {
 }
 
 fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32) {
-    let n_ctx = effective_n_ctx(n_ctx_override, model.n_ctx_train());
+    // KV bytes per token from the model's real geometry (f16 K+V per layer).
+    // Hybrid/SWA layers cap their own KV, so this is a safe upper bound.
+    let kv_bytes_per_token = {
+        let n_head = u64::from(model.n_head().max(1));
+        let head_dim = (model.n_embd().max(0) as u64) / n_head;
+        u64::from(model.n_layer()) * 2 * u64::from(model.n_head_kv()) * head_dim * 2
+    };
+    let auto_cap = plan_auto_n_ctx_cap(crate::util::system::total_ram_bytes(), model.size(), kv_bytes_per_token);
+    let n_ctx = effective_n_ctx(n_ctx_override, model.n_ctx_train(), auto_cap);
+    crate::services::logger::log(
+        "info",
+        "ai",
+        format!(
+            "llamacpp: context window {} tokens (override={}, trained={}, auto_cap={}, kv/token={}B)",
+            n_ctx,
+            n_ctx_override,
+            model.n_ctx_train(),
+            auto_cap,
+            kv_bytes_per_token,
+        ),
+    );
     // n_batch = n_ctx so a full-window prompt fits in a single decode call
     // (GGML_ASSERT(n_tokens_all <= cparams.n_batch) trips otherwise). n_ubatch
     // stays pinned at N_UBATCH so a large window doesn't blow up the per-graph
@@ -231,6 +251,10 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     // Token mirror of the seq-2 system-prefix anchor (never evicted except on
     // a route flip that re-renders the system message, or a hard error).
     let mut cached_system: Vec<LlamaToken> = Vec::new();
+    // The "raise your context window" hint fires at most once per actor
+    // lifetime — long multi-turn chats truncate every turn once they overflow
+    // and repeating the same advice would spam the output panel.
+    let mut n_ctx_suggested = false;
     while let Ok(req) = rx.recv() {
         let GenRequest {
             prompt,
@@ -254,6 +278,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             stable_prompt_bytes,
             system_prefix_bytes,
             on_token.as_mut(),
+            &mut n_ctx_suggested,
         );
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
@@ -286,6 +311,7 @@ fn generate_with_cache(
     stable_prompt_bytes: Option<usize>,
     system_prefix_bytes: Option<usize>,
     mut on_token: Option<&mut OnToken>,
+    n_ctx_suggested: &mut bool,
 ) -> std::result::Result<GenOutcome, String> {
     // Prefill clock starts before tokenisation: everything up to the first
     // sampled token is latency the user perceives as "thinking".
@@ -435,6 +461,34 @@ fn generate_with_cache(
                     n_ctx,
                 ),
             );
+            // Actionable follow-up, once per actor lifetime: when the model
+            // was trained for a bigger window, tell the user what to raise
+            // the Context window setting to (and what it costs in memory).
+            if !*n_ctx_suggested {
+                let orig_prompt = budget.drop_front + tokens.len();
+                if let Some(target) = plan_n_ctx_suggestion(n_ctx, model.n_ctx_train(), orig_prompt, budget.max_gen) {
+                    *n_ctx_suggested = true;
+                    let n_head = u64::from(model.n_head().max(1));
+                    let head_dim = (model.n_embd().max(0) as u64) / n_head;
+                    let kv_per_token = u64::from(model.n_layer()) * 2 * u64::from(model.n_head_kv()) * head_dim * 2;
+                    let extra_mib = (u64::from(target) - n_ctx as u64) * kv_per_token / (1024 * 1024);
+                    crate::services::logger::log(
+                        "warn",
+                        "ai",
+                        format!(
+                            "chat prompt ({} tokens) did not fit the {}-token context window and was cut — \
+                             answers may miss context and the prompt cache resets each turn. This model supports \
+                             up to {} tokens: consider raising \"Context window\" to {} in Settings → AI \
+                             (~{} MiB more memory).",
+                            orig_prompt,
+                            n_ctx,
+                            model.n_ctx_train(),
+                            target,
+                            extra_mib,
+                        ),
+                    );
+                }
+            }
         }
 
         // Token boundary of the system prefix (for anchor seeding). Only when

@@ -65,6 +65,19 @@ pub async fn set_pref(app: AppHandle, state: State<'_, AppState>, key: String, v
     Ok(())
 }
 
+/// The context window the embedded runtime picks on THIS machine when
+/// `chat.n_ctx` is unset/0 (RAM tier: 8192 / 16384 / 32768, hard-capped at
+/// 32k). The Settings UI shows it as the auto default so saving without
+/// touching the field never downgrades the machine's auto choice. Per-model
+/// clamps (trained context, KV fit next to the weights) still happen at
+/// actor-spawn time — this is the machine tier only.
+#[tauri::command]
+pub async fn get_auto_n_ctx() -> Result<u32, AppError> {
+    Ok(crate::util::system::auto_n_ctx_tier(
+        crate::util::system::total_ram_bytes(),
+    ))
+}
+
 /// Called by the frontend once the React tree has mounted so the window is only
 /// revealed after the UI is ready, avoiding the transparent blank-window flash.
 #[tauri::command]

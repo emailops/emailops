@@ -86,7 +86,7 @@
     "ageCutoff": "KI-Verarbeitung auf neuere E-Mails beschränken (Tage)",
     "ageCutoffHelp": "Embeddings und Klassifikation werden für E-Mails, die älter sind als diese Anzahl Tage, übersprungen. Hilft, CPU- und Festplattennutzung bei großen Postfächern im Griff zu halten. 0 = kein Limit. Standard: 365.",
     "contextWindow": "Kontextfenster (Tokens)",
-    "contextWindowHelp": "Wie viele Tokens das lokale Modell pro Runde berücksichtigen kann. Ein größeres Fenster fasst mehr abgerufenen E-Mail-Kontext, braucht aber mehr Speicher und verlangsamt die erste Antwort. Begrenzt auf das Trainingslimit des Modells. Standard: 8192.",
+    "contextWindowHelp": "Wie viele Tokens das lokale Modell pro Runde berücksichtigen kann. Ein größeres Fenster fasst mehr abgerufenen E-Mail-Kontext, braucht aber mehr Speicher. Begrenzt auf das Trainingslimit des Modells. Der Standardwert passt sich dem Systemspeicher an (8192–32768); erhöhen Sie ihn manuell, wenn das Protokoll auf abgeschnittenen Kontext hinweist.",
     "contextWindowSaveFailed": "Kontextfenster konnte nicht gespeichert werden: {{error}}",
     "monthlyBudget": "Monatsbudget (USD)",
     "monthlyBudgetHelp": "Auf 0 setzen für kein Limit.",

@@ -20,6 +20,7 @@ pub mod tools;
 
 mod conversations;
 mod planner;
+mod prewarm;
 mod retrieval;
 mod routing;
 mod turn;
@@ -29,6 +30,7 @@ pub use conversations::{
     create_conversation, create_conversation_with_thread, delete_conversation, get_messages, list_conversations,
     rename_conversation,
 };
+pub use prewarm::prewarm_chat;
 pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, DEFAULT_RAG_CATEGORIES};
 // `smart_body_slice` / `MAX_SOURCE_BODY_CHARS` are consumed by the eval harness
 // (`crate::services::chat::…`), which only compiles under the `eval` feature, so

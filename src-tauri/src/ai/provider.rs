@@ -265,6 +265,18 @@ pub trait AIProvider: Send + Sync {
     async fn warmup(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Best-effort: pre-decode the invariant chat prompt prefix (system
+    /// message + empty-sources tail) into the backend's prompt cache so the
+    /// first real chat turn skips most of its prefill. `messages` must be
+    /// built by the same code path as a real turn (`chat::build_prompt`) so
+    /// the cached bytes match byte-for-byte. Default is a no-op — only
+    /// backends with a persistent KV/prompt cache (embedded llama.cpp)
+    /// override it. Errors must never block the caller; they are logged and
+    /// swallowed at the call site.
+    async fn prewarm_chat_prefix(&self, _messages: Vec<AiMessage>) -> Result<()> {
+        Ok(())
+    }
 }
 
 // ── Fake AI provider for tests ───────────────────────────────────────────────
@@ -297,6 +309,7 @@ pub struct FakeAiProvider {
     completion_calls: RwLock<Vec<String>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     embed_calls: RwLock<Vec<String>>,
+    prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
 }
 
 impl FakeAiProvider {
@@ -317,6 +330,7 @@ impl FakeAiProvider {
             completion_calls: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             embed_calls: RwLock::new(Vec::new()),
+            prewarm_calls: RwLock::new(Vec::new()),
         }
     }
 
@@ -384,6 +398,14 @@ impl FakeAiProvider {
         self.embed_calls.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// Every message list passed to `prewarm_chat_prefix`, in call order.
+    pub fn prewarm_calls(&self) -> Vec<Vec<AiMessage>> {
+        self.prewarm_calls
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Deterministic 8-dimensional embedding derived from a SHA-256 of `text`.
     /// Same input → same vector; distinct inputs almost always produce distinct
     /// vectors, which is enough for tests that need to assert similarity ranking.
@@ -414,6 +436,14 @@ impl Default for FakeAiProvider {
 impl AIProvider for FakeAiProvider {
     fn provider_type(&self) -> ProviderType {
         ProviderType::Ollama // arbitrary — tests typically don't gate on this
+    }
+
+    async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
+        self.prewarm_calls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(messages);
+        Ok(())
     }
 
     fn model_name(&self) -> &str {

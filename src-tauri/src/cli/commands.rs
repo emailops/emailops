@@ -118,7 +118,8 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             trace,
             conversation,
             fresh,
-        } => run_chat(session, questions, trace, conversation, fresh).await,
+            prewarm,
+        } => run_chat(session, questions, trace, conversation, fresh, prewarm).await,
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -380,6 +381,7 @@ async fn run_chat(
     trace: bool,
     conversation: Option<String>,
     fresh: bool,
+    prewarm: bool,
 ) -> Result<()> {
     let account_id = session.require_account()?;
     let model = session.model.clone();
@@ -409,6 +411,18 @@ async fn run_chat(
         .iter()
         .map(|s| s.to_string())
         .collect();
+
+    // Mirror the app's idle-time prompt-prefix prewarm before the first turn
+    // so turn-1 prefill numbers match the in-app first-turn experience.
+    // Best-effort: a prewarm failure just means a normal cold prefill.
+    if prewarm {
+        let provider = crate::services::ai::AiService::load_provider_with_model(&session.db, Some(&model))?;
+        if let Err(e) =
+            crate::services::chat::prewarm_chat(&session.db, &registry, provider.as_ref(), &account_id).await
+        {
+            eprintln!("prewarm failed (continuing cold): {e}");
+        }
+    }
 
     let total = questions.len();
     let mut turns: Vec<serde_json::Value> = Vec::with_capacity(total);

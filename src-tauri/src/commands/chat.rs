@@ -16,6 +16,35 @@ fn emit_log(_app: &AppHandle, level: &str, message: &str) {
     crate::services::logger::log(level, "chat", message);
 }
 
+/// Fire-and-forget prewarm of the chat prompt prefix for `account_id`.
+///
+/// Called by the frontend when the chat panel opens or the selected account
+/// changes, so the embedded llama.cpp KV anchor is seeded before the user's
+/// first turn (covers the 30-min idle eviction too). Enqueued on `ai_queue`
+/// and returns immediately; failures are logged, never surfaced — the worst
+/// case is the normal cold prefill.
+#[tauri::command]
+pub async fn prewarm_chat(state: State<'_, AppState>, account_id: String) -> Result<(), AppError> {
+    let db = state.db.clone();
+    let registry = state.tool_registry.clone();
+    state
+        .ai_queue
+        .submit_named("chat:prewarm", async move {
+            let provider = match AiService::load_provider(&db) {
+                Ok(p) => p,
+                Err(e) => {
+                    crate::services::logger::log("debug", "chat", format!("prewarm skipped: {e}"));
+                    return;
+                }
+            };
+            if let Err(e) = chat::prewarm_chat(&db, &registry, provider.as_ref(), &account_id).await {
+                crate::services::logger::log("debug", "chat", format!("prewarm failed: {e}"));
+            }
+        })
+        .await;
+    Ok(())
+}
+
 // ── Conversations CRUD ─────────────────────────────────────────────────────
 
 #[tauri::command]

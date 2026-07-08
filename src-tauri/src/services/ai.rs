@@ -320,6 +320,31 @@ impl AiService {
             ),
             Err(e) => log("warn", &format!("AI warmup failed ({}): {}", model, e)),
         }
+
+        // Seed the chat prompt-prefix cache so the first real turn skips most
+        // of its prefill (no-op for backends without a persistent prompt
+        // cache). Best-effort account pick: the first enabled account — the
+        // chat panel re-fires the prewarm with the actually-selected account
+        // when it opens, which also covers multi-account setups.
+        let account_id = db
+            .list_accounts()
+            .ok()
+            .and_then(|accounts| accounts.into_iter().find(|a| a.enabled).map(|a| a.id));
+        let Some(account_id) = account_id else {
+            return;
+        };
+        let registry = crate::services::chat::tools::default_registry();
+        match crate::services::chat::prewarm_chat(db, &registry, provider.as_ref(), &account_id).await {
+            Ok(()) => log(
+                "success",
+                &format!(
+                    "chat prefix prewarmed ({}) in {}ms total",
+                    model,
+                    started.elapsed().as_millis()
+                ),
+            ),
+            Err(e) => log("warn", &format!("chat prefix prewarm failed ({}): {}", model, e)),
+        }
     }
 
     pub fn get_config(db: &Database) -> Result<AiConfig> {

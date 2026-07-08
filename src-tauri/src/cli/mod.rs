@@ -214,6 +214,12 @@ pub enum Command {
         /// Ignored together with `--conversation`.
         #[arg(long)]
         fresh: bool,
+        /// Prewarm the chat prompt-prefix cache (system message + empty
+        /// sources tail) BEFORE the first question, mirroring what the app
+        /// does at startup / chat-panel open. Use in benches so turn-1
+        /// numbers reflect the app's real first-turn experience.
+        #[arg(long)]
+        prewarm: bool,
     },
 
     /// Download new mail for an account.
@@ -655,14 +661,22 @@ mod tests {
                 trace,
                 conversation,
                 fresh,
+                prewarm,
             }) => {
                 assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
                 assert!(conversation.is_none());
                 assert!(!fresh);
+                assert!(!prewarm);
             }
             other => panic!("expected Chat, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn chat_prewarm_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "what's new?", "--prewarm"]);
+        assert!(matches!(cli.command, Some(Command::Chat { prewarm: true, .. })));
     }
 
     #[test]

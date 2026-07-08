@@ -27,21 +27,76 @@ pub(crate) const N_CTX_FLOOR: u32 = 1024;
 /// [`effective_n_ctx`]); this is only the auto/default ceiling, not a hard cap.
 pub(crate) const DEFAULT_N_CTX_CAP: u32 = 8192;
 
+/// RAM-aware cap for the AUTOMATIC context window (`override_ctx == 0`).
+///
+/// Starts from the machine's RAM tier (`util::system::auto_n_ctx_tier`:
+/// 8192 / 16384 / 32768, hard-capped at 32k — larger windows stay opt-in via
+/// the `chat.n_ctx` preference) and shrinks it when the KV buffer for the
+/// tier would not fit next to the model weights inside the GPU working set
+/// (~2/3 of unified RAM on Apple Silicon, minus ~1.5 GiB of compute/embed/app
+/// overhead). Never returns below [`DEFAULT_N_CTX_CAP`] — if even that KV
+/// buffer doesn't fit, behaviour degrades exactly like today's fixed default.
+///
+/// `kv_bytes_per_token == 0` (unknown model geometry) skips the fit check.
+pub(crate) fn plan_auto_n_ctx_cap(total_ram_bytes: Option<u64>, model_bytes: u64, kv_bytes_per_token: u64) -> u32 {
+    let tier = crate::util::system::auto_n_ctx_tier(total_ram_bytes);
+    let Some(ram) = total_ram_bytes else {
+        return tier;
+    };
+    if kv_bytes_per_token == 0 {
+        return tier;
+    }
+    // GPU working set ≈ 2/3 of unified RAM on Apple Silicon; reserve ~1.5 GiB
+    // for compute graphs, the embed model, and the app itself.
+    const OVERHEAD_BYTES: u64 = 3 * 1024 * 1024 * 1024 / 2;
+    let usable = ram / 3 * 2;
+    let kv_budget = usable.saturating_sub(model_bytes).saturating_sub(OVERHEAD_BYTES);
+    // Round DOWN to a 1024 boundary so the allocation stays inside the budget.
+    let fits = u32::try_from(kv_budget / kv_bytes_per_token).unwrap_or(u32::MAX) / 1024 * 1024;
+    // Never sink below the historical fixed default: if even 8k of KV doesn't
+    // fit next to the weights, the model is oversized for the machine anyway
+    // and a smaller window would only cripple prompts further.
+    tier.min(fits).max(DEFAULT_N_CTX_CAP)
+}
+
+/// When a prompt had to be front-truncated, work out the context window worth
+/// suggesting to the user: the smallest 1024-multiple that would have fit
+/// `orig_prompt_tokens + reserve`. Returns `None` when there is nothing
+/// actionable — the target isn't larger than the current window, or the model
+/// wasn't trained for it (raising past `n_ctx_train` degrades quality).
+pub(crate) fn plan_n_ctx_suggestion(
+    n_ctx: usize,
+    n_ctx_train: u32,
+    orig_prompt_tokens: usize,
+    reserve: usize,
+) -> Option<u32> {
+    let needed = orig_prompt_tokens.checked_add(reserve)?;
+    if needed <= n_ctx {
+        return None; // fits already — the truncation had another cause
+    }
+    let target = u32::try_from(needed.div_ceil(1024).checked_mul(1024)?).ok()?;
+    if target > n_ctx_train {
+        return None; // raising past the trained context degrades quality
+    }
+    Some(target)
+}
+
 /// Resolve the context window the actor should create its `LlamaContext` with.
 ///
-/// - `override_ctx == 0` (unset / "auto") preserves the historical behaviour:
-///   the model's trained context clamped into `[N_CTX_FLOOR, DEFAULT_N_CTX_CAP]`.
+/// - `override_ctx == 0` (unset / "auto"): the model's trained context clamped
+///   into `[N_CTX_FLOOR, auto_cap]`, where `auto_cap` comes from
+///   [`plan_auto_n_ctx_cap`] (RAM-aware, ≥ [`DEFAULT_N_CTX_CAP`], ≤ 32k).
 /// - `override_ctx > 0` honours the user's explicit choice, clamped into
-///   `[N_CTX_FLOOR, n_ctx_train]` — it may exceed `DEFAULT_N_CTX_CAP`, but never
-///   the window the model was actually trained for (going past that degrades
+///   `[N_CTX_FLOOR, n_ctx_train]` — it may exceed `auto_cap`, but never the
+///   window the model was actually trained for (going past that degrades
 ///   quality via RoPE over-extension and wastes KV memory).
-pub(crate) fn effective_n_ctx(override_ctx: u32, n_ctx_train: u32) -> u32 {
+pub(crate) fn effective_n_ctx(override_ctx: u32, n_ctx_train: u32, auto_cap: u32) -> u32 {
     // The model's own ceiling can never go below the floor, even for a model
     // reporting a tiny trained context — the floor wins so the context is
     // always usable.
     let model_cap = n_ctx_train.max(N_CTX_FLOOR);
     if override_ctx == 0 {
-        n_ctx_train.clamp(N_CTX_FLOOR, DEFAULT_N_CTX_CAP)
+        n_ctx_train.clamp(N_CTX_FLOOR, auto_cap.max(N_CTX_FLOOR))
     } else {
         override_ctx.clamp(N_CTX_FLOOR, model_cap)
     }
@@ -242,24 +297,167 @@ mod tests {
 
     #[test]
     fn effective_n_ctx_table() {
-        // (override_ctx, n_ctx_train, expected, label)
-        let cases: &[(u32, u32, u32, &str)] = &[
-            (0, 32768, 8192, "auto: large model clamps down to the default cap"),
-            (0, 4096, 4096, "auto: small model uses its own trained context"),
-            (0, 512, 1024, "auto: tiny model floored to N_CTX_FLOOR"),
-            (16384, 32768, 16384, "override above the default cap is honoured"),
+        // (override_ctx, n_ctx_train, auto_cap, expected, label)
+        let cases: &[(u32, u32, u32, u32, &str)] = &[
+            (0, 32768, 8192, 8192, "auto: large model clamps down to the auto cap"),
+            (0, 32768, 16384, 16384, "auto: 16GB-tier auto cap unlocks 16k"),
+            (0, 32768, 32768, 32768, "auto: 24GB-tier auto cap unlocks 32k"),
+            (0, 4096, 8192, 4096, "auto: small model uses its own trained context"),
+            (0, 4096, 32768, 4096, "auto: big auto cap never exceeds trained context"),
+            (0, 512, 8192, 1024, "auto: tiny model floored to N_CTX_FLOOR"),
+            (16384, 32768, 8192, 16384, "override above the auto cap is honoured"),
             (
                 40000,
                 32768,
+                8192,
                 32768,
                 "override above trained context clamps to the model cap",
             ),
-            (200, 32768, 1024, "override below the floor clamps up to N_CTX_FLOOR"),
-            (8192, 8192, 8192, "override equal to trained context passes through"),
-            (4096, 512, 1024, "override on a tiny model floored to N_CTX_FLOOR"),
+            (
+                200,
+                32768,
+                8192,
+                1024,
+                "override below the floor clamps up to N_CTX_FLOOR",
+            ),
+            (
+                8192,
+                8192,
+                8192,
+                8192,
+                "override equal to trained context passes through",
+            ),
+            (4096, 512, 8192, 1024, "override on a tiny model floored to N_CTX_FLOOR"),
         ];
-        for &(override_ctx, train, expected, label) in cases {
-            assert_eq!(effective_n_ctx(override_ctx, train), expected, "{label}");
+        for &(override_ctx, train, auto_cap, expected, label) in cases {
+            assert_eq!(effective_n_ctx(override_ctx, train, auto_cap), expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn auto_n_ctx_cap_table() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        // KV per token for the qwen3.5-4b/9b class (36 layers × 2 × 8 kv-heads
+        // × 128 head-dim × 2 bytes f16) ≈ 144 KiB.
+        const KV_9B: u64 = 147_456;
+        // (total_ram, model_bytes, kv_per_token, expected, label)
+        let cases: &[(Option<u64>, u64, u64, u32, &str)] = &[
+            (None, 3 * GIB, KV_9B, 8192, "unknown RAM → conservative baseline"),
+            (Some(8 * GIB), 3 * GIB, KV_9B, 8192, "8GB machine stays at 8k"),
+            (
+                Some(16 * GIB),
+                27 * GIB / 10,
+                KV_9B,
+                16384,
+                "16GB + 4b-q4 weights: 16k KV (~2.3GB) fits the working set",
+            ),
+            (
+                Some(16 * GIB),
+                54 * GIB / 10,
+                KV_9B,
+                16384,
+                "16GB + 9b-q4 weights: 16k still fits (~3.7GB KV budget)",
+            ),
+            (
+                Some(24 * GIB),
+                54 * GIB / 10,
+                KV_9B,
+                32768,
+                "24GB + 9b-q4: 32k KV (~4.6GB) fits",
+            ),
+            (
+                Some(32 * GIB),
+                168 * GIB / 10,
+                265_000,
+                12288,
+                "32GB + 27b-q4 weights: tier 32k shrinks to what the KV budget allows",
+            ),
+            (
+                Some(24 * GIB),
+                21 * GIB,
+                265_000,
+                8192,
+                "weights alone blow the working set: floor at the 8k baseline, never below",
+            ),
+            (
+                Some(64 * GIB),
+                54 * GIB / 10,
+                KV_9B,
+                32768,
+                "big RAM never exceeds the 32k auto cap — larger is user opt-in",
+            ),
+            (
+                Some(16 * GIB),
+                54 * GIB / 10,
+                0,
+                16384,
+                "unknown model geometry skips the fit check and trusts the tier",
+            ),
+        ];
+        for (ram, weights, kv, want, label) in cases {
+            assert_eq!(plan_auto_n_ctx_cap(*ram, *weights, *kv), *want, "{label}");
+        }
+    }
+
+    #[test]
+    fn n_ctx_suggestion_table() {
+        // (n_ctx, n_ctx_train, orig_prompt_tokens, reserve, expected, label)
+        let cases: &[(usize, u32, usize, usize, Option<u32>, &str)] = &[
+            (
+                8192,
+                32768,
+                7592,
+                1024,
+                Some(9216),
+                "truncated 7.6k prompt + 1k reserve → suggest the next 1024 step that fits",
+            ),
+            (
+                8192,
+                8192,
+                9000,
+                1024,
+                None,
+                "model already at its trained max: nothing to suggest",
+            ),
+            (
+                16384,
+                32768,
+                12000,
+                1024,
+                None,
+                "prompt fits the current window: nothing to suggest",
+            ),
+            (
+                8192,
+                32768,
+                40000,
+                1024,
+                None,
+                "needed window exceeds the trained context: nothing actionable",
+            ),
+            (
+                8192,
+                32768,
+                8192,
+                0,
+                None,
+                "prompt+reserve exactly fills the window: not truncated, nothing to suggest",
+            ),
+            (
+                8192,
+                32768,
+                8193,
+                0,
+                Some(9216),
+                "one token over the window rounds up to the next 1024 step",
+            ),
+        ];
+        for (n_ctx, train, prompt, reserve, want, label) in cases {
+            assert_eq!(
+                plan_n_ctx_suggestion(*n_ctx, *train, *prompt, *reserve),
+                *want,
+                "{label}"
+            );
         }
     }
 
@@ -570,6 +768,16 @@ mod tests {
                     max_gen: 2048,
                 },
                 "everything fits: full budget",
+            ),
+            (
+                2500,
+                0,
+                8192,
+                PromptBudget {
+                    drop_front: 0,
+                    max_gen: 0,
+                },
+                "prefill-only (max_tokens=0): decode the prompt, sample nothing — the prewarm contract",
             ),
             (
                 4096,

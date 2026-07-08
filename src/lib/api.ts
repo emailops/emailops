@@ -850,6 +850,16 @@ export async function setPref(key: string, value: string): Promise<void> {
   return invoke('set_pref', { key, value });
 }
 
+/**
+ * The context window the embedded model uses on this machine when the
+ * `chat.n_ctx` preference is unset (RAM-tiered: 8192 / 16384 / 32768).
+ * Settings shows it as the auto default so saving without touching the field
+ * never downgrades the machine's automatic choice.
+ */
+export async function getAutoNCtx(): Promise<number> {
+  return invoke('get_auto_n_ctx');
+}
+
 // Returns the OS locale mapped to a supported UI language code
 // ("en"/"es"/"fr"/"de"). Falls back to "en" when the OS locale is unset or
 // names an unsupported language. Called by main.tsx during i18n bootstrap.
@@ -996,6 +1006,16 @@ export async function sendChatMessage(
   categories?: EmailCategory[],
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', { conversationId, content, categories });
+}
+
+/**
+ * Fire-and-forget: seed the local model's chat prompt-prefix cache for this
+ * account so the first turn skips most of its prefill. Called when the chat
+ * panel opens or the selected account changes; the backend queues it and
+ * returns immediately.
+ */
+export async function prewarmChat(accountId: string): Promise<void> {
+  return invoke('prewarm_chat', { accountId });
 }
 
 // ── Memory subsystem ─────────────────────────────────────────────────────────

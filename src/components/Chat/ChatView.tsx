@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
@@ -76,6 +77,10 @@ export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
       void selectConversation(null);
     }
     lastAccountIdRef.current = accountId;
+    // Seed the local model's prompt-prefix cache for this account so the
+    // first turn skips most of its prefill (also re-seeds after the 30-min
+    // idle eviction). Fire-and-forget: a failure just means a cold prefill.
+    prewarmChat(accountId).catch(() => {});
   }, [accountId, fetchConversations, selectConversation]);
 
   const handleCreate = async () => {

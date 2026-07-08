@@ -36,6 +36,14 @@ mkdir -p src-tauri/reports/bench
 out="src-tauri/reports/bench/chat_bench_$(date +%Y%m%d_%H%M%S).json"
 echo "[cli-bench] writing $out"
 
+# `--prewarm` mirrors the app's idle-time prompt-prefix prewarm so turn-1
+# prefill reflects the real in-app first-turn experience. BENCH_PREWARM=0
+# disables it to measure the truly-cold path.
+PREWARM_FLAG="--prewarm"
+if [ "${BENCH_PREWARM:-1}" = "0" ]; then
+  PREWARM_FLAG=""
+fi
+
 EMAILOPS_DATA_DIR="$DEMO_DIR" cargo run --manifest-path src-tauri/Cargo.toml \
   --features cli --bin emailops-cli -- \
-  --json --account "$ACCOUNT" chat --trace "$Q1" "$Q2" "$Q3" "$Q4" | tee "$out"
+  --json --account "$ACCOUNT" chat --trace $PREWARM_FLAG "$Q1" "$Q2" "$Q3" "$Q4" | tee "$out"

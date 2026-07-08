@@ -158,11 +158,27 @@ impl AIProvider for LlamaCppBackend {
 
     /// Run a tiny 1-token generation so the GGUF is fully loaded and any
     /// lazy Metal buffers are allocated. Skipped if no chat model has been
-    /// configured yet (clean install before the user picks a model).
+    /// configured yet (clean install before the user picks a model). Also
+    /// warms the embedding model so the first RAG turn skips its encoder
+    /// cold load — an embed failure is logged but never fails the warmup.
     async fn warmup(&self) -> Result<()> {
         if !self.runtime.is_ready() {
             return Ok(());
         }
-        self.runtime.warmup_chat().await
+        self.runtime.warmup_chat().await?;
+        if let Err(e) = self.runtime.warmup_embed().await {
+            crate::services::logger::log("warn", "ai", format!("embed warmup failed: {e}"));
+        }
+        Ok(())
+    }
+
+    /// Decode the invariant chat prompt prefix into the actor's persistent
+    /// KV cache (prefill-only, nothing sampled) so the first real turn
+    /// Extends / restarts from the system anchor instead of cold-prefilling.
+    async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
+        if !self.runtime.is_ready() {
+            return Ok(());
+        }
+        self.runtime.prewarm_prefix(messages).await
     }
 }

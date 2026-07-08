@@ -86,7 +86,7 @@
     "ageCutoff": "Limitar el procesado de IA a correos recientes (días)",
     "ageCutoffHelp": "Los embeddings y la clasificación se omiten para correos más antiguos que este número de días. Ayuda a controlar el uso de CPU y disco en buzones grandes. Usa 0 para sin límite. Por defecto: 365.",
     "contextWindow": "Ventana de contexto (tokens)",
-    "contextWindowHelp": "Cuántos tokens puede atender el modelo local por turno. Una ventana más grande admite más contexto de correos recuperados, pero usa más memoria y ralentiza la primera respuesta. Se limita al máximo con el que se entrenó el modelo. Por defecto: 8192.",
+    "contextWindowHelp": "Cuántos tokens puede atender el modelo local por turno. Una ventana más grande admite más contexto de correos recuperados, pero usa más memoria. Se limita al máximo con el que se entrenó el modelo. El valor por defecto se adapta a la memoria del sistema (8192–32768); auméntalo manualmente si el registro indica que el contexto se truncó.",
     "contextWindowSaveFailed": "No se pudo guardar la ventana de contexto: {{error}}",
     "monthlyBudget": "Presupuesto mensual (USD)",
     "monthlyBudgetHelp": "Pon 0 para no aplicar límite.",

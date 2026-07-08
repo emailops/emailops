@@ -90,9 +90,14 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   // Stored as days in the `ai_max_email_age_days` preference. 0 = no limit.
   const [aiMaxEmailAgeDays, setAiMaxEmailAgeDays] = useState<number>(365);
   // Context window (tokens) for the embedded llama.cpp chat model. Stored in
-  // `chat.n_ctx`; an unset pref (or stored 0 = auto) shows the default 8192.
-  // The backend clamps the saved value to [1024, model-trained-context].
+  // `chat.n_ctx`; an unset pref (or stored 0 = auto) shows this machine's
+  // RAM-tiered auto value (8192/16384/32768, via get_auto_n_ctx). The backend
+  // clamps the saved value to [1024, model-trained-context].
   const [nCtx, setNCtx] = useState<number>(8192);
+  // What the field showed right after load. Save skips the `chat.n_ctx` write
+  // when the user never touched the field and no explicit pref existed, so
+  // saving unrelated settings can't pin the machine's auto choice.
+  const nCtxLoadedRef = useRef<{ explicit: boolean; value: number }>({ explicit: false, value: 8192 });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -248,17 +253,22 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
         setKeepAliveMinutes(30);
       }
 
-      // Context window (tokens) for the embedded model — default 8192. A stored
-      // 0 means "auto"; surface it as the default so the input is never blank.
+      // Context window (tokens) for the embedded model. A stored 0 (or no
+      // pref) means "auto" — surface the machine's RAM-tiered auto value so
+      // the input is never blank and never suggests a downgrade.
       try {
+        const autoNCtx = await api.getAutoNCtx().catch(() => 8192);
         const raw = await api.getPref('chat.n_ctx');
-        if (raw != null && raw.trim() !== '') {
-          const n = parseInt(raw, 10);
-          setNCtx(Number.isFinite(n) && n >= 1024 ? n : 8192);
+        const n = raw != null && raw.trim() !== '' ? parseInt(raw, 10) : Number.NaN;
+        if (Number.isFinite(n) && n >= 1024) {
+          nCtxLoadedRef.current = { explicit: true, value: n };
+          setNCtx(n);
         } else {
-          setNCtx(8192);
+          nCtxLoadedRef.current = { explicit: false, value: autoNCtx };
+          setNCtx(autoNCtx);
         }
       } catch {
+        nCtxLoadedRef.current = { explicit: false, value: 8192 };
         setNCtx(8192);
       }
     } catch (err) {
@@ -382,11 +392,15 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
 
       // Save context window (tokens) for the embedded model. Clamp to the
       // backend-accepted floor so the validator never rejects the write; the
-      // per-model upper clamp happens at actor-spawn time.
-      if (config.provider === 'llamacpp') {
+      // per-model upper clamp happens at actor-spawn time. Skipped entirely
+      // when the field still shows the untouched auto value — writing it
+      // would pin this machine's RAM-tiered auto choice forever.
+      const nCtxUntouchedAuto = !nCtxLoadedRef.current.explicit && nCtx === nCtxLoadedRef.current.value;
+      if (config.provider === 'llamacpp' && !nCtxUntouchedAuto) {
         try {
           const tokens = Number.isFinite(nCtx) ? Math.max(1024, Math.round(nCtx)) : 8192;
           await api.setPref('chat.n_ctx', String(tokens));
+          nCtxLoadedRef.current = { explicit: true, value: tokens };
         } catch (err) {
           addLog('error', 'ai', t('settings:ai.contextWindowSaveFailed', { error: errorText(err) }));
         }

@@ -51,6 +51,47 @@ fn is_small_local_model(model: &str) -> bool {
         || m.contains("-3b")
         || m.contains("-4b")
 }
+/// Which optional aux-LLM retrieval steps to run this turn. Decided once per
+/// turn by [`plan_aux_llm`] from the provider type, model name, and the
+/// user's explicit preferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuxLlmPlan {
+    pub rewrite: bool,
+    pub rerank: bool,
+}
+
+/// Pure policy for the optional query-rewrite/HyDE and LLM-rerank steps.
+///
+/// Explicit prefs (`chat.query_rewrite_mode` / `chat.rerank_mode`, values
+/// `on`/`off`) win unconditionally. `auto` (or unset/unknown) applies:
+///   - embedded llama.cpp → both OFF. Bench runs show the 16-candidate rerank
+///     times out (result discarded) and the rewrite adds serial latency on
+///     every RAG turn on M1-class hardware — regardless of model size.
+///   - Ollama → the existing small-model skip ([`is_small_local_model`]).
+///   - remote (OpenRouter) → both ON.
+pub(crate) fn plan_aux_llm(
+    provider: crate::ai::provider::ProviderType,
+    model_name: &str,
+    rewrite_pref: Option<&str>,
+    rerank_pref: Option<&str>,
+) -> AuxLlmPlan {
+    use crate::ai::provider::ProviderType;
+    let auto = match provider {
+        ProviderType::LlamaCpp => false,
+        ProviderType::Ollama => !is_small_local_model(model_name),
+        ProviderType::OpenRouter => true,
+    };
+    let resolve = |pref: Option<&str>| match pref {
+        Some("on") => true,
+        Some("off") => false,
+        _ => auto,
+    };
+    AuxLlmPlan {
+        rewrite: resolve(rewrite_pref),
+        rerank: resolve(rerank_pref),
+    }
+}
+
 /// Max wall-clock the query-rewrite/HyDE pre-step may consume. If it blows
 /// the budget we fall back to the raw user query — retrieval should never be
 /// gated on an optional enhancement step.
@@ -171,17 +212,29 @@ pub async fn retrieve_context_with_trace(
     let t_total = std::time::Instant::now();
     let cat_filter = db_category_filter(categories);
 
+    // Decide once per turn whether the optional aux-LLM steps (rewrite,
+    // rerank) run at all — see `plan_aux_llm` for the policy. Explicit user
+    // prefs override the provider-based auto policy.
+    let rewrite_pref = db.get_preference("chat.query_rewrite_mode")?;
+    let rerank_pref = db.get_preference("chat.rerank_mode")?;
+    let aux_plan = plan_aux_llm(
+        provider.provider_type(),
+        provider.model_name(),
+        rewrite_pref.as_deref(),
+        rerank_pref.as_deref(),
+    );
+
     // ── 0. Query rewrite / HyDE (optional, bounded) ───────────────────────
     // A cheap LLM call broadens the embedding target by adding a rewritten
     // keyword-rich version + a hypothetical answer. Bounded by its own
     // timeout so retrieval never stalls on this optional step.
     //
-    // Skipped for small local models (`:e2b`, `:1b`..`:4b`): they consistently
-    // hit QUERY_REWRITE_TIMEOUT and the code falls back to the raw query
-    // anyway, so we pay 5-6 s of every-turn latency on M1-class hardware for
-    // zero retrieval benefit. Same reasoning as the rerank skip below.
+    // Skipped whenever `plan_aux_llm` says so (embedded llama.cpp, small
+    // Ollama models): those setups consistently hit QUERY_REWRITE_TIMEOUT and
+    // fall back to the raw query anyway, so we'd pay several seconds of
+    // every-turn latency on M1-class hardware for zero retrieval benefit.
     let t_qr = std::time::Instant::now();
-    let expanded = if is_small_local_model(provider.model_name()) {
+    let expanded = if !aux_plan.rewrite {
         None
     } else {
         // Fetch the user-editable rewrite template once per turn; falls back
@@ -371,10 +424,9 @@ pub async fn retrieve_context_with_trace(
         dedup_by_thread(sorted_for_dedup, |id| emails_by_id.get(id).map(|e| e.thread_id.clone()));
     let thread_dedup_collapsed = candidates_before_dedup.saturating_sub(ranked.len());
     // Keep a larger pool than `k` so the reranker (below) has room to reorder.
-    // For small local models the reranker always times out and contributes
-    // nothing, so collapse the pool to `k` up-front and skip rerank entirely.
-    let rerank_disabled = is_small_local_model(provider.model_name());
-    let pool_size = if rerank_disabled { k } else { k.max(RERANK_POOL) };
+    // When `plan_aux_llm` disables the reranker (it times out and contributes
+    // nothing on-device), collapse the pool to `k` up-front and skip it.
+    let pool_size = if !aux_plan.rerank { k } else { k.max(RERANK_POOL) };
     ranked.truncate(pool_size);
 
     // ── 7. FTS injection (thread-scoped) ─────────────────────────────────
@@ -442,7 +494,7 @@ pub async fn retrieve_context_with_trace(
     // more than `k` candidates — otherwise reranking is a no-op that still
     // costs an LLM call.
     let t_rerank = std::time::Instant::now();
-    let (mut results, rerank_timed_out) = if pool.len() > k {
+    let (mut results, rerank_timed_out) = if aux_plan.rerank && pool.len() > k {
         let tpl = crate::services::prompts::get_template(db, "chat.rerank")?;
         rerank_candidates(provider, query, pool, &tpl).await
     } else {
@@ -862,6 +914,100 @@ pub(crate) fn mark_relevant_region(sliced: &SlicedBody) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::provider::ProviderType;
+
+    #[test]
+    fn plan_aux_llm_table() {
+        use ProviderType::*;
+        // (provider, model, rewrite_pref, rerank_pref) -> (rewrite, rerank)
+        let cases: &[(ProviderType, &str, Option<&str>, Option<&str>, bool, bool, &str)] = &[
+            // Embedded llama.cpp: auto → both off, regardless of size.
+            (
+                LlamaCpp,
+                "qwen3.5-9b-q4_k_m",
+                None,
+                None,
+                false,
+                false,
+                "llamacpp 9b auto",
+            ),
+            (
+                LlamaCpp,
+                "qwen3.5-4b-q4_k_m",
+                Some("auto"),
+                Some("auto"),
+                false,
+                false,
+                "llamacpp 4b auto",
+            ),
+            // Ollama: auto keeps the small-model skip; large models keep both.
+            (Ollama, "gemma4:e2b", None, None, false, false, "ollama small auto"),
+            (Ollama, "qwen3.5:14b", None, None, true, true, "ollama large auto"),
+            // Remote: auto → both on.
+            (
+                OpenRouter,
+                "anthropic/claude-haiku-4-5",
+                None,
+                None,
+                true,
+                true,
+                "openrouter auto",
+            ),
+            // Explicit prefs override auto in both directions.
+            (
+                LlamaCpp,
+                "qwen3.5-9b-q4_k_m",
+                Some("on"),
+                Some("on"),
+                true,
+                true,
+                "llamacpp explicit on",
+            ),
+            (
+                OpenRouter,
+                "anthropic/claude-haiku-4-5",
+                Some("off"),
+                Some("off"),
+                false,
+                false,
+                "remote explicit off",
+            ),
+            // Prefs are independent per feature.
+            (
+                LlamaCpp,
+                "qwen3.5-9b-q4_k_m",
+                Some("off"),
+                Some("on"),
+                false,
+                true,
+                "mixed prefs",
+            ),
+            // Unknown pref value falls back to auto policy.
+            (
+                OpenRouter,
+                "anthropic/claude-haiku-4-5",
+                Some("banana"),
+                None,
+                true,
+                true,
+                "unknown pref = auto",
+            ),
+            (
+                LlamaCpp,
+                "qwen3.5-9b-q4_k_m",
+                Some("banana"),
+                Some(""),
+                false,
+                false,
+                "unknown pref = auto (llamacpp)",
+            ),
+        ];
+        for (provider, model, rw_pref, rr_pref, want_rw, want_rr, label) in cases {
+            let plan = plan_aux_llm(provider.clone(), model, *rw_pref, *rr_pref);
+            assert_eq!(plan.rewrite, *want_rw, "rewrite mismatch: {label}");
+            assert_eq!(plan.rerank, *want_rr, "rerank mismatch: {label}");
+        }
+    }
 
     #[test]
     fn smart_slice_indexed_returns_anchor_for_matched_token() {

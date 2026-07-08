@@ -982,6 +982,58 @@ impl LlamaCppRuntime {
         let _ = self.generate("hi", &opts).await?;
         Ok(())
     }
+
+    /// Force-load the embedding model and run one tiny embed pass so the
+    /// first RAG turn doesn't pay the ~2s encoder cold load.
+    pub async fn warmup_embed(&self) -> Result<()> {
+        if self.embed_model_path.is_none() {
+            return Ok(()); // nothing configured — not a failure
+        }
+        let _ = self.embed("hi").await?;
+        Ok(())
+    }
+
+    /// Decode `messages` (the invariant chat prompt prefix) into the actor's
+    /// persistent KV cache WITHOUT sampling anything (`max_tokens=0` →
+    /// `plan_prompt_budget` yields `max_gen=0`, so the generation loop never
+    /// runs). Seeds seq 0 and the seq-2 system anchor exactly like a real
+    /// cached chat call, so the next real turn Extends or RestartsFromAnchor
+    /// instead of cold-prefilling. See `services/chat/prewarm.rs` for the
+    /// caller that guarantees the messages match real turns byte-for-byte.
+    pub async fn prewarm_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
+        self.touch_last_used();
+        let model = self.get_chat_model().await?;
+        let actor = self.get_chat_actor().await?;
+
+        let _permit = Arc::clone(&self.inference_sem)
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::AiError("Inference semaphore closed".into()))?;
+
+        let mut prompt_str = Self::render_template(Arc::clone(&model), messages.clone(), true).await?;
+        let stable_bytes = Self::stable_prompt_bytes(Arc::clone(&model), messages.clone(), &prompt_str).await;
+        let system_bytes = Self::system_prefix_bytes(model, &messages, &prompt_str).await;
+        // Same priming as the real chat call — appended after the prefix byte
+        // counts so the anchor boundary is unaffected.
+        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+
+        let t = std::time::Instant::now();
+        let outcome = actor
+            .generate(prompt_str, 0.0, 0, true, stable_bytes, system_bytes, None)
+            .await
+            .map_err(AppError::AiError)?;
+        crate::services::logger::log(
+            "info",
+            "ai",
+            format!(
+                "llamacpp prewarm: seeded {} prompt tokens (system anchor {}) in {}ms",
+                outcome.prompt_tokens,
+                outcome.system_prefix_tokens,
+                t.elapsed().as_millis(),
+            ),
+        );
+        Ok(())
+    }
 }
 
 /// Unix-seconds timestamp. Saturates to 0 if the system clock is pre-epoch
