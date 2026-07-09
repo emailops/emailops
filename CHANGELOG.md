@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.2] — 2026-07-09
+
+### Fixed
+
+- **Chat no longer returns empty replies or "can't access your mailbox"
+  refusals on long analytical prompts**: degenerate tool calls are repaired
+  (filterless searches get the question's verbatim address, id-less body reads
+  walk the search results), mangled sender addresses are auto-corrected on
+  empty results, and malformed tool-call syntax (flattened args, trailing
+  braces, missing closing tags) is tolerated.
+- **Empty final answers now retry with tool-call salvage** and, as a last
+  resort, show a localized rephrase hint instead of a blank bubble.
+- **Chat input auto-grows with the message** instead of a fixed 2-row height.
+
 ## [0.6.1] — 2026-07-08
 
 ### Added
