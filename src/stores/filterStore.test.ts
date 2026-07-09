@@ -1,8 +1,7 @@
-// Unit tests for filterStore pure reducer and selectors.
-//
-// No React, no Tauri, no Zustand — just plain function calls.
+// Unit tests for filterStore: pure reducer + selectors (plain function calls)
+// and async store actions (Zustand store with the api layer mocked).
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActiveFilter, SmartFilter, SmartFilterPref } from '@/types';
 import {
@@ -13,7 +12,20 @@ import {
   selectActiveFilter,
   selectDisplayedFilters,
   selectIsLoadingStats,
+  useFilterStore,
 } from './filterStore';
+
+vi.mock('@/lib/api', () => ({
+  getSavedSuggestions: vi.fn(async () => []),
+  getTagPriorities: vi.fn(async () => []),
+  getFilterPrefs: vi.fn(async () => []),
+  refreshFilterStats: vi.fn(async () => ({ topDomains: [], topSenders: [] })),
+  pinFilter: vi.fn(async () => {}),
+  removeFilter: vi.fn(async () => {}),
+  deleteFilterPref: vi.fn(async () => {}),
+}));
+
+import * as api from '@/lib/api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -220,5 +232,82 @@ describe('selectDisplayedFilters', () => {
 
   it('empty state returns empty list', () => {
     expect(selectDisplayedFilters(initialFilterState)).toHaveLength(0);
+  });
+
+  // Sender addresses are case-insensitive identifiers: a pref saved with one
+  // casing (e.g. blockSender with the header's casing) must match a suggestion
+  // stored with another.
+  it('hides a sender suggestion removed under a different case', () => {
+    const suggestions = [makeSuggestion('sender', 'alice@ex.com')];
+    const prefs = [makePref('sender', 'Alice@Ex.com', 'removed')];
+    const s: FilterState = { ...initialFilterState, suggestions, prefs };
+    expect(selectDisplayedFilters(s)).toHaveLength(0);
+  });
+
+  it('does not duplicate a sender pinned under a different case', () => {
+    const suggestions = [makeSuggestion('sender', 'alice@ex.com', 7)];
+    const prefs = [makePref('sender', 'Alice@Ex.com', 'pinned')];
+    const s: FilterState = { ...initialFilterState, suggestions, prefs };
+    const displayed = selectDisplayedFilters(s);
+    expect(displayed).toHaveLength(1);
+    expect(displayed[0].count).toBe(7);
+  });
+
+  it('keeps non-sender filter values case-sensitive', () => {
+    // Tag values like company names are display strings, not addresses —
+    // "Acme" and "acme" stay distinct.
+    const suggestions = [makeSuggestion('company', 'acme')];
+    const prefs = [makePref('company', 'Acme', 'removed')];
+    const s: FilterState = { ...initialFilterState, suggestions, prefs };
+    expect(selectDisplayedFilters(s).map((f) => f.value)).toEqual(['acme']);
+  });
+});
+
+// ── Async store actions (mocked api) ─────────────────────────────────────────
+
+describe('forceRefresh', () => {
+  beforeEach(() => {
+    useFilterStore.setState({ ...initialFilterState });
+    vi.clearAllMocks();
+  });
+
+  it('clears isLoadingStats when the account switches mid-refresh', async () => {
+    vi.mocked(api.refreshFilterStats).mockImplementationOnce(async () => {
+      // Simulate the user switching accounts while stats compute.
+      useFilterStore.setState({ currentAccountId: 'acc-B' });
+      return { topDomains: [], topSenders: [] };
+    });
+
+    await useFilterStore.getState().forceRefresh('acc-A');
+
+    expect(useFilterStore.getState().isLoadingStats).toBe(false);
+  });
+});
+
+describe('fetchPrefs', () => {
+  beforeEach(() => {
+    useFilterStore.setState({ ...initialFilterState });
+    vi.clearAllMocks();
+  });
+
+  it('discards a stale response after the account switched', async () => {
+    useFilterStore.setState({ currentAccountId: 'acc-A' });
+    vi.mocked(api.getFilterPrefs).mockImplementationOnce(async () => {
+      useFilterStore.setState({ currentAccountId: 'acc-B' });
+      return [makePref('domain', 'stale.com', 'pinned')];
+    });
+
+    await useFilterStore.getState().fetchPrefs('acc-A');
+
+    expect(useFilterStore.getState().prefs).toHaveLength(0);
+  });
+
+  it('applies the response when the account is unchanged', async () => {
+    useFilterStore.setState({ currentAccountId: 'acc-A' });
+    vi.mocked(api.getFilterPrefs).mockResolvedValueOnce([makePref('domain', 'fresh.com', 'pinned')]);
+
+    await useFilterStore.getState().fetchPrefs('acc-A');
+
+    expect(useFilterStore.getState().prefs.map((p) => p.filterValue)).toEqual(['fresh.com']);
   });
 });

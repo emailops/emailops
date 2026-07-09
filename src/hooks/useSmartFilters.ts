@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/stores/accountStore';
-import { useFilterStore } from '@/stores/filterStore';
+import { filterMatchKey, useFilterStore } from '@/stores/filterStore';
 import { useLogStore } from '@/stores/logStore';
 import type { ActiveFilter } from '@/types';
 
@@ -162,7 +162,8 @@ export function useSmartFilters() {
 
   const isPinned = useCallback(
     (filter: ActiveFilter) => {
-      return prefs.some((p) => p.filterType === filter.type && p.filterValue === filter.value && p.status === 'pinned');
+      const key = filterMatchKey(filter.type, filter.value);
+      return prefs.some((p) => p.status === 'pinned' && filterMatchKey(p.filterType, p.filterValue) === key);
     },
     [prefs],
   );

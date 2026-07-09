@@ -94,6 +94,13 @@ export function selectIsLoadingStats(state: FilterState): boolean {
   return state.isLoadingStats;
 }
 
+// Sender addresses are case-insensitive identifiers (a pref saved from an
+// email header may differ in case from the stored suggestion); other filter
+// values are display strings and stay case-sensitive.
+export function filterMatchKey(type: string, value: string): string {
+  return type === 'sender' ? `${type}:${value.toLowerCase()}` : `${type}:${value}`;
+}
+
 export function selectDisplayedFilters(state: FilterState): SmartFilter[] {
   const { suggestions, prefs } = state;
 
@@ -102,10 +109,10 @@ export function selectDisplayedFilters(state: FilterState): SmartFilter[] {
   const pinnedFilters: SmartFilter[] = [];
 
   for (const pref of prefs) {
-    const key = `${pref.filterType}:${pref.filterValue}`;
+    const key = filterMatchKey(pref.filterType, pref.filterValue);
     if (pref.status === 'pinned') {
       pinnedSet.add(key);
-      const suggestion = suggestions.find((s) => s.type === pref.filterType && s.value === pref.filterValue);
+      const suggestion = suggestions.find((s) => filterMatchKey(s.type, s.value) === key);
       pinnedFilters.push({
         type: pref.filterType as SmartFilter['type'],
         value: pref.filterValue,
@@ -117,7 +124,7 @@ export function selectDisplayedFilters(state: FilterState): SmartFilter[] {
   }
 
   const suggestedFilters = suggestions.filter((s) => {
-    const key = `${s.type}:${s.value}`;
+    const key = filterMatchKey(s.type, s.value);
     return !pinnedSet.has(key) && !removedSet.has(key);
   });
 
@@ -168,6 +175,8 @@ export const useFilterStore = create<FilterStore>((set, get) => ({
 
   fetchPrefs: async (accountId) => {
     const prefs = await api.getFilterPrefs(accountId);
+    // Discard if the account switched while the request was in flight.
+    if (get().currentAccountId !== accountId) return;
     dispatch(set, { type: 'SET_PREFS', prefs });
   },
 
@@ -193,10 +202,10 @@ export const useFilterStore = create<FilterStore>((set, get) => ({
         suggestions: applyCompanyPriority(suggestionsToSmartFilters(saved), priorities),
       });
       dispatch(set, { type: 'SET_PREFS', prefs });
+    } finally {
+      // Always release the spinner — including the account-switched early
+      // return above, which used to leave it stuck on forever.
       dispatch(set, { type: 'SET_LOADING_STATS', loading: false });
-    } catch (error) {
-      dispatch(set, { type: 'SET_LOADING_STATS', loading: false });
-      throw error;
     }
   },
 

@@ -84,6 +84,44 @@ impl Database {
         Ok(())
     }
 
+    /// Thread count for a single filter value, scoped exactly like
+    /// `get_filtered_emails` (inbox/sent, not deleted, case-insensitive sender
+    /// match) so a pinned filter's sidebar count matches the rows shown when
+    /// it is clicked. Non-domain/sender types are tag filters: a thread counts
+    /// if ANY of its emails carries the tag.
+    pub fn count_filter_threads(&self, account_id: &str, filter_type: &str, filter_value: &str) -> Result<i32> {
+        let conn = self.reader();
+        let count: i32 = match filter_type {
+            "domain" => conn.query_row(
+                "SELECT COUNT(DISTINCT thread_id) FROM emails
+                 WHERE account_id = ?1 AND is_deleted = 0
+                   AND mailbox IN ('inbox', 'sent')
+                   AND sender_domain = ?2",
+                params![account_id, filter_value.to_lowercase()],
+                |row| row.get(0),
+            )?,
+            "sender" => conn.query_row(
+                "SELECT COUNT(DISTINCT thread_id) FROM emails
+                 WHERE account_id = ?1 AND is_deleted = 0
+                   AND mailbox IN ('inbox', 'sent')
+                   AND sender_email = ?2 COLLATE NOCASE",
+                params![account_id, filter_value],
+                |row| row.get(0),
+            )?,
+            _ => conn.query_row(
+                "SELECT COUNT(DISTINCT e.thread_id)
+                 FROM email_tags et
+                 JOIN emails e ON e.id = et.email_id
+                 WHERE et.tag_type = ?2 AND et.tag_value = ?3
+                   AND e.account_id = ?1 AND e.is_deleted = 0
+                   AND e.mailbox IN ('inbox', 'sent')",
+                params![account_id, filter_type, filter_value],
+                |row| row.get(0),
+            )?,
+        };
+        Ok(count)
+    }
+
     /// Load previously calculated suggestions for an account
     pub fn get_filter_suggestions(&self, account_id: &str) -> Result<Vec<SmartFilterSuggestion>> {
         let conn = self.reader();
@@ -119,6 +157,69 @@ mod tests {
             filter_value: filter_value.to_string(),
             count,
         }
+    }
+
+    fn insert_email(db: &Database, id: &str, account: &str, thread: &str, sender_email: &str, mailbox: &str) {
+        let domain = sender_email.rsplit_once('@').map(|(_, d)| d.to_lowercase()).unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1,?2,?3,'subj','sender',?4,?5,'[]','[]','snip',0,0,'primary',?6,0)",
+                rusqlite::params![id, account, thread, sender_email, domain, mailbox],
+            )
+            .unwrap();
+    }
+
+    // ── count_filter_threads ──────────────────────────────────────────────────
+    // Scoped exactly like get_filtered_emails (inbox/sent, not deleted, NOCASE
+    // senders) so a pinned filter's count matches the rows shown on click.
+
+    #[test]
+    fn count_filter_threads_sender_is_case_insensitive_and_mailbox_scoped() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc");
+
+        insert_email(&db, "e1", "acc", "t1", "Jorge@Logalty.com", "inbox");
+        insert_email(&db, "e2", "acc", "t1", "jorge@logalty.com", "inbox"); // same thread
+        insert_email(&db, "e3", "acc", "t2", "jorge@logalty.com", "inbox");
+        insert_email(&db, "e4", "acc", "t3", "jorge@logalty.com", "spam"); // out of scope
+
+        let count = db.count_filter_threads("acc", "sender", "jorge@logalty.com").unwrap();
+        assert_eq!(count, 2, "2 inbox threads regardless of casing; spam excluded");
+    }
+
+    #[test]
+    fn count_filter_threads_domain_counts_threads() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc");
+
+        insert_email(&db, "e1", "acc", "t1", "a@aws.com", "inbox");
+        insert_email(&db, "e2", "acc", "t1", "b@aws.com", "inbox"); // same thread
+        insert_email(&db, "e3", "acc", "t2", "c@aws.com", "sent");
+
+        let count = db.count_filter_threads("acc", "domain", "aws.com").unwrap();
+        assert_eq!(count, 2, "threads, not emails");
+    }
+
+    #[test]
+    fn count_filter_threads_tag_counts_threads_with_any_tagged_email() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc");
+
+        insert_email(&db, "e1", "acc", "t1", "a@x.com", "inbox");
+        insert_email(&db, "e2", "acc", "t2", "b@x.com", "inbox");
+        db.connection()
+            .execute(
+                "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at)
+                     VALUES ('e1', 'company', 'Acme', NULL, 0)",
+                [],
+            )
+            .unwrap();
+
+        let count = db.count_filter_threads("acc", "company", "Acme").unwrap();
+        assert_eq!(count, 1, "only the thread containing the tagged email");
     }
 
     // Regression test: two accounts sharing the same domain/sender value must not

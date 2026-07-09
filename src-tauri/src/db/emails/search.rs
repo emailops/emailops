@@ -1,7 +1,14 @@
 use super::*;
 
 impl Database {
-    /// Get aggregate stats for smart filter suggestions, excluding removed filters
+    /// Get aggregate stats for smart filter suggestions, excluding removed filters.
+    ///
+    /// Counts are DISTINCT threads over inbox/sent mail only, so the sidebar
+    /// number matches the rows `get_filtered_emails` shows when the suggestion
+    /// is clicked (which is thread-representative and mailbox-scoped the same
+    /// way). Sender grouping/exclusion is case-insensitive because providers
+    /// vary the casing of one address across messages, and the account owner's
+    /// own address is excluded (sent mail would always rank it first).
     pub fn get_quick_filter_stats(
         &self,
         account_id: &str,
@@ -19,16 +26,17 @@ impl Database {
                 .enumerate()
                 .map(|(i, _)| format!("?{}", i + 2))
                 .collect();
-            format!("HAVING domain NOT IN ({})", placeholders.join(", "))
+            format!("AND sender_domain NOT IN ({})", placeholders.join(", "))
         };
 
         let domain_sql = format!(
             "SELECT sender_domain AS domain,
-                    COUNT(*) AS cnt
+                    COUNT(DISTINCT thread_id) AS cnt
              FROM emails WHERE account_id = ?1
                AND sender_domain != ''
                AND is_deleted = 0
-             GROUP BY domain {}
+               AND mailbox IN ('inbox', 'sent') {}
+             GROUP BY domain
              ORDER BY cnt DESC LIMIT 10",
             domain_exclude_clause
         );
@@ -50,7 +58,7 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
-        // Top 10 individual senders, excluding removed ones
+        // Top 10 individual senders, excluding removed ones (case-insensitively)
         let sender_exclude_clause = if excluded_senders.is_empty() {
             String::new()
         } else {
@@ -59,14 +67,20 @@ impl Database {
                 .enumerate()
                 .map(|(i, _)| format!("?{}", i + 2))
                 .collect();
-            format!("AND sender_email NOT IN ({})", placeholders.join(", "))
+            format!("AND sender_email COLLATE NOCASE NOT IN ({})", placeholders.join(", "))
         };
 
+        // MIN(sender_email) picks a deterministic representative casing for
+        // each NOCASE group. COALESCE guards the (test-only) case of a missing
+        // accounts row — `<> NULL` would otherwise filter out every sender.
         let sender_sql = format!(
-            "SELECT sender_email, COUNT(*) AS cnt
+            "SELECT MIN(sender_email), COUNT(DISTINCT thread_id) AS cnt
              FROM emails WHERE account_id = ?1
-               AND is_deleted = 0 {}
-             GROUP BY sender_email ORDER BY cnt DESC LIMIT 10",
+               AND is_deleted = 0
+               AND mailbox IN ('inbox', 'sent')
+               AND sender_email COLLATE NOCASE <> COALESCE((SELECT email FROM accounts WHERE id = ?1), '') {}
+             GROUP BY sender_email COLLATE NOCASE
+             ORDER BY cnt DESC LIMIT 10",
             sender_exclude_clause
         );
 
@@ -203,7 +217,10 @@ impl Database {
             param_idx += 1;
         }
         if let Some(s) = sender_email {
-            match_conditions.push(format!("sender_email = ?{}", param_idx));
+            // NOCASE: the clicked suggestion (or a blocked header address) may
+            // differ in case from the stored rows. Served by
+            // idx_emails_sender_email_nocase.
+            match_conditions.push(format!("sender_email = ?{} COLLATE NOCASE", param_idx));
             params_vec.push(Box::new(s.to_string()));
             param_idx += 1;
         }
@@ -871,6 +888,206 @@ mod tests {
 
         // Order: newest first (timestamp DESC).
         assert_eq!(ids, vec!["e3", "e2"], "results should be newest-first");
+    }
+
+    // ── quick filter stats: mailbox scoping + count semantics ────────────────────
+
+    // Suggestion stats must only count inbox/sent mail, matching what
+    // get_filtered_emails shows when the user clicks the suggestion. Spam and
+    // trash used to inflate counts and could push a spam domain into the top 10.
+    #[test]
+    fn quick_filter_stats_excludes_spam_and_trash_mailboxes() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        insert_contact_email(&db, "g1", account, "t-g1", "Gina", "gina@good.com", "[]", "inbox", 100);
+        // Three spam/trash emails from spam.com — would outrank good.com if counted.
+        insert_contact_email(&db, "s1", account, "t-s1", "Bot", "bot@spam.com", "[]", "spam", 200);
+        insert_contact_email(&db, "s2", account, "t-s2", "Bot", "bot@spam.com", "[]", "spam", 300);
+        insert_contact_email(&db, "s3", account, "t-s3", "Bot", "bot@spam.com", "[]", "trash", 400);
+
+        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+
+        let domains: Vec<&str> = stats.top_domains.iter().map(|d| d.value.as_str()).collect();
+        assert!(
+            domains.contains(&"good.com"),
+            "inbox mail must be counted, got {:?}",
+            domains
+        );
+        assert!(
+            !domains.contains(&"spam.com"),
+            "spam/trash mail must not produce domain suggestions, got {:?}",
+            domains
+        );
+
+        let senders: Vec<&str> = stats.top_senders.iter().map(|s| s.value.as_str()).collect();
+        assert!(
+            !senders.contains(&"bot@spam.com"),
+            "spam/trash mail must not produce sender suggestions, got {:?}",
+            senders
+        );
+    }
+
+    // The account owner's own address dominates sender stats via sent mail —
+    // suggesting "filter by yourself" is noise. It must be excluded, in any case
+    // variant of the configured account email.
+    #[test]
+    fn quick_filter_stats_excludes_account_owner_address() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        insert_contact_email(
+            &db,
+            "s1",
+            account,
+            "t1",
+            "Me",
+            "me@mymail.com",
+            "[\"a@b.com\"]",
+            "sent",
+            100,
+        );
+        insert_contact_email(
+            &db,
+            "s2",
+            account,
+            "t2",
+            "Me",
+            "Me@MyMail.com",
+            "[\"a@b.com\"]",
+            "sent",
+            200,
+        );
+        insert_contact_email(&db, "i1", account, "t3", "Alice", "alice@ex.com", "[]", "inbox", 300);
+
+        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let senders: Vec<String> = stats.top_senders.iter().map(|s| s.value.to_lowercase()).collect();
+
+        assert!(
+            !senders.contains(&"me@mymail.com".to_string()),
+            "own address must not be suggested as a sender filter, got {:?}",
+            senders
+        );
+        assert!(
+            senders.contains(&"alice@ex.com".to_string()),
+            "other senders must still be suggested, got {:?}",
+            senders
+        );
+    }
+
+    // Sidebar counts must match what clicking the filter shows: one row per
+    // thread. Domain/sender stats used to count emails while tag stats counted
+    // threads and the filtered list shows thread representatives.
+    #[test]
+    fn quick_filter_stats_counts_threads_not_emails() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        // Three emails in one thread + one email in another, all bob@acme.com.
+        insert_contact_email(&db, "e1", account, "t-a", "Bob", "bob@acme.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e2", account, "t-a", "Bob", "bob@acme.com", "[]", "inbox", 200);
+        insert_contact_email(&db, "e3", account, "t-a", "Bob", "bob@acme.com", "[]", "inbox", 300);
+        insert_contact_email(&db, "e4", account, "t-b", "Bob", "bob@acme.com", "[]", "inbox", 400);
+
+        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+
+        let acme = stats
+            .top_domains
+            .iter()
+            .find(|d| d.value == "acme.com")
+            .expect("acme.com must be suggested");
+        assert_eq!(acme.count, 2, "domain count must be threads (2), not emails (4)");
+
+        let bob = stats
+            .top_senders
+            .iter()
+            .find(|s| s.value == "bob@acme.com")
+            .expect("bob@acme.com must be suggested");
+        assert_eq!(bob.count, 2, "sender count must be threads (2), not emails (4)");
+    }
+
+    // ── quick filter stats: sender case-insensitivity ────────────────────────────
+
+    // Providers vary the case of the same address across messages. BINARY
+    // grouping split one sender into two suggestions with divided counts.
+    #[test]
+    fn quick_filter_stats_merges_sender_case_variants() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        insert_contact_email(&db, "e1", account, "t1", "Alice", "Alice@Ex.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e2", account, "t2", "Alice", "alice@ex.com", "[]", "inbox", 200);
+
+        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let alice_entries: Vec<_> = stats
+            .top_senders
+            .iter()
+            .filter(|s| s.value.eq_ignore_ascii_case("alice@ex.com"))
+            .collect();
+
+        assert_eq!(
+            alice_entries.len(),
+            1,
+            "case variants of the same address must merge into one suggestion, got {:?}",
+            stats.top_senders
+        );
+        assert_eq!(alice_entries[0].count, 2, "merged suggestion must count both threads");
+    }
+
+    // Blocking/removing a sender must suppress it regardless of the stored casing.
+    #[test]
+    fn quick_filter_stats_excluded_senders_match_case_insensitively() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        insert_contact_email(&db, "e1", account, "t1", "Alice", "Alice@Ex.com", "[]", "inbox", 100);
+
+        let stats = db
+            .get_quick_filter_stats(account, &[], &["alice@ex.com".to_string()])
+            .unwrap();
+        let senders: Vec<&str> = stats.top_senders.iter().map(|s| s.value.as_str()).collect();
+
+        assert!(
+            !senders.iter().any(|s| s.eq_ignore_ascii_case("alice@ex.com")),
+            "removed sender must be excluded regardless of case, got {:?}",
+            senders
+        );
+    }
+
+    // Clicking a sender suggestion (or blocking from an email whose header casing
+    // differs from the stored rows) must still match the stored address.
+    #[test]
+    fn filtered_emails_sender_filter_is_case_insensitive() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+
+        insert_contact_email(
+            &db,
+            "e1",
+            account,
+            "t1",
+            "Billing",
+            "EMEA_Billing@Ex.com",
+            "[]",
+            "inbox",
+            100,
+        );
+
+        let result = db
+            .get_filtered_emails(account, None, Some("emea_billing@ex.com"), None, None, None, 50, 0)
+            .unwrap();
+
+        assert_eq!(
+            result.emails.len(),
+            1,
+            "sender filter must match the stored mixed-case address"
+        );
     }
 
     // ── from: filter correctness ──────────────────────────────────────────────────
