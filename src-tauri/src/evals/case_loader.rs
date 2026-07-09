@@ -110,6 +110,18 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_answer_contains: Vec<String>,
 
+    /// Case-insensitive substrings that must NOT appear in the final assistant
+    /// content. Guards against failure-mode phrasings ("I couldn't access…")
+    /// that a positive anchor cannot distinguish from a real answer.
+    #[serde(default)]
+    pub expected_answer_not_contains: Vec<String>,
+
+    /// Case-insensitive substrings that must appear in the serialized JSON
+    /// arguments of at least one traced tool call — pins what a tool was asked
+    /// (e.g. the exact sender address), not just that it ran.
+    #[serde(default)]
+    pub expected_tool_args_contains: Vec<String>,
+
     /// Regex pattern the auto-derived conversation title must match.
     #[serde(default)]
     pub expected_title_pattern: Option<String>,

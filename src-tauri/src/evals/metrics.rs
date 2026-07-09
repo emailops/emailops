@@ -66,6 +66,22 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if !case.expected_answer_not_contains.is_empty() {
+        checks.push(check_answer_not_contains(
+            &case.expected_answer_not_contains,
+            &outcome.assistant_content,
+        ));
+    }
+
+    if !case.expected_tool_args_contains.is_empty() {
+        let tool_calls = outcome
+            .assistant_trace
+            .as_ref()
+            .map(|t| t.tool_calls.as_slice())
+            .unwrap_or(&[]);
+        checks.push(check_tool_args_contains(&case.expected_tool_args_contains, tool_calls));
+    }
+
     if let Some(pattern) = case.expected_title_pattern.as_deref() {
         checks.push(check_title_pattern(pattern, &outcome.conversation_title)?);
     }
@@ -165,6 +181,66 @@ fn check_answer_contains(expected: &[String], content: &str) -> HeuristicCheck {
     }
 }
 
+/// Case-insensitive substrings that must NOT appear in the final assistant
+/// content — the negative twin of [`check_answer_contains`]. Guards against
+/// failure-mode phrasings ("I couldn't access your emails", "please paste the
+/// content") that a positive anchor cannot distinguish from a real answer.
+fn check_answer_not_contains(forbidden: &[String], content: &str) -> HeuristicCheck {
+    let lc = content.to_lowercase();
+    let present: Vec<String> = forbidden
+        .iter()
+        .filter(|needle| lc.contains(&needle.to_lowercase()))
+        .cloned()
+        .collect();
+    let passed = present.is_empty();
+    HeuristicCheck {
+        name: "answer_not_contains".into(),
+        passed,
+        expected: format!("none of: {}", forbidden.join(", ")),
+        actual: truncate(content, 200),
+        detail: if passed {
+            "no forbidden substrings present".into()
+        } else {
+            format!("forbidden substrings present: {}", present.join(", "))
+        },
+    }
+}
+
+/// Case-insensitive substrings that must appear in the serialized arguments of
+/// at least one traced tool call. Pins *what the tools were asked*, not just
+/// which tools ran — e.g. that `search_emails` was called with the exact
+/// sender address the user wrote (and not a mangled variant).
+fn check_tool_args_contains(expected: &[String], tool_calls: &[crate::models::ToolCallTrace]) -> HeuristicCheck {
+    let serialized: Vec<String> = tool_calls
+        .iter()
+        .map(|tc| tc.arguments.to_string().to_lowercase())
+        .collect();
+    let missing: Vec<String> = expected
+        .iter()
+        .filter(|needle| {
+            let n = needle.to_lowercase();
+            !serialized.iter().any(|args| args.contains(&n))
+        })
+        .cloned()
+        .collect();
+    let passed = missing.is_empty();
+    HeuristicCheck {
+        name: "tool_args_contains".into(),
+        passed,
+        expected: expected.join(", "),
+        actual: if serialized.is_empty() {
+            "<no tool calls>".into()
+        } else {
+            truncate(&serialized.join(" | "), 300)
+        },
+        detail: if passed {
+            "all expected substrings present in tool arguments".into()
+        } else {
+            format!("missing from every tool call's arguments: {}", missing.join(", "))
+        },
+    }
+}
+
 fn check_title_pattern(pattern: &str, title: &str) -> EvalResult<HeuristicCheck> {
     let re = Regex::new(pattern)?;
     let passed = re.is_match(title);
@@ -191,4 +267,76 @@ fn truncate(s: &str, max_chars: usize) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ToolCallTrace;
+
+    fn tool_call(name: &str, args: serde_json::Value) -> ToolCallTrace {
+        ToolCallTrace {
+            name: name.to_string(),
+            round: 0,
+            arguments: args,
+            result_preview: String::new(),
+            result_chars: 0,
+            elapsed_ms: 0,
+        }
+    }
+
+    #[test]
+    fn answer_not_contains_passes_when_forbidden_text_absent() {
+        let check = check_answer_not_contains(
+            &["no he podido acceder".to_string()],
+            "Aquí tienes el análisis de los correos.",
+        );
+        assert!(check.passed);
+    }
+
+    #[test]
+    fn answer_not_contains_fails_case_insensitively_when_forbidden_text_present() {
+        let check = check_answer_not_contains(
+            &["No he podido ACCEDER".to_string()],
+            "no he podido acceder a los emails. Por favor pega el contenido.",
+        );
+        assert!(!check.passed);
+        assert!(
+            check.detail.contains("forbidden"),
+            "detail names the failure: {}",
+            check.detail
+        );
+    }
+
+    #[test]
+    fn tool_args_contains_passes_when_any_call_carries_the_substring() {
+        let calls = vec![
+            tool_call("search_emails", serde_json::json!({})),
+            tool_call(
+                "search_emails",
+                serde_json::json!({"from": "cosasdefreelance@substack.com", "limit": 25}),
+            ),
+        ];
+        let check = check_tool_args_contains(&["cosasdefreelance@substack.com".to_string()], &calls);
+        assert!(check.passed);
+    }
+
+    #[test]
+    fn tool_args_contains_fails_when_no_call_carries_the_substring() {
+        // The mangled-address failure: the model searched a translated variant
+        // instead of the address the user actually wrote.
+        let calls = vec![tool_call(
+            "search_emails",
+            serde_json::json!({"from": "thingsdefreelance@substack.com"}),
+        )];
+        let check = check_tool_args_contains(&["cosasdefreelance@substack.com".to_string()], &calls);
+        assert!(!check.passed);
+        assert!(check.detail.contains("cosasdefreelance"), "detail: {}", check.detail);
+    }
+
+    #[test]
+    fn tool_args_contains_fails_on_empty_tool_calls() {
+        let check = check_tool_args_contains(&["x@y.com".to_string()], &[]);
+        assert!(!check.passed);
+    }
 }

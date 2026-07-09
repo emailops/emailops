@@ -84,8 +84,12 @@ impl Tool for SearchEmailsTool {
             && since_str.is_none()
             && until_str.is_none()
         {
+            // Include a concrete call to imitate: a flaky model that emitted a
+            // name-only call (`search_emails({})`) recovers far more reliably
+            // from an example than from a list of parameter names.
             return Ok(ToolOutput::text(
-                "Error: search_emails requires at least one of query / from / to / subject / since / until.",
+                "Error: search_emails requires at least one of query / from / to / subject / since / until. \
+Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             ));
         }
 
@@ -227,5 +231,38 @@ showing recent matches without since/until instead)\n",
                 Ok(ToolOutput::text("No matching emails found."))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn empty_args_error_includes_an_example_call() {
+        // A degenerate `search_emails({})` call (name-only tool call from a
+        // flaky model) must come back with an error the model can imitate on
+        // its next round — a concrete example call, not just the list of
+        // accepted parameter names.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let categories: Vec<String> = Vec::new();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acct",
+            categories: &categories,
+        };
+        let out = SearchEmailsTool.execute(&ctx, json!({})).await.expect("tool ran");
+        assert!(
+            out.text.starts_with("Error:"),
+            "kept as a model-facing error: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains("Example:"),
+            "error must include an example call to imitate: {}",
+            out.text
+        );
     }
 }

@@ -284,18 +284,34 @@ struct DispatchedTool {
     text: String,
     email_refs: Vec<String>,
     draft_refs: Vec<String>,
+    /// Set when the mangled-address rescue re-ran the search with the
+    /// question's verbatim address — callers record THESE args in the trace
+    /// so it reflects the call that actually produced the result.
+    corrected_args: Option<serde_json::Value>,
 }
+
+/// Marker prefix of every empty `search_emails` result — the trigger for the
+/// mangled-address rescue in [`dispatch_tool`].
+const NO_MATCHING_EMAILS: &str = "No matching emails found";
 
 /// Dispatch one tool call through the registry: look up the tool (honouring
 /// feature gating), execute it, emit any `ToolEffect`s as `chat-tool-effect`
 /// Tauri events for the frontend to react to, and return the text the LLM
 /// will see as the tool-result message along with the email-id allowlist
 /// this tool produced.
+///
+/// `user_question` powers the mangled-address rescue: when a `search_emails`
+/// call comes back empty and its from/to looks like a mis-transcription of
+/// the ONE address written in the question (see
+/// [`correct_mangled_address_args`]), the search is re-run once with the
+/// verbatim address and the corrected result is returned, with
+/// `corrected_args` set so callers trace what actually ran.
 async fn dispatch_tool(
     registry: &tools::ToolRegistry,
     db: &Arc<Database>,
     account_id: &str,
     categories: &[String],
+    user_question: &str,
     name: &str,
     args: serde_json::Value,
 ) -> DispatchedTool {
@@ -306,8 +322,37 @@ async fn dispatch_tool(
                 account_id,
                 categories,
             };
-            match tool.execute(&ctx, args).await {
-                Ok(out) => {
+            match tool.execute(&ctx, args.clone()).await {
+                Ok(mut out) => {
+                    let mut corrected_args = None;
+                    // Mangled-address rescue: an empty search whose from/to is
+                    // a mis-transcription of the question's address gets ONE
+                    // retry with the verbatim address. Result text names the
+                    // correction so the model's prose uses the right address.
+                    if name == "search_emails" && out.text.starts_with(NO_MATCHING_EMAILS) {
+                        if let Some((fixed, right, wrong)) = correct_mangled_address_args(&args, user_question) {
+                            if let Ok(second) = tool.execute(&ctx, fixed.clone()).await {
+                                if !second.text.starts_with(NO_MATCHING_EMAILS) {
+                                    emit_log(
+                                        "info",
+                                        &format!(
+                                            "tool_loop: search_emails({wrong}) found nothing — retried with the \
+question's verbatim address ({right})"
+                                        ),
+                                    );
+                                    out = tools::ToolOutput {
+                                        text: format!(
+                                            "(No results for {wrong} — that address does not appear in the user's \
+question. Retried with {right}, written verbatim in the question. Use {right} from now on.)\n{}",
+                                            second.text
+                                        ),
+                                        ..second
+                                    };
+                                    corrected_args = Some(fixed);
+                                }
+                            }
+                        }
+                    }
                     // Effects are fire-and-forget through the event seam: a
                     // dropped effect never poisons the tool result — the LLM
                     // still gets its text.
@@ -318,12 +363,14 @@ async fn dispatch_tool(
                         text: out.text,
                         email_refs: out.email_refs,
                         draft_refs: out.draft_refs,
+                        corrected_args,
                     }
                 }
                 Err(e) => DispatchedTool {
                     text: format!("Tool '{name}' error: {e}"),
                     email_refs: Vec::new(),
                     draft_refs: Vec::new(),
+                    corrected_args: None,
                 },
             }
         }
@@ -339,6 +386,7 @@ async fn dispatch_tool(
                 text,
                 email_refs: Vec::new(),
                 draft_refs: Vec::new(),
+                corrected_args: None,
             }
         }
     }
@@ -373,7 +421,7 @@ pub(in crate::services::chat) fn execute_tool(
         .build()
         .expect("test runtime");
     // Existing tests only assert on text — drop the refs after dispatch.
-    rt.block_on(dispatch_tool(&registry, db, account_id, categories, name, args))
+    rt.block_on(dispatch_tool(&registry, db, account_id, categories, "", name, args))
         .text
 }
 
@@ -402,34 +450,54 @@ pub(in crate::services::chat) fn execute_tool(
 /// Integer-shaped parameter values are promoted to a JSON number so args
 /// like `limit=25` still match the tool's schema; everything else stays a
 /// string. Returns an empty `Vec` when no `<tool_call>` block is found.
+/// Split `text` into the inner bodies of its `<tool_call>` blocks. When the
+/// model omits `</tool_call>` (Qwen 3.6 batches calls as newline-separated
+/// `<tool_call>{json}` lines with no closing tags), the next `<tool_call>`
+/// open tag — or the end of the text — acts as an implicit close. The bool
+/// records whether the block was EXPLICITLY closed: Hermes `<function=>`
+/// bodies are only trusted when properly closed (a truncated one would
+/// half-parse into an args-less call), while JSON bodies self-validate via
+/// parsing and accept the implicit close.
+fn tool_call_block_bodies(text: &str) -> Vec<(&str, bool)> {
+    const OPEN: &str = "<tool_call>";
+    const CLOSE: &str = "</tool_call>";
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel_open) = text[cursor..].find(OPEN) {
+        let after_open = cursor + rel_open + OPEN.len();
+        let rest = &text[after_open..];
+        let (end, next_cursor, closed) = match (rest.find(CLOSE), rest.find(OPEN)) {
+            (Some(c), Some(o)) if c < o => (after_open + c, after_open + c + CLOSE.len(), true),
+            (Some(c), None) => (after_open + c, after_open + c + CLOSE.len(), true),
+            (_, Some(o)) => (after_open + o, after_open + o, false),
+            (None, None) => (text.len(), text.len(), false),
+        };
+        out.push((text[after_open..end].trim(), closed));
+        cursor = next_cursor;
+    }
+    out
+}
+
 pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
-    const OPEN: &str = "<tool_call>";
-    const CLOSE: &str = "</tool_call>";
     const FN_OPEN: &str = "<function=";
     const PARAM_OPEN: &str = "<parameter=";
     const PARAM_CLOSE: &str = "</parameter>";
 
     let mut out = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(rel_open) = text[cursor..].find(OPEN) {
-        let after_open = cursor + rel_open + OPEN.len();
-        let close = match text[after_open..].find(CLOSE) {
-            Some(c) => after_open + c,
-            None => break,
-        };
-        let block = &text[after_open..close];
-        cursor = close + CLOSE.len();
-
+    for (block, explicitly_closed) in tool_call_block_bodies(text) {
         // A <tool_call> block carries one of two shapes:
         //   1. Hermes function-XML: <function=NAME><parameter=K>V</parameter>…
         //   2. JSON body: {"name":…,"arguments":…} — Qwen 3.6's shape.
         // With no <function=> sub-element, treat the block as JSON.
         let fn_start = match block.find(FN_OPEN) {
+            // A Hermes body without its explicit `</tool_call>` is a truncated
+            // stream — drop it rather than half-parse an args-less call.
+            Some(_) if !explicitly_closed => continue,
             Some(s) => s + FN_OPEN.len(),
             None => {
-                if let Some(call) = parse_json_tool_call_block(block.trim()) {
+                if let Some(call) = parse_json_tool_call_block(block) {
                     out.push(call);
                 }
                 continue;
@@ -486,21 +554,39 @@ pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToo
     out
 }
 
+/// Parse the FIRST complete JSON value in `s`, tolerating trailing garbage —
+/// Qwen 3.6 occasionally emits an extra closing brace after the object
+/// (`{"name":…,"limit":25}}`), which a strict `from_str` rejects outright.
+fn parse_first_json_value(s: &str) -> Option<serde_json::Value> {
+    serde_json::Deserializer::from_str(s)
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()
+}
+
 /// Parse the JSON body of a `<tool_call>{…}</tool_call>` block (Qwen 3.6's
 /// shape, as opposed to the `<function=>` Hermes form). Mirrors the leniency
 /// of the runtime's native Qwen parser: hoists a `name` nested inside
-/// `arguments` when there is no top-level one, and defaults missing
-/// `arguments` to an empty object. Returns `None` when the block is not a
-/// well-formed object or carries no resolvable tool name.
+/// `arguments` when there is no top-level one, treats top-level keys beside
+/// `name` as the arguments when the `arguments` wrapper was dropped, defaults
+/// truly absent arguments to an empty object, and tolerates trailing garbage
+/// after the object. Returns `None` when the block is not a well-formed
+/// object or carries no resolvable tool name.
 fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
-    let value: serde_json::Value = serde_json::from_str(inner).ok()?;
+    let value = parse_first_json_value(inner)?;
     let obj = value.as_object()?;
-    let mut arguments = obj
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let mut arguments = obj.get("arguments").cloned().unwrap_or_else(|| {
+        // Flattened shape: the model dropped the `arguments` wrapper and put
+        // the args at top level next to `name` — collect everything else.
+        let flat: serde_json::Map<String, serde_json::Value> = obj
+            .iter()
+            .filter(|(k, _)| k.as_str() != "name")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        serde_json::Value::Object(flat)
+    });
     let name = match obj.get("name").and_then(|v| v.as_str()) {
         Some(n) => n.to_string(),
         None => {
@@ -585,21 +671,13 @@ fn infer_tool_from_arg_keys(arg_keys: &[String], tools: &[ToolArgKeys]) -> Optio
 /// blocks that already carry a name never reach here.
 fn parse_unnamed_tool_calls(text: &str, tools: &[ToolArgKeys]) -> Vec<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
-    const OPEN: &str = "<tool_call>";
-    const CLOSE: &str = "</tool_call>";
 
     let mut out = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(rel_open) = text[cursor..].find(OPEN) {
-        let after_open = cursor + rel_open + OPEN.len();
-        let Some(rel_close) = text[after_open..].find(CLOSE) else {
-            break;
-        };
-        let close = after_open + rel_close;
-        let inner = text[after_open..close].trim();
-        cursor = close + CLOSE.len();
-
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(inner) else {
+    // Implicit-close block splitting + lenient first-value parse — tolerates
+    // the missing-close-tag and trailing-brace defects the named parsers also
+    // accept; incomplete JSON simply fails the parse and is skipped.
+    for (inner, _explicitly_closed) in tool_call_block_bodies(text) {
+        let Some(value) = parse_first_json_value(inner) else {
             continue;
         };
         let Some(obj) = value.as_object() else { continue };
@@ -631,6 +709,187 @@ fn parse_unnamed_tool_calls(text: &str, tools: &[ToolArgKeys]) -> Vec<crate::ai:
         }
     }
     out
+}
+
+/// Full text-salvage chain for tool calls a model leaked as plain text instead
+/// of the structured tool_calls channel: named `<tool_call>` XML/JSON blocks →
+/// python-call literals → nameless blocks resolved by arg-key inference.
+/// Returns the parsed calls plus the format label for logging. Shared by the
+/// tool loop and the empty-synthesis recovery so both recognise the same
+/// malformed shapes.
+fn salvage_text_tool_calls(
+    content: &str,
+    registry: &tools::ToolRegistry,
+    db: &Database,
+) -> (Vec<crate::ai::provider::AiToolCall>, &'static str) {
+    let mut parsed = parse_xml_tool_calls(content);
+    let mut kind = "XML";
+    if parsed.is_empty() {
+        let known_tools = registry.names();
+        parsed = parse_python_call_tool_calls(content, &known_tools);
+        kind = "python-call";
+    }
+    if parsed.is_empty() {
+        // Nameless `<tool_call>{"arguments":{…}}` blocks (Qwen 3.6 batched
+        // no-think): infer each tool from its argument keys.
+        let schemas = registry.arg_key_schemas(db);
+        parsed = parse_unnamed_tool_calls(content, &schemas);
+        kind = "inferred-name";
+    }
+    (parsed, kind)
+}
+
+/// Distinct email addresses written verbatim in `text`, first-occurrence
+/// order, deduplicated case-insensitively (original casing preserved).
+fn extract_email_addresses(text: &str) -> Vec<String> {
+    use std::sync::OnceLock;
+    static EMAIL_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = EMAIL_RE.get_or_init(|| {
+        // Hard-coded literal that cannot fail by construction.
+        #[allow(clippy::unwrap_used)]
+        regex::Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap()
+    });
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for m in re.find_iter(text) {
+        let addr = m.as_str().to_string();
+        if seen.insert(addr.to_lowercase()) {
+            out.push(addr);
+        }
+    }
+    out
+}
+
+/// Decide whether an EMPTY `search_emails` result should be retried with the
+/// verbatim address from the question.
+///
+/// Observed on Qwen 3.6 35B: the model TRANSLATES the address while copying
+/// it out of the question ("cosasdefreelance@…" → "thingsdefreelance@…" /
+/// "stufffreelance@…"), searches the wrong sender across several rounds, and
+/// finally tells the user no emails exist. The mangled transcription is
+/// recognisable: the searched from/to is an address that does NOT appear in
+/// the question, while the question names exactly ONE address sharing its
+/// domain or local part. Only ever consulted AFTER a search came back empty,
+/// so a successful search on a legitimately different address (e.g. one
+/// discovered via search_contacts) is never touched.
+///
+/// Returns `(corrected_args, right_address, wrong_address)`.
+fn correct_mangled_address_args(
+    args: &serde_json::Value,
+    user_question: &str,
+) -> Option<(serde_json::Value, String, String)> {
+    let addrs = extract_email_addresses(user_question);
+    let [qaddr] = addrs.as_slice() else {
+        return None;
+    };
+    let qlower = qaddr.to_lowercase();
+    let (qlocal, qdomain) = qlower.split_once('@')?;
+    let question_lower = user_question.to_lowercase();
+    for field in ["from", "to"] {
+        let Some(v) = args.get(field).and_then(|v| v.as_str()).map(str::trim) else {
+            continue;
+        };
+        let vlower = v.to_lowercase();
+        // Only address-shaped values can be transcription slips; display-name
+        // filters ("sharique") are left alone.
+        let Some((vlocal, vdomain)) = vlower.split_once('@') else {
+            continue;
+        };
+        // An address the user actually wrote is intentional, even if empty.
+        if question_lower.contains(&vlower) {
+            continue;
+        }
+        if vdomain == qdomain || vlocal == qlocal {
+            let mut corrected = args.clone();
+            if let Some(obj) = corrected.as_object_mut() {
+                obj.insert(field.to_string(), serde_json::Value::String(qaddr.clone()));
+            }
+            return Some((corrected, qaddr.clone(), v.to_string()));
+        }
+    }
+    None
+}
+
+/// Deterministically repair a filterless `search_emails` call using an email
+/// address the user wrote verbatim in the question.
+///
+/// Weak/stubborn models (Qwen 3.6 35B on long analytical prompts) issue
+/// `search_emails({})` — or worse, MANGLE the address when retrying (observed:
+/// "cosasdefreelance@…" translated to "thingsdefreelance@…"). When the call
+/// carries no selective filter and the question names exactly ONE address, we
+/// inject it instead of bouncing a validation error off the model. The
+/// preceding word decides direction ("a"/"to"/"para" → recipient, else
+/// sender); ambiguity (zero or several addresses) leaves the call untouched.
+/// `include_bodies` is set like the planner's preseeds so the synthesis has
+/// content in one shot. Returns true when the args were modified.
+fn repair_filterless_search_args(args: &mut serde_json::Value, user_question: &str) -> bool {
+    const SELECTIVE: [&str; 6] = ["query", "from", "to", "subject", "since", "until"];
+    let Some(obj) = args.as_object() else {
+        return false;
+    };
+    let has_filter = SELECTIVE.iter().any(|k| {
+        obj.get(*k)
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    });
+    if has_filter {
+        return false;
+    }
+    let addrs = extract_email_addresses(user_question);
+    let [addr] = addrs.as_slice() else {
+        return false;
+    };
+    // Direction from the word right before the first mention: "envié a X" /
+    // "sent to X" / "para X" → recipient; anything else (incl. "de X") → sender.
+    let field = match user_question
+        .find(addr.as_str())
+        .map(|pos| &user_question[..pos])
+        .and_then(|before| before.split_whitespace().last().map(str::to_lowercase))
+        .as_deref()
+    {
+        Some("a") | Some("to") | Some("para") | Some("hacia") => "to",
+        _ => "from",
+    };
+    let Some(obj) = args.as_object_mut() else {
+        return false;
+    };
+    obj.insert(field.to_string(), serde_json::Value::String(addr.clone()));
+    obj.entry("limit").or_insert(serde_json::json!(25));
+    obj.entry("include_bodies").or_insert(serde_json::json!(true));
+    true
+}
+
+/// Deterministically repair an id-less `get_email_body` call: inject the next
+/// email ref (from this turn's tool results, insertion order) that has not
+/// been read yet.
+///
+/// Companion to [`repair_filterless_search_args`] for the other degenerate
+/// shape Qwen 3.6 emits: it batches K body reads after a search but drops
+/// every `email_id` (`get_email_body({})` × K), which used to bounce K
+/// "missing email_id" errors and leave the analysis grounded in snippets
+/// only. A batch of id-less reads right after a search unambiguously means
+/// "read the results I just got" — walk them in order. Declines (returns
+/// `None`) when the call already has an id or no unread ref remains, so
+/// normal validation still applies.
+fn repair_missing_email_id(
+    args: &mut serde_json::Value,
+    available_refs: &[String],
+    consumed: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let has_id = args
+        .as_object()?
+        .get("email_id")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if has_id {
+        return None;
+    }
+    let next = available_refs.iter().find(|r| !consumed.contains(*r))?.clone();
+    args.as_object_mut()?
+        .insert("email_id".to_string(), serde_json::Value::String(next.clone()));
+    Some(next)
 }
 
 /// Canonical, argument-order-independent key for a tool call (`name|args`), so
@@ -1023,20 +1282,79 @@ You already have all the information you need in the tool results above. Do NOT 
 <tool_call> markup. Answer the user's question NOW using only that information; if something is missing, \
 answer with what you have.";
 
+/// Corrective instruction for the ONE retry after the synthesis stream came
+/// back empty — the model answered the tools-free synthesis pass with nothing
+/// but tool-call markup that the gate/strip removed, so
+/// [`SYNTHESIS_CLOSING_INSTRUCTION`] alone did not land. Harder wording than
+/// the closing instruction: name the failure, forbid tool syntax, and demand
+/// a prose answer even when the tool results carry nothing useful (e.g. every
+/// call in the loop failed validation). Bilingual for the same reason as
+/// [`SYNTHESIS_CLOSING_INSTRUCTION`].
+const SYNTHESIS_RETRY_INSTRUCTION: &str =
+    "Tu respuesta anterior quedó vacía: contenía solo una llamada a una tool. Las tools NO están disponibles \
+en este paso. Escribe AHORA una respuesta en prosa para el usuario. Si no encontraste la información \
+necesaria, dilo claramente y sugiere cómo reformular la pregunta.\n\n\
+Your previous reply was empty: it contained only a tool call. Tools are NOT available in this step. Write a \
+prose answer for the user NOW. If you could not find the information, say so plainly and suggest how the \
+user could rephrase the question.";
+
+/// Instruction appended after executing tool call(s) salvaged from an empty
+/// synthesis stream: the model answered with a tool call instead of prose, we
+/// ran it for real, and this closes the loop by demanding prose over the new
+/// result. Bilingual for the same reason as [`SYNTHESIS_CLOSING_INSTRUCTION`].
+const SYNTHESIS_SALVAGED_TOOL_INSTRUCTION: &str =
+    "La tool que pediste ya se ha ejecutado; su resultado está arriba. No hay más tools disponibles. \
+Responde AHORA en prosa a la pregunta del usuario usando esa información; si no es suficiente, dilo \
+claramente y sugiere cómo reformular la pregunta.\n\n\
+The tool you requested has been executed; its result is above. No more tools are available. Answer the \
+user's question NOW in prose using that information; if it is not enough, say so plainly and suggest how \
+the user could rephrase the question.";
+
+/// User-facing fallback when the turn still has no answer text after the
+/// synthesis retry (model returned empty twice). Shipping this instead of a
+/// blank bubble tells the user what happened and how to move forward.
+/// Localized via the same [`crate::services::i18n::Language`] that drives the
+/// reply-language instruction, so the hint matches the conversation language.
+fn empty_answer_hint(lang: crate::services::i18n::Language) -> &'static str {
+    use crate::services::i18n::Language;
+    match lang {
+        Language::En => {
+            "I couldn't generate an answer for this request (the model returned an empty response twice). \
+Try rephrasing the question in a simpler way, or narrow it down — for example, name the sender or a date range."
+        }
+        Language::Es => {
+            "No he podido generar una respuesta para esta petición (el modelo devolvió una respuesta vacía \
+dos veces). Prueba a reformular la pregunta de forma más sencilla o acótala; por ejemplo, indica el \
+remitente o un rango de fechas."
+        }
+        Language::Fr => {
+            "Je n'ai pas pu générer de réponse pour cette demande (le modèle a renvoyé une réponse vide deux \
+fois). Essayez de reformuler la question plus simplement ou de la préciser — par exemple, indiquez \
+l'expéditeur ou une plage de dates."
+        }
+        Language::De => {
+            "Ich konnte für diese Anfrage keine Antwort erzeugen (das Modell hat zweimal eine leere Antwort \
+geliefert). Formuliere die Frage einfacher oder grenze sie ein – nenne zum Beispiel den Absender oder \
+einen Zeitraum."
+        }
+    }
+}
+
 /// Decide how to produce the answer from the tool loop's final message list.
 /// Pure so the routing is unit-testable without a provider or `AppHandle`.
 ///
 /// A trailing assistant message with real text and no pending tool_calls is a
 /// finished answer; anything else (a tool result, a still-open tool call, a
-/// blank assistant turn) needs a streamed synthesis pass — to which we append
-/// an explicit "stop calling tools, answer now" instruction.
+/// blank assistant turn, or text that is ONLY tool-call markup and would strip
+/// to nothing) needs a streamed synthesis pass — to which we append an
+/// explicit "stop calling tools, answer now" instruction.
 fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
     let is_direct = final_messages
         .last()
         .map(|m| {
             m.role == "assistant"
                 && m.tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true)
-                && !m.content.trim().is_empty()
+                && !strip_tool_call_markup(&m.content).trim().is_empty()
         })
         .unwrap_or(false);
     if is_direct {
@@ -1156,6 +1474,7 @@ fn build_planner_trace(latency_ms: i64, outcome: &str) -> LlmCallTrace {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_tool_loop(
     db: &Arc<Database>,
     registry: &Arc<tools::ToolRegistry>,
@@ -1164,6 +1483,7 @@ async fn run_tool_loop(
     message_id: &str,
     account_id: &str,
     categories: &[String],
+    user_question: &str,
     initial_messages: Vec<(String, String)>,
     preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
     force_tool_use: bool,
@@ -1213,6 +1533,10 @@ async fn run_tool_loop(
     // a round that only repeats executed calls makes no progress, so we break
     // to synthesis instead of re-running it.
     let mut executed_tool_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Email ids whose body has been fetched (or scheduled) this turn — the
+    // consumed-set for `repair_missing_email_id`, so a batch of id-less
+    // get_email_body calls walks distinct unread search results.
+    let mut read_body_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Preseeded round 0: execute heuristic-detected tool calls directly ──
     // For shortcut queries like "summary of today's emails" we already know
@@ -1251,8 +1575,10 @@ async fn run_tool_loop(
                 // draft" / …) so the UI reflects what each call is doing.
                 emit_phase(conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
-                let dispatched = dispatch_tool(registry, db, account_id, categories, name, args.clone()).await;
+                let dispatched =
+                    dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await;
                 let elapsed_ms = t_tool.elapsed().as_millis() as i64;
+                let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
                 let result = dispatched.text;
                 for id in dispatched.email_refs {
                     if seen_email_refs.insert(id.clone()) {
@@ -1280,7 +1606,7 @@ async fn run_tool_loop(
                     name: name.clone(),
                     // Preseeded shortcut tools run before the LLM loop.
                     round: -1,
-                    arguments: args.clone(),
+                    arguments: traced_args,
                     result_preview: truncate_chars(&result, 16000),
                     result_chars: result.len() as i32,
                     elapsed_ms,
@@ -1421,20 +1747,7 @@ async fn run_tool_loop(
         // normally — keeps the rest of the loop blissfully unaware of the
         // model quirk.
         let response = if response.tool_calls.as_ref().map(|tc| tc.is_empty()).unwrap_or(true) {
-            let mut parsed = parse_xml_tool_calls(&response.content);
-            let mut kind = "XML";
-            if parsed.is_empty() {
-                let known_tools = registry.names();
-                parsed = parse_python_call_tool_calls(&response.content, &known_tools);
-                kind = "python-call";
-            }
-            if parsed.is_empty() {
-                // Nameless `<tool_call>{"arguments":{…}}` blocks (Qwen 3.6
-                // batched no-think): infer each tool from its argument keys.
-                let schemas = registry.arg_key_schemas(db);
-                parsed = parse_unnamed_tool_calls(&response.content, &schemas);
-                kind = "inferred-name";
-            }
+            let (parsed, kind) = salvage_text_tool_calls(&response.content, registry, db);
             if !parsed.is_empty() {
                 let names: Vec<&str> = parsed.iter().map(|c| c.function.name.as_str()).collect();
                 emit_log(
@@ -1513,6 +1826,52 @@ async fn run_tool_loop(
             }
         };
 
+        // Deterministic repair: a filterless search_emails call gets the email
+        // address the user wrote verbatim injected before dispatch (when the
+        // question names exactly one), instead of bouncing a validation error
+        // off a model that tends to retry with the same empty — or a mangled —
+        // filter. Runs before the no-progress guard so dedup keys see the
+        // repaired args.
+        let mut tool_calls = tool_calls;
+        for tc in &mut tool_calls {
+            if tc.function.name == "search_emails"
+                && repair_filterless_search_args(&mut tc.function.arguments, user_question)
+            {
+                emit_log(
+                    "info",
+                    &format!(
+                        "tool_loop: search_emails had no filters — injected address from the question ({})",
+                        truncate_chars(&tc.function.arguments.to_string(), 200)
+                    ),
+                );
+            }
+            if tc.function.name == "get_email_body" {
+                // Track explicit reads; repair id-less reads with the next
+                // unread search result (Qwen 3.6 batches body reads but drops
+                // every email_id).
+                if let Some(id) = tc
+                    .function
+                    .arguments
+                    .get("email_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    read_body_ids.insert(id.to_string());
+                } else if let Some(injected) =
+                    repair_missing_email_id(&mut tc.function.arguments, &aggregated_email_refs, &read_body_ids)
+                {
+                    read_body_ids.insert(injected.clone());
+                    emit_log(
+                        "info",
+                        &format!(
+                            "tool_loop: get_email_body had no email_id — injected next unread result ({injected})"
+                        ),
+                    );
+                }
+            }
+        }
+
         // No-progress guard: if every call this round was already executed with
         // identical args, the model is spinning (re-searching instead of
         // answering). Break to synthesis from the results we already have rather
@@ -1552,8 +1911,10 @@ async fn run_tool_loop(
             // "Running tools" for the whole loop.
             emit_phase(conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
-            let dispatched = dispatch_tool(registry, db, account_id, categories, name, args.clone()).await;
+            let dispatched =
+                dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await;
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
+            let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
             let result = dispatched.text;
             for id in dispatched.email_refs {
                 if seen_email_refs.insert(id.clone()) {
@@ -1578,7 +1939,7 @@ async fn run_tool_loop(
             tool_traces.push(ToolCallTrace {
                 name: name.clone(),
                 round: round as i32,
-                arguments: args.clone(),
+                arguments: traced_args,
                 result_preview: truncate_chars(&result, 16000),
                 result_chars: result.len() as i32,
                 elapsed_ms,
@@ -1737,6 +2098,7 @@ async fn run_thread_bound_turn(
         &assistant_message_id,
         &account_id,
         &[],
+        &user_question,
         initial_messages,
         None,
         false,
@@ -1982,6 +2344,259 @@ async fn run_thread_bound_turn(
 /// final prompt tail is assembled it is persisted there as `prompt_content`
 /// so later turns replay it byte-identically (KV prefix reuse).
 #[allow(clippy::too_many_arguments)]
+/// Run one tools-free synthesis stream, forwarding gated prose tokens to the
+/// `chat-stream` event channel and flushing the gate's held-back tail at the
+/// end. Extracted from the `StreamSynthesis` branch of [`run_chat_turn`] so
+/// the empty-answer retry reuses the exact same gating/emit path as the first
+/// attempt.
+///
+/// The gate matters because backends that parse tool calls out of the raw
+/// stream (llama.cpp) can emit tool-call syntax here as plain text: the gate
+/// forwards genuine prose and suppresses any tool-call markup — prose-then-tag
+/// included — so it never reaches the bubble. The returned content is cleaned
+/// separately with `strip_tool_call_markup` before persistence.
+async fn run_gated_synthesis_stream(
+    provider: &dyn AIProvider,
+    messages: Vec<AiMessage>,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    stream_timeout: std::time::Duration,
+) -> Result<crate::ai::provider::ChatStreamResult> {
+    let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
+    let gate_for_token = gate.clone();
+    let conv_for_token = conversation_id.to_string();
+    let msg_for_token = assistant_message_id.to_string();
+    let stream_fut = provider.chat_stream(
+        messages,
+        Box::new(move |token| {
+            // On the (unreachable) lock-poison case, forward the raw token
+            // rather than drop content — persistence still strips markup as
+            // the final safety net.
+            let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
+            if !forward.is_empty() {
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: msg_for_token.clone(),
+                        conversation_id: conv_for_token.clone(),
+                        token: forward,
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                    },
+                );
+            }
+            true
+        }),
+    );
+    let res = match timeout(stream_timeout, stream_fut).await {
+        Ok(res) => res,
+        Err(_) => Err(AppError::AiError(format!(
+            "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
+            stream_timeout.as_secs()
+        ))),
+    };
+    // Flush any prose the gate held back while waiting to see if a trailing
+    // chunk completed a tool-call tag.
+    if let Ok(mut g) = gate.lock() {
+        let tail = g.finish();
+        if !tail.is_empty() {
+            crate::services::events::emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: assistant_message_id.to_string(),
+                    conversation_id: conversation_id.to_string(),
+                    token: tail,
+                    done: false,
+                    error: None,
+                    token_count: None,
+                    latency_ms: None,
+                },
+            );
+        }
+    }
+    res
+}
+
+/// Cap on tool calls salvaged from one empty synthesis attempt (a model that
+/// batches several calls into one leaked block).
+const MAX_SALVAGED_SYNTHESIS_CALLS: usize = 3;
+
+/// Cap on salvage-and-execute rounds in the recovery ladder. Observed on
+/// Qwen 3.6 35B: the first leaked call can be degenerate (`search_emails({})`
+/// → validation error) with only the SECOND attempt carrying usable args, so
+/// one round is not always enough. Two rounds + one corrective retry bound the
+/// ladder at 4 model calls total.
+const MAX_SYNTHESIS_RECOVERY_ROUNDS: usize = 2;
+
+/// Outcome of [`synthesize_with_recovery`]: the (possibly retried) stream
+/// result plus any email/draft refs contributed by salvaged tool calls, which
+/// the caller must fold into the turn's citation allowlists.
+struct SynthesisRecovery {
+    result: Result<crate::ai::provider::ChatStreamResult>,
+    email_refs: Vec<String>,
+    draft_refs: Vec<String>,
+}
+
+/// Run the final tools-free synthesis stream with an empty-answer recovery
+/// ladder. A weak or stubborn model can answer the synthesis with nothing but
+/// tool-call markup — the gate suppresses it and the user would get a silently
+/// empty bubble. On each empty attempt, in order:
+///
+/// 1. If the empty answer contains salvageable tool call(s) — named blocks,
+///    python-call literals, or nameless blocks resolved by arg-key inference
+///    (the model is telling us exactly what it needs) — execute them and
+///    re-synthesise from their results. At most
+///    [`MAX_SYNTHESIS_RECOVERY_ROUNDS`] such rounds.
+/// 2. Otherwise retry ONCE with a corrective "answer in prose NOW"
+///    instruction.
+/// 3. Budget exhausted: hand the empty result back — the caller ships a
+///    localized hint (see `empty_answer_hint`) instead of a blank bubble.
+#[allow(clippy::too_many_arguments)]
+async fn synthesize_with_recovery(
+    provider: &dyn AIProvider,
+    registry: &tools::ToolRegistry,
+    db: &Arc<Database>,
+    account_id: &str,
+    categories: &[String],
+    user_question: &str,
+    synthesis_messages: Vec<AiMessage>,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    stream_timeout: std::time::Duration,
+    llm_calls: &mut Vec<LlmCallTrace>,
+    tool_traces: &mut Vec<ToolCallTrace>,
+) -> SynthesisRecovery {
+    let mut prompt_messages = synthesis_messages;
+    let mut email_refs: Vec<String> = Vec::new();
+    let mut draft_refs: Vec<String> = Vec::new();
+    let mut salvage_rounds = 0usize;
+    let mut corrective_done = false;
+
+    loop {
+        // Keep a copy so the next ladder step can re-prompt from this context.
+        let retry_base = prompt_messages.clone();
+        let t_attempt = std::time::Instant::now();
+        let attempt = run_gated_synthesis_stream(
+            provider,
+            prompt_messages,
+            conversation_id,
+            assistant_message_id,
+            stream_timeout,
+        )
+        .await;
+
+        let empty_result = match attempt {
+            Ok(r) if strip_tool_call_markup(&r.content).trim().is_empty() => r,
+            // Healthy prose or a hard stream error — done either way.
+            other => {
+                return SynthesisRecovery {
+                    result: other,
+                    email_refs,
+                    draft_refs,
+                }
+            }
+        };
+
+        // Record the empty attempt as its own trace entry so the reasoning
+        // panel shows each call instead of one call with accumulated latency.
+        #[allow(unused_mut)] // mutated only in debug builds (output snapshot)
+        let mut empty_trace = build_final_stream_trace(t_attempt.elapsed().as_millis() as i64, Some(&empty_result));
+        empty_trace.kind = "final_stream_empty".to_string();
+        #[cfg(debug_assertions)]
+        {
+            empty_trace.output = Some(empty_result.content.clone());
+        }
+        llm_calls.push(empty_trace);
+
+        let (salvaged_all, salvage_kind) = salvage_text_tool_calls(&empty_result.content, registry, db);
+        let mut salvaged: Vec<crate::ai::provider::AiToolCall> =
+            salvaged_all.into_iter().take(MAX_SALVAGED_SYNTHESIS_CALLS).collect();
+        // Same deterministic repair as the tool loop: a filterless (or
+        // empty-args) salvaged search gets the question's verbatim address.
+        for tc in &mut salvaged {
+            if tc.function.name == "search_emails" {
+                repair_filterless_search_args(&mut tc.function.arguments, user_question);
+            }
+        }
+
+        prompt_messages = retry_base;
+        if !salvaged.is_empty() && salvage_rounds < MAX_SYNTHESIS_RECOVERY_ROUNDS {
+            salvage_rounds += 1;
+            emit_log(
+                "info",
+                &format!(
+                    "final synthesis leaked {} {salvage_kind}-format tool call(s) instead of prose — \
+executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_ROUNDS})",
+                    salvaged.len()
+                ),
+            );
+            prompt_messages.push(AiMessage {
+                role: "assistant".to_string(),
+                content: String::new(),
+                tool_calls: Some(salvaged.clone()),
+            });
+            for tc in &salvaged {
+                let t_tool = std::time::Instant::now();
+                let dispatched = dispatch_tool(
+                    registry,
+                    db,
+                    account_id,
+                    categories,
+                    user_question,
+                    &tc.function.name,
+                    tc.function.arguments.clone(),
+                )
+                .await;
+                tool_traces.push(ToolCallTrace {
+                    name: tc.function.name.clone(),
+                    // Salvaged from the final synthesis stream, after the loop.
+                    round: -3,
+                    arguments: dispatched
+                        .corrected_args
+                        .clone()
+                        .unwrap_or_else(|| tc.function.arguments.clone()),
+                    result_preview: truncate_chars(&dispatched.text, 16000),
+                    result_chars: dispatched.text.len() as i32,
+                    elapsed_ms: t_tool.elapsed().as_millis() as i64,
+                });
+                email_refs.extend(dispatched.email_refs);
+                draft_refs.extend(dispatched.draft_refs);
+                prompt_messages.push(AiMessage {
+                    role: "tool".to_string(),
+                    content: dispatched.text,
+                    tool_calls: None,
+                });
+            }
+            prompt_messages.push(AiMessage {
+                role: "user".to_string(),
+                content: SYNTHESIS_SALVAGED_TOOL_INSTRUCTION.to_string(),
+                tool_calls: None,
+            });
+        } else if !corrective_done {
+            corrective_done = true;
+            emit_log(
+                "info",
+                "final synthesis came back empty — retrying once with a corrective instruction",
+            );
+            prompt_messages.push(AiMessage {
+                role: "user".to_string(),
+                content: SYNTHESIS_RETRY_INSTRUCTION.to_string(),
+                tool_calls: None,
+            });
+        } else {
+            // Ladder exhausted: return the empty result so the caller ships
+            // the localized hint instead of a blank bubble.
+            return SynthesisRecovery {
+                result: Ok(empty_result),
+                email_refs,
+                draft_refs,
+            };
+        }
+    }
+}
+
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
@@ -2267,8 +2882,8 @@ pub async fn run_chat_turn(
         tool_loop_ms,
         loop_failed_without_answer,
         loop_error,
-        aggregated_email_refs,
-        aggregated_draft_refs,
+        mut aggregated_email_refs,
+        mut aggregated_draft_refs,
         loop_answer_streamed_live,
     ) = match &route.mode {
         RouteMode::ToolsFirst => {
@@ -2283,6 +2898,7 @@ pub async fn run_chat_turn(
                 &assistant_message_id,
                 &account_id,
                 &categories,
+                &user_question,
                 initial_messages,
                 preseeded_tool_calls,
                 true,
@@ -2413,9 +3029,6 @@ pub async fn run_chat_turn(
                 const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
                 streaming_happened = true;
 
-                let conv_id_for_stream = conversation_id.clone();
-                let msg_id_for_stream = assistant_message_id.clone();
-
                 // Snapshot the final prompt in dev builds so the reasoning panel
                 // can show exactly what was sent to chat_stream. Done before the
                 // move so we don't have to clone `synthesis_messages`.
@@ -2425,68 +3038,39 @@ pub async fn run_chat_turn(
                     final_stream_input = Some(snapshot);
                 }
 
-                // Gate the live token stream: backends that parse tool calls
-                // out of the raw stream (llama.cpp) can emit tool-call syntax
-                // here as plain text. The gate forwards genuine prose and
-                // suppresses any tool-call markup — prose-then-tag included —
-                // so it never reaches the bubble. `chat_stream`'s returned
-                // content is cleaned separately with `strip_tool_call_markup`
-                // before persistence.
-                let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
-                let gate_for_token = gate.clone();
-                let conv_for_token = conv_id_for_stream.clone();
-                let msg_for_token = msg_id_for_stream.clone();
-                let stream_fut = provider.chat_stream(
+                // Empty-answer recovery lives in `synthesize_with_recovery`:
+                // an empty stream (the model leaked a tool call instead of
+                // prose) triggers either a salvage-and-execute pass or a
+                // corrective retry. The persistence path below ships a
+                // localized hint if even the recovery comes back empty.
+                let recovery = synthesize_with_recovery(
+                    provider.as_ref(),
+                    &registry,
+                    &db,
+                    &account_id,
+                    &categories,
+                    &user_question,
                     synthesis_messages,
-                    Box::new(move |token| {
-                        // On the (unreachable) lock-poison case, forward the raw
-                        // token rather than drop content — persistence still
-                        // strips markup as the final safety net.
-                        let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
-                        if !forward.is_empty() {
-                            crate::services::events::emit(
-                                "chat-stream",
-                                ChatStreamEvent {
-                                    message_id: msg_for_token.clone(),
-                                    conversation_id: conv_for_token.clone(),
-                                    token: forward,
-                                    done: false,
-                                    error: None,
-                                    token_count: None,
-                                    latency_ms: None,
-                                },
-                            );
-                        }
-                        true
-                    }),
-                );
-                let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
-                    Ok(res) => res,
-                    Err(_) => Err(AppError::AiError(format!(
-                        "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-                        STREAM_TIMEOUT.as_secs()
-                    ))),
-                };
-                // Flush any prose the gate held back while waiting to see if a
-                // trailing chunk completed a tool-call tag.
-                if let Ok(mut g) = gate.lock() {
-                    let tail = g.finish();
-                    if !tail.is_empty() {
-                        crate::services::events::emit(
-                            "chat-stream",
-                            ChatStreamEvent {
-                                message_id: msg_id_for_stream.clone(),
-                                conversation_id: conv_id_for_stream.clone(),
-                                token: tail,
-                                done: false,
-                                error: None,
-                                token_count: None,
-                                latency_ms: None,
-                            },
-                        );
+                    &conversation_id,
+                    &assistant_message_id,
+                    STREAM_TIMEOUT,
+                    &mut llm_calls,
+                    &mut tool_traces,
+                )
+                .await;
+                // Salvaged tool calls can contribute email/draft refs the
+                // final answer may cite — fold them into the allowlists.
+                for id in recovery.email_refs {
+                    if !aggregated_email_refs.contains(&id) {
+                        aggregated_email_refs.push(id);
                     }
                 }
-                res
+                for id in recovery.draft_refs {
+                    if !aggregated_draft_refs.contains(&id) {
+                        aggregated_draft_refs.push(id);
+                    }
+                }
+                recovery.result
             }
         }
     };
@@ -2520,6 +3104,29 @@ pub async fn run_chat_turn(
             // the live-streaming path (and is a cheap no-op when nothing leaked).
             result.content = strip_tool_call_markup(&result.content);
             result.content = strip_invalid_citations(&result.content, sources.len());
+            // Robustness net: still no answer text after the synthesis retry
+            // (or a direct answer that stripped to nothing). Ship a localized
+            // rephrase hint instead of a silently blank bubble, and emit it as
+            // a stream token so the live UI shows it too.
+            if result.content.trim().is_empty() {
+                emit_log(
+                    "error",
+                    "assistant answer empty after synthesis retry — shipping rephrase hint instead of a blank bubble",
+                );
+                result.content = empty_answer_hint(ai_language).to_string();
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: result.content.clone(),
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                    },
+                );
+            }
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
@@ -2947,6 +3554,303 @@ mod tests {
     }
 
     #[test]
+    fn repair_fills_from_when_question_names_one_address() {
+        // The production failure: the model issues search_emails({}) even
+        // though the question names the sender verbatim. Repair injects it.
+        let mut args = serde_json::json!({});
+        let repaired = repair_filterless_search_args(
+            &mut args,
+            "hazme un análisis de los emails de cosasdefreelance@substack.com",
+        );
+        assert!(repaired);
+        assert_eq!(args["from"], "cosasdefreelance@substack.com");
+        assert_eq!(args["limit"], 25);
+        assert_eq!(args["include_bodies"], true);
+    }
+
+    #[test]
+    fn repair_fills_to_when_address_follows_a_recipient_preposition() {
+        for q in [
+            "cuántos emails envié a maria@acme.com",
+            "how many emails did I send to maria@acme.com",
+            "correos para maria@acme.com",
+        ] {
+            let mut args = serde_json::json!({});
+            assert!(repair_filterless_search_args(&mut args, q), "{q}");
+            assert_eq!(args["to"], "maria@acme.com", "{q}");
+            assert!(args.get("from").is_none(), "{q}");
+        }
+    }
+
+    #[test]
+    fn repair_leaves_calls_that_already_have_a_selective_filter() {
+        let mut args = serde_json::json!({"from": "x@y.com"});
+        assert!(!repair_filterless_search_args(&mut args, "emails de a@b.com"));
+        assert_eq!(args["from"], "x@y.com");
+    }
+
+    #[test]
+    fn repair_treats_limit_only_and_blank_filters_as_filterless() {
+        // limit / include_bodies are not selective; blank strings don't count.
+        let mut args = serde_json::json!({"limit": 5, "query": "  "});
+        assert!(repair_filterless_search_args(&mut args, "emails de a@b.com"));
+        assert_eq!(args["from"], "a@b.com");
+        assert_eq!(args["limit"], 5, "existing limit preserved");
+    }
+
+    #[test]
+    fn repair_declines_on_zero_or_multiple_addresses() {
+        // No address, or an ambiguous pair — never guess.
+        let mut args = serde_json::json!({});
+        assert!(!repair_filterless_search_args(&mut args, "emails de juan"));
+        assert!(!repair_filterless_search_args(
+            &mut args,
+            "emails de a@b.com y de c@d.com"
+        ));
+        assert_eq!(args, serde_json::json!({}));
+    }
+
+    #[test]
+    fn repair_dedups_repeated_mentions_of_the_same_address() {
+        let mut args = serde_json::json!({});
+        assert!(repair_filterless_search_args(
+            &mut args,
+            "emails de Ana@Acme.com — sí, los de ana@acme.com"
+        ));
+        assert_eq!(args["from"], "Ana@Acme.com", "first verbatim occurrence wins");
+    }
+
+    #[test]
+    fn mangled_address_is_corrected_from_the_question() {
+        // The model TRANSLATES the address while copying it (observed:
+        // "cosasdefreelance@…" → "thingsdefreelance@…"), searches the wrong
+        // sender, finds nothing, and reports "no emails found". Same domain +
+        // absent from the question = mangled transcription → correct it.
+        let args = serde_json::json!({"from": "thingsdefreelance@substack.com", "limit": 25, "order": "newest"});
+        let q = "analiza los emails de cosasdefreelance@substack.com";
+        let (corrected, right, wrong) = correct_mangled_address_args(&args, q).expect("rescue fires");
+        assert_eq!(corrected["from"], "cosasdefreelance@substack.com");
+        assert_eq!(corrected["limit"], 25, "other args preserved");
+        assert_eq!(right, "cosasdefreelance@substack.com");
+        assert_eq!(wrong, "thingsdefreelance@substack.com");
+    }
+
+    #[test]
+    fn mangled_address_rescue_covers_the_to_field() {
+        let args = serde_json::json!({"to": "stuff@acme.com"});
+        let q = "correos que envié a cosas@acme.com";
+        let (corrected, ..) = correct_mangled_address_args(&args, q).expect("rescue fires");
+        assert_eq!(corrected["to"], "cosas@acme.com");
+    }
+
+    #[test]
+    fn address_present_in_question_is_never_corrected() {
+        // The model searched exactly what the user wrote — an empty result is
+        // a REAL empty result.
+        let q = "emails de alice@acme.com";
+        let args = serde_json::json!({"from": "alice@acme.com"});
+        assert!(correct_mangled_address_args(&args, q).is_none());
+    }
+
+    #[test]
+    fn unrelated_or_ambiguous_addresses_are_not_corrected() {
+        let q_one = "emails de alice@acme.com";
+        // Different domain AND different local part → not a transcription slip.
+        let args = serde_json::json!({"from": "bob@other.org"});
+        assert!(correct_mangled_address_args(&args, q_one).is_none());
+        // Display-name filter (no '@') → nothing to correct.
+        let args = serde_json::json!({"from": "sharique"});
+        assert!(correct_mangled_address_args(&args, q_one).is_none());
+        // Several addresses in the question → ambiguous, never guess.
+        let args = serde_json::json!({"from": "alicia@acme.com"});
+        assert!(correct_mangled_address_args(&args, "compara alice@acme.com y bob@acme.com").is_none());
+    }
+
+    #[test]
+    fn repair_missing_email_id_injects_next_unread_ref() {
+        // Qwen 3.6 batches body reads but drops every email_id — five
+        // get_email_body({}) in one round. Each empty call gets the next
+        // search-result id that hasn't been read yet.
+        let refs = vec!["e1".to_string(), "e2".to_string(), "e3".to_string()];
+        let mut consumed: std::collections::HashSet<String> = ["e1".to_string()].into_iter().collect();
+
+        let mut args = serde_json::json!({});
+        let injected = repair_missing_email_id(&mut args, &refs, &consumed);
+        assert_eq!(injected.as_deref(), Some("e2"));
+        assert_eq!(args["email_id"], "e2");
+
+        consumed.insert("e2".to_string());
+        let mut args2 = serde_json::json!({});
+        assert_eq!(
+            repair_missing_email_id(&mut args2, &refs, &consumed).as_deref(),
+            Some("e3"),
+            "successive empty calls walk the unread refs in order"
+        );
+    }
+
+    #[test]
+    fn repair_missing_email_id_respects_an_explicit_id() {
+        let refs = vec!["e1".to_string()];
+        let consumed = std::collections::HashSet::new();
+        let mut args = serde_json::json!({"email_id": "custom"});
+        assert!(repair_missing_email_id(&mut args, &refs, &consumed).is_none());
+        assert_eq!(args["email_id"], "custom");
+    }
+
+    #[test]
+    fn repair_missing_email_id_declines_without_unread_refs() {
+        let consumed: std::collections::HashSet<String> = ["e1".to_string()].into_iter().collect();
+        let mut args = serde_json::json!({});
+        // All refs consumed…
+        assert!(repair_missing_email_id(&mut args, &["e1".to_string()], &consumed).is_none());
+        // …or no refs at all: leave the call for normal validation.
+        assert!(repair_missing_email_id(&mut args, &[], &consumed).is_none());
+        assert_eq!(args, serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn loop_repairs_idless_body_reads_with_search_result_refs() {
+        // End-to-end through run_tool_loop: a preseeded search returns email
+        // refs, then the model batches TWO get_email_body({}) calls with no
+        // ids. The loop must inject e1 and e2 (distinct) instead of bouncing
+        // two "missing email_id" errors.
+        struct SearchWithRefs;
+        #[async_trait::async_trait]
+        impl tools::Tool for SearchWithRefs {
+            fn name(&self) -> &'static str {
+                "search_emails"
+            }
+            fn description(&self) -> &'static str {
+                "scripted search"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text_with_email_refs(
+                    "- id=e1 …\n- id=e2 …".to_string(),
+                    vec!["e1".to_string(), "e2".to_string()],
+                ))
+            }
+        }
+        struct EchoBody;
+        #[async_trait::async_trait]
+        impl tools::Tool for EchoBody {
+            fn name(&self) -> &'static str {
+                "get_email_body"
+            }
+            fn description(&self) -> &'static str {
+                "scripted body read"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {"email_id": {"type":"string"}}, "required": ["email_id"] })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                let id = args.get("email_id").and_then(|v| v.as_str()).unwrap_or("<missing>");
+                Ok(tools::ToolOutput::text(format!("body of {id}")))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(SearchWithRefs) as Arc<dyn tools::Tool>,
+            Arc::new(EchoBody) as Arc<dyn tools::Tool>,
+        ]));
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        // Round 0: batch of two id-less body reads (the observed failure).
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![ai_tool_call("get_email_body"), ai_tool_call("get_email_body")]),
+        });
+        // Round 1: prose.
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "Perfil construido.".to_string(),
+            tool_calls: None,
+        });
+
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            "analiza los correos de esa newsletter",
+            vec![
+                ("system".to_string(), "SYS".to_string()),
+                ("user".to_string(), "analiza los correos de esa newsletter".to_string()),
+            ],
+            Some(vec![ai_tool_call("search_emails")]),
+            true,
+            &mut tool_traces,
+            &mut llm_calls,
+        )
+        .await;
+
+        let body_ids: Vec<String> = tool_traces
+            .iter()
+            .filter(|t| t.name == "get_email_body")
+            .filter_map(|t| t.arguments.get("email_id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        assert_eq!(
+            body_ids,
+            vec!["e1".to_string(), "e2".to_string()],
+            "both id-less reads must be repaired with distinct search-result ids; traces: {:?}",
+            tool_traces.iter().map(|t| (&t.name, &t.arguments)).collect::<Vec<_>>()
+        );
+        assert!(
+            outcome
+                .messages
+                .iter()
+                .any(|m| m.role == "tool" && m.content == "body of e1"),
+            "repaired call actually executed"
+        );
+    }
+
+    #[test]
+    fn plan_answer_streams_when_final_assistant_text_is_only_tool_markup() {
+        // The exact empty-reply failure: the final assistant message carried no
+        // structured tool_calls but its text was ONLY a degenerate <tool_call>
+        // block the parsers could not salvage (args-only, no name). Stripping
+        // the markup leaves nothing to show — route through synthesis instead
+        // of shipping an empty bubble as a "direct" answer.
+        let messages = vec![
+            ai_msg("user", "analiza los correos de x@substack.com"),
+            ai_msg(
+                "assistant",
+                "<tool_call>{\"arguments\": {\"from\": \"x@substack.com\", \"limit\": 25}}\n</tool_call>",
+            ),
+        ];
+        assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    #[test]
+    fn empty_answer_hint_is_localized_and_actionable() {
+        use crate::services::i18n::Language;
+        for lang in Language::ALL {
+            let hint = empty_answer_hint(lang);
+            assert!(!hint.trim().is_empty(), "hint must exist for {lang:?}");
+        }
+        // The hint must steer the user toward a rephrase, in their language.
+        assert!(empty_answer_hint(Language::Es).contains("reformular"));
+        assert!(empty_answer_hint(Language::En).contains("rephras"));
+    }
+
+    #[test]
     fn round_may_stream_live_suppresses_first_force_tool_round() {
         // force_tool_use turn, nothing executed yet, nudge still available:
         // the model might be announcing a tool call as text — do NOT stream it.
@@ -2982,6 +3886,373 @@ mod tests {
         assistant.tool_calls = Some(vec![ai_tool_call("search_emails")]);
         let messages = vec![ai_msg("user", "?"), assistant];
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    #[tokio::test]
+    async fn empty_synthesis_salvages_leaked_tool_call_and_resynthesises() {
+        // The exact production failure (Qwen 3.6 35B): the tools-free synthesis
+        // stream answered with NOTHING but a complete, valid tool call. The
+        // stream gate suppresses it, so the user used to get a silently empty
+        // bubble. The recovery must execute the call the model asked for and
+        // re-synthesise prose from its result.
+        struct ScriptedTool {
+            name: &'static str,
+            output: String,
+        }
+        #[async_trait::async_trait]
+        impl tools::Tool for ScriptedTool {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn description(&self) -> &'static str {
+                "scripted test tool"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text(self.output.clone()))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(ScriptedTool {
+            name: "search_emails",
+            output: "No matching emails found.".to_string(),
+        }) as Arc<dyn tools::Tool>]);
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        // Attempt 1: markup-only "answer" — strips to empty.
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"from\":\"x@substack.com\",\"limit\":25}}</tool_call>",
+        );
+        // Attempt 2 (after the salvaged tool ran): real prose.
+        provider.push_chat_response("No encontré correos de x@substack.com.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "analiza los correos de x@substack.com",
+            vec![ai_msg("user", "analiza los correos de x@substack.com")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("retry stream succeeded");
+        assert_eq!(result.content, "No encontré correos de x@substack.com.");
+        // The salvaged call executed and is visible in the trace.
+        assert!(
+            tool_traces.iter().any(|t| t.name == "search_emails" && t.round == -3),
+            "salvaged tool call must be dispatched and traced; got {:?}",
+            tool_traces.iter().map(|t| (&t.name, t.round)).collect::<Vec<_>>()
+        );
+        // The empty first attempt is traced separately so latency isn't doubled.
+        assert!(llm_calls.iter().any(|c| c.kind == "final_stream_empty"));
+        // The retry prompt carried the tool result back to the model.
+        let calls = provider.chat_calls();
+        assert_eq!(calls.len(), 2, "one initial synthesis + one recovery synthesis");
+        assert!(
+            calls[1]
+                .iter()
+                .any(|m| m.role == "tool" && m.content.contains("No matching emails found.")),
+            "recovery prompt must include the executed tool's result"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_synthesis_salvages_nameless_tool_call_via_arg_key_inference() {
+        // Variant of the production failure: the leaked block is args-only —
+        // `{"arguments":{"from":…,"limit":…}}` with NO name. The named parser
+        // can't place it, but arg-key inference can (from/limit uniquely match
+        // search_emails' schema), same as the in-loop salvage chain.
+        struct SearchLikeTool;
+        #[async_trait::async_trait]
+        impl tools::Tool for SearchLikeTool {
+            fn name(&self) -> &'static str {
+                "search_emails"
+            }
+            fn description(&self) -> &'static str {
+                "scripted search"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "from": {"type": "string"},
+                        "limit": {"type": "integer"}
+                    },
+                    "required": []
+                })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text("1 email from x@substack.com: hola".to_string()))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(SearchLikeTool) as Arc<dyn tools::Tool>]);
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(
+            "<tool_call>{\"arguments\": {\"from\": \"x@substack.com\", \"limit\": 25}}\n</tool_call>",
+        );
+        provider.push_chat_response("Encontré 1 correo de x@substack.com.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "analiza los correos de x@substack.com",
+            vec![ai_msg("user", "analiza los correos de x@substack.com")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("retry stream succeeded");
+        assert_eq!(result.content, "Encontré 1 correo de x@substack.com.");
+        assert!(
+            tool_traces.iter().any(|t| t.name == "search_emails" && t.round == -3),
+            "nameless call must be inferred and dispatched; got {:?}",
+            tool_traces.iter().map(|t| (&t.name, t.round)).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_synthesis_ladder_allows_a_second_salvage_round_then_prose() {
+        // Observed on Qwen 3.6 35B: the first leaked call is degenerate
+        // (`search_emails({})` → validation error), and only the SECOND leaked
+        // call carries usable args. The recovery ladder must execute both
+        // (bounded) before the model finally writes prose.
+        struct ScriptedTool;
+        #[async_trait::async_trait]
+        impl tools::Tool for ScriptedTool {
+            fn name(&self) -> &'static str {
+                "search_emails"
+            }
+            fn description(&self) -> &'static str {
+                "scripted search"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {"from": {"type":"string"}}, "required": [] })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                let text = if args.get("from").is_some() {
+                    "1 email found."
+                } else {
+                    "Error: needs a filter."
+                };
+                Ok(tools::ToolOutput::text(text.to_string()))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(ScriptedTool) as Arc<dyn tools::Tool>]);
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        // Attempt 1: degenerate empty-args call.
+        provider.push_chat_response("<tool_call>{\"name\":\"search_emails\",\"arguments\":{}}</tool_call>");
+        // Attempt 2: still a tool call, but a usable one this time.
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"from\":\"x@substack.com\"}}</tool_call>",
+        );
+        // Attempt 3: prose at last.
+        provider.push_chat_response("Encontré 1 correo.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "analiza los correos de x@substack.com",
+            vec![ai_msg("user", "analiza los correos de x@substack.com")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("final stream succeeded");
+        assert_eq!(result.content, "Encontré 1 correo.");
+        assert_eq!(
+            tool_traces.iter().filter(|t| t.round == -3).count(),
+            2,
+            "both salvaged calls dispatched; got {:?}",
+            tool_traces.iter().map(|t| (&t.name, t.round)).collect::<Vec<_>>()
+        );
+        assert_eq!(provider.chat_calls().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn empty_synthesis_ladder_gives_up_after_budget_and_returns_empty() {
+        // A model that NEVER stops emitting tool calls must not loop forever:
+        // 2 salvage rounds + 1 corrective retry, then hand the empty result
+        // back so the caller ships the localized hint.
+        struct ScriptedTool;
+        #[async_trait::async_trait]
+        impl tools::Tool for ScriptedTool {
+            fn name(&self) -> &'static str {
+                "search_emails"
+            }
+            fn description(&self) -> &'static str {
+                "scripted search"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text("result".to_string()))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(ScriptedTool) as Arc<dyn tools::Tool>]);
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        for _ in 0..10 {
+            provider.push_chat_response("<tool_call>{\"name\":\"search_emails\",\"arguments\":{}}</tool_call>");
+        }
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "hola",
+            vec![ai_msg("user", "hola")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("stream itself never errored");
+        assert!(
+            strip_tool_call_markup(&result.content).trim().is_empty(),
+            "still empty after budget — the caller ships the hint"
+        );
+        // 1 initial + 2 salvage rounds + 1 corrective = 4 model calls max.
+        assert_eq!(provider.chat_calls().len(), 4, "recovery budget must be bounded");
+    }
+
+    #[tokio::test]
+    async fn empty_synthesis_without_salvageable_call_retries_with_corrective_instruction() {
+        // Nothing to salvage (the model produced a blank answer, not a leaked
+        // tool call): retry once with the corrective instruction appended.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(Vec::new());
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(""); // attempt 1: empty
+        provider.push_chat_response("Aquí tienes el análisis."); // attempt 2: prose
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "hola",
+            vec![ai_msg("user", "hola")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("retry stream succeeded");
+        assert_eq!(result.content, "Aquí tienes el análisis.");
+        assert!(tool_traces.is_empty(), "no tool should run when nothing was salvaged");
+        let calls = provider.chat_calls();
+        assert_eq!(calls.len(), 2);
+        let last = calls[1].last().expect("retry prompt has messages");
+        assert_eq!(last.role, "user");
+        assert!(
+            last.content.contains("prosa") && last.content.contains("prose"),
+            "corrective instruction must be appended (bilingual): {}",
+            last.content
+        );
+    }
+
+    #[tokio::test]
+    async fn non_empty_synthesis_returns_without_retry() {
+        // A healthy synthesis (prose on the first attempt) must not spend a
+        // second model call.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = tools::ToolRegistry::with_tools(Vec::new());
+
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response("Respuesta normal.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            "hola",
+            vec![ai_msg("user", "hola")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        let result = recovery.result.expect("stream succeeded");
+        assert_eq!(result.content, "Respuesta normal.");
+        assert_eq!(provider.chat_calls().len(), 1, "no retry for a healthy answer");
+        assert!(llm_calls.is_empty(), "no extra trace entries for a healthy answer");
     }
 
     #[tokio::test]
@@ -3061,6 +4332,7 @@ mod tests {
             "msg-1",
             "acct-1",
             &[],
+            "summarise today's emails",
             vec![
                 ("system".to_string(), "SYS".to_string()),
                 ("user".to_string(), "summarise today's emails".to_string()),
@@ -3715,6 +4987,46 @@ Preséntalos en una tabla markdown …";
             .as_object()
             .map(|o| o.is_empty())
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_parses_newline_batched_calls_without_close_tags() {
+        // Verbatim production emission: batched calls as newline-separated
+        // `<tool_call>{json}` lines with NO closing tags. The next open tag
+        // (or end of text) is an implicit close.
+        let text = "<tool_call>{\"arguments\":{\"email_id\":\"e1\"},\"name\":\"get_email_body\"}\n\
+<tool_call>{\"arguments\":{\"email_id\":\"e2\"},\"name\":\"get_email_body\"}\n";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.arguments["email_id"], "e1");
+        assert_eq!(calls[1].function.arguments["email_id"], "e2");
+    }
+
+    #[test]
+    fn parse_unnamed_tool_calls_handles_missing_close_tags() {
+        // Nameless variant of the batched shape — arg-key inference still
+        // resolves each line once the implicit close splits them.
+        let text =
+            "<tool_call>{\"arguments\":{\"email_id\":\"e1\"}}\n<tool_call>{\"arguments\":{\"email_id\":\"e2\"}}\n";
+        let calls = parse_unnamed_tool_calls(text, &tool_schemas_fixture());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[1].function.arguments["email_id"], "e2");
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_salvages_flattened_args_with_trailing_brace() {
+        // Verbatim production emission (Qwen 3.6 35B): args flattened next to
+        // `name` (no `arguments` wrapper) AND a trailing extra brace. Strict
+        // JSON parsing rejects the block, so no tool ever ran.
+        let text = "<tool_call>{\"name\":\"search_emails\",\"from\":\"sharique\",\"limit\":25}}\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            serde_json::json!({"from":"sharique","limit":25})
+        );
     }
 
     // ── Repeated-tool-call detection (no-progress loop guard) ───────────

@@ -159,9 +159,12 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         expected_route: None,
         expected_tools_called: vec![],
         expected_answer_contains: vec![],
+        expected_answer_not_contains: vec![],
+        expected_tool_args_contains: vec![],
         expected_title_pattern: None,
         expected_output: None,
         metrics: vec![],
+        as_of: None,
     };
 
     let outcome = run_case(db.clone(), &account_id, &model, &case).await?;

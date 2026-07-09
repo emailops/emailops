@@ -21,11 +21,16 @@
 //     (`parse_xml_tool_calls`, `parse_python_call_tool_calls`) afterwards
 //     for those.
 //
-// Robustness:
+// Robustness (all observed Qwen 3.6 35B emissions):
 //   - Malformed JSON inside a block → skip that block, keep scanning.
 //   - Prose surrounding the blocks → ignored.
 //   - Nested braces inside `arguments` → parsed correctly via serde_json.
-//   - Mismatched tags (open without close) → ignored.
+//   - Trailing garbage after the object (`…,"limit":25}}`) → first complete
+//     JSON value wins.
+//   - Flattened args (`{"name":"x","from":"y"}`, no `arguments` wrapper) →
+//     top-level keys beside `name` become the arguments.
+//   - Missing `</tool_call>` (newline-batched calls) → the next open tag or
+//     end of text is an implicit close; incomplete JSON still yields nothing.
 
 use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
@@ -41,28 +46,48 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
     let mut cursor = 0usize;
     while let Some(rel_open) = text[cursor..].find(OPEN_TAG) {
         let after_open = cursor + rel_open + OPEN_TAG.len();
-        let Some(rel_close) = text[after_open..].find(CLOSE_TAG) else {
-            // Unterminated open tag — best to bail rather than treat the
-            // rest of the prompt as one giant tool-call body.
-            break;
+        // The model sometimes batches calls as newline-separated
+        // `<tool_call>{json}` lines with NO closing tags. The next open tag —
+        // or the end of the text — acts as an implicit close; the lenient
+        // JSON parse below rejects incomplete bodies, so a genuinely
+        // truncated stream still yields nothing rather than a bogus call.
+        let rest = &text[after_open..];
+        let (close, next_cursor) = match (rest.find(CLOSE_TAG), rest.find(OPEN_TAG)) {
+            (Some(c), Some(o)) if c < o => (after_open + c, after_open + c + CLOSE_TAG.len()),
+            (Some(c), None) => (after_open + c, after_open + c + CLOSE_TAG.len()),
+            (_, Some(o)) => (after_open + o, after_open + o),
+            (None, None) => (text.len(), text.len()),
         };
-        let close = after_open + rel_close;
         let inner = text[after_open..close].trim();
-        cursor = close + CLOSE_TAG.len();
+        cursor = next_cursor;
 
-        // serde_json is the right shape detector here: it ignores leading/
-        // trailing whitespace and handles nested objects natively. A failed
-        // parse means a malformed block — silently skip and keep scanning.
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(inner) else {
+        // Lenient first-value parse: take the first complete JSON value and
+        // ignore trailing garbage — Qwen 3.6 occasionally emits an extra
+        // closing brace after the object (`…,"limit":25}}`), which a strict
+        // `from_str` would reject, dropping an otherwise-good call. A block
+        // with no leading parseable value is malformed — skip and keep
+        // scanning.
+        let Some(value) = serde_json::Deserializer::from_str(inner)
+            .into_iter::<serde_json::Value>()
+            .next()
+            .and_then(|r| r.ok())
+        else {
             continue;
         };
         let Some(obj) = value.as_object() else { continue };
         // `arguments` is conventionally an object, but some emitters use the
-        // empty object `{}` or omit it entirely. Treat both as no-args.
-        let mut arguments = obj
-            .get("arguments")
-            .cloned()
-            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        // empty object `{}`, omit it entirely, or FLATTEN the args to the top
+        // level next to `name` (`{"name":"search_emails","from":"x"}`). When
+        // the wrapper is absent, treat every top-level key except `name` as
+        // the arguments — an empty remainder degrades to the no-args object.
+        let mut arguments = obj.get("arguments").cloned().unwrap_or_else(|| {
+            let flat: serde_json::Map<String, serde_json::Value> = obj
+                .iter()
+                .filter(|(k, _)| k.as_str() != "name")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            serde_json::Value::Object(flat)
+        });
         // Small models (Qwen 3.5 4B was the observed offender) sometimes
         // flatten the call into `{"arguments":{...,"name":"<tool>"}}` with no
         // top-level `name`. Hoist the nested `name` so the block dispatches
@@ -244,5 +269,84 @@ mod tests {
         // A plain array or string inside the block can't represent a call.
         let text = r#"<tool_call>["not","an","object"]</tool_call>"#;
         assert!(parse_qwen_tool_calls(text).is_empty());
+    }
+
+    #[test]
+    fn flattened_args_with_trailing_brace_are_salvaged() {
+        // Verbatim production emission (Qwen 3.6 35B): the `arguments` wrapper
+        // is dropped (args flattened next to `name`) AND an extra closing
+        // brace trails the object, so a strict serde parse rejects the whole
+        // block and no tool ever runs. Both defects must be tolerated.
+        let text = "<tool_call>{\"name\":\"search_emails\",\"from\":\"sharique\",\"limit\":25}}\n</tool_call>";
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[0].function.arguments, json!({"from":"sharique","limit":25}));
+    }
+
+    #[test]
+    fn flattened_args_without_wrapper_become_arguments() {
+        // Same flattened shape, valid JSON: top-level keys besides `name`
+        // are the arguments.
+        let text = r#"<tool_call>{"name":"get_email_body","email_id":"e42"}</tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_email_body");
+        assert_eq!(calls[0].function.arguments, json!({"email_id":"e42"}));
+    }
+
+    #[test]
+    fn explicit_arguments_wrapper_still_wins_over_flat_siblings() {
+        // When BOTH shapes appear, the canonical wrapper is authoritative —
+        // stray top-level keys are ignored.
+        let text = r#"<tool_call>{"name":"a","arguments":{"x":1},"stray":2}</tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.arguments, json!({"x":1}));
+    }
+
+    #[test]
+    fn newline_batched_calls_without_close_tags_are_all_parsed() {
+        // Verbatim production emission (Qwen 3.6 35B): a batch of calls as
+        // newline-separated `<tool_call>{json}` lines with NO closing tags.
+        // Requiring `</tool_call>` dropped the whole batch — no tool ever ran.
+        // The next open tag (or end of text) is an implicit close.
+        let text = "<tool_call>{\"arguments\":{\"thread_id\":\"t1\"},\"name\":\"get_thread\"}\n\
+<tool_call>{\"arguments\":{\"thread_id\":\"t2\"},\"name\":\"get_thread\"}\n\
+<tool_call>{\"arguments\":{\"thread_id\":\"t3\"},\"name\":\"get_thread\"}\n";
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].function.arguments, json!({"thread_id":"t1"}));
+        assert_eq!(calls[2].function.arguments, json!({"thread_id":"t3"}));
+    }
+
+    #[test]
+    fn single_trailing_close_after_unterminated_batch_splits_correctly() {
+        // Same batch shape but the model remembered exactly ONE closing tag at
+        // the very end — each open must still bind to its own JSON line, not
+        // swallow the whole batch as one block.
+        let text = "<tool_call>{\"name\":\"a\",\"arguments\":{\"x\":1}}\n\
+<tool_call>{\"name\":\"b\",\"arguments\":{\"y\":2}}</tool_call>";
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.name, "a");
+        assert_eq!(calls[1].function.name, "b");
+    }
+
+    #[test]
+    fn unterminated_block_with_complete_json_at_eof_is_parsed() {
+        // The stream ended right after a complete JSON object (no close tag).
+        // The call is complete — execute it.
+        let text = r#"<tool_call>{"name":"list_drafts","arguments":{}}"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "list_drafts");
+    }
+
+    #[test]
+    fn trailing_garbage_only_blocks_still_skip() {
+        // Leniency must not turn junk into a call.
+        assert!(parse_qwen_tool_calls("<tool_call>}}</tool_call>").is_empty());
+        assert!(parse_qwen_tool_calls("<tool_call>not json}</tool_call>").is_empty());
     }
 }
