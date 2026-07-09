@@ -82,14 +82,13 @@ sys-locale = "0.3"
 serde_yaml = "0.9"
 tera = "1"
 # Embedded llama.cpp (optional — enabled via the `llamacpp` feature).
-# Pinned to the 0.1.147 git tag (not crates.io) because the maintainer
-# hasn't published 0.1.147 yet. Cargo auto-clones the llama.cpp submodule
-# from this dep, so no extra workflow setup needed.
-llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs.git", tag = "0.1.147", optional = true, default-features = false }
+# Uses the crates.io release (0.1.151). Cargo vendors the llama.cpp sources
+# with the crate, so no submodule/workflow setup is needed.
+llama-cpp-2 = { version = "0.1.151", optional = true, default-features = false }
 # Raw FFI symbols (llama_log_set / ggml_log_set + GGML_LOG_LEVEL_* constants) so
-# we can install a level-filtering log callback. Same git tag as llama-cpp-2, so
+# we can install a level-filtering log callback. Same version as llama-cpp-2, so
 # Cargo unifies it with the copy llama-cpp-2 already pulls in (no second build).
-llama-cpp-sys-2 = { git = "https://github.com/utilityai/llama-cpp-rs.git", tag = "0.1.147", optional = true, default-features = false }
+llama-cpp-sys-2 = { version = "0.1.151", optional = true, default-features = false }
 # TypeScript type generation (optional — enabled via the `ts` feature)
 # cargo test --features ts -- export_bindings → writes src/types/generated/*.ts
 ts-rs = { version = "12", optional = true }
