@@ -920,7 +920,16 @@ mod tests {
     fn plan_aux_llm_table() {
         use ProviderType::*;
         // (provider, model, rewrite_pref, rerank_pref) -> (rewrite, rerank)
-        let cases: &[(ProviderType, &str, Option<&str>, Option<&str>, bool, bool, &str)] = &[
+        type Case<'a> = (
+            ProviderType,
+            &'a str,
+            Option<&'a str>,
+            Option<&'a str>,
+            bool,
+            bool,
+            &'a str,
+        );
+        let cases: &[Case] = &[
             // Embedded llama.cpp: auto → both off, regardless of size.
             (
                 LlamaCpp,

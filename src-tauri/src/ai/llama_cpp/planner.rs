@@ -402,7 +402,8 @@ mod tests {
     #[test]
     fn n_ctx_suggestion_table() {
         // (n_ctx, n_ctx_train, orig_prompt_tokens, reserve, expected, label)
-        let cases: &[(usize, u32, usize, usize, Option<u32>, &str)] = &[
+        type Case<'a> = (usize, u32, usize, usize, Option<u32>, &'a str);
+        let cases: &[Case] = &[
             (
                 8192,
                 32768,
@@ -545,7 +546,8 @@ mod tests {
     #[test]
     fn cached_prefix_table() {
         // (cached, cached_system, new, expected, label)
-        let cases: &[(&[i32], &[i32], &[i32], PrefixPlan, &str)] = &[
+        type Case<'a> = (&'a [i32], &'a [i32], &'a [i32], PrefixPlan, &'a str);
+        let cases: &[Case] = &[
             (
                 &[1, 2, 3],
                 &[1, 2],
@@ -623,7 +625,8 @@ mod tests {
     #[test]
     fn anchor_seed_table() {
         // (cached_system, new, sys_len, expected, label)
-        let cases: &[(&[i32], &[i32], usize, AnchorSeed, &str)] = &[
+        type Case<'a> = (&'a [i32], &'a [i32], usize, AnchorSeed, &'a str);
+        let cases: &[Case] = &[
             (
                 &[],
                 &[1, 2, 3, 4],
@@ -710,7 +713,8 @@ mod tests {
     #[test]
     fn stable_boundary_table() {
         // (full, stable, lcp, expected, label)
-        let cases: &[(&[i32], &[i32], usize, usize, &str)] = &[
+        type Case<'a> = (&'a [i32], &'a [i32], usize, usize, &'a str);
+        let cases: &[Case] = &[
             (
                 &[1, 2, 3, 4, 90, 91, 92, 93],
                 &[1, 2, 3, 4],

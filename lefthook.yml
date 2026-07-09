@@ -32,7 +32,9 @@ pre-commit:
       run: npx tsc --noEmit
     clippy:
       glob: "src-tauri/src/**/*.rs"
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      # --tests matches CI (ci.yml lint-backend) so test-only lint failures
+      # surface before push, not on the runner.
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml --tests -- -D warnings
     rustfmt-check:
       glob: "src-tauri/src/**/*.rs"
       run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
@@ -51,7 +53,7 @@ pre-push:
   parallel: true
   commands:
     clippy:
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml --tests -- -D warnings
     rust-tests:
       run: cargo test --manifest-path src-tauri/Cargo.toml
     secrets-check:

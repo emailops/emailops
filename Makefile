@@ -86,7 +86,7 @@ check:
 # Lint only (fast)
 lint:
 	npx biome check src/
-	cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+	cargo clippy --manifest-path src-tauri/Cargo.toml --tests -- -D warnings
 
 # Format everything
 fmt:
@@ -111,7 +111,7 @@ test-fast:
 	cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
 
 clippy-fast:
-	cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features -- -D warnings
+	cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
 
 lint-fast:
 	npx biome check src/

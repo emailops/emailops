@@ -821,7 +821,7 @@ mod tests {
         // the mailbox filter can tell them apart.
         let emb = vec![0.1_f32; 768];
         for id in ["e-in", "e-spam", "e-trash"] {
-            db.store_embedding_chunks(id, "acc1", &[emb.clone()], "test-model", "hash")
+            db.store_embedding_chunks(id, "acc1", std::slice::from_ref(&emb), "test-model", "hash")
                 .unwrap();
         }
 
