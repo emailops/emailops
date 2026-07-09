@@ -290,7 +290,12 @@ impl Database {
         ascending: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
-        let mut conditions: Vec<String> = vec!["e.account_id = ?1".to_string(), "e.is_deleted = 0".to_string()];
+        let mut conditions: Vec<String> = vec![
+            "e.account_id = ?1".to_string(),
+            "e.is_deleted = 0".to_string(),
+            // Spam/trash never surface in search (see search_emails_inner).
+            "e.mailbox NOT IN ('spam', 'trash')".to_string(),
+        ];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
         let mut param_idx = 2usize;
 
@@ -472,6 +477,9 @@ impl Database {
         params_vec.push(Box::new(account_id.to_string()));
         cte_conditions.push(format!("match_e.account_id = ?{}", param_idx));
         cte_conditions.push("match_e.is_deleted = 0".to_string());
+        // Spam/trash never surface in search — a spam email classified
+        // `primary` must not sail through the category filter.
+        cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string());
         param_idx += 1;
 
         // Category filter
@@ -888,6 +896,117 @@ mod tests {
 
         // Order: newest first (timestamp DESC).
         assert_eq!(ids, vec!["e3", "e2"], "results should be newest-first");
+    }
+
+    // ── search: spam/trash mailbox exclusion ─────────────────────────────────────
+
+    // Regression: chat's search_emails tool (and the app search bar) surfaced
+    // emails sitting in the spam mailbox because search only filtered by
+    // category — a spam email classified `primary` sailed through. Search must
+    // never return spam/trash rows, matching get_emails / quick-filter stats.
+    #[test]
+    fn search_keyword_excludes_spam_and_trash_mailboxes() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_search_email_in_mailbox(
+            &db,
+            "e-in",
+            account,
+            "t-in",
+            "Alice",
+            "alice@good.com",
+            "Alignerr opportunities",
+            "body",
+            100,
+            "inbox",
+        );
+        insert_search_email_in_mailbox(
+            &db,
+            "e-spam",
+            account,
+            "t-spam",
+            "Bot",
+            "bot@bad.com",
+            "Alignerr opportunities",
+            "body",
+            200,
+            "spam",
+        );
+        insert_search_email_in_mailbox(
+            &db,
+            "e-trash",
+            account,
+            "t-trash",
+            "Bot",
+            "bot@bad.com",
+            "Alignerr opportunities",
+            "body",
+            300,
+            "trash",
+        );
+
+        let results = db
+            .search_emails(account, "Alignerr", None, None, None, None, None, None, None, 20)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(ids.contains(&"e-in"), "inbox email must match, got {:?}", ids);
+        assert!(!ids.contains(&"e-spam"), "spam email must be excluded, got {:?}", ids);
+        assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
+    }
+
+    // Same leak on the date-only fast path (no text filters) — the exact path
+    // the "summarise this week" chat shortcut takes (since/until only).
+    #[test]
+    fn search_date_only_excludes_spam_and_trash_mailboxes() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_contact_email(
+            &db,
+            "e-in",
+            account,
+            "t-in",
+            "Alice",
+            "alice@good.com",
+            "[]",
+            "inbox",
+            100,
+        );
+        insert_contact_email(&db, "e-sent", account, "t-sent", "Me", "me@me.com", "[]", "sent", 150);
+        insert_contact_email(
+            &db,
+            "e-spam",
+            account,
+            "t-spam",
+            "Bot",
+            "bot@bad.com",
+            "[]",
+            "spam",
+            200,
+        );
+        insert_contact_email(
+            &db,
+            "e-trash",
+            account,
+            "t-trash",
+            "Bot",
+            "bot@bad.com",
+            "[]",
+            "trash",
+            300,
+        );
+
+        let results = db
+            .search_emails(account, "", None, None, None, None, Some(50), Some(500), None, 20)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(ids.contains(&"e-in"), "inbox email must appear, got {:?}", ids);
+        assert!(ids.contains(&"e-sent"), "sent email must appear, got {:?}", ids);
+        assert!(!ids.contains(&"e-spam"), "spam email must be excluded, got {:?}", ids);
+        assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
     }
 
     // ── quick filter stats: mailbox scoping + count semantics ────────────────────

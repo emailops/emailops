@@ -137,9 +137,11 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        // Step 3: if account/category filter, narrow by a second indexed query
-        // against emails. Each row checks PK + indexed columns, no table scan.
-        let filtered: Vec<(i64, String)> = if account_id.is_some() || categories.is_some_and(|c| !c.is_empty()) {
+        // Step 3: narrow by a second indexed query against emails. Each row
+        // checks PK + indexed columns, no table scan. Always runs — even with
+        // no account/category filter, spam/trash rows must never be retrieved
+        // (a spam email classified `primary` sails through the category filter).
+        let filtered: Vec<(i64, String)> = {
             let unique_emails: Vec<String> = rowid_to_email
                 .iter()
                 .map(|(_, eid)| eid.clone())
@@ -151,7 +153,10 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            let mut sql = format!("SELECT id FROM emails WHERE id IN ({})", eid_phs);
+            let mut sql = format!(
+                "SELECT id FROM emails WHERE id IN ({}) AND mailbox NOT IN ('spam', 'trash')",
+                eid_phs
+            );
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = unique_emails
                 .iter()
                 .map(|e| Box::new(e.clone()) as Box<dyn rusqlite::ToSql>)
@@ -185,8 +190,6 @@ impl Database {
                 .into_iter()
                 .filter(|(_, eid)| allowed.contains(eid))
                 .collect()
-        } else {
-            rowid_to_email
         };
 
         // Step 4: dedup by email_id, keep best similarity
@@ -237,9 +240,12 @@ impl Database {
         let conn = self.connection();
 
         let mut sql = String::from(
+            // Spam/trash are never embedded — retrieval must never surface
+            // them, so embedding them is pure wasted compute.
             "SELECT e.id FROM emails e
              LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-             WHERE ec.email_id IS NULL AND e.is_deleted = 0",
+             WHERE ec.email_id IS NULL AND e.is_deleted = 0
+               AND e.mailbox NOT IN ('spam', 'trash')",
         );
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(acc) = account_id {
@@ -279,18 +285,22 @@ impl Database {
     pub fn count_emails_without_embeddings(&self, account_id: Option<&str>) -> Result<i32> {
         let conn = self.connection();
 
+        // Filters mirror get_emails_without_embeddings (deletion + mailbox) so
+        // the pending count reaches zero when the embed loop finishes.
         let (sql, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) = match account_id {
             Some(acc) => (
                 "SELECT COUNT(*) FROM emails e
                  LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-                 WHERE ec.email_id IS NULL AND e.account_id = ?1"
+                 WHERE ec.email_id IS NULL AND e.is_deleted = 0
+                   AND e.mailbox NOT IN ('spam', 'trash') AND e.account_id = ?1"
                     .to_string(),
                 vec![Box::new(acc.to_string())],
             ),
             None => (
                 "SELECT COUNT(*) FROM emails e
                  LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-                 WHERE ec.email_id IS NULL"
+                 WHERE ec.email_id IS NULL AND e.is_deleted = 0
+                   AND e.mailbox NOT IN ('spam', 'trash')"
                     .to_string(),
                 vec![],
             ),
@@ -376,10 +386,13 @@ impl Database {
 
         let mut sql = String::from(
             // bm25 weights match column order: email_id (UNINDEXED, ignored), subject, sender, body
+            // Spam/trash never surface in retrieval — a spam email classified
+            // `primary` must not sail through the category filter.
             r#"SELECT f.email_id, bm25(emails_fts, 0.0, 3.0, 2.0, 1.0) as rank
                FROM emails_fts f
                JOIN emails e ON f.email_id = e.id
-               WHERE emails_fts MATCH ?1"#,
+               WHERE emails_fts MATCH ?1
+                 AND e.mailbox NOT IN ('spam', 'trash')"#,
         );
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(fts_query)];
         let mut param_idx = 2;
@@ -615,6 +628,20 @@ mod tests {
         body: &str,
         timestamp: i64,
     ) {
+        insert_fts_email_in_mailbox(db, id, account_id, sender_email, subject, body, timestamp, "inbox");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_fts_email_in_mailbox(
+        db: &Database,
+        id: &str,
+        account_id: &str,
+        sender_email: &str,
+        subject: &str,
+        body: &str,
+        timestamp: i64,
+        mailbox: &str,
+    ) {
         let conn = db.connection();
         conn.execute(
             "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
@@ -625,9 +652,9 @@ mod tests {
         conn.execute(
             "INSERT INTO emails
                      (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
-                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
-                     VALUES (?1, ?2, ?1, ?3, 'Test Sender', ?4, 'x.com', '[]', '[]', '', ?5, 0, 'primary', 0)",
-            params![id, account_id, subject, sender_email, timestamp],
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1, ?2, ?1, ?3, 'Test Sender', ?4, 'x.com', '[]', '[]', '', ?5, 0, 'primary', ?6, 0)",
+            params![id, account_id, subject, sender_email, timestamp, mailbox],
         )
         .unwrap();
         conn.execute(
@@ -737,6 +764,127 @@ mod tests {
         for id in &ids {
             assert!(id.starts_with('s'), "non-sent id leaked: {}", id);
         }
+    }
+
+    // Regression: chat RAG surfaced spam-mailbox emails because the retrieval
+    // primitives only filtered by account/category. A spam email classified
+    // `primary` sailed through both the FTS and the vector path.
+    #[test]
+    fn fts_search_excludes_spam_and_trash_mailboxes() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(
+            &db,
+            "e-in",
+            "acc1",
+            "alice@x.com",
+            "factura junio",
+            "body",
+            100,
+            "inbox",
+        );
+        insert_fts_email_in_mailbox(
+            &db,
+            "e-spam",
+            "acc1",
+            "bot@bad.com",
+            "factura premio",
+            "body",
+            200,
+            "spam",
+        );
+        insert_fts_email_in_mailbox(
+            &db,
+            "e-trash",
+            "acc1",
+            "bot@bad.com",
+            "factura vieja",
+            "body",
+            300,
+            "trash",
+        );
+
+        let hits = db.fts_search("factura", Some("acc1"), None, 10).unwrap();
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(ids.contains(&"e-in"), "inbox email must match, got {:?}", ids);
+        assert!(!ids.contains(&"e-spam"), "spam email must be excluded, got {:?}", ids);
+        assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
+    }
+
+    #[test]
+    fn vec_search_excludes_spam_and_trash_mailboxes() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-in", "acc1", "alice@x.com", "subject", "body", 100, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-spam", "acc1", "bot@bad.com", "subject", "body", 200, "spam");
+        insert_fts_email_in_mailbox(&db, "e-trash", "acc1", "bot@bad.com", "subject", "body", 300, "trash");
+
+        // Identical embeddings so all three are equally-ranked KNN hits; only
+        // the mailbox filter can tell them apart.
+        let emb = vec![0.1_f32; 768];
+        for id in ["e-in", "e-spam", "e-trash"] {
+            db.store_embedding_chunks(id, "acc1", &[emb.clone()], "test-model", "hash")
+                .unwrap();
+        }
+
+        let hits = db.vec_search(&emb, Some("acc1"), None, 10).unwrap();
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(ids.contains(&"e-in"), "inbox email must be retrieved, got {:?}", ids);
+        assert!(!ids.contains(&"e-spam"), "spam email must be excluded, got {:?}", ids);
+        assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
+    }
+
+    // Regression: the embedding pipeline embedded spam/trash emails — wasted
+    // compute for content that retrieval must never surface. Candidate
+    // selection must skip them.
+    #[test]
+    fn get_emails_without_embeddings_excludes_spam_and_trash() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-in", "acc1", "alice@x.com", "subject", "body", 100, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-sent", "acc1", "me@me.com", "subject", "body", 150, "sent");
+        insert_fts_email_in_mailbox(&db, "e-spam", "acc1", "bot@bad.com", "subject", "body", 200, "spam");
+        insert_fts_email_in_mailbox(&db, "e-trash", "acc1", "bot@bad.com", "subject", "body", 300, "trash");
+
+        let ids = db.get_emails_without_embeddings(Some("acc1"), 10, &[], None).unwrap();
+        assert!(
+            ids.contains(&"e-in".to_string()),
+            "inbox email must be a candidate, got {:?}",
+            ids
+        );
+        assert!(
+            ids.contains(&"e-sent".to_string()),
+            "sent email must be a candidate, got {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&"e-spam".to_string()),
+            "spam email must be skipped, got {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&"e-trash".to_string()),
+            "trash email must be skipped, got {:?}",
+            ids
+        );
+    }
+
+    // The pending count must mirror the fetcher's filters (mailbox + deletion)
+    // or the UI reports pending work the embed loop will never pick up.
+    #[test]
+    fn count_emails_without_embeddings_matches_fetcher_filters() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-in", "acc1", "alice@x.com", "subject", "body", 100, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-spam", "acc1", "bot@bad.com", "subject", "body", 200, "spam");
+        insert_fts_email_in_mailbox(&db, "e-trash", "acc1", "bot@bad.com", "subject", "body", 300, "trash");
+        insert_fts_email_in_mailbox(&db, "e-del", "acc1", "gone@x.com", "subject", "body", 400, "inbox");
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'e-del'", [])
+            .unwrap();
+        // Already embedded — must not count as pending.
+        insert_fts_email_in_mailbox(&db, "e-emb", "acc1", "bob@x.com", "subject", "body", 500, "inbox");
+        db.store_embedding_chunks("e-emb", "acc1", &[vec![0.1_f32; 768]], "test-model", "hash")
+            .unwrap();
+
+        let count = db.count_emails_without_embeddings(Some("acc1")).unwrap();
+        assert_eq!(count, 1, "only e-in is pending (spam/trash/deleted/embedded excluded)");
     }
 
     // Sanity: passing only stopwords should produce an empty FTS query and

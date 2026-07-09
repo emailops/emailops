@@ -107,6 +107,58 @@ pub(super) fn insert_search_email(
     .unwrap();
 }
 
+/// Same as [`insert_search_email`] but with an explicit mailbox — used to
+/// verify that search excludes spam/trash copies.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert_search_email_in_mailbox(
+    db: &Database,
+    id: &str,
+    account_id: &str,
+    thread_id: &str,
+    sender: &str,
+    sender_email: &str,
+    subject: &str,
+    body: &str,
+    timestamp: i64,
+    mailbox: &str,
+) {
+    let sender_domain = sender_email
+        .rsplit_once('@')
+        .map(|(_, d)| d.to_lowercase())
+        .unwrap_or_default();
+    let body_text = strip_html_for_fts(body);
+    let conn = db.connection();
+    ensure_account(&conn, account_id);
+    conn.execute(
+        "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,'[]','[]','snip',?8,0,'primary',?9,0)",
+        rusqlite::params![
+            id,
+            account_id,
+            thread_id,
+            subject,
+            sender,
+            sender_email,
+            sender_domain,
+            timestamp,
+            mailbox,
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO email_bodies (email_id, body) VALUES (?1, ?2)",
+        rusqlite::params![id, body],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![id, subject, sender, body_text],
+    )
+    .unwrap();
+}
+
 pub(super) fn tag_email(db: &Database, email_id: &str, tag_type: &str, tag_value: &str) {
     db.connection()
         .execute(
