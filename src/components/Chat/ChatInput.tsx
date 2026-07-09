@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { useAutoGrow } from '@/hooks/useAutoGrow';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
 
 interface ChatInputProps {
@@ -17,6 +18,11 @@ interface ChatInputProps {
 export function ChatInput({ onSend, disabled, placeholder, prefillText, prefillNonce }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Grow with the prompt (rows={2} sets the floor) and shrink back on send;
+  // past the cap the textarea scrolls internally instead of pushing the
+  // conversation off-screen.
+  useAutoGrow(textareaRef, value);
 
   // Sync external prefills into local state. Only fires when the nonce
   // changes so typing locally doesn't clash with stale text.
