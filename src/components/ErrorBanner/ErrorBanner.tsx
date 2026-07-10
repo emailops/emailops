@@ -2,11 +2,14 @@ import { useTranslation } from 'react-i18next';
 
 interface ErrorBannerProps {
   message: string | null;
+  /** Email of the account the error belongs to, when it is account-scoped.
+   *  With multiple accounts configured the banner must say which one failed. */
+  accountEmail?: string | null;
   onDismiss: () => void;
   onReauthenticate?: () => void;
 }
 
-export function ErrorBanner({ message, onDismiss, onReauthenticate }: ErrorBannerProps) {
+export function ErrorBanner({ message, accountEmail, onDismiss, onReauthenticate }: ErrorBannerProps) {
   const { t } = useTranslation(['common']);
   if (!message) return null;
 
@@ -29,7 +32,10 @@ export function ErrorBanner({ message, onDismiss, onReauthenticate }: ErrorBanne
           </svg>
         </div>
         <div className="ml-3 flex-1">
-          <p className="text-sm text-red-700">{message}</p>
+          <p className="text-sm text-red-700">
+            {accountEmail && <span className="font-semibold">{accountEmail}: </span>}
+            {message}
+          </p>
           {isAuthError && onReauthenticate && (
             <button
               onClick={onReauthenticate}

@@ -474,6 +474,12 @@ function AppInner() {
     accountErrorAccountId !== null && accountErrorAccountId !== activeAccountId && !isUnified;
   const visibleAccountError = isScopedAccountError ? null : accountError;
   const displayError = visibleAccountError || emailError;
+  // Tell the user WHICH account the banner is about — essential in unified
+  // mode / with several accounts, where "Sync error: …" alone is unactionable.
+  const displayErrorAccountEmail =
+    visibleAccountError && accountErrorAccountId
+      ? (accounts.find((a) => a.id === accountErrorAccountId)?.email ?? null)
+      : null;
   const clearError = useCallback(() => {
     clearAccountError();
     clearEmailError();
@@ -992,7 +998,12 @@ function AppInner() {
         />
       )}
       <OfflineBanner />
-      <ErrorBanner message={displayError} onDismiss={clearError} onReauthenticate={handleReauthenticate} />
+      <ErrorBanner
+        message={displayError}
+        accountEmail={displayErrorAccountEmail}
+        onDismiss={clearError}
+        onReauthenticate={handleReauthenticate}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
