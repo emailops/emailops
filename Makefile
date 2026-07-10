@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -443,6 +443,16 @@ dist-cli-mac:
 	mkdir -p release; \
 	cp "$$DMG" release/EmailOps-CLI-macos.dmg; \
 	echo "Staged release/EmailOps-CLI-macos.dmg (from $$DMG)"
+
+# ── Homebrew cask ────────────────────────────────────────────────────────────
+# Regenerate homebrew/Casks/emailops.rb from the published GitHub release
+# assets (GitHub's own sha256 digests — no download). Run AFTER uploading the
+# DMGs to the release, then copy the cask into the emailops/homebrew-tap repo.
+# Full publishing flow: homebrew/README.md.
+#   make cask              # from the latest release
+#   make cask TAG=v0.6.2   # from a specific tag
+cask:
+	bash scripts/generate_cask.sh $(TAG)
 
 # Regenerate the evaluations index (manifest.json + instructions to open index.html)
 eval-index:

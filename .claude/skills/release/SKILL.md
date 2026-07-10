@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new signed + notarized EmailOps macOS release — version bump across all source-of-truth files, CHANGELOG, quality gates, universal app + standalone CLI builds, commit, tag, and (confirmation-gated) push. The GitHub release is never created automatically; the skill prints the exact info to publish it manually.
+description: Cut a new signed + notarized EmailOps macOS release — version bump across all source-of-truth files, CHANGELOG, quality gates, universal app + standalone CLI builds, commit, tag, and (confirmation-gated) push. The GitHub release is never created automatically; the skill prints the exact info to publish it manually. After the developer publishes the release, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep
@@ -216,8 +216,81 @@ Then print, in your final message:
     `release/EmailOps-macos.dmg` and `release/EmailOps-CLI-macos.dmg` (keep the
     filenames as-is), keep "Set as the latest release" checked, and publish.
 
+Tell the user that once they have published the release, the Homebrew cask
+still needs updating (Phase 9) — offer to do it as soon as they confirm the
+release is live.
+
+## Phase 9 — Homebrew cask update (post-publish)
+
+EmailOps is also distributed via the `emailops/homebrew-tap` cask. The cask is
+generated **from the published release assets** (it pins the sha256 digests
+GitHub computes for each asset), so this phase can only run **after** the
+developer has published the GitHub release from Phase 8. Full background and
+invariants: `homebrew/README.md`.
+
+1. **Verify the release is live and digested.** Do not rely on the user's
+   word alone — check:
+
+   ```bash
+   gh api repos/emailops/emailops/releases/tags/vX.Y.Z --jq '.assets[] | {name, digest}'
+   ```
+
+   Proceed only when `EmailOps-macos.dmg` is listed **with** a `sha256:` digest
+   (GitHub computes it within ~a minute of upload; if `digest` is null, wait
+   and retry).
+
+2. **Regenerate the cask** in the main repo:
+
+   ```bash
+   make cask TAG=vX.Y.Z
+   ```
+
+   This rewrites `homebrew/Casks/emailops.rb`. If the script warns that
+   `EmailOps-macos-intel.dmg` is missing it emits an arm64-only cask — that is
+   the expected outcome of the standard flow above (which only uploads the
+   universal + CLI DMGs). Only chase the Intel warning if the user wants
+   Intel Homebrew support for this release (`make build-mac-intel` etc.).
+
+3. **Lint it:** `brew style homebrew/Casks/emailops.rb` must report **exactly
+   one** offense — `Homebrew/OSDependsOn` on the `depends_on macos:
+   ">= :monterey"` line. That string form is deliberate (older Homebrew treats
+   the symbol form as an exact-version match and refuses to install); see the
+   header comment in `scripts/generate_cask.sh`. Any *other* offense is a real
+   problem — stop and investigate.
+
+4. **Copy it into the tap.** The tap clone lives at `../homebrew-tap`
+   (sibling of this repo); if it is missing, clone it:
+   `gh repo clone emailops/homebrew-tap ../homebrew-tap`.
+
+   ```bash
+   git -C ../homebrew-tap pull
+   cp homebrew/Casks/emailops.rb ../homebrew-tap/Casks/emailops.rb
+   git -C ../homebrew-tap add Casks/emailops.rb
+   git -C ../homebrew-tap commit -m "emailops X.Y.Z"
+   ```
+
+5. **Push the tap (confirmation-gated).** Same rule as Phase 7 — ask before
+   pushing:
+
+   ```bash
+   git -C ../homebrew-tap push origin main
+   ```
+
+   Users pick the new version up via `brew upgrade --cask emailops`.
+
+6. **Commit the regenerated cask in the main repo too** (`homebrew/Casks/
+   emailops.rb` is tracked here as the source of what was shipped):
+   `git add homebrew/Casks/emailops.rb && git commit -m "chore: update Homebrew cask to vX.Y.Z"`,
+   and include it when pushing `main` (ask first, as always).
+
+**Invariant:** never replace a DMG asset on an already-published tag — the
+cask pins its sha256, so swapping the file breaks every install of that
+version. If an asset is bad, cut a new patch release instead.
+
 ## Done
 
 Report: the new version, that gates/build/verify passed, the commit + tag
-created, the push state (pushed or pending), and that the GitHub release is left
-for the developer to create manually (with the info from Phase 8 printed above).
+created, the push state (pushed or pending), that the GitHub release is left
+for the developer to create manually (with the info from Phase 8 printed above),
+and the Homebrew cask state (updated + pushed to the tap, or pending the
+release publish).

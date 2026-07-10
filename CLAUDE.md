@@ -80,6 +80,7 @@ Use the Makefile release targets; do not hand-roll `npm run tauri build` command
 - Apple Silicon / standard Mac release: run `make build-mac && make verify-mac`. This builds the signed and notarized `universal-apple-darwin` bundle and includes the embedded local AI provider plus bundled embedding model.
 - Intel Mac release: run `make build-mac-intel && make verify-mac-intel`. This targets `x86_64-apple-darwin`, uses `src-tauri/tauri.intel.conf.json`, disables default features to omit embedded llama.cpp, and verifies no `.gguf` model files are bundled. Intel users can still configure Ollama or OpenRouter.
 - Always run the matching `verify-*` target before publishing a DMG; it checks codesigning, architectures, Gatekeeper assessment, notarization stapling, and the Intel no-bundled-model guard.
+- Homebrew: after the DMGs are uploaded to the GitHub release, run `make cask` to regenerate `homebrew/Casks/emailops.rb` from the release assets (GitHub-computed sha256 digests, per-arch URLs) and copy it into the `emailops/homebrew-tap` repo. Full flow and invariants: `homebrew/README.md`. Never replace a DMG asset on an already-tagged release — the cask pins its sha256.
 
 ## Architecture Principles
 
