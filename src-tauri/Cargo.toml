@@ -56,7 +56,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "6"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
 # so it never touches default/release desktop builds.
-reedline = { version = "0.48", optional = true }
+reedline = { version = "0.49", optional = true }
 # Secure (no-echo) password prompt for `emailops-cli accounts add imap` (cli
 # feature only). Optional so it never touches default/release desktop builds.
 rpassword = { version = "7", optional = true }
@@ -64,7 +64,7 @@ rpassword = { version = "7", optional = true }
 # aligns chat-answer tables, styles headers/bold/lists. cli feature only, so it
 # never touches default/release desktop builds. Pulls crossterm 0.29 (already in
 # tree via reedline, so the build unifies on one copy).
-termimad = { version = "0.34", optional = true }
+termimad = { version = "0.35", optional = true }
 axum = "0.8"
 unicode-normalization = "0.1.25"
 regex = "1"
@@ -80,7 +80,7 @@ libc = "0.2"
 sys-locale = "0.3"
 # Eval harness deps (used by examples/chat_eval.rs)
 serde_yaml = "0.9"
-tera = "1"
+tera = "2"
 # Embedded llama.cpp (optional — enabled via the `llamacpp` feature).
 # Uses the crates.io release (0.1.151). Cargo vendors the llama.cpp sources
 # with the crate, so no submodule/workflow setup is needed.
