@@ -8,6 +8,7 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
 import { SmartFilters } from './SmartFilters';
+import { VersionLabel } from './VersionLabel';
 
 function CollapseChevron({ open }: { open: boolean }) {
   return (
@@ -134,7 +135,10 @@ export function Sidebar({
     <aside className="w-64 bg-gray-900 text-white flex flex-col">
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold">{t('sidebar:appName')}</h1>
+          <div>
+            <h1 className="text-xl font-bold">{t('sidebar:appName')}</h1>
+            <VersionLabel />
+          </div>
           <div className="flex items-center gap-1">
             {(activeAccount || isUnifiedActive) && (
               <button

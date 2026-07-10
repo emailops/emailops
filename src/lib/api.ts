@@ -888,6 +888,19 @@ export async function detectAiCapability(): Promise<AiCapability> {
   return invoke('detect_ai_capability');
 }
 
+// Build identity for the sidebar version label. `commit` is null when the
+// binary was built outside a git checkout; `isRelease` is true when the built
+// commit is tagged v{version} (i.e. a published release).
+export interface BuildInfo {
+  version: string;
+  commit: string | null;
+  isRelease: boolean;
+}
+
+export async function getBuildInfo(): Promise<BuildInfo> {
+  return invoke('get_build_info');
+}
+
 // Security
 export async function hasMainPassword(): Promise<boolean> {
   return invoke('has_main_password');

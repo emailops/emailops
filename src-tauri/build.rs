@@ -25,7 +25,36 @@ fn main() {
         }
     }
 
+    emit_git_build_metadata();
+
     tauri_build::build()
+}
+
+/// Embed the git short sha and any tags pointing at HEAD so the app can show
+/// which commit a non-release build came from (`get_build_info` command).
+/// Best-effort: outside a git checkout both vars are empty and the version
+/// label degrades to the bare version.
+fn emit_git_build_metadata() {
+    // HEAD changes on commit/checkout; the tag refs change when tagging.
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs/tags");
+
+    let sha = git_output(&["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+    let tags = git_output(&["tag", "--points-at", "HEAD"])
+        .map(|out| out.split_whitespace().collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
+    println!("cargo:rustc-env=EMAILOPS_GIT_SHA={sha}");
+    println!("cargo:rustc-env=EMAILOPS_GIT_TAGS={tags}");
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    let trimmed = text.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn resolve_build_env(key: &str) -> Option<String> {

@@ -655,6 +655,7 @@ pub fn run() {
             commands::dashboard::get_queue_state,
             commands::dashboard::get_storage_stats,
             commands::system::detect_ai_capability,
+            commands::system::get_build_info,
             commands::connectivity::is_online,
             commands::lenses::list_lenses,
             commands::lenses::get_lens,
