@@ -152,7 +152,7 @@ fn list_accounts(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAvailable accounts:");
     println!("{:-<60}", "");
     for account in accounts {
-        let email_count = db.count_emails(&account.id)?;
+        let email_count = db.count_emails(emailops_lib::db::AccountScope::Account(&account.id))?;
         println!(
             "ID: {}\n  Email: {}\n  Provider: {}\n  Emails: {}\n",
             account.id, account.email, account.provider, email_count
@@ -180,7 +180,14 @@ fn export_fixtures(
 
     // Fetch emails
     println!("Fetching emails (limit: {})...", limit);
-    let emails = db.get_emails(account_id, limit, 0, None, None, None)?;
+    let emails = db.get_emails(
+        emailops_lib::db::AccountScope::Account(account_id),
+        limit,
+        0,
+        None,
+        None,
+        None,
+    )?;
     println!("  Found {} emails", emails.len());
 
     // Embeddings now use sqlite-vec (vec0) — skip export

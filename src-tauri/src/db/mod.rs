@@ -22,6 +22,25 @@ pub mod memory;
 pub mod tags;
 pub mod trusted_senders;
 
+/// Account scope for read queries.
+///
+/// Reads are account-scoped by default (`Account`). `AllEnabled` is the
+/// deliberate cross-account path backing the unified ("All accounts") inbox —
+/// it spans every account with `accounts.enabled = 1` and exists so that
+/// cross-account reads are a visible, greppable opt-in at each call site
+/// rather than a silently optional parameter.
+///
+/// Queries that dedup or count by thread under `AllEnabled` must key on
+/// `(account_id, thread_id)` — `thread_id` alone is NOT globally unique
+/// (two accounts CC'd on the same thread share the same provider thread id).
+#[derive(Debug, Clone, Copy)]
+pub enum AccountScope<'a> {
+    /// A single account by id (current behavior for all per-account views).
+    Account(&'a str),
+    /// Every enabled account, merged. Backs the unified inbox.
+    AllEnabled,
+}
+
 /// Number of read connections in the pool. SQLite WAL mode supports unlimited
 /// concurrent readers; 4 is enough to keep the UI responsive while background
 /// sync and filter stats queries run in parallel.

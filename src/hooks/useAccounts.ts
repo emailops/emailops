@@ -1,6 +1,12 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect } from 'react';
-import { type SyncProgress, useAccountStore } from '@/stores/accountStore';
+import {
+  isUnifiedMode,
+  type SyncProgress,
+  selectEffectiveAccountId,
+  toQueryAccountId,
+  useAccountStore,
+} from '@/stores/accountStore';
 import { useLogStore } from '@/stores/logStore';
 
 export function useAccounts() {
@@ -19,6 +25,7 @@ export function useAccounts() {
     removeAccount,
     reauthenticateAccount,
     syncAccount,
+    syncAllAccounts,
     setSyncProgress,
     moveAccountUp,
     moveAccountDown,
@@ -65,6 +72,12 @@ export function useAccounts() {
     accounts,
     activeAccountId,
     activeAccount: accounts.find((a) => a.id === activeAccountId) ?? null,
+    /** True when the "All accounts" pseudo-entry is selected. */
+    isUnified: isUnifiedMode(activeAccountId),
+    /** Account id for backend queries: null in unified mode (= all enabled). */
+    queryAccountId: toQueryAccountId(activeAccountId),
+    /** Concrete account for surfaces that need exactly one (compose, chat…). */
+    effectiveAccountId: selectEffectiveAccountId(accounts, activeAccountId),
     isLoading,
     isSyncing,
     syncProgress,
@@ -76,6 +89,7 @@ export function useAccounts() {
     removeAccount,
     reauthenticateAccount,
     syncAccount,
+    syncAllAccounts,
     moveAccountUp,
     moveAccountDown,
     setAccountEnabled,

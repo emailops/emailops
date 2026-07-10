@@ -57,7 +57,8 @@
     "createClassificationRule": "Créer une règle de classification",
     "copyEmailId": "Copier l'ID du courriel",
     "redownloadEmail": "Retélécharger le courriel",
-    "deleteThread": "Supprimer le fil"
+    "deleteThread": "Supprimer le fil",
+    "accountTooltip": "Compte : {{email}}"
   },
   "header": {
     "totalCount": "{{count}} courriels",

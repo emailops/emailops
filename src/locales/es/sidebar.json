@@ -67,5 +67,7 @@
     "title": "Smart Filters",
     "empty": "Pulsa actualizar para calcular los filtros",
     "companies": "Empresas"
-  }
+  },
+  "allAccounts": "Todas las cuentas",
+  "allAccountsFooter": "Viendo todas las cuentas"
 }

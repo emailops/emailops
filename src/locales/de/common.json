@@ -86,5 +86,8 @@
     "noSubject": "(kein Betreff)",
     "unknownSender": "Unbekannter Absender",
     "you": "Du"
+  },
+  "unifiedScope": {
+    "hint": "In der Alle-Konten-Ansicht zeigt dieser Bereich nur {{email}}"
   }
 }

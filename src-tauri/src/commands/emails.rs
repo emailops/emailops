@@ -51,17 +51,19 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
     crate::services::logger::log(level, source, message);
 }
 
+/// `account_id: None` selects the unified ("All accounts") view — emails
+/// merged across every enabled account.
 #[tauri::command]
 pub async fn get_emails(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     limit: Option<i32>,
     offset: Option<i32>,
     mailbox: Option<String>,
 ) -> Result<Vec<Email>, AppError> {
     services::emails::get_emails(
         &state.db,
-        &account_id,
+        account_id.as_deref(),
         limit.unwrap_or(50),
         offset.unwrap_or(0),
         mailbox.as_deref(),
@@ -654,10 +656,14 @@ pub async fn autocomplete_senders(
 #[tauri::command]
 pub async fn get_email_inbox_position(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     email_id: String,
 ) -> Result<i32, AppError> {
-    state.db.get_email_inbox_position(&account_id, &email_id)
+    let scope = match account_id.as_deref() {
+        Some(id) => crate::db::AccountScope::Account(id),
+        None => crate::db::AccountScope::AllEnabled,
+    };
+    state.db.get_email_inbox_position(scope, &email_id)
 }
 
 #[tauri::command]
@@ -669,9 +675,15 @@ pub async fn get_email_by_id(
     ensure_email_in_account(&state.db, &account_id, &email_id)
 }
 
+/// `account_id: None` counts inbox threads across every enabled account
+/// (unified "All accounts" view).
 #[tauri::command]
-pub fn get_email_count(state: State<'_, AppState>, account_id: String) -> Result<i32, AppError> {
-    state.db.count_emails(&account_id)
+pub fn get_email_count(state: State<'_, AppState>, account_id: Option<String>) -> Result<i32, AppError> {
+    let scope = match account_id.as_deref() {
+        Some(id) => crate::db::AccountScope::Account(id),
+        None => crate::db::AccountScope::AllEnabled,
+    };
+    state.db.count_emails(scope)
 }
 
 #[tauri::command]

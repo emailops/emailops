@@ -51,17 +51,89 @@ pub enum SearchMethod {
     KeywordSearch,
 }
 
-/// Search emails using natural language or structured queries
-/// When AI is available, uses RAG (Retrieval-Augmented Generation) for semantic search
+/// Resolve the accounts a search targets: the given account, or every
+/// enabled account for the unified ("All accounts") view.
+fn search_target_accounts(db: &Arc<Database>, account_id: Option<&str>) -> Result<Vec<String>> {
+    match account_id {
+        Some(id) => Ok(vec![id.to_string()]),
+        None => Ok(db
+            .list_accounts()?
+            .into_iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id)
+            .collect()),
+    }
+}
+
+/// Run `db.search_emails` once per target account and merge the results
+/// newest-first, truncated to `limit`. Pattern parsing and every other
+/// search decision happens once in the caller — only the DB call fans out.
+#[allow(clippy::too_many_arguments)]
+fn db_search_merged(
+    db: &Arc<Database>,
+    targets: &[String],
+    query: &str,
+    categories: Option<&[String]>,
+    from_filter: Option<&str>,
+    to_filter: Option<&str>,
+    subject_filter: Option<&str>,
+    after_timestamp: Option<i64>,
+    before_timestamp: Option<i64>,
+    tag_filters: Option<&[String]>,
+    limit: i32,
+) -> Result<Vec<Email>> {
+    if let [single] = targets {
+        // Single account: preserve the DB's exact ordering untouched.
+        return db.search_emails(
+            single,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+        );
+    }
+    let mut merged: Vec<Email> = Vec::new();
+    for account in targets {
+        merged.extend(db.search_emails(
+            account,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+        )?);
+    }
+    // Each per-account result is newest-first; merge to a single newest-first
+    // list and truncate to the same limit a single-account search gets.
+    merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+    merged.truncate(limit.max(0) as usize);
+    Ok(merged)
+}
+
+/// Search emails using natural language or structured queries.
+/// When AI is available, uses RAG (Retrieval-Augmented Generation) for semantic search.
+///
+/// `account_id: None` searches across every enabled account (unified
+/// "All accounts" view) — the FTS path fans out per account and merges.
 pub async fn search_emails(
     db: &Arc<Database>,
-    account_id: &str,
+    account_id: Option<&str>,
     query: &str,
     use_ai: bool,
     categories: Option<&[String]>,
     app: Option<AppHandle>,
 ) -> Result<SearchResult> {
     let search_start = std::time::Instant::now();
+    let target_accounts = search_target_accounts(db, account_id)?;
 
     // TEMPORARILY DISABLED: AI parsing + RAG. Ollama query parse times out after
     // 60s and vec_search on 47k embeddings takes 15s. Pure FTS is <100 ms and
@@ -204,10 +276,17 @@ pub async fn search_emails(
 
     // ── 4. Dispatch search ───────────────────────────────────────────────────
     let t_dispatch = std::time::Instant::now();
-    let emails: Vec<EmailWithScore> = if use_ai && ai_available && parsed_query.is_none() {
+    // RAG/semantic retrieval is single-account only — the unified view takes
+    // the FTS paths below (AI search is currently hard-disabled anyway).
+    let semantic_account = if use_ai && ai_available && parsed_query.is_none() {
+        account_id
+    } else {
+        None
+    };
+    let emails: Vec<EmailWithScore> = if let Some(single_account) = semantic_account {
         // No structured filters → try RAG semantic search
         emit_log(&app, "debug", "search", "Using hybrid semantic search (RAG)");
-        match semantic_search(db, &ollama, account_id, query, categories).await {
+        match semantic_search(db, &ollama, single_account, query, categories).await {
             Ok((results, used_rag)) => {
                 if used_rag {
                     search_method = SearchMethod::Rag;
@@ -237,7 +316,7 @@ pub async fn search_emails(
                     ),
                 );
                 let t_kw = std::time::Instant::now();
-                let results = emails_to_scored(keyword_search(db, account_id, query, categories, 100)?, None);
+                let results = emails_to_scored(keyword_search(db, &target_accounts, query, categories, 100)?, None);
                 emit_log(
                     &app,
                     "debug",
@@ -256,6 +335,7 @@ pub async fn search_emails(
             db,
             &ollama,
             account_id,
+            &target_accounts,
             parsed,
             use_ai && ai_available,
             categories,
@@ -277,7 +357,7 @@ pub async fn search_emails(
         // Simple keyword search
         let match_reason = format!("Contains \"{}\"", query);
         let results = emails_to_scored(
-            keyword_search(db, account_id, query, categories, 100)?,
+            keyword_search(db, &target_accounts, query, categories, 100)?,
             Some(&match_reason),
         );
         emit_log(
@@ -315,10 +395,12 @@ pub async fn search_emails(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn structured_search(
     db: &Arc<Database>,
     ollama: &OllamaClient,
-    account_id: &str,
+    account_id: Option<&str>,
+    target_accounts: &[String],
     parsed: &ParsedSearchQuery,
     ai_enabled: bool,
     categories: Option<&[String]>,
@@ -327,7 +409,9 @@ async fn structured_search(
     let residual_query = build_effective_query(parsed);
     let filter_reason = build_filter_match_reason(parsed);
 
-    if ai_enabled && !residual_query.is_empty() {
+    // Semantic retrieval stays single-account; unified mode (None) always
+    // takes the DB filter path below.
+    if let (true, false, Some(single_account)) = (ai_enabled, residual_query.is_empty(), account_id) {
         let t_sem = std::time::Instant::now();
         emit_log(
             app,
@@ -335,7 +419,8 @@ async fn structured_search(
             "search",
             &format!("Structured: semantic retrieval with residual query: {}", residual_query),
         );
-        let (semantic_results, used_rag) = semantic_search(db, ollama, account_id, &residual_query, categories).await?;
+        let (semantic_results, used_rag) =
+            semantic_search(db, ollama, single_account, &residual_query, categories).await?;
 
         if used_rag {
             let filtered = filter_scored_results(semantic_results, parsed, &filter_reason);
@@ -380,8 +465,9 @@ async fn structured_search(
     } else {
         Some(parsed.tag_filters.as_slice())
     };
-    let mut results = db.search_emails(
-        account_id,
+    let mut results = db_search_merged(
+        db,
+        target_accounts,
         &residual_query,
         categories,
         parsed.from_filter.as_deref(),
@@ -405,7 +491,7 @@ async fn structured_search(
 
     if results.is_empty() && !residual_query.is_empty() {
         let t_fallback = std::time::Instant::now();
-        results = keyword_search(db, account_id, &residual_query, categories, 100)?;
+        results = keyword_search(db, target_accounts, &residual_query, categories, 100)?;
         results.retain(|email| matches_parsed_filters(email, parsed));
         emit_log(
             app,
@@ -838,13 +924,15 @@ fn build_effective_query(parsed: &ParsedSearchQuery) -> String {
 /// normalized query.
 fn keyword_search(
     db: &Arc<Database>,
-    account_id: &str,
+    targets: &[String],
     query: &str,
     categories: Option<&[String]>,
     limit: i32,
 ) -> Result<Vec<Email>> {
     let t = std::time::Instant::now();
-    let direct = db.search_emails(account_id, query, categories, None, None, None, None, None, None, limit)?;
+    let direct = db_search_merged(
+        db, targets, query, categories, None, None, None, None, None, None, limit,
+    )?;
     emit_log(
         &None,
         "debug",
@@ -866,8 +954,9 @@ fn keyword_search(
         return Ok(direct);
     }
     let t = std::time::Instant::now();
-    let retry = db.search_emails(
-        account_id,
+    let retry = db_search_merged(
+        db,
+        targets,
         &normalized,
         categories,
         None,
@@ -1177,6 +1266,74 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    fn seed_account(db: &Database, id: &str, email: &str, enabled: bool) {
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, enabled)
+                 VALUES (?1, 'gmail', ?2, 'Test', 0, ?3)",
+                rusqlite::params![id, email, enabled as i32],
+            )
+            .unwrap();
+    }
+
+    fn seed_searchable_email(db: &Database, id: &str, account: &str, thread: &str, subject: &str, timestamp: i64) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,?2,?3,?4,'Sender','s@ex.com','ex.com','[]','[]','snip',?5,0,'primary',0)",
+                rusqlite::params![id, account, thread, subject, timestamp],
+            )
+            .unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, 'Sender', 'body')",
+                rusqlite::params![id, subject],
+            )
+            .unwrap();
+    }
+
+    // Unified ("All accounts") search: `account_id: None` must merge FTS
+    // results across enabled accounts, newest first, excluding disabled ones.
+    #[tokio::test]
+    async fn search_unified_merges_enabled_accounts_newest_first() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_account(&db, "acc2", "a2@ex.com", true);
+        seed_account(&db, "acc3", "a3@ex.com", false);
+
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc2", "t2", "Invoice February", 200);
+        seed_searchable_email(&db, "e3", "acc3", "t3", "Invoice March", 300);
+        seed_searchable_email(&db, "e4", "acc1", "t4", "Lunch plans", 400);
+
+        let result = search_emails(&db, None, "invoice", false, None, None).await.unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+
+        assert_eq!(
+            ids,
+            vec!["e2", "e1"],
+            "both enabled accounts merged newest-first; disabled acc3 excluded"
+        );
+    }
+
+    // Single-account behavior must stay exactly as before.
+    #[tokio::test]
+    async fn search_single_account_unchanged() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_account(&db, "acc2", "a2@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc2", "t2", "Invoice February", 200);
+
+        let result = search_emails(&db, Some("acc1"), "invoice", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"], "single-account search must not leak other accounts");
+    }
+
     fn open_prod_db() -> Option<(Arc<Database>, String)> {
         let db_path = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -1236,12 +1393,12 @@ mod tests {
         eprintln!("=== Service-level search: {:?} ===\n", query);
 
         // Warm up
-        let _ = search_emails(&db, &account_id, &query, false, None, None).await;
+        let _ = search_emails(&db, Some(&account_id), &query, false, None, None).await;
 
         // Timed runs
         for run in 1..=3 {
             let t = std::time::Instant::now();
-            let result = search_emails(&db, &account_id, &query, false, None, None)
+            let result = search_emails(&db, Some(&account_id), &query, false, None, None)
                 .await
                 .unwrap();
             eprintln!(
@@ -1325,7 +1482,7 @@ mod tests {
 
         barrier.wait(); // wait for blocker to hold the reader
         let t = std::time::Instant::now();
-        let result = search_emails(&db2, &account_id2, &query2, false, None, None)
+        let result = search_emails(&db2, Some(&account_id2), &query2, false, None, None)
             .await
             .unwrap();
         let contention_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -1359,7 +1516,9 @@ mod tests {
 
         for run in 1..=3 {
             let t = std::time::Instant::now();
-            let result = search_emails(&db, &account_id, query, false, None, None).await.unwrap();
+            let result = search_emails(&db, Some(&account_id), query, false, None, None)
+                .await
+                .unwrap();
             eprintln!(
                 "Run {}: {:.0}ms — {} results (method={:?})",
                 run,
@@ -1421,7 +1580,7 @@ mod tests {
             let fts_ms = t.elapsed().as_secs_f64() * 1000.0;
 
             let t = std::time::Instant::now();
-            let combined = keyword_search(&db, &account_id, query, None, 100).unwrap();
+            let combined = keyword_search(&db, std::slice::from_ref(&account_id), query, None, 100).unwrap();
             let combined_ms = t.elapsed().as_secs_f64() * 1000.0;
 
             if direct.is_empty() && combined.is_empty() {
@@ -1507,7 +1666,7 @@ mod tests {
         // ── Run 1: full service-level search (what the Tauri command does) ──
         eprintln!("\n━━━ End-to-end service search (with timing breakdown) ━━━");
         let t_total = std::time::Instant::now();
-        let result = search_emails(&db, &account_id, &query, use_ai, None, None)
+        let result = search_emails(&db, Some(&account_id), &query, use_ai, None, None)
             .await
             .unwrap();
         let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
@@ -1930,7 +2089,9 @@ mod tests {
 
         // 1. get_quick_filter_stats (domain + sender GROUP BY)
         let t = std::time::Instant::now();
-        let stats = db.get_quick_filter_stats(&account_id, &[], &[]).unwrap();
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(&account_id), &[], &[])
+            .unwrap();
         eprintln!(
             "[{:.0}ms] get_quick_filter_stats: {} domains, {} senders",
             t.elapsed().as_secs_f64() * 1000.0,
@@ -1941,7 +2102,9 @@ mod tests {
         // 2. get_tag_stats (for each tag type)
         for tag_type in ["intent", "topic", "priority"] {
             let t = std::time::Instant::now();
-            let tag_stats = db.get_tag_stats(&account_id, tag_type, 15).unwrap();
+            let tag_stats = db
+                .get_tag_stats(crate::db::AccountScope::Account(&account_id), tag_type, 15)
+                .unwrap();
             eprintln!(
                 "[{:.0}ms] get_tag_stats({:?}): {} values",
                 t.elapsed().as_secs_f64() * 1000.0,
@@ -1956,7 +2119,16 @@ mod tests {
         if let Some(domain) = stats.top_domains.first() {
             let t = std::time::Instant::now();
             let result = db
-                .get_filtered_emails(&account_id, Some(&domain.value), None, None, None, None, 50, 0)
+                .get_filtered_emails(
+                    crate::db::AccountScope::Account(&account_id),
+                    Some(&domain.value),
+                    None,
+                    None,
+                    None,
+                    None,
+                    50,
+                    0,
+                )
                 .unwrap();
             eprintln!(
                 "[{:.0}ms] get_filtered_emails(domain={:?}): {} emails, total={}",
@@ -1971,7 +2143,16 @@ mod tests {
         if let Some(sender) = stats.top_senders.first() {
             let t = std::time::Instant::now();
             let result = db
-                .get_filtered_emails(&account_id, None, Some(&sender.value), None, None, None, 50, 0)
+                .get_filtered_emails(
+                    crate::db::AccountScope::Account(&account_id),
+                    None,
+                    Some(&sender.value),
+                    None,
+                    None,
+                    None,
+                    50,
+                    0,
+                )
                 .unwrap();
             eprintln!(
                 "[{:.0}ms] get_filtered_emails(sender={:?}): {} emails, total={}",
@@ -1986,7 +2167,7 @@ mod tests {
         let t = std::time::Instant::now();
         let result = db
             .get_filtered_emails(
-                &account_id,
+                crate::db::AccountScope::Account(&account_id),
                 None,
                 None,
                 Some("intent"),

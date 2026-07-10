@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
 import * as api from '@/lib/api';
+import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useTagStore } from '@/stores/tagStore';
@@ -33,6 +34,10 @@ interface EmailRowProps {
   onChatAboutThread?: (email: Email) => void;
   /** When true, render a single-line, Gmail-style compact row (used in full-width layout). */
   compact?: boolean;
+  /** Unified ("All accounts") mode: colored left-edge bar identifying the
+   *  email's account. Rendered absolutely so it never changes row height
+   *  (the virtualizer depends on stable measured heights). */
+  accountBadge?: { colorClass: string; label: string };
 }
 
 export function EmailRow({
@@ -46,6 +51,7 @@ export function EmailRow({
   onOpenInTab,
   onChatAboutThread,
   compact = false,
+  accountBadge,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox']);
   const receivedTime = formatReceptionTime(email.timestamp);
@@ -330,6 +336,16 @@ export function EmailRow({
     </div>
   );
 
+  // Unified-mode account indicator: absolutely positioned left-edge bar so it
+  // adds zero height (virtualized rows must keep their measured height stable).
+  const accountBar = accountBadge ? (
+    <span
+      className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r ${accountBadge.colorClass}`}
+      title={t('inbox:emailRow.accountTooltip', { email: accountBadge.label })}
+      aria-hidden="true"
+    />
+  ) : null;
+
   if (compact) {
     return (
       <div
@@ -346,6 +362,7 @@ export function EmailRow({
           }
         }}
       >
+        {accountBar}
         {/* Reserve a stable min-height so async tag/triage loading doesn't grow
             the row after measureElement has run — same fix as the non-compact
             branch, which prevents virtualizer translateY desync / overlap. */}
@@ -417,6 +434,7 @@ export function EmailRow({
         }
       }}
     >
+      {accountBar}
       <div className="flex items-start gap-3">
         <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
         <div className="flex-1 min-w-0">
@@ -456,27 +474,10 @@ export function EmailRow({
   );
 }
 
-const AVATAR_PALETTE = [
-  'bg-blue-500',
-  'bg-emerald-500',
-  'bg-purple-500',
-  'bg-pink-500',
-  'bg-amber-500',
-  'bg-cyan-500',
-  'bg-indigo-500',
-  'bg-rose-500',
-  'bg-teal-500',
-  'bg-orange-500',
-];
-
 /** Deterministic color from a seed string so the same sender always renders with
- *  the same avatar color across the app. */
+ *  the same avatar color across the app. Shared hash lives in `@/lib/colors`. */
 function avatarColor(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  }
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+  return hashColorClass(seed, AVATAR_PALETTE);
 }
 
 /** Strip leading non-letter chars (e.g. quotes, < ) so initials come from the

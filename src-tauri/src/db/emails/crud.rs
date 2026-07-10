@@ -45,9 +45,14 @@ impl Database {
     /// `cursor` is (timestamp, id) of the last email from the previous page.
     /// Pass None for the first page.
     ///
+    /// `scope` selects one account or all enabled accounts (unified inbox).
+    /// Under [`AccountScope::AllEnabled`], thread dedup keys on
+    /// `(account_id, thread_id)` — same-thread rows from different accounts
+    /// each keep their own latest email.
+    ///
     /// `mailbox` selects which server-side mailbox to list:
     /// - `None` or `Some("inbox")` → `mailbox='inbox' AND is_deleted=0` (default)
-    /// - `Some("sent")` → `sender_email` matches this account's own address
+    /// - `Some("sent")` → `sender_email` matches the owning account's own address
     ///   (provider-agnostic — Gmail's `in:sent` inbox filter stores sent items with
     ///   `mailbox='inbox'`, so relying on the mailbox column alone would miss them)
     /// - `Some("spam")` → `mailbox='spam' AND is_deleted=0`
@@ -58,7 +63,7 @@ impl Database {
     /// category (`primary`/`social`/`promotions`/`updates`/`forums`).
     pub fn get_emails(
         &self,
-        account_id: &str,
+        scope: crate::db::AccountScope<'_>,
         limit: i32,
         offset: i32,
         cursor: Option<(i64, &str)>,
@@ -68,9 +73,19 @@ impl Database {
         let conn = self.reader();
         let order_clause = thread_order_clause("e", false);
 
-        let mut conditions = vec![format!("e.account_id = ?1")];
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
-        let mut param_idx = 2;
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1;
+        match scope {
+            crate::db::AccountScope::Account(account_id) => {
+                conditions.push(format!("e.account_id = ?{param_idx}"));
+                params_vec.push(Box::new(account_id.to_string()));
+                param_idx += 1;
+            }
+            crate::db::AccountScope::AllEnabled => {
+                conditions.push("e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)".to_string());
+            }
+        }
 
         // Mailbox scope. The "deleted" view is a union of provider Trash and
         // app-side soft-deletes; all other views exclude soft-deleted rows.
@@ -82,14 +97,20 @@ impl Database {
                 conditions.push("(e.mailbox = 'trash' OR e.is_deleted = 1)".to_string());
             }
             "sent" => {
-                // Match emails whose sender matches the account's own address.
-                // Works regardless of whether the email was ingested via the
-                // inbox label filter (mailbox='inbox') or the sent mailbox
-                // pass (mailbox='sent'). Excludes spam/trash copies.
+                // Match emails whose sender matches the OWNING account's own
+                // address (correlated on e.account_id, so under AllEnabled mail
+                // between the user's own accounts is never misclassified as
+                // "sent" in the receiving account). Works regardless of whether
+                // the email was ingested via the inbox label filter
+                // (mailbox='inbox') or the sent mailbox pass (mailbox='sent').
+                // Excludes spam/trash copies.
                 conditions.push("e.is_deleted = 0".to_string());
                 conditions.push("e.mailbox NOT IN ('spam', 'trash')".to_string());
-                conditions
-                    .push("LOWER(e.sender_email) = (SELECT LOWER(email) FROM accounts WHERE id = ?1)".to_string());
+                conditions.push(
+                    "EXISTS (SELECT 1 FROM accounts a WHERE a.id = e.account_id \
+                     AND LOWER(a.email) = LOWER(e.sender_email))"
+                        .to_string(),
+                );
             }
             "spam" => {
                 // Flat per-email list scoped to the mailbox, ordered by timestamp.
@@ -281,7 +302,7 @@ impl Database {
         }
     }
 
-    /// Count total visible threads in the inbox for an account.
+    /// Count total visible threads in the inbox for the given scope.
     ///
     /// MUST mirror the WHERE clause used by `get_emails` for the default ("inbox")
     /// view (`mailbox = 'inbox' AND is_deleted = 0`). Frontend infinite-scroll
@@ -289,14 +310,28 @@ impl Database {
     /// Sent/Spam/Trash threads while `get_emails` returns only inbox rows,
     /// `hasMore` stays true forever and the inbox loops loadMore endlessly,
     /// appearing "stuck" with the spinner showing.
-    pub fn count_emails(&self, account_id: &str) -> Result<i32> {
+    ///
+    /// The `AllEnabled` variant counts distinct `(account_id, thread_id)` pairs —
+    /// a plain `COUNT(DISTINCT thread_id)` would under-count when two accounts
+    /// share a thread_id string (both CC'd on one provider thread), which would
+    /// desync this count from `get_emails`' per-account thread dedup.
+    pub fn count_emails(&self, scope: crate::db::AccountScope<'_>) -> Result<i32> {
         let conn = self.reader();
-        let count: i32 = conn.query_row(
-            "SELECT COUNT(DISTINCT thread_id) FROM emails \
-             WHERE account_id = ?1 AND is_deleted = 0 AND mailbox = 'inbox'",
-            params![account_id],
-            |row| row.get(0),
-        )?;
+        let count: i32 = match scope {
+            crate::db::AccountScope::Account(account_id) => conn.query_row(
+                "SELECT COUNT(DISTINCT thread_id) FROM emails \
+                 WHERE account_id = ?1 AND is_deleted = 0 AND mailbox = 'inbox'",
+                params![account_id],
+                |row| row.get(0),
+            )?,
+            crate::db::AccountScope::AllEnabled => conn.query_row(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT account_id, thread_id FROM emails \
+                 WHERE account_id IN (SELECT id FROM accounts WHERE enabled = 1) \
+                   AND is_deleted = 0 AND mailbox = 'inbox')",
+                [],
+                |row| row.get(0),
+            )?,
+        };
         Ok(count)
     }
 
@@ -481,7 +516,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use crate::db::Database;
+    use crate::db::{AccountScope, Database};
 
     #[test]
     fn deleted_email_excluded_from_get_emails() {
@@ -494,7 +529,9 @@ mod tests {
         // Soft-delete e1
         db.delete_email("e1").unwrap();
 
-        let emails = db.get_emails(account, 50, 0, None, None, None).unwrap();
+        let emails = db
+            .get_emails(AccountScope::Account(account), 50, 0, None, None, None)
+            .unwrap();
         let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
 
         assert!(
@@ -514,11 +551,15 @@ mod tests {
         insert_email_with_category(&db, "promo1", account, "thread-b", 200, "promotions");
         insert_email_with_category(&db, "promo2", account, "thread-c", 100, "promotions");
 
-        let promos = db.get_emails(account, 50, 0, None, None, Some("promotions")).unwrap();
+        let promos = db
+            .get_emails(AccountScope::Account(account), 50, 0, None, None, Some("promotions"))
+            .unwrap();
         let ids: Vec<&str> = promos.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["promo1", "promo2"], "only promotions, newest first");
 
-        let all = db.get_emails(account, 50, 0, None, None, None).unwrap();
+        let all = db
+            .get_emails(AccountScope::Account(account), 50, 0, None, None, None)
+            .unwrap();
         assert_eq!(all.len(), 3, "no category filter returns every inbox email");
     }
 
@@ -545,6 +586,125 @@ mod tests {
             ids.contains(&"e2"),
             "non-deleted email must appear in thread, got: {:?}",
             ids
+        );
+    }
+
+    #[test]
+    fn get_emails_all_enabled_merges_accounts_sorted_by_timestamp() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_account(&db, "acc2", "a2@example.com");
+
+        insert_email(&db, "e1", "acc1", "t1", 100);
+        insert_email(&db, "e2", "acc2", "t2", 300);
+        insert_email(&db, "e3", "acc1", "t3", 200);
+
+        let emails = db
+            .get_emails(AccountScope::AllEnabled, 50, 0, None, None, None)
+            .unwrap();
+        let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e2", "e3", "e1"], "merged across accounts, newest first");
+    }
+
+    #[test]
+    fn get_emails_all_enabled_excludes_disabled_accounts() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_account(&db, "acc2", "a2@example.com");
+        insert_email(&db, "e1", "acc1", "t1", 100);
+        insert_email(&db, "e2", "acc2", "t2", 200);
+        set_account_enabled(&db, "acc2", false);
+
+        let emails = db
+            .get_emails(AccountScope::AllEnabled, 50, 0, None, None, None)
+            .unwrap();
+        let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"], "disabled account's emails must be excluded");
+    }
+
+    #[test]
+    fn get_emails_all_enabled_sent_view_matches_each_accounts_own_address() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_account(&db, "acc2", "a2@example.com");
+
+        // acc1's own sent mail — must appear.
+        insert_contact_email(&db, "s1", "acc1", "t1", "Me", "a1@example.com", "[]", "sent", 300);
+        // Mail in acc1's mailbox FROM acc2's address (the user's other account
+        // wrote to this one) — received mail, must NOT appear as "sent".
+        insert_contact_email(
+            &db,
+            "r1",
+            "acc1",
+            "t2",
+            "Other Me",
+            "a2@example.com",
+            "[]",
+            "inbox",
+            200,
+        );
+        // acc2's own sent mail — must appear.
+        insert_contact_email(&db, "s2", "acc2", "t3", "Me2", "a2@example.com", "[]", "sent", 100);
+
+        let emails = db
+            .get_emails(AccountScope::AllEnabled, 50, 0, None, Some("sent"), None)
+            .unwrap();
+        let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["s1", "s2"],
+            "sent view must match each account's OWN address only"
+        );
+    }
+
+    #[test]
+    fn get_emails_all_enabled_thread_id_collision_keeps_both_accounts_rows() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_account(&db, "acc2", "a2@example.com");
+
+        // Same thread_id string in two accounts (both CC'd on one provider
+        // thread). The inbox latest-per-thread dedup must key per account and
+        // keep one row from EACH account.
+        insert_email(&db, "e1a", "acc1", "shared-thread", 100);
+        insert_email(&db, "e1b", "acc1", "shared-thread", 150);
+        insert_email(&db, "e2a", "acc2", "shared-thread", 120);
+
+        let emails = db
+            .get_emails(AccountScope::AllEnabled, 50, 0, None, None, None)
+            .unwrap();
+        let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["e1b", "e2a"],
+            "one latest-inbox row per (account, thread), not per thread"
+        );
+    }
+
+    #[test]
+    fn count_emails_all_enabled_counts_account_thread_pairs() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_account(&db, "acc2", "a2@example.com");
+        insert_account(&db, "acc3", "a3@example.com");
+
+        // acc1: two emails in one thread → 1; acc2: same thread_id string → 1 more.
+        insert_email(&db, "e1", "acc1", "shared-thread", 100);
+        insert_email(&db, "e2", "acc1", "shared-thread", 200);
+        insert_email(&db, "e3", "acc2", "shared-thread", 150);
+        // acc3 disabled — its thread must not count.
+        insert_email(&db, "e4", "acc3", "t4", 300);
+        set_account_enabled(&db, "acc3", false);
+
+        assert_eq!(
+            db.count_emails(AccountScope::AllEnabled).unwrap(),
+            2,
+            "counts distinct (account_id, thread_id) pairs across enabled accounts"
+        );
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1")).unwrap(),
+            1,
+            "single-account count unchanged"
         );
     }
 

@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No accounts found in database"))?;
 
     // Show stats
-    let email_count = db.count_emails(&account_id)?;
+    let email_count = db.count_emails(emailops_lib::db::AccountScope::Account(&account_id))?;
     let pending = db.count_emails_without_embeddings(Some(&account_id))?;
     let embedding_count = email_count - pending;
     println!("Emails: {}, Embeddings: {}", email_count, embedding_count);
@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSearching: \"{}\"", args.query);
     println!("{}", "-".repeat(60));
 
-    let result = search::search_emails(&db, &account_id, &args.query, true, None, None).await?;
+    let result = search::search_emails(&db, Some(&account_id), &args.query, true, None, None).await?;
 
     println!("Method: {:?}", result.search_method);
     println!("Results: {}\n", result.emails.len());

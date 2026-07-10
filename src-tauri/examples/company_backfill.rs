@@ -60,7 +60,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.list_accounts {
         for acc in db.list_accounts()? {
-            let count = db.count_emails(&acc.id).unwrap_or(0);
+            let count = db
+                .count_emails(emailops_lib::db::AccountScope::Account(&acc.id))
+                .unwrap_or(0);
             println!("  {}  {:<40}  {}  threads={}", acc.id, acc.email, acc.provider, count);
         }
         return Ok(());

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
 const PAGE_SIZE = 50;
@@ -140,15 +141,17 @@ interface EmailStore {
   ) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string | null) => void;
+  /** `accountId: null` = unified ("All accounts") view — merged across every
+   *  enabled account. Callers translate the UI sentinel via `toQueryAccountId`. */
   fetchEmails: (
-    accountId: string,
+    accountId: string | null,
     filter?: ActiveFilter | null,
     selectedCategories?: EmailCategory[],
     silent?: boolean,
     mailbox?: MailboxView,
   ) => Promise<void>;
   loadMoreEmails: (
-    accountId: string,
+    accountId: string | null,
     filter?: ActiveFilter | null,
     selectedCategories?: EmailCategory[],
     mailbox?: MailboxView,
@@ -481,10 +484,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     });
 
     try {
+      // `accountId` is the email's OWNING account (required by getEmailById /
+      // getThread). The surrounding LIST is scoped to the current view: in
+      // unified ("All accounts") mode the position and page span every
+      // enabled account so the focused email lands in the merged list.
+      const listAccountId = isUnifiedMode(useAccountStore.getState().activeAccountId) ? null : accountId;
       const [email, position, totalCount] = await Promise.all([
         api.getEmailById(accountId, emailId),
-        api.getEmailInboxPosition(accountId, emailId),
-        api.getEmailCount(accountId),
+        api.getEmailInboxPosition(listAccountId, emailId),
+        api.getEmailCount(listAccountId),
       ]);
 
       if (get().currentFetchId !== fetchId) return;
@@ -492,7 +500,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       // Load from offset 0 through the target email so the full list
       // is scrollable from the top. Add a page of buffer below.
       const limit = position + PAGE_SIZE;
-      const emails = await api.getEmails(accountId, limit, 0);
+      const emails = await api.getEmails(listAccountId, limit, 0);
 
       if (get().currentFetchId !== fetchId) return;
 

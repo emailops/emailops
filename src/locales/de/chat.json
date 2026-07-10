@@ -153,5 +153,6 @@
     "empty": "Noch keine Unterhaltungen.",
     "confirmDelete": "Bestätigen?",
     "newChat": "Neuer Chat"
-  }
+  },
+  "unifiedScopeHint": "In der Alle-Konten-Ansicht durchsucht der Chat nur {{email}}"
 }

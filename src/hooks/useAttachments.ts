@@ -1,13 +1,16 @@
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect } from 'react';
 import * as api from '@/lib/api';
-import { useAccountStore } from '@/stores/accountStore';
+import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment, AttachmentRule } from '@/types';
 
 export function useAttachments() {
-  const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  // Attachments stay per-account: in unified ("All accounts") mode we scope
+  // to the first enabled account instead of leaking the sentinel id to the
+  // backend. `selectEffectiveAccountId` returns the id unchanged otherwise.
+  const activeAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
   const addLog = useLogStore((s) => s.addLog);
 
   const {

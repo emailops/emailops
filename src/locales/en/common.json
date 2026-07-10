@@ -86,5 +86,8 @@
     "noSubject": "(no subject)",
     "unknownSender": "Unknown sender",
     "you": "You"
+  },
+  "unifiedScope": {
+    "hint": "In All accounts view, this section shows {{email}} only"
   }
 }

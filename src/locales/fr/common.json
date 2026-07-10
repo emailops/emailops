@@ -86,5 +86,8 @@
     "noSubject": "(sans objet)",
     "unknownSender": "Expéditeur inconnu",
     "you": "Vous"
+  },
+  "unifiedScope": {
+    "hint": "Dans la vue tous les comptes, cette section n'affiche que {{email}}"
   }
 }

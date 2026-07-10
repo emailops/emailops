@@ -269,7 +269,14 @@ fn sample_reply_pairs(
     let max_scan = 1000i32;
 
     while pairs.len() < n && offset < max_scan {
-        let batch = db.get_emails(account_id, batch_size, offset, None, Some("sent"), None)?;
+        let batch = db.get_emails(
+            emailops_lib::db::AccountScope::Account(account_id),
+            batch_size,
+            offset,
+            None,
+            Some("sent"),
+            None,
+        )?;
         if batch.is_empty() {
             break;
         }

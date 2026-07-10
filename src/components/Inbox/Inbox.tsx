@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { SyncProgress } from '@/stores/accountStore';
+import { accountColorClass } from '@/lib/colors';
+import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useTagStore } from '@/stores/tagStore';
@@ -206,6 +207,21 @@ export function Inbox({
   const widthClass = fullWidth ? 'flex-1' : 'w-96';
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Unified ("All accounts") mode: rows get a colored per-account indicator,
+  // and sender autocomplete falls back to the first enabled account (the
+  // sentinel id must never reach the backend).
+  const isUnified = useAccountStore((s) => isUnifiedMode(s.activeAccountId));
+  const allAccounts = useAccountStore((s) => s.accounts);
+  const autocompleteAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
+  const getAccountBadge = useMemo(() => {
+    if (!isUnified) return undefined;
+    const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
+    return (email: Email) => ({
+      colorClass: accountColorClass(email.accountId),
+      label: emailById.get(email.accountId) ?? email.accountId,
+    });
+  }, [isUnified, allAccounts]);
+
   const activeFilter = useFilterStore((s) => s.activeFilter);
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
@@ -374,7 +390,7 @@ export function Inbox({
           {fullWidth && (
             <div className="flex-1 flex justify-center min-w-0">
               <InboxSearchBox
-                accountId={accountId}
+                accountId={isUnified ? autocompleteAccountId : accountId}
                 externalQuery={searchQuery ?? ''}
                 onSubmit={(q) => onSearch?.(q)}
                 onClear={clearSearchQuery}
@@ -466,6 +482,7 @@ export function Inbox({
         onOpenInTab={onOpenInTab}
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
+        getAccountBadge={getAccountBadge}
       />
     </div>
   );

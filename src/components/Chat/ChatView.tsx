@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AccountScopeChip } from '@/components/shared/AccountScopeChip';
 import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import { ChatInput } from './ChatInput';
@@ -28,6 +30,11 @@ interface ChatViewProps {
 
 export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
   const { t } = useTranslation(['chat', 'common']);
+  // Chat conversations are hard-scoped to one account. In unified
+  // ("All accounts") mode the parent passes the first enabled account —
+  // surface that scope so users know retrieval doesn't span all accounts.
+  const isUnified = useAccountStore((s) => isUnifiedMode(s.activeAccountId));
+  const scopedAccountEmail = useAccountStore((s) => s.accounts.find((a) => a.id === accountId)?.email);
   const {
     conversations,
     activeConversationId,
@@ -134,6 +141,16 @@ export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Unified ("All accounts") mode: conversations are hard-scoped to one
+            account — surface that scope persistently, in intro AND while a
+            conversation is open. The tooltip carries the full explanation. */}
+        {isUnified && accountId && scopedAccountEmail && (
+          <AccountScopeChip
+            accountId={accountId}
+            email={scopedAccountEmail}
+            hint={t('chat:unifiedScopeHint', { email: scopedAccountEmail })}
+          />
+        )}
         {showIntro ? (
           <>
             <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">

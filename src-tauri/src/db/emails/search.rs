@@ -9,13 +9,39 @@ impl Database {
     /// way). Sender grouping/exclusion is case-insensitive because providers
     /// vary the casing of one address across messages, and the account owner's
     /// own address is excluded (sent mail would always rank it first).
+    ///
+    /// Under `AllEnabled` (unified inbox): counts dedup by
+    /// `(account_id, thread_id)` — thread ids are not globally unique — and
+    /// EVERY enabled account's own address is excluded from sender stats.
     pub fn get_quick_filter_stats(
         &self,
-        account_id: &str,
+        scope: crate::db::AccountScope<'_>,
         excluded_domains: &[String],
         excluded_senders: &[String],
     ) -> Result<QuickFilterStats> {
         let conn = self.reader();
+
+        // Scope-dependent SQL fragments. The account id (when present) binds
+        // as ?1; exclusion placeholders start after it.
+        let (scope_cond, own_address_cond, account_param): (&str, &str, Option<&str>) = match scope {
+            crate::db::AccountScope::Account(id) => (
+                "account_id = ?1",
+                // COALESCE guards the (test-only) case of a missing accounts
+                // row — `<> NULL` would otherwise filter out every sender.
+                "sender_email COLLATE NOCASE <> COALESCE((SELECT email FROM accounts WHERE id = ?1), '')",
+                Some(id),
+            ),
+            crate::db::AccountScope::AllEnabled => (
+                "account_id IN (SELECT id FROM accounts WHERE enabled = 1)",
+                "NOT EXISTS (SELECT 1 FROM accounts a WHERE a.enabled = 1 \
+                 AND LOWER(a.email) = LOWER(sender_email))",
+                None,
+            ),
+        };
+        let first_exclude_idx = if account_param.is_some() { 2 } else { 1 };
+        // Thread count that stays correct across accounts: thread ids are only
+        // unique per account, so dedup on the (account_id, thread_id) pair.
+        let thread_cnt = "COUNT(DISTINCT account_id || ':' || thread_id)";
 
         // Top 10 sender domains, excluding removed ones
         let domain_exclude_clause = if excluded_domains.is_empty() {
@@ -24,24 +50,26 @@ impl Database {
             let placeholders: Vec<String> = excluded_domains
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!("?{}", i + 2))
+                .map(|(i, _)| format!("?{}", i + first_exclude_idx))
                 .collect();
             format!("AND sender_domain NOT IN ({})", placeholders.join(", "))
         };
 
         let domain_sql = format!(
             "SELECT sender_domain AS domain,
-                    COUNT(DISTINCT thread_id) AS cnt
-             FROM emails WHERE account_id = ?1
+                    {thread_cnt} AS cnt
+             FROM emails WHERE {scope_cond}
                AND sender_domain != ''
                AND is_deleted = 0
-               AND mailbox IN ('inbox', 'sent') {}
+               AND mailbox IN ('inbox', 'sent') {domain_exclude_clause}
              GROUP BY domain
-             ORDER BY cnt DESC LIMIT 10",
-            domain_exclude_clause
+             ORDER BY cnt DESC LIMIT 10"
         );
 
-        let mut domain_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
+        let mut domain_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(id) = account_param {
+            domain_params.push(Box::new(id.to_string()));
+        }
         for d in excluded_domains {
             domain_params.push(Box::new(d.clone()));
         }
@@ -65,26 +93,27 @@ impl Database {
             let placeholders: Vec<String> = excluded_senders
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!("?{}", i + 2))
+                .map(|(i, _)| format!("?{}", i + first_exclude_idx))
                 .collect();
             format!("AND sender_email COLLATE NOCASE NOT IN ({})", placeholders.join(", "))
         };
 
         // MIN(sender_email) picks a deterministic representative casing for
-        // each NOCASE group. COALESCE guards the (test-only) case of a missing
-        // accounts row — `<> NULL` would otherwise filter out every sender.
+        // each NOCASE group.
         let sender_sql = format!(
-            "SELECT MIN(sender_email), COUNT(DISTINCT thread_id) AS cnt
-             FROM emails WHERE account_id = ?1
+            "SELECT MIN(sender_email), {thread_cnt} AS cnt
+             FROM emails WHERE {scope_cond}
                AND is_deleted = 0
                AND mailbox IN ('inbox', 'sent')
-               AND sender_email COLLATE NOCASE <> COALESCE((SELECT email FROM accounts WHERE id = ?1), '') {}
+               AND {own_address_cond} {sender_exclude_clause}
              GROUP BY sender_email COLLATE NOCASE
-             ORDER BY cnt DESC LIMIT 10",
-            sender_exclude_clause
+             ORDER BY cnt DESC LIMIT 10"
         );
 
-        let mut sender_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
+        let mut sender_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(id) = account_param {
+            sender_params.push(Box::new(id.to_string()));
+        }
         for s in excluded_senders {
             sender_params.push(Box::new(s.clone()));
         }
@@ -107,17 +136,57 @@ impl Database {
         })
     }
 
+    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
+    /// branches. MUST drive from `matched_threads` with an indexed scalar
+    /// subquery per row.
+    ///
+    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
+    /// 90k-email DB (unified intent filter): SQLite scanned each matched
+    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
+    /// re-walking the account's whole mailbox partition per thread. The
+    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
+    /// the planner prefers the mailbox index for the inner MAX() too (54s);
+    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
+    const THREAD_LATEST_CTE: &'static str = "thread_latest AS (
+                 SELECT mt.aid AS aid, mt.tid AS tid,
+                        (SELECT MAX(e3.timestamp)
+                         FROM emails e3 INDEXED BY idx_emails_thread_latest
+                         WHERE e3.account_id = mt.aid AND e3.thread_id = mt.tid
+                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')) AS max_ts
+                 FROM matched_threads mt
+             )";
+
+    /// Representative-row SELECT paired with [`Self::THREAD_LATEST_CTE`].
+    /// CROSS JOIN pins the join order (SQLite never reorders CROSS JOIN) so
+    /// the probe drives from the small `thread_latest` set into
+    /// `idx_emails_thread_latest`, never the reverse.
+    fn representative_select() -> String {
+        format!(
+            "SELECT {cols}
+             FROM thread_latest l
+             CROSS JOIN emails e INDEXED BY idx_emails_thread_latest
+             WHERE e.account_id = l.aid AND e.thread_id = l.tid AND e.timestamp = l.max_ts
+               AND e.is_deleted = 0 AND e.mailbox IN ('inbox', 'sent')",
+            cols = EMAIL_COLUMNS
+        )
+    }
+
     /// Get emails filtered by domain or sender, with total count for pagination.
     ///
     /// Uses subquery-based approach to avoid both:
     ///   - O(N²) NOT EXISTS correlated subquery
     ///   - SQLite parameter limit (32,766) for large thread_id sets
     ///
-    /// The matching thread_ids stay inside a CTE subquery; only account_id and
-    /// the filter value are passed as parameters.
+    /// The matching thread_ids stay inside a CTE subquery; only the scope's
+    /// account id (when single-account) and the filter value are parameters.
+    ///
+    /// Thread dedup keys on `(account_id, thread_id)` in BOTH scopes — a no-op
+    /// for single-account queries (account is constant) and required under
+    /// `AllEnabled`, where two accounts CC'd on one provider thread share the
+    /// same thread_id string and must each keep their own representative row.
     pub fn get_filtered_emails(
         &self,
-        account_id: &str,
+        scope: crate::db::AccountScope<'_>,
         domain: Option<&str>,
         sender_email: Option<&str>,
         tag_type: Option<&str>,
@@ -129,24 +198,34 @@ impl Database {
         let conn = self.reader();
         let order_clause = thread_order_clause("e", false);
 
+        // Scope condition for an aliased emails table. Under Account the id
+        // binds as ?1 in every query built below.
+        let scope_cond = |alias: &str| -> String {
+            match scope {
+                crate::db::AccountScope::Account(_) => format!("{alias}.account_id = ?1"),
+                crate::db::AccountScope::AllEnabled => {
+                    format!("{alias}.account_id IN (SELECT id FROM accounts WHERE enabled = 1)")
+                }
+            }
+        };
+        let account_param: Option<&str> = match scope {
+            crate::db::AccountScope::Account(id) => Some(id),
+            crate::db::AccountScope::AllEnabled => None,
+        };
+
         // ── Tag filter: drive from email_tags (small result set) ─────────────
         // Tags are selective — few emails match. Drive from the tag index, find
         // matching threads, GROUP BY for latest-per-thread. Fast even with 0 matches.
         if let (Some(tt), Some(tv)) = (tag_type, tag_value) {
-            // ?1 = account_id, ?2 = tag_type, ?3 = tag_value, ?4 = limit, ?5 = offset
-            //
             // Semantics (user-confirmed): a thread matches the filter if ANY email
             // in the thread carries the tag. The row shown for that thread is the
             // thread representative (latest email in the thread). This way,
             // replying to "Globex" doesn't make the thread disappear from the
             // Globex filter just because the user's sent reply is the latest.
             //
-            // Same shape as the domain/sender branch below: two CTEs (match → latest)
-            // and a final join on (thread_id, timestamp) which lets SQLite use
-            // `idx_emails_thread_latest (account_id, thread_id, timestamp DESC, id DESC)`.
-            // A 3rd "representative_emails" CTE was tried and was much slower because
-            // it forced a join-by-id then a full sort instead of an index-driven
-            // (thread_id, timestamp) lookup.
+            // Same shape as the domain/sender branch below: a matched_threads
+            // CTE, then a per-thread latest lookup DRIVEN FROM matched_threads
+            // (see `thread_latest_cte`) so cost stays O(matching_threads).
             //
             // `mailbox IN ('inbox', 'sent')` keeps Spam/Trash copies out of Inbox-level
             // filtered views.
@@ -155,36 +234,42 @@ impl Database {
             // probe email_tags by email_id — instead of starting from the tag
             // (which yields ~hundreds of rows). With the hint, matched_threads
             // costs O(emails_tagged_with_this_value), not O(account_emails).
+            let first_idx = if account_param.is_some() { 2 } else { 1 };
             let select_sql = format!(
                 "WITH matched_threads AS (
-                     SELECT DISTINCT e2.thread_id
+                     SELECT DISTINCT e2.account_id AS aid, e2.thread_id AS tid
                      FROM email_tags et INDEXED BY idx_email_tags_type_value
                      JOIN emails e2 ON e2.id = et.email_id
-                     WHERE et.tag_type = ?2 AND et.tag_value = ?3
-                       AND e2.account_id = ?1 AND e2.is_deleted = 0
+                     WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
+                       AND {scope_e2} AND e2.is_deleted = 0
                        AND e2.mailbox IN ('inbox', 'sent')
                  ),
-                 thread_latest AS (
-                     SELECT thread_id AS tid, MAX(timestamp) AS max_ts
-                     FROM emails
-                     WHERE account_id = ?1 AND is_deleted = 0
-                       AND mailbox IN ('inbox', 'sent')
-                       AND thread_id IN (SELECT thread_id FROM matched_threads)
-                     GROUP BY thread_id
-                 )
-                 SELECT {cols}
-                 FROM emails e
-                 INNER JOIN thread_latest l ON e.thread_id = l.tid AND e.timestamp = l.max_ts
-                 WHERE e.account_id = ?1 AND e.is_deleted = 0 AND e.mailbox IN ('inbox', 'sent')
+                 {thread_latest}
+                 {representative}
                  ORDER BY {order}
-                 LIMIT ?4 OFFSET ?5",
-                cols = EMAIL_COLUMNS,
+                 LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+                tt_idx = first_idx,
+                tv_idx = first_idx + 1,
+                scope_e2 = scope_cond("e2"),
+                thread_latest = Self::THREAD_LATEST_CTE,
+                representative = Self::representative_select(),
                 order = order_clause,
+                limit_idx = first_idx + 2,
+                offset_idx = first_idx + 3,
             );
 
             let mut stmt = conn.prepare(&select_sql)?;
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(id) = account_param {
+                params_vec.push(Box::new(id.to_string()));
+            }
+            params_vec.push(Box::new(tt.to_string()));
+            params_vec.push(Box::new(tv.to_string()));
+            params_vec.push(Box::new(limit));
+            params_vec.push(Box::new(offset));
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
             let mut emails = Vec::new();
-            let mut rows = stmt.query(params![account_id, tt, tv, limit, offset])?;
+            let mut rows = stmt.query(params_refs.as_slice())?;
             while let Some(row) = rows.next()? {
                 emails.push(row_to_email(row)?);
             }
@@ -195,22 +280,30 @@ impl Database {
         }
 
         // ── Domain/sender filter: three-step CTE ───────────────────────────────
-        // Step 1: find matching thread_ids via idx_emails_domain_filter or
-        //         idx_emails_sender_filter (covering, no table access needed).
-        // Step 2: GROUP BY for latest timestamp per thread — O(matching_threads).
+        // Step 1: find matching (account_id, thread_id) pairs via
+        //         idx_emails_domain_filter or idx_emails_sender_filter
+        //         (covering, no table access needed).
+        // Step 2: GROUP BY for latest timestamp per (account, thread) —
+        //         O(matching_threads).
         // Step 3: join back to emails to fetch the representative row.
         // This is O(emails_from_domain) rather than O(all_emails) and avoids
         // scanning the full inbox in timestamp order.
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
-        let mut param_idx = 2usize; // ?1 = account_id
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1usize;
 
         // Inbox-level filtered view: exclude Spam/Trash copies so they don't
         // leak into the main filter UI. Soft-deleted rows are also excluded.
-        let mut match_conditions = vec![
-            "account_id = ?1".to_string(),
-            "is_deleted = 0".to_string(),
-            "mailbox IN ('inbox', 'sent')".to_string(),
-        ];
+        let mut match_conditions = vec!["is_deleted = 0".to_string(), "mailbox IN ('inbox', 'sent')".to_string()];
+        match scope {
+            crate::db::AccountScope::Account(id) => {
+                match_conditions.push(format!("account_id = ?{param_idx}"));
+                params_vec.push(Box::new(id.to_string()));
+                param_idx += 1;
+            }
+            crate::db::AccountScope::AllEnabled => {
+                match_conditions.push("account_id IN (SELECT id FROM accounts WHERE enabled = 1)".to_string());
+            }
+        }
         if let Some(d) = domain {
             match_conditions.push(format!("sender_domain = ?{}", param_idx));
             params_vec.push(Box::new(d.to_lowercase()));
@@ -235,25 +328,17 @@ impl Database {
 
         let select_sql = format!(
             "WITH matched_threads AS (
-                 SELECT DISTINCT thread_id
+                 SELECT DISTINCT account_id AS aid, thread_id AS tid
                  FROM emails
                  WHERE {match_cond}
              ),
-             thread_latest AS (
-                 SELECT thread_id AS tid, MAX(timestamp) AS max_ts
-                 FROM emails
-                 WHERE account_id = ?1 AND is_deleted = 0 AND mailbox IN ('inbox', 'sent')
-                   AND thread_id IN (SELECT thread_id FROM matched_threads)
-                 GROUP BY thread_id
-             )
-             SELECT {cols}
-             FROM emails e
-             INNER JOIN thread_latest l ON e.thread_id = l.tid AND e.timestamp = l.max_ts
-             WHERE e.account_id = ?1 AND e.is_deleted = 0 AND e.mailbox IN ('inbox', 'sent')
+             {thread_latest}
+             {representative}
              ORDER BY {order}
              LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
             match_cond = match_conditions.join(" AND "),
-            cols = EMAIL_COLUMNS,
+            thread_latest = Self::THREAD_LATEST_CTE,
+            representative = Self::representative_select(),
             order = order_clause,
             limit_idx = param_idx,
             offset_idx = param_idx + 1,
@@ -851,7 +936,16 @@ mod tests {
         insert_email(&db, "e4", account, "thread-c", 400);
 
         let result = db
-            .get_filtered_emails(account, None, None, Some("priority"), Some("urgent"), None, 50, 0)
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                None,
+                Some("priority"),
+                Some("urgent"),
+                None,
+                50,
+                0,
+            )
             .unwrap();
 
         let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
@@ -1026,7 +1120,9 @@ mod tests {
         insert_contact_email(&db, "s2", account, "t-s2", "Bot", "bot@spam.com", "[]", "spam", 300);
         insert_contact_email(&db, "s3", account, "t-s3", "Bot", "bot@spam.com", "[]", "trash", 400);
 
-        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(account), &[], &[])
+            .unwrap();
 
         let domains: Vec<&str> = stats.top_domains.iter().map(|d| d.value.as_str()).collect();
         assert!(
@@ -1081,7 +1177,9 @@ mod tests {
         );
         insert_contact_email(&db, "i1", account, "t3", "Alice", "alice@ex.com", "[]", "inbox", 300);
 
-        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(account), &[], &[])
+            .unwrap();
         let senders: Vec<String> = stats.top_senders.iter().map(|s| s.value.to_lowercase()).collect();
 
         assert!(
@@ -1111,7 +1209,9 @@ mod tests {
         insert_contact_email(&db, "e3", account, "t-a", "Bob", "bob@acme.com", "[]", "inbox", 300);
         insert_contact_email(&db, "e4", account, "t-b", "Bob", "bob@acme.com", "[]", "inbox", 400);
 
-        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(account), &[], &[])
+            .unwrap();
 
         let acme = stats
             .top_domains
@@ -1141,7 +1241,9 @@ mod tests {
         insert_contact_email(&db, "e1", account, "t1", "Alice", "Alice@Ex.com", "[]", "inbox", 100);
         insert_contact_email(&db, "e2", account, "t2", "Alice", "alice@ex.com", "[]", "inbox", 200);
 
-        let stats = db.get_quick_filter_stats(account, &[], &[]).unwrap();
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(account), &[], &[])
+            .unwrap();
         let alice_entries: Vec<_> = stats
             .top_senders
             .iter()
@@ -1167,7 +1269,11 @@ mod tests {
         insert_contact_email(&db, "e1", account, "t1", "Alice", "Alice@Ex.com", "[]", "inbox", 100);
 
         let stats = db
-            .get_quick_filter_stats(account, &[], &["alice@ex.com".to_string()])
+            .get_quick_filter_stats(
+                crate::db::AccountScope::Account(account),
+                &[],
+                &["alice@ex.com".to_string()],
+            )
             .unwrap();
         let senders: Vec<&str> = stats.top_senders.iter().map(|s| s.value.as_str()).collect();
 
@@ -1199,7 +1305,16 @@ mod tests {
         );
 
         let result = db
-            .get_filtered_emails(account, None, Some("emea_billing@ex.com"), None, None, None, 50, 0)
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("emea_billing@ex.com"),
+                None,
+                None,
+                None,
+                50,
+                0,
+            )
             .unwrap();
 
         assert_eq!(
@@ -1207,6 +1322,148 @@ mod tests {
             1,
             "sender filter must match the stored mixed-case address"
         );
+    }
+
+    // ── AllEnabled (unified) scope ───────────────────────────────────────────────
+
+    fn set_enabled(db: &Database, account: &str, enabled: bool) {
+        db.connection()
+            .execute(
+                "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
+                rusqlite::params![account, enabled as i32],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn filtered_emails_all_enabled_sender_filter_spans_accounts() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me1@my.com");
+        insert_account(&db, "acc2", "me2@my.com");
+        insert_account(&db, "acc3", "me3@my.com");
+
+        insert_contact_email(&db, "e1", "acc1", "t1", "Bob", "bob@acme.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e2", "acc2", "t2", "Bob", "bob@acme.com", "[]", "inbox", 200);
+        // Disabled account must not contribute rows.
+        insert_contact_email(&db, "e3", "acc3", "t3", "Bob", "bob@acme.com", "[]", "inbox", 300);
+        set_enabled(&db, "acc3", false);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::AllEnabled,
+                None,
+                Some("bob@acme.com"),
+                None,
+                None,
+                None,
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e2", "e1"], "both enabled accounts' threads, newest first");
+    }
+
+    #[test]
+    fn filtered_emails_all_enabled_thread_collision_no_cross_account_merge() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me1@my.com");
+        insert_account(&db, "acc2", "me2@my.com");
+
+        // Same thread_id string in both accounts; both match the domain filter.
+        // Each account must keep its OWN latest row — the newer acc2 email must
+        // not swallow acc1's thread.
+        insert_contact_email(&db, "e1a", "acc1", "shared", "Bob", "bob@acme.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e1b", "acc1", "shared", "Bob", "bob@acme.com", "[]", "inbox", 150);
+        insert_contact_email(&db, "e2a", "acc2", "shared", "Ann", "ann@acme.com", "[]", "inbox", 200);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::AllEnabled,
+                Some("acme.com"),
+                None,
+                None,
+                None,
+                None,
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["e2a", "e1b"],
+            "one representative per (account, thread) — not per thread_id string"
+        );
+    }
+
+    #[test]
+    fn filtered_emails_all_enabled_tag_filter_spans_accounts() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me1@my.com");
+        insert_account(&db, "acc2", "me2@my.com");
+
+        insert_email(&db, "e1", "acc1", "t1", 100);
+        insert_email(&db, "e2", "acc2", "t2", 200);
+        insert_email(&db, "e3", "acc2", "t3", 300);
+        tag_email(&db, "e1", "company", "Acme");
+        tag_email(&db, "e2", "company", "Acme");
+        tag_email(&db, "e3", "company", "Globex");
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::AllEnabled,
+                None,
+                None,
+                Some("company"),
+                Some("Acme"),
+                None,
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e2", "e1"], "Acme threads from both accounts, newest first");
+    }
+
+    #[test]
+    fn quick_filter_stats_all_enabled_excludes_every_own_address_and_counts_pairs() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me1@my.com");
+        insert_account(&db, "acc2", "me2@my.com");
+
+        // Each account's own sent mail — neither owner address may be suggested.
+        insert_contact_email(&db, "s1", "acc1", "ts1", "Me1", "me1@my.com", "[]", "sent", 100);
+        insert_contact_email(&db, "s2", "acc2", "ts2", "Me2", "Me2@My.com", "[]", "sent", 200);
+        // Same external sender in both accounts, same thread_id string —
+        // 2 (account, thread) pairs.
+        insert_contact_email(&db, "e1", "acc1", "shared", "Bob", "bob@acme.com", "[]", "inbox", 300);
+        insert_contact_email(&db, "e2", "acc2", "shared", "Bob", "bob@acme.com", "[]", "inbox", 400);
+
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::AllEnabled, &[], &[])
+            .unwrap();
+
+        let senders: Vec<String> = stats.top_senders.iter().map(|s| s.value.to_lowercase()).collect();
+        assert!(
+            !senders.contains(&"me1@my.com".to_string()) && !senders.contains(&"me2@my.com".to_string()),
+            "every enabled account's own address must be excluded, got {:?}",
+            senders
+        );
+
+        let bob = stats
+            .top_senders
+            .iter()
+            .find(|s| s.value.eq_ignore_ascii_case("bob@acme.com"))
+            .expect("bob must be suggested");
+        assert_eq!(bob.count, 2, "counts (account, thread) pairs, not thread_id strings");
+
+        let acme = stats
+            .top_domains
+            .iter()
+            .find(|d| d.value == "acme.com")
+            .expect("acme.com must be suggested");
+        assert_eq!(acme.count, 2, "domain counts (account, thread) pairs too");
     }
 
     // ── from: filter correctness ──────────────────────────────────────────────────

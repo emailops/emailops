@@ -57,7 +57,8 @@
     "createClassificationRule": "Klassifikationsregel erstellen",
     "copyEmailId": "E-Mail-ID kopieren",
     "redownloadEmail": "E-Mail erneut herunterladen",
-    "deleteThread": "Thread löschen"
+    "deleteThread": "Thread löschen",
+    "accountTooltip": "Konto: {{email}}"
   },
   "header": {
     "totalCount": "{{count}} E-Mails",

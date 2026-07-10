@@ -41,11 +41,13 @@ fn emit_embedding_error(app: &AppHandle, message: &str) {
     );
 }
 
+/// `account_id: None` searches across every enabled account (unified
+/// "All accounts" view).
 #[tauri::command]
 pub async fn search_emails(
     app: AppHandle,
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     query: String,
     use_ai: Option<bool>,
     categories: Option<Vec<String>>,
@@ -70,7 +72,7 @@ pub async fn search_emails(
 
     let result = services::search::search_emails(
         &state.db,
-        &account_id,
+        account_id.as_deref(),
         &query,
         use_ai_flag,
         categories.as_deref(),
@@ -96,7 +98,11 @@ pub async fn search_emails(
         &format!("Found {} results via {:?}", result.emails.len(), result.search_method,),
     );
 
-    services::memory::on_search(&state.db, &account_id, &query);
+    // Memory facts are account-scoped; a unified (all-accounts) search has no
+    // single owning account, so it is not logged as a memory signal.
+    if let Some(id) = account_id.as_deref() {
+        services::memory::on_search(&state.db, id, &query);
+    }
 
     Ok(result)
 }

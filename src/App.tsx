@@ -32,6 +32,7 @@ import { AccountSettingsDialog } from '@/components/Sidebar/AccountSettingsDialo
 import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
+import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
@@ -114,7 +115,7 @@ function App() {
 }
 
 function AppInner() {
-  const { t } = useTranslation(['common', 'modal']);
+  const { t } = useTranslation(['common', 'modal', 'sidebar']);
   const { enabled: aiEnabled, refresh: refreshAi } = useAiStore();
   // Onboarding: shown when the `onboarding_completed` preference is missing.
   // `null` = still loading the preference; we render nothing AI-conditional
@@ -217,11 +218,15 @@ function AppInner() {
     accounts,
     activeAccount,
     activeAccountId,
+    isUnified,
+    queryAccountId,
+    effectiveAccountId,
     setActiveAccount,
     addAccount,
     registerImapAccount,
     removeAccount,
     syncAccount,
+    syncAllAccounts,
     reauthenticateAccount,
     moveAccountUp,
     moveAccountDown,
@@ -245,21 +250,39 @@ function AppInner() {
   // flash of the hard-coded default trio.
   const [availableCategories, setAvailableCategories] = useState<EmailCategory[] | null>(null);
   const [accountSettingsVersion, setAccountSettingsVersion] = useState(0);
+  // Stable key over the enabled non-IMAP accounts so the categories effect
+  // (and unified-mode consumers) don't re-run on every accounts array identity
+  // change from fetchAccounts.
+  const enabledCategoryAccountsKey = useMemo(
+    () =>
+      accounts
+        .filter((a) => a.enabled && a.provider !== 'imap')
+        .map((a) => a.id)
+        .join(','),
+    [accounts],
+  );
   useEffect(() => {
     if (!activeAccountId) {
       setAvailableCategories(null);
       return;
     }
+    // Unified mode: union of every enabled non-IMAP account's categories, so
+    // the tab strip can filter the merged list. Single account: as before.
+    const targets = isUnified ? enabledCategoryAccountsKey.split(',').filter(Boolean) : [activeAccountId];
+    if (targets.length === 0) {
+      setAvailableCategories(null);
+      return;
+    }
     let cancelled = false;
-    api
-      .getAvailableCategories(activeAccountId)
-      .then((cats) => {
+    Promise.all(targets.map((id) => api.getAvailableCategories(id)))
+      .then((results) => {
         if (cancelled) return;
-        const valid = cats.filter((c): c is EmailCategory => VALID_CATEGORIES.has(c as EmailCategory));
+        const valid = results.flat().filter((c): c is EmailCategory => VALID_CATEGORIES.has(c as EmailCategory));
+        const union = Array.from(new Set(valid));
         // Empty list (IMAP, unknown provider) → null so showCategoryFilter
         // hides the chip strip entirely. Otherwise pass the provider-aware
         // set straight through.
-        setAvailableCategories(valid.length > 0 ? valid : null);
+        setAvailableCategories(union.length > 0 ? union : null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -270,7 +293,7 @@ function AppInner() {
     return () => {
       cancelled = true;
     };
-  }, [activeAccountId, accountSettingsVersion]);
+  }, [activeAccountId, accountSettingsVersion, isUnified, enabledCategoryAccountsKey]);
   const {
     emails,
     isLoading: emailsLoading,
@@ -445,7 +468,10 @@ function AppInner() {
   // Account B would surface the "re-authenticate" banner while the user is
   // looking at Account A. Errors with `errorAccountId === null` are global
   // (fetch/add/remove account, etc.) and always display.
-  const isScopedAccountError = accountErrorAccountId !== null && accountErrorAccountId !== activeAccountId;
+  // In unified ("All accounts") mode every enabled account is "active", so
+  // scoped errors from any of them stay visible.
+  const isScopedAccountError =
+    accountErrorAccountId !== null && accountErrorAccountId !== activeAccountId && !isUnified;
   const visibleAccountError = isScopedAccountError ? null : accountError;
   const displayError = visibleAccountError || emailError;
   const clearError = useCallback(() => {
@@ -456,8 +482,9 @@ function AppInner() {
   const handleReauthenticate = useCallback(async () => {
     // Re-auth the account the error actually belongs to (if known), not
     // whichever account happens to be active when the user clicks "Sign in
-    // again". For non-scoped errors fall back to the active account.
-    const targetAccountId = accountErrorAccountId ?? activeAccountId;
+    // again". For non-scoped errors fall back to the active account (first
+    // enabled account in unified mode — never the sentinel).
+    const targetAccountId = accountErrorAccountId ?? effectiveAccountId;
     if (!targetAccountId) return;
 
     // IMAP accounts don't have OAuth — credentials live in the keychain and
@@ -483,14 +510,14 @@ function AppInner() {
       addLog('error', 'account', `Re-authentication failed: ${error}`);
       console.error('Re-authentication failed:', error);
     }
-  }, [accountErrorAccountId, activeAccountId, accounts, reauthenticateAccount, clearError, syncAccount, addLog]);
+  }, [accountErrorAccountId, effectiveAccountId, accounts, reauthenticateAccount, clearError, syncAccount, addLog]);
 
   // Open a compose tab pre-filled with a feedback email in the current UI
   // language. Runtime facts (app version, OS, AI provider) are gathered here
   // and interpolated into the localized body's "technical info" line.
   const handleGiveFeedback = useCallback(
     async (type: FeedbackType) => {
-      if (!activeAccountId) return;
+      if (!effectiveAccountId) return;
       try {
         const [diag, ai] = await Promise.all([api.getAppDiagnostics(), api.getAiConfig()]);
         // Use the i18next singleton so the fully-qualified `compose:` keys type-
@@ -506,24 +533,25 @@ function AppInner() {
         setViewMode('inbox');
         // Preserve the template's blank lines (answer space between questions)
         // as empty paragraphs rather than collapsing them.
-        openComposeTab(activeAccountId, [to], subject, plainTextToParagraphsHtml(body));
+        openComposeTab(effectiveAccountId, [to], subject, plainTextToParagraphsHtml(body));
       } catch (error) {
         addLog('error', 'system', `Failed to open feedback email: ${errorText(error)}`);
       }
     },
-    [activeAccountId, openComposeTab, addLog],
+    [effectiveAccountId, openComposeTab, addLog],
   );
 
   // Keep the memory store (tasks + badge counts) in sync with the active
-  // account. Runs once per account switch — individual refreshes after user
-  // actions are driven by the store itself.
+  // account (first enabled account in unified mode — memory/tasks stay
+  // per-account). Runs once per account switch — individual refreshes after
+  // user actions are driven by the store itself.
   useEffect(() => {
-    if (activeAccountId) {
-      void useMemoryStore.getState().loadForAccount(activeAccountId);
+    if (effectiveAccountId) {
+      void useMemoryStore.getState().loadForAccount(effectiveAccountId);
     } else {
       useMemoryStore.getState().reset();
     }
-  }, [activeAccountId]);
+  }, [effectiveAccountId]);
 
   // Keyboard shortcut to open search (Cmd/Ctrl + K)
   useEffect(() => {
@@ -669,6 +697,31 @@ function AppInner() {
   useEffect(() => {
     if (!activeAccountId || accountsLoading) return;
 
+    // Unified ("All accounts") mode: reset the list and enqueue a sync for
+    // every enabled account. The backend runs per-account queues, so the
+    // syncs proceed independently; progress events drive list refreshes.
+    if (isUnified) {
+      resetEmails();
+      useChatStore.getState().reset();
+
+      if (!useConnectivityStore.getState().isOnline) {
+        addLog('info', 'sync', 'Sync skipped — currently offline.');
+        return;
+      }
+      const pendingSetupId = useAccountStore.getState().setupPendingAccountId;
+      const toSync = accounts.filter((a) => a.enabled && a.id !== pendingSetupId).map((a) => a.id);
+      if (toSync.length === 0) return;
+
+      addLog('info', 'sync', `Syncing ${toSync.length} account${toSync.length > 1 ? 's' : ''}...`);
+      syncAllAccounts(toSync).catch((err) => {
+        if (useConnectivityStore.getState().isOnline) {
+          addLog('error', 'sync', `Sync failed: ${err}`);
+          console.error('Sync failed:', err);
+        }
+      });
+      return;
+    }
+
     const account = accounts.find((a) => a.id === activeAccountId);
     if (!account) return;
 
@@ -729,7 +782,9 @@ function AppInner() {
     const previousStatus = previousSyncStatusRef.current;
     previousSyncStatusRef.current = status;
 
-    if (!syncProgress || syncProgress.accountId !== activeAccountId) {
+    // In unified mode progress from ANY account affects the merged list, so
+    // accept every account's events; otherwise only the active account's.
+    if (!syncProgress || (!isUnified && syncProgress.accountId !== activeAccountId)) {
       return;
     }
 
@@ -745,7 +800,22 @@ function AppInner() {
       silentRefetchEmailsRef.current();
       forceRefreshFilters();
     }
-  }, [activeAccountId, forceRefreshFilters, syncProgress]);
+  }, [activeAccountId, isUnified, forceRefreshFilters, syncProgress]);
+
+  // Refresh the merged list when the enabled-account set changes while in
+  // unified mode (toggling an account on/off must add/remove its emails).
+  const enabledAccountsKey = useMemo(
+    () =>
+      accounts
+        .filter((a) => a.enabled)
+        .map((a) => a.id)
+        .join(','),
+    [accounts],
+  );
+  useEffect(() => {
+    if (!isUnified) return;
+    silentRefetchEmailsRef.current();
+  }, [isUnified, enabledAccountsKey]);
 
   // Email list views — these all render the inbox/sent/spam/deleted email list.
   // When applying a search from any other view, fall back to 'inbox'.
@@ -812,13 +882,15 @@ function AppInner() {
   const navigateToEmail = useEmailStore((s) => s.navigateToEmail);
   const handleViewAttachmentEmail = useCallback(
     async (emailId: string) => {
-      if (!activeAccountId) return;
+      // Attachments are scoped to the effective account (first enabled in
+      // unified mode), so the email always belongs to that account.
+      if (!effectiveAccountId) return;
       clearActiveFilter();
       clearSearchQuery();
       setViewMode('inbox');
-      navigateToEmail(activeAccountId, emailId);
+      navigateToEmail(effectiveAccountId, emailId);
     },
-    [activeAccountId, clearActiveFilter, clearSearchQuery, navigateToEmail],
+    [effectiveAccountId, clearActiveFilter, clearSearchQuery, navigateToEmail],
   );
 
   const handleCreateAttachmentRule = useCallback((prefill: RulePrefill) => {
@@ -885,22 +957,28 @@ function AppInner() {
   };
 
   const handleSync = async () => {
-    if (activeAccountId) {
-      // Skip the network round-trip when we know we're offline — the request
-      // would fail and the user would see a misleading "Sync failed: ..."
-      // error in the log instead of the offline banner.
-      if (!useConnectivityStore.getState().isOnline) {
-        addLog('info', 'sync', 'Sync skipped — currently offline.');
-        return;
-      }
-      const accountEmail = accounts.find((a) => a.id === activeAccountId)?.email;
-      addLog('info', 'sync', `Manual sync started for ${accountEmail ?? 'account'}`);
-      try {
+    if (!activeAccountId) return;
+    // Skip the network round-trip when we know we're offline — the request
+    // would fail and the user would see a misleading "Sync failed: ..."
+    // error in the log instead of the offline banner.
+    if (!useConnectivityStore.getState().isOnline) {
+      addLog('info', 'sync', 'Sync skipped — currently offline.');
+      return;
+    }
+    try {
+      if (isUnified) {
+        const toSync = accounts.filter((a) => a.enabled).map((a) => a.id);
+        if (toSync.length === 0) return;
+        addLog('info', 'sync', `Manual sync started for ${toSync.length} account${toSync.length > 1 ? 's' : ''}`);
+        await syncAllAccounts(toSync);
+      } else {
+        const accountEmail = accounts.find((a) => a.id === activeAccountId)?.email;
+        addLog('info', 'sync', `Manual sync started for ${accountEmail ?? 'account'}`);
         await syncAccount(activeAccountId);
-      } catch (error) {
-        addLog('error', 'sync', `Sync failed: ${error}`);
-        console.error('Sync failed:', error);
       }
+    } catch (error) {
+      addLog('error', 'sync', `Sync failed: ${error}`);
+      console.error('Sync failed:', error);
     }
   };
 
@@ -920,6 +998,7 @@ function AppInner() {
         <Sidebar
           accounts={accounts}
           activeAccount={activeAccount}
+          isUnifiedActive={isUnified}
           onSelectAccount={(id) => {
             setViewMode('inbox');
             clearSearchQuery();
@@ -976,41 +1055,58 @@ function AppInner() {
 
         <main className="flex flex-1 overflow-hidden">
           {viewMode === 'contacts' ? (
-            <ContactsView
-              accountId={activeAccountId}
-              onComposeTo={(address) => {
-                setComposePrefillTo([address]);
-                setIsComposeOpen(true);
-              }}
-              onViewEmailsFrom={(address) => {
-                setViewMode('inbox');
-                clearSearchQuery();
-                handleToggleSmartFilter({ type: 'sender', value: address });
-              }}
-            />
+            // Per-account views wrap in a column with the unified-mode scope
+            // chip on top (self-gating — renders nothing outside All accounts).
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <ContactsView
+                accountId={effectiveAccountId}
+                onComposeTo={(address) => {
+                  setComposePrefillTo([address]);
+                  setIsComposeOpen(true);
+                }}
+                onViewEmailsFrom={(address) => {
+                  setViewMode('inbox');
+                  clearSearchQuery();
+                  handleToggleSmartFilter({ type: 'sender', value: address });
+                }}
+              />
+            </div>
           ) : viewMode === 'drafts' ? (
-            <DraftsView
-              accountId={activeAccountId}
-              accounts={accounts}
-              onOpenComposeTab={(draft) => {
-                // Compose tabs render inside the inbox/mail pane, not the drafts
-                // view — switch back so the opened tab is actually visible.
-                setViewMode('inbox');
-                openComposeTab(
-                  draft.accountId,
-                  draft.toAddresses,
-                  draft.subject,
-                  draft.bodyHtml ?? plainTextToHtml(draft.body),
-                  { draftId: draft.id, ccAddresses: draft.ccAddresses, attachments: draft.attachments },
-                );
-              }}
-            />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <DraftsView
+                accountId={effectiveAccountId}
+                accounts={accounts}
+                onOpenComposeTab={(draft) => {
+                  // Compose tabs render inside the inbox/mail pane, not the drafts
+                  // view — switch back so the opened tab is actually visible.
+                  setViewMode('inbox');
+                  openComposeTab(
+                    draft.accountId,
+                    draft.toAddresses,
+                    draft.subject,
+                    draft.bodyHtml ?? plainTextToHtml(draft.body),
+                    { draftId: draft.id, ccAddresses: draft.ccAddresses, attachments: draft.attachments },
+                  );
+                }}
+              />
+            </div>
           ) : viewMode === 'chat' ? (
-            <ChatView accountId={activeAccountId} onNavigateToInbox={() => setViewMode('inbox')} />
+            // Chat conversations are hard-scoped to one account; in unified
+            // mode they fall back to the first enabled account. ChatView
+            // renders its own scope chip (chat-specific hint).
+            <ChatView accountId={effectiveAccountId} onNavigateToInbox={() => setViewMode('inbox')} />
           ) : viewMode === 'tasks' && tasksEnabled ? (
-            <TasksPanel accountId={activeAccountId} />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <TasksPanel accountId={effectiveAccountId} />
+            </div>
           ) : viewMode === 'memory' && memoriesEnabled ? (
-            <MemoryView accountId={activeAccountId} />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <MemoryView accountId={effectiveAccountId} />
+            </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView />
           ) : viewMode === 'dashboard' ? (
@@ -1075,7 +1171,9 @@ function AppInner() {
                         isLoading={displayIsLoading}
                         onClose={displayOnClose}
                         accounts={accounts}
-                        activeAccountId={activeAccountId}
+                        // null in unified mode → EmailView's own fallback picks
+                        // the thread's latest email's account as the reply-from.
+                        activeAccountId={queryAccountId}
                         fullWidth={inboxLayout === 'full-width'}
                         onOpenInTab={handleOpenInTab}
                       />
@@ -1116,12 +1214,16 @@ function AppInner() {
                     }}
                     selectedCategories={selectedCategories}
                     onSelectCategories={handleSelectCategories}
-                    showCategoryFilter={activeAccount?.provider !== 'imap' && viewMode === 'inbox'}
+                    showCategoryFilter={
+                      (isUnified
+                        ? accounts.some((a) => a.enabled && a.provider !== 'imap')
+                        : activeAccount?.provider !== 'imap') && viewMode === 'inbox'
+                    }
                     availableCategories={availableCategories ?? undefined}
                     onCollapse={inboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
-                    accountName={activeAccount?.name || activeAccount?.email}
+                    accountName={isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
                   />
@@ -1148,8 +1250,9 @@ function AppInner() {
             </>
           ) : (
             <div className="flex flex-col flex-1">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
               <AttachmentToolbar
-                accountId={activeAccountId}
+                accountId={effectiveAccountId}
                 totalCount={attachmentTotalCount}
                 selectedTag={selectedTag}
                 availableTags={availableTags}
@@ -1186,7 +1289,7 @@ function AppInner() {
 
       {isSearchOpen && (
         <SearchBar
-          accountId={activeAccountId}
+          accountId={queryAccountId}
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
           onApplySearchWithResults={handleApplySearchWithResults}
@@ -1261,10 +1364,10 @@ function AppInner() {
         <AddImapAccountModal onSuccess={handleImapAccountAdded} onCancel={() => setIsAddImapAccountOpen(false)} />
       )}
 
-      {isRuleModalOpen && activeAccountId && (
+      {isRuleModalOpen && effectiveAccountId && (
         <RuleManagementModal
           rules={attachmentRules}
-          accountId={activeAccountId}
+          accountId={effectiveAccountId}
           prefill={rulePrefill}
           onClose={() => {
             setIsRuleModalOpen(false);
@@ -1311,10 +1414,10 @@ function AppInner() {
         />
       )}
 
-      {isComposeOpen && activeAccountId && (
+      {isComposeOpen && effectiveAccountId && (
         <ComposeModal
           accounts={accounts}
-          defaultAccountId={activeAccountId}
+          defaultAccountId={effectiveAccountId}
           defaultToRecipients={composePrefillTo}
           onClose={() => {
             setIsComposeOpen(false);
@@ -1332,7 +1435,7 @@ function AppInner() {
       {settingsTab && (
         <SettingsDialog
           initialTab={settingsTab}
-          activeAccountId={activeAccountId}
+          activeAccountId={effectiveAccountId}
           accounts={accounts}
           currentLayout={inboxLayout}
           onChangeLayout={handleChangeLayout}

@@ -26,6 +26,9 @@ interface VirtualEmailListProps {
   onOpenInTab?: (email: Email) => void;
   onChatAboutThread?: (email: Email) => void;
   compact?: boolean;
+  /** Unified ("All accounts") mode: per-account color bar. Returns undefined
+   *  outside unified mode so rows render exactly as before. */
+  getAccountBadge?: (email: Email) => { colorClass: string; label: string } | undefined;
 }
 
 /**
@@ -51,6 +54,7 @@ export function VirtualEmailList({
   onOpenInTab,
   onChatAboutThread,
   compact = false,
+  getAccountBadge,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox']);
   const virtualizer = useVirtualizer({
@@ -145,6 +149,7 @@ export function VirtualEmailList({
                 onOpenInTab={onOpenInTab}
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
+                accountBadge={getAccountBadge?.(email)}
               />
             </div>
           );

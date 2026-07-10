@@ -213,6 +213,16 @@ pub(super) fn insert_contact_email(
     .unwrap();
 }
 
+/// Toggle an account's `enabled` flag — used by AccountScope::AllEnabled tests.
+pub(super) fn set_account_enabled(db: &Database, account_id: &str, enabled: bool) {
+    db.connection()
+        .execute(
+            "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
+            rusqlite::params![account_id, enabled as i32],
+        )
+        .unwrap();
+}
+
 pub(super) fn insert_account(db: &Database, id: &str, email: &str) {
     db.connection()
         .execute(

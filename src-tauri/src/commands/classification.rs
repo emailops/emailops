@@ -73,14 +73,16 @@ pub async fn count_unclassified_emails(state: State<'_, AppState>, account_id: S
     classification::count_unclassified(&state.db, &account_id)
 }
 
+/// `account_id: None` aggregates priorities across every enabled account
+/// (unified "All accounts" view).
 #[tauri::command]
 pub async fn get_tag_priorities(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     tag_type: String,
     limit: Option<i32>,
 ) -> Result<Vec<crate::models::TagPriority>, AppError> {
-    crate::services::tag_priority::get_priorities(&state.db, &account_id, &tag_type, limit.unwrap_or(50))
+    crate::services::tag_priority::get_priorities(&state.db, account_id.as_deref(), &tag_type, limit.unwrap_or(50))
 }
 
 #[tauri::command]

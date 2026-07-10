@@ -311,3 +311,33 @@ describe('fetchPrefs', () => {
     expect(useFilterStore.getState().prefs.map((p) => p.filterValue)).toEqual(['fresh.com']);
   });
 });
+
+describe('unified (All accounts) mode', () => {
+  beforeEach(() => {
+    useFilterStore.setState({ ...initialFilterState });
+    vi.clearAllMocks();
+  });
+
+  it('loadSaved with the sentinel id queries the API with accountId: null', async () => {
+    const { ALL_ACCOUNTS_ID } = await import('./accountStore');
+    await useFilterStore.getState().loadSaved(ALL_ACCOUNTS_ID);
+
+    expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledWith(null);
+    expect(vi.mocked(api.getTagPriorities)).toHaveBeenCalledWith(null, 'company', expect.any(Number));
+    // Identity tracking keeps the sentinel, so stale-response guards still work.
+    expect(useFilterStore.getState().currentAccountId).toBe(ALL_ACCOUNTS_ID);
+  });
+
+  it('pinFilter with the sentinel id writes and re-reads with accountId: null', async () => {
+    const { ALL_ACCOUNTS_ID } = await import('./accountStore');
+    await useFilterStore.getState().pinFilter(ALL_ACCOUNTS_ID, makeFilter('domain', 'acme.com'));
+
+    expect(vi.mocked(api.pinFilter)).toHaveBeenCalledWith(null, 'domain', 'acme.com');
+    expect(vi.mocked(api.getFilterPrefs)).toHaveBeenCalledWith(null);
+  });
+
+  it('a real account id passes through unchanged', async () => {
+    await useFilterStore.getState().fetchPrefs('acc-1');
+    expect(vi.mocked(api.getFilterPrefs)).toHaveBeenCalledWith('acc-1');
+  });
+});

@@ -197,8 +197,10 @@ export async function getAvailableCategories(accountId: string): Promise<string[
 // Email commands
 export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted';
 
+/** `accountId: null` selects the unified ("All accounts") view — emails
+ *  merged across every enabled account. */
 export async function getEmails(
-  accountId: string,
+  accountId: string | null,
   limit?: number,
   offset?: number,
   mailbox?: MailboxView,
@@ -355,7 +357,8 @@ export async function redownloadEmail(emailId: string): Promise<Email> {
   return invoke('redownload_email', { emailId });
 }
 
-export async function getEmailCount(accountId: string): Promise<number> {
+/** `accountId: null` counts inbox threads across every enabled account. */
+export async function getEmailCount(accountId: string | null): Promise<number> {
   return invoke('get_email_count', { accountId });
 }
 
@@ -399,8 +402,9 @@ export interface SearchResult {
   searchMethod: SearchMethod;
 }
 
+/** `accountId: null` searches across every enabled account (unified view). */
 export async function searchEmails(
-  accountId: string,
+  accountId: string | null,
   query?: string,
   useAi?: boolean,
   categories?: EmailCategory[],
@@ -449,16 +453,17 @@ export async function getPendingEmbeddingsCount(accountId?: string): Promise<num
 }
 
 // Smart filter commands
-export async function refreshFilterStats(accountId: string): Promise<QuickFilterStats> {
+export async function refreshFilterStats(accountId: string | null): Promise<QuickFilterStats> {
   return invoke('refresh_filter_stats', { accountId });
 }
 
-export async function getSavedSuggestions(accountId: string): Promise<SmartFilterSuggestion[]> {
+export async function getSavedSuggestions(accountId: string | null): Promise<SmartFilterSuggestion[]> {
   return invoke('get_saved_suggestions', { accountId });
 }
 
+/** `accountId: null` filters across every enabled account (unified view). */
 export async function getFilteredEmails(
-  accountId: string,
+  accountId: string | null,
   domain?: string,
   senderEmail?: string,
   tagType?: string,
@@ -479,23 +484,27 @@ export async function getFilteredEmails(
   });
 }
 
-export async function getFilterPrefs(accountId: string): Promise<SmartFilterPref[]> {
+export async function getFilterPrefs(accountId: string | null): Promise<SmartFilterPref[]> {
   return invoke('get_filter_prefs', { accountId });
 }
 
-export async function pinFilter(accountId: string, filterType: string, filterValue: string): Promise<void> {
+export async function pinFilter(accountId: string | null, filterType: string, filterValue: string): Promise<void> {
   return invoke('pin_filter', { accountId, filterType, filterValue });
 }
 
-export async function removeFilter(accountId: string, filterType: string, filterValue: string): Promise<void> {
+export async function removeFilter(accountId: string | null, filterType: string, filterValue: string): Promise<void> {
   return invoke('remove_filter', { accountId, filterType, filterValue });
 }
 
-export async function deleteFilterPref(accountId: string, filterType: string, filterValue: string): Promise<void> {
+export async function deleteFilterPref(
+  accountId: string | null,
+  filterType: string,
+  filterValue: string,
+): Promise<void> {
   return invoke('delete_filter_pref', { accountId, filterType, filterValue });
 }
 
-export async function getEmailInboxPosition(accountId: string, emailId: string): Promise<number> {
+export async function getEmailInboxPosition(accountId: string | null, emailId: string): Promise<number> {
   return invoke('get_email_inbox_position', { accountId, emailId });
 }
 
@@ -786,7 +795,7 @@ export async function reclassifyAllEmails(accountId: string): Promise<void> {
   return invoke('reclassify_all_emails', { accountId });
 }
 
-export async function getTagPriorities(accountId: string, tagType: string, limit = 50): Promise<TagPriority[]> {
+export async function getTagPriorities(accountId: string | null, tagType: string, limit = 50): Promise<TagPriority[]> {
   return invoke('get_tag_priorities', { accountId, tagType, limit });
 }
 

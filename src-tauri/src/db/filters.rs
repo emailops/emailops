@@ -1,7 +1,19 @@
-use crate::db::Database;
+use crate::db::{AccountScope, Database};
 use crate::models::error::Result;
 use crate::models::{SmartFilterPref, SmartFilterSuggestion};
 use rusqlite::params;
+
+/// Dedup/normalization key for filter prefs and suggestions. Sender addresses
+/// are case-insensitive identifiers; every other value compares verbatim.
+/// Mirrors `services::filters::suggestion_key` and the frontend's
+/// `filterMatchKey`.
+pub(crate) fn filter_pref_key(filter_type: &str, filter_value: &str) -> String {
+    if filter_type == "sender" {
+        format!("{}:{}", filter_type, filter_value.to_lowercase())
+    } else {
+        format!("{}:{}", filter_type, filter_value)
+    }
+}
 
 impl Database {
     pub fn get_filter_prefs(&self, account_id: &str) -> Result<Vec<SmartFilterPref>> {
@@ -89,37 +101,125 @@ impl Database {
     /// match) so a pinned filter's sidebar count matches the rows shown when
     /// it is clicked. Non-domain/sender types are tag filters: a thread counts
     /// if ANY of its emails carries the tag.
-    pub fn count_filter_threads(&self, account_id: &str, filter_type: &str, filter_value: &str) -> Result<i32> {
+    ///
+    /// Under `AllEnabled`, counts are distinct `(account_id, thread_id)` pairs —
+    /// thread ids are not globally unique across accounts.
+    pub fn count_filter_threads(&self, scope: AccountScope<'_>, filter_type: &str, filter_value: &str) -> Result<i32> {
         let conn = self.reader();
+        // Scope condition + params. Under Account the account id binds as the
+        // LAST param so the filter-value params keep stable low indices.
+        let (scope_cond, scope_cond_tagged, account_param): (&str, &str, Option<&str>) = match scope {
+            AccountScope::Account(id) => ("account_id = ?2", "e.account_id = ?3", Some(id)),
+            AccountScope::AllEnabled => (
+                "account_id IN (SELECT id FROM accounts WHERE enabled = 1)",
+                "e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)",
+                None,
+            ),
+        };
         let count: i32 = match filter_type {
-            "domain" => conn.query_row(
-                "SELECT COUNT(DISTINCT thread_id) FROM emails
-                 WHERE account_id = ?1 AND is_deleted = 0
-                   AND mailbox IN ('inbox', 'sent')
-                   AND sender_domain = ?2",
-                params![account_id, filter_value.to_lowercase()],
-                |row| row.get(0),
-            )?,
-            "sender" => conn.query_row(
-                "SELECT COUNT(DISTINCT thread_id) FROM emails
-                 WHERE account_id = ?1 AND is_deleted = 0
-                   AND mailbox IN ('inbox', 'sent')
-                   AND sender_email = ?2 COLLATE NOCASE",
-                params![account_id, filter_value],
-                |row| row.get(0),
-            )?,
-            _ => conn.query_row(
-                "SELECT COUNT(DISTINCT e.thread_id)
-                 FROM email_tags et
-                 JOIN emails e ON e.id = et.email_id
-                 WHERE et.tag_type = ?2 AND et.tag_value = ?3
-                   AND e.account_id = ?1 AND e.is_deleted = 0
-                   AND e.mailbox IN ('inbox', 'sent')",
-                params![account_id, filter_type, filter_value],
-                |row| row.get(0),
-            )?,
+            "domain" | "sender" => {
+                let value_cond = if filter_type == "domain" {
+                    "sender_domain = ?1"
+                } else {
+                    "sender_email = ?1 COLLATE NOCASE"
+                };
+                let value = if filter_type == "domain" {
+                    filter_value.to_lowercase()
+                } else {
+                    filter_value.to_string()
+                };
+                let sql = format!(
+                    "SELECT COUNT(*) FROM (SELECT DISTINCT account_id, thread_id FROM emails
+                     WHERE {value_cond} AND {scope_cond} AND is_deleted = 0
+                       AND mailbox IN ('inbox', 'sent'))"
+                );
+                match account_param {
+                    Some(id) => conn.query_row(&sql, params![value, id], |row| row.get(0))?,
+                    None => conn.query_row(&sql, params![value], |row| row.get(0))?,
+                }
+            }
+            _ => {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM (SELECT DISTINCT e.account_id, e.thread_id
+                     FROM email_tags et
+                     JOIN emails e ON e.id = et.email_id
+                     WHERE et.tag_type = ?1 AND et.tag_value = ?2
+                       AND {scope_cond_tagged} AND e.is_deleted = 0
+                       AND e.mailbox IN ('inbox', 'sent'))"
+                );
+                match account_param {
+                    Some(id) => conn.query_row(&sql, params![filter_type, filter_value, id], |row| row.get(0))?,
+                    None => conn.query_row(&sql, params![filter_type, filter_value], |row| row.get(0))?,
+                }
+            }
         };
         Ok(count)
+    }
+
+    /// Aggregate saved suggestions across every enabled account (unified
+    /// "All accounts" view): counts SUM per filter value, sender values merge
+    /// case-insensitively (mirroring `filter_pref_key`).
+    pub fn get_filter_suggestions_all_enabled(&self) -> Result<Vec<SmartFilterSuggestion>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT filter_type, MIN(filter_value), SUM(count) AS total
+             FROM smart_filter_suggestions
+             WHERE account_id IN (SELECT id FROM accounts WHERE enabled = 1)
+             GROUP BY filter_type,
+                      CASE WHEN filter_type = 'sender' THEN LOWER(filter_value) ELSE filter_value END
+             ORDER BY total DESC",
+        )?;
+
+        let suggestions = stmt
+            .query_map([], |row| {
+                Ok(SmartFilterSuggestion {
+                    filter_type: row.get(0)?,
+                    filter_value: row.get(1)?,
+                    count: row.get(2)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(suggestions)
+    }
+
+    /// Union of filter prefs across every enabled account, deduplicated by
+    /// filter key with precedence **pinned > removed**: a filter pinned in any
+    /// account shows in the unified sidebar; a removed one is hidden only when
+    /// no account pins it.
+    pub fn get_filter_prefs_all_enabled(&self) -> Result<Vec<SmartFilterPref>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.filter_type, p.filter_value, p.status, p.account_id
+             FROM smart_filter_prefs p
+             WHERE p.account_id IN (SELECT id FROM accounts WHERE enabled = 1)",
+        )?;
+        let all: Vec<SmartFilterPref> = stmt
+            .query_map([], |row| {
+                Ok(SmartFilterPref {
+                    id: row.get(0)?,
+                    filter_type: row.get(1)?,
+                    filter_value: row.get(2)?,
+                    status: row.get(3)?,
+                    account_id: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut by_key: std::collections::HashMap<String, SmartFilterPref> = std::collections::HashMap::new();
+        for pref in all {
+            let key = filter_pref_key(&pref.filter_type, &pref.filter_value);
+            match by_key.get(&key) {
+                // Pinned wins over removed; first entry wins among equals.
+                Some(existing) if existing.status == "pinned" || pref.status != "pinned" => {}
+                _ => {
+                    by_key.insert(key, pref);
+                }
+            }
+        }
+        Ok(by_key.into_values().collect())
     }
 
     /// Load previously calculated suggestions for an account
@@ -186,7 +286,9 @@ mod tests {
         insert_email(&db, "e3", "acc", "t2", "jorge@logalty.com", "inbox");
         insert_email(&db, "e4", "acc", "t3", "jorge@logalty.com", "spam"); // out of scope
 
-        let count = db.count_filter_threads("acc", "sender", "jorge@logalty.com").unwrap();
+        let count = db
+            .count_filter_threads(crate::db::AccountScope::Account("acc"), "sender", "jorge@logalty.com")
+            .unwrap();
         assert_eq!(count, 2, "2 inbox threads regardless of casing; spam excluded");
     }
 
@@ -199,7 +301,9 @@ mod tests {
         insert_email(&db, "e2", "acc", "t1", "b@aws.com", "inbox"); // same thread
         insert_email(&db, "e3", "acc", "t2", "c@aws.com", "sent");
 
-        let count = db.count_filter_threads("acc", "domain", "aws.com").unwrap();
+        let count = db
+            .count_filter_threads(crate::db::AccountScope::Account("acc"), "domain", "aws.com")
+            .unwrap();
         assert_eq!(count, 2, "threads, not emails");
     }
 
@@ -218,8 +322,127 @@ mod tests {
             )
             .unwrap();
 
-        let count = db.count_filter_threads("acc", "company", "Acme").unwrap();
+        let count = db
+            .count_filter_threads(crate::db::AccountScope::Account("acc"), "company", "Acme")
+            .unwrap();
         assert_eq!(count, 1, "only the thread containing the tagged email");
+    }
+
+    // ── AllEnabled scope ─────────────────────────────────────────────────────
+
+    fn set_enabled(db: &Database, account: &str, enabled: bool) {
+        db.connection()
+            .execute(
+                "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
+                rusqlite::params![account, enabled as i32],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn count_filter_threads_all_enabled_spans_accounts_and_collisions() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        db.seed_test_account("acc2");
+        db.seed_test_account("acc3");
+
+        // Same thread_id string in two accounts → 2 distinct (account, thread) pairs.
+        insert_email(&db, "e1", "acc1", "shared", "a@aws.com", "inbox");
+        insert_email(&db, "e2", "acc2", "shared", "b@aws.com", "inbox");
+        // Disabled account must not count.
+        insert_email(&db, "e3", "acc3", "t3", "c@aws.com", "inbox");
+        set_enabled(&db, "acc3", false);
+
+        let count = db
+            .count_filter_threads(crate::db::AccountScope::AllEnabled, "domain", "aws.com")
+            .unwrap();
+        assert_eq!(count, 2, "2 (account, thread) pairs; disabled account excluded");
+    }
+
+    #[test]
+    fn suggestions_all_enabled_sums_counts_and_merges_sender_case_variants() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        db.seed_test_account("acc2");
+        db.seed_test_account("acc3");
+
+        db.save_filter_suggestions(
+            "acc1",
+            &[
+                make_suggestion("domain", "acme.com", 3),
+                make_suggestion("sender", "Alice@Ex.com", 2),
+            ],
+        )
+        .unwrap();
+        db.save_filter_suggestions(
+            "acc2",
+            &[
+                make_suggestion("domain", "acme.com", 4),
+                make_suggestion("sender", "alice@ex.com", 5),
+            ],
+        )
+        .unwrap();
+        // Disabled account's suggestions are excluded.
+        db.save_filter_suggestions("acc3", &[make_suggestion("domain", "acme.com", 100)])
+            .unwrap();
+        set_enabled(&db, "acc3", false);
+
+        let merged = db.get_filter_suggestions_all_enabled().unwrap();
+
+        let acme = merged
+            .iter()
+            .find(|s| s.filter_type == "domain" && s.filter_value == "acme.com")
+            .expect("acme.com must be present");
+        assert_eq!(acme.count, 7, "domain counts sum across enabled accounts only");
+
+        let alice: Vec<_> = merged
+            .iter()
+            .filter(|s| s.filter_type == "sender" && s.filter_value.eq_ignore_ascii_case("alice@ex.com"))
+            .collect();
+        assert_eq!(alice.len(), 1, "sender case variants must merge into one suggestion");
+        assert_eq!(alice[0].count, 7, "merged sender count must sum both accounts");
+    }
+
+    #[test]
+    fn prefs_all_enabled_pinned_beats_removed() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        db.seed_test_account("acc2");
+
+        // acc1 removed acme.com, acc2 pinned it → unified shows it pinned.
+        db.upsert_filter_pref("acc1:domain:acme.com", "domain", "acme.com", "removed", "acc1")
+            .unwrap();
+        db.upsert_filter_pref("acc2:domain:acme.com", "domain", "acme.com", "pinned", "acc2")
+            .unwrap();
+        // Removed everywhere → stays removed.
+        db.upsert_filter_pref("acc1:domain:spam.com", "domain", "spam.com", "removed", "acc1")
+            .unwrap();
+        // Sender case variants dedup to one entry.
+        db.upsert_filter_pref("acc1:sender:Bob@Ex.com", "sender", "Bob@Ex.com", "pinned", "acc1")
+            .unwrap();
+        db.upsert_filter_pref("acc2:sender:bob@ex.com", "sender", "bob@ex.com", "removed", "acc2")
+            .unwrap();
+
+        let prefs = db.get_filter_prefs_all_enabled().unwrap();
+
+        let acme = prefs
+            .iter()
+            .find(|p| p.filter_type == "domain" && p.filter_value == "acme.com")
+            .expect("acme.com pref must be present");
+        assert_eq!(acme.status, "pinned", "pinned in any account must win over removed");
+
+        let spam = prefs
+            .iter()
+            .find(|p| p.filter_type == "domain" && p.filter_value == "spam.com")
+            .expect("spam.com pref must be present");
+        assert_eq!(spam.status, "removed");
+
+        let bob: Vec<_> = prefs
+            .iter()
+            .filter(|p| p.filter_type == "sender" && p.filter_value.eq_ignore_ascii_case("bob@ex.com"))
+            .collect();
+        assert_eq!(bob.len(), 1, "sender case variants must dedup");
+        assert_eq!(bob[0].status, "pinned");
     }
 
     // Regression test: two accounts sharing the same domain/sender value must not

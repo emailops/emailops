@@ -4,6 +4,7 @@ import type { ParsedSearchQuery, SearchMethod, SearchResult, SenderSuggestion } 
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
+import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import type { Email, EmailCategory } from '@/types';
 
 /** Detect an autocomplete trigger (`from:` or `to:` token) at the cursor position.
@@ -28,6 +29,8 @@ function detectAutocompleteTrigger(
 }
 
 interface SearchBarProps {
+  /** Query scope: an account id, or null for the unified ("All accounts")
+   *  view — the backend then searches every enabled account. */
   accountId: string | null;
   onSelectEmail: (email: Email) => void;
   onApplySearch: (query: string) => void;
@@ -47,6 +50,11 @@ export function SearchBar({
 }: SearchBarProps) {
   const { t, i18n } = useTranslation(['common', 'inbox']);
   const locale = i18n.language || 'en';
+  // `accountId === null` is the unified view (search all enabled accounts) —
+  // only a truly empty account list blocks searching. Sender autocomplete
+  // needs one concrete account, so it falls back to the first enabled one.
+  const hasAccounts = useAccountStore((s) => s.accounts.length > 0);
+  const effectiveAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<SearchResult | null>(null);
@@ -103,7 +111,7 @@ export function SearchBar({
         return null;
       }
 
-      if (!accountId) {
+      if (!accountId && !hasAccounts) {
         setResults(null);
         setResultsQuery(null);
         setSearchError('Select an account before searching.');
@@ -153,17 +161,18 @@ export function SearchBar({
         }
       }
     },
-    [accountId, selectedCategories],
+    [accountId, hasAccounts, selectedCategories],
   );
 
   /** Fetch sender suggestions for the current autocomplete trigger */
   const fetchSuggestions = useCallback(
     async (field: 'from' | 'to', prefix: string, tokenStart: number) => {
-      if (!accountId) return;
+      const autocompleteAccountId = accountId ?? effectiveAccountId;
+      if (!autocompleteAccountId) return;
       const reqId = autocompleteReqRef.current + 1;
       autocompleteReqRef.current = reqId;
       try {
-        const suggestions = await api.autocompleteSenders(accountId, prefix, 8);
+        const suggestions = await api.autocompleteSenders(autocompleteAccountId, prefix, 8);
         if (autocompleteReqRef.current !== reqId) return;
         if (suggestions.length === 0) {
           setAutocomplete(null);
@@ -174,7 +183,7 @@ export function SearchBar({
         if (autocompleteReqRef.current === reqId) setAutocomplete(null);
       }
     },
-    [accountId],
+    [accountId, effectiveAccountId],
   );
 
   const handleInputChange = useCallback(

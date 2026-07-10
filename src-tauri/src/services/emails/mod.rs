@@ -24,15 +24,21 @@ pub use redownload::{redownload_email, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
 pub use sync::{resync_mailbox_full, sync_account, sync_account_with_provider};
 
+/// List emails for one account, or — when `account_id` is `None` — merged
+/// across all enabled accounts (the unified "All accounts" inbox).
 pub fn get_emails(
     db: &Arc<Database>,
-    account_id: &str,
+    account_id: Option<&str>,
     limit: i32,
     offset: i32,
     mailbox: Option<&str>,
     category: Option<&str>,
 ) -> Result<Vec<Email>> {
-    db.get_emails(account_id, limit, offset, None, mailbox, category)
+    let scope = match account_id {
+        Some(id) => crate::db::AccountScope::Account(id),
+        None => crate::db::AccountScope::AllEnabled,
+    };
+    db.get_emails(scope, limit, offset, None, mailbox, category)
 }
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {

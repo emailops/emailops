@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import type { MailboxView } from '@/lib/api';
-import { useAccountStore } from '@/stores/accountStore';
+import { toQueryAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
 import type { EmailCategory } from '@/types';
@@ -26,25 +26,38 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
   const { activeAccountId } = useAccountStore();
   const activeFilter = useFilterStore((s) => s.activeFilter);
   const selectedCategoriesKey = searchQuery ? selectedCategories.slice().sort().join(',') : '';
+  // The truthy gate below keeps its "no accounts" meaning — the All-accounts
+  // sentinel is truthy. Queries receive the translated id (null = unified).
+  const queryAccountId = toQueryAccountId(activeAccountId);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: searchQuery + selectedCategoriesKey are deliberate refetch triggers (fetchEmails reads the query from the store)
   useEffect(() => {
     if (activeAccountId) {
-      fetchEmails(activeAccountId, activeFilter, selectedCategories, false, mailbox);
+      fetchEmails(queryAccountId, activeFilter, selectedCategories, false, mailbox);
     }
-  }, [activeAccountId, activeFilter, searchQuery, selectedCategoriesKey, fetchEmails, selectedCategories, mailbox]);
+  }, [
+    activeAccountId,
+    queryAccountId,
+    activeFilter,
+    searchQuery,
+    selectedCategoriesKey,
+    fetchEmails,
+    selectedCategories,
+    mailbox,
+  ]);
 
   const loadMore = useCallback(() => {
     if (activeAccountId) {
-      loadMoreEmails(activeAccountId, activeFilter, selectedCategories, mailbox);
+      loadMoreEmails(queryAccountId, activeFilter, selectedCategories, mailbox);
     }
-  }, [activeAccountId, activeFilter, loadMoreEmails, selectedCategories, mailbox]);
+  }, [activeAccountId, queryAccountId, activeFilter, loadMoreEmails, selectedCategories, mailbox]);
 
   const refetch = useCallback(() => {
     if (!activeAccountId) {
       return;
     }
-    fetchEmails(activeAccountId, activeFilter, selectedCategories, false, mailbox);
-  }, [activeAccountId, activeFilter, fetchEmails, selectedCategories, mailbox]);
+    fetchEmails(queryAccountId, activeFilter, selectedCategories, false, mailbox);
+  }, [activeAccountId, queryAccountId, activeFilter, fetchEmails, selectedCategories, mailbox]);
 
   /** Refresh emails in the background without showing a loading state or clearing the list.
    *  Use this after background syncs so the UI update is transparent to the user. */
@@ -52,8 +65,8 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
     if (!activeAccountId) {
       return;
     }
-    fetchEmails(activeAccountId, activeFilter, selectedCategories, true, mailbox);
-  }, [activeAccountId, activeFilter, fetchEmails, selectedCategories, mailbox]);
+    fetchEmails(queryAccountId, activeFilter, selectedCategories, true, mailbox);
+  }, [activeAccountId, queryAccountId, activeFilter, fetchEmails, selectedCategories, mailbox]);
 
   return {
     emails,

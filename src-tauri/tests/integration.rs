@@ -303,7 +303,16 @@ fn get_emails_returns_correct_account_only() {
     db.insert_email(&make_email("e-2", "acc-A", 900)).expect("insert e-2");
     db.insert_email(&make_email("e-3", "acc-B", 800)).expect("insert e-3");
 
-    let emails = db.get_emails("acc-A", 50, 0, None, None, None).expect("get");
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-A"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("get");
     assert_eq!(emails.len(), 2);
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-1") && ids.contains(&"e-2"));
@@ -314,7 +323,16 @@ fn get_emails_returns_correct_account_only() {
 fn get_emails_empty_for_unknown_account() {
     let db = test_db();
     // No emails for "acc-other" — no account needed, just expect empty.
-    let result = db.get_emails("acc-other", 50, 0, None, None, None).expect("get");
+    let result = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-other"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("get");
     assert!(result.is_empty());
 }
 
@@ -327,7 +345,16 @@ fn get_emails_respects_limit() {
         db.insert_email(&make_email(&format!("e-{i}"), "acc-lim", (10 - i) * 100))
             .expect("insert");
     }
-    let emails = db.get_emails("acc-lim", 3, 0, None, None, None).expect("get");
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-lim"),
+            3,
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("get");
     assert_eq!(emails.len(), 3);
 }
 
@@ -340,7 +367,16 @@ fn get_emails_ordered_newest_first() {
         .expect("insert old");
     db.insert_email(&make_email("e-new", "acc-ord", 9000))
         .expect("insert new");
-    let emails = db.get_emails("acc-ord", 50, 0, None, None, None).expect("get");
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-ord"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("get");
     assert_eq!(emails.len(), 2);
     assert_eq!(emails[0].id, "e-new", "newest first");
     assert_eq!(emails[1].id, "e-old");
@@ -897,7 +933,7 @@ fn pin_filter_sets_status_pinned() {
     let db = test_db();
     db.insert_account(&make_account("acc-f", "f@example.com")).unwrap();
 
-    emailops_lib::services::filters::pin_filter(&db, "acc-f", "domain", "gmail.com").unwrap();
+    emailops_lib::services::filters::pin_filter(&db, Some("acc-f"), "domain", "gmail.com").unwrap();
 
     let prefs = db.get_filter_prefs("acc-f").unwrap();
     let pref = prefs.iter().find(|p| p.filter_value == "gmail.com").unwrap();
@@ -911,7 +947,7 @@ fn remove_filter_sets_status_removed() {
     let db = test_db();
     db.insert_account(&make_account("acc-f", "f@example.com")).unwrap();
 
-    emailops_lib::services::filters::remove_filter(&db, "acc-f", "sender", "boss@corp.com").unwrap();
+    emailops_lib::services::filters::remove_filter(&db, Some("acc-f"), "sender", "boss@corp.com").unwrap();
 
     let prefs = db.get_filter_prefs("acc-f").unwrap();
     let pref = prefs.iter().find(|p| p.filter_value == "boss@corp.com").unwrap();
@@ -922,11 +958,11 @@ fn remove_filter_sets_status_removed() {
 fn delete_filter_pref_removes_row() {
     let db = test_db();
     db.insert_account(&make_account("acc-f", "f@example.com")).unwrap();
-    emailops_lib::services::filters::pin_filter(&db, "acc-f", "domain", "github.com").unwrap();
+    emailops_lib::services::filters::pin_filter(&db, Some("acc-f"), "domain", "github.com").unwrap();
 
     assert_eq!(db.get_filter_prefs("acc-f").unwrap().len(), 1);
 
-    emailops_lib::services::filters::delete_filter_pref(&db, "acc-f", "domain", "github.com").unwrap();
+    emailops_lib::services::filters::delete_filter_pref(&db, Some("acc-f"), "domain", "github.com").unwrap();
     assert!(db.get_filter_prefs("acc-f").unwrap().is_empty());
 }
 
@@ -938,8 +974,8 @@ fn pin_filter_two_accounts_same_value_are_independent() {
     db.insert_account(&make_account("acc-1", "a1@example.com")).unwrap();
     db.insert_account(&make_account("acc-2", "a2@example.com")).unwrap();
 
-    emailops_lib::services::filters::pin_filter(&db, "acc-1", "domain", "gmail.com").unwrap();
-    emailops_lib::services::filters::pin_filter(&db, "acc-2", "domain", "gmail.com").unwrap();
+    emailops_lib::services::filters::pin_filter(&db, Some("acc-1"), "domain", "gmail.com").unwrap();
+    emailops_lib::services::filters::pin_filter(&db, Some("acc-2"), "domain", "gmail.com").unwrap();
 
     let prefs1 = db.get_filter_prefs("acc-1").unwrap();
     let prefs2 = db.get_filter_prefs("acc-2").unwrap();
@@ -963,7 +999,7 @@ fn removed_filter_excluded_from_quick_filter_stats() {
         .unwrap();
 
     // Mark gmail.com as removed
-    emailops_lib::services::filters::remove_filter(&db, "acc-f", "domain", "gmail.com").unwrap();
+    emailops_lib::services::filters::remove_filter(&db, Some("acc-f"), "domain", "gmail.com").unwrap();
 
     let prefs = db.get_filter_prefs("acc-f").unwrap();
     let excluded_domains: Vec<String> = prefs
@@ -972,7 +1008,9 @@ fn removed_filter_excluded_from_quick_filter_stats() {
         .map(|p| p.filter_value.clone())
         .collect();
 
-    let stats = db.get_quick_filter_stats("acc-f", &excluded_domains, &[]).unwrap();
+    let stats = db
+        .get_quick_filter_stats(emailops_lib::db::AccountScope::Account("acc-f"), &excluded_domains, &[])
+        .unwrap();
     let domain_values: Vec<&str> = stats.top_domains.iter().map(|d| d.value.as_str()).collect();
 
     assert!(
@@ -999,7 +1037,16 @@ fn get_filtered_emails_by_domain_returns_matching_threads() {
         .unwrap();
 
     let result = db
-        .get_filtered_emails("acc-f", Some("gmail.com"), None, None, None, None, 50, 0)
+        .get_filtered_emails(
+            emailops_lib::db::AccountScope::Account("acc-f"),
+            Some("gmail.com"),
+            None,
+            None,
+            None,
+            None,
+            50,
+            0,
+        )
         .unwrap();
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
     assert!(
@@ -1023,7 +1070,16 @@ fn get_filtered_emails_by_sender_returns_matching_threads() {
         .unwrap();
 
     let result = db
-        .get_filtered_emails("acc-f", None, Some("boss@corp.com"), None, None, None, 50, 0)
+        .get_filtered_emails(
+            emailops_lib::db::AccountScope::Account("acc-f"),
+            None,
+            Some("boss@corp.com"),
+            None,
+            None,
+            None,
+            50,
+            0,
+        )
         .unwrap();
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e1"), "boss@corp.com email must match");
@@ -1088,7 +1144,16 @@ fn get_emails_sent_view_filters_by_sender_address() {
     db.insert_email(&make_email_with("e-recv", "acc-s", 1000, "other@example.com", "inbox"))
         .unwrap();
 
-    let sent = db.get_emails("acc-s", 50, 0, None, Some("sent"), None).unwrap();
+    let sent = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-s"),
+            50,
+            0,
+            None,
+            Some("sent"),
+            None,
+        )
+        .unwrap();
     let ids: Vec<&str> = sent.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-sent"), "email sent by me must appear in sent view");
     assert!(
@@ -1106,7 +1171,16 @@ fn get_emails_spam_view_filters_by_mailbox() {
     db.insert_email(&make_email_with("e-inbox", "acc-sp", 2000, "good@example.com", "inbox"))
         .unwrap();
 
-    let spam = db.get_emails("acc-sp", 50, 0, None, Some("spam"), None).unwrap();
+    let spam = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-sp"),
+            50,
+            0,
+            None,
+            Some("spam"),
+            None,
+        )
+        .unwrap();
     let ids: Vec<&str> = spam.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"e-spam"), "spam mailbox email must appear in spam view");
     assert!(!ids.contains(&"e-inbox"), "inbox email must not appear in spam view");
@@ -1126,7 +1200,9 @@ fn count_emails_counts_inbox_threads_only() {
     db.insert_email(&make_email_with("e3", "acc-cnt", 3000, "s@spam.com", "spam"))
         .unwrap();
 
-    let count = db.count_emails("acc-cnt").unwrap();
+    let count = db
+        .count_emails(emailops_lib::db::AccountScope::Account("acc-cnt"))
+        .unwrap();
     assert_eq!(count, 2, "count_emails must only count inbox threads, not spam");
 }
 
@@ -1369,7 +1445,16 @@ async fn sync_with_provider_stores_new_emails() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-sy", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-sy"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
@@ -1406,7 +1491,16 @@ async fn sync_with_provider_deduplicates_existing_emails() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-dd", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-dd"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     assert_eq!(
         emails.len(),
         2,
@@ -1455,7 +1549,16 @@ async fn sync_with_provider_incremental_uses_latest_timestamp() {
     .expect("sync_account_with_provider");
 
     // Only the new email should be added (old-1 is already there)
-    let emails = db.get_emails("acc-inc", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-inc"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     assert_eq!(emails.len(), 2, "total must be old + new");
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(ids.contains(&"new-2"), "new email must be synced");
@@ -1489,7 +1592,16 @@ async fn sync_with_provider_no_new_emails_leaves_db_unchanged() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-noop", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-noop"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     assert_eq!(emails.len(), 1, "no emails must be added when nothing is new");
 }
 
@@ -1563,7 +1675,16 @@ async fn inbox_incremental_watermark_is_not_poisoned_by_sent_timestamp() {
     .await
     .expect("sync_account_with_provider");
 
-    let emails = db.get_emails("acc-watermark", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-watermark"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     let ids: std::collections::HashSet<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(
         ids.contains("received-new"),
@@ -1690,7 +1811,16 @@ fn delete_email_hides_it_from_get_emails() {
     db.delete_email("e-to-delete").unwrap();
 
     // get_emails must exclude the soft-deleted email
-    let emails = db.get_emails("acc-del", 50, 0, None, None, None).unwrap();
+    let emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-del"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
     let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
     assert!(
         !ids.contains(&"e-to-delete"),
@@ -2208,7 +2338,16 @@ fn get_filtered_emails_by_tag_returns_only_tagged() {
     db.upsert_email_tag("e-tagged", "priority", "urgent", None).unwrap();
 
     let result = db
-        .get_filtered_emails("acc-tag", None, None, Some("priority"), Some("urgent"), None, 50, 0)
+        .get_filtered_emails(
+            emailops_lib::db::AccountScope::Account("acc-tag"),
+            None,
+            None,
+            Some("priority"),
+            Some("urgent"),
+            None,
+            50,
+            0,
+        )
         .unwrap();
 
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
@@ -2306,7 +2445,16 @@ fn get_filtered_emails_no_filter_returns_all_inbox_emails() {
         .unwrap();
 
     let result = db
-        .get_filtered_emails("acc-all", None, None, None, None, None, 50, 0)
+        .get_filtered_emails(
+            emailops_lib::db::AccountScope::Account("acc-all"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            50,
+            0,
+        )
         .unwrap();
 
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
@@ -2330,7 +2478,16 @@ fn get_filtered_emails_no_filter_excludes_soft_deleted() {
     db.delete_email("e-gone").unwrap();
 
     let result = db
-        .get_filtered_emails("acc-del", None, None, None, None, None, 50, 0)
+        .get_filtered_emails(
+            emailops_lib::db::AccountScope::Account("acc-del"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            50,
+            0,
+        )
         .unwrap();
 
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();

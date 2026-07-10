@@ -153,5 +153,6 @@
     "empty": "Aucune conversation pour le moment.",
     "confirmDelete": "Confirmer ?",
     "newChat": "Nouvelle discussion"
-  }
+  },
+  "unifiedScopeHint": "Dans la vue tous les comptes, le chat ne recherche que dans {{email}}"
 }

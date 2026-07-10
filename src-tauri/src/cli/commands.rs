@@ -26,7 +26,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             let account = session.require_account()?;
             let emails = crate::services::emails::get_emails(
                 &session.db,
-                &account,
+                Some(&account),
                 limit,
                 offset,
                 mailbox.as_deref(),
@@ -69,7 +69,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
         } => {
             let account = session.require_account()?;
             let result =
-                crate::services::search::search_emails(&session.db, &account, &query, false, None, None).await?;
+                crate::services::search::search_emails(&session.db, Some(&account), &query, false, None, None).await?;
             let total = result.emails.len();
             let emails: Vec<_> = result
                 .emails

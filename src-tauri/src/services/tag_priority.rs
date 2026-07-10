@@ -286,9 +286,34 @@ pub fn rebuild_account_tag_type(db: &Arc<Database>, account_id: &str, tag_type: 
 ///   RECENCY_HALF_LIFE_DAYS    = 30.0  -- recency halves at this age
 ///   ENGAGEMENT_HALF_LIFE_DAYS = 365.0 -- engagement halves at this age (slower)
 ///   ENGAGEMENT_FLOOR          = 0.3   -- minimum recency multiplier for one-way
-pub fn get_priorities(db: &Arc<Database>, account_id: &str, tag_type: &str, limit: i32) -> Result<Vec<TagPriority>> {
+///
+/// `account_id: None` (unified "All accounts") aggregates rows across every
+/// enabled account first — `SUM(sent/received)`, `MAX(last_activity_at)` per
+/// tag value — then scores the aggregate with the same formula.
+pub fn get_priorities(
+    db: &Arc<Database>,
+    account_id: Option<&str>,
+    tag_type: &str,
+    limit: i32,
+) -> Result<Vec<TagPriority>> {
+    // Scoped source rows for the scoring query below. Single account reads
+    // rows as-is (?1 = tag_type binds in both variants; the account binds as
+    // ?3 so tag_type/limit keep stable indices).
+    let source = match account_id {
+        Some(_) => {
+            "SELECT tag_type, tag_value, sent_count, received_count, last_activity_at
+             FROM tag_priority WHERE account_id = ?3 AND tag_type = ?1"
+        }
+        None => {
+            "SELECT tag_type, tag_value, SUM(sent_count) AS sent_count,
+                    SUM(received_count) AS received_count, MAX(last_activity_at) AS last_activity_at
+             FROM tag_priority
+             WHERE account_id IN (SELECT id FROM accounts WHERE enabled = 1) AND tag_type = ?1
+             GROUP BY tag_value"
+        }
+    };
     let conn = db.reader();
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT tag_type, tag_value, sent_count, received_count, last_activity_at,
                 (
                   -- engagement: mutual_ratio * volume_cap * RATIO_WEIGHT * decay
@@ -319,24 +344,30 @@ pub fn get_priorities(db: &Arc<Database>, account_id: &str, tag_type: &str, limi
                                       ELSE 0.0 END)
                   END
                 ) AS priority_score
-         FROM tag_priority
-         WHERE account_id = ?1 AND tag_type = ?2
+         FROM ({source})
          ORDER BY priority_score DESC, last_activity_at DESC
-         LIMIT ?3",
-    )?;
+         LIMIT ?2"
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
-    let rows = stmt
-        .query_map(rusqlite::params![account_id, tag_type, limit], |row| {
-            Ok(TagPriority {
-                tag_type: row.get(0)?,
-                tag_value: row.get(1)?,
-                sent_count: row.get(2)?,
-                received_count: row.get(3)?,
-                last_activity_at: row.get(4)?,
-                priority_score: row.get(5)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let map_row = |row: &rusqlite::Row| {
+        Ok(TagPriority {
+            tag_type: row.get(0)?,
+            tag_value: row.get(1)?,
+            sent_count: row.get(2)?,
+            received_count: row.get(3)?,
+            last_activity_at: row.get(4)?,
+            priority_score: row.get(5)?,
+        })
+    };
+    let rows = match account_id {
+        Some(id) => stmt
+            .query_map(rusqlite::params![tag_type, limit, id], map_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        None => stmt
+            .query_map(rusqlite::params![tag_type, limit], map_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+    };
     Ok(rows)
 }
 
@@ -491,7 +522,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let order: Vec<&str> = rows.iter().map(|r| r.tag_value.as_str()).collect();
         // Balanced two-way conversations dominate, regardless of recency.
         // One-way patterns (newsletter, one_off_recent) score 0 on engagement
@@ -519,7 +550,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let client = rows.iter().find(|r| r.tag_value == "client").unwrap();
         let newsletter = rows.iter().find(|r| r.tag_value == "newsletter").unwrap();
         assert!(
@@ -546,7 +577,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let at_cap = rows.iter().find(|r| r.tag_value == "at_cap").unwrap().priority_score;
         let far_above = rows.iter().find(|r| r.tag_value == "far_above").unwrap().priority_score;
         assert_eq!(at_cap, far_above, "score must saturate at the volume cap");
@@ -771,7 +802,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let score = |tag: &str| rows.iter().find(|r| r.tag_value == tag).unwrap().priority_score;
 
         // Expected: raw * 0.3 for ratio=0.
@@ -819,7 +850,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let score = |tag: &str| rows.iter().find(|r| r.tag_value == tag).unwrap().priority_score;
         // ancient: eng=16 * 1/(1+6700/365) ≈ 16*0.052 ≈ 0.83
         //          rec=50/(1+6700/30)*1 ≈ 0.22 → total ≈ 1.1
@@ -863,7 +894,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let score = |tag: &str| rows.iter().find(|r| r.tag_value == tag).unwrap().priority_score;
 
         // conversation:  eng=2*6*1.0=12,  rec≈45.45*1.0=45.45  → ≈57.5
@@ -895,7 +926,7 @@ mod tests {
             ))
             .unwrap();
 
-        let rows = get_priorities(&db, "acc1", "company", 10).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 10).unwrap();
         let score = |tag: &str| rows.iter().find(|r| r.tag_value == tag).unwrap().priority_score;
         assert_eq!(score("only_sent"), 0.0, "kindle-style one-way must score 0");
         assert_eq!(score("only_recv"), 0.0, "newsletter-style one-way must score 0");
@@ -922,7 +953,7 @@ mod tests {
             .unwrap();
 
         // limit caps results.
-        let rows = get_priorities(&db, "acc1", "company", 2).unwrap();
+        let rows = get_priorities(&db, Some("acc1"), "company", 2).unwrap();
         assert_eq!(rows.len(), 2);
         // Scoped to acc1 — acc2's higher-ranked 'a' must not leak in.
         assert!(rows.iter().all(|r| r.tag_value != "a" || r.sent_count == 5));

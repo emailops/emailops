@@ -224,26 +224,48 @@ impl Database {
     /// ANY email in the thread carries the tag, displaying the thread's latest
     /// email as the representative. We count the same set: distinct threads with
     /// at least one tagged, non-deleted, inbox/sent email.
-    pub fn get_tag_stats(&self, account_id: &str, tag_type: &str, limit: i32) -> Result<Vec<(String, i32)>> {
+    ///
+    /// Under `AllEnabled`, threads dedup per `(account_id, thread_id)` — thread
+    /// ids are not globally unique across accounts.
+    pub fn get_tag_stats(
+        &self,
+        scope: crate::db::AccountScope<'_>,
+        tag_type: &str,
+        limit: i32,
+    ) -> Result<Vec<(String, i32)>> {
         let conn = self.reader();
-        let mut stmt = conn.prepare(
-            "SELECT t.tag_value, COUNT(DISTINCT e.thread_id) AS cnt
-             FROM email_tags t
-             INNER JOIN emails e ON e.id = t.email_id
-             WHERE e.account_id = ?1
-               AND t.tag_type = ?2
-               AND e.is_deleted = 0
-               AND e.mailbox IN ('inbox', 'sent')
-             GROUP BY t.tag_value
+        let (scope_cond, account_param): (&str, Option<&str>) = match scope {
+            crate::db::AccountScope::Account(id) => ("e.account_id = ?3", Some(id)),
+            crate::db::AccountScope::AllEnabled => {
+                ("e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)", None)
+            }
+        };
+        let sql = format!(
+            "SELECT tag_value, COUNT(*) AS cnt FROM (
+                 SELECT DISTINCT t.tag_value AS tag_value, e.account_id, e.thread_id
+                 FROM email_tags t
+                 INNER JOIN emails e ON e.id = t.email_id
+                 WHERE {scope_cond}
+                   AND t.tag_type = ?1
+                   AND e.is_deleted = 0
+                   AND e.mailbox IN ('inbox', 'sent')
+             )
+             GROUP BY tag_value
              ORDER BY cnt DESC
-             LIMIT ?3",
-        )?;
-        let stats = stmt
-            .query_map(params![account_id, tag_type, limit], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+             LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let map_row = |row: &rusqlite::Row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?));
+        let stats = match account_param {
+            Some(id) => stmt
+                .query_map(params![tag_type, limit, id], map_row)?
+                .filter_map(|r| r.ok())
+                .collect(),
+            None => stmt
+                .query_map(params![tag_type, limit], map_row)?
+                .filter_map(|r| r.ok())
+                .collect(),
+        };
         Ok(stats)
     }
 
@@ -434,7 +456,9 @@ mod tests {
         insert_email(&db, "c1", account, "thread-c", 600);
         tag_email(&db, "c1", "company", "acme");
 
-        let stats = db.get_tag_stats(account, "company", 15).unwrap();
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "company", 15)
+            .unwrap();
 
         assert_eq!(
             stat_for(&stats, "globex"),
@@ -460,7 +484,9 @@ mod tests {
         tag_email(&db, "live", "company", "globex");
         tag_email(&db, "deleted", "company", "globex");
 
-        let stats = db.get_tag_stats(account, "company", 15).unwrap();
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "company", 15)
+            .unwrap();
         assert_eq!(
             stat_for(&stats, "globex"),
             Some(1),
@@ -483,7 +509,9 @@ mod tests {
         tag_email(&db, "trash", "company", "globex");
         tag_email(&db, "sent", "company", "globex");
 
-        let stats = db.get_tag_stats(account, "company", 15).unwrap();
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "company", 15)
+            .unwrap();
         assert_eq!(
             stat_for(&stats, "globex"),
             Some(2),
@@ -515,11 +543,22 @@ mod tests {
         insert_email_with_mailbox(&db, "t4-spam", account, "thread-4", 600, "spam", 0);
         tag_email(&db, "t4-spam", "intent", "request");
 
-        let stats = db.get_tag_stats(account, "intent", 15).unwrap();
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "intent", 15)
+            .unwrap();
         let sidebar_count = stat_for(&stats, "request").unwrap_or(0);
 
         let list = db
-            .get_filtered_emails(account, None, None, Some("intent"), Some("request"), None, 100, 0)
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                None,
+                Some("intent"),
+                Some("request"),
+                None,
+                100,
+                0,
+            )
             .unwrap();
 
         assert_eq!(

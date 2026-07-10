@@ -13,6 +13,28 @@ All SQL queries that read or write the `emails`, `email_bodies`, `email_tags`, a
 - **test_helpers.rs** — `insert_email_for_test`, `insert_email_body_for_test` helpers for `#[cfg(test)]` modules
 - **mod.rs** — re-exports
 
+## Account scoping (`AccountScope`)
+
+List/count/filter/position reads take a `crate::db::AccountScope` instead of a
+bare `account_id`:
+
+- `AccountScope::Account(id)` — the default, single-account behavior.
+- `AccountScope::AllEnabled` — the deliberate cross-account path backing the
+  unified ("All accounts") inbox. Spans every account with
+  `accounts.enabled = 1`. This keeps cross-account reads a visible, greppable
+  opt-in per call site (satisfying the "no cross-account read paths by
+  default" guardrail) — commands map `account_id: Option<String>` at the IPC
+  boundary (`None` = unified).
+
+**Collision rule:** `thread_id` is NOT globally unique (two accounts CC'd on
+one provider thread share the same string; Outlook falls back to message ids).
+Every dedup/count/CTE under `AllEnabled` must key on `(account_id, thread_id)`
+— see `get_emails` (inbox dedup), `count_emails`, `get_filtered_emails`,
+`get_quick_filter_stats`, `get_tag_stats`, `count_filter_threads`,
+`get_email_inbox_position`. The unified list ordering is served by
+`idx_emails_mailbox_active (mailbox, is_deleted, timestamp DESC, id DESC)`
+(V009).
+
 ## Access rules (enforced by CLAUDE.md)
 
 | Operation | Must use |

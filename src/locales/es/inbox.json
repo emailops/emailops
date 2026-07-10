@@ -57,7 +57,8 @@
     "createClassificationRule": "Crear regla de clasificación",
     "copyEmailId": "Copiar ID del correo",
     "redownloadEmail": "Volver a descargar el correo",
-    "deleteThread": "Eliminar hilo"
+    "deleteThread": "Eliminar hilo",
+    "accountTooltip": "Cuenta: {{email}}"
   },
   "header": {
     "totalCount": "{{count}} correos",

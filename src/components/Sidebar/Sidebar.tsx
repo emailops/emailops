@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { FeedbackType } from '@/lib/feedback';
+import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useMemoryStore } from '@/stores/memoryStore';
@@ -41,6 +42,8 @@ export type ViewMode =
 interface SidebarProps {
   accounts: Account[];
   activeAccount: Account | null;
+  /** True when the unified "All accounts" pseudo-entry is selected. */
+  isUnifiedActive: boolean;
   onSelectAccount: (accountId: string) => void;
   onAddAccount: () => void;
   onMoveAccountUp: (accountId: string) => void;
@@ -74,6 +77,7 @@ interface SidebarProps {
 export function Sidebar({
   accounts,
   activeAccount,
+  isUnifiedActive,
   onSelectAccount,
   onAddAccount,
   onMoveAccountUp,
@@ -132,7 +136,7 @@ export function Sidebar({
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">{t('sidebar:appName')}</h1>
           <div className="flex items-center gap-1">
-            {activeAccount && (
+            {(activeAccount || isUnifiedActive) && (
               <button
                 onClick={onSync}
                 disabled={isSyncing}
@@ -214,6 +218,35 @@ export function Sidebar({
               <p className="text-sm text-gray-500">{t('sidebar:noAccounts')}</p>
             ) : (
               <ul className="space-y-0.5">
+                {accounts.length > 1 && (
+                  <li>
+                    <div
+                      className={`flex items-center rounded-lg text-sm transition-colors ${
+                        isUnifiedActive ? 'bg-primary-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      }`}
+                    >
+                      <button
+                        onClick={() => onSelectAccount(ALL_ACCOUNTS_ID)}
+                        className="flex-1 text-left px-3 py-1.5 min-w-0 flex items-center gap-1.5"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5 flex-shrink-0"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          strokeWidth={2}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                          />
+                        </svg>
+                        <span className="block truncate text-xs">{t('sidebar:allAccounts')}</span>
+                      </button>
+                    </div>
+                  </li>
+                )}
                 {accounts.map((account, idx) => (
                   <AccountItem
                     key={account.id}
@@ -416,140 +449,138 @@ export function Sidebar({
             {t('sidebar:aiFeatures')}
           </button>
           {aiFeaturesOpen && (
-            <>
-              <ul className="space-y-1 mb-2">
-                {aiEnabled && (
-                  <li>
-                    <button
-                      onClick={() => onSetViewMode('chat')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                        viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                      }`}
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                        />
-                      </svg>
-                      {t('sidebar:chat')}
-                    </button>
-                  </li>
-                )}
-                {aiEnabled && tasksEnabled && (
-                  <li>
-                    <button
-                      onClick={() => onSetViewMode('tasks')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                        viewMode === 'tasks' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                      }`}
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                        />
-                      </svg>
-                      <span className="flex-1">{t('sidebar:tasks')}</span>
-                      {tasksBadge > 0 && (
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                            counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-600 text-gray-100'
-                          }`}
-                        >
-                          {tasksBadge}
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                )}
-                {aiEnabled && memoriesEnabled && (
-                  <li>
-                    <button
-                      onClick={() => onSetViewMode('memory')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                        viewMode === 'memory' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                      }`}
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      {t('sidebar:memory')}
-                    </button>
-                  </li>
-                )}
-                {aiEnabled && lensesEnabled && (
-                  <li>
-                    <div
-                      className={`group flex items-center rounded-lg text-sm transition-colors ${
-                        viewMode === 'lenses' && !activeLensId
-                          ? 'bg-gray-700 text-white'
-                          : 'text-gray-300 hover:bg-gray-800'
-                      }`}
-                    >
-                      <button
-                        onClick={() => onSetViewMode('lenses')}
-                        className="flex-1 flex items-center gap-2 px-3 py-2 text-left min-w-0"
+            <ul className="space-y-1 mb-2">
+              {aiEnabled && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('chat')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                      />
+                    </svg>
+                    {t('sidebar:chat')}
+                  </button>
+                </li>
+              )}
+              {aiEnabled && tasksEnabled && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('tasks')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'tasks' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                      />
+                    </svg>
+                    <span className="flex-1">{t('sidebar:tasks')}</span>
+                    {tasksBadge > 0 && (
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-600 text-gray-100'
+                        }`}
                       >
-                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M3 10h18M3 6h18M3 14h18M3 18h18"
-                          />
-                        </svg>
-                        <span className="flex-1">{t('sidebar:lenses')}</span>
-                        {lenses.length > 0 && <span className="text-xs text-gray-500">{lenses.length}</span>}
-                      </button>
-                      {lenses.length > 0 && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLensesListOpen((v) => !v);
-                          }}
-                          className="px-2 py-2 text-gray-400 hover:text-gray-200 flex-shrink-0"
-                          title={lensesListOpen ? t('sidebar:collapseLenses') : t('sidebar:expandLenses')}
-                        >
-                          <CollapseChevron open={lensesListOpen} />
-                        </button>
-                      )}
-                    </div>
-                    {lensesListOpen && lenses.length > 0 && (
-                      <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-700 pl-2">
-                        {lenses.map((l) => {
-                          const isActive = viewMode === 'lenses' && activeLensId === l.id;
-                          return (
-                            <li key={l.id}>
-                              <button
-                                onClick={() => onSelectLens(l.id)}
-                                className={`w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
-                                  isActive
-                                    ? 'bg-primary-600 text-white'
-                                    : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                                }`}
-                                title={l.name}
-                              >
-                                {l.name}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                        {tasksBadge}
+                      </span>
                     )}
-                  </li>
-                )}
-              </ul>
-            </>
+                  </button>
+                </li>
+              )}
+              {aiEnabled && memoriesEnabled && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('memory')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'memory' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    {t('sidebar:memory')}
+                  </button>
+                </li>
+              )}
+              {aiEnabled && lensesEnabled && (
+                <li>
+                  <div
+                    className={`group flex items-center rounded-lg text-sm transition-colors ${
+                      viewMode === 'lenses' && !activeLensId
+                        ? 'bg-gray-700 text-white'
+                        : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <button
+                      onClick={() => onSetViewMode('lenses')}
+                      className="flex-1 flex items-center gap-2 px-3 py-2 text-left min-w-0"
+                    >
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M3 10h18M3 6h18M3 14h18M3 18h18"
+                        />
+                      </svg>
+                      <span className="flex-1">{t('sidebar:lenses')}</span>
+                      {lenses.length > 0 && <span className="text-xs text-gray-500">{lenses.length}</span>}
+                    </button>
+                    {lenses.length > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLensesListOpen((v) => !v);
+                        }}
+                        className="px-2 py-2 text-gray-400 hover:text-gray-200 flex-shrink-0"
+                        title={lensesListOpen ? t('sidebar:collapseLenses') : t('sidebar:expandLenses')}
+                      >
+                        <CollapseChevron open={lensesListOpen} />
+                      </button>
+                    )}
+                  </div>
+                  {lensesListOpen && lenses.length > 0 && (
+                    <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-700 pl-2">
+                      {lenses.map((l) => {
+                        const isActive = viewMode === 'lenses' && activeLensId === l.id;
+                        return (
+                          <li key={l.id}>
+                            <button
+                              onClick={() => onSelectLens(l.id)}
+                              className={`w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
+                                isActive
+                                  ? 'bg-primary-600 text-white'
+                                  : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                              }`}
+                              title={l.name}
+                            >
+                              {l.name}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </li>
+              )}
+            </ul>
           )}
         </section>
 
@@ -570,7 +601,9 @@ export function Sidebar({
       <div className="p-4 border-t border-gray-700">
         <div className="flex items-center justify-between">
           <div className="text-xs text-gray-500 truncate">
-            {activeAccount ? (
+            {isUnifiedActive ? (
+              <span>{t('sidebar:allAccountsFooter')}</span>
+            ) : activeAccount ? (
               <span>{t('sidebar:signedInAs', { email: activeAccount.email })}</span>
             ) : (
               <span>{t('sidebar:noAccountSelected')}</span>
