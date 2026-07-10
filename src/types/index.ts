@@ -393,6 +393,10 @@ export interface ChatStreamEvent {
   error?: string | null;
   tokenCount?: number | null;
   latencyMs?: number | null;
+  /** When true, `token` REPLACES the bubble content instead of appending.
+   *  Used by the backend's contradiction-guard retry, whose corrected answer
+   *  must overwrite the wrong answer that already streamed live. */
+  replace?: boolean | null;
 }
 
 export interface ChatSourcesEvent {

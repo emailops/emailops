@@ -242,7 +242,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const existing = s.messages[idx];
       let updated: ChatMessage = evt.error
         ? { ...existing, content: evt.error }
-        : { ...existing, content: existing.content + evt.token };
+        : // `replace` resets the bubble (contradiction-guard retry overwrites
+          // an already-streamed wrong answer); default appends.
+          { ...existing, content: evt.replace ? evt.token : existing.content + evt.token };
       // On the final event, persist stats from the backend.
       if (evt.done) {
         updated = {

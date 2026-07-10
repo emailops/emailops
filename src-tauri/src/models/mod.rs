@@ -754,6 +754,11 @@ pub struct ChatStreamEvent {
     /// Wall-clock latency of the full turn (retrieval + streaming) in ms. Only set when `done == true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<i64>,
+    /// When `Some(true)`, `token` REPLACES the bubble content instead of
+    /// appending. Emitted by the contradiction-guard retry, whose corrected
+    /// answer must overwrite the wrong answer that already streamed live.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replace: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -89,6 +89,37 @@ describe('chatStore processing phase', () => {
   });
 });
 
+describe('chatStore stream token replace flag', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: 'msg-1',
+      streamingPhase: null,
+      messages: [{ ...assistantMessage('msg-1'), content: 'No emails found.' }],
+      error: null,
+    });
+  });
+
+  it('appends tokens by default', () => {
+    useChatStore.getState().handleStreamToken(streamEvent({ token: ' More.' }));
+    expect(useChatStore.getState().messages[0].content).toBe('No emails found. More.');
+  });
+
+  it('replaces the bubble content when replace is set', () => {
+    // Backend contradiction-guard retry: the wrong answer already streamed
+    // live; the corrected answer must reset the bubble, not append to it.
+    useChatStore.getState().handleStreamToken(streamEvent({ token: '', replace: true }));
+    expect(useChatStore.getState().messages[0].content).toBe('');
+    useChatStore.getState().handleStreamToken(streamEvent({ token: 'You got 1 email today.' }));
+    expect(useChatStore.getState().messages[0].content).toBe('You got 1 email today.');
+  });
+
+  it('replace with a non-empty token restores that exact content', () => {
+    useChatStore.getState().handleStreamToken(streamEvent({ token: 'Restored answer.', replace: true }));
+    expect(useChatStore.getState().messages[0].content).toBe('Restored answer.');
+  });
+});
+
 describe('chatStore selectConversation', () => {
   beforeEach(() => {
     vi.clearAllMocks();

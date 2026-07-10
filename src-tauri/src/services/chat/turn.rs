@@ -1310,6 +1310,82 @@ The tool you requested has been executed; its result is above. No more tools are
 user's question NOW in prose using that information; if it is not enough, say so plainly and suggest how \
 the user could rephrase the question.";
 
+/// Corrective instruction for the ONE retry after the model produced a
+/// categorical "no results" answer even though the tool results above DO
+/// contain emails (observed on Qwen 3.6 35B-A3B: `search_emails` returned
+/// "## Primary (1) …" with a full body excerpt and the model still replied
+/// "No se han encontrado correos electrónicos"). Bilingual for the same
+/// reason as [`SYNTHESIS_CLOSING_INSTRUCTION`].
+const CONTRADICTION_RETRY_INSTRUCTION: &str =
+    "Tu respuesta anterior dice que no se encontraron correos, pero los resultados de las tools de arriba \
+SÍ contienen correos. Vuelve a leer esos resultados y responde AHORA a la pregunta del usuario usándolos. \
+No digas que no hay resultados.\n\n\
+Your previous answer claims no emails were found, but the tool results above DO contain emails. Re-read \
+those results and answer the user's question NOW using them. Do not claim there are no results.";
+
+/// Max length (in chars) for an answer to count as a categorical "no results"
+/// claim in [`answer_claims_no_results`]. Real summaries run much longer; the
+/// observed failure shape is 1-3 short sentences, possibly with an empty
+/// placeholder table. The cap keeps a genuine answer that merely MENTIONS an
+/// absence ("…no emails from Alice, though") from triggering a retry.
+const NO_RESULTS_CLAIM_MAX_CHARS: usize = 400;
+
+/// True when `answer` is a short, categorical "no emails / no results" claim.
+///
+/// Pure half of the contradiction guard: a model can hand back tool results
+/// that plainly contain emails and still answer "nothing found" (observed on
+/// Qwen 3.6 35B-A3B with a single long newsletter body in the tool result).
+/// Patterns cover the four UI languages; matching is substring-based over the
+/// lowercased answer and deliberately conservative — a long answer never
+/// matches, see [`NO_RESULTS_CLAIM_MAX_CHARS`].
+fn answer_claims_no_results(answer: &str) -> bool {
+    let trimmed = answer.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > NO_RESULTS_CLAIM_MAX_CHARS {
+        return false;
+    }
+    let norm = trimmed.to_lowercase();
+    const PATTERNS: &[&str] = &[
+        // Spanish
+        "no se han encontrado correo",
+        "no se encontraron correo",
+        "no se ha encontrado ning",
+        "no se encontró ning",
+        "no hay correos",
+        "no hay ningún correo",
+        "no hay ningun correo",
+        "no he encontrado correo",
+        "no he encontrado ning",
+        "no encontré correo",
+        "no encontré ning",
+        "no tienes correos",
+        // English
+        "no emails were found",
+        "no emails found",
+        "no emails match",
+        "no emails in your inbox",
+        "there are no emails",
+        "you have no emails",
+        "couldn't find any email",
+        "could not find any email",
+        "found no email",
+        "no messages were found",
+        "no messages found",
+        // French
+        "aucun courriel",
+        "aucun e-mail",
+        "aucun email",
+        "aucun message trouvé",
+        "aucun résultat",
+        // German
+        "keine e-mails gefunden",
+        "keine emails gefunden",
+        "keine e-mails in",
+        "es wurden keine",
+        "keine nachrichten gefunden",
+    ];
+    PATTERNS.iter().any(|p| norm.contains(p))
+}
+
 /// User-facing fallback when the turn still has no answer text after the
 /// synthesis retry (model returned empty twice). Shipping this instead of a
 /// blank bubble tells the user what happened and how to move forward.
@@ -1681,6 +1757,7 @@ async fn run_tool_loop(
                             error: None,
                             token_count: None,
                             latency_ms: None,
+                            replace: None,
                         },
                     );
                 }
@@ -2149,6 +2226,7 @@ async fn run_thread_bound_turn(
                     error: None,
                     token_count: None,
                     latency_ms: None,
+                    replace: None,
                 },
             );
         }
@@ -2201,6 +2279,7 @@ async fn run_thread_bound_turn(
                             error: None,
                             token_count: None,
                             latency_ms: None,
+                            replace: None,
                         },
                     );
                 }
@@ -2227,6 +2306,7 @@ async fn run_thread_bound_turn(
                         error: None,
                         token_count: None,
                         latency_ms: None,
+                        replace: None,
                     },
                 );
             }
@@ -2300,6 +2380,7 @@ async fn run_thread_bound_turn(
                     error: None,
                     token_count,
                     latency_ms: Some(latency_ms),
+                    replace: None,
                 },
             );
             let tokens_str = token_count
@@ -2328,6 +2409,7 @@ async fn run_thread_bound_turn(
                     error: Some(err_text.clone()),
                     token_count: None,
                     latency_ms: Some(latency_ms),
+                    replace: None,
                 },
             );
             emit_log("error", &err_text);
@@ -2384,6 +2466,7 @@ async fn run_gated_synthesis_stream(
                         error: None,
                         token_count: None,
                         latency_ms: None,
+                        replace: None,
                     },
                 );
             }
@@ -2412,6 +2495,7 @@ async fn run_gated_synthesis_stream(
                     error: None,
                     token_count: None,
                     latency_ms: None,
+                    replace: None,
                 },
             );
         }
@@ -2966,12 +3050,22 @@ pub async fn run_chat_turn(
     // prompt — the same model just failed us, the stream has no overall
     // timeout in `chat_stream`, and a silent hang here is exactly what
     // freezes the "thinking…" indicator on the client. Fail fast instead.
+    const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
     let stream_result: Result<crate::ai::provider::ChatStreamResult> = if loop_failed_without_answer {
         let detail = loop_error
             .clone()
             .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
         Err(AppError::AiError(detail))
     } else {
+        // Contradiction guard needs the tool-loop transcript to run a
+        // corrective retry; only worth keeping when tools actually handed
+        // back emails this turn (`aggregated_email_refs` is the
+        // format-independent "the tools found something" signal).
+        let contradiction_retry_messages: Option<Vec<AiMessage>> = if aggregated_email_refs.is_empty() {
+            None
+        } else {
+            Some(final_messages.clone())
+        };
         match plan_answer(final_messages) {
             // The tool loop ended with a direct assistant text answer — reuse it
             // as-is and SKIP the re-stream. Otherwise we'd be appending the answer
@@ -2987,38 +3081,147 @@ pub async fn run_chat_turn(
                 // outside the retrieved source range BEFORE emitting so the user
                 // never sees them. count_invalid_citations later then reports 0.
                 let answer = strip_invalid_citations(&answer, sources.len());
-                // If the tool loop already streamed this answer token-by-token,
-                // re-emitting it as one token would duplicate the whole bubble —
-                // skip the emit and just synthesise the result for persistence.
-                // Otherwise emit the full answer as a single stream token so the
-                // UI sees it (no extra model round-trip).
-                if !loop_answer_streamed_live {
-                    crate::services::events::emit(
-                        "chat-stream",
-                        ChatStreamEvent {
-                            message_id: assistant_message_id.clone(),
-                            conversation_id: conversation_id.clone(),
-                            token: answer.clone(),
-                            done: false,
-                            error: None,
-                            token_count: None,
-                            latency_ms: None,
-                        },
+                // Contradiction guard: the model answered "no emails found"
+                // even though the tool results above DO contain emails
+                // (observed on Qwen 3.6 35B-A3B). Run ONE corrective retry
+                // over the same transcript; keep the original answer if the
+                // retry fails, so the guard can never make things worse.
+                let retry_messages = contradiction_retry_messages.filter(|_| answer_claims_no_results(&answer));
+                if let Some(mut retry_messages) = retry_messages {
+                    emit_log(
+                        "info",
+                        "contradiction guard: answer claims no results but tools returned emails — one corrective retry",
                     );
+                    // The wrong answer may already sit in the live bubble
+                    // (streamed by the tool loop) — clear it before the retry
+                    // streams the corrected tokens.
+                    if loop_answer_streamed_live {
+                        crate::services::events::emit(
+                            "chat-stream",
+                            ChatStreamEvent {
+                                message_id: assistant_message_id.clone(),
+                                conversation_id: conversation_id.clone(),
+                                token: String::new(),
+                                done: false,
+                                error: None,
+                                token_count: None,
+                                latency_ms: None,
+                                replace: Some(true),
+                            },
+                        );
+                    }
+                    // The transcript already ends with the contradictory
+                    // assistant answer (that's what made plan_answer pick
+                    // DirectText) — append only the corrective instruction.
+                    retry_messages.push(AiMessage {
+                        role: "user".to_string(),
+                        content: CONTRADICTION_RETRY_INSTRUCTION.to_string(),
+                        tool_calls: None,
+                    });
+                    streaming_happened = true;
+                    #[cfg(debug_assertions)]
+                    {
+                        final_stream_input = Some(format_messages_for_trace(&retry_messages));
+                    }
+                    let recovery = synthesize_with_recovery(
+                        provider.as_ref(),
+                        &registry,
+                        &db,
+                        &account_id,
+                        &categories,
+                        &user_question,
+                        retry_messages,
+                        &conversation_id,
+                        &assistant_message_id,
+                        STREAM_TIMEOUT,
+                        &mut llm_calls,
+                        &mut tool_traces,
+                    )
+                    .await;
+                    for id in recovery.email_refs {
+                        if !aggregated_email_refs.contains(&id) {
+                            aggregated_email_refs.push(id);
+                        }
+                    }
+                    for id in recovery.draft_refs {
+                        if !aggregated_draft_refs.contains(&id) {
+                            aggregated_draft_refs.push(id);
+                        }
+                    }
+                    match recovery.result {
+                        Ok(result) if !strip_tool_call_markup(&result.content).trim().is_empty() => Ok(result),
+                        _ => {
+                            // Retry failed or came back empty — restore the
+                            // original answer (a contradictory answer beats an
+                            // error or a blank bubble). `replace` also wipes
+                            // any partial retry tokens that reached the UI.
+                            emit_log(
+                                "error",
+                                "contradiction retry failed/empty — keeping the original answer",
+                            );
+                            crate::services::events::emit(
+                                "chat-stream",
+                                ChatStreamEvent {
+                                    message_id: assistant_message_id.clone(),
+                                    conversation_id: conversation_id.clone(),
+                                    token: answer.clone(),
+                                    done: false,
+                                    error: None,
+                                    token_count: None,
+                                    latency_ms: None,
+                                    replace: Some(true),
+                                },
+                            );
+                            Ok(crate::ai::provider::ChatStreamResult {
+                                content: answer,
+                                eval_count: None,
+                                prompt_eval_count: None,
+                                prefill_ms: None,
+                                cached_prompt_tokens: None,
+                                prefix_plan: None,
+                                sys_cached_before: None,
+                                sys_cached_after: None,
+                                system_prefix_tokens: None,
+                                stable_tokens: None,
+                                dropped_front_tokens: None,
+                            })
+                        }
+                    }
+                } else {
+                    // If the tool loop already streamed this answer token-by-token,
+                    // re-emitting it as one token would duplicate the whole bubble —
+                    // skip the emit and just synthesise the result for persistence.
+                    // Otherwise emit the full answer as a single stream token so the
+                    // UI sees it (no extra model round-trip).
+                    if !loop_answer_streamed_live {
+                        crate::services::events::emit(
+                            "chat-stream",
+                            ChatStreamEvent {
+                                message_id: assistant_message_id.clone(),
+                                conversation_id: conversation_id.clone(),
+                                token: answer.clone(),
+                                done: false,
+                                error: None,
+                                token_count: None,
+                                latency_ms: None,
+                                replace: None,
+                            },
+                        );
+                    }
+                    Ok(crate::ai::provider::ChatStreamResult {
+                        content: answer,
+                        eval_count: None,
+                        prompt_eval_count: None,
+                        prefill_ms: None,
+                        cached_prompt_tokens: None,
+                        prefix_plan: None,
+                        sys_cached_before: None,
+                        sys_cached_after: None,
+                        system_prefix_tokens: None,
+                        stable_tokens: None,
+                        dropped_front_tokens: None,
+                    })
                 }
-                Ok(crate::ai::provider::ChatStreamResult {
-                    content: answer,
-                    eval_count: None,
-                    prompt_eval_count: None,
-                    prefill_ms: None,
-                    cached_prompt_tokens: None,
-                    prefix_plan: None,
-                    sys_cached_before: None,
-                    sys_cached_after: None,
-                    system_prefix_tokens: None,
-                    stable_tokens: None,
-                    dropped_front_tokens: None,
-                })
             }
             // No direct text answer: the loop handed back tool results (a
             // preseeded shortcut, or a run that hit MAX_TOOL_ROUNDS). Synthesise
@@ -3026,7 +3229,6 @@ pub async fn run_chat_turn(
             // sees tokens within a second or two. Bounded by STREAM_TIMEOUT so a
             // stuck provider can't leave the UI thinking forever.
             AnswerPlan::StreamSynthesis(synthesis_messages) => {
-                const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
                 streaming_happened = true;
 
                 // Snapshot the final prompt in dev builds so the reasoning panel
@@ -3124,6 +3326,7 @@ pub async fn run_chat_turn(
                         error: None,
                         token_count: None,
                         latency_ms: None,
+                        replace: None,
                     },
                 );
             }
@@ -3278,6 +3481,7 @@ pub async fn run_chat_turn(
                     error: None,
                     token_count,
                     latency_ms: Some(latency_ms),
+                    replace: None,
                 },
             );
             let tokens_str = token_count
@@ -3307,6 +3511,7 @@ pub async fn run_chat_turn(
                     error: Some(err_text.clone()),
                     token_count: None,
                     latency_ms: Some(latency_ms),
+                    replace: None,
                 },
             );
             emit_log("error", &err_text);
@@ -3460,6 +3665,64 @@ mod tests {
         assert_eq!(json["promptTokens"], 812);
         assert_eq!(json["prefillMs"], 3950);
         assert_eq!(json["cachedPromptTokens"], 0);
+    }
+
+    #[test]
+    fn no_results_claims_match_all_ui_languages() {
+        // The two observed Qwen 3.6 failure answers (app + CLI runs of the
+        // today-summary shortcut), plus equivalents in the other UI languages.
+        let positives = [
+            "No se han encontrado correos electrónicos que coincidan con los criterios de búsqueda.",
+            "No hay correos electrónicos en tu bandeja de entrada para hoy.\n\
+             | Remitente | Asunto | Urgencia | Resumen |\n| (ninguno) | (ninguno) | — | — |\n\
+             No hay nada urgente ni pendiente por revisar hoy.",
+            "No emails were found matching your search criteria.",
+            "There are no emails in your inbox for today.",
+            "I couldn't find any emails for today.",
+            "Aucun courriel ne correspond à votre recherche.",
+            "Es wurden keine E-Mails gefunden.",
+        ];
+        for answer in positives {
+            assert!(
+                answer_claims_no_results(answer),
+                "must detect a categorical no-results claim: {answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_answers_do_not_count_as_no_results_claims() {
+        let negatives = [
+            // Real summaries — even ones that mention an absence — must never
+            // trigger the retry.
+            "You received 12 emails today. The most important one is from Bob about the Q3 budget. \
+             There were no emails from Alice, though, so the contract review is still pending. \
+             Everything else is routine: three newsletters, two GitHub notifications, and a receipt \
+             from AWS. Nothing needs an urgent reply before tomorrow morning, but the budget thread \
+             deserves a look today because the deadline is Friday and finance is waiting on it.",
+            // Short answers without a no-results phrase.
+            "You got one email today: the freelance newsletter [1].",
+            "Hoy has recibido un correo: la newsletter de freelance.",
+            "",
+            "   ",
+        ];
+        for answer in negatives {
+            assert!(
+                !answer_claims_no_results(answer),
+                "must NOT flag a real answer: {answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn long_answers_never_count_as_no_results_claims() {
+        // Length cap: a pattern inside a long, real answer must not trigger.
+        let long = format!(
+            "No emails found from Alice. {}",
+            "But here is the full summary. ".repeat(20)
+        );
+        assert!(long.chars().count() > NO_RESULTS_CLAIM_MAX_CHARS);
+        assert!(!answer_claims_no_results(&long));
     }
 
     #[test]
