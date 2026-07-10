@@ -257,10 +257,11 @@ pub fn get_tokens(account_id: &str) -> Result<OAuthTokens> {
             account_id: account_id.to_string(),
         })?
     } else {
-        // Read via the keychain seam. `Ok(None)` means the entry is missing
-        // (user-recoverable, needs re-auth); `Err(...)` means the keychain
-        // backend itself failed (infrastructure problem the user can't fix).
-        match super::keychain::current().get_password(KEYRING_SERVICE, account_id)? {
+        // Read via the secrets vault (single keychain item → single macOS
+        // prompt). `Ok(None)` means the entry is missing (user-recoverable,
+        // needs re-auth); `Err(...)` means the keychain backend itself failed
+        // (infrastructure problem the user can't fix).
+        match super::secrets_vault::get(KEYRING_SERVICE, account_id)? {
             Some(p) => p,
             None => {
                 return Err(AppError::NeedsReauth {
@@ -292,8 +293,8 @@ pub fn store_tokens(account_id: &str, tokens: &OAuthTokens) -> Result<()> {
             .ok_or_else(|| AppError::KeyringError("DB not initialized for dev token storage".to_string()))?;
         db.store_dev_tokens(account_id, &json)?;
     } else {
-        // Store via the keychain seam.
-        super::keychain::current().set_password(KEYRING_SERVICE, account_id, &json)?;
+        // Store via the secrets vault.
+        super::secrets_vault::set(KEYRING_SERVICE, account_id, &json)?;
     }
 
     // Update cache
@@ -318,7 +319,7 @@ fn delete_tokens(account_id: &str) -> Result<()> {
             db.delete_dev_tokens(account_id)?;
         }
     } else {
-        super::keychain::current().delete_password(KEYRING_SERVICE, account_id)?;
+        super::secrets_vault::delete(KEYRING_SERVICE, account_id)?;
     }
 
     Ok(())
@@ -341,11 +342,9 @@ pub fn get_imap_credentials(account_id: &str) -> Result<ImapCredentials> {
             })?;
         return serde_json::from_str(&json).map_err(AppError::JsonError);
     }
-    let json = super::keychain::current()
-        .get_password(IMAP_KEYRING_PREFIX, account_id)?
-        .ok_or_else(|| AppError::NeedsReauth {
-            account_id: account_id.to_string(),
-        })?;
+    let json = super::secrets_vault::get(IMAP_KEYRING_PREFIX, account_id)?.ok_or_else(|| AppError::NeedsReauth {
+        account_id: account_id.to_string(),
+    })?;
     serde_json::from_str(&json).map_err(AppError::JsonError)
 }
 
@@ -368,7 +367,7 @@ pub fn store_imap_credentials(account_id: &str, creds: &ImapCredentials) -> Resu
         )?;
         return db.store_dev_imap_creds(account_id, &json);
     }
-    super::keychain::current().set_password(IMAP_KEYRING_PREFIX, account_id, &json)?;
+    super::secrets_vault::set(IMAP_KEYRING_PREFIX, account_id, &json)?;
     // Mirror non-secret fields to imap_account_settings (see comment above).
     // Done after the keychain write so a keychain failure short-circuits before
     // we record settings for an account whose password we couldn't save.
@@ -522,7 +521,7 @@ fn delete_imap_credentials(account_id: &str) -> Result<()> {
         }
         return Ok(());
     }
-    super::keychain::current().delete_password(IMAP_KEYRING_PREFIX, account_id)
+    super::secrets_vault::delete(IMAP_KEYRING_PREFIX, account_id)
 }
 
 /// Test IMAP + SMTP credentials without saving anything.

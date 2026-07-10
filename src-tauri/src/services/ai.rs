@@ -159,8 +159,7 @@ impl AiService {
         let api_key_id = db
             .get_preference("openrouter_api_key_id")?
             .ok_or_else(|| AppError::AiError("OpenRouter API key not configured".to_string()))?;
-        super::keychain::current()
-            .get_password(KEYRING_SERVICE, &api_key_id)?
+        super::secrets_vault::get(KEYRING_SERVICE, &api_key_id)?
             .ok_or_else(|| AppError::AiError("OpenRouter API key not configured".to_string()))
     }
 
@@ -174,7 +173,7 @@ impl AiService {
             return Ok(());
         }
 
-        super::keychain::current().set_password(KEYRING_SERVICE, OPENROUTER_KEY_ID, key)?;
+        super::secrets_vault::set(KEYRING_SERVICE, OPENROUTER_KEY_ID, key)?;
         db.set_preference("openrouter_api_key_id", OPENROUTER_KEY_ID)?;
         Ok(())
     }

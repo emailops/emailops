@@ -23,6 +23,7 @@ pub mod password;
 pub mod prompts;
 pub mod retrieval;
 pub mod search;
+pub mod secrets_vault;
 pub mod storage_stats;
 pub mod sync_scheduler;
 pub mod tag_priority;
