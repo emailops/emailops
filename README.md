@@ -1,9 +1,6 @@
 # EmailOps
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)
-
-> **Alpha software** — EmailOps is in early development. Expect rough edges, breaking changes, and missing features. It is not recommended as your primary email client yet.
 
 Privacy-first, Local AI-native desktop email client (currently Mac only).
 
