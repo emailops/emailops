@@ -17,12 +17,14 @@ Windows and Linux releases are on the [roadmap](ROADMAP.md).
 ## Features
 
 - **Multi-account email**: Gmail, Outlook / Microsoft 365 (Graph API), and IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, custom servers)
+- **Unified inbox**: read and triage mail from all your accounts in a single combined view
 - **Chat with your emails**: use AI to answer questions about your emails, generate drafts, ...
 - **AI email classification**: auto-tag emails by priority, intent, and topic using configurable rules + local AI
 - **Smart filters**: filter inbox by domain, sender, or classification tags
 - **AI draft generation**: context-aware reply drafts using persona + thread history
 - **Attachments view**: organize and access your attachments directly without searching in emails
 - **AI provider abstraction**: embedded llama.cpp (default), local Ollama, or remote OpenRouter — switchable per feature
+- **Headless CLI**: script your inbox from the terminal with [`emailops-cli`](#command-line-interface-emailops-cli) — same service layer as the app, stable `--json` output for scripts and agents
 
 ## Data + privacy model
 
