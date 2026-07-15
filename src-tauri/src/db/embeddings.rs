@@ -241,11 +241,13 @@ impl Database {
 
         let mut sql = String::from(
             // Spam/trash are never embedded — retrieval must never surface
-            // them, so embedding them is pure wasted compute.
+            // them, so embedding them is pure wasted compute. pending_sync = 0:
+            // optimistic sent copies awaiting reconciliation are deleted when
+            // the provider's real copy arrives, so they are skipped too.
             "SELECT e.id FROM emails e
              LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
              WHERE ec.email_id IS NULL AND e.is_deleted = 0
-               AND e.mailbox NOT IN ('spam', 'trash')",
+               AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0",
         );
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(acc) = account_id {
@@ -292,7 +294,8 @@ impl Database {
                 "SELECT COUNT(*) FROM emails e
                  LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
                  WHERE ec.email_id IS NULL AND e.is_deleted = 0
-                   AND e.mailbox NOT IN ('spam', 'trash') AND e.account_id = ?1"
+                   AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0
+                   AND e.account_id = ?1"
                     .to_string(),
                 vec![Box::new(acc.to_string())],
             ),
@@ -300,7 +303,7 @@ impl Database {
                 "SELECT COUNT(*) FROM emails e
                  LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
                  WHERE ec.email_id IS NULL AND e.is_deleted = 0
-                   AND e.mailbox NOT IN ('spam', 'trash')"
+                   AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0"
                     .to_string(),
                 vec![],
             ),
@@ -864,6 +867,27 @@ mod tests {
             "trash email must be skipped, got {:?}",
             ids
         );
+    }
+
+    // Optimistic sent copies awaiting reconciliation must not be embedded —
+    // they are deleted when the provider's real copy arrives.
+    #[test]
+    fn get_emails_without_embeddings_excludes_pending_sent_rows() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-sent", "acc1", "me@me.com", "subject", "body", 100, "sent");
+        insert_fts_email_in_mailbox(&db, "e-pend", "acc1", "me@me.com", "subject", "body", 150, "sent");
+        db.connection()
+            .execute("UPDATE emails SET pending_sync = 1 WHERE id = 'e-pend'", [])
+            .unwrap();
+
+        let ids = db.get_emails_without_embeddings(Some("acc1"), 10, &[], None).unwrap();
+        assert!(ids.contains(&"e-sent".to_string()), "got {:?}", ids);
+        assert!(
+            !ids.contains(&"e-pend".to_string()),
+            "pending rows must be excluded, got {:?}",
+            ids
+        );
+        assert_eq!(db.count_emails_without_embeddings(Some("acc1")).unwrap(), 1);
     }
 
     // The pending count must mirror the fetcher's filters (mailbox + deletion)

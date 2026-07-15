@@ -403,7 +403,7 @@ impl OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         // Graph's `/reply` endpoint auto-preserves subject prefix, In-Reply-To,
         // References, and (with the `comment` form) the quoted thread history.
         let Some(msg_id) = original_message_id.filter(|s| !s.trim().is_empty()) else {
@@ -422,12 +422,14 @@ impl OutlookClient {
             });
         let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(msg_id),);
         let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
-        // /reply returns 202 Accepted with no body on success.
+        // /reply returns 202 Accepted with no body on success — Graph reports
+        // nothing about the created Sent message, so the meta stays empty and
+        // the optimistic local row is reconciled heuristically at sync time.
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send reply: {}", error_text)));
         }
-        Ok(())
+        Ok(crate::sync::provider::SentMessageMeta::default())
     }
 
     pub async fn send_new_email(
@@ -438,7 +440,7 @@ impl OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         let payload =
             crate::sync::outlook_payload::build_send_mail_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
@@ -454,7 +456,8 @@ impl OutlookClient {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
         }
-        Ok(())
+        // /sendMail returns 202 Accepted with no body — no meta available.
+        Ok(crate::sync::provider::SentMessageMeta::default())
     }
 
     // ── Drafts ───────────────────────────────────────────────────────────────
@@ -840,7 +843,7 @@ impl EmailProvider for OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         self.send_reply(
             from_email,
             to_emails,
@@ -862,7 +865,7 @@ impl EmailProvider for OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         self.send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
             .await
     }

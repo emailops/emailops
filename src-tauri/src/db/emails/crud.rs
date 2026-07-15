@@ -41,6 +41,127 @@ impl Database {
         Ok(())
     }
 
+    /// Insert a locally constructed Sent copy at send time (optimistic insert).
+    /// Mirrors `insert_emails_batch` — emails row + email_bodies + manual FTS
+    /// row, all in one transaction — and additionally sets `pending_sync`.
+    /// `pending_sync = true` marks a synthetic row (no provider id yet) that
+    /// the sync reconciler will replace when the real Sent copy is ingested.
+    pub fn insert_sent_email_local(&self, email: &Email, pending_sync: bool) -> Result<()> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let recipients_json = serde_json::to_string(&email.recipients)?;
+        let cc_json = serde_json::to_string(&email.cc)?;
+        let sender_domain = extract_sender_domain(&email.sender_email);
+        let mailbox = normalize_mailbox(&email.mailbox);
+        let now = chrono::Utc::now().timestamp();
+
+        // Remove stale FTS entry before REPLACE (DELETE trigger may not fire
+        // during INSERT OR REPLACE without recursive_triggers enabled).
+        tx.execute("DELETE FROM emails_fts WHERE email_id = ?1", params![email.id])?;
+        tx.execute(
+            r#"INSERT OR REPLACE INTO emails
+               (id, account_id, thread_id, message_id, subject, sender, sender_email,
+                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read,
+                triage_status, category, mailbox, pending_sync, created_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
+            params![
+                email.id,
+                email.account_id,
+                email.thread_id,
+                email.message_id,
+                email.subject,
+                email.sender,
+                email.sender_email,
+                sender_domain,
+                recipients_json,
+                cc_json,
+                email.snippet,
+                email.timestamp,
+                email.is_read as i32,
+                email.triage_status,
+                email.category,
+                mailbox,
+                pending_sync as i32,
+                now,
+            ],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO email_bodies (email_id, body) VALUES (?1, ?2)",
+            params![email.id, email.body],
+        )?;
+        let body_text = crate::util::html::strip_html_for_fts(&email.body);
+        tx.execute(
+            "INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, ?3, ?4)",
+            params![email.id, email.subject, email.sender, body_text],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// All `pending_sync = 1` rows for an account (uses idx_emails_pending_sync).
+    /// These are optimistic sent copies awaiting reconciliation with the
+    /// provider's real Sent message.
+    pub fn get_pending_sent_emails(&self, account_id: &str) -> Result<Vec<Email>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM emails WHERE account_id = ?1 AND pending_sync = 1",
+            EMAIL_COLUMNS
+        ))?;
+        let emails = stmt.query_map(params![account_id], row_to_email)?;
+        let mut result = Vec::new();
+        for email in emails {
+            result.push(email?);
+        }
+        Ok(result)
+    }
+
+    /// Hard-delete reconciled optimistic sent rows. Only rows still flagged
+    /// `pending_sync = 1` are deleted — a stale or buggy reconciliation plan
+    /// can never remove a real synced email. FK cascades drop the body /
+    /// tags / attachment metas and the `emails_fts_delete` trigger removes
+    /// the FTS row.
+    pub fn delete_pending_sent_emails(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute("DELETE FROM emails WHERE id = ?1 AND pending_sync = 1", params![id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Move an email to another thread. Used when a provider's Sent copy
+    /// lands under a different thread_id than the local conversation (IMAP
+    /// References-hash divergence, Outlook new-mail conversationId) — the
+    /// incoming row adopts the local thread so the reply stays in the open
+    /// thread view.
+    pub fn update_email_thread_id(&self, email_id: &str, thread_id: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "UPDATE emails SET thread_id = ?1 WHERE id = ?2",
+            params![thread_id, email_id],
+        )?;
+        Ok(())
+    }
+
+    /// Un-flag pending optimistic rows older than `cutoff_ts` (seconds since
+    /// epoch) so a row the reconciler never matched (e.g. an Outlook
+    /// heuristic miss) eventually becomes a normal permanent email instead
+    /// of lingering in reconciliation limbo. Returns the number of rows
+    /// cleared.
+    pub fn clear_stale_pending_sent(&self, account_id: &str, cutoff_ts: i64) -> Result<u32> {
+        let conn = self.connection();
+        let cleared = conn.execute(
+            "UPDATE emails SET pending_sync = 0
+             WHERE account_id = ?1 AND pending_sync = 1 AND timestamp < ?2",
+            params![account_id, cutoff_ts],
+        )?;
+        Ok(cleared as u32)
+    }
+
     /// Get emails with keyset pagination.
     /// `cursor` is (timestamp, id) of the last email from the previous page.
     /// Pass None for the first page.
@@ -706,6 +827,147 @@ mod tests {
             1,
             "single-account count unchanged"
         );
+    }
+
+    fn local_sent_email(id: &str, account_id: &str, thread_id: &str, timestamp: i64) -> crate::models::Email {
+        crate::models::Email {
+            id: id.to_string(),
+            account_id: account_id.to_string(),
+            thread_id: thread_id.to_string(),
+            message_id: Some(format!("<{}@local>", id)),
+            subject: "Quarterly report".to_string(),
+            sender: "Me".to_string(),
+            sender_email: "me@example.com".to_string(),
+            recipients: vec!["them@example.com".to_string()],
+            cc: vec![],
+            body: "Here is the <b>report</b> you asked for".to_string(),
+            snippet: "Here is the report you asked for".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "sent".to_string(),
+        }
+    }
+
+    #[test]
+    fn insert_sent_email_local_writes_row_body_and_fts() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+
+        let email = local_sent_email("local-sent-1", "acc1", "t1", 100);
+        db.insert_sent_email_local(&email, false).unwrap();
+
+        let stored = db.get_email("local-sent-1").unwrap().expect("row must exist");
+        assert_eq!(stored.mailbox, "sent");
+        assert_eq!(stored.recipients, vec!["them@example.com"]);
+        assert_eq!(
+            db.get_email_body("local-sent-1").unwrap(),
+            "Here is the <b>report</b> you asked for"
+        );
+
+        // FTS row must exist (searchable body, HTML stripped).
+        let fts_count: i32 = db
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM emails_fts WHERE emails_fts MATCH 'report' AND email_id = 'local-sent-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 1, "optimistic sent row must be FTS-indexed");
+    }
+
+    #[test]
+    fn insert_sent_email_local_pending_flag_round_trips() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+
+        db.insert_sent_email_local(&local_sent_email("pending-1", "acc1", "t1", 100), true)
+            .unwrap();
+        db.insert_sent_email_local(&local_sent_email("permanent-1", "acc1", "t2", 200), false)
+            .unwrap();
+
+        let pending = db.get_pending_sent_emails("acc1").unwrap();
+        let ids: Vec<&str> = pending.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["pending-1"], "only pending_sync=1 rows are returned");
+    }
+
+    #[test]
+    fn delete_pending_sent_emails_removes_row_body_and_fts() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+
+        db.insert_sent_email_local(&local_sent_email("pending-1", "acc1", "t1", 100), true)
+            .unwrap();
+        db.delete_pending_sent_emails(&["pending-1".to_string()]).unwrap();
+
+        assert!(db.get_email("pending-1").unwrap().is_none(), "row must be hard-deleted");
+        assert_eq!(db.get_email_body("pending-1").unwrap(), "", "body row must cascade");
+        let fts_count: i32 = db
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM emails_fts WHERE email_id = 'pending-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 0, "FTS row must be removed by the delete trigger");
+    }
+
+    #[test]
+    fn delete_pending_sent_emails_never_deletes_non_pending_rows() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+
+        db.insert_sent_email_local(&local_sent_email("permanent-1", "acc1", "t1", 100), false)
+            .unwrap();
+        db.delete_pending_sent_emails(&["permanent-1".to_string()]).unwrap();
+
+        assert!(
+            db.get_email("permanent-1").unwrap().is_some(),
+            "non-pending rows are protected from reconciliation deletes"
+        );
+    }
+
+    #[test]
+    fn update_email_thread_id_moves_email_between_threads() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_email(&db, "e1", account, "thread-a", 100);
+
+        db.update_email_thread_id("e1", "thread-b").unwrap();
+
+        assert!(db.get_thread(account, "thread-a").unwrap().is_empty());
+        let thread_b: Vec<String> = db
+            .get_thread(account, "thread-b")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(thread_b, vec!["e1"]);
+    }
+
+    #[test]
+    fn clear_stale_pending_sent_unflags_only_rows_older_than_cutoff() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+
+        db.insert_sent_email_local(&local_sent_email("old-pending", "acc1", "t1", 100), true)
+            .unwrap();
+        db.insert_sent_email_local(&local_sent_email("fresh-pending", "acc1", "t2", 500), true)
+            .unwrap();
+
+        let cleared = db.clear_stale_pending_sent("acc1", 300).unwrap();
+        assert_eq!(cleared, 1, "only the row older than the cutoff is unflagged");
+
+        let pending: Vec<String> = db
+            .get_pending_sent_emails("acc1")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(pending, vec!["fresh-pending"]);
     }
 
     #[test]

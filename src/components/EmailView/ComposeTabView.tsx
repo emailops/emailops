@@ -12,6 +12,7 @@ import {
 import { prepareOutgoingHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import type { ComposeTab } from '@/stores/emailStore';
+import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
 
@@ -204,6 +205,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         await api.sendDraft(draftId, fromAccountId);
         addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
         setSent(true);
+        // The backend stored the optimistic Sent row before returning — nudge
+        // the list to refetch so the Sent view shows the message instantly.
+        useEmailStore.getState().bumpSentRefresh();
         setTimeout(onClose, 1200);
         return;
       }
@@ -219,6 +223,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       );
       addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
       setSent(true);
+      // The backend stored the optimistic Sent row before returning — nudge
+      // the list to refetch so the Sent view shows the message instantly.
+      useEmailStore.getState().bumpSentRefresh();
       // Drop the backing draft (local + provider copy) now that it's sent, so it
       // doesn't linger in Drafts or get re-pulled on the next sync.
       const draftId = await autosaverRef.current?.flush();

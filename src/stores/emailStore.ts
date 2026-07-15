@@ -49,6 +49,23 @@ export function appendUniqueEmails(existing: Email[], more: Email[]): Email[] {
   return additions.length === more.length ? [...existing, ...more] : [...existing, ...additions];
 }
 
+/**
+ * Pure helper: merge a freshly fetched thread into the one already on screen.
+ *
+ * The fetched rows are the source of truth for membership and ordering — a
+ * row that disappeared (e.g. an optimistic sent copy replaced by the
+ * provider's real one during reconciliation) is dropped. But `getThread`
+ * returns rows with empty bodies (bodies load lazily), so a refresh must not
+ * blank out bodies the user already has expanded: when the fetched body is
+ * empty and the existing row has one, the existing body is kept.
+ */
+export function mergeThreadRefresh(existing: Email[], fetched: Email[]): Email[] {
+  const bodies = new Map(existing.filter((e) => e.body).map((e) => [e.id, e.body]));
+  return [...fetched]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((e) => (e.body ? e : { ...e, body: bodies.get(e.id) ?? e.body }));
+}
+
 export interface EmailThreadTab {
   type: 'thread';
   id: string;
@@ -157,6 +174,21 @@ interface EmailStore {
     mailbox?: MailboxView,
   ) => Promise<void>;
   selectEmail: (email: Email | null, focusId?: string) => Promise<void>;
+  /**
+   * Silently refetch the thread currently on screen (selected pane and/or
+   * matching thread tab). Used right after a reply is sent — the backend has
+   * already inserted the optimistic Sent row when the send command returns —
+   * and when a sync batch lands, so a pending row is transparently swapped
+   * for the provider's reconciled copy.
+   */
+  refreshThread: (accountId: string, threadId: string) => Promise<void>;
+  /**
+   * Monotonic counter bumped after every successful send. App-level effects
+   * watch it to silently refresh the email list (Sent view shows the new
+   * mail instantly) without components holding App's fetch closure.
+   */
+  sentRefreshTick: number;
+  bumpSentRefresh: () => void;
   navigateToEmail: (accountId: string, emailId: string) => Promise<void>;
   markAsRead: (emailId: string) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
@@ -469,6 +501,35 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
+  sentRefreshTick: 0,
+  bumpSentRefresh: () => set((state) => ({ sentRefreshTick: state.sentRefreshTick + 1 })),
+
+  refreshThread: async (accountId, threadId) => {
+    try {
+      const fetched = await api.getThread(accountId, threadId);
+
+      set((state) => {
+        const next: Partial<EmailStore> = {
+          tabs: state.tabs.map((t) =>
+            t.type === 'thread' && t.threadId === threadId && t.accountId === accountId
+              ? { ...t, threadEmails: mergeThreadRefresh(t.threadEmails, fetched) }
+              : t,
+          ),
+        };
+        // Guard against the selection having moved while the fetch was in
+        // flight: only replace the selected pane when it still shows this
+        // thread.
+        if (state.selectedEmail?.threadId === threadId && state.selectedEmail?.accountId === accountId) {
+          next.threadEmails = mergeThreadRefresh(state.threadEmails, fetched);
+        }
+        return next;
+      });
+    } catch (error) {
+      // Non-fatal: the thread simply keeps its current contents.
+      console.error('Failed to refresh thread:', error);
+    }
+  },
+
   navigateToEmail: async (accountId, emailId) => {
     const fetchId = get().currentFetchId + 1;
     set({
@@ -618,5 +679,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       tabs: [],
       activeTabId: null,
       pendingChatDraft: null,
+      sentRefreshTick: 0,
     }),
 }));

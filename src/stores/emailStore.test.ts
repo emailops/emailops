@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Email } from '@/types';
-import { appendUniqueEmails, computeHasMore, useEmailStore } from './emailStore';
+import { appendUniqueEmails, computeHasMore, mergeThreadRefresh, useEmailStore } from './emailStore';
 
 const PAGE_SIZE = 50;
 
@@ -114,6 +114,52 @@ describe('appendUniqueEmails', () => {
     const more = [makeEmail('b'), makeEmail('c'), makeEmail('c')];
     const ids = appendUniqueEmails(existing, more).map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('mergeThreadRefresh', () => {
+  // A thread refresh (after a send, or after a sync batch replaces an
+  // optimistic sent row with the provider's real copy) must not blank out
+  // bodies the user already has expanded — getThread returns rows with empty
+  // bodies (they load lazily).
+  function threadEmail(id: string, timestamp: number, body = ''): Email {
+    return { id, timestamp, body } as Email;
+  }
+
+  it('returns the fetched rows sorted oldest-first', () => {
+    const fetched = [threadEmail('b', 200), threadEmail('a', 100)];
+    expect(mergeThreadRefresh([], fetched).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps an already-loaded body when the fetched row has an empty one', () => {
+    const existing = [threadEmail('a', 100, '<p>loaded</p>')];
+    const fetched = [threadEmail('a', 100), threadEmail('local-sent-1', 200, 'reply body')];
+    const merged = mergeThreadRefresh(existing, fetched);
+    expect(merged.find((e) => e.id === 'a')?.body).toBe('<p>loaded</p>');
+    expect(merged.find((e) => e.id === 'local-sent-1')?.body).toBe('reply body');
+  });
+
+  it('prefers a non-empty fetched body over the cached one', () => {
+    const existing = [threadEmail('a', 100, 'stale')];
+    const fetched = [threadEmail('a', 100, 'fresh')];
+    expect(mergeThreadRefresh(existing, fetched)[0].body).toBe('fresh');
+  });
+
+  it('drops rows that are no longer in the thread (reconciled synthetic row)', () => {
+    const existing = [threadEmail('a', 100), threadEmail('local-sent-1', 200, 'reply')];
+    const fetched = [threadEmail('a', 100), threadEmail('imap-real-7', 200, '')];
+    expect(mergeThreadRefresh(existing, fetched).map((e) => e.id)).toEqual(['a', 'imap-real-7']);
+  });
+});
+
+describe('sentRefreshTick', () => {
+  beforeEach(() => useEmailStore.getState().reset());
+
+  it('starts at 0 and increments on bumpSentRefresh', () => {
+    expect(useEmailStore.getState().sentRefreshTick).toBe(0);
+    useEmailStore.getState().bumpSentRefresh();
+    useEmailStore.getState().bumpSentRefresh();
+    expect(useEmailStore.getState().sentRefreshTick).toBe(2);
   });
 });
 

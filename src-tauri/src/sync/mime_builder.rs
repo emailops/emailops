@@ -120,12 +120,49 @@ pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage
     Ok(msg)
 }
 
+/// Normalize a subject for a reply: prefix `Re: ` unless one (in any case)
+/// is already present. Shared by the Gmail send path and the optimistic
+/// local Sent row so the stored subject matches what goes on the wire.
+pub fn reply_subject(subject: &str) -> String {
+    if subject.to_ascii_lowercase().starts_with("re:") {
+        subject.to_string()
+    } else {
+        format!("Re: {}", subject)
+    }
+}
+
+/// RFC 5322 `Message-ID` of a built message, angle brackets included
+/// (e.g. `<abc.123@host>`). lettre generates one at build time when the
+/// builder didn't set it explicitly, so this is `Some` for every message
+/// produced by [`build_lettre_message`]. The send paths store it on the
+/// optimistic local Sent row so the sync reconciler can exact-match the
+/// provider's Sent copy later.
+pub fn extract_message_id(msg: &LettreMessage) -> Option<String> {
+    msg.headers().get_raw("Message-ID").map(|raw| {
+        let trimmed = raw.trim();
+        // lettre stores the raw header value without the angle brackets;
+        // normalize to the bracketed wire form either way.
+        if trimmed.starts_with('<') {
+            trimmed.to_string()
+        } else {
+            format!("<{trimmed}>")
+        }
+    })
+}
+
 fn base_builder(params: &SendMimeParams<'_>) -> Result<lettre::message::MessageBuilder> {
     let from: Mailbox = params
         .from_email
         .parse()
         .map_err(|e| AppError::SyncError(format!("Invalid from address: {e}")))?;
-    let mut builder = LettreMessage::builder().from(from).subject(params.subject);
+    // Generate a client-side Message-ID (`<uuid@hostname>`) instead of leaving
+    // it to the mail relay. Gmail and IMAP Sent copies preserve it, which lets
+    // the sync reconciler exact-match the provider's Sent copy against the
+    // optimistic local row inserted at send time.
+    let mut builder = LettreMessage::builder()
+        .from(from)
+        .subject(params.subject)
+        .message_id(None);
     for to in params.to_emails {
         builder = builder.to(to
             .parse()
@@ -468,6 +505,32 @@ mod tests {
         assert!(
             mime.contains("Subject: Hello World"),
             "ASCII subject must pass through unencoded, got:\n{mime}"
+        );
+    }
+
+    #[test]
+    fn extract_message_id_returns_the_generated_header() {
+        let to = vec!["you@example.com".to_string()];
+        let msg = build_lettre_message(&SendMimeParams {
+            from_email: "me@example.com",
+            to_emails: &to,
+            cc_emails: &[],
+            subject: "hello",
+            in_reply_to: None,
+            body: &EmailBody::plain("hi"),
+            attachments: &[],
+        })
+        .unwrap();
+        let mid = extract_message_id(&msg).expect("lettre generates a Message-ID at build time");
+        assert!(
+            mid.starts_with('<') && mid.ends_with('>') && mid.contains('@'),
+            "expected an RFC 5322 msg-id, got: {mid}"
+        );
+        // The extracted value must match what actually goes on the wire.
+        let mime = String::from_utf8_lossy(&msg.formatted()).into_owned();
+        assert!(
+            mime.contains(&format!("Message-ID: {mid}")),
+            "extracted Message-ID must appear in the serialized MIME, got: {mid}\n{mime}"
         );
     }
 

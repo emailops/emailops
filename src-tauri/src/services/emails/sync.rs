@@ -185,6 +185,26 @@ pub async fn sync_account_with_provider(
     // Load previously failed emails so we can retry them at the end of this sync
     let failed_emails_to_retry = db.get_failed_emails(account_id).unwrap_or_default();
 
+    // Un-flag optimistic sent copies the reconciler never matched (e.g. an
+    // Outlook heuristic miss) so they become normal permanent rows instead
+    // of lingering in reconciliation limbo — after this they also enter the
+    // classification/embedding backlogs like any other email.
+    match db.clear_stale_pending_sent(account_id, crate::services::clock::now_secs() - 24 * 3600) {
+        Ok(0) => {}
+        Ok(n) => emit_account_log(
+            "debug",
+            "sync",
+            &account.email,
+            &format!("Kept {} locally stored sent email(s) the provider never returned", n),
+        ),
+        Err(e) => emit_account_log(
+            "error",
+            "sync",
+            &account.email,
+            &format!("Could not sweep stale pending sent copies: {e}"),
+        ),
+    }
+
     // Inbox watermark MUST be scoped to inbox-only rows. Using the global
     // MAX(timestamp) across all mailboxes lets a locally stored sent email
     // (e.g. a reply the user just composed) push the incremental cursor
@@ -515,6 +535,9 @@ pub async fn sync_account_with_provider(
         if !chunk_emails.is_empty() {
             let emails_only: Vec<Email> = chunk_emails.iter().map(|(e, _)| e.clone()).collect();
             db.insert_emails_batch(&emails_only)?;
+            // Replace optimistic locally-stored sent copies now that the
+            // provider's real rows are in (Gmail's main pass includes in:sent).
+            super::reconcile::reconcile_pending_sent(db, account_id, &account.email, &emails_only);
 
             let metas: Vec<_> = chunk_emails
                 .iter()
@@ -1221,6 +1244,9 @@ async fn ingest_mailbox_refs(
             );
             continue;
         }
+        // Replace optimistic locally-stored sent copies now that the
+        // provider's real Sent rows are in (Outlook/IMAP arrive via this pass).
+        super::reconcile::reconcile_pending_sent(db, account_id, account_email, &emails_only);
 
         let metas: Vec<_> = chunk_emails
             .iter()

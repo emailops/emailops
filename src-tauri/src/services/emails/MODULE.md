@@ -6,7 +6,9 @@ All business logic for email read/write operations that cross the provider bound
 
 - **sync.rs** — full-account sync (fetch from provider → upsert to DB → trigger embeddings/classification)
 - **drafts.rs** — AI draft generation (prompt assembly, Ollama call, DB write)
-- **send.rs** — send reply / new email through the provider's SMTP or API
+- **send.rs** — send reply / new email through the provider's SMTP or API; after the provider accepts, inserts an optimistic local Sent row (via `optimistic.rs`) so the message shows in the thread/Sent views immediately, and for Gmail spawns a background authoritative `get_message` refresh
+- **optimistic.rs** — pure planner for the optimistic Sent row: provider-keyed permanent row when the send returned a canonical id (Gmail), synthetic `local-sent-<uuid>` row with `pending_sync = 1` otherwise (Outlook/IMAP)
+- **reconcile.rs** — pure planner + thin executor that matches `pending_sync = 1` rows against provider-ingested Sent copies (exact RFC Message-ID for IMAP, conservative subject/recipients/time heuristic for Outlook), deletes the synthetic row, and moves the incoming row into the local thread when thread ids diverged. Hooked after both `insert_emails_batch` sites in sync.rs; a 24h stale sweep at sync start un-flags rows that never matched
 - **provider.rs** — thin wrappers that map provider-neutral `Email` to provider-specific send payloads
 - **redownload.rs** — re-fetch emails whose body is empty (e.g. after a failed initial sync)
 - **events.rs** — Tauri event emission helpers (`emit_sync_progress`, `emit_sync_complete`)

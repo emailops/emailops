@@ -237,6 +237,24 @@ pub fn email_footer_html(language: Language) -> String {
     )
 }
 
+/// Metadata a provider can report about a just-sent message, used to insert
+/// an optimistic local Sent copy without waiting for the next sync. All
+/// fields are best-effort: Gmail fills all three, IMAP only the RFC
+/// Message-ID, Outlook none (Graph's send endpoints return 202 with no body).
+#[derive(Debug, Clone, Default)]
+pub struct SentMessageMeta {
+    /// Provider-canonical message id (Gmail `id`). When present, the
+    /// optimistic row uses it as its primary key and needs no reconciliation
+    /// — the sync layer's existing-id dedup keeps it as the permanent row.
+    pub provider_message_id: Option<String>,
+    /// Provider thread id for the sent copy (Gmail `threadId`).
+    pub provider_thread_id: Option<String>,
+    /// RFC 5322 `Message-ID` header of the outgoing MIME (lettre-generated).
+    /// Lets the reconciler exact-match the provider's Sent copy when it is
+    /// ingested later (IMAP).
+    pub message_id_header: Option<String>,
+}
+
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
 ///
 /// Services depend on this trait, never on concrete providers.
@@ -268,6 +286,9 @@ pub trait EmailProvider: Send + Sync {
     /// rich editor, an HTML alternative plus any inline images referenced from
     /// the HTML via `cid:` URIs. `attachments` is for regular file attachments
     /// only.
+    ///
+    /// Returns best-effort [`SentMessageMeta`] about the sent copy so the
+    /// caller can store an optimistic local Sent row.
     async fn send_reply(
         &self,
         from_email: &str,
@@ -278,13 +299,16 @@ pub trait EmailProvider: Send + Sync {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()>;
+    ) -> Result<SentMessageMeta>;
 
     /// Send a new email (not a reply to any existing thread).
     ///
     /// `body` carries the plain-text part and, when the user composed in the
     /// rich editor, an HTML alternative. Inline images live inside `body`;
     /// `attachments` is for regular file attachments only.
+    ///
+    /// Returns best-effort [`SentMessageMeta`] about the sent copy so the
+    /// caller can store an optimistic local Sent row.
     async fn send_new_email(
         &self,
         from_email: &str,
@@ -293,7 +317,7 @@ pub trait EmailProvider: Send + Sync {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()>;
+    ) -> Result<SentMessageMeta>;
 
     /// Fetch raw attachment bytes by message ID and attachment ID.
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>>;
@@ -419,6 +443,10 @@ pub struct FakeEmailProvider {
     drafts: std::sync::RwLock<std::collections::HashMap<String, ProviderDraft>>,
     /// Monotonic counter for deterministic fake draft ids (no `Math.random`).
     draft_seq: std::sync::atomic::AtomicU64,
+    /// Metadata returned by `send_reply` / `send_new_email`. Defaults to an
+    /// empty meta (Outlook-shaped); tests set it to simulate Gmail (provider
+    /// ids) or IMAP (Message-ID header) providers.
+    send_meta: std::sync::RwLock<SentMessageMeta>,
 }
 
 #[derive(Debug, Clone)]
@@ -453,7 +481,15 @@ impl FakeEmailProvider {
             attachment_bytes: std::sync::RwLock::new(std::collections::HashMap::new()),
             drafts: std::sync::RwLock::new(std::collections::HashMap::new()),
             draft_seq: std::sync::atomic::AtomicU64::new(0),
+            send_meta: std::sync::RwLock::new(SentMessageMeta::default()),
         }
+    }
+
+    /// Configure the [`SentMessageMeta`] returned by subsequent send calls,
+    /// simulating a Gmail-shaped (provider ids) or IMAP-shaped (Message-ID
+    /// header) provider.
+    pub fn set_send_meta(&self, meta: SentMessageMeta) {
+        *self.send_meta.write().unwrap_or_else(PoisonError::into_inner) = meta;
     }
 
     /// Seed a draft as if it already exists in the provider's Drafts folder.
@@ -594,7 +630,7 @@ impl EmailProvider for FakeEmailProvider {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<SentMessageMeta> {
         self.sent
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -608,7 +644,7 @@ impl EmailProvider for FakeEmailProvider {
                 body: body.clone(),
                 attachments: attachments.to_vec(),
             });
-        Ok(())
+        Ok(self.send_meta.read().unwrap_or_else(PoisonError::into_inner).clone())
     }
 
     async fn send_new_email(
@@ -619,7 +655,7 @@ impl EmailProvider for FakeEmailProvider {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<SentMessageMeta> {
         self.sent
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -633,7 +669,7 @@ impl EmailProvider for FakeEmailProvider {
                 body: body.clone(),
                 attachments: attachments.to_vec(),
             });
-        Ok(())
+        Ok(self.send_meta.read().unwrap_or_else(PoisonError::into_inner).clone())
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -793,6 +829,48 @@ mod tests {
         assert_eq!(sent[0].body.inline_images.len(), 1);
         assert_eq!(sent[0].body.inline_images[0].content_id.as_deref(), Some("img1"));
         assert!(sent[0].body.inline_images[0].is_inline);
+    }
+
+    #[tokio::test]
+    async fn fake_provider_send_returns_default_meta_unless_configured() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        let meta = p
+            .send_new_email(
+                "me@example.com",
+                &["x@y.com".to_string()],
+                &[],
+                "subj",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(meta.provider_message_id.is_none());
+        assert!(meta.provider_thread_id.is_none());
+        assert!(meta.message_id_header.is_none());
+
+        // A Gmail-shaped fake reports provider ids for the sent copy.
+        p.set_send_meta(SentMessageMeta {
+            provider_message_id: Some("gm-1".into()),
+            provider_thread_id: Some("gt-1".into()),
+            message_id_header: Some("<mid-1@local>".into()),
+        });
+        let meta = p
+            .send_reply(
+                "me@example.com",
+                &["x@y.com".to_string()],
+                &[],
+                "thread-1",
+                Some("<orig@remote>"),
+                "Re: subj",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(meta.provider_message_id.as_deref(), Some("gm-1"));
+        assert_eq!(meta.provider_thread_id.as_deref(), Some("gt-1"));
+        assert_eq!(meta.message_id_header.as_deref(), Some("<mid-1@local>"));
     }
 
     #[test]

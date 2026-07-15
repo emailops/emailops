@@ -4,7 +4,7 @@
 
 Provider-specific email synchronisation adapters plus the shared `EmailProvider` trait.
 
-- **provider.rs** — `EmailProvider` trait + `FakeEmailProvider` test double. The trait defines the minimal surface all sync paths share: `list_messages`, `get_message`, `send_reply`, `send_new_email`, `download_attachment`.
+- **provider.rs** — `EmailProvider` trait + `FakeEmailProvider` test double. The trait defines the minimal surface all sync paths share: `list_messages`, `get_message`, `send_reply`, `send_new_email`, `download_attachment`. Sends return a best-effort `SentMessageMeta` (Gmail: provider `id`/`threadId` from the send response; IMAP: the lettre-generated RFC Message-ID; Outlook: empty — Graph returns 202 with no body) so `services/emails` can insert an optimistic local Sent row. The fake's `set_send_meta` simulates each shape.
 - **gmail.rs** — Gmail REST API adapter (OAuth 2, incremental sync via `after:` filter, attachment handling, category mapping)
 - **outlook.rs** — Microsoft Graph API adapter (OAuth 2, delta sync, category mapping)
 - **imap.rs** — IMAP/SMTP adapter (native-TLS, IDLE for push notifications, SMTP for send)

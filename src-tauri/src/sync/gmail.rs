@@ -392,9 +392,9 @@ impl GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         let normalized_subject = reply_subject(subject);
-        let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
+        let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             to_emails,
             cc_emails,
@@ -403,7 +403,8 @@ impl GmailClient {
             body,
             attachments,
         })?;
-        let raw = base64_url_encode(mime.as_bytes());
+        let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
+        let raw = base64_url_encode(&message.formatted());
         let payload = serde_json::json!({
             "threadId": thread_id,
             "raw": raw,
@@ -416,7 +417,7 @@ impl GmailClient {
             return Err(AppError::SyncError(format!("Failed to send reply: {}", error_text)));
         }
 
-        Ok(())
+        Ok(sent_meta_from_response(response.json().await.ok(), message_id_header))
     }
 
     pub async fn send_new_email(
@@ -427,8 +428,8 @@ impl GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
-        let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
+        let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             to_emails,
             cc_emails,
@@ -437,7 +438,8 @@ impl GmailClient {
             body,
             attachments,
         })?;
-        let raw = base64_url_encode(mime.as_bytes());
+        let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
+        let raw = base64_url_encode(&message.formatted());
         let payload = serde_json::json!({ "raw": raw });
         let url = format!("{}/users/me/messages/send", self.base_url);
 
@@ -447,7 +449,7 @@ impl GmailClient {
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
         }
 
-        Ok(())
+        Ok(sent_meta_from_response(response.json().await.ok(), message_id_header))
     }
 
     /// Build the base64url-encoded MIME + `{message:{raw}}` payload shared by
@@ -1318,7 +1320,7 @@ impl EmailProvider for GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<provider::SentMessageMeta> {
         self.send_reply(
             from_email,
             to_emails,
@@ -1340,7 +1342,7 @@ impl EmailProvider for GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<provider::SentMessageMeta> {
         self.send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
             .await
     }
@@ -1690,13 +1692,30 @@ fn base64_url_encode(data: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(data)
 }
 
-fn reply_subject(subject: &str) -> String {
-    if subject.to_ascii_lowercase().starts_with("re:") {
-        subject.to_string()
-    } else {
-        format!("Re: {}", subject)
+/// Body of a successful `POST /users/me/messages/send` — Gmail returns the
+/// canonical `id` / `threadId` of the freshly created Sent message.
+#[derive(serde::Deserialize)]
+struct GmailSendResponse {
+    id: String,
+    #[serde(rename = "threadId")]
+    thread_id: String,
+}
+
+/// Assemble the [`SentMessageMeta`] for a successful send. The response body
+/// is best-effort — a malformed/absent body degrades to a meta with only the
+/// Message-ID header, never an error (the mail IS sent at this point).
+fn sent_meta_from_response(
+    response: Option<GmailSendResponse>,
+    message_id_header: Option<String>,
+) -> crate::sync::provider::SentMessageMeta {
+    crate::sync::provider::SentMessageMeta {
+        provider_message_id: response.as_ref().map(|r| r.id.clone()),
+        provider_thread_id: response.as_ref().map(|r| r.thread_id.clone()),
+        message_id_header,
     }
 }
+
+use crate::sync::mime_builder::reply_subject;
 
 fn html_escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
@@ -1933,6 +1952,24 @@ fn is_safe_remote_url(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gmail_send_response_yields_full_sent_meta() {
+        let response: GmailSendResponse =
+            serde_json::from_str(r#"{"id":"18f2a","threadId":"18e11","labelIds":["SENT"]}"#).unwrap();
+        let meta = sent_meta_from_response(Some(response), Some("<mid@local>".into()));
+        assert_eq!(meta.provider_message_id.as_deref(), Some("18f2a"));
+        assert_eq!(meta.provider_thread_id.as_deref(), Some("18e11"));
+        assert_eq!(meta.message_id_header.as_deref(), Some("<mid@local>"));
+    }
+
+    #[test]
+    fn missing_send_response_body_degrades_to_header_only_meta() {
+        let meta = sent_meta_from_response(None, Some("<mid@local>".into()));
+        assert!(meta.provider_message_id.is_none());
+        assert!(meta.provider_thread_id.is_none());
+        assert_eq!(meta.message_id_header.as_deref(), Some("<mid@local>"));
+    }
 
     #[test]
     fn new_client_uses_production_gmail_base_by_default() {

@@ -780,7 +780,7 @@ impl EmailProvider for ImapClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             to_emails,
@@ -790,10 +790,16 @@ impl EmailProvider for ImapClient {
             body,
             attachments,
         })?;
+        // The appended Sent copy carries this same Message-ID, so the sync
+        // reconciler can exact-match it against the optimistic local row.
+        let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
         let raw = message.formatted();
         self.smtp_send(message).await?;
         self.save_sent_copy(raw).await;
-        Ok(())
+        Ok(crate::sync::provider::SentMessageMeta {
+            message_id_header,
+            ..Default::default()
+        })
     }
 
     async fn send_new_email(
@@ -804,7 +810,7 @@ impl EmailProvider for ImapClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
-    ) -> Result<()> {
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             to_emails,
@@ -814,10 +820,14 @@ impl EmailProvider for ImapClient {
             body,
             attachments,
         })?;
+        let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
         let raw = message.formatted();
         self.smtp_send(message).await?;
         self.save_sent_copy(raw).await;
-        Ok(())
+        Ok(crate::sync::provider::SentMessageMeta {
+            message_id_header,
+            ..Default::default()
+        })
     }
 
     async fn fetch_attachment_bytes(&self, _message_id: &str, _attachment_id: &str) -> Result<Vec<u8>> {

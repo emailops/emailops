@@ -1300,6 +1300,150 @@ async fn send_reply_with_provider_forwards_attachments() {
 }
 
 #[tokio::test]
+async fn send_reply_with_provider_inserts_optimistic_row_in_thread_and_sent_view() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-opt", "me@example.com")).unwrap();
+    let email = make_email_with("orig-opt", "acc-opt", 1000, "sender@other.com", "inbox");
+    db.insert_email(&email).unwrap();
+
+    // Default fake meta = Outlook-shaped (no provider id) → synthetic pending row.
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "orig-opt",
+        &emailops_lib::sync::provider::EmailBody::plain("On my way"),
+        None,
+        None,
+        None,
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_reply_with_provider");
+
+    // The reply appears in the local thread immediately.
+    let thread = db.get_thread("acc-opt", "thread-orig-opt").unwrap();
+    assert_eq!(thread.len(), 2, "thread must contain the original and the sent reply");
+    let reply = &thread[1];
+    assert!(reply.id.starts_with("local-sent-"), "synthetic id, got {}", reply.id);
+    assert_eq!(reply.sender_email, "me@example.com");
+    assert_eq!(reply.mailbox, "sent");
+    assert_eq!(reply.subject, "Re: Subject orig-opt");
+    assert!(reply.is_read);
+    assert!(
+        db.get_email_body(&reply.id).unwrap().starts_with("On my way"),
+        "body stored for the optimistic row"
+    );
+
+    // ...and in the Sent view.
+    let sent_view = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-opt"),
+            50,
+            0,
+            None,
+            Some("sent"),
+            None,
+        )
+        .unwrap();
+    assert!(
+        sent_view.iter().any(|e| e.id == reply.id),
+        "optimistic row must show in the Sent view"
+    );
+
+    // ...and is flagged for reconciliation.
+    let pending = db.get_pending_sent_emails("acc-opt").unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, reply.id);
+}
+
+#[tokio::test]
+async fn send_new_email_with_provider_inserts_optimistic_row() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-optn", "me@example.com")).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_new_email_with_provider(
+        &db,
+        "acc-optn",
+        vec!["them@dest.com".to_string()],
+        vec![],
+        "Project kickoff",
+        &emailops_lib::sync::provider::EmailBody::plain("Let's begin"),
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_new_email_with_provider");
+
+    let pending = db.get_pending_sent_emails("acc-optn").unwrap();
+    assert_eq!(pending.len(), 1);
+    let row = &pending[0];
+    assert_eq!(row.subject, "Project kickoff");
+    assert_eq!(row.recipients, vec!["them@dest.com"]);
+    assert_eq!(row.thread_id, row.id, "new mail threads under its own id");
+}
+
+#[tokio::test]
+async fn send_reply_with_gmail_meta_uses_provider_ids_not_pending() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-optg", "me@example.com")).unwrap();
+    let email = make_email_with("orig-optg", "acc-optg", 1000, "sender@other.com", "inbox");
+    db.insert_email(&email).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.set_send_meta(emailops_lib::sync::provider::SentMessageMeta {
+        provider_message_id: Some("gm-real-1".to_string()),
+        provider_thread_id: Some("thread-orig-optg".to_string()),
+        message_id_header: Some("<mid-1@local>".to_string()),
+    });
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "orig-optg",
+        &emailops_lib::sync::provider::EmailBody::plain("ack"),
+        None,
+        None,
+        None,
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_reply_with_provider");
+
+    let stored = db.get_email("gm-real-1").unwrap().expect("row keyed by provider id");
+    assert_eq!(stored.thread_id, "thread-orig-optg");
+    assert_eq!(stored.message_id.as_deref(), Some("<mid-1@local>"));
+    assert!(
+        db.get_pending_sent_emails("acc-optg").unwrap().is_empty(),
+        "provider-keyed rows are permanent, not pending"
+    );
+}
+
+#[tokio::test]
+async fn send_failure_does_not_insert_optimistic_row() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-optf", "me@example.com")).unwrap();
+    let email = make_email_with("orig-optf", "acc-optf", 1000, "sender@other.com", "inbox");
+    db.insert_email(&email).unwrap();
+
+    let result = emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "orig-optf",
+        &emailops_lib::sync::provider::EmailBody::plain("won't go"),
+        None,
+        None,
+        None,
+        vec![],
+        &FailingEmailProvider,
+    )
+    .await;
+    assert!(result.is_err(), "provider failure must propagate");
+
+    let thread = db.get_thread("acc-optf", "thread-orig-optf").unwrap();
+    assert_eq!(thread.len(), 1, "no optimistic row on send failure");
+}
+
+#[tokio::test]
 async fn send_reply_with_provider_fails_when_email_missing() {
     let db = test_db();
     db.insert_account(&make_account("acc-s3", "s3@example.com")).unwrap();
@@ -1456,6 +1600,193 @@ async fn sync_with_provider_stores_new_emails() {
         )
         .unwrap();
     assert_eq!(emails.len(), 2, "both new emails must be stored");
+}
+
+// ── P0: reconciliation of optimistic sent rows during sync ─────────────────
+
+#[tokio::test]
+async fn sync_reconciles_pending_imap_row_by_message_id() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rec1", "me@example.com")).unwrap();
+    let account = db.get_account("acc-rec1").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    // Optimistic pending row from an IMAP send (carries our Message-ID).
+    let mut pending = make_email_with("local-sent-abc", "acc-rec1", now, "me@example.com", "sent");
+    pending.thread_id = "t-conversation".to_string();
+    pending.message_id = Some("<m1@local>".to_string());
+    pending.subject = "Re: Plan".to_string();
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    // The provider's Sent folder later serves the real copy — same
+    // Message-ID, but a divergent thread id (IMAP References-hash).
+    let mut sent_copy = make_email_with("imap-sent-7", "acc-rec1", now + 5, "me@example.com", "sent");
+    sent_copy.thread_id = "t-divergent-hash".to_string();
+    sent_copy.message_id = Some("<m1@local>".to_string());
+    sent_copy.subject = "Re: Plan".to_string();
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        db.get_pending_sent_emails("acc-rec1").unwrap().is_empty(),
+        "pending row must be reconciled away"
+    );
+    assert!(
+        db.get_email("local-sent-abc").unwrap().is_none(),
+        "synthetic row must be deleted"
+    );
+    let real = db.get_email("imap-sent-7").unwrap().expect("provider row stored");
+    assert_eq!(
+        real.thread_id, "t-conversation",
+        "incoming row must adopt the local conversation's thread"
+    );
+    let thread = db.get_thread("acc-rec1", "t-conversation").unwrap();
+    assert_eq!(thread.len(), 1, "exactly one copy of the reply in the thread");
+}
+
+#[tokio::test]
+async fn sync_reconciles_outlook_row_by_heuristic() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rec2", "me@example.com")).unwrap();
+    let account = db.get_account("acc-rec2").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    // Outlook pending row: Graph reports nothing at send time → no Message-ID.
+    let mut pending = make_email_with("local-sent-out", "acc-rec2", now, "me@example.com", "sent");
+    pending.thread_id = "conv-1".to_string();
+    pending.message_id = None;
+    pending.subject = "Re: Budget".to_string();
+    pending.recipients = vec!["ada@x.com".to_string()];
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    // Graph's Sent Items copy: server-assigned ids, display-form recipient.
+    let mut sent_copy = make_email_with("graph-77", "acc-rec2", now + 30, "me@example.com", "sent");
+    sent_copy.thread_id = "conv-1".to_string();
+    sent_copy.message_id = Some("<server-generated@outlook.com>".to_string());
+    sent_copy.subject = "RE: Budget".to_string();
+    sent_copy.recipients = vec!["Ada L <Ada@X.com>".to_string()];
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        db.get_email("local-sent-out").unwrap().is_none(),
+        "heuristic match must remove the synthetic row"
+    );
+    assert!(db.get_email("graph-77").unwrap().is_some());
+    let thread = db.get_thread("acc-rec2", "conv-1").unwrap();
+    assert_eq!(thread.len(), 1, "no duplicate in the conversation");
+}
+
+#[tokio::test]
+async fn sync_does_not_duplicate_gmail_optimistic_row() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rec3", "me@example.com")).unwrap();
+    let account = db.get_account("acc-rec3").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    // Gmail optimistic row is keyed by the REAL provider id (not pending).
+    let mut optimistic = make_email_with("gm-real-9", "acc-rec3", now, "me@example.com", "inbox");
+    optimistic.body = "optimistic body".to_string();
+    db.insert_sent_email_local(&optimistic, false).unwrap();
+
+    // The main pass later lists the same id (Gmail's in:sent shows the copy).
+    let mut provider_copy = make_email_with("gm-real-9", "acc-rec3", now, "me@example.com", "inbox");
+    provider_copy.body = "provider body".to_string();
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(provider_copy, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let all = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-rec3"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(all.len(), 1, "existing-id dedup keeps a single row");
+    assert_eq!(
+        db.get_email_body("gm-real-9").unwrap(),
+        "optimistic body",
+        "already-stored row is not re-downloaded"
+    );
+}
+
+#[tokio::test]
+async fn sync_unflags_stale_pending_rows_instead_of_leaving_them_in_limbo() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rec4", "me@example.com")).unwrap();
+    let account = db.get_account("acc-rec4").unwrap().unwrap();
+
+    // A pending row from >24h ago that reconciliation never matched.
+    let stale = make_email_with("local-sent-old", "acc-rec4", 1000, "me@example.com", "sent");
+    db.insert_sent_email_local(&stale, true).unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(FakeEmailProvider::new("me@example.com", "Me")),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        db.get_pending_sent_emails("acc-rec4").unwrap().is_empty(),
+        "stale pending flag must be cleared"
+    );
+    assert!(
+        db.get_email("local-sent-old").unwrap().is_some(),
+        "the email itself is kept — it was genuinely sent"
+    );
 }
 
 #[tokio::test]
@@ -1732,7 +2063,7 @@ impl EmailProvider for FailingEmailProvider {
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
-    ) -> emailops_lib::models::error::Result<()> {
+    ) -> emailops_lib::models::error::Result<emailops_lib::sync::provider::SentMessageMeta> {
         Err(AppError::SyncError("Deliberate provider send failure".to_string()))
     }
 
@@ -1744,7 +2075,7 @@ impl EmailProvider for FailingEmailProvider {
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
-    ) -> emailops_lib::models::error::Result<()> {
+    ) -> emailops_lib::models::error::Result<emailops_lib::sync::provider::SentMessageMeta> {
         Err(AppError::SyncError("Deliberate provider send failure".to_string()))
     }
 
@@ -2090,7 +2421,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
-    ) -> emailops_lib::models::error::Result<()> {
+    ) -> emailops_lib::models::error::Result<emailops_lib::sync::provider::SentMessageMeta> {
         unimplemented!()
     }
 
@@ -2102,7 +2433,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
-    ) -> emailops_lib::models::error::Result<()> {
+    ) -> emailops_lib::models::error::Result<emailops_lib::sync::provider::SentMessageMeta> {
         unimplemented!()
     }
 

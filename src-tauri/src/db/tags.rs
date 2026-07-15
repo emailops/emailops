@@ -182,12 +182,16 @@ impl Database {
             String::new()
         };
         let sql = format!(
+            // pending_sync = 0: optimistic sent copies awaiting reconciliation
+            // are deleted when the provider's real copy arrives — classifying
+            // them is wasted compute on a doomed row.
             "SELECT e.id FROM emails e
              WHERE e.account_id = ?1
                AND NOT EXISTS (
                    SELECT 1 FROM email_tags t WHERE t.email_id = e.id AND t.tag_type = 'intent'
                )
-               AND LENGTH(e.snippet) > 20{cat_filter}{ts_filter}
+               AND LENGTH(e.snippet) > 20
+               AND e.pending_sync = 0{cat_filter}{ts_filter}
              ORDER BY e.timestamp DESC
              LIMIT ?2"
         );
@@ -210,7 +214,8 @@ impl Database {
                AND NOT EXISTS (
                    SELECT 1 FROM email_tags t WHERE t.email_id = e.id AND t.tag_type = 'intent'
                )
-               AND LENGTH(e.snippet) > 20",
+               AND LENGTH(e.snippet) > 20
+               AND e.pending_sync = 0",
             params![account_id],
             |row| row.get(0),
         )
@@ -427,6 +432,39 @@ mod tests {
 
     fn stat_for(stats: &[(String, i32)], value: &str) -> Option<i32> {
         stats.iter().find(|(v, _)| v == value).map(|(_, c)| *c)
+    }
+
+    fn insert_classifiable_email(db: &Database, id: &str, account_id: &str, pending_sync: i32) {
+        ensure_account(db, account_id);
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, pending_sync, created_at)
+                     VALUES (?1,?2,?1,'subj','sender','s@s.com','s.com','[]','[]',
+                             'a snippet definitely longer than twenty characters',100,0,'primary',?3,0)",
+                params![id, account_id, pending_sync],
+            )
+            .unwrap();
+    }
+
+    // Optimistic sent copies awaiting reconciliation must not enter the
+    // classification backlog — they are deleted when the provider's real
+    // copy arrives, so classifying them is wasted compute on a doomed row.
+    #[test]
+    fn unclassified_backlog_excludes_pending_sent_rows() {
+        let db = Database::new_for_testing().unwrap();
+        insert_classifiable_email(&db, "e-normal", "acc1", 0);
+        insert_classifiable_email(&db, "e-pending", "acc1", 1);
+
+        let ids = db.get_unclassified_email_ids("acc1", 10, &[], None).unwrap();
+        assert!(ids.contains(&"e-normal".to_string()), "got {:?}", ids);
+        assert!(
+            !ids.contains(&"e-pending".to_string()),
+            "pending rows must be excluded, got {:?}",
+            ids
+        );
+        assert_eq!(db.count_unclassified_emails("acc1").unwrap(), 1);
     }
 
     // Regression: sidebar count must match the list query semantics.

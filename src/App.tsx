@@ -794,19 +794,50 @@ function AppInner() {
       return;
     }
 
+    // Refresh the open thread (selected pane / thread tab) for the synced
+    // account, so a just-sent optimistic row is transparently swapped for the
+    // provider's reconciled copy. Read the store fresh — capturing thread
+    // state in this closure would go stale (see src/CLAUDE.md).
+    const refreshOpenThread = () => {
+      const emailStore = useEmailStore.getState();
+      const selected = emailStore.selectedEmail;
+      if (selected && selected.accountId === syncProgress.accountId) {
+        void emailStore.refreshThread(selected.accountId, selected.threadId);
+      }
+      const activeTab = emailStore.tabs.find((t) => t.id === emailStore.activeTabId);
+      if (
+        activeTab?.type === 'thread' &&
+        activeTab.accountId === syncProgress.accountId &&
+        activeTab.threadId !== selected?.threadId
+      ) {
+        void emailStore.refreshThread(activeTab.accountId, activeTab.threadId);
+      }
+    };
+
     if (status === 'batch') {
       // New emails were just written to DB — refresh the list in-place so they
       // appear while the rest of the sync is still running.
       silentRefetchEmailsRef.current();
+      refreshOpenThread();
     }
 
     if (status === 'complete' && previousStatus !== 'complete') {
       // Use silent refresh so the list updates in-place without a loading spinner
       // or scroll-position reset — the sync should be transparent to the user.
       silentRefetchEmailsRef.current();
+      refreshOpenThread();
       forceRefreshFilters();
     }
   }, [activeAccountId, isUnified, forceRefreshFilters, syncProgress]);
+
+  // After every successful send the backend has already stored the optimistic
+  // Sent row — refetch the list so the message appears instantly (most visibly
+  // in the Sent view). `sentRefreshTick` is bumped by the reply/compose flows.
+  const sentRefreshTick = useEmailStore((s) => s.sentRefreshTick);
+  useEffect(() => {
+    if (sentRefreshTick === 0) return;
+    silentRefetchEmailsRef.current();
+  }, [sentRefreshTick]);
 
   // Refresh the merged list when the enabled-account set changes while in
   // unified mode (toggling an account on/off must add/remove its emails).

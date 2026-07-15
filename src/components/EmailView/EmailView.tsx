@@ -90,6 +90,8 @@ export function EmailView({
   // as the AI Draft button) instead of a standalone compose tab.
   const pendingChatDraft = useEmailStore((s) => s.pendingChatDraft);
   const consumePendingChatDraft = useEmailStore((s) => s.consumePendingChatDraft);
+  const refreshThread = useEmailStore((s) => s.refreshThread);
+  const bumpSentRefresh = useEmailStore((s) => s.bumpSentRefresh);
   const [isReplyOpen, setIsReplyOpen] = useState(false);
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all'>('reply');
   const [replyBody, setReplyBody] = useState('');
@@ -172,8 +174,14 @@ export function EmailView({
     return match?.id ?? null;
   }, [threadEmails, searchQuery]);
 
+  // Reset compose state when the user moves to a different thread / a new
+  // latest message. Keyed on the latest email's ID, NOT its object identity:
+  // refreshThread (after a send, and on sync batch/complete events) replaces
+  // threadEmails with fresh object identities even when the content is
+  // unchanged, and an identity-keyed reset closed the reply box the moment
+  // it opened ("clicking Reply All does nothing").
   useEffect(() => {
-    if (!latestEmailForEffect) {
+    if (!latestEmailId) {
       setIsReplyOpen(false);
       setReplyBody('');
       setDraftSources([]);
@@ -188,7 +196,7 @@ export function EmailView({
     setDraftSources([]);
     setIsGeneratingDraft(false);
     draftRequestIdRef.current = null;
-  }, [latestEmailForEffect]);
+  }, [latestEmailId]);
 
   // Chat-generated reply draft: once the matching thread is loaded, open
   // the inline ReplyCompose with the AI body prepended on top of the
@@ -439,7 +447,11 @@ export function EmailView({
                 inlineImages,
                 attachments,
               );
-              await api.syncAccount(latestEmail.accountId);
+              // The backend inserted the optimistic Sent row before the send
+              // command returned (and already enqueued the follow-up account
+              // sync) — refetching the thread shows the reply instantly.
+              await refreshThread(latestEmail.accountId, latestEmail.threadId);
+              bumpSentRefresh();
               addLog('success', 'sync', `Reply sent to ${toEmails.join(', ')}`);
               setIsReplyOpen(false);
             }}

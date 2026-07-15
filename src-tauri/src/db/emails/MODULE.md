@@ -4,7 +4,7 @@
 
 All SQL queries that read or write the `emails`, `email_bodies`, `email_tags`, and `email_attachment_meta` tables.
 
-- **crud.rs** — INSERT / UPDATE / DELETE: `upsert_email`, `mark_as_read`, `delete_email`, `mark_body_downloaded`, etc.
+- **crud.rs** — INSERT / UPDATE / DELETE: `upsert_email`, `mark_as_read`, `delete_email`, `mark_body_downloaded`, etc. Also the optimistic-sent surface (V010 `emails.pending_sync`): `insert_sent_email_local` (single-row insert that mirrors batch.rs — emails row + body + manual FTS — and sets `pending_sync`), `get_pending_sent_emails`, `delete_pending_sent_emails` (hard delete, guarded to `pending_sync = 1` rows), `update_email_thread_id`, `clear_stale_pending_sent`.
 - **batch.rs** — batch upsert for sync loops: `upsert_emails_batch(conn, emails)` — always runs in one transaction.
 - **search.rs** — FTS5 and structured filter queries: `search_emails`, `get_filtered_emails`, `get_emails_with_cursor`
 - **autocomplete.rs** — sender/recipient autocomplete (`autocomplete_senders`, `autocomplete_recipients`)
