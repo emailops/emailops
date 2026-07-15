@@ -5,6 +5,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
+import { errorText } from '@/lib/errors';
 import type { Account, Email } from '@/types';
 
 interface ReplyComposeProps {
@@ -82,6 +83,7 @@ export function ReplyCompose({
   // we wrap them in <p>...</p> so Tiptap renders them as one paragraph each.
   const [bodyHtml, setBodyHtml] = useState<string>(() => plainTextToHtml(initialBody));
   const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Sync body when the parent updates initialBody (e.g. AI draft generation
   // replaces the "Generating draft..." placeholder with the actual draft).
@@ -226,6 +228,7 @@ export function ReplyCompose({
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     if (toRecipients.length === 0 || !plain) return;
+    setSendError(null);
     setIsSending(true);
     try {
       await onSend({
@@ -237,6 +240,10 @@ export function ReplyCompose({
         inlineImages: prepared.inlineImages,
         attachments,
       });
+    } catch (err) {
+      // A failed send must never be silent: keep the compose open with the
+      // user's text and show what went wrong (auth expired, SMTP down, ...).
+      setSendError(errorText(err));
     } finally {
       setIsSending(false);
     }
@@ -462,6 +469,12 @@ export function ReplyCompose({
           {isSending ? 'Sending...' : mode === 'reply-all' ? 'Reply All' : 'Send Reply'}
         </button>
       </div>
+
+      {sendError && (
+        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          {sendError}
+        </div>
+      )}
 
       {/* RAG sources — past threads the AI used as precedent. Collapsed by
           default so they don't push the action buttons off-screen; the user

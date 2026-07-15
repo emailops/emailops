@@ -286,6 +286,16 @@ export function AccountSettingsDialog({
           <p className="mt-0.5 text-sm text-gray-500">{account.email}</p>
         </div>
 
+        {/* Save errors render OUTSIDE the scroll container, pinned under the
+            header — at the old position (bottom of the scrollable body) a
+            failed Save & Sync looked like a silent no-op unless the user
+            happened to scroll all the way down. */}
+        {error && (
+          <div className="mx-6 mt-4 flex-shrink-0 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300">
+            {error}
+          </div>
+        )}
+
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
           {isLoading ? (
             <div className="text-sm text-gray-500">{t('modal:accountSettings.loading')}</div>
@@ -628,12 +638,6 @@ export function AccountSettingsDialog({
                   </div>
                 )}
               </section>
-
-              {error && (
-                <div className="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300">
-                  {error}
-                </div>
-              )}
             </>
           )}
         </div>
