@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
 import * as api from '@/lib/api';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
+import { computeDropdownTop } from '@/lib/dropdownPosition';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useTagStore } from '@/stores/tagStore';
@@ -103,6 +104,25 @@ export function EmailRow({
     return () => window.clearTimeout(timeoutId);
   }, [copyMessage]);
 
+  // The menu first renders below the button (estimate set on click), then —
+  // before paint — is measured and repositioned so it never clips past the
+  // bottom of the window: flipped above the button, or clamped as a last
+  // resort. Height isn't known until the portal is in the DOM because most
+  // menu items are conditional on the handler props.
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const btnRect = menuBtnRef.current?.getBoundingClientRect();
+    const menuHeight = menuDropdownRef.current?.getBoundingClientRect().height;
+    if (!btnRect || !menuHeight) return;
+    const top = computeDropdownTop({
+      anchorTop: btnRect.top,
+      anchorBottom: btnRect.bottom,
+      menuHeight,
+      viewportHeight: window.innerHeight,
+    });
+    setMenuPos((pos) => (pos && pos.top !== top ? { ...pos, top } : pos));
+  }, [menuOpen]);
+
   const kebabMenu = (
     <div ref={menuRef} className="relative flex-shrink-0">
       <button
@@ -127,7 +147,7 @@ export function EmailRow({
         createPortal(
           <div
             ref={menuDropdownRef}
-            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100]"
+            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
             {onChatAboutThread && (
