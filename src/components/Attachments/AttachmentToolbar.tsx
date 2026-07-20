@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { useToastStore } from '@/stores/toastStore';
 
 interface AttachmentToolbarProps {
   accountId: string | null;
@@ -33,6 +34,7 @@ export function AttachmentToolbar({
 }: AttachmentToolbarProps) {
   const { t } = useTranslation(['common', 'attachments']);
   const addLog = useLogStore((s) => s.addLog);
+  const addToast = useToastStore((s) => s.addToast);
   const [isDownloading, setIsDownloading] = useState(false);
 
   const handleBulkDownload = async () => {
@@ -41,6 +43,15 @@ export function AttachmentToolbar({
     try {
       const dest = await api.bulkDownloadAttachments(accountId, Array.from(checkedIds));
       addLog('success', 'attachments', t('attachments:toolbar.downloadedLog', { count: checkedCount, dest }));
+      addToast({
+        message: t('attachments:toolbar.downloadedToast', { count: checkedCount }),
+        actionLabel: t('attachments:download.showInFinder'),
+        onAction: () => {
+          void api.revealInFinder(dest).catch((err) => {
+            addLog('error', 'attachments', `Failed to open Downloads folder: ${errorText(err)}`);
+          });
+        },
+      });
       onClearChecked();
     } catch (err) {
       addLog('error', 'attachments', t('attachments:toolbar.downloadFailedLog', { error: errorText(err) }));

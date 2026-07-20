@@ -10,6 +10,7 @@ import { RuleManagementModal } from '@/components/Attachments/RuleManagementModa
 import { ChatView } from '@/components/Chat/ChatView';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
+import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
 import { DraftsView } from '@/components/DraftsView';
 import { AttachmentTabView } from '@/components/EmailView/AttachmentTabView';
@@ -1328,6 +1329,7 @@ function AppInner() {
       </div>
 
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
+      <ToastHost />
 
       {isSearchOpen && (
         <SearchBar

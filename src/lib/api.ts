@@ -640,6 +640,16 @@ export async function openEmailAttachmentMeta(accountId: string, metaId: string)
   return invoke('open_email_attachment_meta', { accountId, metaId });
 }
 
+/** Save base64 attachment bytes into ~/Downloads; returns the saved file path. */
+export async function saveAttachmentToDownloads(filename: string, dataBase64: string): Promise<string> {
+  return invoke('save_attachment_to_downloads', { filename, dataBase64 });
+}
+
+/** Reveal a downloaded file (or the Downloads folder) in the OS file manager. */
+export async function revealInFinder(path: string): Promise<void> {
+  return invoke('reveal_in_finder', { path });
+}
+
 // AI provider commands
 export async function getAiConfig(): Promise<AiConfig> {
   return invoke('get_ai_config');

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { dataUrlToBase64, saveToDownloads } from '@/lib/download';
 import type { EmailAttachmentMeta } from '@/types';
 
 interface AttachmentLightboxProps {
@@ -31,6 +32,22 @@ export function AttachmentLightbox({ meta, onClose }: AttachmentLightboxProps) {
   return (
     <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-8" onClick={onClose}>
       <div className="relative flex flex-col items-center max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
+        {dataUrl && (
+          <button
+            onClick={() => void saveToDownloads(meta.filename, dataUrlToBase64(dataUrl))}
+            className="absolute -top-9 right-9 text-white/70 hover:text-white transition-colors"
+            title={t('attachments:viewer.download')}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+          </button>
+        )}
         <button
           onClick={onClose}
           className="absolute -top-9 right-0 text-white/70 hover:text-white transition-colors"

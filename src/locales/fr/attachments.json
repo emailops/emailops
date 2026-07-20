@@ -14,7 +14,8 @@
     "viewEmail": "Voir l'e-mail",
     "openExternally": "Ouvrir en externe",
     "openInDefaultApp": "Ouvrir dans l'application par défaut",
-    "previewLoadFailed": "Échec du chargement de l'aperçu : {{error}}"
+    "previewLoadFailed": "Échec du chargement de l'aperçu : {{error}}",
+    "download": "Télécharger"
   },
   "toolbar": {
     "title": "Pièces jointes",
@@ -25,7 +26,8 @@
     "manageRules": "Gérer les règles",
     "allTags": "Toutes",
     "downloadedLog": "{{count}} fichier(s) téléchargé(s) vers {{dest}}",
-    "downloadFailedLog": "Échec du téléchargement : {{error}}"
+    "downloadFailedLog": "Échec du téléchargement : {{error}}",
+    "downloadedToast": "{{count}} fichier(s) téléchargé(s) dans Téléchargements"
   },
   "rules": {
     "title": "Règles de pièces jointes",
@@ -68,5 +70,9 @@
     "rowFilename": "Nom de fichier :",
     "rowTags": "Étiquettes :",
     "footerHelp": "Les règles correspondent aux e-mails pendant la synchronisation. Utilisez * comme joker. Tous les motifs spécifiés doivent correspondre (logique ET). Le nom de fichier filtre les pièces jointes collectées parmi les e-mails correspondants."
+  },
+  "download": {
+    "savedTo": "« {{filename}} » enregistré dans Téléchargements",
+    "showInFinder": "Afficher dans le Finder"
   }
 }

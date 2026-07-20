@@ -262,6 +262,28 @@ pub async fn bulk_download_attachments(
     Ok(downloads_dir.to_string_lossy().to_string())
 }
 
+/// Save raw attachment bytes (base64, standard or URL-safe alphabet) into the
+/// user's Downloads folder under a sanitized, collision-free name. Returns
+/// the absolute path of the saved file so the frontend can offer to reveal it.
+#[tauri::command]
+pub async fn save_attachment_to_downloads(filename: String, data_base64: String) -> Result<String, AppError> {
+    let downloads_dir =
+        dirs::download_dir().ok_or_else(|| AppError::IoError("Could not determine Downloads folder".to_string()))?;
+    let bytes = services::attachments::decode_inline_base64(&data_base64)?;
+    let path = services::attachments::save_bytes_to_downloads(&downloads_dir, &filename, &bytes)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Reveal a previously downloaded file (or the Downloads folder itself) in
+/// the OS file manager. Paths outside the Downloads folder are rejected.
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> Result<(), AppError> {
+    let downloads_dir =
+        dirs::download_dir().ok_or_else(|| AppError::IoError("Could not determine Downloads folder".to_string()))?;
+    let target = services::attachments::validate_reveal_path(&downloads_dir, std::path::Path::new(&path))?;
+    services::attachments::reveal_in_file_manager(&target)
+}
+
 #[tauri::command]
 pub async fn apply_rule_retroactively(
     app: AppHandle,

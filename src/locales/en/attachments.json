@@ -14,7 +14,8 @@
     "viewEmail": "View Email",
     "openExternally": "Open Externally",
     "openInDefaultApp": "Open in default application",
-    "previewLoadFailed": "Failed to load preview: {{error}}"
+    "previewLoadFailed": "Failed to load preview: {{error}}",
+    "download": "Download"
   },
   "toolbar": {
     "title": "Attachments",
@@ -25,7 +26,8 @@
     "manageRules": "Manage Rules",
     "allTags": "All",
     "downloadedLog": "Downloaded {{count}} file(s) to {{dest}}",
-    "downloadFailedLog": "Download failed: {{error}}"
+    "downloadFailedLog": "Download failed: {{error}}",
+    "downloadedToast": "Downloaded {{count}} file(s) to Downloads"
   },
   "rules": {
     "title": "Attachment rules",
@@ -68,5 +70,9 @@
     "rowFilename": "Filename:",
     "rowTags": "Tags:",
     "footerHelp": "Rules match emails during sync. Use * for wildcards. All specified patterns must match (AND logic). Filename filters which attachments are collected from matching emails."
+  },
+  "download": {
+    "savedTo": "Saved \"{{filename}}\" to Downloads",
+    "showInFinder": "Show in Finder"
   }
 }

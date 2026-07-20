@@ -73,6 +73,117 @@ pub fn safe_attachment_path(app_data_dir: &Path, file_path: &str) -> Result<Path
     Ok(canonical)
 }
 
+/// Reduce a client-supplied filename to a safe bare file name: path
+/// separators and `.`/`..` segments are dropped so a crafted name like
+/// `../../evil.sh` cannot escape the destination directory.
+fn sanitize_download_filename(filename: &str) -> String {
+    let name = filename
+        .replace('\\', "/")
+        .split('/')
+        .rfind(|part| !part.is_empty() && *part != "." && *part != "..")
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        "attachment".to_string()
+    } else {
+        name
+    }
+}
+
+/// Pick a non-colliding destination path in `dir` for `filename`, appending
+/// ` (1)`, ` (2)`, … before the extension while a file with that name exists.
+pub fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
+    let dest = dir.join(filename);
+    if !dest.exists() {
+        return dest;
+    }
+    let stem = Path::new(filename)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let ext = Path::new(filename)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut n = 1u32;
+    loop {
+        let candidate = dir.join(format!("{stem} ({n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Write attachment bytes into `dir` (the user's Downloads folder) under a
+/// sanitized, collision-free name. Returns the path actually written.
+pub fn save_bytes_to_downloads(dir: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let safe_name = sanitize_download_filename(filename);
+    let dest = unique_download_path(dir, &safe_name);
+    std::fs::write(&dest, bytes)
+        .map_err(|e| AppError::IoError(format!("Failed to save {} to Downloads: {e}", dest.display())))?;
+    Ok(dest)
+}
+
+/// Validate a frontend-supplied path before revealing it in the OS file
+/// manager: it must exist and canonicalize to somewhere inside the user's
+/// Downloads folder (the folder itself is allowed — bulk downloads reveal
+/// the whole directory). Anything else is rejected so the reveal command
+/// can't be pointed at arbitrary filesystem locations.
+pub fn validate_reveal_path(downloads_dir: &Path, path: &Path) -> Result<PathBuf> {
+    let canonical = path.canonicalize().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            AppError::NotFound(format!("File not found: {}", path.display()))
+        } else {
+            AppError::IoError(format!("Failed to resolve path '{}': {e}", path.display()))
+        }
+    })?;
+    let root = downloads_dir.canonicalize().map_err(|e| {
+        AppError::IoError(format!(
+            "Failed to canonicalize Downloads dir '{}': {e}",
+            downloads_dir.display()
+        ))
+    })?;
+    if !canonical.starts_with(&root) {
+        return Err(AppError::InvalidInput(format!(
+            "Path '{}' is outside the Downloads folder",
+            path.display()
+        )));
+    }
+    Ok(canonical)
+}
+
+/// Reveal an already-validated path in the OS file manager. On macOS a file
+/// is selected in Finder (`open -R`); a directory is opened directly.
+pub fn reveal_in_file_manager(path: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if path.is_dir() {
+            cmd.arg(path);
+        } else {
+            cmd.arg("-R").arg(path);
+        }
+        cmd.spawn()
+            .map_err(|e| AppError::IoError(format!("Failed to reveal in Finder: {e}")))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let target = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| path.to_path_buf())
+        };
+        open::that(target).map_err(|e| AppError::IoError(format!("Failed to open folder: {e}")))?;
+        Ok(())
+    }
+}
+
 /// Decode an inline attachment payload from any of the base64 flavors providers
 /// hand us. Gmail's `data` field is URL-safe base64 (RFC 4648 §5, alphabet
 /// `-_`); Microsoft Graph's `contentBytes` is standard base64 (RFC 4648 §4,
@@ -84,7 +195,7 @@ pub fn safe_attachment_path(app_data_dir: &Path, file_path: &str) -> Result<Path
 /// `decode_inline_base64_accepts_outlook_standard_alphabet` regression test).
 /// If that fails, fall through to the URL-safe alphabet for Gmail. Both
 /// passes are padding-indifferent and tolerate whitespace.
-fn decode_inline_base64(data: &str) -> crate::models::error::Result<Vec<u8>> {
+pub(crate) fn decode_inline_base64(data: &str) -> crate::models::error::Result<Vec<u8>> {
     use base64::{
         alphabet,
         engine::{self, GeneralPurpose, GeneralPurposeConfig},
@@ -1168,5 +1279,78 @@ mod tests {
             db.get_attachments_for_rule(&rule.id).expect("query attachments").len(),
             0
         );
+    }
+
+    // --- save_bytes_to_downloads ---
+
+    #[test]
+    fn save_bytes_writes_the_file_into_the_downloads_dir() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let path = save_bytes_to_downloads(tmp.path(), "report.pdf", b"pdf-bytes").expect("save");
+        assert_eq!(path, tmp.path().join("report.pdf"));
+        assert_eq!(std::fs::read(&path).expect("read back"), b"pdf-bytes");
+    }
+
+    #[test]
+    fn save_bytes_dedupes_colliding_filenames_with_numeric_suffix() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        std::fs::write(tmp.path().join("report.pdf"), b"old").expect("seed");
+        std::fs::write(tmp.path().join("report (1).pdf"), b"old").expect("seed");
+        let path = save_bytes_to_downloads(tmp.path(), "report.pdf", b"new").expect("save");
+        assert_eq!(path, tmp.path().join("report (2).pdf"));
+        // The existing files are untouched.
+        assert_eq!(std::fs::read(tmp.path().join("report.pdf")).expect("read"), b"old");
+    }
+
+    #[test]
+    fn save_bytes_strips_path_components_from_the_filename() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let path = save_bytes_to_downloads(tmp.path(), "../../evil.sh", b"x").expect("save");
+        assert_eq!(path, tmp.path().join("evil.sh"));
+        let path = save_bytes_to_downloads(tmp.path(), "nested/dir/file.txt", b"x").expect("save");
+        assert_eq!(path, tmp.path().join("file.txt"));
+    }
+
+    #[test]
+    fn save_bytes_falls_back_to_a_generic_name_when_the_filename_is_unusable() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let path = save_bytes_to_downloads(tmp.path(), "", b"x").expect("save");
+        assert_eq!(path, tmp.path().join("attachment"));
+        let path = save_bytes_to_downloads(tmp.path(), "../..", b"x").expect("save");
+        assert_eq!(path, tmp.path().join("attachment (1)"));
+    }
+
+    // --- validate_reveal_path ---
+
+    #[test]
+    fn validate_reveal_path_accepts_files_inside_the_downloads_dir() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let file = tmp.path().join("saved.pdf");
+        std::fs::write(&file, b"x").expect("seed");
+        let ok = validate_reveal_path(tmp.path(), &file).expect("must accept");
+        assert!(ok.ends_with("saved.pdf"));
+    }
+
+    #[test]
+    fn validate_reveal_path_accepts_the_downloads_dir_itself() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        validate_reveal_path(tmp.path(), tmp.path()).expect("must accept the dir itself");
+    }
+
+    #[test]
+    fn validate_reveal_path_rejects_paths_outside_the_downloads_dir() {
+        let downloads = tempfile::tempdir().expect("tmp dir");
+        let elsewhere = tempfile::tempdir().expect("tmp dir");
+        let file = elsewhere.path().join("secret.txt");
+        std::fs::write(&file, b"x").expect("seed");
+        let err = validate_reveal_path(downloads.path(), &file).expect_err("must reject");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn validate_reveal_path_rejects_missing_files() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let err = validate_reveal_path(tmp.path(), &tmp.path().join("gone.pdf")).expect_err("must reject");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
     }
 }

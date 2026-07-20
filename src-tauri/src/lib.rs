@@ -585,6 +585,8 @@ pub fn run() {
             commands::attachments::get_attachment_file_path,
             commands::attachments::get_attachment_data,
             commands::attachments::bulk_download_attachments,
+            commands::attachments::save_attachment_to_downloads,
+            commands::attachments::reveal_in_finder,
             commands::attachments::apply_rule_retroactively,
             commands::attachments::open_attachment_externally,
             commands::attachments::get_email_attachment_metas,

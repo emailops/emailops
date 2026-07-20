@@ -14,7 +14,8 @@
     "viewEmail": "E-Mail anzeigen",
     "openExternally": "Extern öffnen",
     "openInDefaultApp": "In Standard-App öffnen",
-    "previewLoadFailed": "Vorschau konnte nicht geladen werden: {{error}}"
+    "previewLoadFailed": "Vorschau konnte nicht geladen werden: {{error}}",
+    "download": "Herunterladen"
   },
   "toolbar": {
     "title": "Anhänge",
@@ -25,7 +26,8 @@
     "manageRules": "Regeln verwalten",
     "allTags": "Alle",
     "downloadedLog": "{{count}} Datei(en) heruntergeladen nach {{dest}}",
-    "downloadFailedLog": "Download fehlgeschlagen: {{error}}"
+    "downloadFailedLog": "Download fehlgeschlagen: {{error}}",
+    "downloadedToast": "{{count}} Datei(en) in Downloads heruntergeladen"
   },
   "rules": {
     "title": "Anhang-Regeln",
@@ -68,5 +70,9 @@
     "rowFilename": "Dateiname:",
     "rowTags": "Tags:",
     "footerHelp": "Regeln werden während der Synchronisierung auf E-Mails angewendet. Verwende * als Platzhalter. Alle angegebenen Muster müssen übereinstimmen (UND-Logik). Der Dateiname filtert, welche Anhänge aus passenden E-Mails gesammelt werden."
+  },
+  "download": {
+    "savedTo": "\"{{filename}}\" in Downloads gespeichert",
+    "showInFinder": "Im Finder zeigen"
   }
 }

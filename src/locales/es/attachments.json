@@ -14,7 +14,8 @@
     "viewEmail": "Ver correo",
     "openExternally": "Abrir externamente",
     "openInDefaultApp": "Abrir en la aplicación predeterminada",
-    "previewLoadFailed": "No se pudo cargar la vista previa: {{error}}"
+    "previewLoadFailed": "No se pudo cargar la vista previa: {{error}}",
+    "download": "Descargar"
   },
   "toolbar": {
     "title": "Adjuntos",
@@ -25,7 +26,8 @@
     "manageRules": "Gestionar reglas",
     "allTags": "Todas",
     "downloadedLog": "Se descargaron {{count}} archivo(s) en {{dest}}",
-    "downloadFailedLog": "Error de descarga: {{error}}"
+    "downloadFailedLog": "Error de descarga: {{error}}",
+    "downloadedToast": "{{count}} archivo(s) descargado(s) en Descargas"
   },
   "rules": {
     "title": "Reglas de adjuntos",
@@ -68,5 +70,9 @@
     "rowFilename": "Nombre de archivo:",
     "rowTags": "Etiquetas:",
     "footerHelp": "Las reglas coinciden con los correos durante la sincronización. Usa * como comodín. Todos los patrones especificados deben coincidir (lógica Y). El nombre de archivo filtra qué adjuntos se recopilan de los correos coincidentes."
+  },
+  "download": {
+    "savedTo": "Se guardó \"{{filename}}\" en Descargas",
+    "showInFinder": "Mostrar en Finder"
   }
 }
