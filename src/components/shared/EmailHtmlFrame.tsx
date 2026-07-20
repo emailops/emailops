@@ -20,14 +20,20 @@ import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
+import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
 
 export interface EmailHtmlFrameProps {
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
   html: string;
   /** Optional substring to highlight in the rendered body. Case-insensitive. */
   highlightQuery?: string | null;
-  /** Scroll the first highlight into view when present. */
-  scrollToFirstMatch?: boolean;
+  /** Index of the occurrence inside this body that is the active search
+   *  match. It gets distinct styling and the surrounding scroll container is
+   *  scrolled to it. null/undefined → no active occurrence in this body. */
+  activeMatchIndex?: number | null;
+  /** Reports how many occurrences of `highlightQuery` this body contains,
+   *  whenever the highlight is (re-)applied. */
+  onMatchesReported?: (count: number) => void;
   /** Class applied to the iframe element. */
   className?: string;
   /** Called when the user clicks a mailto: link in the body. When omitted,
@@ -40,6 +46,8 @@ export interface EmailHtmlFrameProps {
 // cannot terminate it — head parses before body.
 export const BRIDGE_SCRIPT = String.raw`
 (function(){
+  var zoomLevel = 1;
+  var gestureBaseZoom = 1;
   function send(msg){
     parent.postMessage(Object.assign({ __emailFrame: true }, msg), '*');
   }
@@ -50,10 +58,47 @@ export const BRIDGE_SCRIPT = String.raw`
     // creates a one-way ratchet that can only grow (the v0.5.0 runaway-height
     // bug). The body shrink-wraps its content, so its scrollHeight reflects the
     // real height and stays stable across re-measurements.
+    //
+    // Zoom lives on the documentElement, so the body's scrollHeight stays in
+    // its own (unzoomed) coordinate space — multiply by the zoom factor to get
+    // the visual height the parent must give the iframe.
     var h = document.body ? document.body.scrollHeight : document.documentElement.scrollHeight;
-    send({ type: 'height', height: h });
+    send({ type: 'height', height: Math.round(h * zoomLevel) });
+  }
+  function applyZoom(z){
+    z = Math.min(3, Math.max(0.5, z));
+    zoomLevel = z;
+    var root = document.documentElement;
+    root.style.zoom = z === 1 ? '' : String(z);
+    root.setAttribute('data-email-zoom', String(z));
+    postHeight();
   }
   function init(){
+    // macOS touchpad pinch: Chromium/Firefox deliver it as ctrl+wheel; WebKit
+    // (the Tauri webview) fires proprietary gesture events with an absolute
+    // scale relative to the gesture's start. Cmd/Ctrl+0 resets.
+    window.addEventListener('wheel', function(e){
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      applyZoom(zoomLevel * Math.exp(-e.deltaY * 0.01));
+    }, { passive: false });
+    window.addEventListener('gesturestart', function(e){
+      e.preventDefault();
+      gestureBaseZoom = zoomLevel;
+    });
+    window.addEventListener('gesturechange', function(e){
+      e.preventDefault();
+      if (e.scale) applyZoom(gestureBaseZoom * e.scale);
+    });
+    window.addEventListener('gestureend', function(e){
+      e.preventDefault();
+    });
+    window.addEventListener('keydown', function(e){
+      if ((e.metaKey || e.ctrlKey) && e.key === '0'){
+        e.preventDefault();
+        applyZoom(1);
+      }
+    });
     if (window.ResizeObserver){
       var ro = new ResizeObserver(postHeight);
       ro.observe(document.documentElement);
@@ -77,12 +122,20 @@ export const BRIDGE_SCRIPT = String.raw`
       var data = ev.data || {};
       if (data && data.__emailFrameCmd === 'highlight'){
         clearMarks();
-        var firstMark = wrapMatches(String(data.query || ''));
-        if (firstMark && data.scrollToFirst){
-          requestAnimationFrame(function(){
-            firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          });
+        var marks = wrapMatches(String(data.query || ''));
+        // The parent tells us which occurrence inside THIS body is the
+        // globally active one; style it distinctly and report its position so
+        // the parent can scroll its container (a null-origin iframe cannot
+        // scroll the parent itself).
+        var activeIndex = typeof data.activeIndex === 'number' ? data.activeIndex : -1;
+        var activeTop = null;
+        if (activeIndex >= 0 && activeIndex < marks.length){
+          var active = marks[activeIndex];
+          active.setAttribute('data-email-search-active', '1');
+          active.style.backgroundColor = '#f59e0b';
+          activeTop = active.getBoundingClientRect().top;
         }
+        send({ type: 'matches', count: marks.length, activeTop: activeTop });
         postHeight();
       }
     });
@@ -100,7 +153,7 @@ export const BRIDGE_SCRIPT = String.raw`
     });
   }
   function wrapMatches(q){
-    if (!q) return null;
+    if (!q) return [];
     var ql = q.toLowerCase();
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: function(n){
@@ -114,7 +167,7 @@ export const BRIDGE_SCRIPT = String.raw`
     });
     var nodes = []; var n;
     while ((n = walker.nextNode())) nodes.push(n);
-    var firstMark = null;
+    var allMarks = [];
     nodes.forEach(function(textNode){
       var text = textNode.nodeValue || '';
       var lower = text.toLowerCase();
@@ -134,13 +187,13 @@ export const BRIDGE_SCRIPT = String.raw`
         mark.style.padding = '0 1px';
         mark.style.borderRadius = '2px';
         mark.textContent = text.slice(idx, idx + q.length);
-        if (!firstMark) firstMark = mark;
+        allMarks.push(mark);
         frag.appendChild(mark);
         cursor = idx + q.length;
       }
       if (textNode.parentNode) textNode.parentNode.replaceChild(frag, textNode);
     });
-    return firstMark;
+    return allMarks;
   }
   if (document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', init);
@@ -193,7 +246,8 @@ function buildSrcDoc(sanitizedHtml: string): string {
 export function EmailHtmlFrame({
   html,
   highlightQuery,
-  scrollToFirstMatch,
+  activeMatchIndex,
+  onMatchesReported,
   className,
   onMailtoLink,
 }: EmailHtmlFrameProps) {
@@ -206,7 +260,14 @@ export function EmailHtmlFrame({
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
-      const data = e.data as { __emailFrame?: boolean; type?: string; height?: number; href?: string } | null;
+      const data = e.data as {
+        __emailFrame?: boolean;
+        type?: string;
+        height?: number;
+        href?: string;
+        count?: number;
+        activeTop?: number | null;
+      } | null;
       if (!data?.__emailFrame) return;
       if (e.source !== frameRef.current?.contentWindow) return;
       if (data.type === 'height' && typeof data.height === 'number') {
@@ -214,6 +275,28 @@ export function EmailHtmlFrame({
         // 50k px tall are pathological and almost always tracking artefacts.
         const clamped = Math.min(Math.max(data.height, 40), 50000);
         setHeight((prev) => (Math.abs(prev - clamped) > 1 ? clamped : prev));
+      } else if (data.type === 'matches') {
+        if (typeof data.count === 'number') onMatchesReported?.(data.count);
+        // The bridge only reports a position when this body holds the active
+        // occurrence; scroll the surrounding container to it — the sandboxed
+        // iframe can't scroll the parent itself.
+        if (typeof data.activeTop === 'number' && frameRef.current) {
+          const container = findScrollParent(frameRef.current);
+          if (container) {
+            container.scrollTo({
+              top: computeMatchScrollTop(
+                {
+                  scrollTop: container.scrollTop,
+                  rectTop: container.getBoundingClientRect().top,
+                  clientHeight: container.clientHeight,
+                },
+                frameRef.current.getBoundingClientRect().top,
+                data.activeTop,
+              ),
+              behavior: 'smooth',
+            });
+          }
+        }
       } else if (data.type === 'link' && typeof data.href === 'string') {
         const href = data.href;
         if (href.startsWith('#')) return;
@@ -230,7 +313,7 @@ export function EmailHtmlFrame({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [onMailtoLink]);
+  }, [onMailtoLink, onMatchesReported]);
 
   // Re-send the highlight command whenever the query or the frame contents
   // change. `srcDoc` is intentional in the dep list — when html changes the
@@ -242,19 +325,19 @@ export function EmailHtmlFrame({
     const win = frameRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(
-      { __emailFrameCmd: 'highlight', query: highlightQuery ?? '', scrollToFirst: !!scrollToFirstMatch },
+      { __emailFrameCmd: 'highlight', query: highlightQuery ?? '', activeIndex: activeMatchIndex ?? null },
       '*',
     );
-  }, [highlightQuery, scrollToFirstMatch, srcDoc]);
+  }, [highlightQuery, activeMatchIndex, srcDoc]);
 
   const handleLoad = useCallback(() => {
     const win = frameRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(
-      { __emailFrameCmd: 'highlight', query: highlightQuery ?? '', scrollToFirst: !!scrollToFirstMatch },
+      { __emailFrameCmd: 'highlight', query: highlightQuery ?? '', activeIndex: activeMatchIndex ?? null },
       '*',
     );
-  }, [highlightQuery, scrollToFirstMatch]);
+  }, [highlightQuery, activeMatchIndex]);
 
   const handleConfirmOpen = useCallback(async () => {
     if (!confirmUrl) return;

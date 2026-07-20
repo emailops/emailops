@@ -11,13 +11,15 @@ import { useLogStore } from '@/stores/logStore';
 export function EmailBody({
   html,
   highlightQuery,
-  scrollToFirstMatch,
+  activeMatchIndex,
+  onMatchesReported,
   accountId,
   senderEmail,
 }: {
   html: string;
   highlightQuery?: string | null;
-  scrollToFirstMatch?: boolean;
+  activeMatchIndex?: number | null;
+  onMatchesReported?: (count: number) => void;
   accountId: string;
   senderEmail: string;
 }) {
@@ -149,7 +151,8 @@ export function EmailBody({
         <EmailHtmlFrame
           html={sanitizedHtml}
           highlightQuery={highlightQuery}
-          scrollToFirstMatch={scrollToFirstMatch}
+          activeMatchIndex={activeMatchIndex}
+          onMatchesReported={onMatchesReported}
           className="email-body"
           onMailtoLink={handleMailtoLink}
         />

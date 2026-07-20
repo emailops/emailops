@@ -5,6 +5,7 @@ import { TagChips } from '@/components/common/TagChips';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource } from '@/lib/api';
 import * as api from '@/lib/api';
 import { getThreadViewItems } from '@/lib/threadCollapse';
+import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
@@ -92,6 +93,12 @@ export function EmailView({
   const consumePendingChatDraft = useEmailStore((s) => s.consumePendingChatDraft);
   const refreshThread = useEmailStore((s) => s.refreshThread);
   const bumpSentRefresh = useEmailStore((s) => s.bumpSentRefresh);
+  // In-thread search: matches are whole messages (subject/sender/snippet/body
+  // text); the active match is highlighted in-body and scrolled into view.
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState('');
+  const [threadMatchIdx, setThreadMatchIdx] = useState(0);
+  const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [isReplyOpen, setIsReplyOpen] = useState(false);
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all'>('reply');
   const [replyBody, setReplyBody] = useState('');
@@ -159,6 +166,59 @@ export function EmailView({
   const latestEmailForEffect = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1] : null;
   const isThread = threadEmails.length > 1;
 
+  const threadSearchActive = threadSearchOpen && threadSearchQuery.trim().length > 0;
+  const threadMatches = useMemo(
+    () => (threadSearchActive ? getThreadSearchMatches(threadEmails, threadSearchQuery) : []),
+    [threadSearchActive, threadSearchQuery, threadEmails],
+  );
+  // Occurrence counts per email, reported asynchronously by each rendered
+  // body frame after it applies the highlight. Slots flatten those counts
+  // into one entry per occurrence so prev/next walks occurrences, not just
+  // messages, and the counter can say "3 of 7".
+  const [occurrenceCounts, setOccurrenceCounts] = useState<Record<string, number>>({});
+  const occurrenceSlots = useMemo(
+    () => buildOccurrenceSlots(threadMatches, occurrenceCounts),
+    [threadMatches, occurrenceCounts],
+  );
+  const activeSlot =
+    occurrenceSlots.length > 0 ? occurrenceSlots[Math.min(threadMatchIdx, occurrenceSlots.length - 1)] : null;
+
+  const handleSearchMatches = useCallback((emailId: string, count: number) => {
+    setOccurrenceCounts((prev) => (prev[emailId] === count ? prev : { ...prev, [emailId]: count }));
+  }, []);
+
+  const openThreadSearch = useCallback(() => {
+    setThreadSearchOpen(true);
+    // The input mounts on this state change; focus it on the next frame.
+    requestAnimationFrame(() => threadSearchInputRef.current?.focus());
+  }, []);
+
+  const closeThreadSearch = useCallback(() => {
+    setThreadSearchOpen(false);
+    setThreadSearchQuery('');
+    setThreadMatchIdx(0);
+    setOccurrenceCounts({});
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return;
+      // Don't hijack Cmd+F (nor steal focus) while the user is typing in some
+      // other text field — e.g. the chat panel or a compose form that can be
+      // focused while this view is mounted alongside them.
+      const target = e.target as HTMLElement | null;
+      const isOtherTextField =
+        !!target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) &&
+        target !== threadSearchInputRef.current;
+      if (isOtherTextField) return;
+      e.preventDefault();
+      openThreadSearch();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [openThreadSearch]);
+
   // When a search is active, find the oldest email in the thread whose subject,
   // snippet, or (already-loaded) body contains the query. We highlight that email
   // and scroll its first in-body match into view.
@@ -196,6 +256,10 @@ export function EmailView({
     setDraftSources([]);
     setIsGeneratingDraft(false);
     draftRequestIdRef.current = null;
+    setThreadSearchOpen(false);
+    setThreadSearchQuery('');
+    setThreadMatchIdx(0);
+    setOccurrenceCounts({});
   }, [latestEmailId]);
 
   // Chat-generated reply draft: once the matching thread is loaded, open
@@ -340,6 +404,24 @@ export function EmailView({
                 AI Draft
               </button>
             )}
+            <button
+              onClick={() => (threadSearchOpen ? closeThreadSearch() : openThreadSearch())}
+              className={`p-1.5 rounded transition-colors ${
+                threadSearchOpen
+                  ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title={t('inbox:emailView.searchInThread')}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </button>
             {onOpenInTab && (
               <button
                 onClick={onOpenInTab}
@@ -459,41 +541,138 @@ export function EmailView({
         )}
       </header>
 
-      <div className="flex-1 overflow-y-auto">
-        {getThreadViewItems(threadEmails, threadExpanded).map((item) => {
-          if (item.type === 'collapsed') {
-            return (
-              <button
-                key="collapsed"
-                type="button"
-                onClick={() => setThreadExpanded(true)}
-                className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left"
-              >
-                Show {item.count} more message{item.count !== 1 ? 's' : ''}
-              </button>
-            );
-          }
-
-          const { email, index } = item;
-          const isLast = index === threadEmails.length - 1;
-          const isFocused = focusEmailId === email.id;
-          const isSearchMatch = searchHighlightEmailId === email.id;
-          const isExpanded = isLast || isFocused || isSearchMatch || expandedEmails.has(email.id);
-
-          return (
-            <ThreadEmailItem
-              key={email.id}
-              email={email}
-              isExpanded={isExpanded}
-              isLast={isLast}
-              isFocused={isFocused}
-              isSearchMatch={isSearchMatch}
-              highlightQuery={searchQuery}
-              onToggle={() => toggleEmailExpanded(email.id)}
-              onOpenAttachment={handleOpenAttachment}
+      <div className="relative flex-1 flex flex-col overflow-hidden">
+        {threadSearchOpen && (
+          <div className="absolute top-2 right-4 z-20 flex items-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-lg">
+            <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <input
+              ref={threadSearchInputRef}
+              type="text"
+              value={threadSearchQuery}
+              onChange={(e) => {
+                setThreadSearchQuery(e.target.value);
+                setThreadMatchIdx(0);
+                setOccurrenceCounts({});
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  closeThreadSearch();
+                } else if (e.key === 'Enter' && occurrenceSlots.length > 0) {
+                  e.preventDefault();
+                  setThreadMatchIdx((idx) => stepMatchIndex(idx, e.shiftKey ? -1 : 1, occurrenceSlots.length));
+                }
+              }}
+              placeholder={t('inbox:emailView.searchInThreadPlaceholder')}
+              className="w-48 bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none"
             />
-          );
-        })}
+            {threadSearchActive && (
+              <span className="text-xs text-gray-400 flex-shrink-0 tabular-nums pr-1">
+                {occurrenceSlots.length > 0
+                  ? t('inbox:emailView.searchMatchCount', {
+                      current: Math.min(threadMatchIdx, occurrenceSlots.length - 1) + 1,
+                      total: occurrenceSlots.length,
+                    })
+                  : t('inbox:emailView.searchNoMatches')}
+              </span>
+            )}
+            <div className="w-px h-4 bg-gray-200" />
+            <button
+              onClick={() => setThreadMatchIdx((idx) => stepMatchIndex(idx, -1, occurrenceSlots.length))}
+              disabled={occurrenceSlots.length === 0}
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title={t('inbox:emailView.searchPrevMatch')}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setThreadMatchIdx((idx) => stepMatchIndex(idx, 1, occurrenceSlots.length))}
+              disabled={occurrenceSlots.length === 0}
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              title={t('inbox:emailView.searchNextMatch')}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <button
+              onClick={closeThreadSearch}
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+              title={t('inbox:emailView.close')}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto">
+          {getThreadViewItems(threadEmails, threadExpanded || threadSearchActive).map((item) => {
+            if (item.type === 'collapsed') {
+              return (
+                <button
+                  key="collapsed"
+                  type="button"
+                  onClick={() => setThreadExpanded(true)}
+                  className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left"
+                >
+                  Show {item.count} more message{item.count !== 1 ? 's' : ''}
+                </button>
+              );
+            }
+
+            const { email, index } = item;
+            const isLast = index === threadEmails.length - 1;
+            const isFocused = focusEmailId === email.id;
+            // In-thread search takes over highlighting from the global search
+            // while it is active; the email holding the active occurrence
+            // drives scroll-into-view.
+            const isSearchMatch = threadSearchActive
+              ? activeSlot?.emailId === email.id
+              : searchHighlightEmailId === email.id;
+            // Which occurrence inside THIS email is active. For the global
+            // search there is no occurrence navigation — the first occurrence
+            // in the matching email is the one scrolled to.
+            const searchActiveMatchIndex = threadSearchActive
+              ? activeSlot?.emailId === email.id
+                ? activeSlot.indexInEmail
+                : null
+              : isSearchMatch
+                ? 0
+                : null;
+            const isExpanded =
+              isLast ||
+              isFocused ||
+              isSearchMatch ||
+              expandedEmails.has(email.id) ||
+              (threadSearchActive && threadMatches.includes(email.id));
+
+            return (
+              <ThreadEmailItem
+                key={email.id}
+                email={email}
+                isExpanded={isExpanded}
+                isLast={isLast}
+                isFocused={isFocused}
+                isSearchMatch={isSearchMatch}
+                highlightQuery={threadSearchActive ? threadSearchQuery : searchQuery}
+                searchActiveMatchIndex={searchActiveMatchIndex}
+                onSearchMatches={threadSearchActive ? handleSearchMatches : undefined}
+                onToggle={() => toggleEmailExpanded(email.id)}
+                onOpenAttachment={handleOpenAttachment}
+              />
+            );
+          })}
+        </div>
       </div>
     </div>
   );

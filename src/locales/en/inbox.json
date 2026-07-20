@@ -93,7 +93,13 @@
     "remoteImagesBlocked": "Remote images were blocked to protect your privacy.",
     "frameTitle": "Email content",
     "openLinkTitle": "Open link?",
-    "openInBrowser": "Open in browser"
+    "openInBrowser": "Open in browser",
+    "searchInThread": "Search in thread (⌘F)",
+    "searchInThreadPlaceholder": "Search in this thread…",
+    "searchMatchCount": "{{current}} of {{total}}",
+    "searchNoMatches": "No matches",
+    "searchPrevMatch": "Previous match",
+    "searchNextMatch": "Next match"
   },
   "compose": {
     "open": "Compose",

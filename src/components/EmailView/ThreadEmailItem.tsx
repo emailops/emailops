@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import type { Email, EmailAttachmentMeta } from '@/types';
@@ -13,6 +13,11 @@ export interface ThreadEmailItemProps {
   isFocused?: boolean;
   isSearchMatch?: boolean;
   highlightQuery: string | null;
+  /** Occurrence index inside this email's body that is the active search
+   *  match; null when the active match lives in another email. */
+  searchActiveMatchIndex?: number | null;
+  /** Reports how many highlight occurrences this email's body contains. */
+  onSearchMatches?: (emailId: string, count: number) => void;
   onToggle: () => void;
   onOpenAttachment: (meta: EmailAttachmentMeta) => void;
 }
@@ -24,6 +29,8 @@ export function ThreadEmailItem({
   isFocused,
   isSearchMatch,
   highlightQuery,
+  searchActiveMatchIndex,
+  onSearchMatches,
   onToggle,
   onOpenAttachment,
 }: ThreadEmailItemProps) {
@@ -46,6 +53,13 @@ export function ThreadEmailItem({
       itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [isFocused, isSearchMatch]);
+
+  const handleMatchesReported = useCallback(
+    (count: number) => {
+      onSearchMatches?.(email.id, count);
+    },
+    [onSearchMatches, email.id],
+  );
 
   const formattedDate = format(new Date(email.timestamp * 1000), 'PPpp');
   const shortDate = format(new Date(email.timestamp * 1000), 'MMM d');
@@ -122,7 +136,8 @@ export function ThreadEmailItem({
           <EmailBody
             html={body}
             highlightQuery={highlightQuery}
-            scrollToFirstMatch={isSearchMatch ?? false}
+            activeMatchIndex={searchActiveMatchIndex ?? null}
+            onMatchesReported={onSearchMatches ? handleMatchesReported : undefined}
             accountId={email.accountId}
             senderEmail={email.senderEmail}
           />

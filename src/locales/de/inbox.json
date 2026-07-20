@@ -93,7 +93,13 @@
     "remoteImagesBlocked": "Externe Bilder wurden zum Schutz deiner Privatsphäre blockiert.",
     "frameTitle": "E-Mail-Inhalt",
     "openLinkTitle": "Link öffnen?",
-    "openInBrowser": "Im Browser öffnen"
+    "openInBrowser": "Im Browser öffnen",
+    "searchInThread": "Im Verlauf suchen (⌘F)",
+    "searchInThreadPlaceholder": "In diesem Verlauf suchen…",
+    "searchMatchCount": "{{current}} von {{total}}",
+    "searchNoMatches": "Keine Treffer",
+    "searchPrevMatch": "Vorheriger Treffer",
+    "searchNextMatch": "Nächster Treffer"
   },
   "compose": {
     "open": "Verfassen",

@@ -93,7 +93,13 @@
     "remoteImagesBlocked": "Se han bloqueado las imágenes remotas para proteger tu privacidad.",
     "frameTitle": "Contenido del correo",
     "openLinkTitle": "¿Abrir enlace?",
-    "openInBrowser": "Abrir en el navegador"
+    "openInBrowser": "Abrir en el navegador",
+    "searchInThread": "Buscar en el hilo (⌘F)",
+    "searchInThreadPlaceholder": "Buscar en este hilo…",
+    "searchMatchCount": "{{current}} de {{total}}",
+    "searchNoMatches": "Sin coincidencias",
+    "searchPrevMatch": "Coincidencia anterior",
+    "searchNextMatch": "Siguiente coincidencia"
   },
   "compose": {
     "open": "Redactar",

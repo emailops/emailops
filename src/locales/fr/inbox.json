@@ -93,7 +93,13 @@
     "remoteImagesBlocked": "Les images distantes ont été bloquées pour préserver votre confidentialité.",
     "frameTitle": "Contenu du courriel",
     "openLinkTitle": "Ouvrir le lien ?",
-    "openInBrowser": "Ouvrir dans le navigateur"
+    "openInBrowser": "Ouvrir dans le navigateur",
+    "searchInThread": "Rechercher dans la conversation (⌘F)",
+    "searchInThreadPlaceholder": "Rechercher dans cette conversation…",
+    "searchMatchCount": "{{current}} sur {{total}}",
+    "searchNoMatches": "Aucune correspondance",
+    "searchPrevMatch": "Correspondance précédente",
+    "searchNextMatch": "Correspondance suivante"
   },
   "compose": {
     "open": "Nouveau message",
