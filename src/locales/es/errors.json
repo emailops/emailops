@@ -47,6 +47,7 @@
     "sync": "Error de sincronización: {{detail}}",
     "keyring": "Error del llavero: {{detail}}",
     "needs_reauth": "Se requiere autenticación: inicia sesión de nuevo.",
+    "calendar_permission_denied": "Esta cuenta no ha concedido permiso de calendario: inicia sesión de nuevo y permite el acceso al calendario.",
     "not_found": "No encontrado: {{detail}}",
     "invalid_input": "Entrada no válida: {{detail}}",
     "ai": "Error de IA: {{detail}}",

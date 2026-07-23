@@ -47,6 +47,7 @@
     "sync": "Synchronisierung fehlgeschlagen: {{detail}}",
     "keyring": "Schlüsselbund-Fehler: {{detail}}",
     "needs_reauth": "Authentifizierung erforderlich — melde dich erneut an.",
+    "calendar_permission_denied": "Dieses Konto hat keine Kalender-Berechtigung erteilt — melde dich erneut an und erlaube den Kalenderzugriff.",
     "not_found": "Nicht gefunden: {{detail}}",
     "invalid_input": "Ungültige Eingabe: {{detail}}",
     "ai": "KI-Fehler: {{detail}}",

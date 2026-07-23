@@ -35,6 +35,16 @@ pub enum AppError {
     #[error("Authentication required for account {account_id} — please sign in again")]
     NeedsReauth { account_id: String },
 
+    /// The account's token is valid but was never granted calendar access
+    /// (scope unchecked on the consent screen, or the token predates the
+    /// calendar scopes). Distinct from `NeedsReauth`: the scheduler
+    /// auto-disables the calendar integration on this error, while transient
+    /// auth failures must never flip the user's calendar toggle.
+    /// Display message contains "sign in" so auth-substring detection still
+    /// offers the re-auth action.
+    #[error("Account {account_id} has not granted calendar permission — sign in again and allow calendar access")]
+    CalendarPermissionDenied { account_id: String },
+
     #[error("Not found: {0}")]
     NotFound(String),
 
@@ -72,6 +82,7 @@ impl AppError {
             AppError::SyncError(_) => "sync",
             AppError::KeyringError(_) => "keyring",
             AppError::NeedsReauth { .. } => "needs_reauth",
+            AppError::CalendarPermissionDenied { .. } => "calendar_permission_denied",
             AppError::NotFound(_) => "not_found",
             AppError::InvalidInput(_) => "invalid_input",
             AppError::AiError(_) => "ai",
@@ -109,7 +120,7 @@ impl AppError {
             AppError::JsonError(e) => {
                 p.insert("detail", e.to_string());
             }
-            AppError::NeedsReauth { account_id } => {
+            AppError::NeedsReauth { account_id } | AppError::CalendarPermissionDenied { account_id } => {
                 p.insert("accountId", account_id.clone());
             }
             AppError::AiDisabled | AppError::Cancelled => {}
@@ -151,6 +162,22 @@ mod tests {
         assert_eq!(AppError::AiDisabled.code(), "ai_disabled");
         assert_eq!(AppError::Cancelled.code(), "cancelled");
         assert_eq!(AppError::NeedsReauth { account_id: "a".into() }.code(), "needs_reauth");
+        assert_eq!(
+            AppError::CalendarPermissionDenied { account_id: "a".into() }.code(),
+            "calendar_permission_denied"
+        );
+    }
+
+    #[test]
+    fn calendar_permission_denied_serializes_account_id_param() {
+        let err = AppError::CalendarPermissionDenied {
+            account_id: "acct-9".into(),
+        };
+        let v: serde_json::Value = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(v["code"], "calendar_permission_denied");
+        assert_eq!(v["params"]["accountId"], "acct-9");
+        // Auth-substring fallback in the frontend keys off "sign in".
+        assert!(v["message"].as_str().unwrap().contains("sign in"));
     }
 
     #[test]

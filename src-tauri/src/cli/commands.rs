@@ -237,6 +237,43 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             draft,
         } => run_compose(session, to, cc, subject, body, body_file, attach, send, draft).await,
 
+        Command::Calendar { days, next, sync } => {
+            let account = session.require_account()?;
+            let now = chrono::Utc::now().timestamp();
+            if sync {
+                let acct = session
+                    .db
+                    .get_account(&account)?
+                    .ok_or_else(|| AppError::NotFound(format!("account '{account}' not found")))?;
+                let provider = crate::services::calendar::sync::build_calendar_provider(&acct.id, &acct.provider)?;
+                let count = crate::services::calendar::sync::sync_account_calendar(
+                    &session.db,
+                    &acct.id,
+                    provider.as_ref(),
+                    now,
+                )
+                .await?;
+                crate::services::logger::log("info", "sync", format!("calendar sync: {count} events in window"));
+            }
+            // Agenda starts at local midnight so today's earlier events show.
+            let start_of_today = chrono::Local::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
+                .map(|dt| dt.timestamp())
+                .unwrap_or(now);
+            let range_end = start_of_today + days.max(1).saturating_mul(86_400);
+            let events = session.db.list_calendar_events(&account, start_of_today, range_end)?;
+            if next {
+                // Events are start-time ordered; the first not-yet-started one
+                // is the next meeting.
+                let upcoming: Vec<crate::models::CalendarEvent> =
+                    events.into_iter().filter(|e| e.start_time > now).take(1).collect();
+                return output::render_calendar_events(&upcoming, session.style);
+            }
+            output::render_calendar_events(&events, session.style)
+        }
+
         Command::Drafts => {
             let account = session.require_account()?;
             let drafts = crate::services::emails::list_drafts(&session.db, &account)?;

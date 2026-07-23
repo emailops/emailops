@@ -47,6 +47,7 @@
     "sync": "Échec de synchronisation : {{detail}}",
     "keyring": "Erreur du trousseau : {{detail}}",
     "needs_reauth": "Authentification requise — reconnectez-vous.",
+    "calendar_permission_denied": "Ce compte n'a pas accordé l'autorisation d'accès au calendrier — reconnectez-vous et autorisez l'accès au calendrier.",
     "not_found": "Introuvable : {{detail}}",
     "invalid_input": "Entrée invalide : {{detail}}",
     "ai": "Erreur d'IA : {{detail}}",

@@ -6,6 +6,7 @@ import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
 import { AiSettings } from './AiSettings';
+import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
 import { LensesSettings } from './LensesSettings';
@@ -15,6 +16,7 @@ import { TasksSettings } from './TasksSettings';
 
 export type SettingsTab =
   | 'appearance'
+  | 'calendar'
   | 'ai'
   | 'classification'
   | 'tasks'
@@ -47,6 +49,7 @@ type TabSpec = { id: SettingsTab; experimental?: boolean };
 // the dialog.
 const ALL_TABS: TabSpec[] = [
   { id: 'appearance' },
+  { id: 'calendar' },
   { id: 'ai' },
   { id: 'classification' },
   { id: 'tasks', experimental: true },
@@ -83,7 +86,10 @@ export function SettingsDialog({
   const { t } = useTranslation(['common', 'settings']);
   const { enabled: aiEnabled } = useAiStore();
   const visibleTabs = useMemo(
-    () => (aiEnabled ? ALL_TABS : ALL_TABS.filter((t) => t.id === 'appearance' || t.id === 'ai' || t.id === 'privacy')),
+    () =>
+      aiEnabled
+        ? ALL_TABS
+        : ALL_TABS.filter((t) => t.id === 'appearance' || t.id === 'calendar' || t.id === 'ai' || t.id === 'privacy'),
     [aiEnabled],
   );
   const [tab, setTab] = useState<SettingsTab>(() =>
@@ -191,6 +197,7 @@ export function SettingsDialog({
           </div>
 
           {tab === 'appearance' && <AppearancePanel currentLayout={currentLayout} onChangeLayout={onChangeLayout} />}
+          {tab === 'calendar' && <CalendarSettings />}
           {tab === 'ai' && <AiSettings onClose={onClose} embedded />}
           {tab === 'classification' && (
             <ClassificationSettings

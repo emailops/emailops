@@ -1,0 +1,101 @@
+{
+  "title": "Kalender",
+  "today": "Heute",
+  "previous": "Zurück",
+  "next": "Weiter",
+  "refreshing": "Aktualisiere…",
+  "allDay": "Ganztägig",
+  "moreEvents": "+{{n}} weitere",
+  "noAccount": "Die Kalender-Integration ist für kein Konto aktiviert. Aktiviere sie in Einstellungen → Kalender.",
+  "selectAccount": "Kalenderkonto",
+  "syncError": "Kalenderfehler: {{message}}",
+  "reauthNeeded": "EmailOps hat noch keine Berechtigung, den Kalender dieses Kontos zu lesen. Melde dich erneut an, um Kalenderzugriff zu gewähren.",
+  "reauthButton": "Erneut anmelden",
+  "reauthInProgress": "Warten auf Google/Microsoft…",
+  "viewModes": {
+    "month": "Monat",
+    "week": "Woche",
+    "day": "Tag"
+  },
+  "create": {
+    "title": "Neuer Termin",
+    "eventTitle": "Titel",
+    "eventTitlePlaceholder": "Titel hinzufügen",
+    "date": "Datum",
+    "startTime": "Beginn",
+    "endTime": "Ende",
+    "description": "Beschreibung",
+    "descriptionPlaceholder": "Beschreibung hinzufügen",
+    "invitees": "Eingeladene",
+    "inviteesPlaceholder": "Eingeladene hinzufügen…",
+    "invalidEmail": "Gib eine gültige E-Mail-Adresse ein",
+    "recurrence": {
+      "label": "Wiederholung",
+      "none": "Wird nicht wiederholt",
+      "daily": "Täglich",
+      "weekly": "Wöchentlich am {{weekday}}",
+      "weekdays": "Jeden Werktag (Mo–Fr)",
+      "monthly": "Monatlich",
+      "yearly": "Jährlich"
+    },
+    "meetNote": "Ein Google-Meet-Link wird automatisch hinzugefügt.",
+    "createButton": "Erstellen",
+    "creating": "Erstelle…",
+    "error": "Der Termin konnte nicht erstellt werden: {{message}}"
+  },
+  "detail": {
+    "tentative": "Vorläufig",
+    "join": "An Meeting teilnehmen",
+    "openInProvider": "Im Anbieter-Kalender öffnen",
+    "location": "Ort",
+    "organizer": "Organisator",
+    "attendees": "Teilnehmer",
+    "description": "Beschreibung",
+    "attendeeStatus": {
+      "accepted": "Zugesagt",
+      "declined": "Abgesagt",
+      "tentative": "Vorläufig",
+      "needsAction": "Noch keine Antwort",
+      "organizer": "Organisator"
+    },
+    "delete": "Löschen",
+    "deleteConfirmTitle": "Diesen Termin löschen?",
+    "deleteScope": {
+      "instance": "Diesen Termin",
+      "following": "Diesen und alle folgenden Termine",
+      "all": "Alle Termine",
+      "allHint": "einschließlich vergangener Termine"
+    },
+    "deleteButton": "Termin löschen",
+    "deleting": "Lösche…",
+    "notifyAttendees": "Teilnehmer benachrichtigen",
+    "cancellationMessage": "Notiz zur Absage hinzufügen",
+    "cancellationMessagePlaceholder": "Optionale Nachricht an die Teilnehmer",
+    "googleCancellationHint": "Google sendet seine Standard-Absage-E-Mail an die Eingeladenen.",
+    "deleteError": "Der Termin konnte nicht gelöscht werden: {{message}}"
+  },
+  "reminder": {
+    "title": "Anstehendes Meeting",
+    "startsInMinutes": "Beginnt in {{minutes}} Min.",
+    "startsNow": "Beginnt jetzt",
+    "join": "Teilnehmen",
+    "dismiss": "Verwerfen"
+  },
+  "invite": {
+    "noTitle": "(ohne Titel)",
+    "organizer": "Organisator: {{organizer}}",
+    "cancelled": "Dieses Meeting wurde abgesagt",
+    "going": "Teilnehmen?",
+    "yes": "Ja",
+    "no": "Nein",
+    "maybe": "Vielleicht",
+    "confirmed": {
+      "accepted": "Du hast diese Einladung angenommen.",
+      "declined": "Du hast diese Einladung abgelehnt.",
+      "tentative": "Du hast diese Einladung vorläufig angenommen."
+    },
+    "change": "Ändern",
+    "authError": "Deine Antwort konnte nicht gesendet werden. Melde dich erneut bei diesem Konto an, um Kalenderzugriff zu gewähren.",
+    "error": "Deine Antwort konnte nicht gesendet werden: {{message}}"
+  }
+}

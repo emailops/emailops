@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Erscheinungsbild",
     "appearanceDesc": "Layout des Posteingangs",
+    "calendar": "Kalender",
+    "calendarDesc": "Konten & Meeting-Benachrichtigungen",
     "ai": "KI: Backend & Modelle",
     "aiDesc": "Anbieter, Chat- und Embedding-Modelle",
     "classification": "KI-Klassifikation",
@@ -415,5 +417,16 @@
       "saving": "Speichern...",
       "removeButton": "Passwort entfernen"
     }
+  },
+  "calendar": {
+    "accountsLabel": "Kalender-Konten",
+    "accountsDesc": "Die Kalender-Integration ist für Gmail- und Outlook-Konten standardmäßig aktiviert und schaltet sich selbst ab, wenn ein Konto keine Kalender-Berechtigung erteilt hat. Nur aktivierte Konten erhalten die Kalenderansicht, Einladungskarten, Meeting-Benachrichtigungen und das Kalender-Tool im Chat.",
+    "noCapableAccounts": "Verbinde ein Gmail- oder Outlook-Konto, um den Kalender zu nutzen.",
+    "accountToggleAria": "Kalender-Integration für {{email}} umschalten",
+    "notificationsLabel": "Meeting-Benachrichtigungen",
+    "notificationsDesc": "Werde vor einem anstehenden Meeting benachrichtigt, mit direktem Teilnahme-Link.",
+    "leadTimeLabel": "Vorlaufzeit der Benachrichtigung",
+    "leadTimeDesc": "Wie lange vor Beginn des Meetings die Benachrichtigung erscheint.",
+    "minutesOption": "{{n}} Minuten"
   }
 }

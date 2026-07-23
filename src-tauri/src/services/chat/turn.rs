@@ -1119,7 +1119,13 @@ fn planner_enabled(db: &Arc<Database>) -> bool {
         .unwrap_or(true)
 }
 
-fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider::AiToolCall>> {
+/// `calendar_available`: whether the conversation's account has calendar
+/// integration (Gmail/Outlook) — the weekly-report shortcut preseeds the
+/// account's calendar events alongside the email summary when it does.
+fn heuristic_direct_tools(
+    user_question: &str,
+    calendar_available: bool,
+) -> Option<Vec<crate::ai::provider::AiToolCall>> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
     let q = user_question.trim().to_lowercase();
     if q.is_empty() {
@@ -1168,13 +1174,27 @@ fn heuristic_direct_tools(user_question: &str) -> Option<Vec<crate::ai::provider
         return Some(search_since_until(today, tomorrow));
     }
 
-    // Summary of this week's emails (EN + ES).
+    // Summary of this week's emails (EN + ES). When the account has calendar
+    // integration, also preseed the week's calendar events so the report
+    // covers meetings — the model summarises both in one pass.
     if has_week && has_summary && !has_month {
         let now = now_utc().date_naive();
         let days_since_monday = now.weekday().num_days_from_monday() as i64;
         let monday = now - chrono::Duration::days(days_since_monday);
         let next_monday = monday + chrono::Duration::days(7);
-        return Some(search_since_until(monday, next_monday));
+        let mut calls = search_since_until(monday, next_monday);
+        if calendar_available {
+            calls.push(AiToolCall {
+                function: AiToolCallFunction {
+                    name: "list_calendar_events".to_string(),
+                    arguments: serde_json::json!({
+                        "since": monday.format("%Y-%m-%d").to_string(),
+                        "until": next_monday.format("%Y-%m-%d").to_string(),
+                    }),
+                },
+            });
+        }
+        return Some(calls);
     }
 
     // Pending tasks: frontend sends "Identifica los emails que requieren mi
@@ -2775,7 +2795,16 @@ pub async fn run_chat_turn(
     // Heuristic shortcut: recognise common phrasings and pre-seed the tool
     // call so we can skip the LLM's tool-choice round entirely. Returns None
     // for anything that doesn't match, in which case the normal loop runs.
-    let mut preseeded_tool_calls = heuristic_direct_tools(&user_question);
+    let calendar_available = db
+        .get_account(&account_id)
+        .ok()
+        .flatten()
+        .map(|a| {
+            crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
+                && db.calendar_enabled(&a.id).unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let mut preseeded_tool_calls = heuristic_direct_tools(&user_question, calendar_available);
     if preseeded_tool_calls.is_some() {
         emit_log("info", "shortcut: matched direct-tool pattern");
     }
@@ -5035,7 +5064,7 @@ mod tests {
 Formatéalo como una tabla markdown con las columnas | Remitente | Asunto | Hora | Urgencia | Resumen |, \
 ordenados por urgencia. Cita cada email con su número de referencia. \
 Termina con un párrafo breve destacando lo más importante del día.";
-        let calls = heuristic_direct_tools(prompt).expect("today shortcut must match the button prompt");
+        let calls = heuristic_direct_tools(prompt, false).expect("today shortcut must match the button prompt");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "search_emails");
         let args = &calls[0].function.arguments;
@@ -5054,7 +5083,7 @@ Termina con un párrafo breve destacando lo más importante del día.";
 Usa una tabla markdown con columnas | Día | Remitente | Asunto | Tema | Acción sugerida |, \
 ordenados cronológicamente. Cita cada entrada. \
 Termina con dos o tres frases sobre los temas dominantes de la semana.";
-        let calls = heuristic_direct_tools(prompt).expect("week shortcut must match the button prompt");
+        let calls = heuristic_direct_tools(prompt, false).expect("week shortcut must match the button prompt");
         assert_eq!(calls[0].function.name, "search_emails");
         assert_eq!(
             calls[0]
@@ -5068,10 +5097,41 @@ Termina con dos o tres frases sobre los temas dominantes de la semana.";
     }
 
     #[test]
+    fn week_summary_preseeds_calendar_events_when_account_has_calendar() {
+        let calls = heuristic_direct_tools("summary of this week", true).expect("week shortcut must match");
+        assert_eq!(calls.len(), 2, "email search + calendar events");
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[1].function.name, "list_calendar_events");
+        // Both cover the same Monday..next-Monday window.
+        assert_eq!(
+            calls[0].function.arguments.get("since"),
+            calls[1].function.arguments.get("since")
+        );
+        assert_eq!(
+            calls[0].function.arguments.get("until"),
+            calls[1].function.arguments.get("until")
+        );
+    }
+
+    #[test]
+    fn week_summary_skips_calendar_without_integration() {
+        let calls = heuristic_direct_tools("resumen de la semana", false).expect("week shortcut must match");
+        assert_eq!(calls.len(), 1, "IMAP-only accounts get the email summary only");
+        assert_eq!(calls[0].function.name, "search_emails");
+    }
+
+    #[test]
+    fn today_summary_is_unaffected_by_calendar_availability() {
+        let calls = heuristic_direct_tools("summary of today", true).expect("today shortcut must match");
+        assert_eq!(calls.len(), 1, "the daily summary stays email-only");
+        assert_eq!(calls[0].function.name, "search_emails");
+    }
+
+    #[test]
     fn direct_shortcut_matches_pending_button_prompt() {
         let prompt = "Identifica los emails que requieren mi respuesta o acción. \
 Preséntalos en una tabla markdown …";
-        let calls = heuristic_direct_tools(prompt).expect("pending shortcut must match the button prompt");
+        let calls = heuristic_direct_tools(prompt, false).expect("pending shortcut must match the button prompt");
         assert_eq!(calls[0].function.name, "list_pending_tasks");
     }
 
@@ -5127,7 +5187,7 @@ Preséntalos en una tabla markdown …";
             .expect("valid time");
         crate::services::clock::install_for_testing(pinned.and_utc().timestamp());
 
-        let calls = heuristic_direct_tools("summarize today's client emails")
+        let calls = heuristic_direct_tools("summarize today's client emails", false)
             .expect("today shortcut must match the demo prompt");
         let args = &calls[0].function.arguments;
         assert_eq!(args.get("since").and_then(|v| v.as_str()), Some("2024-01-15"));
@@ -5140,7 +5200,7 @@ Preséntalos en una tabla markdown …";
     fn direct_shortcut_today_ignored_when_week_also_mentioned() {
         // "resumen" + "hoy" + "semana" — ambiguous; bail out of the today
         // shortcut rather than answering the wrong window.
-        let out = heuristic_direct_tools("resumen de hoy y de la semana");
+        let out = heuristic_direct_tools("resumen de hoy y de la semana", false);
         // Week shortcut wins because "has_month" is false and the today
         // branch is skipped when has_week is true.
         let calls = out.expect("should fall through to week shortcut");

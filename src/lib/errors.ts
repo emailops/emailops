@@ -18,6 +18,19 @@ export function isAppErrorPayload(e: unknown): e is AppErrorPayload {
   return typeof o.code === 'string' && typeof o.message === 'string';
 }
 
+/** Error codes that mean "the account needs re-consent", not a transient failure. */
+const AUTH_ERROR_CODES = new Set(['auth', 'oauth', 'needs_reauth', 'calendar_permission_denied']);
+
+/**
+ * Whether a failure is auth-class (expired/revoked consent, missing scopes)
+ * rather than transient. Callers pass the already-normalized `message`
+ * (usually `errorText(e)`) so string-shaped provider errors are classified too.
+ */
+export function isAuthError(e: unknown, message: string): boolean {
+  if (isAppErrorPayload(e) && AUTH_ERROR_CODES.has(e.code)) return true;
+  return /auth|consent|token|sign.?in/i.test(message);
+}
+
 /**
  * Normalize any thrown value into a localized, user-facing message.
  *

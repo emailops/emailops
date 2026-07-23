@@ -208,9 +208,11 @@ pub fn exit_code(err: &AppError) -> u8 {
     match err {
         AppError::InvalidInput(_) => 2,
         AppError::NotFound(_) => 3,
-        AppError::AuthError(_) | AppError::OAuthError(_) | AppError::KeyringError(_) | AppError::NeedsReauth { .. } => {
-            4
-        }
+        AppError::AuthError(_)
+        | AppError::OAuthError(_)
+        | AppError::KeyringError(_)
+        | AppError::NeedsReauth { .. }
+        | AppError::CalendarPermissionDenied { .. } => 4,
         AppError::HttpError(_) | AppError::SyncError(_) => 5,
         AppError::AiError(_) | AppError::AiDisabled | AppError::BudgetExceeded(_) => 6,
         AppError::Cancelled => 130,
@@ -331,6 +333,48 @@ pub fn render_email(email: &Email, body: &str, style: RenderStyle) -> Result<()>
     println!("{}      {}", dim("Id:", color), dim(&email.id, color));
     println!();
     println!("{}", body_for_display(body));
+    Ok(())
+}
+
+/// Calendar agenda list. JSON emits the raw `CalendarEvent` rows; pretty prints
+/// one line per event: local start–end, title, join platform, dim id.
+pub fn render_calendar_events(events: &[crate::models::CalendarEvent], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(events);
+    }
+    if events.is_empty() {
+        println!("(no calendar events in range)");
+        return Ok(());
+    }
+    let color = style.color();
+    for e in events {
+        use chrono::TimeZone;
+        let when = if e.is_all_day {
+            match chrono::Local.timestamp_opt(e.start_time, 0).single() {
+                Some(dt) => format!("{} (all day)     ", dt.format("%Y-%m-%d")),
+                None => "????-??-?? (all day)".to_string(),
+            }
+        } else {
+            let start = chrono::Local.timestamp_opt(e.start_time, 0).single();
+            let end = chrono::Local.timestamp_opt(e.end_time, 0).single();
+            match (start, end) {
+                (Some(s), Some(en)) => format!("{}–{}", s.format("%Y-%m-%d %H:%M"), en.format("%H:%M")),
+                _ => "????-??-?? ??:??".to_string(),
+            }
+        };
+        let join = match &e.meeting_platform {
+            Some(platform) => paint(&format!(" [{platform}]"), "36", color),
+            None => String::new(),
+        };
+        let title = if e.title.is_empty() { "(untitled)" } else { &e.title };
+        println!(
+            "{} {:<44}{} {}",
+            dim(&when, color),
+            truncate(title, 44),
+            join,
+            dim(&e.id, color)
+        );
+    }
     Ok(())
 }
 

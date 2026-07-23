@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Apariencia",
     "appearanceDesc": "Diseño de la bandeja de entrada",
+    "calendar": "Calendario",
+    "calendarDesc": "Cuentas y notificaciones de reuniones",
     "ai": "IA: backend y modelos",
     "aiDesc": "Proveedor, modelos de chat y embeddings",
     "classification": "Clasificación con IA",
@@ -415,5 +417,16 @@
       "saving": "Guardando...",
       "removeButton": "Quitar contraseña"
     }
+  },
+  "calendar": {
+    "accountsLabel": "Cuentas con calendario",
+    "accountsDesc": "La integración de calendario está activada por defecto en cuentas de Gmail y Outlook, y se desactiva sola si la cuenta no ha concedido permiso de calendario. Solo las cuentas activadas tienen vista de calendario, tarjetas de invitación, avisos de reuniones y la herramienta de calendario del chat.",
+    "noCapableAccounts": "Conecta una cuenta de Gmail u Outlook para usar el calendario.",
+    "accountToggleAria": "Activar o desactivar la integración de calendario de {{email}}",
+    "notificationsLabel": "Notificaciones de reuniones",
+    "notificationsDesc": "Recibe un aviso antes de cada reunión, con enlace directo para unirte.",
+    "leadTimeLabel": "Antelación del aviso",
+    "leadTimeDesc": "Cuánto tiempo antes del inicio de la reunión se envía el aviso.",
+    "minutesOption": "{{n}} minutos"
   }
 }

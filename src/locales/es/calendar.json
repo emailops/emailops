@@ -1,0 +1,101 @@
+{
+  "title": "Calendario",
+  "today": "Hoy",
+  "previous": "Anterior",
+  "next": "Siguiente",
+  "refreshing": "Actualizando…",
+  "allDay": "Todo el día",
+  "moreEvents": "+{{n}} más",
+  "noAccount": "La integración de calendario no está activada en ninguna cuenta. Actívala en Ajustes → Calendario.",
+  "selectAccount": "Cuenta del calendario",
+  "syncError": "Error del calendario: {{message}}",
+  "reauthNeeded": "EmailOps todavía no tiene permiso para leer el calendario de esta cuenta. Inicia sesión de nuevo para conceder acceso al calendario.",
+  "reauthButton": "Iniciar sesión de nuevo",
+  "reauthInProgress": "Esperando a Google/Microsoft…",
+  "viewModes": {
+    "month": "Mes",
+    "week": "Semana",
+    "day": "Día"
+  },
+  "create": {
+    "title": "Nuevo evento",
+    "eventTitle": "Título",
+    "eventTitlePlaceholder": "Añade un título",
+    "date": "Fecha",
+    "startTime": "Empieza",
+    "endTime": "Termina",
+    "description": "Descripción",
+    "descriptionPlaceholder": "Añade una descripción",
+    "invitees": "Invitados",
+    "inviteesPlaceholder": "Añade invitados…",
+    "invalidEmail": "Introduce una dirección de correo válida",
+    "recurrence": {
+      "label": "Se repite",
+      "none": "No se repite",
+      "daily": "Cada día",
+      "weekly": "Cada semana el {{weekday}}",
+      "weekdays": "Cada día laborable (lun–vie)",
+      "monthly": "Cada mes",
+      "yearly": "Cada año"
+    },
+    "meetNote": "Se añadirá automáticamente un enlace de Google Meet.",
+    "createButton": "Crear",
+    "creating": "Creando…",
+    "error": "No se pudo crear el evento: {{message}}"
+  },
+  "detail": {
+    "tentative": "Provisional",
+    "join": "Unirse a la reunión",
+    "openInProvider": "Abrir en el calendario del proveedor",
+    "location": "Ubicación",
+    "organizer": "Organizador",
+    "attendees": "Asistentes",
+    "description": "Descripción",
+    "attendeeStatus": {
+      "accepted": "Aceptado",
+      "declined": "Rechazado",
+      "tentative": "Provisional",
+      "needsAction": "Sin respuesta todavía",
+      "organizer": "Organizador"
+    },
+    "delete": "Eliminar",
+    "deleteConfirmTitle": "¿Eliminar este evento?",
+    "deleteScope": {
+      "instance": "Este evento",
+      "following": "Este y los siguientes eventos",
+      "all": "Todos los eventos",
+      "allHint": "incluidos los eventos pasados"
+    },
+    "deleteButton": "Eliminar evento",
+    "deleting": "Eliminando…",
+    "notifyAttendees": "Notificar a los asistentes",
+    "cancellationMessage": "Añade una nota a la cancelación",
+    "cancellationMessagePlaceholder": "Mensaje opcional para los asistentes",
+    "googleCancellationHint": "Google envía su correo estándar de cancelación a los invitados.",
+    "deleteError": "No se pudo eliminar el evento: {{message}}"
+  },
+  "reminder": {
+    "title": "Próxima reunión",
+    "startsInMinutes": "Empieza en {{minutes}} min",
+    "startsNow": "Empieza ahora",
+    "join": "Unirse",
+    "dismiss": "Descartar"
+  },
+  "invite": {
+    "noTitle": "(sin título)",
+    "organizer": "Organizador: {{organizer}}",
+    "cancelled": "Esta reunión se ha cancelado",
+    "going": "¿Asistirás?",
+    "yes": "Sí",
+    "no": "No",
+    "maybe": "Quizás",
+    "confirmed": {
+      "accepted": "Has aceptado esta invitación.",
+      "declined": "Has rechazado esta invitación.",
+      "tentative": "Has aceptado provisionalmente esta invitación."
+    },
+    "change": "Cambiar",
+    "authError": "No se pudo enviar tu respuesta. Inicia sesión de nuevo en esta cuenta para conceder acceso al calendario.",
+    "error": "No se pudo enviar tu respuesta: {{message}}"
+  }
+}

@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Apparence",
     "appearanceDesc": "Disposition de la boîte de réception",
+    "calendar": "Calendrier",
+    "calendarDesc": "Comptes et notifications de réunion",
     "ai": "IA : backend et modèles",
     "aiDesc": "Fournisseur, modèles de chat et d'embeddings",
     "classification": "Classification par IA",
@@ -415,5 +417,16 @@
       "saving": "Enregistrement...",
       "removeButton": "Supprimer le mot de passe"
     }
+  },
+  "calendar": {
+    "accountsLabel": "Comptes avec calendrier",
+    "accountsDesc": "L'intégration du calendrier est activée par défaut pour les comptes Gmail et Outlook, et se désactive d'elle-même si un compte n'a pas accordé l'autorisation d'accès au calendrier. Seuls les comptes activés disposent de la vue calendrier, des cartes d'invitation, des notifications de réunion et de l'outil calendrier du chat.",
+    "noCapableAccounts": "Connectez un compte Gmail ou Outlook pour utiliser le calendrier.",
+    "accountToggleAria": "Activer ou désactiver l'intégration du calendrier de {{email}}",
+    "notificationsLabel": "Notifications de réunion",
+    "notificationsDesc": "Soyez averti avant une réunion, avec un lien direct pour la rejoindre.",
+    "leadTimeLabel": "Délai de notification",
+    "leadTimeDesc": "Combien de temps avant le début de la réunion la notification est envoyée.",
+    "minutesOption": "{{n}} minutes"
   }
 }

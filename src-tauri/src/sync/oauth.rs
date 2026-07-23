@@ -24,6 +24,7 @@ const GMAIL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/calendar.events",
 ];
 
 // Microsoft Graph (Outlook / Office 365) OAuth configuration.
@@ -36,7 +37,13 @@ const OUTLOOK_TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2
 const BUNDLED_OUTLOOK_CLIENT_ID: Option<&str> = option_env!("EMAILOPS_OUTLOOK_CLIENT_ID");
 const BUNDLED_OUTLOOK_CLIENT_SECRET: Option<&str> = option_env!("EMAILOPS_OUTLOOK_CLIENT_SECRET");
 
-const OUTLOOK_SCOPES: &[&str] = &["offline_access", "User.Read", "Mail.ReadWrite", "Mail.Send"];
+const OUTLOOK_SCOPES: &[&str] = &[
+    "offline_access",
+    "User.Read",
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "Calendars.ReadWrite",
+];
 
 pub struct OAuthConfig {
     pub client_id: String,
@@ -348,6 +355,32 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::extract_callback_code;
+    use super::OAuthConfig;
+
+    #[test]
+    fn gmail_scopes_include_calendar_events_read_write() {
+        // `calendar.events` covers read + create/update of events (the calendar
+        // view syncs events and creates them from the new-event dialog).
+        let config = OAuthConfig::gmail();
+        assert!(
+            config
+                .scopes
+                .iter()
+                .any(|s| s == "https://www.googleapis.com/auth/calendar.events"),
+            "Gmail OAuth must request event read/write access to Google Calendar, got: {:?}",
+            config.scopes
+        );
+    }
+
+    #[test]
+    fn outlook_scopes_include_calendar_read_write() {
+        let config = OAuthConfig::outlook();
+        assert!(
+            config.scopes.iter().any(|s| s == "Calendars.ReadWrite"),
+            "Outlook OAuth must request read/write access to Graph calendars, got: {:?}",
+            config.scopes
+        );
+    }
 
     #[test]
     fn extracts_code_from_valid_callback() {

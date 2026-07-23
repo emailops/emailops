@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Appearance",
     "appearanceDesc": "Inbox layout",
+    "calendar": "Calendar",
+    "calendarDesc": "Accounts & meeting notifications",
     "ai": "AI Backend & Models",
     "aiDesc": "Provider, chat & embedding models",
     "classification": "AI Classification",
@@ -415,5 +417,16 @@
       "saving": "Saving...",
       "removeButton": "Remove password"
     }
+  },
+  "calendar": {
+    "accountsLabel": "Calendar accounts",
+    "accountsDesc": "Calendar integration is on by default for Gmail and Outlook accounts and switches itself off when an account hasn't granted calendar permission. Only enabled accounts get the calendar view, invite cards, meeting notifications and the chat calendar tool.",
+    "noCapableAccounts": "Connect a Gmail or Outlook account to use the calendar.",
+    "accountToggleAria": "Toggle calendar integration for {{email}}",
+    "notificationsLabel": "Meeting notifications",
+    "notificationsDesc": "Get notified before an upcoming meeting, with a direct join link.",
+    "leadTimeLabel": "Notification lead time",
+    "leadTimeDesc": "How long before the meeting starts the notification fires.",
+    "minutesOption": "{{n}} minutes"
   }
 }

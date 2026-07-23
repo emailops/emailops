@@ -117,6 +117,29 @@ impl SyncScheduler {
                 online_flag.clone(),
             ));
         }
+        // One calendar poll loop per OAuth account (IMAP has no calendar).
+        for account in plan_calendar_accounts(&enabled) {
+            let flag = Arc::new(AtomicBool::new(false));
+            stop_flags.push(flag.clone());
+            let sync_fn = make_calendar_sync_fn(db.clone(), account, app.clone());
+            handles.push(tauri::async_runtime::spawn(calendar_poll_loop(
+                sync_fn,
+                CALENDAR_POLL_INTERVAL,
+                online_flag.clone(),
+            )));
+        }
+
+        // Single global meeting-reminder ticker across all calendar accounts.
+        {
+            let flag = Arc::new(AtomicBool::new(false));
+            stop_flags.push(flag.clone());
+            handles.push(tauri::async_runtime::spawn(meeting_notification_loop(
+                db.clone(),
+                app.clone(),
+                flag,
+            )));
+        }
+
         // One consolidation ticker per account. Cheap: it no-ops quickly when
         // the memory subsystem is disabled or nothing needs consolidating.
         for account in &enabled {
@@ -317,6 +340,268 @@ pub(crate) async fn gmail_poll_loop(
         }
 
         sync_fn().await;
+    }
+}
+
+// ── Calendar polling ──────────────────────────────────────────────────────────
+
+/// How often each OAuth account's calendar window is re-fetched.
+const CALENDAR_POLL_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Pure planner: the subset of accounts that get a calendar poll loop.
+/// Capability only (Gmail/Outlook) — loops spawn for every capable account so
+/// the Settings toggle takes effect without an app restart; each tick then
+/// checks the per-account opt-in via [`plan_calendar_enabled_accounts`] /
+/// `calendar_enabled_or_log`.
+pub(crate) fn plan_calendar_accounts(accounts: &[Account]) -> Vec<Account> {
+    accounts
+        .iter()
+        .filter(|a| crate::sync::calendar_provider::provider_supports_calendar(&a.provider))
+        .cloned()
+        .collect()
+}
+
+/// Pure planner: capable accounts whose calendar integration the user opted
+/// into (`calendar.enabled:<account_id>` pref). `is_enabled` is injected so
+/// the filter is unit-testable without a DB.
+pub(crate) fn plan_calendar_enabled_accounts(accounts: &[Account], is_enabled: &dyn Fn(&str) -> bool) -> Vec<Account> {
+    plan_calendar_accounts(accounts)
+        .into_iter()
+        .filter(|a| is_enabled(&a.id))
+        .collect()
+}
+
+/// Read the per-account calendar opt-in, logging (once per tick) instead of
+/// discarding a pref-read failure. A failed read counts as disabled — never
+/// sync or notify on an account the user may not have opted in.
+fn calendar_enabled_or_log(db: &Database, account_id: &str) -> bool {
+    match db.calendar_enabled(account_id) {
+        Ok(enabled) => enabled,
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!("calendar: failed to read calendar.enabled pref for {account_id}: {e}"),
+            );
+            false
+        }
+    }
+}
+
+/// Poll the account's calendar every `interval`. The first tick fires
+/// immediately (calendar data should exist soon after startup); offline ticks
+/// are skipped silently, mirroring `gmail_poll_loop`.
+pub(crate) async fn calendar_poll_loop(sync_fn: SyncFn, interval: Duration, online_flag: Arc<AtomicBool>) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        if !online_flag.load(Ordering::Relaxed) {
+            continue;
+        }
+        sync_fn().await;
+    }
+}
+
+/// One calendar sync cycle wrapped as a `SyncFn`: build the provider from the
+/// current tokens, run the full-window sync, log the outcome. Errors are
+/// deduped per account (keyed separately from email sync) so a stale-auth
+/// account doesn't spam the output panel every 5 minutes.
+fn make_calendar_sync_fn(db: Arc<Database>, account: Account, app: AppHandle) -> SyncFn {
+    Arc::new(move || {
+        let db = db.clone();
+        let account = account.clone();
+        let app = app.clone();
+        Box::pin(async move {
+            // Per-tick opt-in check (not at spawn time) so flipping the
+            // Settings toggle starts/stops syncing without an app restart.
+            if !calendar_enabled_or_log(&db, &account.id) {
+                return;
+            }
+            let dedup_key = format!("calendar:{}", account.id);
+            let now = chrono::Utc::now().timestamp();
+            let result = match crate::services::calendar::sync::build_calendar_provider(&account.id, &account.provider)
+            {
+                Ok(provider) => {
+                    crate::services::calendar::sync::sync_account_calendar(&db, &account.id, provider.as_ref(), now)
+                        .await
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(count) => {
+                    {
+                        let mut guard = LAST_SYNC_ERROR.write().unwrap_or_else(PoisonError::into_inner);
+                        guard.remove(&dedup_key);
+                    }
+                    let _ = app.emit(
+                        "app-log",
+                        AppLogEvent {
+                            level: "debug".to_string(),
+                            source: "sync".to_string(),
+                            message: format!("Calendar sync for {}: {count} events in window", account.email),
+                        },
+                    );
+                }
+                Err(AppError::CalendarPermissionDenied { .. }) => {
+                    // The account never granted calendar access (scope
+                    // unchecked on the consent screen, or a pre-calendar
+                    // token): switch the integration off so the calendar UI,
+                    // chat tool, and this poll loop stop advertising a
+                    // calendar that can't be read. Re-enabling is one toggle
+                    // in Settings → Calendar after re-authenticating.
+                    if let Err(pref_err) =
+                        db.set_preference(&crate::db::calendar::calendar_enabled_pref_key(&account.id), "false")
+                    {
+                        crate::services::logger::log(
+                            "error",
+                            "sync",
+                            format!(
+                                "calendar: failed to persist auto-disable for {}: {pref_err}",
+                                account.email
+                            ),
+                        );
+                        return;
+                    }
+                    let _ = app.emit(
+                        "app-log",
+                        AppLogEvent {
+                            level: "error".to_string(),
+                            source: "sync".to_string(),
+                            message: format!(
+                                "Calendar disabled for {}: the account has not granted calendar permission. Sign in again and re-enable it in Settings → Calendar.",
+                                account.email
+                            ),
+                        },
+                    );
+                    let _ = app.emit(
+                        "calendar-integration-changed",
+                        CalendarIntegrationChangedEvent {
+                            account_id: account.id.clone(),
+                            enabled: false,
+                        },
+                    );
+                }
+                Err(e) => {
+                    let message = e.to_string();
+                    let already_reported = {
+                        let guard = LAST_SYNC_ERROR.read().unwrap_or_else(PoisonError::into_inner);
+                        guard.get(&dedup_key).is_some_and(|prev| prev == &message)
+                    };
+                    if !already_reported {
+                        let _ = app.emit(
+                            "app-log",
+                            AppLogEvent {
+                                level: "error".to_string(),
+                                source: "sync".to_string(),
+                                message: format!("Calendar sync failed for {}: {message}", account.email),
+                            },
+                        );
+                        let mut guard = LAST_SYNC_ERROR.write().unwrap_or_else(PoisonError::into_inner);
+                        guard.insert(dedup_key, message);
+                    }
+                }
+            }
+        })
+    })
+}
+
+// ── Meeting notifications ─────────────────────────────────────────────────────
+
+/// How often the notifier checks for meetings entering the reminder window.
+const MEETING_NOTIFY_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Payload of the `meeting-reminder` event — the frontend shows an in-app
+/// banner with a Join button. Sent alongside the OS notification because the
+/// desktop notification plugin cannot deliver click events back to us on
+/// macOS; clicking the OS notification focuses the app, where the banner
+/// carries the actual join link.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeetingReminderEvent {
+    event: crate::models::CalendarEvent,
+}
+
+/// Payload of the `calendar-integration-changed` event — emitted when the
+/// scheduler auto-disables an account's calendar integration (permission
+/// denied) so the frontend store hides the calendar surfaces immediately.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarIntegrationChangedEvent {
+    account_id: String,
+    enabled: bool,
+}
+
+/// Every minute: find events entering the reminder window across all enabled
+/// calendar accounts, fire one OS notification + one `meeting-reminder` event
+/// per meeting, and persist the notified marker so restarts never re-notify.
+async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<AtomicBool>) {
+    use tauri_plugin_notification::NotificationExt;
+
+    let mut ticker = tokio::time::interval(MEETING_NOTIFY_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        if stop_flag.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let lead_secs = match crate::services::calendar::notify::notification_lead_secs(&db) {
+            Ok(Some(lead)) => lead,
+            Ok(None) => continue, // notifications disabled
+            Err(e) => {
+                crate::services::logger::log("error", "sync", format!("meeting notifier: pref read failed: {e}"));
+                continue;
+            }
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let accounts =
+            plan_calendar_enabled_accounts(&enabled_accounts(db.list_accounts().unwrap_or_default()), &|id| {
+                calendar_enabled_or_log(&db, id)
+            });
+        for account in accounts {
+            let events = match db.list_calendar_events(&account.id, now, now + lead_secs + 60) {
+                Ok(events) => events,
+                Err(e) => {
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("meeting notifier: event query failed for {}: {e}", account.email),
+                    );
+                    continue;
+                }
+            };
+            for event in crate::services::calendar::notify::plan_meeting_notifications(&events, now, lead_secs) {
+                let minutes_left = ((event.start_time - now) as f64 / 60.0).ceil() as i64;
+                let body = match &event.meeting_platform {
+                    Some(platform) => format!("Starts in {minutes_left} min · join via {platform}"),
+                    None => format!("Starts in {minutes_left} min"),
+                };
+                let title = if event.title.is_empty() {
+                    "Upcoming meeting"
+                } else {
+                    &event.title
+                };
+                if let Err(e) = app.notification().builder().title(title).body(&body).show() {
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("meeting notifier: OS notification failed: {e}"),
+                    );
+                }
+                let _ = app.emit("meeting-reminder", MeetingReminderEvent { event: event.clone() });
+                if let Err(e) = db.mark_calendar_event_notified(&event.id, now) {
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("meeting notifier: failed to persist notified marker: {e}"),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -666,6 +951,82 @@ mod tests {
         imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
 
         assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    // ── calendar_poll_loop ────────────────────────────────────────────────────
+
+    /// First tick fires immediately so the calendar has data soon after
+    /// startup, then once per interval.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn calendar_poll_loop_syncs_immediately_then_each_interval() {
+        let count = Arc::new(AtomicU32::new(0));
+
+        let handle = tokio::spawn(calendar_poll_loop(
+            counter_sync_fn(count.clone()),
+            Duration::from_secs(300),
+            Arc::new(AtomicBool::new(true)),
+        ));
+
+        tokio::task::yield_now().await;
+        assert_eq!(count.load(Ordering::SeqCst), 1, "first sync fires at startup");
+
+        tokio::time::advance(Duration::from_secs(301)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(count.load(Ordering::SeqCst), 2, "second sync fires after one interval");
+
+        handle.abort();
+    }
+
+    /// Offline ticks are skipped; syncing resumes once the flag flips online.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn calendar_poll_loop_skips_while_offline() {
+        let count = Arc::new(AtomicU32::new(0));
+        let online = Arc::new(AtomicBool::new(false));
+
+        let handle = tokio::spawn(calendar_poll_loop(
+            counter_sync_fn(count.clone()),
+            Duration::from_secs(300),
+            online.clone(),
+        ));
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(301)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(count.load(Ordering::SeqCst), 0, "must not sync while offline");
+
+        online.store(true, Ordering::Relaxed);
+        tokio::time::advance(Duration::from_secs(300)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(count.load(Ordering::SeqCst), 1, "must sync after reconnect");
+
+        handle.abort();
+    }
+
+    // ── plan_calendar_accounts ────────────────────────────────────────────────
+
+    #[test]
+    fn calendar_accounts_are_oauth_only() {
+        let accounts = vec![
+            make_account("g", "gmail", true),
+            make_account("o", "outlook", true),
+            make_account("i", "imap", true),
+        ];
+        let planned = plan_calendar_accounts(&accounts);
+        let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["g", "o"], "IMAP accounts have no calendar to poll");
+    }
+
+    #[test]
+    fn calendar_enabled_accounts_require_the_per_account_opt_in() {
+        let accounts = vec![
+            make_account("g-on", "gmail", true),
+            make_account("g-off", "gmail", true),
+            make_account("i", "imap", true),
+        ];
+        // IMAP is excluded even if a stray pref claims it's enabled.
+        let planned = plan_calendar_enabled_accounts(&accounts, &|id| id == "g-on" || id == "i");
+        let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["g-on"], "only opted-in OAuth accounts get calendar work");
     }
 
     // ── gmail_poll_loop ───────────────────────────────────────────────────────

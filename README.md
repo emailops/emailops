@@ -18,6 +18,7 @@ Windows and Linux releases are on the [roadmap](ROADMAP.md).
 
 - **Multi-account email**: Gmail, Outlook / Microsoft 365 (Graph API), and IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, custom servers)
 - **Unified inbox**: read and triage mail from all your accounts in a single combined view
+- **Calendar**: per-account month/week/day views for Google Calendar and Outlook (on by default, auto-disabled for accounts that haven't granted calendar permission — manage in Settings → Calendar); create events by double-clicking a slot (with invitees, recurrence, and an auto-generated Google Meet link on Gmail), delete/cancel with attendee notification, and get meeting reminders with a one-click Join button for Meet / Teams / Webex / Zoom links
 - **Chat with your emails**: use AI to answer questions about your emails, generate drafts, ...
 - **AI email classification**: auto-tag emails by priority, intent, and topic using configurable rules + local AI
 - **Smart filters**: filter inbox by domain, sender, or classification tags
@@ -70,8 +71,8 @@ ollama pull nomic-embed-text
 
 ## OAuth setup (required for Gmail / Outlook accounts)
 
-1. **Gmail**: create OAuth credentials in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (type: **Desktop app**, enable Gmail API)
-2. **Outlook / Microsoft 365**: register an application in the [Microsoft Entra admin center](https://entra.microsoft.com/) with the Graph API mail scopes (a public-client / desktop redirect)
+1. **Gmail**: create OAuth credentials in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (type: **Desktop app**, enable the **Gmail API** and — for the calendar view — the **Google Calendar API**)
+2. **Outlook / Microsoft 365**: register an application in the [Microsoft Entra admin center](https://entra.microsoft.com/) with the Graph API mail scopes (a public-client / desktop redirect); calendar access uses the dynamically-consented `Calendars.ReadWrite` scope
 3. **IMAP / SMTP** accounts don't need OAuth — add them directly from the in-app onboarding wizard.
 4. Copy `.env.example` to `.env.local` in both the project root and `src-tauri/`:
 
@@ -143,6 +144,7 @@ make cli-eval ARGS="--tier smoke --json"    # run chat eval cases (needs cli,eva
 | `search <query> [--limit N]` | Full-text search an account's mail |
 | `chat <question> [--trace]` | Ask one question; streams the answer (`--trace` adds route/retrieval/tool timings) |
 | `sync [account]` | Download new mail |
+| `calendar [--days N] [--next] [--sync]` | Upcoming calendar events for one account (`--next` = next meeting only) |
 | `classify [--all]` | Classify new (or all) emails |
 | `embed [--batch N]` | Generate search embeddings |
 | `doctor` | Read-only environment readiness report (DB, accounts, AI config) — loads no model |

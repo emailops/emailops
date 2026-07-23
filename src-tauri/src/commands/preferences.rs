@@ -42,6 +42,29 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
                 "chat.n_ctx must be 0 (auto) or between {N_CTX_PREF_MIN} and {N_CTX_PREF_MAX}, got: {parsed}"
             )));
         }
+    } else if key == "calendar_notify_minutes" {
+        // Meeting-reminder lead time. The notifier clamps defensively at read
+        // time too, but reject nonsense at the write boundary so Settings can
+        // surface the error.
+        const NOTIFY_MIN: i64 = 1;
+        const NOTIFY_MAX: i64 = 120;
+        let parsed = value.parse::<i64>().map_err(|_| {
+            AppError::InvalidInput(format!("calendar_notify_minutes must be a whole number, got: {value}"))
+        })?;
+        if !(NOTIFY_MIN..=NOTIFY_MAX).contains(&parsed) {
+            return Err(AppError::InvalidInput(format!(
+                "calendar_notify_minutes must be between {NOTIFY_MIN} and {NOTIFY_MAX}, got: {parsed}"
+            )));
+        }
+    } else if key == "calendar_notifications_enabled" && !matches!(value, "true" | "false") {
+        return Err(AppError::InvalidInput(format!(
+            "calendar_notifications_enabled must be true or false, got: {value}"
+        )));
+    } else if key.starts_with("calendar.enabled:") && !matches!(value, "true" | "false") {
+        // Per-account calendar-integration opt-in (calendar.enabled:<account_id>).
+        return Err(AppError::InvalidInput(format!(
+            "calendar.enabled must be true or false, got: {value}"
+        )));
     }
     Ok(())
 }
@@ -166,6 +189,40 @@ mod tests {
                 "should reject {v} as InvalidInput"
             );
         }
+    }
+
+    #[test]
+    fn validate_pref_accepts_valid_calendar_notify_minutes() {
+        for v in ["1", "10", "30", "120"] {
+            assert!(validate_pref("calendar_notify_minutes", v).is_ok(), "should accept {v}");
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_out_of_range_calendar_notify_minutes() {
+        for v in ["0", "121", "-5", "soon"] {
+            let err = validate_pref("calendar_notify_minutes", v).unwrap_err();
+            assert!(
+                matches!(err, AppError::InvalidInput(_)),
+                "should reject {v} as InvalidInput"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_pref_calendar_notifications_enabled_must_be_boolean() {
+        assert!(validate_pref("calendar_notifications_enabled", "true").is_ok());
+        assert!(validate_pref("calendar_notifications_enabled", "false").is_ok());
+        let err = validate_pref("calendar_notifications_enabled", "yes").unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn validate_pref_per_account_calendar_enabled_must_be_boolean() {
+        assert!(validate_pref("calendar.enabled:acc1", "true").is_ok());
+        assert!(validate_pref("calendar.enabled:acc1", "false").is_ok());
+        let err = validate_pref("calendar.enabled:acc1", "yes").unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
     #[test]

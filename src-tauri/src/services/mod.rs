@@ -3,6 +3,7 @@ pub mod agent_search;
 pub mod ai;
 pub mod attachments;
 pub mod background_tasks;
+pub mod calendar;
 pub mod chat;
 pub mod classification;
 pub mod clock;

@@ -27,6 +27,7 @@ pub mod get_attachments;
 pub mod get_email_body;
 pub mod get_lens_data;
 pub mod get_thread;
+pub mod list_calendar_events;
 pub mod list_drafts;
 pub mod list_lenses;
 pub mod list_open_threads;
@@ -420,6 +421,7 @@ pub fn default_registry() -> ToolRegistry {
         Arc::new(get_attachments::GetAttachmentsTool),
         Arc::new(memory_search::MemorySearchTool),
         Arc::new(recall_entity::RecallEntityTool),
+        Arc::new(list_calendar_events::ListCalendarEventsTool),
         Arc::new(list_pending_tasks::ListPendingTasksTool),
         Arc::new(list_open_threads::ListOpenThreadsTool),
         Arc::new(remember::RememberTool),

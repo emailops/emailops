@@ -114,6 +114,15 @@ emailops/
 └── package.json     # Frontend dependencies and npm scripts
 ```
 
+## Decision Log
+
+Durable product and architecture decisions live in `docs/DECISIONS.md` (git-tracked,
+append-only). **Consult it before proposing changes that touch a recorded decision, and
+append an entry (same change/PR) whenever the developer makes a durable decision in a
+session** — product direction, architecture choice, deliberate trade-off. Follow the
+entry format documented at the top of that file. Session-level gotchas and in-flight
+work state do not belong there.
+
 ## Cross-cutting Production Guardrails
 
 ### HTML / WebView Safety

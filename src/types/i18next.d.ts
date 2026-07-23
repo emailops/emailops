@@ -12,6 +12,7 @@ import 'i18next';
 
 import type attachments from '../locales/en/attachments.json';
 import type auth from '../locales/en/auth.json';
+import type calendar from '../locales/en/calendar.json';
 import type chat from '../locales/en/chat.json';
 import type common from '../locales/en/common.json';
 import type compose from '../locales/en/compose.json';
@@ -42,6 +43,7 @@ declare module 'i18next' {
       contacts: typeof contacts;
       compose: typeof compose;
       auth: typeof auth;
+      calendar: typeof calendar;
       errors: typeof errors;
       notifications: typeof notifications;
       lenses: typeof lenses;

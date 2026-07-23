@@ -293,6 +293,21 @@ pub enum Command {
         id: String,
     },
 
+    /// Upcoming calendar events for one account (the calendar is per-account
+    /// by design — no merged view). Reads locally-synced events; pass `--sync`
+    /// to fetch fresh ones from the provider first.
+    Calendar {
+        /// Days ahead to include, counted from the start of today (local time).
+        #[arg(long, default_value_t = 7)]
+        days: i64,
+        /// Show only the next upcoming meeting.
+        #[arg(long)]
+        next: bool,
+        /// Fetch fresh events from the provider before listing (network).
+        #[arg(long)]
+        sync: bool,
+    },
+
     /// Get/set CLI-local preferences (e.g. the default account).
     Config {
         #[command(subcommand)]

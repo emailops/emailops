@@ -1,0 +1,101 @@
+{
+  "title": "Calendar",
+  "today": "Today",
+  "previous": "Previous",
+  "next": "Next",
+  "refreshing": "Refreshing…",
+  "allDay": "All day",
+  "moreEvents": "+{{n}} more",
+  "noAccount": "Calendar integration is not enabled for any account. Turn it on in Settings → Calendar.",
+  "selectAccount": "Calendar account",
+  "syncError": "Calendar error: {{message}}",
+  "reauthNeeded": "EmailOps doesn't have permission to read this account's calendar yet. Sign in again to grant calendar access.",
+  "reauthButton": "Sign in again",
+  "reauthInProgress": "Waiting for Google/Microsoft…",
+  "viewModes": {
+    "month": "Month",
+    "week": "Week",
+    "day": "Day"
+  },
+  "create": {
+    "title": "New event",
+    "eventTitle": "Title",
+    "eventTitlePlaceholder": "Add a title",
+    "date": "Date",
+    "startTime": "Starts",
+    "endTime": "Ends",
+    "description": "Description",
+    "descriptionPlaceholder": "Add a description",
+    "invitees": "Invitees",
+    "inviteesPlaceholder": "Add invitees…",
+    "invalidEmail": "Enter a valid email address",
+    "recurrence": {
+      "label": "Repeats",
+      "none": "Does not repeat",
+      "daily": "Daily",
+      "weekly": "Weekly on {{weekday}}",
+      "weekdays": "Every weekday (Mon–Fri)",
+      "monthly": "Monthly",
+      "yearly": "Yearly"
+    },
+    "meetNote": "A Google Meet link will be added automatically.",
+    "createButton": "Create",
+    "creating": "Creating…",
+    "error": "Couldn't create the event: {{message}}"
+  },
+  "detail": {
+    "tentative": "Tentative",
+    "join": "Join meeting",
+    "openInProvider": "Open in provider calendar",
+    "location": "Location",
+    "organizer": "Organizer",
+    "attendees": "Attendees",
+    "description": "Description",
+    "attendeeStatus": {
+      "accepted": "Accepted",
+      "declined": "Declined",
+      "tentative": "Tentative",
+      "needsAction": "No response yet",
+      "organizer": "Organizer"
+    },
+    "delete": "Delete",
+    "deleteConfirmTitle": "Delete this event?",
+    "deleteScope": {
+      "instance": "This event",
+      "following": "This and following events",
+      "all": "All events",
+      "allHint": "including past events"
+    },
+    "deleteButton": "Delete event",
+    "deleting": "Deleting…",
+    "notifyAttendees": "Notify attendees",
+    "cancellationMessage": "Add a note to the cancellation",
+    "cancellationMessagePlaceholder": "Optional message to attendees",
+    "googleCancellationHint": "Google sends its standard cancellation email to invitees.",
+    "deleteError": "Couldn't delete the event: {{message}}"
+  },
+  "reminder": {
+    "title": "Upcoming meeting",
+    "startsInMinutes": "Starts in {{minutes}} min",
+    "startsNow": "Starting now",
+    "join": "Join",
+    "dismiss": "Dismiss"
+  },
+  "invite": {
+    "noTitle": "(no title)",
+    "organizer": "Organizer: {{organizer}}",
+    "cancelled": "This meeting was cancelled",
+    "going": "Going?",
+    "yes": "Yes",
+    "no": "No",
+    "maybe": "Maybe",
+    "confirmed": {
+      "accepted": "You accepted this invitation.",
+      "declined": "You declined this invitation.",
+      "tentative": "You tentatively accepted this invitation."
+    },
+    "change": "Change",
+    "authError": "Couldn't send your response. Sign in to this account again to grant calendar access.",
+    "error": "Couldn't send your response: {{message}}"
+  }
+}

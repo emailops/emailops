@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import type { Email, EmailAttachmentMeta } from '@/types';
+import { CalendarInviteCard } from './CalendarInviteCard';
 import { EmailAttachments } from './EmailAttachments';
 import { EmailBody } from './EmailBody';
 
@@ -127,6 +128,7 @@ export function ThreadEmailItem({
       </div>
 
       <div className="px-6 pb-6">
+        <CalendarInviteCard email={email} />
         {body === null ? (
           <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300" />

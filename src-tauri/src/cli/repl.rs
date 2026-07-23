@@ -426,6 +426,7 @@ fn print_help() {
          \x20 /classify [--all] classify emails\n\
          \x20 /embed [--batch N] generate embeddings\n\
          \x20 /stats            dashboard stats per account (emails, categories, embeddings…)\n\
+         \x20 /calendar [--days N] [--next] [--sync]   upcoming calendar events (per-account)\n\
          \x20 /config <get|set|unset|list> [key] [value]  manage CLI preferences\n\
          \x20 /account [<id|email>]  show or switch the working account (switch is saved as default)\n\
          \x20 /model [<name>]   list available models (no arg) or set the AI model\n\
