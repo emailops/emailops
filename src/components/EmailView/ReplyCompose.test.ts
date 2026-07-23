@@ -71,6 +71,7 @@ function makeEmail(overrides: Partial<Email>): Email {
     isRead: true,
     triageStatus: null,
     category: 'primary',
+    mailbox: 'inbox',
     ...overrides,
   };
 }

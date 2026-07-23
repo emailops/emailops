@@ -20,7 +20,8 @@
         "fullscreen": false,
         "minWidth": 800,
         "minHeight": 600,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

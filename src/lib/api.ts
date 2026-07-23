@@ -1,6 +1,7 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { arch as osArch, platform as osPlatform, version as osVersion } from '@tauri-apps/plugin-os';
+import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
 import type {
   Account,
   AccountDashboard,
@@ -12,6 +13,8 @@ import type {
   Attachment,
   AttachmentRule,
   BackfillStatus,
+  CalendarEvent,
+  CalendarInvite,
   CatalogModel,
   ChatConversation,
   ChatMessage,
@@ -195,7 +198,20 @@ export async function getAvailableCategories(accountId: string): Promise<string[
 }
 
 // Email commands
-export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted';
+/** `folder:<serverPath>` addresses one custom IMAP folder. */
+export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted' | `folder:${string}`;
+
+/** A custom IMAP folder discovered on the server, as stored by sync. */
+export interface Folder {
+  id: string;
+  accountId: string;
+  /** Raw IMAP wire name — build the MailboxView as `folder:${serverPath}`. */
+  serverPath: string;
+  /** Decoded UTF-8 path for display. */
+  displayName: string;
+  role: string;
+  delimiter: string | null;
+}
 
 /** `accountId: null` selects the unified ("All accounts") view — emails
  *  merged across every enabled account. */
@@ -206,6 +222,36 @@ export async function getEmails(
   mailbox?: MailboxView,
 ): Promise<Email[]> {
   return invoke('get_emails', { accountId, limit, offset, mailbox });
+}
+
+/** Custom folders of one account, sorted by display name. Empty for
+ *  Gmail/Outlook accounts (folder sync is IMAP-only). */
+export async function getFolders(accountId: string): Promise<Folder[]> {
+  return invoke('get_folders', { accountId });
+}
+
+/** Create a custom folder on the mail server (IMAP accounts only). `name` is
+ *  a single path segment; placement and wire encoding are backend concerns. */
+export async function createFolder(accountId: string, name: string): Promise<Folder> {
+  return invoke('create_folder', { accountId, name });
+}
+
+/** Rename a custom folder on the mail server (IMAP accounts only). Local
+ *  emails, tags and sync state migrate with it — nothing re-downloads. */
+export async function renameFolder(accountId: string, folderId: string, newName: string): Promise<Folder> {
+  return invoke('rename_folder', { accountId, folderId, newName });
+}
+
+/** Delete a custom folder on the mail server (IMAP accounts only). Its
+ *  messages are removed on the server and locally — irreversible. */
+export async function deleteFolder(accountId: string, folderId: string): Promise<void> {
+  return invoke('delete_folder', { accountId, folderId });
+}
+
+/** Move an email between the inbox and a custom folder (IMAP accounts only).
+ *  `targetMailbox` is `'inbox'` or `` `folder:${serverPath}` ``. */
+export async function moveEmail(accountId: string, emailId: string, targetMailbox: MailboxView): Promise<void> {
+  return invoke('move_email', { accountId, emailId, targetMailbox });
 }
 
 export async function getThread(accountId: string, threadId: string): Promise<Email[]> {
@@ -1170,6 +1216,87 @@ export async function resetTaskExtraction(accountId: string): Promise<number> {
 
 export async function runMemoryConsolidation(accountId: string): Promise<void> {
   return invoke('run_memory_consolidation', { accountId });
+}
+
+// ── Calendar ─────────────────────────────────────────────────────────────────
+
+/** Events overlapping `[rangeStart, rangeEnd)` (unix seconds) for one account.
+ *  The calendar surface is per-account only — no unified variant exists. */
+export async function getCalendarEvents(
+  accountId: string,
+  rangeStart: number,
+  rangeEnd: number,
+): Promise<CalendarEvent[]> {
+  return invoke('get_calendar_events', { accountId, rangeStart, rangeEnd });
+}
+
+/** Create a calendar event on the provider (double-click "New event" flow).
+ *  Times are unix seconds; the backend validates (non-empty title, end >
+ *  start, attendee shape — max 100) and returns the stored event — for Gmail
+ *  with `meetingLink` / `meetingPlatform` already populated from the
+ *  auto-added Google Meet. For `recurrence !== 'none'` the returned event is
+ *  the recurrence *master*; the next calendar sync expands it into
+ *  per-occurrence instances. `timeZone` is the user's IANA zone
+ *  (`Intl.DateTimeFormat().resolvedOptions().timeZone`). */
+export async function createCalendarEvent(
+  accountId: string,
+  title: string,
+  description: string,
+  attendees: string[],
+  startTime: number,
+  endTime: number,
+  recurrence: CalendarRecurrence,
+  timeZone: string,
+): Promise<CalendarEvent> {
+  return invoke('create_calendar_event', {
+    accountId,
+    title,
+    description,
+    attendees,
+    startTime,
+    endTime,
+    recurrence,
+    timeZone,
+  });
+}
+
+/** Delete a calendar event on the provider (event-detail dialog). When
+ *  `notifyAttendees` is set, Outlook accepts an optional cancellation
+ *  `message`; Google always sends its standard cancellation email. For
+ *  recurring-series instances `scope` widens the delete to the following
+ *  occurrences or the whole series; the default only removes the clicked
+ *  occurrence. */
+export async function deleteCalendarEvent(
+  accountId: string,
+  providerEventId: string,
+  notifyAttendees: boolean,
+  message: string,
+  scope: CalendarDeleteScope = 'instance',
+): Promise<void> {
+  return invoke('delete_calendar_event', { accountId, providerEventId, notifyAttendees, message, scope });
+}
+
+/** The calendar invite (.ics) carried by an email, or null when the email
+ *  has none. */
+export async function getCalendarInvite(emailId: string): Promise<CalendarInvite | null> {
+  return invoke('get_calendar_invite', { emailId });
+}
+
+/** RSVP to a calendar invite on the provider (invite card in the email
+ *  view). Auth-class errors are possible — classify with `isAuthError`. */
+export async function rsvpCalendarInvite(
+  accountId: string,
+  icalUid: string,
+  response: 'accepted' | 'declined' | 'tentative',
+): Promise<void> {
+  return invoke('rsvp_calendar_invite', { accountId, icalUid, response });
+}
+
+/** Run one calendar sync cycle for the account right now (view open / manual
+ *  refresh). Hits the network — can take a few seconds. Returns the number of
+ *  events stored. Errors are meaningful (e.g. auth needs re-consent). */
+export async function syncCalendarNow(accountId: string): Promise<number> {
+  return invoke('sync_calendar_now', { accountId });
 }
 
 // Dashboard

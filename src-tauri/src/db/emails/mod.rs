@@ -13,6 +13,7 @@ pub mod batch;
 pub mod contacts;
 pub mod crud;
 pub mod failed;
+pub mod folder_ops;
 pub mod search;
 
 #[cfg(test)]
@@ -126,14 +127,48 @@ pub(super) fn relationship_score(a: &ContactAccum, now_secs: i64) -> f64 {
     (raw * 100.0).round()
 }
 
-/// Clamp a mailbox string to the four supported values. Unknown values fall back
-/// to 'inbox' so a stray provider value can never poison the DB.
-pub(crate) fn normalize_mailbox(raw: &str) -> &'static str {
+/// Clamp a mailbox string to a supported value: the four canonical mailboxes
+/// pass through, as does `folder:<server_path>` for custom IMAP folders.
+/// Anything else falls back to 'inbox' so a stray provider value can never
+/// poison the DB.
+pub(crate) fn normalize_mailbox(raw: &str) -> &str {
     match raw {
-        "sent" => "sent",
-        "spam" => "spam",
-        "trash" => "trash",
+        "inbox" | "sent" | "spam" | "trash" => raw,
+        s if s.len() > "folder:".len() && s.starts_with("folder:") => raw,
         _ => "inbox",
+    }
+}
+
+#[cfg(test)]
+mod normalize_mailbox_tests {
+    use super::normalize_mailbox;
+
+    #[test]
+    fn canonical_values_pass_through() {
+        assert_eq!(normalize_mailbox("inbox"), "inbox");
+        assert_eq!(normalize_mailbox("sent"), "sent");
+        assert_eq!(normalize_mailbox("spam"), "spam");
+        assert_eq!(normalize_mailbox("trash"), "trash");
+    }
+
+    #[test]
+    fn custom_folder_values_pass_through() {
+        // Custom IMAP folders are stored as 'folder:<server_path>'. Clamping
+        // them to 'inbox' would silently file the mail into the Inbox view.
+        assert_eq!(normalize_mailbox("folder:INBOX.Patienten"), "folder:INBOX.Patienten");
+        assert_eq!(
+            normalize_mailbox("folder:Gesendete Objekte.2024"),
+            "folder:Gesendete Objekte.2024"
+        );
+    }
+
+    #[test]
+    fn garbage_still_clamps_to_inbox() {
+        assert_eq!(normalize_mailbox(""), "inbox");
+        assert_eq!(normalize_mailbox("SENT"), "inbox");
+        assert_eq!(normalize_mailbox("random"), "inbox");
+        // 'folder:' with no path is not a valid custom-folder value.
+        assert_eq!(normalize_mailbox("folder:"), "inbox");
     }
 }
 

@@ -7,6 +7,8 @@ import { AttachmentToolbar } from '@/components/Attachments/AttachmentToolbar';
 import { AttachmentViewer } from '@/components/Attachments/AttachmentViewer';
 import type { RuleFormPrefill } from '@/components/Attachments/RuleManagementModal';
 import { RuleManagementModal } from '@/components/Attachments/RuleManagementModal';
+import { CalendarView } from '@/components/Calendar/CalendarView';
+import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
 import { ChatView } from '@/components/Chat/ChatView';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
@@ -41,6 +43,7 @@ import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
+import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
@@ -49,6 +52,7 @@ import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { planViewChange } from '@/lib/viewNavigation';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -57,9 +61,11 @@ import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useReminderStore } from '@/stores/reminderStore';
 import { useTagStore } from '@/stores/tagStore';
 import type {
   ActiveFilter,
+  CalendarEvent,
   ChatPhaseEvent,
   ChatRenamedEvent,
   ChatSourcesEvent,
@@ -85,8 +91,9 @@ const LOG_SOURCES: LogSource[] = [
 const DEFAULT_CATEGORIES: EmailCategory[] = ['primary', 'social', 'updates'];
 const VALID_CATEGORIES = new Set<EmailCategory>(['primary', 'social', 'updates', 'forums', 'promotions']);
 
-function viewModeToMailbox(mode: ViewMode): 'inbox' | 'sent' | 'spam' | 'deleted' {
+function viewModeToMailbox(mode: ViewMode): MailboxView {
   if (mode === 'sent' || mode === 'spam' || mode === 'deleted') return mode;
+  if (mode.startsWith('folder:')) return mode as MailboxView;
   return 'inbox';
 }
 
@@ -240,6 +247,25 @@ function AppInner() {
     clearError: clearAccountError,
     refetch: fetchAccounts,
   } = useAccounts();
+
+  // Per-account calendar-integration opt-in (Settings → Calendar). The
+  // backend gates sync/notifications/chat on the same pref; this store only
+  // controls which surfaces are visible. Calendar UI (sidebar entry, view)
+  // exists only while at least one account has the integration enabled.
+  const calendarIntegrationIds = useCalendarIntegrationStore((s) => s.enabledIds);
+  const calendarIntegrationLoaded = useCalendarIntegrationStore((s) => s.isLoaded);
+  const loadCalendarIntegration = useCalendarIntegrationStore((s) => s.loadForAccounts);
+  useEffect(() => {
+    void loadCalendarIntegration(accounts);
+  }, [accounts, loadCalendarIntegration]);
+  const calendarFeatureEnabled = useMemo(
+    () => calendarEnabledAccounts(accounts, calendarIntegrationIds).length > 0,
+    [accounts, calendarIntegrationIds],
+  );
+  // Leaving the calendar view when its last account gets switched off.
+  useEffect(() => {
+    if (viewMode === 'calendar' && calendarIntegrationLoaded && !calendarFeatureEnabled) setViewMode('inbox');
+  }, [viewMode, calendarIntegrationLoaded, calendarFeatureEnabled]);
 
   // Inbox category tabs for the active account. Drives the filter chips in
   // <Inbox/> so users only see what they've opted into (Gmail) or what the
@@ -598,6 +624,34 @@ function AppInner() {
       }),
     );
 
+    // Upcoming-meeting reminder — the backend fires this alongside the OS
+    // notification (whose click macOS can't deliver), so the in-app banner is
+    // the actionable surface. Validate the payload shape before trusting it.
+    unlisteners.push(
+      listen<{ event: CalendarEvent }>('meeting-reminder', (event) => {
+        const meeting = event.payload?.event;
+        if (meeting && typeof meeting.id === 'string' && typeof meeting.startTime === 'number') {
+          useReminderStore.getState().show(meeting);
+        } else {
+          console.error('Ignoring malformed meeting-reminder payload', event.payload);
+        }
+      }),
+    );
+
+    // Backend-initiated calendar-integration change (permission-denied
+    // auto-disable): the pref is already persisted — just mirror it so the
+    // calendar surfaces hide immediately.
+    unlisteners.push(
+      listen<{ accountId: string; enabled: boolean }>('calendar-integration-changed', (event) => {
+        const payload = event.payload;
+        if (payload && typeof payload.accountId === 'string' && typeof payload.enabled === 'boolean') {
+          useCalendarIntegrationStore.getState().applyBackendChange(payload.accountId, payload.enabled);
+        } else {
+          console.error('Ignoring malformed calendar-integration-changed payload', payload);
+        }
+      }),
+    );
+
     unlisteners.push(
       listen<{
         provider: string;
@@ -855,10 +909,11 @@ function AppInner() {
     silentRefetchEmailsRef.current();
   }, [isUnified, enabledAccountsKey]);
 
-  // Email list views — these all render the inbox/sent/spam/deleted email list.
-  // When applying a search from any other view, fall back to 'inbox'.
+  // Email list views — these all render the inbox/sent/spam/deleted/custom-
+  // folder email list. When applying a search from any other view, fall back
+  // to 'inbox'.
   const isEmailListView = (mode: ViewMode): boolean =>
-    mode === 'inbox' || mode === 'sent' || mode === 'spam' || mode === 'deleted';
+    mode === 'inbox' || mode === 'sent' || mode === 'spam' || mode === 'deleted' || mode.startsWith('folder:');
 
   const handleSearchSelect = useCallback(
     (email: Parameters<typeof selectEmail>[0]) => {
@@ -1030,6 +1085,7 @@ function AppInner() {
         />
       )}
       <OfflineBanner />
+      <MeetingReminderBanner />
       <ErrorBanner
         message={displayError}
         accountEmail={displayErrorAccountEmail}
@@ -1087,6 +1143,7 @@ function AppInner() {
           tasksEnabled={tasksEnabled}
           memoriesEnabled={memoriesEnabled}
           lensesEnabled={lensesEnabled}
+          calendarEnabled={calendarFeatureEnabled}
           onSelectLens={(lensId) => {
             // Selecting a lens in the sidebar: fire the store action so the
             // Lenses view picks it up (it already subscribes to activeLensId),
@@ -1154,7 +1211,11 @@ function AppInner() {
             <LensesView />
           ) : viewMode === 'dashboard' ? (
             <Dashboard accounts={accounts} onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)} />
-          ) : viewMode === 'inbox' || viewMode === 'sent' || viewMode === 'spam' || viewMode === 'deleted' ? (
+          ) : viewMode === 'calendar' ? (
+            // Calendar is per-account only (docs/DECISIONS.md) — it renders its
+            // own compact account selector, so no UnifiedScopeBar here.
+            <CalendarView accounts={accounts} defaultAccountId={effectiveAccountId} />
+          ) : isEmailListView(viewMode) ? (
             // biome-ignore lint/complexity/noUselessFragments: IIFE result needs a fragment wrapper for the ternary
             <>
               {(() => {

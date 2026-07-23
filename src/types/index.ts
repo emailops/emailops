@@ -45,9 +45,74 @@ export interface Email {
   isRead: boolean;
   triageStatus: TriageStatus | null;
   category: EmailCategory;
+  /** 'inbox' | 'sent' | 'spam' | 'trash' | `folder:<serverPath>` — which
+   *  mailbox this email lives in (drives move-to-folder eligibility). */
+  mailbox: string;
 }
 
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
+
+/** One attendee of a calendar event with their RSVP state. `response` is an
+ *  open set — normalize through `attendeeStatusMeta` before mapping to UI. */
+export interface CalendarAttendee {
+  email: string;
+  /** 'accepted' | 'declined' | 'tentative' | 'needsAction' | 'organizer' | provider-specific. */
+  response: string;
+}
+
+/** A calendar event synced from Gmail / Outlook. Mirrors the Rust
+ *  `CalendarEvent` struct in `src-tauri/src/models/mod.rs` (camelCase serde).
+ *  `description` may contain raw provider HTML (Graph) — treat as UNTRUSTED
+ *  and render as plain text only, never via dangerouslySetInnerHTML. */
+export interface CalendarEvent {
+  id: string;
+  accountId: string;
+  providerEventId: string;
+  calendarId: string;
+  title: string;
+  description: string;
+  location: string;
+  /** UTC epoch seconds. */
+  startTime: number;
+  /** UTC epoch seconds (exclusive end). */
+  endTime: number;
+  isAllDay: boolean;
+  /** Provider's original IANA timezone (e.g. "Europe/Madrid"); empty when unknown. */
+  timezone: string;
+  organizer: string;
+  attendees: CalendarAttendee[];
+  /** Extracted join URL (https only, validated backend-side). */
+  meetingLink: string | null;
+  /** "meet" | "teams" | "webex" | "zoom" | "gotomeeting" | "jitsi" | "other" */
+  meetingPlatform: string | null;
+  /** "confirmed" | "tentative" */
+  status: string;
+  /** Provider web link to open the event in the provider's own calendar UI. */
+  htmlLink: string | null;
+  /** Set when the upcoming-meeting notification fired for this event. */
+  notifiedAt: number | null;
+  /** Non-null when the event is an instance of a recurring series (the
+   *  provider id of the series master). */
+  recurringEventId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A calendar invite (.ics) attached to an email, as parsed by
+ *  `get_calendar_invite`. Times are UTC epoch seconds. */
+export interface CalendarInvite {
+  uid: string;
+  summary: string;
+  location: string;
+  organizer: string;
+  startTime: number;
+  endTime: number;
+  isAllDay: boolean;
+  /** Raw RRULE value, e.g. "FREQ=WEEKLY;BYDAY=TU"; null when one-off. */
+  recurrence: string | null;
+  /** iCalendar METHOD — "REQUEST" | "CANCEL" | … */
+  method: string;
+}
 export type EmailCategory = 'primary' | 'social' | 'updates' | 'forums' | 'promotions';
 
 export interface DraftAttachment {

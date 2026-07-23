@@ -66,6 +66,26 @@ export function mergeThreadRefresh(existing: Email[], fetched: Email[]): Email[]
     .map((e) => (e.body ? e : { ...e, body: bodies.get(e.id) ?? e.body }));
 }
 
+/**
+ * Drop one email from every list slice — inbox list, thread view, open
+ * thread tabs, selection, total count. Shared by deleteEmail and moveEmail,
+ * which both make the email vanish from its current view.
+ */
+export function removeEmailFromSlices(
+  state: Pick<EmailStore, 'emails' | 'threadEmails' | 'selectedEmail' | 'totalCount' | 'tabs'>,
+  emailId: string,
+): Pick<EmailStore, 'emails' | 'threadEmails' | 'selectedEmail' | 'totalCount' | 'tabs'> {
+  return {
+    emails: state.emails.filter((e) => e.id !== emailId),
+    threadEmails: state.threadEmails.filter((e) => e.id !== emailId),
+    selectedEmail: state.selectedEmail?.id === emailId ? null : state.selectedEmail,
+    totalCount: Math.max(0, state.totalCount - 1),
+    tabs: state.tabs.map((t) =>
+      t.type === 'thread' ? { ...t, threadEmails: t.threadEmails.filter((e) => e.id !== emailId) } : t,
+    ),
+  };
+}
+
 export interface EmailThreadTab {
   type: 'thread';
   id: string;
@@ -192,6 +212,9 @@ interface EmailStore {
   navigateToEmail: (accountId: string, emailId: string) => Promise<void>;
   markAsRead: (emailId: string) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
+  /** Move an email to the inbox or a custom folder (IMAP accounts only).
+   *  Throws on failure so callers can surface the error. */
+  moveEmail: (accountId: string, emailId: string, targetMailbox: MailboxView) => Promise<void>;
   updateEmail: (updated: Email) => void;
   setSearchQuery: (query: string) => void;
   /** Apply a search query with already-fetched results (skips the next fetchEmails call). */
@@ -618,15 +641,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   deleteEmail: async (emailId) => {
     await api.deleteEmail(emailId);
-    set((state) => ({
-      emails: state.emails.filter((e) => e.id !== emailId),
-      threadEmails: state.threadEmails.filter((e) => e.id !== emailId),
-      selectedEmail: state.selectedEmail?.id === emailId ? null : state.selectedEmail,
-      totalCount: Math.max(0, state.totalCount - 1),
-      tabs: state.tabs.map((t) =>
-        t.type === 'thread' ? { ...t, threadEmails: t.threadEmails.filter((e) => e.id !== emailId) } : t,
-      ),
-    }));
+    set((state) => removeEmailFromSlices(state, emailId));
+  },
+
+  moveEmail: async (accountId, emailId, targetMailbox) => {
+    await api.moveEmail(accountId, emailId, targetMailbox);
+    // The email left its current mailbox — drop it from every visible slice;
+    // the target folder view picks it up on its next fetch.
+    set((state) => removeEmailFromSlices(state, emailId));
   },
 
   updateEmail: (updated) => {

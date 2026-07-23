@@ -28,6 +28,7 @@ const email: Email = {
   isRead: true,
   triageStatus: null,
   category: 'primary',
+  mailbox: 'inbox',
 };
 
 let container: HTMLDivElement;

@@ -57,6 +57,9 @@
     "createClassificationRule": "Create classification rule",
     "copyEmailId": "Copy email ID",
     "redownloadEmail": "Re-download email",
+    "moveToFolder": "Move to folder",
+    "moveToInbox": "Inbox",
+    "moveFailed": "Move failed",
     "deleteThread": "Delete thread",
     "accountTooltip": "Account: {{email}}"
   },

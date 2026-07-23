@@ -18,6 +18,7 @@ function mkEmail(overrides: Partial<Email> & { id: string }): Email {
     isRead: true,
     triageStatus: null,
     category: 'primary' as Email['category'],
+    mailbox: 'inbox',
     ...overrides,
   };
 }

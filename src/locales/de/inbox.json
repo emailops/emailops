@@ -57,6 +57,9 @@
     "createClassificationRule": "Klassifikationsregel erstellen",
     "copyEmailId": "E-Mail-ID kopieren",
     "redownloadEmail": "E-Mail erneut herunterladen",
+    "moveToFolder": "In Ordner verschieben",
+    "moveToInbox": "Posteingang",
+    "moveFailed": "Verschieben fehlgeschlagen",
     "deleteThread": "Thread löschen",
     "accountTooltip": "Konto: {{email}}"
   },

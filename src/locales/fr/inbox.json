@@ -57,6 +57,9 @@
     "createClassificationRule": "Créer une règle de classification",
     "copyEmailId": "Copier l'ID du courriel",
     "redownloadEmail": "Retélécharger le courriel",
+    "moveToFolder": "Déplacer vers un dossier",
+    "moveToInbox": "Boîte de réception",
+    "moveFailed": "Échec du déplacement",
     "deleteThread": "Supprimer le fil",
     "accountTooltip": "Compte : {{email}}"
   },

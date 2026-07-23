@@ -7,10 +7,13 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tokio::time::sleep;
 
+use crate::db::folders::FolderUpsert;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
+use crate::models::FolderRole;
 use crate::models::{Account, Email};
 use crate::services::accounts;
+use crate::sync::folder_plan::{plan_folders, FolderPlan, ListedFolder, WellKnownFolder};
 use crate::sync::provider::{EmailProvider, ExtraMailbox};
 
 use super::events::{emit_account_log, emit_progress};
@@ -1113,17 +1116,117 @@ const MAX_EXTRA_MAILBOX_EMAILS: u32 = 500;
 const MAX_BACKFILL_PAGES_PER_SYNC: u32 = 10;
 const EXTRA_MAILBOX_BATCH_SIZE: usize = 20;
 const EXTRA_MAILBOX_INTER_BATCH_DELAY_MS: u64 = 2_000;
+/// Hard cap on custom folders synced per account, so a pathological server
+/// (thousands of folders) can't explode sync time. Exceeding it logs a
+/// warning — never a silent cap.
+const MAX_CUSTOM_FOLDERS_PER_ACCOUNT: usize = 50;
+/// Backfill page budget SHARED across all custom folders in one sync run
+/// (canonical mailboxes keep their own per-mailbox budget). Keeps the first
+/// sync of a many-folder account bounded; later runs resume from the
+/// per-folder cursors.
+const MAX_CUSTOM_BACKFILL_PAGES_PER_SYNC: u32 = 20;
 
-fn extra_mailbox_forward_key(account_id: &str, mailbox: ExtraMailbox) -> String {
-    format!("extra_mailbox_sync:{}:{}", account_id, mailbox.as_str())
+/// One mailbox the two-pass (incremental + backfill) machinery can sync:
+/// either a canonical well-known mailbox or a custom folder addressed by its
+/// exact server path.
+#[derive(Debug, Clone, PartialEq)]
+enum SyncTarget {
+    Canonical(ExtraMailbox),
+    CustomFolder { server_path: String },
 }
 
-fn extra_mailbox_backfill_key(account_id: &str, mailbox: ExtraMailbox) -> String {
-    format!("extra_mailbox_backfill:{}:{}", account_id, mailbox.as_str())
+impl SyncTarget {
+    /// The `emails.mailbox` column value for messages of this target. Also
+    /// used as the human-readable mailbox label in sync log lines and as the
+    /// segment of the watermark preference keys.
+    fn mailbox_value(&self) -> String {
+        match self {
+            SyncTarget::Canonical(mailbox) => mailbox.as_str().to_string(),
+            SyncTarget::CustomFolder { server_path } => format!("folder:{server_path}"),
+        }
+    }
+
+    /// List one page of message refs for this target.
+    async fn list_messages(
+        &self,
+        email_provider: &dyn EmailProvider,
+        max_results: u32,
+        after_timestamp: Option<i64>,
+        before_timestamp: Option<i64>,
+    ) -> Result<Vec<crate::sync::provider::MessageRef>> {
+        match self {
+            SyncTarget::Canonical(mailbox) => {
+                email_provider
+                    .list_mailbox_messages(*mailbox, max_results, after_timestamp, before_timestamp)
+                    .await
+            }
+            SyncTarget::CustomFolder { server_path } => {
+                email_provider
+                    .list_folder_messages(server_path, max_results, after_timestamp, before_timestamp)
+                    .await
+            }
+        }
+    }
 }
 
-fn extra_mailbox_backfill_cursor_key(account_id: &str, mailbox: ExtraMailbox) -> String {
-    format!("extra_mailbox_backfill_cursor:{}:{}", account_id, mailbox.as_str())
+fn extra_mailbox_forward_key(account_id: &str, target: &SyncTarget) -> String {
+    format!("extra_mailbox_sync:{}:{}", account_id, target.mailbox_value())
+}
+
+fn extra_mailbox_backfill_key(account_id: &str, target: &SyncTarget) -> String {
+    format!("extra_mailbox_backfill:{}:{}", account_id, target.mailbox_value())
+}
+
+fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> String {
+    format!(
+        "extra_mailbox_backfill_cursor:{}:{}",
+        account_id,
+        target.mailbox_value()
+    )
+}
+
+/// All watermark preference keys of one custom folder (forward, backfill-done,
+/// backfill-cursor). The folder-management ops use this to carry watermarks
+/// across a rename and to clean up after a delete — going through the same
+/// derivation functions the sync passes use keeps the formats in lockstep.
+pub(super) fn custom_folder_pref_keys(account_id: &str, server_path: &str) -> [String; 3] {
+    let target = SyncTarget::CustomFolder {
+        server_path: server_path.to_string(),
+    };
+    [
+        extra_mailbox_forward_key(account_id, &target),
+        extra_mailbox_backfill_key(account_id, &target),
+        extra_mailbox_backfill_cursor_key(account_id, &target),
+    ]
+}
+
+/// Convert a folder plan (plus the LIST entries it came from, for delimiter
+/// lookup) into the rows to persist. Role winners are stored with their role
+/// so detection results are inspectable; custom folders as `custom`.
+fn folder_upserts_from_plan(entries: &[ListedFolder], plan: &FolderPlan) -> Vec<FolderUpsert> {
+    let mut upserts = Vec::new();
+    for (role, raw_name) in &plan.roles {
+        let entry = entries.iter().find(|e| &e.raw_name == raw_name);
+        upserts.push(FolderUpsert {
+            server_path: raw_name.clone(),
+            display_name: crate::sync::folder_plan::decode_imap_utf7(raw_name),
+            role: match role {
+                WellKnownFolder::Sent => FolderRole::Sent,
+                WellKnownFolder::Spam => FolderRole::Spam,
+                WellKnownFolder::Trash => FolderRole::Trash,
+            },
+            delimiter: entry.and_then(|e| e.delimiter.clone()),
+        });
+    }
+    for folder in &plan.custom {
+        upserts.push(FolderUpsert {
+            server_path: folder.raw_name.clone(),
+            display_name: folder.display_name.clone(),
+            role: FolderRole::Custom,
+            delimiter: folder.delimiter.clone(),
+        });
+    }
+    upserts
 }
 
 /// Outcome of ingesting a batch of message refs for one mailbox pass.
@@ -1306,20 +1409,67 @@ async fn sync_extra_mailboxes(
     account_id: &str,
     email_provider: &dyn EmailProvider,
 ) -> Result<()> {
-    for mailbox in ExtraMailbox::all().iter().copied() {
-        // ── Forward incremental ──────────────────────────────────────────────
-        sync_extra_mailbox_incremental(db, account, account_id, mailbox, email_provider).await;
+    // ── Folder discovery (IMAP LIST; Gmail/Outlook return empty) ─────────────
+    // Non-fatal by design: a LIST hiccup must not break the canonical passes,
+    // which fall back to their own resolution. The folders table keeps its
+    // previous snapshot in that case.
+    let custom_folders: Vec<String> = match email_provider.list_folders().await {
+        Ok(entries) if !entries.is_empty() => {
+            let plan = plan_folders(&entries);
+            let upserts = folder_upserts_from_plan(&entries, &plan);
+            if let Err(e) = db.upsert_folders_for_account(account_id, &upserts) {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!("Failed to persist folder list: {}", e),
+                );
+            }
+            let mut folders: Vec<String> = plan.custom.into_iter().map(|f| f.raw_name).collect();
+            if folders.len() > MAX_CUSTOM_FOLDERS_PER_ACCOUNT {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!(
+                        "Account has {} custom folders; syncing only the first {}",
+                        folders.len(),
+                        MAX_CUSTOM_FOLDERS_PER_ACCOUNT
+                    ),
+                );
+                folders.truncate(MAX_CUSTOM_FOLDERS_PER_ACCOUNT);
+            }
+            folders
+        }
+        Ok(_) => Vec::new(),
+        Err(e) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Folder discovery failed, using cached folder list: {}", e),
+            );
+            db.list_folders(account_id, Some(FolderRole::Custom))
+                .map(|rows| rows.into_iter().map(|f| f.server_path).collect())
+                .unwrap_or_default()
+        }
+    };
 
-        // ── Backward backfill (bounded per sync run) ─────────────────────────
-        sync_extra_mailbox_backfill(
-            db,
-            account,
-            account_id,
-            mailbox,
-            email_provider,
-            MAX_BACKFILL_PAGES_PER_SYNC,
-        )
-        .await;
+    // ── Canonical mailboxes (Sent/Spam/Trash), per-mailbox backfill budget ───
+    for mailbox in ExtraMailbox::all().iter().copied() {
+        let target = SyncTarget::Canonical(mailbox);
+        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
+
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget).await;
+    }
+
+    // ── Custom folders, shared backfill budget across all folders ────────────
+    let mut custom_budget = MAX_CUSTOM_BACKFILL_PAGES_PER_SYNC;
+    for server_path in custom_folders {
+        let target = SyncTarget::CustomFolder { server_path };
+        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
+        sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut custom_budget).await;
     }
 
     Ok(())
@@ -1364,19 +1514,20 @@ async fn sync_extra_mailbox_incremental(
     db: &Arc<Database>,
     account: &Account,
     account_id: &str,
-    mailbox: ExtraMailbox,
+    target: &SyncTarget,
     email_provider: &dyn EmailProvider,
 ) {
-    let mailbox_name = mailbox.as_str();
-    let pref_key = extra_mailbox_forward_key(account_id, mailbox);
+    let mailbox_name = target.mailbox_value();
+    let mailbox_name = mailbox_name.as_str();
+    let pref_key = extra_mailbox_forward_key(account_id, target);
     let after_timestamp = db
         .get_preference(&pref_key)
         .ok()
         .flatten()
         .and_then(|s| s.parse::<i64>().ok());
 
-    let refs = match email_provider
-        .list_mailbox_messages(mailbox, MAX_EXTRA_MAILBOX_EMAILS, after_timestamp, None)
+    let refs = match target
+        .list_messages(email_provider, MAX_EXTRA_MAILBOX_EMAILS, after_timestamp, None)
         .await
     {
         Ok(refs) => refs,
@@ -1448,20 +1599,23 @@ async fn sync_extra_mailbox_incremental(
 /// - Cannot advance the cursor (defensive — should not happen with the
 ///   `get_min_timestamp_for_ids` fallback below).
 ///
-/// `max_pages` caps how many iterations run in a single call so that periodic
-/// sync never stalls on a deep history. The manual `resync_mailbox_full`
+/// `budget` caps how many pages this call may walk and is decremented as
+/// pages are consumed — canonical mailboxes pass a fresh per-mailbox budget,
+/// custom folders share one budget across all folders of the account so a
+/// many-folder first sync stays bounded. The manual `resync_mailbox_full`
 /// recovery path passes `u32::MAX` to walk to exhaustion.
 async fn sync_extra_mailbox_backfill(
     db: &Arc<Database>,
     account: &Account,
     account_id: &str,
-    mailbox: ExtraMailbox,
+    target: &SyncTarget,
     email_provider: &dyn EmailProvider,
-    max_pages: u32,
+    budget: &mut u32,
 ) {
-    let mailbox_name = mailbox.as_str();
-    let done_key = extra_mailbox_backfill_key(account_id, mailbox);
-    let cursor_key = extra_mailbox_backfill_cursor_key(account_id, mailbox);
+    let mailbox_name = target.mailbox_value();
+    let mailbox_name = mailbox_name.as_str();
+    let done_key = extra_mailbox_backfill_key(account_id, target);
+    let cursor_key = extra_mailbox_backfill_cursor_key(account_id, target);
 
     if matches!(db.get_preference(&done_key).ok().flatten().as_deref(), Some("1")) {
         return;
@@ -1480,15 +1634,16 @@ async fn sync_extra_mailbox_backfill(
     let sync_from_floor = account.sync_from_timestamp.unwrap_or(0);
     let mut total_inserted: u32 = 0;
 
-    for _ in 0..max_pages {
+    while *budget > 0 {
         if before_timestamp <= sync_from_floor {
             // Past the configured account sync floor — nothing older to fetch.
             let _ = db.set_preference(&done_key, "1");
             break;
         }
+        *budget -= 1;
 
-        let refs = match email_provider
-            .list_mailbox_messages(mailbox, MAX_EXTRA_MAILBOX_EMAILS, None, Some(before_timestamp))
+        let refs = match target
+            .list_messages(email_provider, MAX_EXTRA_MAILBOX_EMAILS, None, Some(before_timestamp))
             .await
         {
             Ok(refs) => refs,
@@ -1572,8 +1727,9 @@ pub async fn resync_mailbox_full(
 ) -> Result<u32> {
     let account_id = &account.id;
     let mailbox_name = mailbox.as_str();
-    let done_key = extra_mailbox_backfill_key(account_id, mailbox);
-    let cursor_key = extra_mailbox_backfill_cursor_key(account_id, mailbox);
+    let target = SyncTarget::Canonical(mailbox);
+    let done_key = extra_mailbox_backfill_key(account_id, &target);
+    let cursor_key = extra_mailbox_backfill_cursor_key(account_id, &target);
 
     // Reset the done flag and the cursor so the backfill walks the full
     // history from "now" downward, regardless of any prior state — that's
@@ -1600,9 +1756,10 @@ pub async fn resync_mailbox_full(
     let before_count = db.count_emails_in_mailbox(account_id, mailbox_name).unwrap_or(0);
 
     // Forward pass first to catch anything since the last successful sync.
-    sync_extra_mailbox_incremental(db, account, account_id, mailbox, email_provider).await;
+    sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
 
-    sync_extra_mailbox_backfill(db, account, account_id, mailbox, email_provider, u32::MAX).await;
+    let mut budget = u32::MAX;
+    sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget).await;
 
     let after_count = db
         .count_emails_in_mailbox(account_id, mailbox_name)
@@ -1672,6 +1829,78 @@ pub(super) fn plan_sync_passes(
         backfill_after_timestamp,
         backfill_before_timestamp,
         run_incremental,
+    }
+}
+
+#[cfg(test)]
+mod sync_target_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_targets_keep_historic_watermark_keys() {
+        // Existing installs must resume from their persisted watermarks — the
+        // key format for Sent/Spam/Trash is frozen.
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        assert_eq!(
+            extra_mailbox_forward_key("acc-1", &target),
+            "extra_mailbox_sync:acc-1:sent"
+        );
+        assert_eq!(
+            extra_mailbox_backfill_key("acc-1", &target),
+            "extra_mailbox_backfill:acc-1:sent"
+        );
+        assert_eq!(
+            extra_mailbox_backfill_cursor_key("acc-1", &target),
+            "extra_mailbox_backfill_cursor:acc-1:sent"
+        );
+    }
+
+    #[test]
+    fn custom_folder_targets_scope_keys_by_server_path() {
+        let target = SyncTarget::CustomFolder {
+            server_path: "INBOX.Patienten".to_string(),
+        };
+        assert_eq!(target.mailbox_value(), "folder:INBOX.Patienten");
+        assert_eq!(
+            extra_mailbox_forward_key("acc-1", &target),
+            "extra_mailbox_sync:acc-1:folder:INBOX.Patienten"
+        );
+        assert_eq!(
+            extra_mailbox_backfill_cursor_key("acc-1", &target),
+            "extra_mailbox_backfill_cursor:acc-1:folder:INBOX.Patienten"
+        );
+    }
+
+    #[test]
+    fn folder_upserts_cover_roles_and_custom_with_decoded_display_names() {
+        let entries = vec![
+            ListedFolder {
+                raw_name: "Gesendete Objekte".to_string(),
+                delimiter: Some(".".to_string()),
+                attributes: vec![],
+            },
+            ListedFolder {
+                raw_name: "Vertr&AOQ-ge".to_string(),
+                delimiter: Some(".".to_string()),
+                attributes: vec![],
+            },
+        ];
+        let plan = plan_folders(&entries);
+        let upserts = folder_upserts_from_plan(&entries, &plan);
+
+        let sent = upserts
+            .iter()
+            .find(|u| u.server_path == "Gesendete Objekte")
+            .expect("sent row");
+        assert_eq!(sent.role.as_str(), "sent");
+        assert_eq!(sent.delimiter.as_deref(), Some("."));
+
+        let custom = upserts
+            .iter()
+            .find(|u| u.server_path == "Vertr&AOQ-ge")
+            .expect("custom row");
+        assert_eq!(custom.role.as_str(), "custom");
+        assert_eq!(custom.display_name, "Verträge", "display name is UTF-7 decoded");
     }
 }
 

@@ -1602,6 +1602,271 @@ async fn sync_with_provider_stores_new_emails() {
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
+// ── Custom IMAP folder sync ────────────────────────────────────────────────
+
+fn listed_folder(name: &str, attrs: &[&str]) -> emailops_lib::sync::folder_plan::ListedFolder {
+    emailops_lib::sync::folder_plan::ListedFolder {
+        raw_name: name.to_string(),
+        delimiter: Some(".".to_string()),
+        attributes: attrs.iter().map(|a| a.to_string()).collect(),
+    }
+}
+
+#[tokio::test]
+async fn custom_folder_sync_creates_folder_rows_emails_and_watermark() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-cf", "cf@example.com")).unwrap();
+    let account = db.get_account("acc-cf").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("cf@example.com", "Cf");
+    provider.set_folders(vec![
+        listed_folder("INBOX", &["\\HasChildren"]),
+        listed_folder("Patienten", &[]),
+    ]);
+    provider.add_message(
+        make_email_with("pf-1", "acc-cf", 1000, "a@x.com", "folder:Patienten"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    provider.add_message(
+        make_email_with("pf-2", "acc-cf", 2000, "b@x.com", "folder:Patienten"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    // Folder row persisted as custom.
+    let custom = db
+        .list_folders("acc-cf", Some(emailops_lib::models::FolderRole::Custom))
+        .unwrap();
+    assert_eq!(custom.len(), 1, "one custom folder row");
+    assert_eq!(custom[0].server_path, "Patienten");
+
+    // Emails stored under the folder mailbox — not clamped into the inbox.
+    let folder_emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-cf"),
+            50,
+            0,
+            None,
+            Some("folder:Patienten"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(folder_emails.len(), 2, "both folder emails stored");
+    let inbox_emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-cf"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap();
+    assert!(inbox_emails.is_empty(), "folder mail must not leak into inbox view");
+
+    // Forward watermark persisted under the folder-scoped key.
+    let watermark = db.get_preference("extra_mailbox_sync:acc-cf:folder:Patienten").unwrap();
+    assert_eq!(watermark.as_deref(), Some("2000"));
+}
+
+#[tokio::test]
+async fn custom_folder_second_sync_inserts_nothing_new() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-cf2", "cf2@example.com")).unwrap();
+    let account = db.get_account("acc-cf2").unwrap().unwrap();
+
+    let make_provider = || {
+        let p = FakeEmailProvider::new("cf2@example.com", "Cf2");
+        p.set_folders(vec![listed_folder("Projekte", &[])]);
+        p.add_message(
+            make_email_with("pj-1", "acc-cf2", 1500, "a@x.com", "folder:Projekte"),
+            EmailCategory::Primary,
+            vec![],
+        );
+        p
+    };
+
+    for _ in 0..2 {
+        let (abort_flags, ai_queue) = test_sync_state();
+        emailops_lib::services::emails::sync_account_with_provider(
+            &db,
+            &account,
+            std::path::Path::new("/tmp"),
+            None,
+            ai_queue,
+            abort_flags,
+            Box::new(make_provider()),
+        )
+        .await
+        .expect("sync_account_with_provider");
+    }
+
+    let folder_emails = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-cf2"),
+            50,
+            0,
+            None,
+            Some("folder:Projekte"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(folder_emails.len(), 1, "second sync must not duplicate");
+}
+
+#[tokio::test]
+async fn german_role_folders_persisted_with_roles_not_custom() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-de", "de@example.com")).unwrap();
+    let account = db.get_account("acc-de").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("de@example.com", "De");
+    // IONOS-shaped German server, no SPECIAL-USE attributes.
+    provider.set_folders(vec![
+        listed_folder("INBOX", &["\\HasChildren"]),
+        listed_folder("Gesendete Objekte", &[]),
+        listed_folder("Papierkorb", &[]),
+        listed_folder("Entw\u{fc}rfe", &[]),
+        listed_folder("Kunden", &[]),
+    ]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let all = db.list_folders("acc-de", None).unwrap();
+    let by_path = |p: &str| all.iter().find(|f| f.server_path == p);
+    assert_eq!(by_path("Gesendete Objekte").expect("sent row").role, "sent");
+    assert_eq!(by_path("Papierkorb").expect("trash row").role, "trash");
+    assert!(by_path("Entwürfe").is_none(), "drafts folder must not be synced");
+    let custom = db
+        .list_folders("acc-de", Some(emailops_lib::models::FolderRole::Custom))
+        .unwrap();
+    let custom_paths: Vec<&str> = custom.iter().map(|f| f.server_path.as_str()).collect();
+    assert_eq!(custom_paths, vec!["Kunden"], "only the user folder is custom");
+}
+
+#[tokio::test]
+async fn folder_removed_from_server_prunes_row_but_keeps_emails() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rm", "rm@example.com")).unwrap();
+    let account = db.get_account("acc-rm").unwrap().unwrap();
+
+    // First sync: folder exists with one message.
+    let p1 = FakeEmailProvider::new("rm@example.com", "Rm");
+    p1.set_folders(vec![listed_folder("Alt", &[])]);
+    p1.add_message(
+        make_email_with("alt-1", "acc-rm", 1200, "a@x.com", "folder:Alt"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(p1),
+    )
+    .await
+    .expect("first sync");
+
+    // Second sync: server no longer reports the folder.
+    let p2 = FakeEmailProvider::new("rm@example.com", "Rm");
+    p2.set_folders(vec![listed_folder("Neu", &[])]);
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(p2),
+    )
+    .await
+    .expect("second sync");
+
+    let custom = db
+        .list_folders("acc-rm", Some(emailops_lib::models::FolderRole::Custom))
+        .unwrap();
+    let paths: Vec<&str> = custom.iter().map(|f| f.server_path.as_str()).collect();
+    assert_eq!(paths, vec!["Neu"], "removed folder row pruned, new one added");
+
+    // The already-synced email survives (still searchable / in threads).
+    assert!(
+        db.get_email("alt-1").unwrap().is_some(),
+        "emails of pruned folders must be kept"
+    );
+}
+
+#[test]
+fn get_folders_service_returns_custom_only_sorted() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-gf", "gf@example.com")).unwrap();
+    db.upsert_folders_for_account(
+        "acc-gf",
+        &[
+            emailops_lib::db::folders::FolderUpsert {
+                server_path: "Gesendete Objekte".to_string(),
+                display_name: "Gesendete Objekte".to_string(),
+                role: emailops_lib::models::FolderRole::Sent,
+                delimiter: Some(".".to_string()),
+            },
+            emailops_lib::db::folders::FolderUpsert {
+                server_path: "Zulieferer".to_string(),
+                display_name: "Zulieferer".to_string(),
+                role: emailops_lib::models::FolderRole::Custom,
+                delimiter: Some(".".to_string()),
+            },
+            emailops_lib::db::folders::FolderUpsert {
+                server_path: "Patienten".to_string(),
+                display_name: "Patienten".to_string(),
+                role: emailops_lib::models::FolderRole::Custom,
+                delimiter: Some(".".to_string()),
+            },
+        ],
+    )
+    .unwrap();
+
+    let folders = emailops_lib::services::emails::get_folders(&db, "acc-gf").unwrap();
+    let names: Vec<&str> = folders.iter().map(|f| f.display_name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Patienten", "Zulieferer"],
+        "custom folders only, sorted by display name — role folders stay hidden"
+    );
+}
+
 // ── P0: reconciliation of optimistic sent rows during sync ─────────────────
 
 #[tokio::test]

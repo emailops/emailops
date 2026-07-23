@@ -255,6 +255,24 @@ pub struct SentMessageMeta {
     pub message_id_header: Option<String>,
 }
 
+/// Target of a message move: back to the inbox, or into a custom folder
+/// addressed by its exact server path (wire format).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveTarget {
+    Inbox,
+    Folder(String),
+}
+
+impl MoveTarget {
+    /// The `emails.mailbox` column value for messages living in this target.
+    pub fn mailbox_value(&self) -> String {
+        match self {
+            Self::Inbox => "inbox".to_string(),
+            Self::Folder(path) => format!("folder:{path}"),
+        }
+    }
+}
+
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
 ///
 /// Services depend on this trait, never on concrete providers.
@@ -345,6 +363,27 @@ pub trait EmailProvider: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Enumerate the folders the provider exposes (IMAP `LIST`), including
+    /// name attributes so the caller can run the role/custom detection ladder.
+    /// Default impl returns empty — providers without folder enumeration
+    /// (Gmail, Outlook) simply skip custom-folder sync.
+    async fn list_folders(&self) -> Result<Vec<crate::sync::folder_plan::ListedFolder>> {
+        Ok(Vec::new())
+    }
+
+    /// List message IDs in a custom folder addressed by its exact server path.
+    /// Same newest-first / watermark semantics as [`Self::list_mailbox_messages`].
+    /// Default impl returns empty.
+    async fn list_folder_messages(
+        &self,
+        _server_path: &str,
+        _max_results: u32,
+        _after_timestamp: Option<i64>,
+        _before_timestamp: Option<i64>,
+    ) -> Result<Vec<MessageRef>> {
+        Ok(Vec::new())
+    }
+
     /// Fetch multiple messages in bulk.
     ///
     /// Returns `Err` only on a transport or auth failure that affects the whole batch.
@@ -362,6 +401,49 @@ pub trait EmailProvider: Send + Sync {
             results.push(self.get_message(id).await);
         }
         Ok(results)
+    }
+
+    // ── Folder management ─────────────────────────────────────────────────
+    //
+    // IMAP-only in v1: only the IMAP adapter overrides these; callers gate
+    // the UI behind the account's provider, so the "unsupported" defaults
+    // below only fire if a provider is mis-wired.
+
+    /// Create a folder at the given exact server path (wire format).
+    async fn create_folder(&self, _server_path: &str) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "folder management is not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Rename a folder from one exact server path to another.
+    async fn rename_folder(&self, _old_server_path: &str, _new_server_path: &str) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "folder management is not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Delete a folder (and, per IMAP semantics, the messages inside it).
+    async fn delete_folder(&self, _server_path: &str) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "folder management is not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Move a message into `target`. `message_id_header` is the message's RFC
+    /// 5322 Message-ID when known — implementations use it to resolve the
+    /// message's new provider id in the target folder. Returns that new
+    /// [`MessageRef`] so the caller can re-ingest the moved message without a
+    /// full folder resync, or `None` when the new id cannot be determined.
+    async fn move_message(
+        &self,
+        _message_id: &str,
+        _message_id_header: Option<&str>,
+        _target: &MoveTarget,
+    ) -> Result<Option<MessageRef>> {
+        Err(AppError::InvalidInput(
+            "moving messages is not supported by this provider".to_string(),
+        ))
     }
 
     // ── Drafts ────────────────────────────────────────────────────────────
@@ -447,6 +529,23 @@ pub struct FakeEmailProvider {
     /// empty meta (Outlook-shaped); tests set it to simulate Gmail (provider
     /// ids) or IMAP (Message-ID header) providers.
     send_meta: std::sync::RwLock<SentMessageMeta>,
+    /// Folders reported by `list_folders`, simulating an IMAP `LIST` response.
+    folders: std::sync::RwLock<Vec<crate::sync::folder_plan::ListedFolder>>,
+    /// Folder-management operations performed, for test assertions.
+    folder_ops: std::sync::RwLock<Vec<FakeFolderOp>>,
+    /// When `Some`, `move_message` returns this instead of the default
+    /// same-id ref — simulates providers that re-key moved messages
+    /// (`Some(Some(ref))`) or cannot report the new id (`Some(None)`).
+    move_result: std::sync::RwLock<Option<Option<MessageRef>>>,
+}
+
+/// A folder-management call recorded by [`FakeEmailProvider`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FakeFolderOp {
+    Create(String),
+    Rename(String, String),
+    Delete(String),
+    Move { message_id: String, mailbox_value: String },
 }
 
 #[derive(Debug, Clone)]
@@ -482,7 +581,27 @@ impl FakeEmailProvider {
             drafts: std::sync::RwLock::new(std::collections::HashMap::new()),
             draft_seq: std::sync::atomic::AtomicU64::new(0),
             send_meta: std::sync::RwLock::new(SentMessageMeta::default()),
+            folders: std::sync::RwLock::new(Vec::new()),
+            folder_ops: std::sync::RwLock::new(Vec::new()),
+            move_result: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Override what subsequent `move_message` calls return (see the field
+    /// doc). The default (no override) returns the moved message's own id.
+    pub fn set_move_result(&self, result: Option<MessageRef>) {
+        *self.move_result.write().unwrap_or_else(PoisonError::into_inner) = Some(result);
+    }
+
+    /// Snapshot of the folder-management operations performed so far.
+    pub fn folder_ops(&self) -> Vec<FakeFolderOp> {
+        self.folder_ops.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Configure the folder set reported by `list_folders`, simulating the
+    /// server's IMAP `LIST` response.
+    pub fn set_folders(&self, folders: Vec<crate::sync::folder_plan::ListedFolder>) {
+        *self.folders.write().unwrap_or_else(PoisonError::into_inner) = folders;
     }
 
     /// Configure the [`SentMessageMeta`] returned by subsequent send calls,
@@ -611,6 +730,36 @@ impl EmailProvider for FakeEmailProvider {
             .collect())
     }
 
+    async fn list_folders(&self) -> Result<Vec<crate::sync::folder_plan::ListedFolder>> {
+        Ok(self.folders.read().unwrap_or_else(PoisonError::into_inner).clone())
+    }
+
+    async fn list_folder_messages(
+        &self,
+        server_path: &str,
+        max_results: u32,
+        after_timestamp: Option<i64>,
+        before_timestamp: Option<i64>,
+    ) -> Result<Vec<MessageRef>> {
+        let mailbox_value = format!("folder:{server_path}");
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        let mut filtered: Vec<&FakeStoredMessage> = guard
+            .iter()
+            .filter(|m| m.email.mailbox == mailbox_value)
+            .filter(|m| after_timestamp.is_none_or(|t| m.email.timestamp > t))
+            .filter(|m| before_timestamp.is_none_or(|t| m.email.timestamp < t))
+            .collect();
+        filtered.sort_by_key(|m| std::cmp::Reverse(m.email.timestamp));
+        filtered.truncate(max_results as usize);
+        Ok(filtered
+            .into_iter()
+            .map(|m| MessageRef {
+                id: m.email.id.clone(),
+                thread_id: m.email.thread_id.clone(),
+            })
+            .collect())
+    }
+
     async fn get_message(&self, message_id: &str) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         guard
@@ -684,6 +833,91 @@ impl EmailProvider for FakeEmailProvider {
                     "Fake attachment bytes not configured: {message_id}/{attachment_id}"
                 ))
             })
+    }
+
+    async fn create_folder(&self, server_path: &str) -> Result<()> {
+        self.folders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(crate::sync::folder_plan::ListedFolder {
+                raw_name: server_path.to_string(),
+                delimiter: Some(".".to_string()),
+                attributes: vec!["\\HasNoChildren".to_string()],
+            });
+        self.folder_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeFolderOp::Create(server_path.to_string()));
+        Ok(())
+    }
+
+    async fn rename_folder(&self, old_server_path: &str, new_server_path: &str) -> Result<()> {
+        let mut folders = self.folders.write().unwrap_or_else(PoisonError::into_inner);
+        let entry = folders
+            .iter_mut()
+            .find(|f| f.raw_name == old_server_path)
+            .ok_or_else(|| AppError::NotFound(format!("Fake folder not found: {old_server_path}")))?;
+        entry.raw_name = new_server_path.to_string();
+        drop(folders);
+        self.folder_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeFolderOp::Rename(
+                old_server_path.to_string(),
+                new_server_path.to_string(),
+            ));
+        Ok(())
+    }
+
+    async fn delete_folder(&self, server_path: &str) -> Result<()> {
+        let mut folders = self.folders.write().unwrap_or_else(PoisonError::into_inner);
+        let before = folders.len();
+        folders.retain(|f| f.raw_name != server_path);
+        if folders.len() == before {
+            return Err(AppError::NotFound(format!("Fake folder not found: {server_path}")));
+        }
+        drop(folders);
+        // Per IMAP semantics deleting a folder deletes its messages too.
+        let mailbox_value = format!("folder:{server_path}");
+        self.messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|m| m.email.mailbox != mailbox_value);
+        self.folder_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeFolderOp::Delete(server_path.to_string()));
+        Ok(())
+    }
+
+    async fn move_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+        target: &MoveTarget,
+    ) -> Result<Option<MessageRef>> {
+        let mut messages = self.messages.write().unwrap_or_else(PoisonError::into_inner);
+        let stored = messages
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+            .ok_or_else(|| AppError::NotFound(format!("Fake message not found: {message_id}")))?;
+        stored.email.mailbox = target.mailbox_value();
+        let moved_ref = MessageRef {
+            id: stored.email.id.clone(),
+            thread_id: stored.email.thread_id.clone(),
+        };
+        drop(messages);
+        self.folder_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeFolderOp::Move {
+                message_id: message_id.to_string(),
+                mailbox_value: target.mailbox_value(),
+            });
+        if let Some(overridden) = self.move_result.read().unwrap_or_else(PoisonError::into_inner).clone() {
+            return Ok(overridden);
+        }
+        Ok(Some(moved_ref))
     }
 
     async fn create_draft(
@@ -871,6 +1105,218 @@ mod tests {
         assert_eq!(meta.provider_message_id.as_deref(), Some("gm-1"));
         assert_eq!(meta.provider_thread_id.as_deref(), Some("gt-1"));
         assert_eq!(meta.message_id_header.as_deref(), Some("<mid-1@local>"));
+    }
+
+    #[tokio::test]
+    async fn fake_provider_lists_configured_folders() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert!(p.list_folders().await.unwrap().is_empty(), "default is empty");
+
+        p.set_folders(vec![crate::sync::folder_plan::ListedFolder {
+            raw_name: "INBOX.Patienten".to_string(),
+            delimiter: Some(".".to_string()),
+            attributes: vec!["\\HasNoChildren".to_string()],
+        }]);
+        let folders = p.list_folders().await.unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].raw_name, "INBOX.Patienten");
+    }
+
+    #[tokio::test]
+    async fn fake_provider_folder_messages_filter_by_folder_and_timestamps() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        let mut in_folder_old = sample_email("f-old", 1000);
+        in_folder_old.mailbox = "folder:INBOX.Patienten".to_string();
+        let mut in_folder_new = sample_email("f-new", 3000);
+        in_folder_new.mailbox = "folder:INBOX.Patienten".to_string();
+        let mut other_folder = sample_email("other", 2000);
+        other_folder.mailbox = "folder:INBOX.Zulieferer".to_string();
+        p.add_message(in_folder_old, EmailCategory::Primary, vec![]);
+        p.add_message(in_folder_new, EmailCategory::Primary, vec![]);
+        p.add_message(other_folder, EmailCategory::Primary, vec![]);
+        p.add_message(sample_email("inbox-msg", 2500), EmailCategory::Primary, vec![]);
+
+        // No bounds: both folder messages, newest first, inbox and other
+        // folders excluded.
+        let refs = p.list_folder_messages("INBOX.Patienten", 10, None, None).await.unwrap();
+        let ids: Vec<&str> = refs.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["f-new", "f-old"]);
+
+        // after_timestamp is exclusive (watermark semantics, mirrors
+        // list_mailbox_messages); before_timestamp is exclusive too.
+        let refs = p
+            .list_folder_messages("INBOX.Patienten", 10, Some(1000), None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = refs.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["f-new"]);
+
+        let refs = p
+            .list_folder_messages("INBOX.Patienten", 10, None, Some(3000))
+            .await
+            .unwrap();
+        let ids: Vec<&str> = refs.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["f-old"]);
+    }
+
+    #[tokio::test]
+    async fn fake_provider_folder_crud_mutates_listing_and_records_ops() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+
+        p.create_folder("INBOX.Neu").await.unwrap();
+        let names: Vec<String> = p
+            .list_folders()
+            .await
+            .unwrap()
+            .iter()
+            .map(|f| f.raw_name.clone())
+            .collect();
+        assert_eq!(names, vec!["INBOX.Neu"]);
+
+        p.rename_folder("INBOX.Neu", "INBOX.Projekte").await.unwrap();
+        let names: Vec<String> = p
+            .list_folders()
+            .await
+            .unwrap()
+            .iter()
+            .map(|f| f.raw_name.clone())
+            .collect();
+        assert_eq!(names, vec!["INBOX.Projekte"]);
+
+        p.delete_folder("INBOX.Projekte").await.unwrap();
+        assert!(p.list_folders().await.unwrap().is_empty());
+
+        assert_eq!(
+            p.folder_ops(),
+            vec![
+                FakeFolderOp::Create("INBOX.Neu".to_string()),
+                FakeFolderOp::Rename("INBOX.Neu".to_string(), "INBOX.Projekte".to_string()),
+                FakeFolderOp::Delete("INBOX.Projekte".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn fake_provider_delete_folder_drops_its_messages() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.set_folders(vec![crate::sync::folder_plan::ListedFolder {
+            raw_name: "INBOX.Alt".to_string(),
+            delimiter: Some(".".to_string()),
+            attributes: vec![],
+        }]);
+        let mut in_folder = sample_email("f1", 1000);
+        in_folder.mailbox = "folder:INBOX.Alt".to_string();
+        p.add_message(in_folder, EmailCategory::Primary, vec![]);
+        p.add_message(sample_email("i1", 2000), EmailCategory::Primary, vec![]);
+
+        p.delete_folder("INBOX.Alt").await.unwrap();
+
+        assert!(p.get_message("f1").await.is_err(), "folder message gone");
+        assert!(p.get_message("i1").await.is_ok(), "inbox message untouched");
+    }
+
+    #[tokio::test]
+    async fn fake_provider_folder_ops_error_on_missing_targets() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert!(p.rename_folder("Nope", "New").await.is_err());
+        assert!(p.delete_folder("Nope").await.is_err());
+        assert!(p.move_message("nope", None, &MoveTarget::Inbox).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fake_provider_move_message_updates_mailbox_and_returns_ref() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.add_message(sample_email("m1", 1000), EmailCategory::Primary, vec![]);
+
+        let target = MoveTarget::Folder("INBOX.Archiv".to_string());
+        let moved = p.move_message("m1", Some("<mid@x>"), &target).await.unwrap();
+        assert_eq!(moved.map(|r| r.id), Some("m1".to_string()));
+        let (email, _, _) = p.get_message("m1").await.unwrap();
+        assert_eq!(email.mailbox, "folder:INBOX.Archiv");
+
+        // ...and back to the inbox.
+        p.move_message("m1", None, &MoveTarget::Inbox).await.unwrap();
+        let (email, _, _) = p.get_message("m1").await.unwrap();
+        assert_eq!(email.mailbox, "inbox");
+    }
+
+    #[test]
+    fn move_target_mailbox_values() {
+        assert_eq!(MoveTarget::Inbox.mailbox_value(), "inbox");
+        assert_eq!(
+            MoveTarget::Folder("INBOX.Patienten".to_string()).mailbox_value(),
+            "folder:INBOX.Patienten"
+        );
+    }
+
+    /// Minimal provider that overrides nothing optional — locks the contract
+    /// that folder management defaults to a typed "unsupported" error rather
+    /// than silently succeeding.
+    struct BareProvider;
+
+    #[async_trait]
+    impl EmailProvider for BareProvider {
+        async fn get_profile(&self) -> Result<(String, String)> {
+            Ok((String::new(), String::new()))
+        }
+        async fn list_messages(
+            &self,
+            _max_results: u32,
+            _page_token: Option<&str>,
+            _after_timestamp: Option<i64>,
+            _before_timestamp: Option<i64>,
+            _label_filter: Option<&str>,
+        ) -> Result<(Vec<MessageRef>, Option<String>)> {
+            Ok((Vec::new(), None))
+        }
+        async fn get_message(&self, id: &str) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+            Err(crate::models::error::AppError::NotFound(id.to_string()))
+        }
+        async fn send_reply(
+            &self,
+            _from_email: &str,
+            _to_emails: &[String],
+            _cc_emails: &[String],
+            _thread_id: &str,
+            _original_message_id: Option<&str>,
+            _subject: &str,
+            _body: &EmailBody,
+            _attachments: &[EmailAttachment],
+        ) -> Result<SentMessageMeta> {
+            Ok(SentMessageMeta::default())
+        }
+        async fn send_new_email(
+            &self,
+            _from_email: &str,
+            _to_emails: &[String],
+            _cc_emails: &[String],
+            _subject: &str,
+            _body: &EmailBody,
+            _attachments: &[EmailAttachment],
+        ) -> Result<SentMessageMeta> {
+            Ok(SentMessageMeta::default())
+        }
+        async fn fetch_attachment_bytes(&self, _message_id: &str, _attachment_id: &str) -> Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn folder_management_defaults_to_unsupported_error() {
+        let p = BareProvider;
+        for result in [
+            p.create_folder("X").await,
+            p.rename_folder("X", "Y").await,
+            p.delete_folder("X").await,
+            p.move_message("m", None, &MoveTarget::Inbox).await.map(|_| ()),
+        ] {
+            match result {
+                Err(crate::models::error::AppError::InvalidInput(msg)) => {
+                    assert!(msg.contains("not supported"), "unexpected message: {msg}");
+                }
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+        }
     }
 
     #[test]

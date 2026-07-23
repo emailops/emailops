@@ -71,6 +71,83 @@ pub async fn get_emails(
     )
 }
 
+/// List the custom folders of one account for the sidebar "Folders" section.
+#[tauri::command]
+pub async fn get_folders(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<crate::models::Folder>, AppError> {
+    services::emails::get_folders(&state.db, &account_id)
+}
+
+/// Load an account and build its provider — shared by the folder-management
+/// commands below.
+async fn account_and_provider(
+    state: &State<'_, AppState>,
+    app: AppHandle,
+    account_id: &str,
+) -> Result<(crate::models::Account, Box<dyn crate::sync::provider::EmailProvider>), AppError> {
+    let account = state
+        .db
+        .get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    let provider = services::emails::build_provider(&account, Some(app)).await?;
+    Ok((account, provider))
+}
+
+/// Create a custom folder on the mail server (IMAP accounts only).
+#[tauri::command]
+pub async fn create_folder(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    name: String,
+) -> Result<crate::models::Folder, AppError> {
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    services::emails::create_folder(&state.db, &account, provider.as_ref(), &name).await
+}
+
+/// Rename a custom folder on the mail server (IMAP accounts only).
+#[tauri::command]
+pub async fn rename_folder(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    folder_id: String,
+    new_name: String,
+) -> Result<crate::models::Folder, AppError> {
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    services::emails::rename_folder(&state.db, &account, provider.as_ref(), &folder_id, &new_name).await
+}
+
+/// Delete a custom folder on the mail server (IMAP accounts only). Its
+/// messages are removed both server-side (IMAP semantics) and locally.
+#[tauri::command]
+pub async fn delete_folder(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    folder_id: String,
+) -> Result<(), AppError> {
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    services::emails::delete_folder(&state.db, &account, provider.as_ref(), &folder_id).await
+}
+
+/// Move an email between the inbox and a custom folder (IMAP accounts only).
+/// `target_mailbox` is `"inbox"` or `"folder:<server_path>"`.
+#[tauri::command]
+pub async fn move_email(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    email_id: String,
+    target_mailbox: String,
+) -> Result<(), AppError> {
+    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target_mailbox).await
+}
+
 #[tauri::command]
 pub async fn get_thread(
     state: State<'_, AppState>,

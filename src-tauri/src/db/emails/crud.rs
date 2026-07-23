@@ -238,6 +238,15 @@ impl Database {
                 conditions.push("e.is_deleted = 0".to_string());
                 conditions.push("e.mailbox = 'spam'".to_string());
             }
+            v if v.starts_with("folder:") => {
+                // Custom IMAP folder view: flat per-email list (no thread
+                // dedup, like spam), scoped to the exact folder mailbox value.
+                // Served by idx_emails_account_mailbox.
+                conditions.push("e.is_deleted = 0".to_string());
+                conditions.push(format!("e.mailbox = ?{param_idx}"));
+                params_vec.push(Box::new(v.to_string()));
+                param_idx += 1;
+            }
             _ => {
                 // Inbox view: dedup by thread, picking the latest *inbox* email
                 // per thread. Using the cross-mailbox predicate here causes

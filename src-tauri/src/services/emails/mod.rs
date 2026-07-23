@@ -1,6 +1,7 @@
 mod compose;
 mod drafts;
 mod events;
+mod folders;
 mod html_sanitizer;
 mod optimistic;
 mod provider;
@@ -20,6 +21,7 @@ pub use compose::{
 };
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub use events::SyncProgress;
+pub use folders::{create_folder, delete_folder, move_email, rename_folder};
 pub use html_sanitizer::sanitize_outgoing_html;
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_empty_emails};
@@ -41,6 +43,12 @@ pub fn get_emails(
         None => crate::db::AccountScope::AllEnabled,
     };
     db.get_emails(scope, limit, offset, None, mailbox, category)
+}
+
+/// List an account's custom folders for the sidebar. Well-known role folders
+/// (Sent/Spam/Trash) are excluded — they already have dedicated views.
+pub fn get_folders(db: &Arc<Database>, account_id: &str) -> Result<Vec<crate::models::Folder>> {
+    db.list_folders(account_id, Some(crate::models::FolderRole::Custom))
 }
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {

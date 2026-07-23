@@ -5,7 +5,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Email } from '@/types';
-import { appendUniqueEmails, computeHasMore, mergeThreadRefresh, useEmailStore } from './emailStore';
+import {
+  appendUniqueEmails,
+  computeHasMore,
+  mergeThreadRefresh,
+  removeEmailFromSlices,
+  useEmailStore,
+} from './emailStore';
 
 const PAGE_SIZE = 50;
 
@@ -149,6 +155,43 @@ describe('mergeThreadRefresh', () => {
     const existing = [threadEmail('a', 100), threadEmail('local-sent-1', 200, 'reply')];
     const fetched = [threadEmail('a', 100), threadEmail('imap-real-7', 200, '')];
     expect(mergeThreadRefresh(existing, fetched).map((e) => e.id)).toEqual(['a', 'imap-real-7']);
+  });
+});
+
+describe('removeEmailFromSlices', () => {
+  // Shared by deleteEmail and moveEmail: both make the email vanish from its
+  // current view (inbox list, thread view, open thread tabs, selection).
+  function slices(selectedId: string | null) {
+    const emails = [makeEmail('a'), makeEmail('b')];
+    return {
+      emails,
+      threadEmails: [makeEmail('a')],
+      selectedEmail: selectedId ? makeEmail(selectedId) : null,
+      totalCount: 2,
+      tabs: [{ type: 'thread' as const, threadEmails: [makeEmail('a'), makeEmail('b')] }],
+    };
+  }
+
+  it('removes the email from every slice and decrements the count', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal tab shape for a pure-helper test
+    const next = removeEmailFromSlices(slices(null) as any, 'a');
+    expect(next.emails.map((e) => e.id)).toEqual(['b']);
+    expect(next.threadEmails).toEqual([]);
+    expect(next.totalCount).toBe(1);
+    expect((next.tabs[0] as { threadEmails: Email[] }).threadEmails.map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('clears selectedEmail only when it is the removed email', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal tab shape for a pure-helper test
+    expect(removeEmailFromSlices(slices('a') as any, 'a').selectedEmail).toBeNull();
+    // biome-ignore lint/suspicious/noExplicitAny: minimal tab shape for a pure-helper test
+    expect(removeEmailFromSlices(slices('b') as any, 'a').selectedEmail?.id).toBe('b');
+  });
+
+  it('never lets the count go negative', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal tab shape for a pure-helper test
+    const state = { ...slices(null), totalCount: 0 } as any;
+    expect(removeEmailFromSlices(state, 'a').totalCount).toBe(0);
   });
 });
 

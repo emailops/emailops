@@ -208,6 +208,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let setup_start = std::time::Instant::now();
 
@@ -509,6 +510,11 @@ pub fn run() {
             commands::accounts::set_account_settings,
             commands::accounts::get_available_categories,
             commands::emails::get_emails,
+            commands::emails::get_folders,
+            commands::emails::create_folder,
+            commands::emails::rename_folder,
+            commands::emails::delete_folder,
+            commands::emails::move_email,
             commands::emails::get_thread,
             commands::emails::get_email_body,
             commands::emails::mark_as_read,
@@ -538,6 +544,12 @@ pub fn run() {
             commands::search::list_ollama_models,
             commands::search::get_ai_model,
             commands::search::set_ai_model,
+            commands::calendar::get_calendar_events,
+            commands::calendar::create_calendar_event,
+            commands::calendar::delete_calendar_event,
+            commands::calendar::get_calendar_invite,
+            commands::calendar::rsvp_calendar_invite,
+            commands::calendar::sync_calendar_now,
             commands::preferences::get_pref,
             commands::preferences::set_pref,
             commands::preferences::get_auto_n_ctx,

@@ -19,6 +19,7 @@ function makeEmail(id: string): Email {
     isRead: true,
     triageStatus: null,
     category: 'primary',
+    mailbox: 'inbox',
   };
 }
 

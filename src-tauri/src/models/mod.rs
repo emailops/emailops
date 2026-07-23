@@ -68,6 +68,105 @@ pub struct OAuthTokens {
     pub expires_at: Option<i64>,
 }
 
+// Folders
+
+/// Canonical role of a mail folder discovered on the server. `Custom` covers
+/// every selectable user-created folder that is not one of the well-known
+/// mailboxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderRole {
+    Sent,
+    Spam,
+    Trash,
+    Custom,
+}
+
+impl FolderRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FolderRole::Sent => "sent",
+            FolderRole::Spam => "spam",
+            FolderRole::Trash => "trash",
+            FolderRole::Custom => "custom",
+        }
+    }
+}
+
+/// A mail folder discovered on the provider (IMAP `LIST`). `server_path` is
+/// the raw wire name (modified UTF-7) used verbatim for `SELECT` and as the
+/// stable identity; `display_name` is the decoded UTF-8 path shown in the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: String,
+    pub account_id: String,
+    pub server_path: String,
+    pub display_name: String,
+    pub role: String,
+    pub delimiter: Option<String>,
+}
+
+// Calendar
+
+/// One invitee on a calendar event, with their RSVP state normalized across
+/// providers: "accepted" | "declined" | "tentative" | "needsAction" |
+/// "organizer".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAttendee {
+    pub email: String,
+    #[serde(default = "default_attendee_response")]
+    pub response: String,
+}
+
+fn default_attendee_response() -> String {
+    "needsAction".to_string()
+}
+
+/// One calendar event instance synced from the provider. Recurring events are
+/// stored as expanded instances (one row per occurrence in the sync window),
+/// never as RRULE masters — see `migrations/V011__calendar_events.sql`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEvent {
+    pub id: String,
+    pub account_id: String,
+    pub provider_event_id: String,
+    pub calendar_id: String,
+    pub title: String,
+    pub description: String,
+    pub location: String,
+    /// UTC epoch seconds.
+    pub start_time: i64,
+    /// UTC epoch seconds (exclusive end).
+    pub end_time: i64,
+    pub is_all_day: bool,
+    /// Provider's original IANA timezone (e.g. "Europe/Madrid"); empty when unknown.
+    pub timezone: String,
+    pub organizer: String,
+    pub attendees: Vec<CalendarAttendee>,
+    /// Extracted join URL (https only). `None` when the event has no detectable
+    /// meeting link.
+    pub meeting_link: Option<String>,
+    /// "meet" | "teams" | "webex" | "zoom" | … — see services::calendar::meeting_link.
+    pub meeting_platform: Option<String>,
+    /// "confirmed" | "tentative" | "cancelled"
+    pub status: String,
+    /// Provider web link to open the event in the provider's own calendar UI.
+    pub html_link: Option<String>,
+    /// Set when the upcoming-meeting notification fired for this event.
+    pub notified_at: Option<i64>,
+    /// Series master id for expanded recurring instances (`None` for
+    /// non-recurring events). Drives scoped deletes.
+    #[serde(default)]
+    pub recurring_event_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 // Logging
 
 #[derive(Debug, Clone, Serialize)]

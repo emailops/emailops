@@ -12,11 +12,13 @@ mod embedded {
 
 pub mod accounts;
 pub mod attachments;
+pub mod calendar;
 pub mod chat;
 pub mod drafts;
 pub mod emails;
 pub mod embeddings;
 pub mod filters;
+pub mod folders;
 pub mod lenses;
 pub mod memory;
 pub mod tags;
@@ -870,6 +872,8 @@ mod schema_parity_tests {
             "pending_tasks",
             "embedding_chunks",
             "smart_filter_suggestions",
+            "calendar_events",
+            "calendar_sync_state",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),
