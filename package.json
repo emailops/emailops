@@ -28,7 +28,7 @@
     "generate-types": "cargo test --manifest-path src-tauri/Cargo.toml --features ts -- export_bindings --nocapture",
     "test:frontend": "vitest run",
     "test:all": "npm run test:rust && npm run test:frontend",
-    "i18n:check": "i18next 'src/**/*.{ts,tsx}' --config i18next-parser.config.cjs --silent --dry-run",
+    "i18n:check": "node scripts/check-i18n-drift.mjs",
     "i18n:extract": "i18next 'src/**/*.{ts,tsx}' --config i18next-parser.config.cjs",
     "i18n:no-jsx-literals": "node scripts/check-jsx-literals.mjs",
     "tauri": "tauri"
