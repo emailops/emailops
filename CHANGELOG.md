@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.3] — 2026-07-24
+
+### Added
+
+- **Calendar view** with provider sync, invites, and reminders.
+- **Unified "All accounts" inbox** across enabled accounts.
+- **IMAP custom folder sync and in-app folder management** — create, rename,
+  delete, and move folders (including drag-and-drop), with localized folder
+  detection.
+- **New-release notifications** via a sticky toast and sidebar link.
+- **Attachment downloads to the Downloads folder** with a "Show in Finder"
+  toast.
+- **In-thread search and pinch-zoom** in email bodies.
+- **Sent emails appear instantly** via optimistic local insert.
+- **App version and commit SHA** shown under the sidebar logo.
+- **Homebrew distribution** — install via the `emailops/homebrew-tap` cask.
+
+### Fixed
+
+- **Send and account-save errors are surfaced** instead of being silently
+  hidden.
+- **Chat answers that contradict tool results are retried.**
+- **Keychain secrets consolidated into one vault item**, reducing keychain
+  prompts.
+- **Sync error banner shows which account is failing.**
+- **Email row menu flips above the button** when near the viewport bottom.
+
+### Changed
+
+- Dependency bumps to latest compatible versions.
+
 ## [0.6.2] — 2026-07-09
 
 ### Fixed
