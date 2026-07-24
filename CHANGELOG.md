@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.4] — 2026-07-24
+
+### Fixed
+
+- **Gmail sync respects Google's rate-limit window**: when Gmail says
+  "retry after \<time\>", sync stops retrying, pauses that account's requests
+  until the window reopens, and resumes on the next scheduled sync —
+  previously each operation burned six rapid retries against the exhausted
+  quota and flooded the log with warnings.
+
 ## [0.6.3] — 2026-07-24
 
 ### Added
