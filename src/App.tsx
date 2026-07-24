@@ -1,4 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AddImapAccountModal } from '@/components/AddImapAccountModal';
@@ -45,6 +46,7 @@ import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
+import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
@@ -63,6 +65,8 @@ import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useReminderStore } from '@/stores/reminderStore';
 import { useTagStore } from '@/stores/tagStore';
+import { useToastStore } from '@/stores/toastStore';
+import { useUpdateStore } from '@/stores/updateStore';
 import type {
   ActiveFilter,
   CalendarEvent,
@@ -635,6 +639,28 @@ function AppInner() {
         } else {
           console.error('Ignoring malformed meeting-reminder payload', event.payload);
         }
+      }),
+    );
+
+    // New-release notification — the backend checks GitHub daily and emits
+    // this at most once per version. Validation + toast routing live in the
+    // pure handler (`appUpdate.ts`); the i18n singleton resolves the message
+    // in the current language at event time. The sticky toast announces; the
+    // update store feeds the persistent sidebar link, seeded at startup from
+    // the prefs the backend check persists.
+    void useUpdateStore.getState().load();
+    unlisteners.push(
+      listen<UpdateAvailablePayload>('app-update-available', (event) => {
+        handleUpdateAvailable(event.payload, {
+          addToast: useToastStore.getState().addToast,
+          t: (key, opts) => i18n.t(key, opts),
+          openUrl: (url) => {
+            void openExternal(url).catch((err) => {
+              addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
+            });
+          },
+          onAvailable: useUpdateStore.getState().setAvailable,
+        });
       }),
     );
 

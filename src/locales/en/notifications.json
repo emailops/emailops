@@ -49,5 +49,9 @@
   "banners": {
     "offline": "You are offline — sync paused.",
     "reconnect": "Reconnected — sync will resume."
+  },
+  "updates": {
+    "available": "EmailOps {{version}} is available",
+    "download": "Download"
   }
 }

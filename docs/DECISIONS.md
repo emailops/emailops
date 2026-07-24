@@ -146,3 +146,28 @@ messages by delete + re-ingest (loses local AI state, message invisible until ne
 sync); rewriting `chat_messages.referenced_email_ids` JSON on id migration (renderer
 already degrades gracefully on unknown ids); Gmail/Outlook support (trait defaults
 return a typed "unsupported" error; UI is gated to IMAP accounts).
+
+## 2026-07-24 — Update notification: in-app toast to GitHub release page, no auto-updater
+
+**Decision:** The app detects new releases by polling the GitHub Releases API
+(`/repos/emailops/emailops/releases/latest`) at most once per 24h (checked hourly,
+gated on the persisted `app_update_last_check_at` pref, skipped offline and in debug
+builds unless `EMAILOPS_UPDATE_CHECK=1`). A newer version surfaces on two in-app
+channels, both opening the GitHub release page in the external browser: (1) a sticky
+toast (never auto-dismisses; user-close only) emitted once per version via
+`app-update-available` (`app_update_notified_version` pref), and (2) a persistent
+link in the sidebar footer, below the syncing message, that survives restarts (the
+check persists `app_update_latest_version`/`_url` prefs; `get_available_update`
+re-derives the link at startup) and disappears only once the user actually upgrades.
+**Context:** Releases ship as DMGs on GitHub (plus Homebrew cask); users had no
+in-app signal that a new version exists. macOS native notification clicks proved
+undeliverable back to the app during the calendar feature, so in-app surfaces are
+the actionable channel. A transient toast alone was deemed too easy to miss for a
+notice that stays relevant until the user upgrades.
+**Rejected:** `tauri-plugin-updater` / self-updating binaries (signing +
+auto-replace complexity, and Homebrew-managed installs shouldn't self-mutate);
+native OS notification (click-through unreliable); top-of-app banner (too intrusive
+for a non-urgent nudge — the sidebar footer link carries the persistent state
+instead); direct per-arch DMG download link (breaks if asset naming changes; release
+page also shows the notes); a Settings toggle (automatic-only keeps the surface
+minimal — trivial to add later since checks read prefs every tick).

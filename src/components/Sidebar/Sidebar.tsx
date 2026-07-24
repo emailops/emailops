@@ -1,3 +1,4 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Folder, MailboxView } from '@/lib/api';
@@ -12,6 +13,7 @@ import { useFolderStore } from '@/stores/folderStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
 import { SmartFilters } from './SmartFilters';
@@ -164,6 +166,9 @@ export function Sidebar({
   // Folder management + drag-and-drop move targets (IMAP accounts only).
   const isImapAccount = activeAccount?.provider === 'imap';
   const { addLog } = useLogStore();
+  // Persistent new-release link in the footer — unlike the update toast it
+  // stays until the user actually upgrades (store self-heals post-upgrade).
+  const availableUpdate = useUpdateStore((s) => s.available);
   const moveEmail = useEmailStore((s) => s.moveEmail);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -920,6 +925,20 @@ export function Sidebar({
           </button>
         </div>
         {isSyncing && <div className="mt-2 text-xs text-primary-400">{t('sidebar:syncingEmails')}</div>}
+        {availableUpdate && (
+          <button
+            type="button"
+            onClick={() => {
+              void openExternal(availableUpdate.url).catch((e) => {
+                addLog('error', 'system', `Failed to open release page: ${errorText(e)}`);
+              });
+            }}
+            className="mt-2 block text-left text-xs text-primary-400 hover:text-primary-300 hover:underline truncate w-full"
+            title={availableUpdate.url}
+          >
+            {t('sidebar:updateAvailable', { version: availableUpdate.version })}
+          </button>
+        )}
       </div>
 
       {/* Folder-delete confirmation — deleting removes the emails on the

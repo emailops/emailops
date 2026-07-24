@@ -2,6 +2,7 @@
   "appName": "EmailOps",
   "searchShortcut": "⌘K",
   "syncingEmails": "Syncing emails...",
+  "updateAvailable": "EmailOps {{version}} available — download",
   "accountDisabledSuffix": "(disabled)",
   "inbox": "Inbox",
   "drafts": "Drafts",

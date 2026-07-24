@@ -22,9 +22,11 @@ function ToastCard({ toast }: { toast: Toast }) {
   const dismissToast = useToastStore((s) => s.dismissToast);
 
   useEffect(() => {
+    // Sticky toasts stay until the user closes them (X or the action button).
+    if (toast.sticky) return;
     const timer = setTimeout(() => dismissToast(toast.id), AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [toast.id, dismissToast]);
+  }, [toast.id, toast.sticky, dismissToast]);
 
   return (
     <div className="flex items-center gap-3 pl-4 pr-2 py-2.5 bg-gray-900 text-white rounded-lg shadow-lg max-w-md">

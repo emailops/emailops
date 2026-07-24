@@ -5,7 +5,11 @@
 //! client" everywhere else. Detection lives in Rust because Tauri's webview
 //! does not expose CPU architecture reliably.
 
+use tauri::State;
+
 use crate::models::error::AppError;
+use crate::services::updates::UpdateAvailableEvent;
+use crate::AppState;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +58,17 @@ pub async fn get_build_info() -> Result<BuildInfo, AppError> {
         env!("CARGO_PKG_VERSION"),
         option_env!("EMAILOPS_GIT_SHA").unwrap_or(""),
         option_env!("EMAILOPS_GIT_TAGS").unwrap_or(""),
+    ))
+}
+
+/// Latest-known newer release, derived from the prefs the daily update check
+/// persists. Backs the persistent sidebar download link, which — unlike the
+/// once-per-version `app-update-available` toast — must survive restarts.
+#[tauri::command]
+pub async fn get_available_update(state: State<'_, AppState>) -> Result<Option<UpdateAvailableEvent>, AppError> {
+    Ok(crate::services::updates::available_update(
+        &state.db,
+        env!("CARGO_PKG_VERSION"),
     ))
 }
 

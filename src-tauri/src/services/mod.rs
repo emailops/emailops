@@ -31,3 +31,4 @@ pub mod tag_priority;
 pub mod task_queue;
 pub mod tasks;
 pub mod thread_clean;
+pub mod updates;

@@ -957,6 +957,18 @@ export async function getBuildInfo(): Promise<BuildInfo> {
   return invoke('get_build_info');
 }
 
+// Latest-known newer release (mirrors `services::updates::UpdateAvailableEvent`).
+// Derived from prefs the daily update check persists, so it survives restarts;
+// null when the running build is up to date or no check has completed yet.
+export interface AvailableUpdate {
+  version: string;
+  url: string;
+}
+
+export async function getAvailableUpdate(): Promise<AvailableUpdate | null> {
+  return invoke('get_available_update');
+}
+
 // Security
 export async function hasMainPassword(): Promise<boolean> {
   return invoke('has_main_password');

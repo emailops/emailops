@@ -6,6 +6,9 @@ export interface Toast {
   /** Optional action button label (e.g. "Show in Finder"). */
   actionLabel?: string;
   onAction?: () => void;
+  /** Sticky toasts never auto-dismiss — only the user can close them
+   *  (e.g. the app-update notification). */
+  sticky?: boolean;
 }
 
 interface ToastStore {

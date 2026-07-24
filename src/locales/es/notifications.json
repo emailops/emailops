@@ -49,5 +49,9 @@
   "banners": {
     "offline": "Estás sin conexión — sincronización pausada.",
     "reconnect": "Vuelta a la red — la sincronización se reanudará."
+  },
+  "updates": {
+    "available": "EmailOps {{version}} está disponible",
+    "download": "Descargar"
   }
 }

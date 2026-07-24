@@ -140,6 +140,33 @@ impl SyncScheduler {
             )));
         }
 
+        // Single global release-update check (daily, gated inside the tick).
+        // Skipped in debug builds — dev builds always trail released versions,
+        // so every `make dev` would toast — unless EMAILOPS_UPDATE_CHECK=1
+        // forces it on for manual QA.
+        if !cfg!(debug_assertions) || std::env::var("EMAILOPS_UPDATE_CHECK").as_deref() == Ok("1") {
+            match crate::services::updates::make_github_fetch() {
+                Ok(fetch) => {
+                    let flag = Arc::new(AtomicBool::new(false));
+                    stop_flags.push(flag.clone());
+                    handles.push(tauri::async_runtime::spawn(
+                        crate::services::updates::update_check_loop(
+                            db.clone(),
+                            app.clone(),
+                            online_flag.clone(),
+                            flag,
+                            fetch,
+                        ),
+                    ));
+                }
+                Err(e) => crate::services::logger::log(
+                    "error",
+                    "system",
+                    format!("update check disabled: failed to build HTTP client: {e}"),
+                ),
+            }
+        }
+
         // One consolidation ticker per account. Cheap: it no-ops quickly when
         // the memory subsystem is disabled or nothing needs consolidating.
         for account in &enabled {
