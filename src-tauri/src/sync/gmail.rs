@@ -1013,6 +1013,18 @@ impl GmailClient {
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
+        // A previous 429 told us when the quota window reopens: skip the call
+        // entirely instead of burning more quota on requests that cannot succeed.
+        if let Some(account_id) = &self.account_id {
+            if let Some(until) = rate_limit_gate_until(account_id, crate::services::clock::now_secs()) {
+                return Err(AppError::SyncError(format!(
+                    "Gmail rate limit in effect — skipping {}; requests for this account are paused until {}",
+                    operation,
+                    format_gate_until(until)
+                )));
+            }
+        }
+
         let mut delay_ms = GMAIL_INITIAL_BACKOFF_MS;
         // 401 gets one silent refresh attempt; this flag ensures we don't loop on auth failures.
         let mut auth_retried = false;
@@ -1039,16 +1051,25 @@ impl GmailClient {
                         }
                     }
 
-                    let retry_after = retry_after_ms(response.headers());
+                    let headers = response.headers().clone();
                     let body = response.text().await.unwrap_or_default();
                     let should_retry = is_retryable_gmail_error(status, &body);
 
                     if should_retry && attempt < GMAIL_MAX_RETRIES {
-                        let wait_ms = retry_after.unwrap_or(delay_ms).min(GMAIL_MAX_BACKOFF_MS);
-                        self.emit_retry_log(operation, attempt + 1, wait_ms, status);
-                        sleep(Duration::from_millis(wait_ms)).await;
-                        delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
-                        continue;
+                        match plan_rate_limit_wait(&headers, &body, delay_ms, crate::services::clock::now_secs()) {
+                            RetryPlan::Wait(wait_ms) => {
+                                self.emit_retry_log(operation, attempt + 1, wait_ms, status);
+                                sleep(Duration::from_millis(wait_ms)).await;
+                                delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
+                                continue;
+                            }
+                            RetryPlan::GateUntil(until_secs) => {
+                                if let Some(account_id) = &self.account_id {
+                                    set_rate_limit_gate(account_id, until_secs);
+                                }
+                                self.emit_rate_limit_gate_log(operation, status, until_secs);
+                            }
+                        }
                     }
 
                     return Err(AppError::SyncError(format!(
@@ -1092,6 +1113,25 @@ impl GmailClient {
                     seconds,
                     attempt + 1,
                     GMAIL_MAX_RETRIES + 1
+                ),
+            },
+        );
+    }
+
+    fn emit_rate_limit_gate_log(&self, operation: &str, status: StatusCode, until_secs: i64) {
+        let Some(app) = &self.app else { return };
+        let account = self.account_id.as_deref().unwrap_or("unknown account");
+        let _ = app.emit(
+            "app-log",
+            AppLogEvent {
+                level: "warn".to_string(),
+                source: "sync".to_string(),
+                message: format!(
+                    "Gmail rate limited {} for {} (HTTP {}). Provider asked to retry after {} — pausing Gmail requests for this account until then.",
+                    operation,
+                    account,
+                    status.as_u16(),
+                    format_gate_until(until_secs)
                 ),
             },
         );
@@ -1605,15 +1645,104 @@ fn is_retryable_gmail_error(status: StatusCode, body: &str) -> bool {
     false
 }
 
-fn retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
+/// How to respond to a retryable Gmail error.
+#[derive(Debug, PartialEq)]
+enum RetryPlan {
+    /// Sleep this many milliseconds, then retry within the attempt loop.
+    Wait(u64),
+    /// The provider's retry window ends past what in-loop backoff can
+    /// bridge — stop retrying and pause the account until this unix-seconds
+    /// instant. Every in-window retry is itself a quota-charged API call, so
+    /// continuing the ladder only digs the rate-limit hole deeper.
+    GateUntil(i64),
+}
+
+/// Pick the wait strategy for a retryable response. The provider's own hint
+/// (`Retry-After` header, or the "Retry after <RFC3339>" timestamp Gmail
+/// embeds in 429 error messages) wins over the exponential fallback; hints
+/// longer than [`GMAIL_MAX_BACKOFF_MS`] gate the account instead of sleeping
+/// a sync task for minutes.
+fn plan_rate_limit_wait(
+    headers: &reqwest::header::HeaderMap,
+    body: &str,
+    fallback_delay_ms: u64,
+    now_secs: i64,
+) -> RetryPlan {
+    let provider_wait_ms = retry_after_ms(headers, now_secs).or_else(|| {
+        retry_until_millis_from_body(body)
+            .map(|until_ms| u64::try_from((until_ms - now_secs * 1000).max(0)).unwrap_or(0))
+    });
+
+    match provider_wait_ms {
+        Some(wait_ms) if wait_ms > GMAIL_MAX_BACKOFF_MS => {
+            let until_secs = now_secs.saturating_add(i64::try_from(wait_ms.div_ceil(1000)).unwrap_or(i64::MAX));
+            RetryPlan::GateUntil(until_secs)
+        }
+        Some(wait_ms) => RetryPlan::Wait(wait_ms),
+        None => RetryPlan::Wait(fallback_delay_ms.min(GMAIL_MAX_BACKOFF_MS)),
+    }
+}
+
+fn retry_after_ms(headers: &reqwest::header::HeaderMap, now_secs: i64) -> Option<u64> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(seconds.saturating_mul(1000));
+    }
+    // RFC 7231 also allows an HTTP-date form ("Fri, 24 Jul 2026 14:18:08 GMT").
+    let date = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+    u64::try_from((date.timestamp() - now_secs).max(0))
         .ok()
-        .map(|seconds| seconds.saturating_mul(1000))
+        .map(|s| s.saturating_mul(1000))
+}
+
+/// Gmail 429 bodies often carry the retry hint only inside the human-readable
+/// message, e.g. "User-rate limit exceeded.  Retry after
+/// 2026-07-24T14:18:08.861Z" — with no `Retry-After` header at all.
+fn retry_until_millis_from_body(body: &str) -> Option<i64> {
+    // Hard-coded literal that cannot fail by construction — syntax checked by tests.
+    #[allow(clippy::unwrap_used)]
+    static RETRY_AFTER_TS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)retry after\s+(\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-][0-9:]+))").unwrap()
+    });
+    let ts = RETRY_AFTER_TS.captures(body)?.get(1)?.as_str();
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+/// Process-wide "paused until" map, keyed by account id. `GmailClient`s are
+/// constructed per operation (see `services::accounts` / `services::emails`),
+/// so an instance field would not survive to the next command or sync run —
+/// the gate must outlive the client.
+static RATE_LIMIT_GATES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn set_rate_limit_gate(account_id: &str, until_secs: i64) {
+    RATE_LIMIT_GATES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(account_id.to_string(), until_secs);
+}
+
+/// `Some(until)` while the account is paused; expired entries are removed.
+fn rate_limit_gate_until(account_id: &str, now_secs: i64) -> Option<i64> {
+    let mut gates = RATE_LIMIT_GATES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match gates.get(account_id) {
+        Some(&until) if now_secs < until => Some(until),
+        Some(_) => {
+            gates.remove(account_id);
+            None
+        }
+        None => None,
+    }
+}
+
+fn format_gate_until(until_secs: i64) -> String {
+    chrono::DateTime::from_timestamp(until_secs, 0)
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|| until_secs.to_string())
 }
 
 fn gmail_error_reasons(body: &str) -> Vec<String> {
@@ -1952,6 +2081,174 @@ fn is_safe_remote_url(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- rate-limit retry planning tests ---
+
+    /// Arbitrary fixed "now" so planner tests are deterministic without the
+    /// global clock seam.
+    const RL_NOW: i64 = 1_753_366_000;
+
+    fn headers_with_retry_after(value: &str) -> reqwest::header::HeaderMap {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, value.parse().unwrap());
+        headers
+    }
+
+    fn rate_limit_body(until_secs: i64) -> String {
+        let ts = chrono::DateTime::from_timestamp(until_secs, 861_000_000)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        format!(
+            r#"{{"error":{{"code":429,"message":"User-rate limit exceeded.  Retry after {ts}","errors":[{{"reason":"rateLimitExceeded","domain":"usageLimits"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn retry_after_header_parses_delta_seconds() {
+        assert_eq!(retry_after_ms(&headers_with_retry_after("12"), RL_NOW), Some(12_000));
+    }
+
+    #[test]
+    fn retry_after_header_parses_http_date() {
+        let value = chrono::DateTime::from_timestamp(RL_NOW + 90, 0).unwrap().to_rfc2822();
+        assert_eq!(retry_after_ms(&headers_with_retry_after(&value), RL_NOW), Some(90_000));
+    }
+
+    #[test]
+    fn retry_after_header_http_date_in_past_clamps_to_zero() {
+        let value = chrono::DateTime::from_timestamp(RL_NOW - 90, 0).unwrap().to_rfc2822();
+        assert_eq!(retry_after_ms(&headers_with_retry_after(&value), RL_NOW), Some(0));
+    }
+
+    #[test]
+    fn retry_after_header_ignores_garbage() {
+        assert_eq!(retry_after_ms(&headers_with_retry_after("soon"), RL_NOW), None);
+    }
+
+    #[test]
+    fn body_retry_timestamp_is_parsed_from_gmail_error_message() {
+        assert_eq!(
+            retry_until_millis_from_body(&rate_limit_body(RL_NOW + 600)),
+            Some((RL_NOW + 600) * 1000 + 861)
+        );
+    }
+
+    #[test]
+    fn body_without_retry_timestamp_yields_none() {
+        assert_eq!(
+            retry_until_millis_from_body(r#"{"error":{"code":503,"message":"Backend Error"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn short_header_window_waits_in_loop() {
+        let plan = plan_rate_limit_wait(&headers_with_retry_after("5"), "", 1_000, RL_NOW);
+        assert_eq!(plan, RetryPlan::Wait(5_000));
+    }
+
+    #[test]
+    fn short_body_window_waits_in_loop() {
+        let plan = plan_rate_limit_wait(
+            &reqwest::header::HeaderMap::new(),
+            &rate_limit_body(RL_NOW + 10),
+            1_000,
+            RL_NOW,
+        );
+        // Millisecond precision is preserved so we never retry before the window opens.
+        assert_eq!(plan, RetryPlan::Wait(10_861));
+    }
+
+    #[test]
+    fn no_retry_info_falls_back_to_exponential_delay() {
+        let plan = plan_rate_limit_wait(&reqwest::header::HeaderMap::new(), "", 4_000, RL_NOW);
+        assert_eq!(plan, RetryPlan::Wait(4_000));
+    }
+
+    #[test]
+    fn long_body_window_gates_the_account() {
+        let plan = plan_rate_limit_wait(
+            &reqwest::header::HeaderMap::new(),
+            &rate_limit_body(RL_NOW + 600),
+            1_000,
+            RL_NOW,
+        );
+        assert_eq!(plan, RetryPlan::GateUntil(RL_NOW + 601));
+    }
+
+    #[test]
+    fn long_header_window_gates_the_account() {
+        let plan = plan_rate_limit_wait(&headers_with_retry_after("300"), "", 1_000, RL_NOW);
+        assert_eq!(plan, RetryPlan::GateUntil(RL_NOW + 300));
+    }
+
+    #[test]
+    fn header_takes_precedence_over_body_timestamp() {
+        let plan = plan_rate_limit_wait(
+            &headers_with_retry_after("5"),
+            &rate_limit_body(RL_NOW + 600),
+            1_000,
+            RL_NOW,
+        );
+        assert_eq!(plan, RetryPlan::Wait(5_000));
+    }
+
+    // --- rate-limit gate tests ---
+
+    #[test]
+    fn gate_blocks_until_expiry_then_clears() {
+        let account = "test-gate-blocks-until-expiry";
+        set_rate_limit_gate(account, RL_NOW + 120);
+        assert_eq!(rate_limit_gate_until(account, RL_NOW), Some(RL_NOW + 120));
+        assert_eq!(rate_limit_gate_until(account, RL_NOW + 120), None);
+        // The expired entry is removed for good, not just skipped.
+        assert_eq!(rate_limit_gate_until(account, RL_NOW), None);
+    }
+
+    #[test]
+    fn ungated_account_is_not_blocked() {
+        assert_eq!(rate_limit_gate_until("test-gate-never-set", RL_NOW), None);
+    }
+
+    #[tokio::test]
+    async fn far_future_rate_limit_fails_fast_and_gates_account() {
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let until = chrono::Utc::now().timestamp() + 600;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(429).set_body_raw(rate_limit_body(until), "application/json"))
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-gate-wiremock".into())).with_base_url(server.uri());
+
+        let started = std::time::Instant::now();
+        let err = client.get_profile().await.unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "should fail fast instead of sleeping through the backoff ladder"
+        );
+        assert!(
+            err.to_string().to_lowercase().contains("rate limit"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "must not burn retries on an exhausted quota"
+        );
+
+        // Follow-up calls short-circuit without touching the network.
+        let err = client.get_profile().await.unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("rate limit"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
 
     #[test]
     fn gmail_send_response_yields_full_sent_meta() {
