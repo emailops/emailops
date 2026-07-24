@@ -18,7 +18,7 @@ Windows and Linux releases are on the [roadmap](ROADMAP.md).
 
 - **Multi-account email**: Gmail, Outlook / Microsoft 365 (Graph API), and IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, custom servers)
 - **Unified inbox**: read and triage mail from all your accounts in a single combined view
-- **Calendar**: per-account month/week/day views for Google Calendar and Outlook (on by default, auto-disabled for accounts that haven't granted calendar permission — manage in Settings → Calendar); create events by double-clicking a slot (with invitees, recurrence, and an auto-generated Google Meet link on Gmail), delete/cancel with attendee notification, and get meeting reminders with a one-click Join button for Meet / Teams / Webex / Zoom links
+- **Calendar**: per-account month/week/day views for Google Calendar and Outlook and get meeting reminders with a one-click Join button for Meet / Teams / Webex / Zoom links
 - **Chat with your emails**: use AI to answer questions about your emails, generate drafts, ...
 - **AI email classification**: auto-tag emails by priority, intent, and topic using configurable rules + local AI
 - **Smart filters**: filter inbox by domain, sender, or classification tags
