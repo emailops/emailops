@@ -403,6 +403,7 @@
     "emailContent": "E-Mail-Inhalt",
     "allowRemoteToggle": "Externe Inhalte in E-Mails erlauben",
     "allowRemoteToggleDesc": "Wenn aus, werden externe Bilder und Tracker blockiert. Ein Banner lässt dich sie pro E-Mail laden.",
+    "privacyPolicyLink": "Datenschutzerklärung",
     "loading": "Lädt...",
     "passwordDialog": {
       "setTitle": "Hauptpasswort festlegen",

@@ -403,6 +403,7 @@
     "emailContent": "Contenido del correo",
     "allowRemoteToggle": "Permitir contenido remoto en los correos",
     "allowRemoteToggleDesc": "Cuando está desactivado, se bloquean imágenes externas y rastreadores. Un aviso te permite cargarlos por correo.",
+    "privacyPolicyLink": "Política de privacidad",
     "loading": "Cargando...",
     "passwordDialog": {
       "setTitle": "Definir contraseña principal",

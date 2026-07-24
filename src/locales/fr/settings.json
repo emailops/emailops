@@ -403,6 +403,7 @@
     "emailContent": "Contenu des courriels",
     "allowRemoteToggle": "Autoriser le contenu distant dans les courriels",
     "allowRemoteToggleDesc": "Lorsque c'est désactivé, les images externes et trackers sont bloqués. Un bandeau vous permet de les charger par courriel.",
+    "privacyPolicyLink": "Politique de confidentialité",
     "loading": "Chargement...",
     "passwordDialog": {
       "setTitle": "Définir le mot de passe principal",

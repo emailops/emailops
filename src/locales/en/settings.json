@@ -403,6 +403,7 @@
     "emailContent": "Email Content",
     "allowRemoteToggle": "Allow remote content in emails",
     "allowRemoteToggleDesc": "When off, external images and trackers are blocked. A banner lets you load them per-email.",
+    "privacyPolicyLink": "Privacy policy",
     "loading": "Loading...",
     "passwordDialog": {
       "setTitle": "Set main password",

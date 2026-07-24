@@ -1,7 +1,11 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { FALLBACK_LANGUAGE, isSupportedLanguage } from '@/i18n/resources';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { privacyPolicyUrl } from '@/lib/privacyPolicy';
+import { useLogStore } from '@/stores/logStore';
 
 // ── Small reusable toggle row ─────────────────────────────────────────────────
 
@@ -186,7 +190,8 @@ function PasswordDialog({
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export function PrivacySettings() {
-  const { t } = useTranslation(['common', 'settings']);
+  const { t, i18n } = useTranslation(['common', 'settings']);
+  const { addLog } = useLogStore();
   const [hasPassword, setHasPassword] = useState(false);
   const [allowRemoteContent, setAllowRemoteContent] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -209,6 +214,13 @@ export function PrivacySettings() {
     setDialog(null);
     api.hasMainPassword().then(setHasPassword);
   }, []);
+
+  const handleOpenPrivacyPolicy = useCallback(() => {
+    const language = isSupportedLanguage(i18n.language) ? i18n.language : FALLBACK_LANGUAGE;
+    void openExternal(privacyPolicyUrl(language)).catch((e) => {
+      addLog('error', 'system', `Failed to open privacy policy: ${errorText(e)}`);
+    });
+  }, [i18n.language, addLog]);
 
   if (isLoading) {
     return (
@@ -265,6 +277,16 @@ export function PrivacySettings() {
               onChange={handleToggleRemoteContent}
             />
           </div>
+        </div>
+
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={handleOpenPrivacyPolicy}
+            className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+          >
+            {t('settings:privacy.privacyPolicyLink')} ↗
+          </button>
         </div>
       </section>
 
