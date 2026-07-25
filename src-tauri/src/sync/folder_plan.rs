@@ -291,7 +291,7 @@ fn decode_utf7_b64_section(section: &str) -> Option<String> {
         .chunks_exact(2)
         .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
         .collect();
-    let decoded: String = char::decode_utf16(units.into_iter())
+    let decoded: String = char::decode_utf16(units)
         .collect::<std::result::Result<String, _>>()
         .ok()?;
     Some(decoded)
