@@ -132,5 +132,15 @@
     "afterHint": "AAAA-MM-DD",
     "beforeHint": "AAAA-MM-DD",
     "tagHint": "etiqueta de clasificación"
+  },
+  "translation": {
+    "detectedLabel": "Este correo está en {{language}}",
+    "translate": "Traducir",
+    "translating": "Traduciendo…",
+    "showOriginal": "Ver original",
+    "showTranslation": "Ver traducción",
+    "aiTranslation": "Traducción con IA · {{language}}",
+    "truncatedNotice": "El correo era demasiado largo: solo se tradujo el comienzo.",
+    "failed": "Error al traducir: {{error}}"
   }
 }

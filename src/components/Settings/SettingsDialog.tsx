@@ -6,6 +6,7 @@ import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
 import { AiSettings } from './AiSettings';
+import { AiTranslationSettings } from './AiTranslationSettings';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
@@ -23,6 +24,7 @@ export type SettingsTab =
   | 'memory'
   | 'lenses'
   | 'aidrafts'
+  | 'aitranslation'
   | 'aisearch'
   | 'privacy';
 
@@ -56,6 +58,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'memory', experimental: true },
   { id: 'lenses', experimental: true },
   { id: 'aidrafts' },
+  { id: 'aitranslation' },
   { id: 'aisearch' },
   { id: 'privacy' },
 ];
@@ -225,6 +228,7 @@ export function SettingsDialog({
             <LensesSettings experimentalEnabled={lensesEnabled} onChangeExperimentalEnabled={onChangeLensesEnabled} />
           )}
           {tab === 'aidrafts' && <AiDraftsSettings />}
+          {tab === 'aitranslation' && <AiTranslationSettings />}
           {tab === 'aisearch' && <AiSearchSettings activeAccountId={effectiveAccountId} />}
           {tab === 'privacy' && <PrivacySettings />}
         </div>

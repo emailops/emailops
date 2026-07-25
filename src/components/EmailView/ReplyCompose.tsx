@@ -2,10 +2,12 @@ import { format } from 'date-fns';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
+import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
+import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Email } from '@/types';
 
 interface ReplyComposeProps {
@@ -84,6 +86,10 @@ export function ReplyCompose({
   const [bodyHtml, setBodyHtml] = useState<string>(() => plainTextToHtml(initialBody));
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Thread-language detection (populated by the reading view when the email
+  // was expanded). When the thread's language differs from the user's
+  // preferred one, offer to translate the drafted reply into it.
+  const threadDetection = useTranslationStore((s) => s.detectedByEmail[email.id]);
 
   // Sync body when the parent updates initialBody (e.g. AI draft generation
   // replaces the "Generating draft..." placeholder with the actual draft).
@@ -451,6 +457,14 @@ export function ReplyCompose({
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
+        {threadDetection?.needsTranslation && (
+          <TranslateComposeControl
+            bodyHtml={bodyHtml}
+            onApply={setBodyHtml}
+            fixedTargetCode={threadDetection.language}
+            disabled={isSending || isLoadingDraft}
+          />
+        )}
         <div className="flex-1" />
         <button
           type="button"

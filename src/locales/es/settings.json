@@ -17,6 +17,8 @@
     "lensesDesc": "Vistas tipadas por esquemas de tu buzón",
     "aidrafts": "Borradores con IA",
     "aidraftsDesc": "Generación de respuestas",
+    "aitranslation": "Traducción con IA",
+    "aitranslationDesc": "Traducir correos y borradores",
     "aisearch": "Búsqueda con IA",
     "aisearchDesc": "Embeddings y búsqueda semántica",
     "privacy": "Privacidad y seguridad",
@@ -429,5 +431,11 @@
     "leadTimeLabel": "Antelación del aviso",
     "leadTimeDesc": "Cuánto tiempo antes del inicio de la reunión se envía el aviso.",
     "minutesOption": "{{n}} minutos"
+  },
+  "aiTranslation": {
+    "enable": "Activar traducción con IA",
+    "enableDesc": "Muestra botones de traducción en correos en otros idiomas y en la ventana de redacción.",
+    "promptTitle": "Prompt de traducción",
+    "promptDesc": "Se usa al traducir un correo o un borrador."
   }
 }

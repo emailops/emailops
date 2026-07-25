@@ -308,6 +308,19 @@ pub enum Command {
         sync: bool,
     },
 
+    /// Detect an email's language and translate it with the configured AI.
+    Translate {
+        /// Email id.
+        id: String,
+        /// Target language: an ISO code (`es`) or a name (`Italian`). Defaults
+        /// to the preferred AI output language.
+        #[arg(long, value_name = "LANG")]
+        to: Option<String>,
+        /// Only detect the language; skip the translation call.
+        #[arg(long)]
+        detect_only: bool,
+    },
+
     /// Get/set CLI-local preferences (e.g. the default account).
     Config {
         #[command(subcommand)]

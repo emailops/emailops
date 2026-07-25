@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
+import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -689,6 +690,7 @@ export function ComposeModal({
               {isGeneratingDraft ? t('compose:aiDraft.generating') : t('compose:aiDraft.generate')}
             </button>
           )}
+          <TranslateComposeControl bodyHtml={bodyHtml} onApply={setBodyHtml} disabled={isSending || sent} />
           <div className="flex-1" />
           <button
             type="button"

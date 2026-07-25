@@ -250,5 +250,11 @@ required-features = ["eval"]
 name = "draft_eval"
 required-features = ["eval"]
 
+[[example]]
+# Synthetic language-detection + translation eval (no personal data, no judge).
+#   cargo run --features eval --example translation_eval -- [--case <id>]
+name = "translation_eval"
+required-features = ["eval"]
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-shell = "2"

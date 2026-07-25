@@ -503,6 +503,15 @@ impl Database {
             .unwrap_or(true))
     }
 
+    /// Per-feature gate for AI translation (email reading view + compose).
+    /// Default `true` to match the frontend `useTranslationEnabledStore`.
+    pub fn is_ai_translation_enabled(&self) -> Result<bool> {
+        Ok(self
+            .get_preference("ai_translation_enabled")?
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true))
+    }
+
     /// Maximum age (in days) of emails eligible for AI processing
     /// (embeddings + classification). Default: 365 days. A value of 0 means
     /// "no limit" — process every email regardless of age.

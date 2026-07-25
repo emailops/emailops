@@ -22,6 +22,7 @@ pub enum PromptCategory {
     Classification,
     Memory,
     Tasks,
+    Translation,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -189,6 +190,22 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
     },
 ];
 
+const TRANSLATE_DETECT_VARS: &[VariableDef] = &[VariableDef {
+    name: "sample",
+    description: "First ~400 characters of the email's plain text.",
+}];
+
+const TRANSLATE_EMAIL_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "target_language",
+        description: "English name of the language to translate into (e.g. 'Spanish').",
+    },
+    VariableDef {
+        name: "text",
+        description: "Plain text of the email or draft being translated (truncated to fit the context window).",
+    },
+];
+
 // ── Registry table ──────────────────────────────────────────────────────────
 
 pub const PROMPTS: &[PromptDef] = &[
@@ -254,6 +271,24 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_RERANK,
         variables: CHAT_RERANK_VARS,
+    },
+    PromptDef {
+        id: "translate.detect_language",
+        label: "Translation — language detection",
+        description: "Internal step that identifies an email's language to decide whether to offer translation.",
+        category: PromptCategory::Translation,
+        advanced: true,
+        default_template: defaults::TRANSLATE_DETECT_LANGUAGE,
+        variables: TRANSLATE_DETECT_VARS,
+    },
+    PromptDef {
+        id: "translate.email",
+        label: "Translation — email / draft",
+        description: "Translates an email body or compose draft into the requested language.",
+        category: PromptCategory::Translation,
+        advanced: false,
+        default_template: defaults::TRANSLATE_EMAIL,
+        variables: TRANSLATE_EMAIL_VARS,
     },
     PromptDef {
         id: "chat.query_plan",

@@ -1,0 +1,89 @@
+# Synthetic translation eval cases — NO personal-mailbox content.
+#
+# detect:    exact-match on the ISO 639-1 code returned by the detection path.
+# translate: heuristic checks on the translated output — names / URLs / numbers
+#            must survive verbatim; a distinctive source-language phrase must
+#            be gone. No LLM judge.
+#
+# Run: cargo run --features eval --example translation_eval
+#      (add -- --case <id> to run one case)
+
+- id: detect_es_invoice
+  kind: detect
+  text: "Hola Marta, te adjunto la factura del mes pasado. Avísame si necesitas cualquier otra cosa. Un saludo cordial."
+  expected_language: es
+
+- id: detect_fr_meeting
+  kind: detect
+  text: "Bonjour, la réunion de demain est reportée à jeudi prochain à 14h. Merci de confirmer votre disponibilité."
+  expected_language: fr
+
+- id: detect_de_report
+  kind: detect
+  text: "Guten Tag, anbei finden Sie den Quartalsbericht. Bitte senden Sie uns Ihre Rückmeldung bis Ende der Woche."
+  expected_language: de
+
+- id: detect_en_newsletter
+  kind: detect
+  text: "Hi there, thanks for signing up for our monthly newsletter. Here are the top stories you missed this week."
+  expected_language: en
+
+- id: detect_it_confirmation
+  kind: detect
+  text: "Buongiorno, confermiamo la ricezione del suo ordine. La spedizione è prevista entro tre giorni lavorativi."
+  expected_language: it
+
+- id: detect_pt_support
+  kind: detect
+  text: "Olá, recebemos o seu pedido de suporte. A nossa equipa entrará em contacto consigo nas próximas horas. Obrigado."
+  expected_language: pt
+
+- id: detect_nl_invite
+  kind: detect
+  text: "Beste collega, hierbij nodigen we je uit voor de teamvergadering van volgende week dinsdag om tien uur."
+  expected_language: nl
+
+- id: detect_es_html_body
+  kind: detect
+  text: "<p>Estimado cliente,</p><p>Su suscripción se renovará <b>automáticamente</b> el próximo mes. Puede cancelar en cualquier momento desde su cuenta.</p>"
+  expected_language: es
+
+- id: translate_es_to_english
+  kind: translate
+  text: "Hola Marta, te adjunto el informe mensual de rendimiento. El enlace directo es https://example.com/reporte-42. Un saludo, Ulises."
+  target: English
+  expect_contains:
+    - "Marta"
+    - "https://example.com/reporte-42"
+    - "Ulises"
+  expect_not_contains:
+    - "informe mensual"
+
+- id: translate_en_to_spanish
+  kind: translate
+  text: "Hi team, the kickoff call is confirmed for March 3rd at 10:00. Please review the budget document before the call."
+  target: es
+  expect_contains:
+    - "10:00"
+  expect_not_contains:
+    - "kickoff call is confirmed"
+
+- id: translate_fr_to_english
+  kind: translate
+  text: "Bonjour Paul, le devis numéro 7841 est valable jusqu'au 15 mars. N'hésitez pas à nous écrire à contact@example.com pour toute question."
+  target: English
+  expect_contains:
+    - "7841"
+    - "contact@example.com"
+  expect_not_contains:
+    - "N'hésitez pas"
+
+- id: translate_de_to_english
+  kind: translate
+  text: "Sehr geehrter Herr Weber, Ihre Bestellung Nr. 55021 wurde versandt. Die Lieferung erfolgt voraussichtlich am Montag."
+  target: English
+  expect_contains:
+    - "55021"
+    - "Weber"
+  expect_not_contains:
+    - "Bestellung"

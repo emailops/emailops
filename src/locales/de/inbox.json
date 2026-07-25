@@ -132,5 +132,15 @@
     "afterHint": "JJJJ-MM-TT",
     "beforeHint": "JJJJ-MM-TT",
     "tagHint": "Klassifikationskennzeichen"
+  },
+  "translation": {
+    "detectedLabel": "Diese E-Mail ist auf {{language}}",
+    "translate": "Übersetzen",
+    "translating": "Übersetzen…",
+    "showOriginal": "Original anzeigen",
+    "showTranslation": "Übersetzung anzeigen",
+    "aiTranslation": "KI-Übersetzung · {{language}}",
+    "truncatedNotice": "Die E-Mail war zu lang – nur der Anfang wurde übersetzt.",
+    "failed": "Übersetzung fehlgeschlagen: {{error}}"
   }
 }

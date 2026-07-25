@@ -75,5 +75,14 @@
     "selectAccount": "Select an account to view drafts.",
     "continueEditing": "Continue editing",
     "delete": "Delete draft"
+  },
+  "translate": {
+    "open": "Translate to…",
+    "toLanguage": "Translate to {{language}}",
+    "placeholder": "Target language (e.g. Italian)",
+    "apply": "Translate",
+    "translating": "Translating…",
+    "undo": "Undo translation",
+    "failed": "Translation failed: {{error}}"
   }
 }

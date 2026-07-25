@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
+import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftAttachmentInput, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -463,6 +464,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
+        <TranslateComposeControl bodyHtml={bodyHtml} onApply={setBodyHtml} disabled={isSending || sent} />
         <div className="flex-1" />
         <button
           type="button"

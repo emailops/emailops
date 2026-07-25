@@ -227,6 +227,22 @@ Output ONLY the JSON object — no prose, no markdown fences.
 Question: {{query}}
 JSON:"#;
 
+// ── Translation ─────────────────────────────────────────────────────────────
+
+pub const TRANSLATE_DETECT_LANGUAGE: &str = r#"Identify the language of this email excerpt. Reply with ONLY the two-letter ISO 639-1 code (e.g. en, es, fr, de, it, pt). If the language is unknown or mixed, reply und.
+
+Excerpt:
+{{sample}}
+
+Code:"#;
+
+pub const TRANSLATE_EMAIL: &str = r#"You are a professional translator. Translate the following email into {{target_language}}. Preserve paragraph breaks and tone. Keep names, numbers, dates, URLs and email addresses exactly as they appear. Output ONLY the translation — no commentary, no notes.
+
+Email:
+{{text}}
+
+Translation:"#;
+
 // ── Chat: reranker ──────────────────────────────────────────────────────────
 
 pub const CHAT_RERANK: &str = r#"You are a relevance-rescoring step in a RAG pipeline over the user's own email inbox. Score each candidate from 0 (irrelevant) to 10 (directly answers the question).

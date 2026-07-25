@@ -17,6 +17,8 @@
     "lensesDesc": "Schematypisierte Ansichten deines Postfachs",
     "aidrafts": "KI-Entwürfe",
     "aidraftsDesc": "Generierung von Antwortentwürfen",
+    "aitranslation": "KI-Übersetzung",
+    "aitranslationDesc": "E-Mails und Entwürfe übersetzen",
     "aisearch": "KI-Suche",
     "aisearchDesc": "Embeddings und semantische Suche",
     "privacy": "Datenschutz & Sicherheit",
@@ -429,5 +431,11 @@
     "leadTimeLabel": "Vorlaufzeit der Benachrichtigung",
     "leadTimeDesc": "Wie lange vor Beginn des Meetings die Benachrichtigung erscheint.",
     "minutesOption": "{{n}} Minuten"
+  },
+  "aiTranslation": {
+    "enable": "KI-Übersetzung aktivieren",
+    "enableDesc": "Zeigt Übersetzen-Schaltflächen bei E-Mails in anderen Sprachen und im Verfassen-Fenster.",
+    "promptTitle": "Übersetzungs-Prompt",
+    "promptDesc": "Wird beim Übersetzen einer E-Mail oder eines Entwurfs verwendet."
   }
 }

@@ -288,6 +288,37 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             output::render_draft_detail(&draft, session.style)
         }
 
+        Command::Translate { id, to, detect_only } => {
+            if detect_only {
+                let result = crate::services::translation::detect_email_language(&session.db, &id).await?;
+                if session.mode == OutputMode::Json {
+                    return output::emit_ok(&result);
+                }
+                println!(
+                    "language: {} (preferred: {}) — {}",
+                    result.language,
+                    result.preferred,
+                    if result.needs_translation {
+                        "translation available"
+                    } else {
+                        "no translation needed"
+                    }
+                );
+                Ok(())
+            } else {
+                let result = crate::services::translation::translate_email(&session.db, &id, to.as_deref()).await?;
+                if session.mode == OutputMode::Json {
+                    return output::emit_ok(&result);
+                }
+                println!("── translated to {} ──", result.target_language);
+                if result.truncated {
+                    println!("(input was truncated to fit the model's context window)");
+                }
+                println!("{}", result.text);
+                Ok(())
+            }
+        }
+
         Command::Config { action } => super::config::run_config(session, action),
 
         Command::Eval { case, tier, cases_dir } => super::eval::run_eval(session, case, tier, cases_dir).await,

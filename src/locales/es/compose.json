@@ -75,5 +75,14 @@
     "selectAccount": "Selecciona una cuenta para ver los borradores.",
     "continueEditing": "Continuar editando",
     "delete": "Eliminar borrador"
+  },
+  "translate": {
+    "open": "Traducir a…",
+    "toLanguage": "Traducir a {{language}}",
+    "placeholder": "Idioma de destino (p. ej. italiano)",
+    "apply": "Traducir",
+    "translating": "Traduciendo…",
+    "undo": "Deshacer traducción",
+    "failed": "Error al traducir: {{error}}"
   }
 }

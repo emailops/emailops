@@ -67,6 +67,12 @@ cargo run --features eval --example draft_eval -- \
   --prod-db "$EVAL_SNAPSHOT_DB" \
   --in-place-dangerous
 
+echo "── [eval-all] translation ──"
+# Fully synthetic (in-tree cases, in-memory DB) — no snapshot needed.
+cargo run --features eval --example translation_eval -- \
+  --model "$MODEL" \
+  --provider "$PROVIDER"
+
 echo "── [eval-all] chat ──"
 cargo run --features eval --example chat_eval -- \
   --account "$ACCOUNT" \

@@ -75,5 +75,14 @@
     "selectAccount": "Wähle ein Konto, um die Entwürfe anzuzeigen.",
     "continueEditing": "Bearbeitung fortsetzen",
     "delete": "Entwurf löschen"
+  },
+  "translate": {
+    "open": "Übersetzen in…",
+    "toLanguage": "Übersetzen in {{language}}",
+    "placeholder": "Zielsprache (z. B. Italienisch)",
+    "apply": "Übersetzen",
+    "translating": "Übersetzen…",
+    "undo": "Übersetzung rückgängig machen",
+    "failed": "Übersetzung fehlgeschlagen: {{error}}"
   }
 }

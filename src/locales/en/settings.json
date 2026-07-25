@@ -17,6 +17,8 @@
     "lensesDesc": "Schema-typed views over your mailbox",
     "aidrafts": "AI Drafts",
     "aidraftsDesc": "Reply draft generation",
+    "aitranslation": "AI Translation",
+    "aitranslationDesc": "Translate emails and drafts",
     "aisearch": "AI Search",
     "aisearchDesc": "Embedding & semantic search options",
     "privacy": "Privacy & Security",
@@ -429,5 +431,11 @@
     "leadTimeLabel": "Notification lead time",
     "leadTimeDesc": "How long before the meeting starts the notification fires.",
     "minutesOption": "{{n}} minutes"
+  },
+  "aiTranslation": {
+    "enable": "Enable AI translation",
+    "enableDesc": "Show Translate buttons on emails in other languages and in the compose window.",
+    "promptTitle": "Translation prompt",
+    "promptDesc": "Used when translating an email or a compose draft."
   }
 }

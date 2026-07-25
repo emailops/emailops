@@ -399,6 +399,71 @@ export async function generateNewDraft(
   return invoke('generate_new_draft', { accountId, to, subject, instructions });
 }
 
+// ── AI translation ───────────────────────────────────────────────────────────
+
+export interface LanguageDetectedEvent {
+  requestId: string;
+  emailId: string;
+  /** ISO 639-1 code, or "und" when detection failed (fail-closed: no button). */
+  language: string;
+  /** The user's preferred AI language code the detection was compared against. */
+  preferredLanguage: string;
+  needsTranslation: boolean;
+}
+
+export interface EmailTranslatedEvent {
+  requestId: string;
+  emailId: string;
+  /** English name of the language translated into (e.g. "Spanish"). */
+  targetLanguage: string;
+  text: string;
+  /** True when the email was longer than the model's input budget and only
+   *  the beginning was translated. */
+  truncated: boolean;
+}
+
+export interface ComposeTranslatedEvent {
+  requestId: string;
+  targetLanguage: string;
+  text: string;
+  truncated: boolean;
+}
+
+export interface TranslationFailedEvent {
+  requestId: string;
+  /** Empty for compose translations (no inbound email). */
+  emailId: string;
+  error: string;
+}
+
+/**
+ * Lazily detect an email's language. Returns a `requestId` immediately; the
+ * result arrives via the `language-detected` event. Detection failures are
+ * logged backend-side only — no failure event, the Translate button simply
+ * never appears.
+ */
+export async function detectEmailLanguage(emailId: string): Promise<string> {
+  return invoke('detect_email_language', { emailId });
+}
+
+/**
+ * Translate an email's body. `targetLanguage` omitted → the user's preferred
+ * AI language. Returns a `requestId`; result on `email-translated`, failure
+ * on `translation-failed`.
+ */
+export async function translateEmail(emailId: string, targetLanguage?: string | null): Promise<string> {
+  return invoke('translate_email', { emailId, targetLanguage });
+}
+
+/**
+ * Translate compose-draft plain text into `targetLanguage` (ISO code or a
+ * typed language name, max 40 chars). Returns a `requestId`; result on
+ * `compose-translated`, failure on `translation-failed` (empty `emailId`).
+ */
+export async function translateComposeText(text: string, targetLanguage: string): Promise<string> {
+  return invoke('translate_compose_text', { text, targetLanguage });
+}
+
 export async function redownloadEmail(emailId: string): Promise<Email> {
   return invoke('redownload_email', { emailId });
 }

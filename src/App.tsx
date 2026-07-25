@@ -58,7 +58,12 @@ import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/c
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
 import { useEmailStore } from '@/stores/emailStore';
-import { useLensesEnabledStore, useMemoryEnabledStore, useTasksEnabledStore } from '@/stores/featureToggleStore';
+import {
+  useLensesEnabledStore,
+  useMemoryEnabledStore,
+  useTasksEnabledStore,
+  useTranslationEnabledStore,
+} from '@/stores/featureToggleStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
@@ -66,6 +71,7 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import { useReminderStore } from '@/stores/reminderStore';
 import { useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
+import { initTranslationListeners } from '@/stores/translationStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import type {
   ActiveFilter,
@@ -159,6 +165,7 @@ function AppInner() {
     setEnabled: setLensesEnabledRaw,
     refresh: refreshLensesEnabled,
   } = useLensesEnabledStore();
+  const { refresh: refreshTranslationEnabled } = useTranslationEnabledStore();
   const setTasksEnabled = useCallback(
     (v: boolean) => {
       setTasksEnabledRaw(v).catch((err) => console.error('Failed to persist task_enabled', err));
@@ -411,7 +418,8 @@ function AppInner() {
     refreshMemoriesEnabled().catch((err) => console.error('Failed to load memory_enabled pref', err));
     refreshTasksEnabled().catch((err) => console.error('Failed to load task_enabled pref', err));
     refreshLensesEnabled().catch((err) => console.error('Failed to load lenses_enabled pref', err));
-  }, [refreshAi, refreshMemoriesEnabled, refreshTasksEnabled, refreshLensesEnabled]);
+    refreshTranslationEnabled().catch((err) => console.error('Failed to load ai_translation_enabled pref', err));
+  }, [refreshAi, refreshMemoriesEnabled, refreshTasksEnabled, refreshLensesEnabled, refreshTranslationEnabled]);
 
   // Decide whether to show the onboarding wizard. Existing users (anyone with
   // accounts already connected) are auto-marked complete on this boot — they
@@ -600,6 +608,12 @@ function AppInner() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Route translation events (language-detected / email-translated /
+  // translation-failed) into the translation store. Idempotent.
+  useEffect(() => {
+    initTranslationListeners();
   }, []);
 
   // Listen for backend events and convert to log entries

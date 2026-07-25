@@ -17,6 +17,8 @@
     "lensesDesc": "Vues typées par schéma de votre boîte",
     "aidrafts": "Brouillons IA",
     "aidraftsDesc": "Génération de réponses",
+    "aitranslation": "Traduction IA",
+    "aitranslationDesc": "Traduire e-mails et brouillons",
     "aisearch": "Recherche IA",
     "aisearchDesc": "Embeddings et recherche sémantique",
     "privacy": "Confidentialité et sécurité",
@@ -429,5 +431,11 @@
     "leadTimeLabel": "Délai de notification",
     "leadTimeDesc": "Combien de temps avant le début de la réunion la notification est envoyée.",
     "minutesOption": "{{n}} minutes"
+  },
+  "aiTranslation": {
+    "enable": "Activer la traduction IA",
+    "enableDesc": "Affiche des boutons de traduction sur les e-mails dans d'autres langues et dans la fenêtre de rédaction.",
+    "promptTitle": "Prompt de traduction",
+    "promptDesc": "Utilisé pour traduire un e-mail ou un brouillon."
   }
 }

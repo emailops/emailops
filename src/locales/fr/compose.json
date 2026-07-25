@@ -75,5 +75,14 @@
     "selectAccount": "Sélectionnez un compte pour afficher les brouillons.",
     "continueEditing": "Continuer la modification",
     "delete": "Supprimer le brouillon"
+  },
+  "translate": {
+    "open": "Traduire en…",
+    "toLanguage": "Traduire en {{language}}",
+    "placeholder": "Langue cible (p. ex. italien)",
+    "apply": "Traduire",
+    "translating": "Traduction…",
+    "undo": "Annuler la traduction",
+    "failed": "Échec de la traduction : {{error}}"
   }
 }

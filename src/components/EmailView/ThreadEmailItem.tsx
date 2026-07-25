@@ -2,10 +2,14 @@ import { format } from 'date-fns';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { useAiStore } from '@/stores/aiStore';
+import { useTranslationEnabledStore } from '@/stores/featureToggleStore';
+import { useTranslationStore } from '@/stores/translationStore';
 import type { Email, EmailAttachmentMeta } from '@/types';
 import { CalendarInviteCard } from './CalendarInviteCard';
 import { EmailAttachments } from './EmailAttachments';
 import { EmailBody } from './EmailBody';
+import { TranslatedEmailBody, TranslationControls } from './TranslationControls';
 
 export interface ThreadEmailItemProps {
   email: Email;
@@ -48,6 +52,19 @@ export function ThreadEmailItem({
       .then(setBody)
       .catch(() => setBody(''));
   }, [isExpanded, email.accountId, email.id, body]);
+
+  // Lazy AI language detection: fire once per email when it is expanded with
+  // a body present (the store + backend both dedupe, so re-renders are free).
+  const { enabled: aiEnabled } = useAiStore();
+  const { enabled: translationEnabled } = useTranslationEnabledStore();
+  useEffect(() => {
+    if (!isExpanded || !body) return;
+    if (!aiEnabled || !translationEnabled) return;
+    void useTranslationStore.getState().detect(email.id);
+  }, [isExpanded, body, aiEnabled, translationEnabled, email.id]);
+
+  const translation = useTranslationStore((s) => s.translations[email.id]);
+  const showTranslated = useTranslationStore((s) => !!s.showTranslated[email.id]);
 
   useEffect(() => {
     if ((isFocused || isSearchMatch) && itemRef.current) {
@@ -135,14 +152,25 @@ export function ThreadEmailItem({
             {t('common:state.loading')}
           </div>
         ) : (
-          <EmailBody
-            html={body}
-            highlightQuery={highlightQuery}
-            activeMatchIndex={searchActiveMatchIndex ?? null}
-            onMatchesReported={onSearchMatches ? handleMatchesReported : undefined}
-            accountId={email.accountId}
-            senderEmail={email.senderEmail}
-          />
+          <>
+            {translationEnabled && aiEnabled && <TranslationControls emailId={email.id} />}
+            {showTranslated && translation ? (
+              <TranslatedEmailBody
+                text={translation.text}
+                targetLanguage={translation.targetLanguage}
+                truncated={translation.truncated}
+              />
+            ) : (
+              <EmailBody
+                html={body}
+                highlightQuery={highlightQuery}
+                activeMatchIndex={searchActiveMatchIndex ?? null}
+                onMatchesReported={onSearchMatches ? handleMatchesReported : undefined}
+                accountId={email.accountId}
+                senderEmail={email.senderEmail}
+              />
+            )}
+          </>
         )}
         <EmailAttachments emailId={email.id} accountId={email.accountId} onOpenAttachment={onOpenAttachment} />
       </div>

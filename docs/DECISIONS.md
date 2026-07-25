@@ -171,3 +171,27 @@ for a non-urgent nudge — the sidebar footer link carries the persistent state
 instead); direct per-arch DMG download link (breaks if asset naming changes; release
 page also shows the notes); a Settings toggle (automatic-only keeps the surface
 minimal — trivial to add later since checks read prefs every tick).
+
+## 2026-07-24 — AI email translation: LLM detection, session-only cache, plain-text fidelity
+
+**Decision:** Add AI translation at three surfaces — a Translate button on emails whose
+detected language differs from the preferred AI language (reading view, per-email with an
+original/translation toggle), "Translate to <thread language>" in reply compose, and a
+free-text "Translate to…" target in new compose. Language detection is LLM-based (tiny
+400-char sample prompt, `max_tokens 16`, ISO-code-only answer, fail-closed to `und` = no
+button) through the configured provider. Nothing is persisted: detections live in a
+process-static map on the Rust side + a Zustand session store; translated bodies are
+session-only. Translation is a plain-text roundtrip — `body_to_plain_text` → model →
+plain rendering (reading view) or `plainTextToHtml` back into Tiptap (compose, with an
+"Undo translation" snapshot) — capped at 9,000 input chars (`truncated` surfaced in the
+UI). Feature-gated by `ai_translation_enabled` (default on) with a Settings tab; prompts
+are user-editable registry entries (`translate.detect_language`, `translate.email`);
+free-text targets are sanitized (40 chars, letters/space/hyphen/apostrophe/parens only).
+**Context:** Users receive mail in languages other than their preferred one; the app
+already resolves a preferred AI language (`resolve_ai_language`). Detection must be lazy
+(on email expand) and cheap so the embedded model isn't taxed during sync.
+**Rejected:** DB persistence of translations (new migration + release coupling for a
+cache that local re-generation covers); heuristic detection crate (user chose LLM
+detection — no new dependency, handles mixed content); HTML-preserving translation
+(small local models mangle markup and marketing HTML blows the 8k context window);
+per-feature model override (would evict the chat KV cache — uses the main provider).

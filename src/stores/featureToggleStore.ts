@@ -56,3 +56,5 @@ function createBoolPrefStore(key: string, defaultValue: boolean) {
 export const useMemoryEnabledStore = createBoolPrefStore('memory_enabled', false);
 export const useTasksEnabledStore = createBoolPrefStore('task_enabled', false);
 export const useLensesEnabledStore = createBoolPrefStore('lenses_enabled', false);
+// Mirrors `Database::is_ai_translation_enabled` on the Rust side (default on).
+export const useTranslationEnabledStore = createBoolPrefStore('ai_translation_enabled', true);

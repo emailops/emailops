@@ -132,5 +132,15 @@
     "afterHint": "YYYY-MM-DD",
     "beforeHint": "YYYY-MM-DD",
     "tagHint": "classification tag"
+  },
+  "translation": {
+    "detectedLabel": "This email is in {{language}}",
+    "translate": "Translate",
+    "translating": "Translating…",
+    "showOriginal": "Show original",
+    "showTranslation": "Show translation",
+    "aiTranslation": "AI translation · {{language}}",
+    "truncatedNotice": "This email was too long — only the beginning was translated.",
+    "failed": "Translation failed: {{error}}"
   }
 }
