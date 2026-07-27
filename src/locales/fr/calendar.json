@@ -7,6 +7,8 @@
   "allDay": "Toute la journée",
   "moreEvents": "+{{n}} autres",
   "noAccount": "L'intégration du calendrier n'est activée pour aucun compte. Activez-la dans Réglages → Calendrier.",
+  "integrationDisabled": "Le calendrier est désactivé pour {{email}}.",
+  "enableCalendarButton": "Activer le calendrier",
   "selectAccount": "Compte du calendrier",
   "syncError": "Erreur du calendrier : {{message}}",
   "reauthNeeded": "EmailOps n'a pas encore la permission de lire le calendrier de ce compte. Reconnectez-vous pour accorder l'accès au calendrier.",

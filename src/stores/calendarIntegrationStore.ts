@@ -27,6 +27,20 @@ export function calendarEnabledAccounts(accounts: Account[], enabledIds: Readonl
   return calendarCapableAccounts(accounts).filter((a) => enabledIds.has(a.id));
 }
 
+/** The current account when it could have a calendar but the integration is
+ *  switched off (user toggle or permission-denied auto-disable) — the calendar
+ *  view offers an inline "Enable calendar" banner for it instead of silently
+ *  falling back to another account. */
+export function calendarDisabledCurrentAccount(
+  accounts: Account[],
+  enabledIds: ReadonlySet<string>,
+  currentAccountId: string | null,
+): Account | null {
+  if (!currentAccountId) return null;
+  const account = calendarCapableAccounts(accounts).find((a) => a.id === currentAccountId);
+  return account && !enabledIds.has(account.id) ? account : null;
+}
+
 interface CalendarIntegrationStore {
   /** Ids of accounts with calendar integration switched on. */
   enabledIds: Set<string>;

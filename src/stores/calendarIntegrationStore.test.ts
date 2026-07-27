@@ -9,6 +9,7 @@ import * as api from '@/lib/api';
 import type { Account } from '@/types';
 import {
   calendarCapableAccounts,
+  calendarDisabledCurrentAccount,
   calendarEnabledAccounts,
   calendarEnabledPrefKey,
   useCalendarIntegrationStore,
@@ -47,6 +48,37 @@ describe('calendar integration pure helpers', () => {
 
   it('pref key matches the backend composite key', () => {
     expect(calendarEnabledPrefKey('acc-1')).toBe('calendar.enabled:acc-1');
+  });
+});
+
+describe('calendarDisabledCurrentAccount', () => {
+  const accounts = [
+    makeAccount('g-on', 'gmail'),
+    makeAccount('g-off', 'gmail'),
+    makeAccount('i', 'imap'),
+    makeAccount('g-dis', 'gmail', false),
+  ];
+  const enabledIds = new Set(['g-on']);
+
+  it('returns the current account when it is capable but calendar-disabled', () => {
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, 'g-off')?.id).toBe('g-off');
+  });
+
+  it('returns null when the current account already has calendar enabled', () => {
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, 'g-on')).toBeNull();
+  });
+
+  it('returns null for IMAP accounts (no calendar support to enable)', () => {
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, 'i')).toBeNull();
+  });
+
+  it('returns null for disabled accounts', () => {
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, 'g-dis')).toBeNull();
+  });
+
+  it('returns null for an unknown or missing current account', () => {
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, 'nope')).toBeNull();
+    expect(calendarDisabledCurrentAccount(accounts, enabledIds, null)).toBeNull();
   });
 });
 

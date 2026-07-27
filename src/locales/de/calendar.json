@@ -7,6 +7,8 @@
   "allDay": "Ganztägig",
   "moreEvents": "+{{n}} weitere",
   "noAccount": "Die Kalender-Integration ist für kein Konto aktiviert. Aktiviere sie in Einstellungen → Kalender.",
+  "integrationDisabled": "Der Kalender ist für {{email}} deaktiviert.",
+  "enableCalendarButton": "Kalender aktivieren",
   "selectAccount": "Kalenderkonto",
   "syncError": "Kalenderfehler: {{message}}",
   "reauthNeeded": "EmailOps hat noch keine Berechtigung, den Kalender dieses Kontos zu lesen. Melde dich erneut an, um Kalenderzugriff zu gewähren.",

@@ -7,6 +7,8 @@
   "allDay": "All day",
   "moreEvents": "+{{n}} more",
   "noAccount": "Calendar integration is not enabled for any account. Turn it on in Settings → Calendar.",
+  "integrationDisabled": "Calendar is turned off for {{email}}.",
+  "enableCalendarButton": "Enable calendar",
   "selectAccount": "Calendar account",
   "syncError": "Calendar error: {{message}}",
   "reauthNeeded": "EmailOps doesn't have permission to read this account's calendar yet. Sign in again to grant calendar access.",
