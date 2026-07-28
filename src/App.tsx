@@ -51,7 +51,7 @@ import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatTool
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
-import { planViewChange } from '@/lib/viewNavigation';
+import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -948,12 +948,6 @@ function AppInner() {
     if (!isUnified) return;
     silentRefetchEmailsRef.current();
   }, [isUnified, enabledAccountsKey]);
-
-  // Email list views — these all render the inbox/sent/spam/deleted/custom-
-  // folder email list. When applying a search from any other view, fall back
-  // to 'inbox'.
-  const isEmailListView = (mode: ViewMode): boolean =>
-    mode === 'inbox' || mode === 'sent' || mode === 'spam' || mode === 'deleted' || mode.startsWith('folder:');
 
   const handleSearchSelect = useCallback(
     (email: Parameters<typeof selectEmail>[0]) => {
