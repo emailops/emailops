@@ -112,6 +112,15 @@ pub fn collect_storage_stats(app_data_dir: &Path, db_path: &Path) -> Result<Stor
 
     let (db_file_bytes, wal_bytes, shm_bytes) = if db_path.as_os_str().is_empty() {
         (0, 0, 0)
+    } else if !db_path.starts_with(app_data_dir) {
+        // Both numbers have to describe the same tree or the breakdown lies:
+        // the db bucket would report a file the total never counted, and any
+        // database inside the scanned root would land in `otherBytes`.
+        return Err(crate::models::error::AppError::IoError(format!(
+            "database {} is outside the scanned app data dir {}",
+            db_path.display(),
+            app_data_dir.display()
+        )));
     } else {
         let db = file_size_or_zero(db_path)?;
         // SQLite sidecars sit next to the main file with `-wal` / `-shm`
@@ -202,6 +211,27 @@ mod tests {
         assert_eq!(stats.backups_bytes, 2_000);
         assert_eq!(stats.other_bytes, 50 + 4);
         assert_eq!(stats.total_bytes, 1000 + 200 + 32 + 1200 + 9_000 + 2_000 + 50 + 4);
+    }
+
+    #[test]
+    fn db_outside_the_scanned_root_is_rejected() {
+        // Regression: the dashboard command scanned Tauri's default app data
+        // dir while the DB lived in the EMAILOPS_DATA_DIR override. The db
+        // bucket then described a file the total never counted, and the
+        // production DB sitting in the scanned root silently inflated
+        // `otherBytes`. Refuse to report numbers from two different roots.
+        let scanned = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        write_file(&scanned.path().join("emailops.db"), 5_000);
+        let foreign_db = elsewhere.path().join("emailops.db");
+        write_file(&foreign_db, 100);
+
+        let err = collect_storage_stats(scanned.path(), &foreign_db)
+            .expect_err("db outside the scanned root must be an error, not silent nonsense");
+        assert!(
+            err.to_string().contains("app data dir"),
+            "error should name the mismatch, got: {err}"
+        );
     }
 
     #[test]

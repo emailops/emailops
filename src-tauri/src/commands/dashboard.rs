@@ -8,7 +8,7 @@
 //!   so the UI can show currently-running and pending tasks.
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::models::error::{AppError, Result};
 use crate::services::dashboard::{self, AccountDashboard, ServerTotalCache};
@@ -117,10 +117,9 @@ pub async fn get_queue_state(state: State<'_, AppState>) -> Result<AllQueuesStat
 /// Snapshot of EmailOps' on-disk footprint. Pure filesystem scan — no SQL
 /// is executed — so this is safe to call inline on dashboard mount.
 #[tauri::command]
-pub async fn get_storage_stats(app: AppHandle, state: State<'_, AppState>) -> Result<StorageStats> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::IoError(format!("resolve app_data_dir: {e}")))?;
-    storage_stats::collect_storage_stats(&app_data_dir, state.db.db_path())
+pub async fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats> {
+    // `state.app_data_dir` honours the EMAILOPS_DATA_DIR override that the dev
+    // targets set; `app.path().app_data_dir()` always returns the platform
+    // default, which would scan a different install than the open database.
+    storage_stats::collect_storage_stats(&state.app_data_dir, state.db.db_path())
 }
