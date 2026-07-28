@@ -467,6 +467,38 @@ impl Database {
         Ok(existing)
     }
 
+    /// Flag rows the provider reports as sent, leaving every other column —
+    /// `mailbox` above all — untouched. Returns how many rows changed.
+    ///
+    /// The sync skips messages it has already stored, so without this a row the
+    /// inbox pass filed as 'inbox' (Gmail labels self-sent mail INBOX *and*
+    /// SENT) could never learn it was sent. Only ever sets the flag: a row the
+    /// provider once called sent does not stop being sent mail.
+    pub fn mark_emails_sent(&self, ids: &[String]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let mut updated = 0usize;
+        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; chunk to stay safe.
+        for chunk in ids.chunks(900) {
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("?{}", i)).collect();
+            let sql = format!(
+                "UPDATE emails SET is_sent = 1 WHERE is_sent = 0 AND id IN ({})",
+                placeholders.join(", ")
+            );
+            let params_vec: Vec<Box<dyn rusqlite::ToSql>> = chunk
+                .iter()
+                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::ToSql>)
+                .collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            updated += tx.execute(&sql, params_refs.as_slice())?;
+        }
+        tx.commit()?;
+        Ok(updated)
+    }
+
     pub fn get_email(&self, email_id: &str) -> Result<Option<Email>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(&format!("SELECT {} FROM emails WHERE id = ?1", EMAIL_COLUMNS))?;
@@ -1066,6 +1098,34 @@ mod tests {
             .unwrap();
         let counted = db.count_emails(AccountScope::Account("acc1"), Some("sent")).unwrap();
         assert_eq!(counted as usize, listed.len(), "count must track the widened predicate");
+    }
+
+    #[test]
+    fn mark_emails_sent_sets_the_flag_without_moving_the_message() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_contact_email(
+            &db,
+            "self-alias",
+            "acc1",
+            "t1",
+            "Me",
+            "me@alias.example",
+            "[]",
+            "inbox",
+            300,
+        );
+
+        let updated = db.mark_emails_sent(&["self-alias".to_string()]).unwrap();
+        assert_eq!(updated, 1);
+
+        let row = db.get_email_by_id("self-alias").unwrap().expect("row");
+        assert!(row.is_sent);
+        assert_eq!(row.mailbox, "inbox", "flagging must not relocate the message");
+
+        // Already flagged → nothing left to update, so a repeat pass is a no-op.
+        assert_eq!(db.mark_emails_sent(&["self-alias".to_string()]).unwrap(), 0);
+        assert_eq!(db.mark_emails_sent(&[]).unwrap(), 0);
     }
 
     #[test]

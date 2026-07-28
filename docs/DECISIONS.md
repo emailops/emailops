@@ -214,3 +214,26 @@ scope to justify in the review and in the demo video, with nothing gained.
 `gmail.modify` were ever narrowed (it isn't, and unused breadth is exactly what the
 review penalises); dropping to `gmail.readonly` + `gmail.send` and giving up
 archive/label/read-state writes (those are core inbox actions the app already ships).
+
+## 2026-07-28 — Record provider Sent state in an `is_sent` column, not by inference
+
+**Decision:** The `emails` table carries an `is_sent` flag (V014) set from the
+provider's own signal — Gmail's `SENT` label, the Sent folder for IMAP/Outlook — and
+the Sent view matches it first, falling back to `mailbox = 'sent'` and to
+sender-equals-account for rows written before the column existed. `mailbox` stays
+single-valued and keeps recording 'inbox' for self-sent mail so those threads remain
+in the inbox view. Because the sync skips message ids it already stores, the Sent
+pass also repairs the flag in place on rows it re-lists, and V015 clears the Sent
+backfill watermarks once so existing databases walk their history and self-heal.
+**Context:** Mail sent through a Gmail send-as alias was invisible in the Sent view.
+Gmail labels self-sent mail INBOX *and* SENT, so the single `mailbox` column recorded
+'inbox', and the sender was the alias rather than the account address — so neither
+the mailbox check nor the sender check matched. No amount of local inference could
+recover the fact; only the provider knows.
+**Rejected:** Fetching the account's send-as addresses from Gmail's `sendAs` API into
+preferences and matching senders against that list (no migration, but Gmail-only,
+leaves Outlook/IMAP aliases unsolved, and needs refresh logic when an alias changes);
+deriving aliases from senders already seen on `mailbox='sent'` rows (circular — empty
+on a fresh database, and misses aliases only ever used to mail yourself); letting
+`mailbox` hold 'sent' for self-sent mail (would drop those threads out of the inbox
+view, which is where the user expects them).

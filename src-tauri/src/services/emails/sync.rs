@@ -1286,6 +1286,30 @@ async fn ingest_mailbox_refs(
             return IngestOutcome::default();
         }
     };
+    // A message the provider lists under Sent is sent mail even when we already
+    // hold it — the inbox pass files Gmail's INBOX+SENT self-sent mail as
+    // 'inbox', and skipping the row outright would leave that fact unrecorded
+    // forever. Correct the flag in place before dropping the known ids; this is
+    // also what repairs databases populated before the flag existed.
+    if mailbox_name == ExtraMailbox::Sent.as_str() && !existing_ids.is_empty() {
+        let known: Vec<String> = existing_ids.iter().cloned().collect();
+        match db.mark_emails_sent(&known) {
+            Ok(0) => {}
+            Ok(n) => emit_account_log(
+                "debug",
+                "sync",
+                account_email,
+                &format!("Marked {n} already-stored email(s) as sent"),
+            ),
+            Err(e) => emit_account_log(
+                "error",
+                "sync",
+                account_email,
+                &format!("Failed to flag already-stored sent email(s): {e}"),
+            ),
+        }
+    }
+
     let new_refs: Vec<_> = refs.into_iter().filter(|r| !existing_ids.contains(&r.id)).collect();
 
     if new_refs.is_empty() {
@@ -1990,6 +2014,40 @@ mod extra_mailbox_window_tests {
             vec!["recent".to_string()],
             "backfill must stop at the account's sync date, not walk the whole mailbox"
         );
+    }
+
+    #[tokio::test]
+    async fn sent_pass_flags_messages_already_stored_from_the_inbox_pass() {
+        // Repair path for existing installs: the main inbox pass ingests Gmail's
+        // `in:sent` results first, and a message the user sent to themselves
+        // carries INBOX+SENT so it lands as mailbox='inbox'. The Sent pass then
+        // saw a known id and skipped it, leaving is_sent unset forever — which
+        // is exactly how alias-sent mail stayed invisible in the Sent view.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+
+        // Already stored by the inbox pass: filed under inbox, flag unset.
+        let mut already_stored = sent_email("self-alias", FLOOR + 500);
+        already_stored.mailbox = "inbox".to_string();
+        already_stored.sender_email = "me@alias.example".to_string();
+        already_stored.is_sent = false;
+        db.insert_email(&already_stored).expect("seed existing row");
+        assert!(
+            !db.get_email_by_id("self-alias").expect("get").expect("row").is_sent,
+            "precondition: the stored row is not flagged"
+        );
+
+        // The provider lists that same message under Sent.
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("self-alias", FLOOR + 500), EmailCategory::Primary, vec![]);
+
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider).await;
+
+        let repaired = db.get_email_by_id("self-alias").expect("get").expect("row");
+        assert!(repaired.is_sent, "the Sent pass must correct the flag in place");
+        assert_eq!(repaired.mailbox, "inbox", "and leave the inbox placement alone");
     }
 
     #[tokio::test]
