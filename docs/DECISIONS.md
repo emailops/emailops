@@ -195,3 +195,22 @@ cache that local re-generation covers); heuristic detection crate (user chose LL
 detection — no new dependency, handles mixed content); HTML-preserving translation
 (small local models mangle markup and marketing HTML blows the 8k context window);
 per-feature model override (would evict the chat KV cache — uses the main provider).
+
+## 2026-07-28 — Gmail OAuth: request `gmail.modify` only, never `gmail.readonly`
+
+**Decision:** `GMAIL_SCOPES` requests `gmail.send`, `gmail.modify`, and the two
+`userinfo` scopes — never `gmail.readonly`. `gmail.modify` is a strict superset of
+read access, so requesting both widened the declared scope set for zero capability.
+A unit test (`gmail_scopes_omit_redundant_readonly` in `sync/oauth.rs`) fails if it
+is ever re-added. The scope list published in the privacy policy (section 2, all four
+locales in the `emailops_web` site repo) and the scopes declared on the GCP consent
+screen must match this constant exactly.
+**Context:** EmailOps is going through Google restricted-scope verification to lift
+the 100-user OAuth cap. Google's review applies a narrowest-scope requirement, and a
+mismatch between the code's scopes, the consent screen, and the privacy policy is a
+documented rejection trigger. Carrying a redundant restricted scope meant one more
+scope to justify in the review and in the demo video, with nothing gained.
+**Rejected:** Keeping `gmail.readonly` for "explicitness" or as a fallback if
+`gmail.modify` were ever narrowed (it isn't, and unused breadth is exactly what the
+review penalises); dropping to `gmail.readonly` + `gmail.send` and giving up
+archive/label/read-state writes (those are core inbox actions the app already ships).
