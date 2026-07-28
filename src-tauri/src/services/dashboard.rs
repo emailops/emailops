@@ -196,7 +196,7 @@ fn collect_one(db: &Arc<Database>, account: Account) -> Result<AccountDashboard>
         )?;
 
         // Sent detection has to look at *who sent the email*, not the `mailbox`
-        // column. The Gmail inbox sync pulls `category:primary OR in:sent` into
+        // column. The Gmail inbox sync pulls `in:inbox OR in:sent` into
         // a single pass and stores everything with `mailbox='inbox'`; the
         // separate sent-folder pass then skips those rows as duplicates. So
         // `mailbox='sent'` is only reliably set for IMAP / Outlook accounts.

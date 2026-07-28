@@ -237,3 +237,53 @@ deriving aliases from senders already seen on `mailbox='sent'` rows (circular �
 on a fresh database, and misses aliases only ever used to mail yourself); letting
 `mailbox` hold 'sent' for self-sent mail (would drop those threads out of the inbox
 view, which is where the user expects them).
+
+## 2026-07-28 — Backfill progress lives in its own column, never in the user's sync-from preference
+
+**Decision:** `accounts.sync_from_timestamp` is exclusively the user's chosen history
+floor (`NULL` = "All mail") and is written only by the account-add and account-settings
+paths. Sync's backfill progress moves to a dedicated `accounts.backfill_swept_from`
+column (V017), where `F` means "swept from `F` up to the oldest stored inbox email and
+found nothing new". The planner skips the backfill pass while the requested floor is at
+or above `F`, and re-opens it if the user later asks for older history. Both sync
+watermarks — newest and oldest — are inbox-scoped.
+**Context:** A Gmail account added with "All mail" (`NULL`) stopped receiving anything
+sent before the afternoon it was created. Two defects compounded: the backfill floor was
+derived from `get_oldest_email_timestamp`, unscoped across mailboxes, so a reply the user
+sent from the app became the account's oldest row; and on finding nothing older, sync
+wrote that timestamp into `sync_from_timestamp` itself. The user's "All mail" was thereby
+converted into a hard floor pinned to their own outgoing mail, permanently excluding
+earlier inbound messages. The inbox-scoping bug was already fixed for the *newest*
+watermark — the comment above `get_latest_email_timestamp_for_mailbox` describes exactly
+this failure mode — but the fix was never applied to the oldest end of the range.
+**Rejected:** Keeping the single overloaded column and only fixing the mailbox scoping
+(the clobber would still destroy "All mail" whenever the oldest inbox row happened to sit
+above the true floor, and leaves preference and progress indistinguishable on inspection);
+dropping the watermark entirely and re-running the backfill every sync (re-queries an
+exhausted range on every pass, which is what the watermark was introduced to avoid);
+back-filling the new column from existing `sync_from_timestamp` values in the migration
+(a clobbered value and a deliberate user choice are indistinguishable after the fact, so
+this would launder corrupted floors into legitimate-looking preferences).
+
+## 2026-07-28 — Gmail inbox listing filters categories negatively, over `in:inbox`
+
+**Decision:** The Gmail list query is built as `((in:inbox -category:<deselected>…) OR
+in:sent)` rather than `((category:<selected> OR …) OR in:sent)`. The account's category
+selection is expressed by *excluding* the categories the user turned off, never by
+requiring the ones they left on.
+**Context:** Gmail's inbox tabs are optional and are commonly disabled on Google
+Workspace accounts. On an account without them, `category:primary` matches nothing at
+all — so the positive query returned an empty inbox while the `in:sent` branch kept
+working. The result was an account that looked correctly connected, synced its own sent
+mail and spam, and never showed a single received message. Negative terms degrade
+correctly in both worlds: with tabs on the deselected categories are excluded exactly as
+before, and with tabs off there is nothing to exclude so the whole inbox comes through.
+An empty selection still means "sent only" — that branch is unchanged.
+**Rejected:** Probing the account once and persisting a "has categories" flag to pick
+between two query shapes (stateful, needs invalidation when the user toggles tabs in
+Gmail, and doubles the query paths under test); listing `in:inbox` unfiltered and
+dropping unwanted categories after fetching each message (correct, but pays a full
+message fetch for mail that is immediately discarded — expensive on promotions-heavy
+mailboxes); adding `in:inbox` as another positive OR term alongside the category clauses
+(matches the entire inbox regardless of selection, silently discarding the user's
+deliberate Promotions/Social exclusions).

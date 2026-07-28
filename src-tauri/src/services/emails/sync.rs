@@ -167,17 +167,7 @@ pub async fn sync_account_with_provider(
             .unwrap_or_default();
 
         if account.provider == "gmail" {
-            let filter = if settings.gmail_categories.is_empty() {
-                Some("in:sent".to_string())
-            } else {
-                let clause = settings
-                    .gmail_categories
-                    .iter()
-                    .map(|c| format!("category:{}", c))
-                    .collect::<Vec<_>>()
-                    .join(" OR ");
-                Some(format!("({} OR in:sent)", clause))
-            };
+            let filter = gmail_label_filter(&settings.gmail_categories);
             let skip_promo = !settings.gmail_categories.contains(&"promotions".to_string());
             (filter, skip_promo, settings.auto_download_attachment_categories)
         } else {
@@ -213,13 +203,9 @@ pub async fn sync_account_with_provider(
     // (e.g. a reply the user just composed) push the incremental cursor
     // past unsynced received emails that arrived between syncs at an
     // earlier timestamp — Gmail's `after:T_sent` then filters them out.
-    let latest_timestamp = db.get_latest_email_timestamp_for_mailbox(account_id, "inbox")?;
-    let oldest_timestamp = db.get_oldest_email_timestamp(account_id)?;
-    let effective_sync_from = account.sync_from_timestamp.or(match account.provider.as_str() {
-        "imap" | "outlook" | "gmail" => Some(0),
-        _ => None,
-    });
-    let plan = plan_sync_passes(effective_sync_from, latest_timestamp, oldest_timestamp);
+    let anchors = resolve_sync_anchors(db, account, account_id)?;
+    let latest_timestamp = anchors.latest_timestamp;
+    let plan = anchors.plan;
     let backfill_after_timestamp = plan.backfill_after_timestamp;
     let backfill_before_timestamp = plan.backfill_before_timestamp;
     // Incremental's anchor only matters when the planner says to run it.
@@ -353,7 +339,9 @@ pub async fn sync_account_with_provider(
     if backfill_after_timestamp.is_some() && backfill_before_timestamp.is_some() {
         let has_new_backfill = new_message_refs.iter().any(|r| backfill_ref_ids.contains(&r.id));
         if !has_new_backfill {
-            if let Err(e) = db.update_account_sync_from(account_id, backfill_before_timestamp) {
+            // Record progress in the dedicated watermark column — writing this
+            // into `sync_from_timestamp` used to destroy the user's "All mail".
+            if let Err(e) = db.set_account_backfill_swept_from(account_id, backfill_after_timestamp) {
                 emit_account_log(
                     "warn",
                     "sync",
@@ -1837,6 +1825,77 @@ pub(super) struct SyncPlan {
     pub run_incremental: bool,
 }
 
+/// Gmail's five inbox categories, in the order its own tabs use them.
+const GMAIL_CATEGORIES: [&str; 5] = ["primary", "social", "promotions", "updates", "forums"];
+
+/// Build the Gmail list-query fragment for an account's selected inbox
+/// categories.
+///
+/// The selection is expressed as **negative** terms over `in:inbox` rather than
+/// positive `category:` terms. Gmail's inbox tabs are optional — they are
+/// commonly off on Google Workspace accounts — and on an account without them
+/// `category:primary` matches *nothing at all*. A positive query therefore
+/// syncs an empty inbox while `in:sent` keeps working, which is precisely how
+/// an account can look "connected" yet never receive a message.
+///
+/// Negative terms degrade correctly in both worlds: with tabs on, the
+/// deselected categories are excluded exactly as before; with tabs off there is
+/// nothing to exclude, so the whole inbox comes through.
+pub(super) fn gmail_label_filter(selected: &[String]) -> Option<String> {
+    if selected.is_empty() {
+        return Some("in:sent".to_string());
+    }
+    let excluded: Vec<String> = GMAIL_CATEGORIES
+        .iter()
+        .filter(|category| !selected.iter().any(|s| s == *category))
+        .map(|category| format!("-category:{}", category))
+        .collect();
+    let inbox_clause = if excluded.is_empty() {
+        "in:inbox".to_string()
+    } else {
+        format!("in:inbox {}", excluded.join(" "))
+    };
+    Some(format!("(({}) OR in:sent)", inbox_clause))
+}
+
+/// Everything the sync passes need to anchor themselves, read from the DB in
+/// one place so the derivation is testable without a provider or the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SyncAnchors {
+    pub plan: SyncPlan,
+    /// Newest inbox email already stored — the incremental cursor.
+    pub latest_timestamp: Option<i64>,
+    /// The account's floor, with the provider default applied.
+    pub effective_sync_from: Option<i64>,
+}
+
+/// Read the anchors for `account` and run [`plan_sync_passes`] over them.
+///
+/// Both watermarks are **inbox-scoped**. A locally stored Sent email must never
+/// move either end of the range: at the top it would push the incremental
+/// cursor past unsynced received mail, and at the bottom it would raise the
+/// backfill floor above genuinely older inbox messages.
+pub(super) fn resolve_sync_anchors(db: &Database, account: &Account, account_id: &str) -> Result<SyncAnchors> {
+    let latest_timestamp = db.get_latest_email_timestamp_for_mailbox(account_id, "inbox")?;
+    let oldest_timestamp = db.get_oldest_email_timestamp_for_mailbox(account_id, "inbox")?;
+    let backfill_swept_from = db.get_account_backfill_swept_from(account_id)?;
+    let effective_sync_from = account.sync_from_timestamp.or(match account.provider.as_str() {
+        "imap" | "outlook" | "gmail" => Some(0),
+        _ => None,
+    });
+    let plan = plan_sync_passes(
+        effective_sync_from,
+        latest_timestamp,
+        oldest_timestamp,
+        backfill_swept_from,
+    );
+    Ok(SyncAnchors {
+        plan,
+        latest_timestamp,
+        effective_sync_from,
+    })
+}
+
 /// Pure decision: given the user's chosen `sync_from_timestamp` and the
 /// timestamps already present locally, decide which passes to run.
 ///
@@ -1858,6 +1917,7 @@ pub(super) fn plan_sync_passes(
     effective_sync_from: Option<i64>,
     latest_timestamp: Option<i64>,
     oldest_timestamp: Option<i64>,
+    backfill_swept_from: Option<i64>,
 ) -> SyncPlan {
     let backfill_after_timestamp = match (effective_sync_from, oldest_timestamp) {
         // History gap: user wants emails older than what's locally stored.
@@ -1869,7 +1929,11 @@ pub(super) fn plan_sync_passes(
         // silently capped at 500 by the old code.
         (Some(sync_from), None) => Some(sync_from),
         _ => None,
-    };
+    }
+    // A completed sweep from `swept` upward found nothing older, so don't
+    // re-query that range every sync. Only re-open the window if the user has
+    // since asked for history older than what we already swept.
+    .filter(|sync_from| backfill_swept_from.is_none_or(|swept| *sync_from < swept));
     let backfill_before_timestamp = oldest_timestamp;
     // Skip incremental on the very first sync — the backfill above already
     // covers the full range without the per-sync cap. Once at least one
@@ -2155,7 +2219,7 @@ mod plan_sync_passes_tests {
         // Reproduces the production bug: user picked "Sync since 2004" on a
         // brand-new Outlook account. Old code ran the 500-capped incremental
         // pass and stopped, leaving thousands of older messages unsynced.
-        let plan = plan_sync_passes(Some(1_088_640_000), None, None);
+        let plan = plan_sync_passes(Some(1_088_640_000), None, None, None);
         assert_eq!(
             plan,
             SyncPlan {
@@ -2172,7 +2236,7 @@ mod plan_sync_passes_tests {
         // nothing rather than backfill from epoch. Currently no provider in
         // the catalog hits this branch (gmail/outlook/imap all pass Some(0)),
         // but the case is reachable for future providers.
-        let plan = plan_sync_passes(None, None, None);
+        let plan = plan_sync_passes(None, None, None, None);
         assert_eq!(plan.backfill_after_timestamp, None);
         assert!(!plan.run_incremental);
     }
@@ -2181,7 +2245,7 @@ mod plan_sync_passes_tests {
     fn subsequent_sync_with_no_history_gap_runs_incremental_only() {
         // Account has been synced before AND sync_from is newer than the
         // oldest local email — i.e. nothing older to backfill.
-        let plan = plan_sync_passes(Some(3_000), Some(5_000), Some(2_500));
+        let plan = plan_sync_passes(Some(3_000), Some(5_000), Some(2_500), None);
         assert_eq!(plan.backfill_after_timestamp, None);
         assert_eq!(plan.backfill_before_timestamp, Some(2_500));
         assert!(plan.run_incremental);
@@ -2192,7 +2256,7 @@ mod plan_sync_passes_tests {
         // Classic "user lowered the sync_from date after the initial sync"
         // scenario: local oldest is 2024, but they now want emails since
         // 2004. Backfill fills the gap; incremental keeps up with what's new.
-        let plan = plan_sync_passes(Some(1_088_640_000), Some(1_716_000_000), Some(1_700_000_000));
+        let plan = plan_sync_passes(Some(1_088_640_000), Some(1_716_000_000), Some(1_700_000_000), None);
         assert_eq!(plan.backfill_after_timestamp, Some(1_088_640_000));
         assert_eq!(plan.backfill_before_timestamp, Some(1_700_000_000));
         assert!(plan.run_incremental);
@@ -2202,7 +2266,7 @@ mod plan_sync_passes_tests {
     fn subsequent_sync_with_sync_from_equal_to_oldest_skips_backfill() {
         // Boundary: sync_from == oldest_timestamp. Nothing older exists by
         // definition, so skip the backfill loop.
-        let plan = plan_sync_passes(Some(1_000), Some(2_000), Some(1_000));
+        let plan = plan_sync_passes(Some(1_000), Some(2_000), Some(1_000), None);
         assert_eq!(plan.backfill_after_timestamp, None);
         assert!(plan.run_incremental);
     }
@@ -2211,9 +2275,32 @@ mod plan_sync_passes_tests {
     fn subsequent_sync_without_sync_from_runs_incremental_only() {
         // sync_from never set (None) and account has history → just keep
         // pulling new mail; no backfill intent to honor.
-        let plan = plan_sync_passes(None, Some(2_000), Some(1_000));
+        let plan = plan_sync_passes(None, Some(2_000), Some(1_000), None);
         assert_eq!(plan.backfill_after_timestamp, None);
         assert!(plan.run_incremental);
+    }
+
+    #[test]
+    fn a_completed_sweep_stops_the_backfill_from_re_running_every_sync() {
+        // The watermark's whole job: once we've swept from the floor upward and
+        // found nothing older, don't re-query that exhausted range forever.
+        let plan = plan_sync_passes(Some(0), Some(5_000), Some(2_000), Some(0));
+        assert_eq!(
+            plan.backfill_after_timestamp, None,
+            "a range already swept from 0 must not be re-opened"
+        );
+    }
+
+    #[test]
+    fn lowering_the_floor_below_a_completed_sweep_re_opens_the_backfill() {
+        // The user swept from 2_000 previously, then asked for older history.
+        // The watermark must not lock them out of the newly requested range.
+        let plan = plan_sync_passes(Some(1_000), Some(5_000), Some(3_000), Some(2_000));
+        assert_eq!(
+            plan.backfill_after_timestamp,
+            Some(1_000),
+            "history older than the swept mark must still be reachable"
+        );
     }
 
     #[test]
@@ -2222,10 +2309,245 @@ mod plan_sync_passes_tests {
         // 500-cap loop wired in elsewhere, this planner must not authorize
         // it on first sync. If this test fails, the cap will silently
         // truncate long-history backfills again.
-        let plan = plan_sync_passes(Some(1_088_640_000), None, None);
+        let plan = plan_sync_passes(Some(1_088_640_000), None, None, None);
         assert!(
             !plan.run_incremental,
             "first sync must skip incremental; the 500-cap would truncate the backfill"
         );
+    }
+}
+
+#[cfg(test)]
+mod sync_anchor_tests {
+    use super::*;
+
+    fn gmail_account_all_mail() -> Account {
+        Account {
+            id: "acc-anchor".to_string(),
+            provider: "gmail".to_string(),
+            email: "contact@example.com".to_string(),
+            name: "Contact".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            // "All mail" — the preference the sync watermark used to destroy.
+            sync_from_timestamp: None,
+        }
+    }
+
+    fn seed_account_row(db: &Database, account: &Account) {
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+    }
+
+    fn email_in(mailbox: &str, id: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: "acc-anchor".to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            subject: format!("subject {id}"),
+            sender: "Someone".to_string(),
+            sender_email: "someone@example.com".to_string(),
+            recipients: vec!["contact@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: mailbox.to_string(),
+            is_sent: mailbox == "sent",
+        }
+    }
+
+    #[test]
+    fn a_sent_email_older_than_the_inbox_does_not_raise_the_backfill_floor() {
+        // Production bug: the user replied from the app at T=1_000, and that
+        // locally stored Sent copy became the account's oldest row. The backfill
+        // floor was then pinned to it, permanently hiding inbound mail that had
+        // arrived earlier the same day.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = gmail_account_all_mail();
+        seed_account_row(&db, &account);
+
+        db.insert_email(&email_in("sent", "my-reply", 1_000))
+            .expect("seed sent");
+        db.insert_email(&email_in("inbox", "received", 2_000))
+            .expect("seed inbox");
+
+        let anchors = resolve_sync_anchors(&db, &account, &account.id).expect("anchors");
+
+        assert_eq!(
+            anchors.plan.backfill_before_timestamp,
+            Some(2_000),
+            "the backfill ceiling must come from the inbox, not from a newer-than-inbox Sent row"
+        );
+        assert_eq!(
+            anchors.plan.backfill_after_timestamp,
+            Some(0),
+            "an 'All mail' account must still backfill from the beginning"
+        );
+    }
+
+    #[test]
+    fn recording_backfill_progress_leaves_the_user_sync_from_preference_alone() {
+        // Sync used to write its watermark into `sync_from_timestamp`, which
+        // silently converted "All mail" (NULL) into a hard floor the user never
+        // chose. Progress and preference are now different columns.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = gmail_account_all_mail();
+        seed_account_row(&db, &account);
+
+        db.set_account_backfill_swept_from(&account.id, Some(1_500))
+            .expect("record progress");
+
+        let stored = db.get_account(&account.id).expect("get").expect("account");
+        assert_eq!(
+            stored.sync_from_timestamp, None,
+            "'All mail' must survive a backfill watermark write"
+        );
+        assert_eq!(
+            db.get_account_backfill_swept_from(&account.id).expect("read watermark"),
+            Some(1_500),
+            "the watermark itself must round-trip"
+        );
+    }
+}
+
+#[cfg(test)]
+mod backfill_watermark_persistence_tests {
+    use super::*;
+    use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+    /// End-to-end guard for the production bug: a full sync pass must record its
+    /// backfill progress WITHOUT rewriting the user's "All mail" preference.
+    #[tokio::test]
+    async fn a_completed_backfill_records_progress_without_touching_sync_from() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let account = Account {
+            id: "acc-wm".to_string(),
+            provider: "gmail".to_string(),
+            email: "contact@example.com".to_string(),
+            name: "Contact".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None, // "All mail"
+        };
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+
+        // One inbox email already stored, so the backfill has a ceiling to work
+        // against and the "nothing new found" branch is the one exercised.
+        let existing = Email {
+            id: "already-here".to_string(),
+            account_id: account.id.clone(),
+            thread_id: "t-1".to_string(),
+            message_id: None,
+            subject: "subject".to_string(),
+            sender: "Someone".to_string(),
+            sender_email: "someone@example.com".to_string(),
+            recipients: vec!["contact@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp: 2_000,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "inbox".to_string(),
+            is_sent: false,
+        };
+        db.insert_email(&existing).expect("seed inbox email");
+
+        let provider = FakeEmailProvider::new("contact@example.com", "Contact");
+        provider.add_message(existing.clone(), EmailCategory::Primary, vec![]);
+
+        sync_account_with_provider(
+            &db,
+            &account,
+            temp.path(),
+            None,
+            crate::services::task_queue::TaskQueue::new(1, "test-sync"),
+            Arc::new(Mutex::new(HashMap::new())),
+            Box::new(provider),
+        )
+        .await
+        .expect("sync");
+
+        let stored = db.get_account(&account.id).expect("get").expect("account");
+        assert_eq!(
+            stored.sync_from_timestamp, None,
+            "sync must not convert the user's 'All mail' into a hard floor"
+        );
+    }
+}
+
+#[cfg(test)]
+mod gmail_label_filter_tests {
+    use super::*;
+
+    fn cats(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn an_account_with_inbox_tabs_disabled_still_matches_the_whole_inbox() {
+        // Production bug: a Google Workspace account with Gmail's inbox tabs
+        // turned off matches NOTHING for `category:primary`, so the sync's only
+        // route to the inbox evaporated and the account synced sent mail only.
+        // The query must reach the inbox without depending on categories.
+        let filter = gmail_label_filter(&cats(&["primary", "updates"])).expect("filter");
+        assert!(
+            filter.contains("in:inbox"),
+            "inbox mail must be reachable without category tabs, got: {filter}"
+        );
+    }
+
+    #[test]
+    fn deselected_categories_are_excluded_rather_than_selected_categories_required() {
+        // Negative terms degrade correctly: they exclude on accounts that have
+        // categories, and match nothing to exclude on accounts that don't.
+        let filter = gmail_label_filter(&cats(&["primary", "updates"])).expect("filter");
+        assert!(filter.contains("-category:social"), "got: {filter}");
+        assert!(filter.contains("-category:promotions"), "got: {filter}");
+        assert!(filter.contains("-category:forums"), "got: {filter}");
+        assert!(
+            !filter.contains("category:primary"),
+            "a positive category term reintroduces the bug, got: {filter}"
+        );
+    }
+
+    #[test]
+    fn selecting_every_category_needs_no_exclusions() {
+        let filter =
+            gmail_label_filter(&cats(&["primary", "social", "promotions", "updates", "forums"])).expect("filter");
+        assert!(!filter.contains("-category:"), "nothing to exclude, got: {filter}");
+        assert!(filter.contains("in:inbox"), "got: {filter}");
+    }
+
+    #[test]
+    fn sent_mail_is_always_listed_alongside_the_inbox() {
+        let filter = gmail_label_filter(&cats(&["primary"])).expect("filter");
+        assert!(filter.contains("in:sent"), "got: {filter}");
+    }
+
+    #[test]
+    fn no_categories_selected_keeps_listing_sent_only() {
+        assert_eq!(gmail_label_filter(&[]), Some("in:sent".to_string()));
     }
 }
