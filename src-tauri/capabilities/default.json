@@ -2,5 +2,5 @@
   "identifier": "default",
   "description": "Default capabilities for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open", "os:default", "notification:default"]
+  "permissions": ["core:default", "shell:allow-open", "dialog:allow-open", "os:default", "notification:default"]
 }

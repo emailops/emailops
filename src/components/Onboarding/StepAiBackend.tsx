@@ -1,4 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -33,6 +34,11 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Model ids currently being linked (vs. downloaded) — lets the shared
+  // model-download-progress event handler pick the right error message.
+  // A ref (not state) because it's mutated inside the `listen` callback,
+  // which is set up once and would otherwise close over a stale value.
+  const linkingIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     void (async () => {
@@ -65,13 +71,19 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
     const unlisten = listen<ModelDownloadProgress>('model-download-progress', (event) => {
       const progress = event.payload;
       if (!progress?.modelId || !progress?.status) return;
+      const isLinking = linkingIds.current.has(progress.modelId);
       if (progress.status === 'error') {
         const detail = progress.error?.trim() || t('auth:onboarding.aiBackend.unknownError');
-        setError(t('auth:onboarding.aiBackend.downloadFailedFor', { modelId: progress.modelId, detail }));
-        addLog('error', 'ai', `Model download failed (${progress.modelId}): ${detail}`);
+        setError(
+          isLinking
+            ? t('auth:onboarding.aiBackend.linkFailedFor', { modelId: progress.modelId, detail })
+            : t('auth:onboarding.aiBackend.downloadFailedFor', { modelId: progress.modelId, detail }),
+        );
+        addLog('error', 'ai', `Model ${isLinking ? 'link' : 'download'} failed (${progress.modelId}): ${detail}`);
       }
       setDownloads((prev) => {
         if (progress.status === 'complete' || progress.status === 'error' || progress.status === 'cancelled') {
+          linkingIds.current.delete(progress.modelId);
           const next = { ...prev };
           delete next[progress.modelId];
           if (progress.status === 'complete') {
@@ -79,7 +91,27 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
             refreshTimer.current = setTimeout(() => {
               void api
                 .listCatalogModels()
-                .then(setCatalog)
+                .then((cat) => {
+                  setCatalog(cat);
+                  // The currently-selected id may still be the initial
+                  // recommended-model guess, which is never downloaded when
+                  // the user downloads/links a different model first. If
+                  // the current pick isn't actually local, adopt whichever
+                  // model just finished — mirrors the backend's own
+                  // auto-select-when-missing logic (finish_model_op) so
+                  // Continue submits a model that actually exists on disk.
+                  const completed = cat.find((m) => m.id === progress.modelId);
+                  if (!completed) return;
+                  if (completed.kind === 'chat') {
+                    setChatModelId((prev) =>
+                      cat.some((m) => m.id === prev && m.kind === 'chat' && m.isLocal) ? prev : completed.id,
+                    );
+                  } else {
+                    setEmbedModelId((prev) =>
+                      cat.some((m) => m.id === prev && m.kind === 'embedding' && m.isLocal) ? prev : completed.id,
+                    );
+                  }
+                })
                 .catch(() => {});
             }, 400);
           }
@@ -104,6 +136,31 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       const msg = errorText(err);
       setError(t('auth:onboarding.aiBackend.downloadFailed', { error: msg }));
       addLog('error', 'ai', `Model download failed: ${msg}`);
+    }
+  };
+
+  const handleUseExistingFile = async (modelId: string) => {
+    setError(null);
+    let sourcePath: string | null;
+    try {
+      sourcePath = await openFileDialog({
+        multiple: false,
+        filters: [{ name: 'GGUF', extensions: ['gguf'] }],
+      });
+    } catch (err) {
+      addLog('error', 'ai', `Failed to open file picker: ${errorText(err)}`);
+      return;
+    }
+    if (!sourcePath) return; // User cancelled the picker.
+    linkingIds.current.add(modelId);
+    try {
+      await api.linkLocalModel(modelId, sourcePath);
+      addLog('info', 'ai', `Using existing file for ${modelId}: ${sourcePath}`);
+    } catch (err) {
+      linkingIds.current.delete(modelId);
+      const msg = errorText(err);
+      setError(t('auth:onboarding.aiBackend.linkFailed', { error: msg }));
+      addLog('error', 'ai', `Failed to use existing file for ${modelId}: ${msg}`);
     }
   };
 
@@ -260,6 +317,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                   progress={downloads[m.id] ?? null}
                   onSelect={() => setChatModelId(m.id)}
                   onDownload={() => void handleDownload(m.id)}
+                  onUseExistingFile={() => void handleUseExistingFile(m.id)}
                   onCancel={() => void handleCancel(m.id)}
                 />
               ))}
@@ -433,6 +491,7 @@ function CompactModelRow({
   progress,
   onSelect,
   onDownload,
+  onUseExistingFile,
   onCancel,
 }: {
   model: CatalogModel;
@@ -440,6 +499,7 @@ function CompactModelRow({
   progress: ModelDownloadProgress | null;
   onSelect: () => void;
   onDownload: () => void;
+  onUseExistingFile: () => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation(['auth']);
@@ -482,7 +542,9 @@ function CompactModelRow({
               )}
               {model.isLocal && (
                 <span className="text-[10px] px-1.5 py-0.5 bg-green-900/40 text-green-400 rounded border border-green-800">
-                  {t('auth:onboarding.aiBackend.downloadedBadge')}
+                  {model.isLinked
+                    ? t('auth:onboarding.aiBackend.linkedBadge')
+                    : t('auth:onboarding.aiBackend.downloadedBadge')}
                 </span>
               )}
             </div>
@@ -505,13 +567,22 @@ function CompactModelRow({
               {t('auth:onboarding.aiBackend.cancel')}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={onDownload}
-              className="px-2 py-1 text-xs bg-primary-700 hover:bg-primary-600 text-white rounded transition-colors"
-            >
-              {t('auth:onboarding.aiBackend.download')}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onUseExistingFile}
+                className="px-2 py-1 text-xs text-gray-300 hover:text-gray-100 hover:bg-gray-700 rounded border border-gray-600 transition-colors"
+              >
+                {t('auth:onboarding.aiBackend.useExistingFile')}
+              </button>
+              <button
+                type="button"
+                onClick={onDownload}
+                className="px-2 py-1 text-xs bg-primary-700 hover:bg-primary-600 text-white rounded transition-colors"
+              >
+                {t('auth:onboarding.aiBackend.download')}
+              </button>
+            </>
           )}
         </div>
       </div>

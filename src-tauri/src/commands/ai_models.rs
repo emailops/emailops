@@ -35,12 +35,16 @@ pub struct CatalogModelResponse {
     pub supports_tools: bool,
     /// Whether this model is already downloaded locally.
     pub is_local: bool,
+    /// Whether the local file is a symlink to a file elsewhere on disk
+    /// (via `link_local_model`) rather than a downloaded copy. Only
+    /// meaningful when `is_local` is true.
+    pub is_linked: bool,
 }
 
 #[tauri::command]
 pub async fn list_catalog_models(state: State<'_, AppState>) -> Result<Vec<CatalogModelResponse>, AppError> {
     let local = model_manager::list_local_models(&state.app_data_dir);
-    let local_ids: std::collections::HashSet<&str> = local.iter().map(|m| m.id.as_str()).collect();
+    let local_by_id: HashMap<&str, &model_manager::LocalModel> = local.iter().map(|m| (m.id.as_str(), m)).collect();
 
     let models: Vec<CatalogModelResponse> = CATALOG
         .iter()
@@ -57,7 +61,8 @@ pub async fn list_catalog_models(state: State<'_, AppState>) -> Result<Vec<Catal
             min_ram_gb: m.min_ram_gb,
             recommended: m.recommended,
             supports_tools: m.supports_tools,
-            is_local: local_ids.contains(m.id),
+            is_local: local_by_id.contains_key(m.id),
+            is_linked: local_by_id.get(m.id).map(|m| m.is_linked).unwrap_or(false),
         })
         .collect();
 
@@ -94,6 +99,136 @@ static ACTIVE_DOWNLOADS: std::sync::OnceLock<Mutex<HashMap<String, model_manager
 
 fn active_downloads() -> &'static Mutex<HashMap<String, model_manager::CancelToken>> {
     ACTIVE_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Shared completion handling for both `start_model_download` and
+/// `link_local_model`'s background task: emit the terminal progress event,
+/// log it, drop the cancel token from `ACTIVE_DOWNLOADS`, and — on success —
+/// auto-select the model as the configured default if none was configured
+/// yet. Kept in one place so the two flows can't drift.
+fn finish_model_op(
+    app: &AppHandle,
+    db: &crate::db::Database,
+    app_data_dir: &std::path::Path,
+    model_id: &str,
+    entry_kind: ModelKind,
+    result: Result<std::path::PathBuf, AppError>,
+) {
+    match result {
+        Ok(_path) => {
+            let _ = app.emit(
+                "model-download-progress",
+                ModelDownloadProgress {
+                    model_id: model_id.to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: 0,
+                    status: "complete".to_string(),
+                    error: None,
+                },
+            );
+            emit_log(app, "success", &format!("Model ready: {}", model_id));
+            if let Ok(mut map) = active_downloads().lock() {
+                map.remove(model_id);
+            }
+
+            // Auto-select: if no model of this kind is configured — or the
+            // configured one is not actually available locally — set this
+            // model as default so the user doesn't have to click Save.
+            let raw_chat = db.get_preference("ai_model").ok().flatten();
+            let raw_embed = db.get_preference("ai_embedding_model").ok().flatten();
+            let provider_saved = db.get_preference("ai_provider").ok().flatten();
+
+            let local = model_manager::list_local_models(app_data_dir);
+            let local_chat_ids: std::collections::HashSet<&str> = local
+                .iter()
+                .filter(|m| m.kind == ModelKind::Chat)
+                .map(|m| m.id.as_str())
+                .collect();
+            let local_embed_ids: std::collections::HashSet<&str> = local
+                .iter()
+                .filter(|m| m.kind == ModelKind::Embedding)
+                .map(|m| m.id.as_str())
+                .collect();
+
+            let chat_missing = raw_chat
+                .as_deref()
+                .map(|s| s.is_empty() || !local_chat_ids.contains(s))
+                .unwrap_or(true);
+            let embed_missing = raw_embed
+                .as_deref()
+                .map(|s| s.is_empty() || !local_embed_ids.contains(s))
+                .unwrap_or(true);
+            let no_provider = provider_saved.is_none();
+            // Helper: persist a preference and surface failures in the
+            // output panel. CLAUDE.md mandates we never swallow DB errors
+            // silently; auto-select would otherwise look like it succeeded
+            // while the next launch re-prompts.
+            let save = |key: &str, value: &str| {
+                if let Err(e) = db.set_preference(key, value) {
+                    emit_log(app, "error", &format!("failed to persist preference {key}: {e}"));
+                }
+            };
+            let selected = match entry_kind {
+                ModelKind::Chat if chat_missing => {
+                    save("ai_model", model_id);
+                    if no_provider {
+                        save("ai_provider", "llamacpp");
+                    }
+                    true
+                }
+                ModelKind::Embedding if embed_missing => {
+                    save("ai_embedding_model", model_id);
+                    if no_provider {
+                        save("ai_provider", "llamacpp");
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if selected {
+                let _ = app.emit("ai-config-updated", serde_json::Value::Null);
+            }
+        }
+        Err(AppError::Cancelled) => {
+            // User cancelled — emit a distinct "cancelled" status so the UI
+            // can clear progress without showing a red error banner.
+            let _ = app.emit(
+                "model-download-progress",
+                ModelDownloadProgress {
+                    model_id: model_id.to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: 0,
+                    status: "cancelled".to_string(),
+                    error: None,
+                },
+            );
+            emit_log(app, "info", &format!("Cancelled: {}", model_id));
+            if let Ok(mut map) = active_downloads().lock() {
+                map.remove(model_id);
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                "model-download-progress",
+                ModelDownloadProgress {
+                    model_id: model_id.to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: 0,
+                    status: "error".to_string(),
+                    error: Some(msg.clone()),
+                },
+            );
+            emit_log(
+                app,
+                "error",
+                &format!("Model operation failed for {}: {}", model_id, msg),
+            );
+            if let Ok(mut map) = active_downloads().lock() {
+                map.remove(model_id);
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -163,122 +298,78 @@ pub async fn start_model_download(
             )
             .await;
 
-            match result {
-                Ok(_path) => {
-                    let _ = app_clone.emit(
-                        "model-download-progress",
-                        ModelDownloadProgress {
-                            model_id: mid.clone(),
-                            downloaded_bytes: 0,
-                            total_bytes: 0,
-                            status: "complete".to_string(),
-                            error: None,
-                        },
-                    );
-                    emit_log(&app_clone, "success", &format!("Model downloaded: {}", mid));
-                    if let Ok(mut map) = active_downloads().lock() {
-                        map.remove(&mid);
-                    }
+            finish_model_op(&app_clone, &db_clone, &app_data_dir, &mid, entry_kind, result);
+        })
+        .await;
 
-                    // Auto-select: if no model of this kind is configured — or the
-                    // configured one is not actually downloaded locally — set the
-                    // newly-downloaded model as default so the user doesn't have to
-                    // click Save after a first download.
-                    {
-                        let raw_chat = db_clone.get_preference("ai_model").ok().flatten();
-                        let raw_embed = db_clone.get_preference("ai_embedding_model").ok().flatten();
-                        let provider_saved = db_clone.get_preference("ai_provider").ok().flatten();
+    Ok(())
+}
 
-                        // What's actually on disk right now (we just finished a download).
-                        let local = model_manager::list_local_models(&app_data_dir);
-                        let local_chat_ids: std::collections::HashSet<&str> = local
-                            .iter()
-                            .filter(|m| m.kind == ModelKind::Chat)
-                            .map(|m| m.id.as_str())
-                            .collect();
-                        let local_embed_ids: std::collections::HashSet<&str> = local
-                            .iter()
-                            .filter(|m| m.kind == ModelKind::Embedding)
-                            .map(|m| m.id.as_str())
-                            .collect();
+/// Point `<app_data_dir>/models/{chat,embed}/<model_id>.gguf` at a GGUF file
+/// the user already has on disk (a symlink, not a copy — see
+/// `model_manager::link_local_model`), after verifying it matches the
+/// catalog entry's pinned SHA-256. Lets the user skip re-downloading a model
+/// they've already fetched some other way.
+#[tauri::command]
+pub async fn link_local_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model_id: String,
+    source_path: String,
+) -> Result<(), AppError> {
+    // Validate the model exists in the catalog.
+    let entry = crate::ai::model_catalog::find(&model_id)
+        .ok_or_else(|| AppError::NotFound(format!("Model '{}' not found in catalog", model_id)))?;
 
-                        let chat_missing = raw_chat
-                            .as_deref()
-                            .map(|s| s.is_empty() || !local_chat_ids.contains(s))
-                            .unwrap_or(true);
-                        let embed_missing = raw_embed
-                            .as_deref()
-                            .map(|s| s.is_empty() || !local_embed_ids.contains(s))
-                            .unwrap_or(true);
-                        let no_provider = provider_saved.is_none();
-                        // Helper: persist a preference and surface failures in
-                        // the output panel. CLAUDE.md mandates we never swallow
-                        // DB errors silently; auto-select would otherwise look
-                        // like it succeeded while the next launch re-prompts.
-                        let save = |key: &str, value: &str| {
-                            if let Err(e) = db_clone.set_preference(key, value) {
-                                emit_log(&app_clone, "error", &format!("failed to persist preference {key}: {e}"));
-                            }
-                        };
-                        let selected = match entry_kind {
-                            ModelKind::Chat if chat_missing => {
-                                save("ai_model", &mid);
-                                if no_provider {
-                                    save("ai_provider", "llamacpp");
-                                }
-                                true
-                            }
-                            ModelKind::Embedding if embed_missing => {
-                                save("ai_embedding_model", &mid);
-                                if no_provider {
-                                    save("ai_provider", "llamacpp");
-                                }
-                                true
-                            }
-                            _ => false,
-                        };
-                        if selected {
-                            let _ = app_clone.emit("ai-config-updated", serde_json::Value::Null);
-                        }
-                    }
-                }
-                Err(AppError::Cancelled) => {
-                    // User cancelled — emit a distinct "cancelled" status so
-                    // the UI can clear progress without showing a red error
-                    // banner. The .partial file is preserved for resume.
-                    let _ = app_clone.emit(
-                        "model-download-progress",
-                        ModelDownloadProgress {
-                            model_id: mid.clone(),
-                            downloaded_bytes: 0,
-                            total_bytes: 0,
-                            status: "cancelled".to_string(),
-                            error: None,
-                        },
-                    );
-                    emit_log(&app_clone, "info", &format!("Download cancelled: {}", mid));
-                    if let Ok(mut map) = active_downloads().lock() {
-                        map.remove(&mid);
-                    }
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    let _ = app_clone.emit(
-                        "model-download-progress",
-                        ModelDownloadProgress {
-                            model_id: mid.clone(),
-                            downloaded_bytes: 0,
-                            total_bytes: 0,
-                            status: "error".to_string(),
-                            error: Some(msg.clone()),
-                        },
-                    );
-                    emit_log(&app_clone, "error", &format!("Model download failed: {}", msg));
-                    if let Ok(mut map) = active_downloads().lock() {
-                        map.remove(&mid);
-                    }
-                }
-            }
+    // Check RAM ceiling — a linked model still has to run. No disk-space
+    // check: linking creates a symlink, not a copy, so it doesn't consume
+    // meaningful additional disk space.
+    let ram_gb = system_ram_gb();
+    if ram_gb > 0 && ram_gb < entry.min_ram_gb as u64 {
+        return Err(AppError::AiError(format!(
+            "This model requires {} GB RAM but your system has {} GB",
+            entry.min_ram_gb, ram_gb
+        )));
+    }
+
+    let app_data_dir = state.app_data_dir.clone();
+    let source = std::path::PathBuf::from(source_path);
+    let model_id_clone = model_id.clone();
+    let app_clone = app.clone();
+    let db_clone = state.db.clone();
+    let entry_kind = entry.kind;
+    let entry_owned = entry.clone();
+
+    let (cancel_token, cancel_handle) = model_manager::CancelToken::new();
+    if let Ok(mut map) = active_downloads().lock() {
+        map.insert(model_id_clone.clone(), cancel_token);
+    }
+
+    emit_log(
+        &app,
+        "info",
+        &format!("Using existing file for: {}", entry.display_name),
+    );
+
+    let task_label = format!("model_link:{}", model_id_clone);
+    state
+        .db_queue
+        .submit_named(&task_label, async move {
+            let progress_app = app_clone.clone();
+            let mid = model_id_clone.clone();
+
+            let result = model_manager::link_local_model(
+                &app_data_dir,
+                &entry_owned,
+                &source,
+                Some(cancel_handle),
+                move |progress: ModelDownloadProgress| {
+                    let _ = progress_app.emit("model-download-progress", &progress);
+                },
+            )
+            .await;
+
+            finish_model_op(&app_clone, &db_clone, &app_data_dir, &mid, entry_kind, result);
         })
         .await;
 

@@ -207,6 +207,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -634,6 +635,7 @@ pub fn run() {
             commands::ai_models::list_local_models,
             commands::ai_models::delete_local_model,
             commands::ai_models::start_model_download,
+            commands::ai_models::link_local_model,
             commands::ai_models::cancel_model_download,
             commands::chat::list_chat_conversations,
             commands::chat::create_chat_conversation,
