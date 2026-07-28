@@ -18,8 +18,10 @@ const GMAIL_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const BUNDLED_GMAIL_CLIENT_ID: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_ID");
 const BUNDLED_GMAIL_CLIENT_SECRET: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_SECRET");
 
+// NOTE: `gmail.modify` includes full read access, so `gmail.readonly` must NOT
+// be added here — Google's restricted-scope verification requires the narrowest
+// scope set, and the declared scopes must match this list exactly.
 const GMAIL_SCOPES: &[&str] = &[
-    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -368,6 +370,22 @@ mod tests {
                 .iter()
                 .any(|s| s == "https://www.googleapis.com/auth/calendar.events"),
             "Gmail OAuth must request event read/write access to Google Calendar, got: {:?}",
+            config.scopes
+        );
+    }
+
+    #[test]
+    fn gmail_scopes_omit_redundant_readonly() {
+        // `gmail.modify` already grants full read access; requesting
+        // `gmail.readonly` on top is redundant and complicates Google's
+        // restricted-scope verification (narrowest-scope requirement).
+        let config = OAuthConfig::gmail();
+        assert!(
+            !config
+                .scopes
+                .iter()
+                .any(|s| s == "https://www.googleapis.com/auth/gmail.readonly"),
+            "gmail.readonly is redundant alongside gmail.modify, got: {:?}",
             config.scopes
         );
     }
