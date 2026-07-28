@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::error::Result;
@@ -211,9 +213,9 @@ impl Database {
         conn.execute(
             "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                                  subject, body, body_html, ai_generated, status,
-                                 provider_draft_id, created_at, updated_at)
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?9), ?10)
+                                 provider_draft_id, provider_message_id, created_at, updated_at)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
+                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11)
              ON CONFLICT(id) DO UPDATE SET
                 to_addresses_json = excluded.to_addresses_json,
                 cc_addresses_json = excluded.cc_addresses_json,
@@ -221,6 +223,7 @@ impl Database {
                 body = excluded.body,
                 body_html = excluded.body_html,
                 provider_draft_id = excluded.provider_draft_id,
+                provider_message_id = excluded.provider_message_id,
                 updated_at = excluded.updated_at",
             params![
                 id,
@@ -231,11 +234,30 @@ impl Database {
                 draft.body,
                 draft.body_html,
                 draft.provider_draft_id,
+                draft.provider_message_id,
                 now,
                 updated_at,
             ],
         )?;
         Ok(id)
+    }
+
+    /// Change tokens for this account's provider-linked drafts, keyed by
+    /// provider draft id. Feeds `plan_draft_fetches` so the pull pass can skip
+    /// the full content read for drafts that have not changed upstream. Drafts
+    /// with no stored token are omitted, which the planner reads as "fetch".
+    pub fn provider_draft_change_tokens(&self, account_id: &str) -> Result<HashMap<String, String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT provider_draft_id, provider_message_id FROM drafts
+             WHERE account_id = ?1 AND provider_draft_id IS NOT NULL AND provider_message_id IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        Ok(rows)
     }
 
     /// Delete provider-linked local drafts for an account whose provider id is
@@ -415,7 +437,67 @@ mod tests {
             body: "body".to_string(),
             body_html: None,
             updated_at: None,
+            provider_message_id: None,
         }
+    }
+
+    #[test]
+    fn upsert_provider_draft_persists_the_change_token() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+
+        let mut pd = provider_draft("p-1", "Hello");
+        pd.provider_message_id = Some("msg-1".to_string());
+        db.upsert_provider_draft("acct-1", &pd).expect("insert");
+
+        let tokens = db.provider_draft_change_tokens("acct-1").expect("tokens");
+        assert_eq!(tokens.get("p-1").map(String::as_str), Some("msg-1"));
+    }
+
+    #[test]
+    fn re_upserting_a_draft_moves_its_change_token() {
+        // A draft edited upstream must not keep answering with the stale token,
+        // or the next pull would skip the content it just fetched.
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+
+        let mut pd = provider_draft("p-1", "First");
+        pd.provider_message_id = Some("msg-1".to_string());
+        db.upsert_provider_draft("acct-1", &pd).expect("insert");
+
+        pd.subject = "Second".to_string();
+        pd.provider_message_id = Some("msg-2".to_string());
+        db.upsert_provider_draft("acct-1", &pd).expect("update");
+
+        let tokens = db.provider_draft_change_tokens("acct-1").expect("tokens");
+        assert_eq!(tokens.get("p-1").map(String::as_str), Some("msg-2"));
+    }
+
+    #[test]
+    fn drafts_without_a_change_token_are_omitted() {
+        // Rows predating the migration have NULL here; the planner must see
+        // them as "unknown" so their content is fetched once and backfilled.
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        db.upsert_provider_draft("acct-1", &provider_draft("p-1", "No token"))
+            .expect("insert");
+
+        let tokens = db.provider_draft_change_tokens("acct-1").expect("tokens");
+        assert!(tokens.is_empty(), "NULL token must not look like a match");
+    }
+
+    #[test]
+    fn change_tokens_are_scoped_to_one_account() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        seed_account(&db, "acct-2");
+
+        let mut pd = provider_draft("p-1", "Mine");
+        pd.provider_message_id = Some("msg-1".to_string());
+        db.upsert_provider_draft("acct-1", &pd).expect("insert");
+
+        let tokens = db.provider_draft_change_tokens("acct-2").expect("tokens");
+        assert!(tokens.is_empty(), "must not leak tokens across accounts");
     }
 
     #[test]

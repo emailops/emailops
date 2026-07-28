@@ -76,6 +76,8 @@ struct GraphMessageRef {
 #[derive(Debug, Deserialize)]
 struct GraphMessageDraftList {
     value: Vec<GraphMessage>,
+    #[serde(rename = "@odata.nextLink")]
+    next_link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -528,26 +530,47 @@ impl OutlookClient {
     }
 
     pub async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
-        let url = format!("{}/me/mailFolders/drafts/messages?$top=100", self.base_url);
-        let response = self.send_get_with_retry(&url, "list drafts").await?;
-        let list: GraphMessageDraftList = response.json().await?;
+        // Enumerate the whole Drafts folder. This must be exhaustive: the ids
+        // become the keep-list for `prune_provider_drafts`, so stopping at the
+        // first page would delete every draft past it on each sync.
+        let mut next_url = Some(format!("{}/me/mailFolders/drafts/messages?$top=100", self.base_url));
         let mut out = Vec::new();
-        for msg in list.value {
-            let provider_draft_id = msg.id.clone();
-            let (email, _cat) = parse_message(msg);
-            // Graph draft bodies are HTML; split so the composer renders the
-            // rich source instead of escaping it as literal text.
-            let (body, body_html) = crate::util::html::split_draft_body(&email.body);
-            out.push(crate::models::ProviderDraft {
-                provider_draft_id,
-                to_addresses: email.recipients,
-                cc_addresses: email.cc,
-                subject: email.subject,
-                body,
-                body_html,
-                // Graph stamps `receivedDateTime` on a draft when it is saved.
-                updated_at: Some(email.timestamp),
-            });
+        let mut pages = 0usize;
+        while let Some(url) = next_url.take() {
+            // Bail rather than truncate: a partial list would make the prune
+            // pass delete every draft it never got to see.
+            pages += 1;
+            if pages > crate::sync::draft_plan::MAX_DRAFT_PAGES {
+                return Err(AppError::SyncError(format!(
+                    "Outlook drafts listing returned too many pages (over {}); refusing a partial list.",
+                    crate::sync::draft_plan::MAX_DRAFT_PAGES
+                )));
+            }
+            let response = self.send_get_with_retry(&url, "list drafts").await?;
+            let list: GraphMessageDraftList = response.json().await?;
+            for msg in list.value {
+                let provider_draft_id = msg.id.clone();
+                let (email, _cat) = parse_message(msg);
+                // Graph draft bodies are HTML; split so the composer renders the
+                // rich source instead of escaping it as literal text.
+                let (body, body_html) = crate::util::html::split_draft_body(&email.body);
+                out.push(crate::models::ProviderDraft {
+                    provider_draft_id,
+                    to_addresses: email.recipients,
+                    cc_addresses: email.cc,
+                    subject: email.subject,
+                    body,
+                    body_html,
+                    // Graph stamps `receivedDateTime` on a draft when it is saved.
+                    updated_at: Some(email.timestamp),
+                    // Graph returns full draft bodies in the listing itself, so
+                    // there is no per-draft read to skip and no token to track.
+                    provider_message_id: None,
+                });
+            }
+            // `@odata.nextLink` is a complete URL carrying $skiptoken state —
+            // follow it verbatim rather than rebuilding the query.
+            next_url = list.next_link.filter(|link| !link.is_empty());
         }
         Ok(out)
     }
@@ -907,8 +930,18 @@ impl EmailProvider for OutlookClient {
         self.delete_draft(provider_draft_id).await
     }
 
-    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
-        self.list_drafts().await
+    async fn list_drafts(
+        &self,
+        _known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::sync::draft_plan::ProviderDraftPull> {
+        // Graph hands back full draft bodies in one listing call, so there is
+        // no N+1 to avoid — every listed draft is reported as changed.
+        let drafts = self.list_drafts().await?;
+        let present_ids = drafts.iter().map(|d| d.provider_draft_id.clone()).collect();
+        Ok(crate::sync::draft_plan::ProviderDraftPull {
+            changed: drafts,
+            present_ids,
+        })
     }
 }
 
@@ -1116,6 +1149,88 @@ mod tests {
         // test silently calls the real Graph API.
         let c = OutlookClient::new("tok".into(), None, None, None).with_base_url("http://127.0.0.1:9999");
         assert_eq!(c.base_url, "http://127.0.0.1:9999");
+    }
+
+    #[tokio::test]
+    async fn list_drafts_follows_every_page() {
+        // Regression: `$top=100` with no `@odata.nextLink` follow-up fed a
+        // truncated keep-list to `prune_provider_drafts`, so an account with
+        // more than a page of drafts lost the overflow on every sync.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let draft = |id: &str, subject: &str| {
+            format!(
+                r#"{{"id":"{id}","conversationId":"c-{id}","subject":"{subject}",
+                   "receivedDateTime":"2026-07-01T10:00:00Z","isRead":false,
+                   "body":{{"contentType":"html","content":"<p>hi</p>"}},
+                   "toRecipients":[{{"emailAddress":{{"address":"dest@example.com","name":"D"}}}}]}}"#
+            )
+        };
+        // Page 2 lives at its own path; the client must follow the link verbatim.
+        Mock::given(method("GET"))
+            .and(path("/drafts-page-2"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(r#"{{"value":[{}]}}"#, draft("d-2", "Second")),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/drafts/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    r#"{{"value":[{}],"@odata.nextLink":"{}/drafts-page-2"}}"#,
+                    draft("d-1", "First"),
+                    server.uri()
+                ),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        // Fully qualified: the inherent `list_drafts` takes no arguments.
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            pull.present_ids,
+            vec!["d-1".to_string(), "d-2".to_string()],
+            "page 2 drafts must reach the prune keep-list"
+        );
+        assert_eq!(pull.changed.len(), 2, "both pages' drafts are returned as content");
+    }
+
+    #[tokio::test]
+    async fn a_self_referential_next_link_aborts_instead_of_looping() {
+        // A stuck $skiptoken would otherwise spin the sync task forever. Failing
+        // is also safer than stopping early: a partial list would drive the
+        // prune pass into deleting drafts it simply never saw.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let uri = server.uri();
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/drafts/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(r#"{{"value":[],"@odata.nextLink":"{uri}/me/mailFolders/drafts/messages"}}"#),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let err = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect_err("must not loop forever");
+        assert!(
+            err.to_string().to_lowercase().contains("too many pages"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

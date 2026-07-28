@@ -1,0 +1,14 @@
+-- Change token for the provider draft pull pass.
+--
+-- The pull pass used to download every draft in full on every 60-second sync
+-- tick (1 drafts.list + N drafts.get), because it had no way to tell an
+-- untouched draft from a modified one. Gmail mints a brand-new message id every
+-- time a draft is saved, and that id is already present in the cheap
+-- `drafts.list` response — so it works as an ETag.
+--
+-- `provider_message_id` stores the token seen the last time this draft's content
+-- was actually read. On the next pull, a listed draft whose token still matches
+-- is skipped entirely. NULL means "unknown" (local-only drafts, providers that
+-- report no token, and every row predating this migration), which the planner
+-- treats as "must fetch" — so the backfill happens naturally on the first sync.
+ALTER TABLE drafts ADD COLUMN provider_message_id TEXT;

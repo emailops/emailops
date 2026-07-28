@@ -534,6 +534,12 @@ pub struct ProviderDraft {
     /// draft, because each sync re-stamps the row.
     #[serde(default)]
     pub updated_at: Option<i64>,
+    /// Provider token that changes whenever the draft's content changes. Gmail
+    /// mints a new message id on every draft save, so it doubles as an ETag:
+    /// the pull pass stores it and skips the full read while it stays the same.
+    /// `None` for providers that don't report one.
+    #[serde(default)]
+    pub provider_message_id: Option<String>,
 }
 
 // AI config and usage types

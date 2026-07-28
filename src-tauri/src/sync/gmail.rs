@@ -74,10 +74,22 @@ struct GmailMessage {
 /// `drafts.update`, and `drafts.list` entries — all of which return the nested
 /// `message` in MINIMAL format (no `payload`). Deserializing that partial
 /// message into the full [`GmailMessage`] fails, so those paths must decode the
-/// id alone (serde ignores the extra `message` field). Read with
-/// `format=full` — see [`GmailDraft`] — when the message body is actually needed.
+/// id plus the nested message's id. Read with `format=full` — see
+/// [`GmailDraft`] — when the message body is actually needed.
 #[derive(Debug, Deserialize)]
 struct GmailDraftId {
+    id: String,
+    /// MINIMAL-format message stub. Its `id` is the draft's change token:
+    /// Gmail replaces the underlying message on every draft save, so an
+    /// unchanged id proves the content is untouched and the `drafts.get` can
+    /// be skipped. Absent on the create/update responses, which don't need it.
+    #[serde(default)]
+    message: Option<GmailDraftMessageRef>,
+}
+
+/// Just enough of a MINIMAL-format draft message to read its id.
+#[derive(Debug, Deserialize)]
+struct GmailDraftMessageRef {
     id: String,
 }
 
@@ -93,6 +105,8 @@ struct GmailDraft {
 #[derive(Debug, Deserialize)]
 struct GmailDraftList {
     drafts: Option<Vec<GmailDraftId>>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -520,24 +534,60 @@ impl GmailClient {
         Ok(())
     }
 
-    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
-        // Page 1 only (maxResults=100) — the Drafts folder is small in practice
-        // and the pull pass is best-effort.
-        let url = format!("{}/users/me/drafts?maxResults=100", self.base_url);
-        let response = self.send_get_with_retry(&url, "list drafts").await?;
-        let list: GmailDraftList = response.json().await?;
-        let mut out = Vec::new();
-        for entry in list.drafts.unwrap_or_default() {
-            let full_url = format!("{}/users/me/drafts/{}?format=full", self.base_url, entry.id);
+    async fn list_drafts(
+        &self,
+        known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::sync::draft_plan::ProviderDraftPull> {
+        // Enumerate the whole Drafts folder. This must be exhaustive: the ids
+        // become the keep-list for `prune_provider_drafts`, so stopping at page
+        // one would delete every draft past the first 100 on each sync.
+        let mut listed = Vec::new();
+        let mut page_token: Option<String> = None;
+        for page in 0..crate::sync::draft_plan::MAX_DRAFT_PAGES {
+            let mut url = format!("{}/users/me/drafts?maxResults=100", self.base_url);
+            if let Some(token) = &page_token {
+                url.push_str(&format!("&pageToken={}", urlencoding::encode(token)));
+            }
+            let response = self.send_get_with_retry(&url, "list drafts").await?;
+            let list: GmailDraftList = response.json().await?;
+            listed.extend(list.drafts.unwrap_or_default().into_iter().map(|entry| {
+                crate::sync::draft_plan::ListedDraft {
+                    provider_draft_id: entry.id,
+                    change_token: entry.message.map(|m| m.id),
+                }
+            }));
+            match list.next_page_token {
+                Some(token) if !token.is_empty() => page_token = Some(token),
+                _ => break,
+            }
+            // Bail rather than truncate: a partial list would make the prune
+            // pass delete every draft it never got to see.
+            if page + 1 == crate::sync::draft_plan::MAX_DRAFT_PAGES {
+                return Err(AppError::SyncError(format!(
+                    "Gmail drafts listing returned too many pages (over {}); refusing a partial list.",
+                    crate::sync::draft_plan::MAX_DRAFT_PAGES
+                )));
+            }
+        }
+
+        // Only drafts whose message id moved need the (expensive) full read.
+        let plan = crate::sync::draft_plan::plan_draft_fetches(&listed, known_change_tokens);
+        let mut changed = Vec::with_capacity(plan.to_fetch.len());
+        for draft_id in &plan.to_fetch {
+            let full_url = format!("{}/users/me/drafts/{}?format=full", self.base_url, draft_id);
             let full_resp = self.send_get_with_retry(&full_url, "get draft").await?;
             let full: GmailDraft = full_resp.json().await?;
             let Some(msg) = full.message else { continue };
+            // Take the token from the content we actually read, not from the
+            // listing: if the draft was saved in between, storing the listed id
+            // would pin us to content we never fetched.
+            let message_id = Some(msg.id.clone());
             let (email, _cat, _atts) = self.parse_message(msg).await?;
             // The parsed body is HTML; split it so the composer renders the rich
             // source instead of escaping it as literal text.
             let (body, body_html) = crate::util::html::split_draft_body(&email.body);
-            out.push(crate::models::ProviderDraft {
-                provider_draft_id: entry.id,
+            changed.push(crate::models::ProviderDraft {
+                provider_draft_id: draft_id.clone(),
                 to_addresses: email.recipients,
                 cc_addresses: email.cc,
                 subject: email.subject,
@@ -546,9 +596,13 @@ impl GmailClient {
                 // Gmail's `internalDate`, already parsed onto the message —
                 // for a draft that's when it was last saved.
                 updated_at: Some(email.timestamp),
+                provider_message_id: message_id,
             });
         }
-        Ok(out)
+        Ok(crate::sync::draft_plan::ProviderDraftPull {
+            changed,
+            present_ids: plan.present_ids,
+        })
     }
 
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
@@ -1439,8 +1493,11 @@ impl EmailProvider for GmailClient {
         self.delete_draft(provider_draft_id).await
     }
 
-    async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
-        self.list_drafts().await
+    async fn list_drafts(
+        &self,
+        known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::sync::draft_plan::ProviderDraftPull> {
+        self.list_drafts(known_change_tokens).await
     }
 
     async fn batch_get_messages(
@@ -2275,6 +2332,168 @@ mod tests {
         assert!(meta.provider_message_id.is_none());
         assert!(meta.provider_thread_id.is_none());
         assert_eq!(meta.message_id_header.as_deref(), Some("<mid@local>"));
+    }
+
+    /// A `drafts.list` page whose entries carry MINIMAL message stubs.
+    fn drafts_list_page(entries: &[(&str, &str)], next_page_token: Option<&str>) -> String {
+        let drafts = entries
+            .iter()
+            .map(|(draft_id, message_id)| {
+                format!(r#"{{"id":"{draft_id}","message":{{"id":"{message_id}","threadId":"t-{message_id}"}}}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        match next_page_token {
+            Some(token) => format!(r#"{{"drafts":[{drafts}],"nextPageToken":"{token}"}}"#),
+            None => format!(r#"{{"drafts":[{drafts}]}}"#),
+        }
+    }
+
+    /// A `format=full` draft read, minimal but complete enough to parse.
+    fn full_draft_body(draft_id: &str, message_id: &str, subject: &str) -> String {
+        format!(
+            r#"{{"id":"{draft_id}","message":{{"id":"{message_id}","threadId":"t-{message_id}",
+               "labelIds":["DRAFT"],"internalDate":"1700000000000","snippet":"",
+               "payload":{{"mimeType":"text/plain","headers":[{{"name":"Subject","value":"{subject}"}},
+               {{"name":"To","value":"dest@example.com"}}],"body":{{"size":0}}}}}}}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn unchanged_drafts_are_not_re_read_on_the_next_pull() {
+        // Regression: 91k `drafts.get` calls against ~100 drafts, because the
+        // pull pass downloaded every draft in full on every 60-second tick.
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                drafts_list_page(&[("d-1", "m-1"), ("d-2", "m-2")], None),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/users/me/drafts/d-\d$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(full_draft_body("d-1", "m-1", "Hello"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        // Cold: nothing known, so both drafts are read in full.
+        let first = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("first");
+        assert_eq!(first.changed.len(), 2);
+        assert_eq!(first.present_ids, vec!["d-1".to_string(), "d-2".to_string()]);
+        assert_eq!(
+            first.changed[0].provider_message_id.as_deref(),
+            Some("m-1"),
+            "the change token must be carried back for storage"
+        );
+
+        // Warm: the stored tokens still match, so no content read is issued.
+        let known: std::collections::HashMap<String, String> = [
+            ("d-1".to_string(), "m-1".to_string()),
+            ("d-2".to_string(), "m-2".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let second = client.list_drafts(&known).await.expect("second");
+        assert!(second.changed.is_empty(), "unchanged drafts must not be re-read");
+        assert_eq!(
+            second.present_ids,
+            vec!["d-1".to_string(), "d-2".to_string()],
+            "skipped drafts still count as present, or the prune pass deletes them"
+        );
+
+        let gets = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path().starts_with("/users/me/drafts/"))
+            .count();
+        assert_eq!(gets, 2, "the second pull must add zero drafts.get calls");
+    }
+
+    #[tokio::test]
+    async fn a_repeating_page_token_aborts_instead_of_looping() {
+        // A provider that keeps handing back a pageToken would otherwise spin
+        // the sync task forever. Failing is also safer than stopping early: a
+        // partial list would drive the prune pass into deleting unseen drafts.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(r#"{"drafts":[],"nextPageToken":"same"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let err = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect_err("must not loop forever");
+        assert!(
+            err.to_string().to_lowercase().contains("too many pages"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn drafts_list_follows_every_page() {
+        // Regression: `maxResults=100` with no pagination fed a truncated
+        // keep-list to the prune pass, deleting drafts past the first page.
+        use wiremock::matchers::{method, path, path_regex, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .and(query_param("pageToken", "page-2"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(drafts_list_page(&[("d-2", "m-2")], None), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(drafts_list_page(&[("d-1", "m-1")], Some("page-2")), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/users/me/drafts/d-\d$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(full_draft_body("d-1", "m-1", "Hello"), "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            pull.present_ids,
+            vec!["d-1".to_string(), "d-2".to_string()],
+            "page 2 drafts must reach the prune keep-list"
+        );
     }
 
     #[test]

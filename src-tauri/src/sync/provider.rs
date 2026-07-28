@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 
 use crate::models::error::{AppError, Result};
 use crate::models::{Email, ProviderDraft};
 use crate::services::i18n::Language;
+use crate::sync::draft_plan::{plan_draft_fetches, ListedDraft, ProviderDraftPull};
 
 /// Whether a provider (identified by its `accounts.provider` string) supports
 /// server-side drafts we can push to / pull from. Gmail and Outlook expose
@@ -495,8 +498,19 @@ pub trait EmailProvider: Send + Sync {
     }
 
     /// List drafts currently in the provider's Drafts folder, for the pull pass.
-    async fn list_drafts(&self) -> Result<Vec<ProviderDraft>> {
-        Ok(Vec::new())
+    ///
+    /// `known_change_tokens` maps provider draft id → the change token stored
+    /// when that draft's content was last read. Providers whose listing is
+    /// cheap but whose per-draft read is not (Gmail: 1 `drafts.list` + N
+    /// `drafts.get`) must use it to skip unchanged drafts — otherwise every
+    /// sync tick re-downloads the whole Drafts folder. Providers that return
+    /// full content in the listing itself can ignore it.
+    ///
+    /// The returned `present_ids` must enumerate *all* drafts upstream, not
+    /// just the changed ones: it is the keep-list for `prune_provider_drafts`,
+    /// so a partial list silently deletes local drafts.
+    async fn list_drafts(&self, _known_change_tokens: &HashMap<String, String>) -> Result<ProviderDraftPull> {
+        Ok(ProviderDraftPull::default())
     }
 }
 
@@ -939,6 +953,7 @@ impl EmailProvider for FakeEmailProvider {
             body: body.text.clone(),
             body_html: body.html.clone(),
             updated_at: None,
+            provider_message_id: Some(format!("fake-msg-{seq}")),
         };
         self.drafts
             .write()
@@ -957,6 +972,9 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         _attachments: &[EmailAttachment],
     ) -> Result<String> {
+        // Saving a draft mints a fresh change token, mirroring Gmail replacing
+        // the underlying message id on every `drafts.update`.
+        let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let draft = ProviderDraft {
             provider_draft_id: provider_draft_id.to_string(),
             to_addresses: to_emails.to_vec(),
@@ -965,6 +983,7 @@ impl EmailProvider for FakeEmailProvider {
             body: body.text.clone(),
             body_html: body.html.clone(),
             updated_at: None,
+            provider_message_id: Some(format!("fake-msg-{seq}")),
         };
         self.drafts
             .write()
@@ -981,8 +1000,27 @@ impl EmailProvider for FakeEmailProvider {
         Ok(())
     }
 
-    async fn list_drafts(&self) -> Result<Vec<ProviderDraft>> {
-        Ok(self.provider_drafts())
+    async fn list_drafts(&self, known_change_tokens: &HashMap<String, String>) -> Result<ProviderDraftPull> {
+        // Mirror the real Gmail contract so service-level tests exercise the
+        // skip path rather than a fake that always returns everything.
+        let mut drafts = self.provider_drafts();
+        drafts.sort_by(|a, b| a.provider_draft_id.cmp(&b.provider_draft_id));
+        let listed: Vec<ListedDraft> = drafts
+            .iter()
+            .map(|d| ListedDraft {
+                provider_draft_id: d.provider_draft_id.clone(),
+                change_token: d.provider_message_id.clone(),
+            })
+            .collect();
+        let plan = plan_draft_fetches(&listed, known_change_tokens);
+        let changed = drafts
+            .into_iter()
+            .filter(|d| plan.to_fetch.contains(&d.provider_draft_id))
+            .collect();
+        Ok(ProviderDraftPull {
+            changed,
+            present_ids: plan.present_ids,
+        })
     }
 }
 

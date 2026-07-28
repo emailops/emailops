@@ -298,14 +298,16 @@ pub async fn delete_draft(
 /// Returns the number of drafts pulled. Best-effort — the caller (sync) logs
 /// and continues on error.
 pub async fn pull_provider_drafts(db: &Arc<Database>, account_id: &str, provider: &dyn EmailProvider) -> Result<usize> {
-    let provider_drafts = provider.list_drafts().await?;
-    let mut keep_ids = Vec::with_capacity(provider_drafts.len());
-    for pd in &provider_drafts {
+    // Hand the provider what we already have so it can skip re-reading drafts
+    // that have not changed upstream. At steady state this makes the pass one
+    // listing call and zero content reads.
+    let known = db.provider_draft_change_tokens(account_id)?;
+    let pull = provider.list_drafts(&known).await?;
+    for pd in &pull.changed {
         db.upsert_provider_draft(account_id, pd)?;
-        keep_ids.push(pd.provider_draft_id.clone());
     }
-    db.prune_provider_drafts(account_id, &keep_ids)?;
-    Ok(provider_drafts.len())
+    db.prune_provider_drafts(account_id, &pull.present_ids)?;
+    Ok(pull.changed.len())
 }
 
 #[cfg(test)]
@@ -480,6 +482,7 @@ mod tests {
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
+            provider_message_id: Some("msg-1".to_string()),
         });
 
         let pulled = pull_provider_drafts(&db, "a1", &provider).await.expect("pull");
@@ -498,5 +501,77 @@ mod tests {
         let pulled2 = pull_provider_drafts(&db, "a1", &provider).await.expect("pull2");
         assert_eq!(pulled2, 0);
         assert!(db.list_drafts("a1").expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    async fn re_pulling_unchanged_drafts_reads_no_content_and_keeps_them() {
+        // Regression: the pull pass re-downloaded every draft in full on every
+        // 60-second sync tick, because it had no way to spot an untouched one.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-1".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Server draft".to_string(),
+            body: "hi".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_000),
+            provider_message_id: Some("msg-1".to_string()),
+        });
+
+        assert_eq!(
+            pull_provider_drafts(&db, "a1", &provider).await.expect("first"),
+            1,
+            "first pull reads the draft it has never seen"
+        );
+        assert_eq!(
+            pull_provider_drafts(&db, "a1", &provider).await.expect("second"),
+            0,
+            "unchanged draft must not be read again"
+        );
+        // Skipping the read must not make the draft look absent upstream.
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1, "a skipped draft must survive the prune pass");
+        assert_eq!(drafts[0].subject, "Server draft");
+    }
+
+    #[tokio::test]
+    async fn a_draft_edited_upstream_is_read_again() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-1".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Before".to_string(),
+            body: "hi".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_000),
+            provider_message_id: Some("msg-1".to_string()),
+        });
+        pull_provider_drafts(&db, "a1", &provider).await.expect("first");
+
+        // Same draft id, new change token — Gmail's behaviour on a re-save.
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-1".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "After".to_string(),
+            body: "hi again".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_500),
+            provider_message_id: Some("msg-2".to_string()),
+        });
+
+        assert_eq!(
+            pull_provider_drafts(&db, "a1", &provider).await.expect("second"),
+            1,
+            "a moved change token must trigger a fresh read"
+        );
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts[0].subject, "After");
     }
 }
