@@ -8,6 +8,7 @@ import type { Email } from '@/types';
 import {
   appendUniqueEmails,
   computeHasMore,
+  computeHasMoreAfterPage,
   mergeThreadRefresh,
   removeEmailFromSlices,
   useEmailStore,
@@ -90,6 +91,30 @@ describe('computeHasMore', () => {
       expect(computeHasMore(50, -1)).toBe(true);
       expect(computeHasMore(49, -1)).toBe(false);
     });
+  });
+});
+
+describe('computeHasMoreAfterPage', () => {
+  it('stops when the page came back short, even if totalCount is larger', () => {
+    // Regression: the Sent/Spam/Trash views list one mailbox but compare
+    // against the account-wide inbox thread count. With 1 sent email and 32
+    // inbox threads, hasMore stayed true forever and the list re-requested an
+    // empty page on a loop, leaving "Loading more…" spinning.
+    expect(computeHasMoreAfterPage(1, 0, 32, PAGE_SIZE)).toBe(false);
+    expect(computeHasMoreAfterPage(12, 11, 999, PAGE_SIZE)).toBe(false);
+  });
+
+  it('keeps paging while the backend hands back full pages', () => {
+    expect(computeHasMoreAfterPage(100, PAGE_SIZE, 200, PAGE_SIZE)).toBe(true);
+  });
+
+  it('stops once a full page reaches the known total', () => {
+    expect(computeHasMoreAfterPage(200, PAGE_SIZE, 200, PAGE_SIZE)).toBe(false);
+  });
+
+  it('falls back to page fullness when the total is unknown', () => {
+    expect(computeHasMoreAfterPage(50, PAGE_SIZE, -1, PAGE_SIZE)).toBe(true);
+    expect(computeHasMoreAfterPage(12, 12, -1, PAGE_SIZE)).toBe(false);
   });
 });
 

@@ -29,6 +29,7 @@ const email: Email = {
   triageStatus: null,
   category: 'primary',
   mailbox: 'inbox',
+  isSent: false,
 };
 
 let container: HTMLDivElement;

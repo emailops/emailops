@@ -27,6 +27,27 @@ export function computeHasMore(emailsLength: number, totalCount: number, pageSiz
 }
 
 /**
+ * Pure helper: should we keep paging after a load-more returned `pageLength`
+ * rows, bringing the list to `newTotal`?
+ *
+ * A short page is proof the backend has nothing left, and it outranks
+ * `totalCount` — the two can legitimately describe different sets. The mailbox
+ * views (Sent / Spam / Trash / custom folder) list one mailbox while
+ * `totalCount` counts inbox threads, so trusting the total alone made the list
+ * re-request an empty page forever with the spinner stuck on screen.
+ */
+export function computeHasMoreAfterPage(
+  newTotal: number,
+  pageLength: number,
+  totalCount: number,
+  pageSize: number = PAGE_SIZE,
+): boolean {
+  if (pageLength < pageSize) return false;
+  if (totalCount > 0) return newTotal < totalCount;
+  return true;
+}
+
+/**
  * Pure helper: append a freshly-fetched page onto the existing list, dropping
  * any emails whose id is already present.
  *
@@ -417,7 +438,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       } else {
         [emails, totalCount] = await Promise.all([
           api.getEmails(accountId, PAGE_SIZE, 0, mailbox),
-          api.getEmailCount(accountId),
+          // Same mailbox as the list — counting the inbox while listing Sent
+          // made hasMore compare two different sets.
+          api.getEmailCount(accountId, mailbox),
         ]);
       }
 
@@ -487,9 +510,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         emails: appendUniqueEmails(state.emails, moreEmails),
         isLoadingMore: false,
         loadMoreLock: false,
-        // Same hasMore logic as fetchEmails — see computeHasMore for the
-        // totalCount=-1 fallback used by filtered/search endpoints.
-        hasMore: totalCount > 0 ? newTotal < totalCount : computeHasMore(moreEmails.length, totalCount),
+        hasMore: computeHasMoreAfterPage(newTotal, moreEmails.length, totalCount),
       }));
     } catch (error) {
       console.error('Failed to load more emails:', error);

@@ -26,7 +26,7 @@ pub(super) use crate::util::html::strip_html_for_fts;
 
 // Body lives in email_bodies — all queries on the emails table use this column list.
 pub(super) const EMAIL_COLUMNS: &str = "id, account_id, thread_id, message_id, subject, sender, sender_email, \
-     recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox";
+     recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent";
 
 pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
     let recipients_json: String = row.get(7)?;
@@ -51,6 +51,7 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         triage_status: row.get(12)?,
         category: row.get::<_, String>(13).unwrap_or_else(|_| "primary".to_string()),
         mailbox: row.get::<_, String>(14).unwrap_or_else(|_| "inbox".to_string()),
+        is_sent: row.get::<_, i32>(15).unwrap_or(0) != 0,
     })
 }
 
@@ -137,6 +138,13 @@ pub(crate) fn normalize_mailbox(raw: &str) -> &str {
         s if s.len() > "folder:".len() && s.starts_with("folder:") => raw,
         _ => "inbox",
     }
+}
+
+/// Value for the `is_sent` column: the provider's own signal, plus the
+/// implication that anything filed under Sent is sent mail. Deriving it here
+/// keeps the column consistent no matter which write path inserted the row.
+pub(crate) fn is_sent_flag(email: &Email, normalized_mailbox: &str) -> bool {
+    email.is_sent || normalized_mailbox == "sent"
 }
 
 #[cfg(test)]

@@ -938,6 +938,7 @@ impl EmailProvider for FakeEmailProvider {
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
+            updated_at: None,
         };
         self.drafts
             .write()
@@ -963,6 +964,7 @@ impl EmailProvider for FakeEmailProvider {
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
+            updated_at: None,
         };
         self.drafts
             .write()
@@ -1007,6 +1009,7 @@ mod tests {
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
+            is_sent: false,
         }
     }
 

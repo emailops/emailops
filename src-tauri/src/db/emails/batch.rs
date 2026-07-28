@@ -22,8 +22,8 @@ impl Database {
             tx.execute(
                 r#"INSERT OR REPLACE INTO emails
                    (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                    sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, created_at)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"#,
+                    sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
                 params![
                     email.id,
                     email.account_id,
@@ -41,6 +41,7 @@ impl Database {
                     email.triage_status,
                     email.category,
                     mailbox,
+                    is_sent_flag(email, mailbox) as i32,
                     now,
                 ],
             )?;

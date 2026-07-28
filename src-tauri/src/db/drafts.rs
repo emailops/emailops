@@ -192,6 +192,10 @@ impl Database {
     pub fn upsert_provider_draft(&self, account_id: &str, draft: &ProviderDraft) -> Result<String> {
         let conn = self.connection();
         let now = now_secs();
+        // Keep the provider's own modification time so a pulled draft doesn't
+        // jump to "today" on every sync; fall back to now for providers that
+        // don't report one.
+        let updated_at = draft.updated_at.unwrap_or(now);
         let to_json = serde_json::to_string(&draft.to_addresses).unwrap_or_else(|_| "[]".to_string());
         let cc_json = serde_json::to_string(&draft.cc_addresses).unwrap_or_else(|_| "[]".to_string());
 
@@ -209,7 +213,7 @@ impl Database {
                                  subject, body, body_html, ai_generated, status,
                                  provider_draft_id, created_at, updated_at)
              VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?9), ?9)
+                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?9), ?10)
              ON CONFLICT(id) DO UPDATE SET
                 to_addresses_json = excluded.to_addresses_json,
                 cc_addresses_json = excluded.cc_addresses_json,
@@ -228,6 +232,7 @@ impl Database {
                 draft.body_html,
                 draft.provider_draft_id,
                 now,
+                updated_at,
             ],
         )?;
         Ok(id)
@@ -409,6 +414,7 @@ mod tests {
             subject: subject.to_string(),
             body: "body".to_string(),
             body_html: None,
+            updated_at: None,
         }
     }
 
@@ -429,6 +435,41 @@ mod tests {
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].subject, "Updated");
         assert_eq!(drafts[0].provider_draft_id.as_deref(), Some("p-1"));
+    }
+
+    #[test]
+    fn upsert_provider_draft_keeps_the_providers_own_timestamp() {
+        // Regression: every sync re-stamped pulled drafts with now(), so the
+        // Drafts list showed today's date for every draft no matter how old.
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+
+        let mut pd = provider_draft("p-1", "Written last year");
+        pd.updated_at = Some(1_700_000_000);
+        db.upsert_provider_draft("acct-1", &pd).expect("insert");
+
+        let drafts = db.list_drafts("acct-1").expect("list");
+        assert_eq!(
+            drafts[0].updated_at, 1_700_000_000,
+            "provider timestamp wins over now()"
+        );
+    }
+
+    #[test]
+    fn upsert_provider_draft_without_timestamp_falls_back_to_now() {
+        // Providers that don't report a draft date still need a sane value.
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+
+        let before = crate::services::clock::now_secs();
+        db.upsert_provider_draft("acct-1", &provider_draft("p-1", "No date"))
+            .expect("insert");
+
+        let drafts = db.list_drafts("acct-1").expect("list");
+        assert!(
+            drafts[0].updated_at >= before,
+            "missing provider timestamp falls back to now"
+        );
     }
 
     #[test]

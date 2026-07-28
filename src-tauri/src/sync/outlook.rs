@@ -545,6 +545,8 @@ impl OutlookClient {
                 subject: email.subject,
                 body,
                 body_html,
+                // Graph stamps `receivedDateTime` on a draft when it is saved.
+                updated_at: Some(email.timestamp),
             });
         }
         Ok(out)
@@ -950,6 +952,10 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         category: category.as_str().to_string(),
         // Caller (sync_folder) overrides per mailbox pass.
         mailbox: "inbox".to_string(),
+        // Graph reports no per-message sent marker on this projection — a
+        // message is sent iff it came from the Sent folder, which the insert
+        // derives from the caller's `mailbox` value.
+        is_sent: false,
     };
 
     (email, category)

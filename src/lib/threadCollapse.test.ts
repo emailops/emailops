@@ -20,6 +20,7 @@ function makeEmail(id: string): Email {
     triageStatus: null,
     category: 'primary',
     mailbox: 'inbox',
+    isSent: false,
   };
 }
 

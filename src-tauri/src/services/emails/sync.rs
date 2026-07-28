@@ -1169,6 +1169,20 @@ impl SyncTarget {
     }
 }
 
+/// Lower bound for an extra-mailbox listing.
+///
+/// Both inputs are floors and the stricter one wins: `sync_from` is the date
+/// the user configured for the account (never fetch older than this), and
+/// `watermark` is how far a previous pass already got (never re-fetch below
+/// it). `None` for both means the account syncs its full history.
+fn extra_mailbox_after_timestamp(sync_from: Option<i64>, watermark: Option<i64>) -> Option<i64> {
+    match (sync_from, watermark) {
+        (Some(floor), Some(mark)) => Some(floor.max(mark)),
+        (floor, None) => floor,
+        (None, mark) => mark,
+    }
+}
+
 fn extra_mailbox_forward_key(account_id: &str, target: &SyncTarget) -> String {
     format!("extra_mailbox_sync:{}:{}", account_id, target.mailbox_value())
 }
@@ -1520,11 +1534,15 @@ async fn sync_extra_mailbox_incremental(
     let mailbox_name = target.mailbox_value();
     let mailbox_name = mailbox_name.as_str();
     let pref_key = extra_mailbox_forward_key(account_id, target);
-    let after_timestamp = db
+    let watermark = db
         .get_preference(&pref_key)
         .ok()
         .flatten()
         .and_then(|s| s.parse::<i64>().ok());
+    // On a mailbox's first pass there is no watermark, so the account's
+    // configured sync date is the only thing keeping this from pulling the
+    // newest MAX_EXTRA_MAILBOX_EMAILS messages of all time.
+    let after_timestamp = extra_mailbox_after_timestamp(account.sync_from_timestamp, watermark);
 
     let refs = match target
         .list_messages(email_provider, MAX_EXTRA_MAILBOX_EMAILS, after_timestamp, None)
@@ -1643,7 +1661,16 @@ async fn sync_extra_mailbox_backfill(
         *budget -= 1;
 
         let refs = match target
-            .list_messages(email_provider, MAX_EXTRA_MAILBOX_EMAILS, None, Some(before_timestamp))
+            .list_messages(
+                email_provider,
+                MAX_EXTRA_MAILBOX_EMAILS,
+                // The floor has to bound the request itself, not just the
+                // decision to make another one: an unbounded page reaches
+                // below the account's sync date and every message on it gets
+                // ingested regardless of the loop guard above.
+                account.sync_from_timestamp,
+                Some(before_timestamp),
+            )
             .await
         {
             Ok(refs) => refs,
@@ -1829,6 +1856,163 @@ pub(super) fn plan_sync_passes(
         backfill_after_timestamp,
         backfill_before_timestamp,
         run_incremental,
+    }
+}
+
+#[cfg(test)]
+mod extra_mailbox_window_tests {
+    use super::*;
+    use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+    fn account_synced_from(sync_from: Option<i64>) -> Account {
+        Account {
+            id: "acc-1".to_string(),
+            provider: "gmail".to_string(),
+            email: "me@example.com".to_string(),
+            name: "Me".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: sync_from,
+        }
+    }
+
+    fn seed_account_row(db: &Database, account: &Account) {
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+    }
+
+    fn sent_email(id: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: "acc-1".to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            subject: format!("subject {id}"),
+            sender: "Me".to_string(),
+            sender_email: "me@example.com".to_string(),
+            recipients: vec!["dest@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "sent".to_string(),
+            is_sent: true,
+        }
+    }
+
+    fn stored_ids(db: &Database) -> Vec<String> {
+        let conn = db.reader();
+        let mut stmt = conn
+            .prepare("SELECT id FROM emails ORDER BY timestamp ASC")
+            .expect("prepare");
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("collect");
+        ids
+    }
+
+    const FLOOR: i64 = 1_000_000;
+
+    #[test]
+    fn listing_floor_is_the_later_of_sync_from_and_watermark() {
+        // No watermark yet (first run of a mailbox): the account's configured
+        // sync date is still a hard floor.
+        assert_eq!(extra_mailbox_after_timestamp(Some(FLOOR), None), Some(FLOOR));
+        // A watermark ahead of the floor wins — don't re-fetch what we have.
+        assert_eq!(
+            extra_mailbox_after_timestamp(Some(FLOOR), Some(FLOOR + 500)),
+            Some(FLOOR + 500)
+        );
+        // A stale watermark below the floor must not re-open the window.
+        assert_eq!(
+            extra_mailbox_after_timestamp(Some(FLOOR), Some(FLOOR - 500)),
+            Some(FLOOR)
+        );
+        // "Sync everything" accounts keep their unbounded behaviour.
+        assert_eq!(extra_mailbox_after_timestamp(None, None), None);
+        assert_eq!(extra_mailbox_after_timestamp(None, Some(42)), Some(42));
+    }
+
+    #[tokio::test]
+    async fn incremental_pass_does_not_ingest_below_the_sync_floor() {
+        // Regression: on a fresh DB the Sent/Spam/Trash passes had no
+        // watermark, so they fetched the newest 500 messages with no lower
+        // bound — a 7-day account ended up with a year of sent mail.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("old", FLOOR - 86_400), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("new", FLOOR + 86_400), EmailCategory::Primary, vec![]);
+
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider).await;
+
+        assert_eq!(
+            stored_ids(&db),
+            vec!["new".to_string()],
+            "sent mail older than the account's sync date must not be ingested"
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_pass_does_not_ingest_below_the_sync_floor() {
+        // The backfill loop checked the floor only to decide whether to fetch
+        // another page; each page itself was fetched unbounded, so its
+        // contents reached below the floor and were ingested anyway.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("ancient", FLOOR - 400_000), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("old", FLOOR - 1), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("recent", FLOOR + 10), EmailCategory::Primary, vec![]);
+
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+
+        assert_eq!(
+            stored_ids(&db),
+            vec!["recent".to_string()],
+            "backfill must stop at the account's sync date, not walk the whole mailbox"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_everything_accounts_still_backfill_the_whole_mailbox() {
+        // Guard the other direction: an account with no configured floor
+        // (or "all mail") must keep pulling its full history.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(None);
+        seed_account_row(&db, &account);
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("ancient", 10_000), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("recent", 2_000_000), EmailCategory::Primary, vec![]);
+
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+
+        assert_eq!(
+            stored_ids(&db),
+            vec!["ancient".to_string(), "recent".to_string()],
+            "an account with no sync floor keeps its full-history backfill"
+        );
     }
 }
 

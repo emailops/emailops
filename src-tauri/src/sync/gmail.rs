@@ -543,6 +543,9 @@ impl GmailClient {
                 subject: email.subject,
                 body,
                 body_html,
+                // Gmail's `internalDate`, already parsed onto the message —
+                // for a draft that's when it was last saved.
+                updated_at: Some(email.timestamp),
             });
         }
         Ok(out)
@@ -639,6 +642,12 @@ impl GmailClient {
             // (e.g. sync_extra_mailboxes for Sent / Trash) still override this
             // explicitly when they intentionally route a row into a folder.
             mailbox: mailbox.to_string(),
+            // Independent of `mailbox`: a message the user sent to themselves
+            // carries INBOX *and* SENT, and `mailbox` records 'inbox' to keep
+            // the thread in the inbox view. Only this flag can tell the Sent
+            // view about it — the sender is no help when the message went out
+            // through a send-as alias.
+            is_sent: labels.iter().any(|l| l == "SENT"),
         };
 
         Ok((email, category, attachment_infos))
@@ -2662,6 +2671,30 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    /// Minimal `format=full` message carrying the given labels.
+    fn test_message(label_ids: &[&str]) -> GmailMessage {
+        let labels_json = serde_json::to_string(label_ids).expect("labels");
+        serde_json::from_str(&format!(
+            r#"{{
+                "id": "m1",
+                "threadId": "t1",
+                "labelIds": {labels_json},
+                "snippet": "hello",
+                "internalDate": "1700000000000",
+                "payload": {{
+                    "mimeType": "text/plain",
+                    "headers": [
+                        {{"name": "Subject", "value": "Hi"}},
+                        {{"name": "From", "value": "Me <me@alias.example>"}},
+                        {{"name": "To", "value": "me@example.com"}}
+                    ],
+                    "body": {{"size": 0}}
+                }}
+            }}"#
+        ))
+        .expect("decode test message")
+    }
+
     #[test]
     fn mailbox_sent_only_label_routes_to_sent() {
         // Sent email to someone else: Gmail labels = [SENT]
@@ -2678,6 +2711,28 @@ mod tests {
     fn mailbox_self_sent_email_stays_in_inbox() {
         // Self-sent emails carry both labels — they should remain visible in inbox.
         assert_eq!(mailbox_from_labels(&labels(&["INBOX", "SENT"])), "inbox");
+    }
+
+    #[tokio::test]
+    async fn parse_message_records_the_sent_label_alongside_the_inbox_mailbox() {
+        // A self-sent message keeps mailbox='inbox' so the thread stays in the
+        // inbox view, but `is_sent` must still record that Gmail filed it under
+        // Sent — otherwise the Sent view can never find it.
+        let client = GmailClient::new("token".to_string(), None, None, None);
+
+        let self_sent = client
+            .parse_message(test_message(&["INBOX", "SENT"]))
+            .await
+            .expect("parse");
+        assert_eq!(self_sent.0.mailbox, "inbox", "stays in the inbox view");
+        assert!(self_sent.0.is_sent, "and is still sent mail");
+
+        let received = client.parse_message(test_message(&["INBOX"])).await.expect("parse");
+        assert!(!received.0.is_sent, "received mail is not sent mail");
+
+        let pure_sent = client.parse_message(test_message(&["SENT"])).await.expect("parse");
+        assert_eq!(pure_sent.0.mailbox, "sent");
+        assert!(pure_sent.0.is_sent);
     }
 
     #[test]

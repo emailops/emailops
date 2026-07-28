@@ -3579,6 +3579,7 @@ mod tests {
             triage_status: None,
             category: "primary".into(),
             mailbox: "inbox".into(),
+            is_sent: false,
         };
         ScoredEmail {
             email,

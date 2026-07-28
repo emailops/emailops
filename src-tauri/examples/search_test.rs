@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No accounts found in database"))?;
 
     // Show stats
-    let email_count = db.count_emails(emailops_lib::db::AccountScope::Account(&account_id))?;
+    let email_count = db.count_emails(emailops_lib::db::AccountScope::Account(&account_id), None)?;
     let pending = db.count_emails_without_embeddings(Some(&account_id))?;
     let embedding_count = email_count - pending;
     println!("Emails: {}, Embeddings: {}", email_count, embedding_count);

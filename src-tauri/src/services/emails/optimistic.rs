@@ -98,6 +98,7 @@ pub fn build_optimistic_sent_email(input: &OptimisticSendInput<'_>) -> Optimisti
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
+            is_sent: true,
         },
         pending_sync,
     }

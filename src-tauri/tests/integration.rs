@@ -63,6 +63,7 @@ fn make_email(id: &str, account_id: &str, timestamp: i64) -> Email {
         triage_status: None,
         category: "primary".to_string(),
         mailbox: "inbox".to_string(),
+        is_sent: false,
     }
 }
 
@@ -614,6 +615,7 @@ fn make_email_with(id: &str, account_id: &str, timestamp: i64, sender_email: &st
         triage_status: None,
         category: "primary".to_string(),
         mailbox: mailbox.to_string(),
+        is_sent: mailbox == "sent",
     }
 }
 
@@ -1201,9 +1203,14 @@ fn count_emails_counts_inbox_threads_only() {
         .unwrap();
 
     let count = db
-        .count_emails(emailops_lib::db::AccountScope::Account("acc-cnt"))
+        .count_emails(emailops_lib::db::AccountScope::Account("acc-cnt"), None)
         .unwrap();
     assert_eq!(count, 2, "count_emails must only count inbox threads, not spam");
+
+    let spam_count = db
+        .count_emails(emailops_lib::db::AccountScope::Account("acc-cnt"), Some("spam"))
+        .unwrap();
+    assert_eq!(spam_count, 1, "the spam view counts spam, not inbox threads");
 }
 
 // ── P0: send service (via FakeEmailProvider) ──────────────────────────────

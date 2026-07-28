@@ -752,15 +752,21 @@ pub async fn get_email_by_id(
     ensure_email_in_account(&state.db, &account_id, &email_id)
 }
 
-/// `account_id: None` counts inbox threads across every enabled account
-/// (unified "All accounts" view).
+/// `account_id: None` counts across every enabled account (unified "All
+/// accounts" view). `mailbox` selects the view to count — omit it for the
+/// inbox. It must match the `mailbox` passed to `get_emails`, since the UI
+/// compares the two to decide whether more pages remain.
 #[tauri::command]
-pub fn get_email_count(state: State<'_, AppState>, account_id: Option<String>) -> Result<i32, AppError> {
+pub fn get_email_count(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+    mailbox: Option<String>,
+) -> Result<i32, AppError> {
     let scope = match account_id.as_deref() {
         Some(id) => crate::db::AccountScope::Account(id),
         None => crate::db::AccountScope::AllEnabled,
     };
-    state.db.count_emails(scope)
+    state.db.count_emails(scope, mailbox.as_deref())
 }
 
 #[tauri::command]

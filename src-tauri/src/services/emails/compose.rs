@@ -479,6 +479,7 @@ mod tests {
             subject: "Server draft".to_string(),
             body: "hi".to_string(),
             body_html: None,
+            updated_at: Some(1_700_000_000),
         });
 
         let pulled = pull_provider_drafts(&db, "a1", &provider).await.expect("pull");
@@ -487,6 +488,10 @@ mod tests {
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].subject, "Server draft");
         assert_eq!(drafts[0].provider_draft_id.as_deref(), Some("srv-1"));
+        assert_eq!(
+            drafts[0].updated_at, 1_700_000_000,
+            "pull carries the provider's date through to the local row"
+        );
 
         // Remove it upstream → next pull prunes the local copy.
         provider.delete_draft("srv-1").await.expect("del");

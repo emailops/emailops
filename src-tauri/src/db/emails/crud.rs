@@ -1,5 +1,82 @@
 use super::*;
 
+/// How a mailbox view scopes a query, shared by the list and the count so the
+/// two can never describe different sets (the pagination `hasMore` comparison
+/// depends on that identity).
+pub(super) struct MailboxScopeSql {
+    /// WHERE fragments, already qualified with the caller's column prefix.
+    pub conditions: Vec<String>,
+    /// Value to bind to the folder placeholder, for custom-folder views.
+    pub folder_value: Option<String>,
+    /// Whether the view collapses each thread to a single row (inbox only).
+    pub thread_deduped: bool,
+}
+
+/// Build the scope for `view`. `prefix` qualifies every column (`"e."` for the
+/// aliased list query, `"emails."` for the count); `folder_placeholder` is the
+/// `?N` token the caller will bind `folder_value` to.
+///
+/// The "deleted" view is a union of provider Trash and app-side soft-deletes;
+/// all other views exclude soft-deleted rows.
+pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &str) -> MailboxScopeSql {
+    let mut conditions: Vec<String> = Vec::new();
+    let mut folder_value = None;
+    let mut thread_deduped = false;
+
+    match view {
+        "deleted" => {
+            // Flat list — no thread dedup (trash items show individually, like Gmail).
+            conditions.push(format!("({prefix}mailbox = 'trash' OR {prefix}is_deleted = 1)"));
+        }
+        "sent" => {
+            // Three ways an email qualifies as "sent":
+            //   1. The provider marked it sent (`is_sent`) — the authoritative
+            //      signal, and the only one that catches mail sent to yourself
+            //      through a send-as alias (Gmail labels it INBOX *and* SENT,
+            //      so `mailbox` says 'inbox' and the sender is the alias).
+            //   2. It is filed under Sent (`mailbox='sent'`) — covers rows
+            //      written before `is_sent` existed.
+            //   3. Its sender matches the OWNING account's own address
+            //      (correlated on account_id, so under AllEnabled mail between
+            //      the user's own accounts is never misclassified as "sent" in
+            //      the receiving account).
+            // Excludes spam/trash copies.
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            conditions.push(format!("{prefix}mailbox NOT IN ('spam', 'trash')"));
+            conditions.push(format!(
+                "({prefix}is_sent = 1 \
+                 OR {prefix}mailbox = 'sent' \
+                 OR EXISTS (SELECT 1 FROM accounts a WHERE a.id = {prefix}account_id \
+                 AND LOWER(a.email) = LOWER({prefix}sender_email)))"
+            ));
+        }
+        "spam" => {
+            // Flat per-email list scoped to the mailbox, ordered by timestamp.
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            conditions.push(format!("{prefix}mailbox = 'spam'"));
+        }
+        v if v.starts_with("folder:") => {
+            // Custom IMAP folder view: flat per-email list (no thread dedup,
+            // like spam), scoped to the exact folder mailbox value.
+            // Served by idx_emails_account_mailbox.
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            conditions.push(format!("{prefix}mailbox = {folder_placeholder}"));
+            folder_value = Some(v.to_string());
+        }
+        _ => {
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            conditions.push(format!("{prefix}mailbox = 'inbox'"));
+            thread_deduped = true;
+        }
+    }
+
+    MailboxScopeSql {
+        conditions,
+        folder_value,
+        thread_deduped,
+    }
+}
+
 impl Database {
     pub fn insert_email(&self, email: &Email) -> Result<()> {
         let conn = self.connection();
@@ -12,8 +89,8 @@ impl Database {
         conn.execute(
             r#"INSERT OR REPLACE INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"#,
+                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
             params![
                 email.id,
                 email.account_id,
@@ -31,6 +108,7 @@ impl Database {
                 email.triage_status,
                 email.category,
                 mailbox,
+                is_sent_flag(email, mailbox) as i32,
                 now,
             ],
         )?;
@@ -62,8 +140,8 @@ impl Database {
             r#"INSERT OR REPLACE INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
                 sender_domain, recipients_json, cc_json, snippet, timestamp, is_read,
-                triage_status, category, mailbox, pending_sync, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
+                triage_status, category, mailbox, is_sent, pending_sync, created_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
             params![
                 email.id,
                 email.account_id,
@@ -81,6 +159,7 @@ impl Database {
                 email.triage_status,
                 email.category,
                 mailbox,
+                is_sent_flag(email, mailbox) as i32,
                 pending_sync as i32,
                 now,
             ],
@@ -173,9 +252,10 @@ impl Database {
     ///
     /// `mailbox` selects which server-side mailbox to list:
     /// - `None` or `Some("inbox")` → `mailbox='inbox' AND is_deleted=0` (default)
-    /// - `Some("sent")` → `sender_email` matches the owning account's own address
-    ///   (provider-agnostic — Gmail's `in:sent` inbox filter stores sent items with
-    ///   `mailbox='inbox'`, so relying on the mailbox column alone would miss them)
+    /// - `Some("sent")` → `mailbox='sent'` (what the provider filed under Sent,
+    ///   including send-as alias mail) OR `sender_email` matches the owning
+    ///   account's own address (self-sent copies that Gmail also labels INBOX,
+    ///   which the mailbox column files as `inbox`)
     /// - `Some("spam")` → `mailbox='spam' AND is_deleted=0`
     /// - `Some("deleted")` → `mailbox='trash' OR is_deleted=1`
     ///   (union: provider Trash + in-app soft-deletes)
@@ -208,54 +288,21 @@ impl Database {
             }
         }
 
-        // Mailbox scope. The "deleted" view is a union of provider Trash and
-        // app-side soft-deletes; all other views exclude soft-deleted rows.
+        // Mailbox scope, shared with `count_emails` so the list and the count
+        // always describe the same set.
         let view = mailbox.unwrap_or("inbox");
-        match view {
-            "deleted" => {
-                // Union of provider Trash and in-app soft-deletes. Flat list — no
-                // thread dedup (trash items are shown individually, like Gmail).
-                conditions.push("(e.mailbox = 'trash' OR e.is_deleted = 1)".to_string());
-            }
-            "sent" => {
-                // Match emails whose sender matches the OWNING account's own
-                // address (correlated on e.account_id, so under AllEnabled mail
-                // between the user's own accounts is never misclassified as
-                // "sent" in the receiving account). Works regardless of whether
-                // the email was ingested via the inbox label filter
-                // (mailbox='inbox') or the sent mailbox pass (mailbox='sent').
-                // Excludes spam/trash copies.
-                conditions.push("e.is_deleted = 0".to_string());
-                conditions.push("e.mailbox NOT IN ('spam', 'trash')".to_string());
-                conditions.push(
-                    "EXISTS (SELECT 1 FROM accounts a WHERE a.id = e.account_id \
-                     AND LOWER(a.email) = LOWER(e.sender_email))"
-                        .to_string(),
-                );
-            }
-            "spam" => {
-                // Flat per-email list scoped to the mailbox, ordered by timestamp.
-                conditions.push("e.is_deleted = 0".to_string());
-                conditions.push("e.mailbox = 'spam'".to_string());
-            }
-            v if v.starts_with("folder:") => {
-                // Custom IMAP folder view: flat per-email list (no thread
-                // dedup, like spam), scoped to the exact folder mailbox value.
-                // Served by idx_emails_account_mailbox.
-                conditions.push("e.is_deleted = 0".to_string());
-                conditions.push(format!("e.mailbox = ?{param_idx}"));
-                params_vec.push(Box::new(v.to_string()));
-                param_idx += 1;
-            }
-            _ => {
-                // Inbox view: dedup by thread, picking the latest *inbox* email
-                // per thread. Using the cross-mailbox predicate here causes
-                // threads where the user replied to disappear (the Sent reply
-                // wins the "latest" race but is then excluded by mailbox='inbox').
-                conditions.push("e.is_deleted = 0".to_string());
-                conditions.push("e.mailbox = 'inbox'".to_string());
-                conditions.push(format!("({})", latest_inbox_email_predicate("e")));
-            }
+        let scope_sql = mailbox_scope_sql(view, "e.", &format!("?{param_idx}"));
+        conditions.extend(scope_sql.conditions);
+        if let Some(folder) = scope_sql.folder_value {
+            params_vec.push(Box::new(folder));
+            param_idx += 1;
+        }
+        if scope_sql.thread_deduped {
+            // Inbox view: dedup by thread, picking the latest *inbox* email
+            // per thread. Using the cross-mailbox predicate here causes
+            // threads where the user replied to disappear (the Sent reply
+            // wins the "latest" race but is then excluded by mailbox='inbox').
+            conditions.push(format!("({})", latest_inbox_email_predicate("e")));
         }
 
         // Optional Gmail-category filter, applied on top of the mailbox scope.
@@ -445,23 +492,51 @@ impl Database {
     /// a plain `COUNT(DISTINCT thread_id)` would under-count when two accounts
     /// share a thread_id string (both CC'd on one provider thread), which would
     /// desync this count from `get_emails`' per-account thread dedup.
-    pub fn count_emails(&self, scope: crate::db::AccountScope<'_>) -> Result<i32> {
+    /// Number of rows the `mailbox` view lists for `scope`. `None` means the
+    /// inbox, which counts distinct threads because that view collapses each
+    /// thread to one row; every other view is a flat per-email list.
+    ///
+    /// Must stay in lockstep with [`Database::get_emails`] — both derive their
+    /// scope from [`mailbox_scope_sql`] — because the UI compares the length of
+    /// the listed page against this count to decide whether to keep paging.
+    pub fn count_emails(&self, scope: crate::db::AccountScope<'_>, mailbox: Option<&str>) -> Result<i32> {
         let conn = self.reader();
-        let count: i32 = match scope {
-            crate::db::AccountScope::Account(account_id) => conn.query_row(
-                "SELECT COUNT(DISTINCT thread_id) FROM emails \
-                 WHERE account_id = ?1 AND is_deleted = 0 AND mailbox = 'inbox'",
-                params![account_id],
-                |row| row.get(0),
-            )?,
-            crate::db::AccountScope::AllEnabled => conn.query_row(
-                "SELECT COUNT(*) FROM (SELECT DISTINCT account_id, thread_id FROM emails \
-                 WHERE account_id IN (SELECT id FROM accounts WHERE enabled = 1) \
-                   AND is_deleted = 0 AND mailbox = 'inbox')",
-                [],
-                |row| row.get(0),
-            )?,
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1;
+        match scope {
+            crate::db::AccountScope::Account(account_id) => {
+                conditions.push(format!("emails.account_id = ?{param_idx}"));
+                params_vec.push(Box::new(account_id.to_string()));
+                param_idx += 1;
+            }
+            crate::db::AccountScope::AllEnabled => {
+                conditions.push("emails.account_id IN (SELECT id FROM accounts WHERE enabled = 1)".to_string());
+            }
+        }
+
+        let scope_sql = mailbox_scope_sql(mailbox.unwrap_or("inbox"), "emails.", &format!("?{param_idx}"));
+        conditions.extend(scope_sql.conditions);
+        if let Some(folder) = scope_sql.folder_value {
+            params_vec.push(Box::new(folder));
+        }
+        let where_clause = conditions.join(" AND ");
+
+        let sql = match (scope_sql.thread_deduped, scope) {
+            (true, crate::db::AccountScope::Account(_)) => {
+                format!("SELECT COUNT(DISTINCT emails.thread_id) FROM emails WHERE {where_clause}")
+            }
+            // Thread ids are only unique per account, so dedup on the pair.
+            (true, crate::db::AccountScope::AllEnabled) => format!(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT emails.account_id, emails.thread_id \
+                 FROM emails WHERE {where_clause})"
+            ),
+            (false, _) => format!("SELECT COUNT(*) FROM emails WHERE {where_clause}"),
         };
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let count: i32 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
         Ok(count)
     }
 
@@ -788,6 +863,55 @@ mod tests {
     }
 
     #[test]
+    fn get_emails_sent_view_includes_send_as_alias_mail() {
+        // Regression: mail the user sent through a Gmail "send-as" alias
+        // carries the alias in sender_email, not the account address, so the
+        // sender-match predicate alone dropped it from the Sent view even
+        // though the provider filed it under Sent (mailbox='sent').
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+
+        // Sent from the account's own address — always matched.
+        insert_contact_email(&db, "own", "acc1", "t1", "Me", "a1@example.com", "[]", "sent", 300);
+        // Sent through a configured alias — provider filed it under Sent.
+        insert_contact_email(&db, "alias", "acc1", "t2", "Me", "me@alias.example", "[]", "sent", 200);
+
+        let emails = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("sent"), None)
+            .unwrap();
+        let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["own", "alias"],
+            "provider-filed sent mail must appear regardless of the from address"
+        );
+    }
+
+    #[test]
+    fn get_emails_sent_view_excludes_received_mail_in_sent_labelled_thread() {
+        // The mailbox column must not become a blanket "show everything"
+        // escape hatch: received mail stays out of the Sent view.
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_contact_email(
+            &db,
+            "received",
+            "acc1",
+            "t1",
+            "Someone",
+            "someone@example.com",
+            "[]",
+            "inbox",
+            100,
+        );
+
+        let emails = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("sent"), None)
+            .unwrap();
+        assert!(emails.is_empty(), "inbox mail from a third party is not sent mail");
+    }
+
+    #[test]
     fn get_emails_all_enabled_thread_id_collision_keeps_both_accounts_rows() {
         let db = Database::new_for_testing().unwrap();
         insert_account(&db, "acc1", "a1@example.com");
@@ -827,15 +951,137 @@ mod tests {
         set_account_enabled(&db, "acc3", false);
 
         assert_eq!(
-            db.count_emails(AccountScope::AllEnabled).unwrap(),
+            db.count_emails(AccountScope::AllEnabled, None).unwrap(),
             2,
             "counts distinct (account_id, thread_id) pairs across enabled accounts"
         );
         assert_eq!(
-            db.count_emails(AccountScope::Account("acc1")).unwrap(),
+            db.count_emails(AccountScope::Account("acc1"), None).unwrap(),
             1,
             "single-account count unchanged"
         );
+    }
+
+    #[test]
+    fn count_emails_counts_the_requested_mailbox_view() {
+        // Regression: the count always counted inbox threads while the list was
+        // scoped to a mailbox. In the Sent view the two disagreed, so the UI
+        // either re-requested empty pages forever (few sent, many inbox) or
+        // stopped paging early (many sent, few inbox).
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+
+        insert_email(&db, "i1", "acc1", "t1", 100);
+        insert_email(&db, "i2", "acc1", "t2", 200);
+        insert_contact_email(&db, "s1", "acc1", "t3", "Me", "a1@example.com", "[]", "sent", 300);
+        insert_contact_email(&db, "s2", "acc1", "t4", "Me", "me@alias.example", "[]", "sent", 400);
+
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1"), Some("sent")).unwrap(),
+            2,
+            "sent view counts sent mail, not inbox threads"
+        );
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1"), Some("inbox")).unwrap(),
+            2,
+            "inbox view still counts inbox threads"
+        );
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1"), None).unwrap(),
+            2,
+            "no mailbox argument keeps the historic inbox behaviour"
+        );
+    }
+
+    #[test]
+    fn count_emails_matches_the_number_of_rows_the_sent_view_lists() {
+        // The count and the list must describe the same set — that identity is
+        // what the pagination "hasMore" comparison relies on.
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_contact_email(&db, "s1", "acc1", "t1", "Me", "a1@example.com", "[]", "sent", 300);
+        insert_contact_email(&db, "s2", "acc1", "t2", "Me", "me@alias.example", "[]", "sent", 200);
+        insert_contact_email(&db, "spam1", "acc1", "t3", "X", "x@example.com", "[]", "spam", 150);
+        insert_email(&db, "i1", "acc1", "t4", 100);
+
+        let listed = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("sent"), None)
+            .unwrap();
+        let counted = db.count_emails(AccountScope::Account("acc1"), Some("sent")).unwrap();
+        assert_eq!(counted as usize, listed.len());
+    }
+
+    #[test]
+    fn get_emails_sent_view_includes_self_sent_alias_mail_labelled_inbox() {
+        // Regression: Gmail labels mail you send to yourself INBOX *and* SENT.
+        // The mailbox column records 'inbox' to keep the thread in the inbox
+        // view, and when the message went out through a send-as alias the
+        // sender is not the account address either — so it matched neither
+        // branch of the Sent predicate and vanished from the Sent view.
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+
+        let mut self_sent = local_sent_email("self-alias", "acc1", "t1", 300);
+        self_sent.sender_email = "me@alias.example".to_string();
+        self_sent.recipients = vec!["a1@example.com".to_string()];
+        self_sent.mailbox = "inbox".to_string();
+        self_sent.is_sent = true;
+        db.insert_email(&self_sent).unwrap();
+
+        // A plain received email must still stay out of the Sent view.
+        insert_contact_email(
+            &db,
+            "received",
+            "acc1",
+            "t2",
+            "Someone",
+            "someone@example.com",
+            "[]",
+            "inbox",
+            200,
+        );
+
+        let ids: Vec<String> = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("sent"), None)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, vec!["self-alias".to_string()]);
+    }
+
+    #[test]
+    fn sent_view_and_count_agree_on_self_sent_alias_mail() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+
+        let mut self_sent = local_sent_email("self-alias", "acc1", "t1", 300);
+        self_sent.sender_email = "me@alias.example".to_string();
+        self_sent.mailbox = "inbox".to_string();
+        self_sent.is_sent = true;
+        db.insert_email(&self_sent).unwrap();
+
+        let listed = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("sent"), None)
+            .unwrap();
+        let counted = db.count_emails(AccountScope::Account("acc1"), Some("sent")).unwrap();
+        assert_eq!(counted as usize, listed.len(), "count must track the widened predicate");
+    }
+
+    #[test]
+    fn insert_email_flags_sent_mailbox_rows_even_without_the_provider_signal() {
+        // Providers that only know the folder (IMAP, Outlook) leave is_sent
+        // false and rely on the mailbox value; the column must still be right.
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+
+        let mut email = local_sent_email("folder-sent", "acc1", "t1", 100);
+        email.is_sent = false;
+        email.mailbox = "sent".to_string();
+        db.insert_email(&email).unwrap();
+
+        let stored = db.get_email_by_id("folder-sent").unwrap().expect("row");
+        assert!(stored.is_sent, "a row filed under Sent is sent mail");
     }
 
     fn local_sent_email(id: &str, account_id: &str, thread_id: &str, timestamp: i64) -> crate::models::Email {
@@ -856,6 +1102,7 @@ mod tests {
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
+            is_sent: true,
         }
     }
 

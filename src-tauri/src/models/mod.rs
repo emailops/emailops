@@ -45,6 +45,16 @@ pub struct Email {
     /// for emails ingested before the column was added.
     #[serde(default = "default_mailbox")]
     pub mailbox: String,
+    /// The provider filed this message under Sent.
+    ///
+    /// Distinct from `mailbox == "sent"`: Gmail labels mail you send to
+    /// yourself with both INBOX and SENT, and `mailbox` can only hold one
+    /// value, so it records 'inbox' to keep the thread in the inbox view.
+    /// Without this flag such messages — especially ones sent through a
+    /// send-as alias, whose sender is not the account address — are invisible
+    /// in the Sent view.
+    #[serde(default)]
+    pub is_sent: bool,
 }
 
 fn default_mailbox() -> String {
@@ -518,6 +528,12 @@ pub struct ProviderDraft {
     pub subject: String,
     pub body: String,
     pub body_html: Option<String>,
+    /// When the provider last modified the draft, in Unix seconds. `None` for
+    /// providers that don't report one — the pull pass then falls back to the
+    /// ingest time. Without this the Drafts list shows today's date for every
+    /// draft, because each sync re-stamps the row.
+    #[serde(default)]
+    pub updated_at: Option<i64>,
 }
 
 // AI config and usage types

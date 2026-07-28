@@ -477,6 +477,10 @@ impl ImapClient {
             category: "primary".to_string(),
             // Overridden by the caller per-mailbox (INBOX/Sent/Trash/Junk).
             mailbox: "inbox".to_string(),
+            // IMAP has no per-message sent label — a message is sent iff it
+            // came from the Sent mailbox, which the insert derives from the
+            // caller's `mailbox` value.
+            is_sent: false,
         };
 
         Ok((email, attachments))

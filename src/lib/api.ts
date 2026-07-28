@@ -468,9 +468,13 @@ export async function redownloadEmail(emailId: string): Promise<Email> {
   return invoke('redownload_email', { emailId });
 }
 
-/** `accountId: null` counts inbox threads across every enabled account. */
-export async function getEmailCount(accountId: string | null): Promise<number> {
-  return invoke('get_email_count', { accountId });
+/**
+ * `accountId: null` counts across every enabled account. `mailbox` must match
+ * the one passed to `getEmails` — the store compares list length against this
+ * count to decide whether more pages remain.
+ */
+export async function getEmailCount(accountId: string | null, mailbox?: MailboxView): Promise<number> {
+  return invoke('get_email_count', { accountId, mailbox });
 }
 
 // Sync commands
@@ -850,6 +854,10 @@ export async function deleteLocalModel(modelId: string, kind: 'chat' | 'embeddin
 
 export async function startModelDownload(modelId: string): Promise<void> {
   return invoke('start_model_download', { modelId });
+}
+
+export async function linkLocalModel(modelId: string, sourcePath: string): Promise<void> {
+  return invoke('link_local_model', { modelId, sourcePath });
 }
 
 export async function cancelModelDownload(modelId: string): Promise<void> {

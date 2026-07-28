@@ -248,6 +248,7 @@ mod tests {
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
+            is_sent: true,
         }
     }
 

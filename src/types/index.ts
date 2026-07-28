@@ -48,6 +48,9 @@ export interface Email {
   /** 'inbox' | 'sent' | 'spam' | 'trash' | `folder:<serverPath>` — which
    *  mailbox this email lives in (drives move-to-folder eligibility). */
   mailbox: string;
+  /** The provider filed this under Sent. Independent of `mailbox`: Gmail
+   *  labels self-sent mail INBOX *and* SENT, so `mailbox` reads 'inbox'. */
+  isSent: boolean;
 }
 
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
@@ -309,6 +312,10 @@ export interface CatalogModel {
   supportsTools: boolean;
   /** True when this model's GGUF is already on disk. */
   isLocal: boolean;
+  /** True when the local file is a symlink to a file elsewhere on disk
+   * (via linkLocalModel) rather than a downloaded copy. Only meaningful
+   * when isLocal is true. */
+  isLinked: boolean;
 }
 
 /** A GGUF file that is already downloaded locally. */
@@ -318,6 +325,7 @@ export interface LocalModel {
   kind: 'chat' | 'embedding';
   path: string;
   sizeBytes: number;
+  isLinked: boolean;
 }
 
 /** Progress event payload emitted during a model download. */
