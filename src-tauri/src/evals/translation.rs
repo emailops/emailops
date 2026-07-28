@@ -98,6 +98,7 @@ fn seed_email(db: &Database, id: &str, body: &str) -> EvalResult<()> {
         snippet: String::new(),
         timestamp: 1_700_000_000,
         is_read: true,
+        is_sent: false,
         triage_status: None,
         category: "primary".to_string(),
         mailbox: "inbox".to_string(),
