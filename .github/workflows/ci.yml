@@ -147,38 +147,70 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
 
-      # TEMPORARY DIAGNOSTIC — remove once the load failure below is understood.
-      # The lib test binary dies with STATUS_ENTRYPOINT_NOTFOUND (0xc0000139)
-      # before running a single test, while the app binary built by the bundle
-      # job links and runs fine. That exit code means a DLL *was* found but did
-      # not export something the binary imports, so the question is which DLL
-      # resolves differently for the test exe than for the app exe.
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+
+      # TEMPORARY DIAGNOSTIC — delete once the load failure is fixed.
+      #
+      # The lib test binary dies with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)
+      # before running a single test: a DLL it imports was found, but did not
+      # export something it asked for. `dumpbin /DEPENDENTS` only lists DLL
+      # names and was not enough to identify which — so this resolves every
+      # imported *function* the way the loader does and reports the ones that
+      # fail. That names the culprit exactly.
+      #
+      # Runs AFTER the test step on purpose: msvc-dev-cmd rewrites INCLUDE/LIB,
+      # which invalidates the cargo cache and cost 14 minutes of rebuild when
+      # this ran first. Nothing here invokes cargo.
       - name: Set up MSVC dev tools (for dumpbin)
+        if: always()
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Diagnose test-binary DLL imports
+      - name: Diagnose unresolved imports
+        if: always()
         continue-on-error: true
         shell: pwsh
         run: |
-          $json = cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --no-run --message-format=json 2>$null
-          $exes = $json | ForEach-Object {
-            try { $o = $_ | ConvertFrom-Json } catch { return }
-            if ($o.reason -eq 'compiler-artifact' -and $o.executable) { $o.executable }
-          }
-          foreach ($exe in $exes) {
-            Write-Host "=== DEPENDENTS: $exe ==="
-            dumpbin /DEPENDENTS "$exe"
-          }
-          Write-Host "=== DLLs sitting next to the test binaries ==="
-          Get-ChildItem -Recurse -Filter *.dll src-tauri/target/debug |
-            Select-Object -First 60 FullName, Length, LastWriteTime | Format-Table -AutoSize
-          # Deliberately NOT launching the failing binary. A load failure raises
-          # a Windows hard-error dialog, which on a headless runner blocks
-          # forever — the first version of this step hung for 45 minutes. The
-          # import table above is the diagnostic; the exit code is already known.
+          Add-Type -Namespace Native -Name Loader -MemberDefinition @'
+            [System.Runtime.InteropServices.DllImport("kernel32", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Ansi)]
+            public static extern System.IntPtr LoadLibraryA(string name);
+            [System.Runtime.InteropServices.DllImport("kernel32", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Ansi)]
+            public static extern System.IntPtr GetProcAddress(System.IntPtr module, string proc);
+          '@
 
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+          $exe = Get-ChildItem src-tauri/target/debug/deps -Filter 'emailops_lib-*.exe' |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { Write-Host "no lib test exe found"; exit 0 }
+          Write-Host "Analysing $($exe.FullName)`n"
+
+          # dumpbin /IMPORTS groups functions under each DLL; a DLL name sits at
+          # one indent level and its imported symbols beneath it.
+          $lines = dumpbin /IMPORTS "$($exe.FullName)"
+          $currentDll = $null
+          $missing = @()
+          $checked = 0
+          foreach ($line in $lines) {
+            if ($line -match '^\s{4}(\S+\.dll)\s*$') { $currentDll = $Matches[1]; continue }
+            if ($currentDll -and $line -match '^\s+[0-9A-F]+\s+([A-Za-z_][A-Za-z0-9_@\?\$]*)\s*$') {
+              $func = $Matches[1]
+              $h = [Native.Loader]::LoadLibraryA($currentDll)
+              if ($h -eq [System.IntPtr]::Zero) {
+                $missing += "MODULE NOT FOUND: $currentDll"; $currentDll = $null; continue
+              }
+              $checked++
+              if ([Native.Loader]::GetProcAddress($h, $func) -eq [System.IntPtr]::Zero) {
+                $missing += "$currentDll -> $func"
+              }
+            }
+          }
+          Write-Host "Resolved $checked imported symbols."
+          if ($missing.Count -eq 0) {
+            Write-Host "All imports resolve. The failure is NOT a plain missing export --"
+            Write-Host "look at delay-loaded imports or a DLL loaded at runtime instead."
+          } else {
+            Write-Host "`n*** UNRESOLVED (this is what kills the process at load time) ***"
+            $missing | ForEach-Object { Write-Host "  $_" }
+          }
 
   # Compiles the embedded llama.cpp path (CMake + C++) on both Linux and
   # Windows. Slow and cache-sensitive, so it is limited to pushes to main;
