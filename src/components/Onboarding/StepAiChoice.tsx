@@ -28,6 +28,10 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
   }, []);
 
   const capable = capability?.localAiCapable ?? null;
+  // A build compiled without the embedded runtime cannot run local AI at all.
+  // Offering it anyway is what produced "Ollama warmup failed" on a machine the
+  // user had deliberately configured for embedded AI.
+  const unavailable = capability !== null && !capability.embeddedAiAvailable;
   const ramCopy = {
     ram: String(capability?.totalRamGb ?? 0),
     minRam: String(capability?.minRamGbForLocalAi ?? 0),
@@ -51,14 +55,19 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <ChoiceCard
           selected={choice === 'ai'}
-          onSelect={() => setChoice('ai')}
+          disabled={unavailable}
+          onSelect={() => {
+            if (!unavailable) setChoice('ai');
+          }}
           title={t('auth:onboarding.aiChoice.useAi')}
           subtitle={
-            capable === true
-              ? t('auth:onboarding.aiChoice.useAiRecommended')
-              : capable === false
-                ? t('auth:onboarding.aiChoice.useAiAvailable', ramCopy)
-                : t('auth:onboarding.aiChoice.detecting')
+            unavailable
+              ? t('auth:onboarding.aiChoice.useAiUnavailable')
+              : capable === true
+                ? t('auth:onboarding.aiChoice.useAiRecommended')
+                : capable === false
+                  ? t('auth:onboarding.aiChoice.useAiAvailable', ramCopy)
+                  : t('auth:onboarding.aiChoice.detecting')
           }
         >
           <ul className="text-xs text-gray-400 space-y-1.5 mt-2">
@@ -106,12 +115,14 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
 
 function ChoiceCard({
   selected,
+  disabled = false,
   onSelect,
   title,
   subtitle,
   children,
 }: {
   selected: boolean;
+  disabled?: boolean;
   onSelect: () => void;
   title: string;
   subtitle: string;
@@ -121,8 +132,13 @@ function ChoiceCard({
     <button
       type="button"
       onClick={onSelect}
+      disabled={disabled}
       className={`text-left p-4 rounded-lg border-2 transition-colors ${
-        selected ? 'border-primary-500 bg-primary-900/15' : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
+        disabled
+          ? 'border-gray-800 bg-[#232326] opacity-50 cursor-not-allowed'
+          : selected
+            ? 'border-primary-500 bg-primary-900/15'
+            : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
       }`}
     >
       <div className="text-sm font-semibold text-gray-100">{title}</div>

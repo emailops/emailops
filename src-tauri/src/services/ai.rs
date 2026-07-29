@@ -11,6 +11,13 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{AiConfig, AiLogEvent, AiUsageSummary};
 
+/// Shown when the configured provider is the embedded runtime but this build
+/// was compiled without it (`--no-default-features`, e.g. the Intel-mac bundle
+/// or a CI packaging artifact).
+#[cfg(not(feature = "llamacpp"))]
+const EMBEDDED_AI_UNAVAILABLE: &str = "This build of EmailOps does not include the embedded AI runtime. \
+     Choose Ollama or OpenRouter in Settings → AI, or install a build with embedded AI.";
+
 const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
 const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
@@ -235,6 +242,12 @@ impl AiService {
                     embedding_model,
                 )))
             }
+            // Without the `llamacpp` feature there is no arm above to match, so
+            // a saved "llamacpp" preference used to fall through to Ollama and
+            // report "check that Ollama is running" — blaming a component the
+            // user never chose. Fail with what is actually wrong instead.
+            #[cfg(not(feature = "llamacpp"))]
+            "llamacpp" => Err(AppError::AiError(EMBEDDED_AI_UNAVAILABLE.to_string())),
             _ => Ok(Arc::new(
                 OllamaClient::new_with_models(Some(model), None).with_keep_alive(ollama_keep_alive),
             )),
@@ -285,6 +298,9 @@ impl AiService {
                     config.embedding_model,
                 )))
             }
+            // Same silent-fallback trap as in `load_provider_with_model`.
+            #[cfg(not(feature = "llamacpp"))]
+            "llamacpp" => Err(AppError::AiError(EMBEDDED_AI_UNAVAILABLE.to_string())),
             _ => Ok(Arc::new(
                 OllamaClient::new_with_models(Some(&config.model), Some(&config.embedding_model))
                     .with_keep_alive(ollama_keep_alive),

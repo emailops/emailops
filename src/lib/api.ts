@@ -1035,8 +1035,13 @@ export interface AiCapability {
   /** True on Apple Silicon. Retained for Metal-specific copy only — branch on
    *  `localAiCapable` to decide whether local AI is viable. */
   appleSilicon: boolean;
-  /** Enough RAM (and a 64-bit target) to run the smallest catalog chat model. */
+  /** Enough RAM (and a 64-bit target) to run the smallest catalog chat model,
+   *  AND this build actually contains the embedded runtime. */
   localAiCapable: boolean;
+  /** Whether this binary was compiled with the embedded llama.cpp runtime.
+   *  Builds without it cannot run local AI at any RAM size, so offering the
+   *  option yields confusing Ollama connection errors. */
+  embeddedAiAvailable: boolean;
   /** Physical RAM in whole GiB; 0 when the probe failed. */
   totalRamGb: number;
   /** RAM the smallest catalog chat model needs, so the UI can say why. */

@@ -28,8 +28,15 @@ pub struct AiCapability {
     /// [`AiCapability::local_ai_capable`] for that.
     pub apple_silicon: bool,
     /// True when the machine has enough RAM to run the smallest local chat
-    /// model in the catalog. This is what onboarding should branch on.
+    /// model in the catalog AND this build actually contains the embedded
+    /// runtime. This is what onboarding should branch on.
     pub local_ai_capable: bool,
+    /// Whether this binary was compiled with the embedded llama.cpp runtime.
+    ///
+    /// Builds without it (`--no-default-features` — the Intel-mac bundle, CI
+    /// packaging artifacts) cannot run local AI at any RAM size, and offering
+    /// the option produces confusing Ollama connection errors instead.
+    pub embedded_ai_available: bool,
     /// Physical RAM in whole GiB, or 0 when the probe failed.
     pub total_ram_gb: u64,
     /// RAM the smallest catalog chat model needs, so the UI can explain *why*
@@ -63,7 +70,13 @@ fn min_chat_model_ram_gb() -> u64 {
 /// reservations routinely shave a few hundred MB off nominal RAM — a nominal
 /// 8 GB laptop commonly reports 7. One GiB of slack keeps those machines on the
 /// capable side of a threshold they nominally meet.
-pub fn ai_capability_from(os: &str, arch: &str, total_ram_gb: u64, min_chat_ram_gb: u64) -> AiCapability {
+pub fn ai_capability_from(
+    os: &str,
+    arch: &str,
+    total_ram_gb: u64,
+    min_chat_ram_gb: u64,
+    embedded_ai_available: bool,
+) -> AiCapability {
     // A 32-bit process cannot map multi-gigabyte weights however much RAM the
     // box reports.
     let address_space_ok = matches!(arch, "aarch64" | "x86_64" | "riscv64" | "loongarch64");
@@ -71,7 +84,8 @@ pub fn ai_capability_from(os: &str, arch: &str, total_ram_gb: u64, min_chat_ram_
 
     AiCapability {
         apple_silicon: os == "macos" && arch == "aarch64",
-        local_ai_capable: address_space_ok && enough_ram,
+        local_ai_capable: embedded_ai_available && address_space_ok && enough_ram,
+        embedded_ai_available,
         total_ram_gb,
         min_ram_gb_for_local_ai: min_chat_ram_gb,
         os: os.to_string(),
@@ -134,6 +148,7 @@ pub async fn detect_ai_capability() -> Result<AiCapability, AppError> {
         std::env::consts::ARCH,
         crate::util::system::total_ram_gb(),
         min_chat_model_ram_gb(),
+        cfg!(feature = "llamacpp"),
     ))
 }
 
@@ -206,16 +221,50 @@ mod tests {
             ),
         ];
         for (os, arch, ram, want, label) in cases {
-            let cap = ai_capability_from(os, arch, *ram, 8);
+            let cap = ai_capability_from(os, arch, *ram, 8, true);
             assert_eq!(cap.local_ai_capable, *want, "{label}");
         }
+    }
+
+    #[test]
+    fn a_build_without_the_embedded_runtime_is_never_capable() {
+        // The regression behind "AI warmup failed … Ollama warmup failed" on a
+        // machine the user had configured for embedded AI: the binary was
+        // compiled with --no-default-features, so there is no local runtime at
+        // any RAM size, and the saved provider silently fell through to Ollama.
+        for ram in [8, 16, 64, 256] {
+            let cap = ai_capability_from("windows", "x86_64", ram, 8, false);
+            assert!(
+                !cap.local_ai_capable,
+                "{ram} GB cannot help when the runtime is not compiled in"
+            );
+            assert!(!cap.embedded_ai_available);
+        }
+
+        // Even an Apple Silicon Mac — the historical "always capable" case.
+        let cap = ai_capability_from("macos", "aarch64", 64, 8, false);
+        assert!(!cap.local_ai_capable);
+        assert!(cap.apple_silicon, "hardware facts stay truthful");
+    }
+
+    #[test]
+    fn availability_is_reported_separately_so_the_ui_can_explain_why() {
+        // Plenty of RAM but no runtime vs. runtime present but too little RAM
+        // are different problems and need different copy.
+        let no_runtime = ai_capability_from("windows", "x86_64", 64, 8, false);
+        assert!(!no_runtime.embedded_ai_available);
+        assert!(no_runtime.total_ram_gb >= no_runtime.min_ram_gb_for_local_ai);
+
+        let too_small = ai_capability_from("windows", "x86_64", 4, 8, true);
+        assert!(too_small.embedded_ai_available);
+        assert!(!too_small.local_ai_capable);
     }
 
     #[test]
     fn thirty_two_bit_targets_are_never_capable() {
         // Address space, not RAM, is the binding constraint here.
         for arch in ["x86", "arm", "mips"] {
-            let cap = ai_capability_from("linux", arch, 64, 8);
+            let cap = ai_capability_from("linux", arch, 64, 8, true);
             assert!(!cap.local_ai_capable, "{arch} cannot map multi-GB weights");
         }
     }
@@ -223,11 +272,11 @@ mod tests {
     #[test]
     fn nominal_ram_just_under_the_threshold_still_counts() {
         // A nominal 8 GB machine reports 7 GiB after firmware/iGPU reservation.
-        let cap = ai_capability_from("windows", "x86_64", 7, 8);
+        let cap = ai_capability_from("windows", "x86_64", 7, 8, true);
         assert!(cap.local_ai_capable, "1 GiB of slack must absorb the reservation");
 
         // But the slack is exactly one GiB — 6 is genuinely too little.
-        let cap = ai_capability_from("windows", "x86_64", 6, 8);
+        let cap = ai_capability_from("windows", "x86_64", 6, 8, true);
         assert!(!cap.local_ai_capable);
     }
 
@@ -235,21 +284,21 @@ mod tests {
     fn a_failed_ram_probe_reports_incapable_rather_than_capable() {
         // `total_ram_gb()` returns 0 when the probe fails; defaulting to
         // "capable" would offer a download that cannot possibly run.
-        let cap = ai_capability_from("linux", "x86_64", 0, 8);
+        let cap = ai_capability_from("linux", "x86_64", 0, 8, true);
         assert!(!cap.local_ai_capable);
         assert_eq!(cap.total_ram_gb, 0);
     }
 
     #[test]
     fn apple_silicon_still_reported_for_metal_specific_copy() {
-        assert!(ai_capability_from("macos", "aarch64", 16, 8).apple_silicon);
-        assert!(!ai_capability_from("macos", "x86_64", 16, 8).apple_silicon);
-        assert!(!ai_capability_from("linux", "aarch64", 16, 8).apple_silicon);
+        assert!(ai_capability_from("macos", "aarch64", 16, 8, true).apple_silicon);
+        assert!(!ai_capability_from("macos", "x86_64", 16, 8, true).apple_silicon);
+        assert!(!ai_capability_from("linux", "aarch64", 16, 8, true).apple_silicon);
     }
 
     #[test]
     fn the_threshold_is_surfaced_so_the_ui_can_explain_itself() {
-        let cap = ai_capability_from("linux", "x86_64", 4, 8);
+        let cap = ai_capability_from("linux", "x86_64", 4, 8, true);
         assert_eq!(cap.min_ram_gb_for_local_ai, 8);
         assert_eq!(cap.total_ram_gb, 4);
     }
@@ -278,5 +327,10 @@ mod tests {
         assert_eq!(cap.os, std::env::consts::OS);
         assert_eq!(cap.arch, std::env::consts::ARCH);
         assert_eq!(cap.min_ram_gb_for_local_ai, min_chat_model_ram_gb());
+        assert_eq!(
+            cap.embedded_ai_available,
+            cfg!(feature = "llamacpp"),
+            "availability must reflect how this binary was actually built"
+        );
     }
 }
