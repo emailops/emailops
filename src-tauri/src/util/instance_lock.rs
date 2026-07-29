@@ -113,9 +113,13 @@ pub fn acquire(app_data_dir: &Path) -> Result<InstanceLock, LockError> {
         }
     };
 
-    // Record our PID so `cat emailops.lock` identifies the holder. Best-effort:
-    // the lock is already held at this point, so a write failure must not fail
+    // Record our PID so the lock file identifies the holder. Best-effort: the
+    // lock is already held at this point, so a write failure must not fail
     // startup — but it does get logged rather than silently dropped.
+    //
+    // Readable with `cat` on Unix, where `flock` is advisory. On Windows
+    // `LockFileEx` is mandatory for the locked byte range, so reading the file
+    // fails with a lock violation until the holding process exits.
     if let Err(e) = write_pid(&mut guard) {
         eprintln!(
             "[startup] Warning: could not record PID in {}: {e}",
@@ -160,9 +164,18 @@ mod tests {
     #[test]
     fn first_acquire_succeeds_and_records_the_pid() {
         let tmp = tempfile::tempdir().expect("temp dir");
-        let lock = acquire(tmp.path()).expect("first acquire should succeed");
 
-        let contents = std::fs::read_to_string(lock.path()).expect("lock file readable");
+        // Read the PID only after releasing: `flock` on Unix is advisory, so
+        // the file stays readable while held, but `LockFileEx` on Windows is
+        // mandatory for the locked byte range and any read fails with a lock
+        // violation until the holder exits. Reading after release verifies the
+        // PID was written on both platforms.
+        let path = {
+            let lock = acquire(tmp.path()).expect("first acquire should succeed");
+            lock.path().to_path_buf()
+        };
+
+        let contents = std::fs::read_to_string(&path).expect("lock file readable once released");
         assert_eq!(
             contents.trim(),
             std::process::id().to_string(),
