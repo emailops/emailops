@@ -145,6 +145,39 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
 
+      # TEMPORARY DIAGNOSTIC — remove once the load failure below is understood.
+      # The lib test binary dies with STATUS_ENTRYPOINT_NOTFOUND (0xc0000139)
+      # before running a single test, while the app binary built by the bundle
+      # job links and runs fine. That exit code means a DLL *was* found but did
+      # not export something the binary imports, so the question is which DLL
+      # resolves differently for the test exe than for the app exe.
+      - name: Set up MSVC dev tools (for dumpbin)
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Diagnose test-binary DLL imports
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $json = cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --no-run --message-format=json 2>$null
+          $exes = $json | ForEach-Object {
+            try { $o = $_ | ConvertFrom-Json } catch { return }
+            if ($o.reason -eq 'compiler-artifact' -and $o.executable) { $o.executable }
+          }
+          foreach ($exe in $exes) {
+            Write-Host "=== DEPENDENTS: $exe ==="
+            dumpbin /DEPENDENTS "$exe"
+          }
+          Write-Host "=== DLLs sitting next to the test binaries ==="
+          Get-ChildItem -Recurse -Filter *.dll src-tauri/target/debug |
+            Select-Object -First 60 FullName, Length, LastWriteTime | Format-Table -AutoSize
+          Write-Host "=== Attempt to launch the lib test exe ==="
+          foreach ($exe in $exes) {
+            $p = Start-Process -FilePath $exe -ArgumentList '--list' -NoNewWindow -Wait -PassThru `
+                   -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+            Write-Host "$exe -> exit 0x$('{0:X}' -f $p.ExitCode)"
+            Get-Content err.txt -ErrorAction SilentlyContinue | Select-Object -First 20
+          }
+
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
 
