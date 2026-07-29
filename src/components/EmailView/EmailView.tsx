@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource } from '@/lib/api';
 import * as api from '@/lib/api';
+import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { useEmailStore } from '@/stores/emailStore';
@@ -411,7 +412,7 @@ export function EmailView({
                   ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
                   : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
               }`}
-              title={t('inbox:emailView.searchInThread')}
+              title={t('inbox:emailView.searchInThread', { shortcut: formatShortcut(api.currentPlatform(), 'F') })}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path

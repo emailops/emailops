@@ -37,8 +37,19 @@ LINK="$DEST_DIR/emailops-cli"
 ln -sf "$ABS_BIN" "$LINK"
 echo "Symlinked $LINK -> $ABS_BIN"
 
+# Point the user at the rc file their own login shell actually reads, rather
+# than assuming ~/.zshrc (the macOS default but not Linux's).
+shell_rc() {
+  case "$(basename "${SHELL:-/bin/sh}")" in
+    zsh)  echo "~/.zshrc" ;;
+    bash) [ "$(uname -s)" = "Darwin" ] && echo "~/.bash_profile" || echo "~/.bashrc" ;;
+    fish) echo "~/.config/fish/config.fish" ;;
+    *)    echo "~/.profile" ;;
+  esac
+}
+
 case ":$PATH:" in
   *":$DEST_DIR:"*) echo "Run: emailops-cli --version" ;;
   *) echo "NOTE: $DEST_DIR is not on your PATH. Add it, e.g.:"
-     echo "  echo 'export PATH=\"$DEST_DIR:\$PATH\"' >> ~/.zshrc" ;;
+     echo "  echo 'export PATH=\"$DEST_DIR:\$PATH\"' >> $(shell_rc)" ;;
 esac

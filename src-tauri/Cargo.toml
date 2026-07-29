@@ -79,8 +79,20 @@ lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "buil
 mailparse = "0.16"
 ammonia = "4"
 futures = "0.3"
-libc = "0.2"
 sys-locale = "0.3"
+# ── Cross-platform system access ──────────────────────────────────────────────
+# These three replace hand-written `libc` probes that only ever compiled (or
+# only ever returned a real answer) on macOS/unix. `libc` itself is gone from
+# the dependency list as a result — nothing in the crate needs it any more.
+#
+# Advisory file locking for the single-instance lock: `flock(2)` on Unix,
+# `LockFileEx` on Windows.
+fd-lock = "4"
+# Physical RAM probe. Default features pull in disk/network/component/user
+# collectors we never touch, so only `system` is enabled.
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+# Free-space probe (`statvfs` on Unix, `GetDiskFreeSpaceExW` on Windows).
+fs4 = { version = "1.1", default-features = false, features = ["sync"] }
 # Eval harness deps (used by examples/chat_eval.rs)
 serde_yaml = "0.9"
 tera = "2"
@@ -134,10 +146,23 @@ tracing = [
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
 ]
-# GPU backend sub-features (pick one per platform):
-metal = ["llama-cpp-2/metal"]    # Apple Silicon — enabled automatically in release
-cuda = ["llama-cpp-2/cuda"]      # NVIDIA (Linux/Windows, future)
-vulkan = ["llama-cpp-2/vulkan"]  # AMD/Intel (Linux/Windows, future)
+# GPU backend sub-features — at most one per build.
+#
+# None of these is enabled by default. `llamacpp` on its own produces a CPU
+# build that runs everywhere, which is the right default for a downloadable
+# binary: a CUDA-linked build refuses to start without the matching driver.
+# `runtime.rs` requests `n_gpu_layers = u32::MAX` unconditionally and llama.cpp
+# falls back to CPU when no backend was compiled in, so no code changes with
+# these flags — only the linked backend.
+#
+#   macOS   : metal is selected by llama-cpp-2's own target detection; the flag
+#             is here for completeness and need not be passed.
+#   Linux   : make build-linux CARGO_FEATURES=cuda   (NVIDIA, needs the CUDA toolkit)
+#             make build-linux CARGO_FEATURES=vulkan (AMD/Intel, needs the Vulkan SDK)
+#   Windows : make build-windows CARGO_FEATURES=cuda|vulkan, same prerequisites
+metal = ["llama-cpp-2/metal"]
+cuda = ["llama-cpp-2/cuda"]
+vulkan = ["llama-cpp-2/vulkan"]
 
 [dev-dependencies]
 tempfile = "3"

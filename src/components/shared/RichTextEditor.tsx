@@ -25,6 +25,8 @@ import { type Editor, EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { currentPlatform } from '@/lib/api';
+import { formatShortcut } from '@/lib/platform';
 
 export interface RichTextEditorProps {
   /** HTML content. The editor is updated when this changes externally. */
@@ -183,6 +185,11 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
     setLinkPopoverOpen(false);
   };
 
+  // Tooltip modifier: ⌘ on macOS, Ctrl elsewhere. (The surrounding tooltip text
+  // is still hardcoded English, as it is for every other button in this
+  // toolbar — that predates this change and is tracked separately.)
+  const platform = currentPlatform();
+
   const btn = (label: string, title: string, active: boolean, onClick: () => void, enabled = true) => (
     <button
       type="button"
@@ -201,9 +208,15 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
 
   return (
     <div className="relative flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 bg-gray-50 rounded-t-lg">
-      {btn('B', 'Bold (⌘B)', editor.isActive('bold'), () => editor.chain().focus().toggleBold().run())}
-      {btn('I', 'Italic (⌘I)', editor.isActive('italic'), () => editor.chain().focus().toggleItalic().run())}
-      {btn('U', 'Underline (⌘U)', editor.isActive('underline'), () => editor.chain().focus().toggleUnderline().run())}
+      {btn('B', `Bold (${formatShortcut(platform, 'B')})`, editor.isActive('bold'), () =>
+        editor.chain().focus().toggleBold().run(),
+      )}
+      {btn('I', `Italic (${formatShortcut(platform, 'I')})`, editor.isActive('italic'), () =>
+        editor.chain().focus().toggleItalic().run(),
+      )}
+      {btn('U', `Underline (${formatShortcut(platform, 'U')})`, editor.isActive('underline'), () =>
+        editor.chain().focus().toggleUnderline().run(),
+      )}
       {btn('S', 'Strikethrough', editor.isActive('strike'), () => editor.chain().focus().toggleStrike().run())}
       <span className="w-px h-4 bg-gray-300 mx-1" />
       {btn('• List', 'Bullet list', editor.isActive('bulletList'), () =>

@@ -1,11 +1,12 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Folder, MailboxView } from '@/lib/api';
+import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
 import { folderLabel } from '@/lib/folderDisplay';
+import { formatShortcut } from '@/lib/platform';
 import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -317,7 +318,11 @@ export function Sidebar({
             />
           </svg>
           <span>{t('sidebar:search')}</span>
-          <kbd className="ml-auto text-xs bg-gray-700 px-1.5 py-0.5 rounded">{t('sidebar:searchShortcut')}</kbd>
+          {/* Rendered rather than translated: the shortcut is the same in every
+              language, but differs per platform (⌘K on macOS, Ctrl+K elsewhere). */}
+          <kbd className="ml-auto text-xs bg-gray-700 px-1.5 py-0.5 rounded">
+            {formatShortcut(currentPlatform(), 'K')}
+          </kbd>
         </button>
 
         {/* Give Feedback */}

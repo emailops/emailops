@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
+import { credentialStoreKey } from '@/lib/platform';
 import { useLogStore } from '@/stores/logStore';
 import type { CatalogModel, ModelDownloadProgress } from '@/types';
 
@@ -358,7 +359,9 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
               className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
             />
             <p className="text-[11px] text-gray-500 mt-1">
-              {t('auth:onboarding.aiBackend.apiKeyHelpPart1')}{' '}
+              {t('auth:onboarding.aiBackend.apiKeyHelpPart1', {
+                store: t(credentialStoreKey(api.currentPlatform())),
+              })}{' '}
               <span className="text-gray-400">{t('auth:onboarding.aiBackend.apiKeyHelpUrl')}</span>
               {t('auth:onboarding.aiBackend.apiKeyHelpDot')}
             </p>

@@ -6,9 +6,11 @@
 # Both inputs are sourced from environment — nothing sensitive ever lands in
 # a git-tracked file:
 #
-#   EMAILOPS_DATA_DIR           Path to the prod app data dir. Default macOS
-#                               location is
-#                               ~/Library/Application Support/com.emailops.app
+#   EMAILOPS_DATA_DIR           Path to the prod app data dir. Defaults per
+#                               platform:
+#                                 macOS   ~/Library/Application Support/com.emailops.app
+#                                 Linux   ~/.local/share/com.emailops.app
+#                                 Windows %APPDATA%/com.emailops.app
 #                               You already use this var for `make dev`, so
 #                               setting it in .env.local does double duty.
 #

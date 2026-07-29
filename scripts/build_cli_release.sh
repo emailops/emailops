@@ -15,7 +15,13 @@
 # .dmg verifies offline, which matters for an offline-first tool. The .dmg is
 # the distributable; the bare binary is left next to it for local use.
 
+#
+# macOS-only by nature: lipo, codesign, hdiutil and notarytool are Apple
+# tooling with no cross-platform equivalent.
 set -euo pipefail
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_data_dir.sh"
+require_macos
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$ROOT/src-tauri/Cargo.toml"

@@ -97,7 +97,7 @@
     "frameTitle": "Contenu du courriel",
     "openLinkTitle": "Ouvrir le lien ?",
     "openInBrowser": "Ouvrir dans le navigateur",
-    "searchInThread": "Rechercher dans la conversation (⌘F)",
+    "searchInThread": "Rechercher dans la conversation ({{shortcut}})",
     "searchInThreadPlaceholder": "Rechercher dans cette conversation…",
     "searchMatchCount": "{{current}} sur {{total}}",
     "searchNoMatches": "Aucune correspondance",

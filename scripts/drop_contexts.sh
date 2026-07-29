@@ -8,14 +8,18 @@
 # Usage:
 #   bash scripts/drop_contexts.sh [DB_PATH]
 #
-# DB_PATH defaults to the macOS production location:
-#   ~/Library/Application Support/com.emailops.app/emailops.db
+# DB_PATH defaults to the production location for the current platform:
+#   macOS   ~/Library/Application Support/com.emailops.app/emailops.db
+#   Linux   ~/.local/share/com.emailops.app/emailops.db
+#   Windows %APPDATA%/com.emailops.app/emailops.db
 #
 # The script creates a timestamped backup before making any changes.
 
 set -euo pipefail
 
-DB="${1:-$HOME/Library/Application Support/com.emailops.app/emailops.db}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_data_dir.sh"
+
+DB="${1:-$(emailops_data_dir)/emailops.db}"
 
 if [ ! -f "$DB" ]; then
   echo "Error: database not found at: $DB"

@@ -244,7 +244,7 @@ pub async fn start_model_download(
     // Check free disk space.
     let app_data_dir = state.app_data_dir.clone();
     let required = entry.size_bytes + entry.size_bytes / 10; // +10% buffer
-    if let Ok(avail) = available_disk_bytes(&app_data_dir) {
+    if let Some(avail) = crate::util::system::available_disk_bytes(&app_data_dir) {
         if avail < required {
             return Err(AppError::AiError(format!(
                 "Not enough disk space: need {:.1} GB, available {:.1} GB",
@@ -255,7 +255,7 @@ pub async fn start_model_download(
     }
 
     // Check RAM ceiling.
-    let ram_gb = system_ram_gb();
+    let ram_gb = crate::util::system::total_ram_gb();
     if ram_gb > 0 && ram_gb < entry.min_ram_gb as u64 {
         return Err(AppError::AiError(format!(
             "This model requires {} GB RAM but your system has {} GB",
@@ -324,7 +324,7 @@ pub async fn link_local_model(
     // Check RAM ceiling — a linked model still has to run. No disk-space
     // check: linking creates a symlink, not a copy, so it doesn't consume
     // meaningful additional disk space.
-    let ram_gb = system_ram_gb();
+    let ram_gb = crate::util::system::total_ram_gb();
     if ram_gb > 0 && ram_gb < entry.min_ram_gb as u64 {
         return Err(AppError::AiError(format!(
             "This model requires {} GB RAM but your system has {} GB",
@@ -387,43 +387,8 @@ pub async fn cancel_model_download(_state: State<'_, AppState>, model_id: String
 }
 
 // ── System helpers ────────────────────────────────────────────────────────────
-
-/// Returns available disk bytes at the given path, or Err if unsupported.
-fn available_disk_bytes(path: &std::path::Path) -> std::result::Result<u64, ()> {
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let cpath = CString::new(path.as_os_str().as_bytes()).map_err(|_| ())?;
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        if unsafe { libc::statvfs(cpath.as_ptr(), &mut stat) } == 0 {
-            return Ok(stat.f_bavail as u64 * stat.f_bsize as u64);
-        }
-        Err(())
-    }
-    #[cfg(not(unix))]
-    Err(())
-}
-
-/// Returns total system RAM in GiB, or 0 if it can't be determined.
-fn system_ram_gb() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        let mut size: u64 = 0;
-        let mut len = std::mem::size_of::<u64>();
-        let name = c"hw.memsize";
-        let ret = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                &mut size as *mut u64 as *mut libc::c_void,
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if ret == 0 {
-            return size / (1024 * 1024 * 1024);
-        }
-    }
-    0
-}
+//
+// Both probes used to live here as macOS/unix-only `libc` calls: RAM returned 0
+// on anything but macOS and disk space returned `Err` on anything but unix,
+// which silently disabled the pre-download guards on Windows. They now delegate
+// to the single portable implementation in `util::system`.

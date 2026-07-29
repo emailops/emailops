@@ -1,27 +1,82 @@
 //! Host capability probes used by the onboarding wizard.
 //!
 //! The first-run flow needs to know whether the user's machine can run AI
-//! locally so we can pre-select "Use AI" on Apple Silicon and "Plain email
-//! client" everywhere else. Detection lives in Rust because Tauri's webview
-//! does not expose CPU architecture reliably.
+//! locally so it can pre-select "Use AI" or "Plain email client". Detection
+//! lives in Rust because Tauri's webview does not expose CPU architecture or
+//! physical memory reliably.
+//!
+//! This used to key entirely off `apple_silicon`, which meant every Linux and
+//! Windows machine — including a 64 GB workstation with a discrete GPU — was
+//! defaulted to the no-AI client. Capability is now decided by whether the
+//! machine has enough RAM for the smallest chat model in the catalog, which
+//! applies equally to all three platforms.
 
 use tauri::State;
 
+use crate::ai::model_catalog::{ModelKind, CATALOG};
 use crate::models::error::AppError;
 use crate::services::updates::UpdateAvailableEvent;
 use crate::AppState;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiCapability {
     /// True when running on macOS with an Apple Silicon CPU (aarch64).
-    /// This is the only configuration where local llama.cpp / Ollama gets
-    /// a meaningful Metal acceleration boost out of the box.
+    ///
+    /// Retained because it still drives Metal-specific copy, but it is no
+    /// longer the signal for "can this machine do local AI" — use
+    /// [`AiCapability::local_ai_capable`] for that.
     pub apple_silicon: bool,
+    /// True when the machine has enough RAM to run the smallest local chat
+    /// model in the catalog. This is what onboarding should branch on.
+    pub local_ai_capable: bool,
+    /// Physical RAM in whole GiB, or 0 when the probe failed.
+    pub total_ram_gb: u64,
+    /// RAM the smallest catalog chat model needs, so the UI can explain *why*
+    /// local AI is unavailable instead of just hiding the option.
+    pub min_ram_gb_for_local_ai: u64,
     /// e.g. "macos", "linux", "windows".
     pub os: String,
     /// e.g. "aarch64", "x86_64".
     pub arch: String,
+}
+
+/// RAM required by the least demanding chat model in the catalog.
+///
+/// Derived rather than hardcoded so adding a smaller model automatically
+/// lowers the bar, and retiring the smallest one automatically raises it.
+fn min_chat_model_ram_gb() -> u64 {
+    CATALOG
+        .iter()
+        .filter(|m| matches!(m.kind, ModelKind::Chat))
+        .map(|m| m.min_ram_gb as u64)
+        .min()
+        // A catalog with no chat models is not a real configuration, but
+        // falling back to the historical 8 GB floor beats reporting 0 (which
+        // would claim every machine is capable).
+        .unwrap_or(8)
+}
+
+/// Pure decision: can this machine plausibly run a local chat model?
+///
+/// `total_ram_gb` is floor-rounded, and firmware plus integrated-GPU
+/// reservations routinely shave a few hundred MB off nominal RAM — a nominal
+/// 8 GB laptop commonly reports 7. One GiB of slack keeps those machines on the
+/// capable side of a threshold they nominally meet.
+pub fn ai_capability_from(os: &str, arch: &str, total_ram_gb: u64, min_chat_ram_gb: u64) -> AiCapability {
+    // A 32-bit process cannot map multi-gigabyte weights however much RAM the
+    // box reports.
+    let address_space_ok = matches!(arch, "aarch64" | "x86_64" | "riscv64" | "loongarch64");
+    let enough_ram = total_ram_gb + 1 >= min_chat_ram_gb;
+
+    AiCapability {
+        apple_silicon: os == "macos" && arch == "aarch64",
+        local_ai_capable: address_space_ok && enough_ram,
+        total_ram_gb,
+        min_ram_gb_for_local_ai: min_chat_ram_gb,
+        os: os.to_string(),
+        arch: arch.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -74,14 +129,12 @@ pub async fn get_available_update(state: State<'_, AppState>) -> Result<Option<U
 
 #[tauri::command]
 pub async fn detect_ai_capability() -> Result<AiCapability, AppError> {
-    let os = std::env::consts::OS.to_string();
-    let arch = std::env::consts::ARCH.to_string();
-    let apple_silicon = os == "macos" && arch == "aarch64";
-    Ok(AiCapability {
-        apple_silicon,
-        os,
-        arch,
-    })
+    Ok(ai_capability_from(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        crate::util::system::total_ram_gb(),
+        min_chat_model_ram_gb(),
+    ))
 }
 
 #[cfg(test)]
@@ -129,6 +182,92 @@ mod tests {
         assert!(info.is_release);
     }
 
+    // ── ai_capability_from ────────────────────────────────────────────────────
+
+    #[test]
+    fn capability_is_decided_by_ram_on_every_platform() {
+        // The regression this whole change exists for: a well-specced Linux or
+        // Windows box used to be reported incapable purely because it was not a
+        // Mac. (os, arch, ram_gb, expected_capable, label)
+        let cases: &[(&str, &str, u64, bool, &str)] = &[
+            ("macos", "aarch64", 16, true, "Apple Silicon with headroom"),
+            ("macos", "x86_64", 16, true, "Intel Mac with headroom"),
+            ("linux", "x86_64", 64, true, "Linux workstation"),
+            ("windows", "x86_64", 32, true, "Windows desktop"),
+            ("linux", "aarch64", 16, true, "ARM Linux"),
+            ("windows", "aarch64", 16, true, "ARM Windows"),
+            ("linux", "x86_64", 4, false, "too little RAM to run anything"),
+            (
+                "macos",
+                "aarch64",
+                4,
+                false,
+                "Apple Silicon is not exempt from the RAM floor",
+            ),
+        ];
+        for (os, arch, ram, want, label) in cases {
+            let cap = ai_capability_from(os, arch, *ram, 8);
+            assert_eq!(cap.local_ai_capable, *want, "{label}");
+        }
+    }
+
+    #[test]
+    fn thirty_two_bit_targets_are_never_capable() {
+        // Address space, not RAM, is the binding constraint here.
+        for arch in ["x86", "arm", "mips"] {
+            let cap = ai_capability_from("linux", arch, 64, 8);
+            assert!(!cap.local_ai_capable, "{arch} cannot map multi-GB weights");
+        }
+    }
+
+    #[test]
+    fn nominal_ram_just_under_the_threshold_still_counts() {
+        // A nominal 8 GB machine reports 7 GiB after firmware/iGPU reservation.
+        let cap = ai_capability_from("windows", "x86_64", 7, 8);
+        assert!(cap.local_ai_capable, "1 GiB of slack must absorb the reservation");
+
+        // But the slack is exactly one GiB — 6 is genuinely too little.
+        let cap = ai_capability_from("windows", "x86_64", 6, 8);
+        assert!(!cap.local_ai_capable);
+    }
+
+    #[test]
+    fn a_failed_ram_probe_reports_incapable_rather_than_capable() {
+        // `total_ram_gb()` returns 0 when the probe fails; defaulting to
+        // "capable" would offer a download that cannot possibly run.
+        let cap = ai_capability_from("linux", "x86_64", 0, 8);
+        assert!(!cap.local_ai_capable);
+        assert_eq!(cap.total_ram_gb, 0);
+    }
+
+    #[test]
+    fn apple_silicon_still_reported_for_metal_specific_copy() {
+        assert!(ai_capability_from("macos", "aarch64", 16, 8).apple_silicon);
+        assert!(!ai_capability_from("macos", "x86_64", 16, 8).apple_silicon);
+        assert!(!ai_capability_from("linux", "aarch64", 16, 8).apple_silicon);
+    }
+
+    #[test]
+    fn the_threshold_is_surfaced_so_the_ui_can_explain_itself() {
+        let cap = ai_capability_from("linux", "x86_64", 4, 8);
+        assert_eq!(cap.min_ram_gb_for_local_ai, 8);
+        assert_eq!(cap.total_ram_gb, 4);
+    }
+
+    #[test]
+    fn threshold_tracks_the_smallest_chat_model_in_the_catalog() {
+        let expected = CATALOG
+            .iter()
+            .filter(|m| matches!(m.kind, ModelKind::Chat))
+            .map(|m| m.min_ram_gb as u64)
+            .min()
+            .expect("catalog has chat models");
+        assert_eq!(min_chat_model_ram_gb(), expected);
+        // Embedding models are far smaller; they must not drag the floor down,
+        // since being able to embed is not being able to chat.
+        assert!(min_chat_model_ram_gb() > 1);
+    }
+
     #[tokio::test]
     async fn capability_reports_current_target() {
         let cap = detect_ai_capability().await.expect("detect ok");
@@ -138,5 +277,6 @@ mod tests {
         assert_eq!(cap.apple_silicon, expected);
         assert_eq!(cap.os, std::env::consts::OS);
         assert_eq!(cap.arch, std::env::consts::ARCH);
+        assert_eq!(cap.min_ram_gb_for_local_ai, min_chat_model_ram_gb());
     }
 }

@@ -12,7 +12,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError};
 use tauri::webview::PageLoadEvent;
@@ -112,13 +112,14 @@ impl AppState {
     /// * All hash-maps start empty.
     #[cfg(test)]
     pub fn for_testing(db: Arc<Database>) -> Self {
-        use std::path::PathBuf;
         let ai_queue = services::task_queue::TaskQueue::new(1, "ai");
         let ai_background = services::task_queue::TaskQueue::new(1, "ai_bg");
         let db_queue = services::task_queue::TaskQueue::new(1, "db");
         Self {
             db,
-            app_data_dir: PathBuf::from("/tmp/emailops-test"),
+            // `std::env::temp_dir()` rather than a literal "/tmp/..." — the
+            // latter is not a valid path on Windows.
+            app_data_dir: std::env::temp_dir().join("emailops-test"),
             ai_queue,
             ai_background,
             db_queue,
@@ -249,15 +250,24 @@ pub fn run() {
             // Enforce single-instance: if another emailops process already holds the
             // lock file, log a warning and exit immediately so we don't accumulate zombies.
             let t = std::time::Instant::now();
-            match acquire_instance_lock(&app_data_dir) {
+            match util::instance_lock::acquire(&app_data_dir) {
                 Ok(lock) => {
-                    // Keep the lock file open for the lifetime of the app.
-                    // The OS releases flock() automatically on process exit / crash.
+                    // Keep the lock held for the lifetime of the app. Every
+                    // supported OS releases it automatically on process exit,
+                    // including after a crash.
                     app.manage(lock);
                 }
-                Err(msg) => {
-                    eprintln!("[startup] {msg}");
+                // Expected and benign: the user launched a second copy.
+                Err(util::instance_lock::LockError::AlreadyRunning) => {
+                    eprintln!("[startup] Another instance of EmailOps is already running. Exiting.");
                     std::process::exit(0);
+                }
+                // The data directory is unusable (read-only, full, permissions).
+                // Previously this also exited 0 and printed nothing the user
+                // would ever see, which made a broken install look like a
+                // normal second launch.
+                Err(util::instance_lock::LockError::Unavailable(detail)) => {
+                    fatal_startup_error("lock its data directory", &detail);
                 }
             }
             eprintln!(
@@ -720,31 +730,22 @@ fn format_startup_error(stage: &str, detail: &str) -> String {
     )
 }
 
-/// Show a blocking native error dialog. Best-effort: on macOS we shell out to
-/// `osascript` (which works even though our own window has not been created
-/// yet); on other platforms we rely on the stderr log written by the caller.
-#[cfg(target_os = "macos")]
-fn show_startup_error_dialog(message: &str) {
-    // Escape for an AppleScript double-quoted string literal.
-    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("display alert \"EmailOps\" message \"{escaped}\" as critical");
-    let _ = std::process::Command::new("osascript").arg("-e").arg(script).status();
-}
-
-#[cfg(not(target_os = "macos"))]
-fn show_startup_error_dialog(_message: &str) {}
-
 /// Abort startup gracefully: log the reason, show the user a readable dialog,
 /// then exit with a non-zero status. Unlike a panic, `std::process::exit` does
 /// not trip the `panic_cannot_unwind` abort path when called from inside the
 /// macOS launch callback.
+///
+/// The data directory is unknown at the earliest call sites (resolving it is
+/// itself one of the steps that can fail), so the crash report falls back to
+/// the system temp directory — see `util::startup_dialog`.
 fn fatal_startup_error(stage: &str, detail: &str) -> ! {
     let message = format_startup_error(stage, detail);
     eprintln!("[startup][fatal] {message}");
     // The frontend window is never shown on this path, so the logger emission
-    // is mostly for parity; the native dialog is what the user actually sees.
+    // is mostly for parity; the dialog and crash report are what the user
+    // actually sees.
     services::logger::log("error", "system", message.clone());
-    show_startup_error_dialog(&message);
+    util::startup_dialog::show(None, &message);
     std::process::exit(1);
 }
 
@@ -801,42 +802,6 @@ mod env_loading_tests {
         assert!(!should_load_dotenv_with(false, Some("false")));
         assert!(!should_load_dotenv_with(false, Some("")));
     }
-}
-
-// ── Single-instance lock ──────────────────────────────────────────────────────
-
-/// Holds an open file with an exclusive flock() so that a second launch can
-/// detect an already-running instance and exit immediately.
-/// The OS releases the lock automatically on process exit — even on crash.
-struct InstanceLock {
-    _file: std::fs::File,
-}
-
-fn acquire_instance_lock(app_data_dir: &Path) -> std::result::Result<InstanceLock, String> {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    use std::os::unix::io::AsRawFd;
-
-    std::fs::create_dir_all(app_data_dir).map_err(|e| format!("Cannot create app data dir: {e}"))?;
-
-    let lock_path = app_data_dir.join("emailops.lock");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&lock_path)
-        .map_err(|e| format!("Cannot open lock file: {e}"))?;
-
-    // Non-blocking exclusive lock — fails immediately if another process holds it.
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if ret != 0 {
-        return Err("Another instance of EmailOps is already running. Exiting.".into());
-    }
-
-    // Write our PID so it's visible in `cat emailops.lock` for debugging.
-    let _ = file.write_all(std::process::id().to_string().as_bytes());
-
-    Ok(InstanceLock { _file: file })
 }
 
 #[cfg(test)]

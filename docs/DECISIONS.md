@@ -323,3 +323,36 @@ actually decide phishing); training the class prior from the provider's spam fol
 folder is not a random sample of the inbox, so the empirical prior is wrong — it is fixed
 by configuration instead); hiding junk from the inbox by default (deprioritize-and-
 collapse keeps every message one click away and keeps the failure mode recoverable).
+
+## 2026-07-29 — Linux and Windows are supported targets; portable crates over per-OS FFI
+
+**Decision:** EmailOps builds and ships on Linux (`.deb`, `.AppImage`) and Windows
+(`.msi`, NSIS `.exe`) alongside macOS. Platform-specific behaviour is obtained from
+portable crates (`fd-lock`, `sysinfo`, `fs4`) rather than hand-written `#[cfg]` FFI
+arms, and per-platform *decisions* are extracted into pure functions that take the OS
+as an argument. Per-platform bundling lives in thin `tauri.<os>.conf.json` overlays
+merged over the base config, exactly as `tauri.intel.conf.json` already did; the base
+config keeps macOS-only bundle targets so the signed/notarized mac path is untouched.
+**Context:** The codebase was macOS-first but only one thing actually blocked Windows
+compilation (`std::os::unix::io::AsRawFd` + `libc::flock` in the single-instance lock).
+The larger problem was silent degradation: RAM and disk probes returned "unknown" off
+macOS, fatal startup errors showed no dialog at all outside macOS, and onboarding keyed
+local-AI capability off `apple_silicon`, so every Linux and Windows machine was
+defaulted to the no-AI client regardless of hardware. Development happens on macOS with
+no cross-toolchain available, so any `#[cfg(windows)]` block a developer writes is code
+they cannot compile — which is the argument for portable crates and for pure,
+OS-as-parameter decision functions: both are compiled and table-tested on every host.
+CI is consequently the only real verification gate, and a `windows-latest` job is now
+the thing standing between a `std::os::unix` import and a broken release.
+**Rejected:** Hand-rolled `windows-sys` FFI for the lock, RAM and disk probes (smaller
+dependency footprint, but unverifiable on the development machine — precisely the
+failure mode being fixed); enabling `cuda`/`vulkan` in the shipped binaries (a
+GPU-linked build refuses to start without the matching driver, so the downloadable
+artifact stays CPU-only and GPU backends remain opt-in build flags); shipping Linux and
+Windows without embedded llama.cpp as the Intel-Mac build does (that exclusion exists
+because Metal is Apple-Silicon-only, which says nothing about a CUDA workstation);
+folding the Linux/Windows release jobs into the macOS matrix leg (the mac path carries
+certificate import, notarization and keychain teardown with no analogue elsewhere, and
+merging them would risk a working signed pipeline for no gain); code-signing the Windows
+installers (needs an OV/EV certificate the project does not hold — unsigned artifacts
+ship with a SmartScreen warning until one is acquired).

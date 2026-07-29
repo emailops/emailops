@@ -155,33 +155,84 @@ pub fn validate_reveal_path(downloads_dir: &Path, path: &Path) -> Result<PathBuf
     Ok(canonical)
 }
 
-/// Reveal an already-validated path in the OS file manager. On macOS a file
-/// is selected in Finder (`open -R`); a directory is opened directly.
+/// How to reveal a path in the host file manager.
+///
+/// Split out as a pure decision so each platform's argument shape can be
+/// table-tested from any platform — the Windows and Linux arms are never
+/// executed during macOS development.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevealAction {
+    /// Launch a file manager that highlights the file inside its folder.
+    Select { program: String, args: Vec<String> },
+    /// No file-selecting helper is reliably available; open the folder instead.
+    OpenDirectory(std::path::PathBuf),
+}
+
+/// Decide how to reveal `path` on `os`.
+///
+/// `is_dir` is passed in rather than probed so the decision stays pure.
+pub fn plan_reveal(os: &str, path: &Path, is_dir: bool) -> RevealAction {
+    if is_dir {
+        return RevealAction::OpenDirectory(path.to_path_buf());
+    }
+
+    match os {
+        "macos" => RevealAction::Select {
+            program: "open".into(),
+            args: vec!["-R".into(), path.to_string_lossy().into_owned()],
+        },
+        // Explorer wants the path glued to the switch as a single argument:
+        // `explorer /select,C:\dir\file.txt`. It also exits non-zero on
+        // success, which is why the executor spawns rather than waits.
+        "windows" => RevealAction::Select {
+            program: "explorer".into(),
+            args: vec![format!("/select,{}", path.to_string_lossy())],
+        },
+        // No file manager is guaranteed across desktop environments, and the
+        // org.freedesktop.FileManager1 D-Bus interface is widely unimplemented,
+        // so opening the containing folder is the dependable behaviour.
+        _ => RevealAction::OpenDirectory(containing_dir(path)),
+    }
+}
+
+/// Directory holding `path`, falling back to `path` itself when it has none.
+///
+/// `Path::parent` yields `Some("")` — not `None` — for a bare filename, and an
+/// empty path is not something any file manager can open.
+fn containing_dir(path: &Path) -> std::path::PathBuf {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Reveal an already-validated path in the OS file manager.
+///
+/// A file is highlighted where the platform supports it (Finder on macOS,
+/// Explorer on Windows); otherwise the containing folder is opened. If the
+/// selecting helper cannot be launched, this degrades to opening the folder
+/// rather than failing — but the reason is logged, never swallowed.
 pub fn reveal_in_file_manager(path: &Path) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = std::process::Command::new("open");
-        if path.is_dir() {
-            cmd.arg(path);
-        } else {
-            cmd.arg("-R").arg(path);
-        }
-        cmd.spawn()
-            .map_err(|e| AppError::IoError(format!("Failed to reveal in Finder: {e}")))?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let target = if path.is_dir() {
-            path.to_path_buf()
-        } else {
-            path.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| path.to_path_buf())
-        };
-        open::that(target).map_err(|e| AppError::IoError(format!("Failed to open folder: {e}")))?;
-        Ok(())
-    }
+    let action = plan_reveal(std::env::consts::OS, path, path.is_dir());
+
+    let fallback_dir = match action {
+        RevealAction::Select { program, args } => match std::process::Command::new(&program).args(&args).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                crate::services::logger::log(
+                    "debug",
+                    "system",
+                    format!("Could not launch '{program}' to select the file ({e}); opening the folder instead"),
+                );
+                containing_dir(path)
+            }
+        },
+        RevealAction::OpenDirectory(dir) => dir,
+    };
+
+    open::that(&fallback_dir)
+        .map_err(|e| AppError::IoError(format!("Failed to open folder '{}': {e}", fallback_dir.display())))?;
+    Ok(())
 }
 
 /// Decode an inline attachment payload from any of the base64 flavors providers
@@ -829,6 +880,76 @@ pub async fn apply_rule_with_provider(
 mod tests {
     use super::*;
     use crate::models::AttachmentRule;
+
+    // ── plan_reveal ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn macos_selects_the_file_in_finder() {
+        let path = Path::new("/Users/x/Downloads/invoice.pdf");
+        assert_eq!(
+            plan_reveal("macos", path, false),
+            RevealAction::Select {
+                program: "open".into(),
+                args: vec!["-R".into(), "/Users/x/Downloads/invoice.pdf".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn windows_selects_the_file_with_the_glued_switch() {
+        // Explorer only understands `/select,<path>` as one argument; passing
+        // "/select," and the path separately silently opens the wrong thing.
+        let path = Path::new(r"C:\Users\x\Downloads\invoice.pdf");
+        let action = plan_reveal("windows", path, false);
+        match action {
+            RevealAction::Select { program, args } => {
+                assert_eq!(program, "explorer");
+                assert_eq!(args.len(), 1, "the switch and path must be one argument");
+                assert_eq!(args[0], r"/select,C:\Users\x\Downloads\invoice.pdf");
+            }
+            other => panic!("expected Select, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn linux_opens_the_containing_folder() {
+        let path = Path::new("/home/x/Downloads/invoice.pdf");
+        assert_eq!(
+            plan_reveal("linux", path, false),
+            RevealAction::OpenDirectory(Path::new("/home/x/Downloads").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn a_directory_is_opened_directly_on_every_platform() {
+        let dir = Path::new("/home/x/Downloads");
+        for os in ["macos", "windows", "linux", "freebsd"] {
+            assert_eq!(
+                plan_reveal(os, dir, true),
+                RevealAction::OpenDirectory(dir.to_path_buf()),
+                "{os} should open a directory rather than select it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_parentless_path_falls_back_to_itself() {
+        // Guards against handing an empty path to the file manager.
+        let path = Path::new("invoice.pdf");
+        assert_eq!(
+            plan_reveal("linux", path, false),
+            RevealAction::OpenDirectory(path.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn unknown_platforms_still_get_a_usable_action() {
+        let path = Path::new("/home/x/Downloads/invoice.pdf");
+        assert_eq!(
+            plan_reveal("freebsd", path, false),
+            RevealAction::OpenDirectory(Path::new("/home/x/Downloads").to_path_buf())
+        );
+    }
 
     fn make_rule(sender: Option<&str>, subject: Option<&str>) -> AttachmentRule {
         make_rule_with_filename(sender, subject, None)

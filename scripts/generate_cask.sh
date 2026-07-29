@@ -23,7 +23,12 @@
 # rejected/ignored by brew style, so it cannot be silenced).
 #
 # Publishing flow lives in homebrew/README.md.
+#
+# macOS-only by nature: Homebrew casks describe macOS .app installs.
 set -euo pipefail
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_data_dir.sh"
+require_macos
 
 REPO="emailops/emailops"
 TAG="${1:-}"

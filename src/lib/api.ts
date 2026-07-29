@@ -1028,16 +1028,38 @@ export async function getSystemLocale(): Promise<string> {
   return invoke('get_system_locale');
 }
 
-// Host capability probe — used by the onboarding wizard to recommend
-// "Use AI" on Apple Silicon Macs and "Plain email client" elsewhere.
+// Host capability probe — used by the onboarding wizard to recommend "Use AI"
+// or "Plain email client". Keyed on RAM rather than on being a Mac, so a
+// well-specced Linux or Windows machine is recommended AI too.
 export interface AiCapability {
+  /** True on Apple Silicon. Retained for Metal-specific copy only — branch on
+   *  `localAiCapable` to decide whether local AI is viable. */
   appleSilicon: boolean;
+  /** Enough RAM (and a 64-bit target) to run the smallest catalog chat model. */
+  localAiCapable: boolean;
+  /** Physical RAM in whole GiB; 0 when the probe failed. */
+  totalRamGb: number;
+  /** RAM the smallest catalog chat model needs, so the UI can say why. */
+  minRamGbForLocalAi: number;
   os: string;
   arch: string;
 }
 
 export async function detectAiCapability(): Promise<AiCapability> {
   return invoke('detect_ai_capability');
+}
+
+// Raw Tauri platform code (`macos` | `windows` | `linux` | …) for the host.
+//
+// Centralized here alongside the other OS-plugin reads. Falls back to an empty
+// string outside a Tauri runtime (unit tests, a plain browser), which callers
+// in src/lib/platform.ts treat as "not macOS" — the safe default.
+export function currentPlatform(): string {
+  try {
+    return osPlatform();
+  } catch {
+    return '';
+  }
 }
 
 // Build identity for the sidebar version label. `commit` is null when the

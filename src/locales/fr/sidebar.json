@@ -1,6 +1,5 @@
 {
   "appName": "EmailOps",
-  "searchShortcut": "⌘K",
   "syncingEmails": "Synchronisation des courriels...",
   "updateAvailable": "EmailOps {{version}} disponible — télécharger",
   "accountDisabledSuffix": "(désactivé)",

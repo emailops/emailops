@@ -1,4 +1,10 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows
+
+# ── Shell requirements ───────────────────────────────────────────────────────
+# Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
+# env prefixes, `$(...)` substitution, and call scripts/*.sh. On Windows, run
+# these targets from Git Bash or MSYS2 — cmd.exe and PowerShell cannot execute
+# them. Linux and macOS work out of the box.
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -399,6 +405,55 @@ dist-mac-intel:
 	mkdir -p release; \
 	cp "$$DMG" release/EmailOps-macos-intel.dmg; \
 	echo "Staged release/EmailOps-macos-intel.dmg (from $$(basename "$$DMG"))"
+
+# ── Linux release: .deb + .AppImage ──────────────────────────────────────────
+#
+#   make bootstrap-linux    # rust target + report missing system packages
+#   make build-linux        # unsigned deb + AppImage
+#   make verify-linux       # artifacts, architecture, unresolved .so check
+#   make dist-linux         # stage into release/ with stable names
+#
+# Embedded llama.cpp is ON (the default feature), so cmake and a C++ toolchain
+# are required — `bootstrap-linux` checks for both. For GPU builds:
+#   make build-linux CARGO_FEATURES=cuda     # NVIDIA
+#   make build-linux CARGO_FEATURES=vulkan   # AMD/Intel
+# Unsigned by convention; Linux packages are not code-signed.
+bootstrap-linux:
+	bash scripts/bootstrap_platform.sh linux
+
+build-linux:
+	bash scripts/build_platform.sh linux
+
+verify-linux:
+	bash scripts/verify_platform.sh linux
+
+dist-linux:
+	bash scripts/dist_platform.sh linux
+
+# ── Windows release: .msi + NSIS .exe ────────────────────────────────────────
+#
+#   make bootstrap-windows  # rust target + report missing MSVC/cmake
+#   make build-windows      # unsigned msi + nsis installer
+#   make verify-windows     # artifacts + architecture
+#   make dist-windows       # stage into release/ with stable names
+#
+# Run from Git Bash or MSYS2 (see "Shell requirements" at the top of this file).
+# GPU builds use the same CARGO_FEATURES=cuda|vulkan switch as Linux.
+#
+# NOT code-signed: the project holds no Windows signing certificate, so
+# installers trigger a SmartScreen warning on first run. Adding signing means
+# adding a cert + `signtool` step to build_platform.sh.
+bootstrap-windows:
+	bash scripts/bootstrap_platform.sh windows
+
+build-windows:
+	bash scripts/build_platform.sh windows
+
+verify-windows:
+	bash scripts/verify_platform.sh windows
+
+dist-windows:
+	bash scripts/dist_platform.sh windows
 
 # ── emailops-cli release binary (universal, signed + notarized) ──────────────
 # Build a standalone `emailops-cli` to distribute alongside the desktop app so

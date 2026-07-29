@@ -496,7 +496,12 @@ mod tests {
             "tag_name": "v0.7.0",
             "name": "EmailOps 0.7.0",
             "target_commitish": "main",
-            "assets": [{ "name": "EmailOps-macos.dmg", "size": 123 }],
+            "assets": [
+                { "name": "EmailOps-macos.dmg", "size": 123 },
+                { "name": "EmailOps-linux.AppImage", "size": 123 },
+                { "name": "EmailOps-linux.deb", "size": 123 },
+                { "name": "EmailOps-windows.msi", "size": 123 }
+            ],
             "body": "Release notes"
         }"#;
         let info: ReleaseInfo = serde_json::from_str(json).expect("must deserialize");

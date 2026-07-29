@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch bundled model artifacts that are packaged into the macOS app.
+# Fetch bundled model artifacts that are packaged into the app (all platforms).
 #
 # Defaults fetch the Nomic embedding GGUF used for first-run semantic search.
 # Environment overrides are intentionally supported so the script can be tested
@@ -16,8 +16,22 @@ MODEL_SHA256="${BUNDLED_MODEL_SHA256:-d4e388894e09cf3816e8b0896d81d265b55e7a9fff
 MODEL_NAME="$(basename "$MODEL_PATH")"
 PARTIAL_PATH="$MODEL_PATH.partial"
 
+# Portable SHA-256. `shasum` is a Perl script that ships with macOS and
+# Git-for-Windows but is absent from a stock Linux install, where `sha256sum`
+# (coreutils) is the one that is always there. This target is a prerequisite of
+# `make dev`, so hardcoding `shasum` made a fresh Linux checkout unable to run
+# the app at all.
 sha256_file() {
-  shasum -a 256 "$1" | awk '{print $1}'
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    echo "ERROR: no SHA-256 tool available (install coreutils, perl, or openssl)" >&2
+    return 1
+  fi
 }
 
 if [ -f "$MODEL_PATH" ]; then

@@ -98,3 +98,80 @@ jobs:
           files: |
             release/EmailOps-macos.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+  # Linux (.deb + .AppImage) and Windows (.msi + NSIS .exe). Deliberately a
+  # separate job from the macOS one rather than a matrix leg: the macOS path
+  # carries certificate import, notarization and keychain teardown that have no
+  # analogue here, and folding them together would put that working, signed
+  # pipeline at risk for no benefit.
+  #
+  # NOT code-signed. Linux packages conventionally are not; Windows installers
+  # would need an OV/EV certificate the project does not hold, so users see a
+  # SmartScreen warning on first run. Adding one means a `signtool` step in
+  # scripts/build_platform.sh plus the cert in repository secrets.
+  #
+  # Asset names match `scripts/dist_platform.sh`, which mirrors `dist-mac`'s
+  # convention so every platform has a permanent latest-download URL:
+  #   .../releases/latest/download/EmailOps-linux.AppImage
+  release-desktop:
+    name: Release (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-${{ matrix.platform }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake
+
+      - run: npm ci
+
+      # Full build, embedded llama.cpp included (CPU backend — a CUDA- or
+      # Vulkan-linked binary refuses to start without the matching driver, so
+      # the downloadable build must stay portable).
+      - name: Build
+        shell: bash
+        run: make build-${{ matrix.platform }}
+
+      - name: Verify
+        shell: bash
+        run: make verify-${{ matrix.platform }}
+
+      - name: Stage stable-named artifacts
+        shell: bash
+        run: make dist-${{ matrix.platform }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: release/*

@@ -1,21 +1,33 @@
 name: CI
 
+# Platform coverage
+# -----------------
+# The app ships on macOS, Linux and Windows, but development happens on macOS
+# and there is no cross-toolchain there — so nothing in a local `make check`
+# can compile the Linux or Windows code paths. CI is therefore the ONLY gate
+# that verifies them, and `test-windows` in particular is what catches the
+# `std::os::unix` / `libc::flock` class of bug that used to make the crate
+# uncompilable on Windows outright.
+#
 # Note on `--no-default-features`
 # --------------------------------
-# The Ubuntu Rust jobs pass `--no-default-features` to skip the embedded
-# `llama-cpp-2` build (CMake + a full C++ toolchain link, several minutes
-# of cold-cache CI time and a multi-GB target dir). This matches the
-# `*-fast` Makefile targets used during local iteration.
+# The fast Rust jobs pass `--no-default-features` to skip the embedded
+# `llama-cpp-2` build (CMake + a full C++ toolchain link, several minutes of
+# cold-cache CI time and a multi-GB target dir). This matches the `*-fast`
+# Makefile targets used during local iteration.
 #
-# The `build-macos` job compensates: it runs `cargo test` with default
-# features (llamacpp enabled) before producing the .app bundle.  Any code
-# gated behind `#[cfg(feature = "llamacpp")]` is therefore compiled and
-# tested on every PR — just on macOS rather than Linux.
+# `compile-llamacpp` compensates: it compiles WITH default features on both
+# Ubuntu and Windows, so code gated behind `#[cfg(feature = "llamacpp")]` and
+# the CMake/C++ toolchain are exercised. It is slow, so it runs on pushes to
+# main rather than on every PR.
 
 on:
   push:
     branches: [main]
   pull_request:
+  # Lets the slow `compile-llamacpp` sweep be run on demand from the Actions UI
+  # against any branch, without paying for it on every pull request.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -104,6 +116,155 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
 
+  # The highest-value job in this file. Everything else runs on a Unix host,
+  # where `std::os::unix` imports and unix-only crate APIs compile fine — this
+  # is the only place a Windows-breaking change is caught before a user hits it.
+  test-windows:
+    name: Lint & Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: windows-msvc
+
+      # tauri-build validates bundle.resources at cargo-check time; the real
+      # GGUF is gitignored and only needed when actually bundling.
+      - name: Placeholder bundled model
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/models
+          touch src-tauri/resources/models/nomic-embed-text-v1.5-q4_k_m.gguf
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+
+  # Compiles the embedded llama.cpp path (CMake + C++) on both Linux and
+  # Windows. Slow and cache-sensitive, so it is limited to pushes to main;
+  # a PR that only touches Rust is covered by the fast jobs above.
+  compile-llamacpp:
+    name: Compile with llamacpp (${{ matrix.os }})
+    # Skipped on pull requests only — a cold llama.cpp build is ~30-60 min per
+    # OS. Runs on pushes to main, and on demand via workflow_dispatch when you
+    # want to check the C++ path on a branch before merging.
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: llamacpp-${{ matrix.os }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake
+
+      # MSVC and CMake are preinstalled on windows-latest; this only asserts it.
+      - name: Verify toolchain (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --version
+
+      - name: Placeholder bundled model
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/models
+          touch src-tauri/resources/models/nomic-embed-text-v1.5-q4_k_m.gguf
+
+      # `cargo check` still runs llama-cpp-sys-2's build script, so the CMake /
+      # C++ compile is genuinely exercised; only the final Rust codegen and
+      # link are skipped. That is the expensive part we can afford to omit.
+      - name: Check with default features (llamacpp)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+
+  # Validates the per-platform bundle configuration (tauri.linux.conf.json /
+  # tauri.windows.conf.json) and the packaging step itself. Built WITHOUT
+  # llamacpp so it stays fast enough for every PR — `compile-llamacpp` covers
+  # the C++ side separately. Nothing here is code-signed.
+  bundle:
+    name: Bundle (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    needs: [lint-frontend, test]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: bundle-${{ matrix.platform }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - run: npm ci
+
+      # Invoke the same Makefile targets developers run locally, so CI and
+      # local builds cannot drift apart. They require a POSIX shell, which is
+      # why the Windows leg runs under bash (Git Bash ships on the runner).
+      - name: Build bundle
+        shell: bash
+        env:
+          NO_DEFAULT_FEATURES: "1"
+        run: make build-${{ matrix.platform }}
+
+      - name: Verify bundle
+        shell: bash
+        run: make verify-${{ matrix.platform }}
+
+      - name: Stage artifacts
+        shell: bash
+        run: make dist-${{ matrix.platform }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: emailops-${{ matrix.platform }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
   security:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -142,45 +303,18 @@ jobs:
         # output. Non-zero exit on any finding fails the job.
         run: gitleaks detect --source=. --redact --verbose --exit-code 1
 
-  # ── Build jobs temporarily disabled ─────────────────────────────────────────
-  # Both `build` (Ubuntu Vite bundle) and `build-macos` (full Tauri bundle +
-  # llamacpp tests + .app artifact) are commented out for now to save CI
-  # minutes — the project ships mac-only and a signed bundle is produced by
-  # the separate release workflow, so the bundle check on every PR is
-  # currently overkill. Lint + tests + security still run on every PR.
+  # ── macOS bundle job still disabled ─────────────────────────────────────────
+  # The Linux and Windows bundle legs now live in the `bundle` job above; the
+  # standalone Ubuntu Vite-only `build` job it replaced has been removed as
+  # redundant (`tauri build` runs `npm run build` as its beforeBuildCommand,
+  # tauri.conf.json:9).
   #
-  # To re-enable, uncomment the blocks below. `build-macos` is the one that
-  # matters for regression coverage — it exercises the C++/CMake / llamacpp
-  # path that `--no-default-features` on Linux skips. `build` (Ubuntu) is
-  # redundant once `build-macos` is back, because `tauri build` runs
-  # `npm run build` as `beforeBuildCommand` (tauri.conf.json:9).
+  # `build-macos` remains commented out to save CI minutes: the signed mac
+  # bundle is produced by the separate release workflow, and the llamacpp /
+  # CMake path it used to be the sole guardian of is now covered on Linux and
+  # Windows by `compile-llamacpp`. Re-enable it if macOS-specific bundling
+  # (icon pipeline, codesign placeholders, universal build) starts regressing.
   # ────────────────────────────────────────────────────────────────────────────
-  #
-  # build:
-  #   name: Build
-  #   runs-on: ubuntu-latest
-  #   needs: [test]
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #
-  #     - uses: actions/setup-node@v6
-  #       with:
-  #         node-version: 20
-  #         cache: npm
-  #
-  #     - uses: dtolnay/rust-toolchain@stable
-  #
-  #     - uses: Swatinem/rust-cache@v2
-  #       with:
-  #         workspaces: src-tauri
-  #
-  #     - name: Install system dependencies
-  #       run: |
-  #         sudo apt-get update
-  #         sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-  #
-  #     - run: npm ci
-  #     - run: npm run build
   #
   # # macOS bundle job — catches regressions in the Tauri bundle step that
   # # the Ubuntu build job cannot (icon pipeline, codesign placeholders,

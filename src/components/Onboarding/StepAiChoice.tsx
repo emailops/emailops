@@ -6,7 +6,10 @@ import { useAiStore } from '@/stores/aiStore';
 export function StepAiChoice({ onNext }: { onNext: () => void }) {
   const { t } = useTranslation(['auth']);
   const { setEnabled } = useAiStore();
-  const [appleSilicon, setAppleSilicon] = useState<boolean | null>(null);
+  // Capability is RAM-based and platform-neutral. Keying this off
+  // `appleSilicon`, as it used to, defaulted every Linux and Windows machine to
+  // the no-AI client no matter how much memory it had.
+  const [capability, setCapability] = useState<api.AiCapability | null>(null);
   const [choice, setChoice] = useState<'ai' | 'plain' | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -14,14 +17,21 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
     api
       .detectAiCapability()
       .then((cap) => {
-        setAppleSilicon(cap.appleSilicon);
-        setChoice(cap.appleSilicon ? 'ai' : 'plain');
+        setCapability(cap);
+        setChoice(cap.localAiCapable ? 'ai' : 'plain');
       })
       .catch(() => {
-        setAppleSilicon(false);
+        // Probe failed: recommend the option that always works.
+        setCapability(null);
         setChoice('plain');
       });
   }, []);
+
+  const capable = capability?.localAiCapable ?? null;
+  const ramCopy = {
+    ram: String(capability?.totalRamGb ?? 0),
+    minRam: String(capability?.minRamGbForLocalAi ?? 0),
+  };
 
   const handleContinue = async () => {
     if (!choice) return;
@@ -44,10 +54,10 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
           onSelect={() => setChoice('ai')}
           title={t('auth:onboarding.aiChoice.useAi')}
           subtitle={
-            appleSilicon === true
+            capable === true
               ? t('auth:onboarding.aiChoice.useAiRecommended')
-              : appleSilicon === false
-                ? t('auth:onboarding.aiChoice.useAiAvailable')
+              : capable === false
+                ? t('auth:onboarding.aiChoice.useAiAvailable', ramCopy)
                 : t('auth:onboarding.aiChoice.detecting')
           }
         >
@@ -57,7 +67,7 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
             <li>{t('auth:onboarding.aiChoice.useAiBullet3')}</li>
             <li>{t('auth:onboarding.aiChoice.useAiBullet4')}</li>
           </ul>
-          <p className="text-[11px] text-gray-500 mt-3">{t('auth:onboarding.aiChoice.useAiHardware')}</p>
+          <p className="text-[11px] text-gray-500 mt-3">{t('auth:onboarding.aiChoice.useAiHardware', ramCopy)}</p>
         </ChoiceCard>
 
         <ChoiceCard
@@ -65,9 +75,7 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
           onSelect={() => setChoice('plain')}
           title={t('auth:onboarding.aiChoice.plain')}
           subtitle={
-            appleSilicon === false
-              ? t('auth:onboarding.aiChoice.plainRecommended')
-              : t('auth:onboarding.aiChoice.plainNoAi')
+            capable === false ? t('auth:onboarding.aiChoice.plainRecommended') : t('auth:onboarding.aiChoice.plainNoAi')
           }
         >
           <ul className="text-xs text-gray-400 space-y-1.5 mt-2">

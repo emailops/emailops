@@ -97,7 +97,7 @@
     "frameTitle": "Contenido del correo",
     "openLinkTitle": "¿Abrir enlace?",
     "openInBrowser": "Abrir en el navegador",
-    "searchInThread": "Buscar en el hilo (⌘F)",
+    "searchInThread": "Buscar en el hilo ({{shortcut}})",
     "searchInThreadPlaceholder": "Buscar en este hilo…",
     "searchMatchCount": "{{current}} de {{total}}",
     "searchNoMatches": "Sin coincidencias",
