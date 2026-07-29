@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/models/nomic-embed-text-v1.5-q4_k_m.gguf": "models/embed/nomic-embed-text-v1.5-q4_k_m.gguf",
+      "resources/backends/*": "backends/"
+    }
+  }
+}

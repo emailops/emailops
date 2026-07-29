@@ -140,11 +140,62 @@ fn install_log_callback() {
     }
 }
 
+/// Directory holding the loadable ggml backend modules, set at startup from the
+/// Tauri resource directory. Only meaningful with the `dynamic-backends`
+/// feature; ignored otherwise.
+#[cfg(feature = "dynamic-backends")]
+static BACKENDS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Tell the runtime where the bundled backend modules live.
+///
+/// Must be called before the first inference. A second call is ignored — the
+/// backend registry is process-global and initialised once.
+#[cfg(feature = "dynamic-backends")]
+pub fn set_backends_dir(dir: PathBuf) {
+    let _ = BACKENDS_DIR.set(dir);
+}
+
+/// Load the GPU/CPU backend modules before the backend registry is built.
+///
+/// With `dynamic-backends`, ggml ships each backend (Vulkan, CUDA, and the
+/// per-ISA CPU variants) as a separate loadable module instead of linking one
+/// into the binary. That is what lets a single downloadable artifact use a GPU
+/// when the driver is present and fall back to CPU when it is not — a
+/// statically CUDA-linked binary refuses to start without the runtime.
+#[cfg(feature = "dynamic-backends")]
+fn load_dynamic_backends() {
+    let bundled = BACKENDS_DIR.get().map(PathBuf::as_path);
+    match crate::ai::gpu_plan::resolve_backends_dir(bundled, llama_cpp_2::llama_backend::BACKENDS_DIR, |p| p.is_dir()) {
+        Some(dir) => {
+            llama_cpp_2::llama_backend::load_backends_from_path(&dir);
+            crate::services::logger::log(
+                "debug",
+                "ai",
+                format!("llamacpp: loaded backends from {}", dir.display()),
+            );
+        }
+        None => {
+            // Not fatal: the CPU backend is still linked in, so this degrades
+            // to CPU inference rather than failing. Logged because it silently
+            // costs GPU acceleration.
+            crate::services::logger::log(
+                "debug",
+                "ai",
+                "llamacpp: no backend module directory found — GPU backends unavailable, using CPU",
+            );
+        }
+    }
+}
+
 pub(crate) fn backend() -> &'static LlamaBackend {
     LLAMA_BACKEND.get_or_init(|| {
         // Filter llama.cpp/ggml stderr *before* init so the Metal device-probe
         // chatter emitted inside `LlamaBackend::init()` is already suppressed.
         install_log_callback();
+        // Must precede `init()`: the registry is built there, so a module
+        // loaded afterwards would never be seen.
+        #[cfg(feature = "dynamic-backends")]
+        load_dynamic_backends();
         // `BackendAlreadyInitialized` is not an error in practice — it means
         // the crate's global was initialised by another path (tests, etc.).
         LlamaBackend::init().unwrap_or_else(|_| {
@@ -157,6 +208,52 @@ pub(crate) fn backend() -> &'static LlamaBackend {
             LlamaBackend::init().expect("LlamaBackend unexpectedly unavailable")
         })
     })
+}
+
+/// Ask ggml what devices exist, in this module's platform-neutral shape.
+///
+/// Requires the backend to be initialised first — the device list is empty
+/// until the backends have registered.
+fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
+    use crate::ai::gpu_plan::{classify_device, GpuDevice, RawDeviceType};
+    use llama_cpp_2::LlamaBackendDeviceType as Ty;
+
+    llama_cpp_2::list_llama_ggml_backend_devices()
+        .into_iter()
+        .map(|d| {
+            let raw = match d.device_type {
+                Ty::Cpu => RawDeviceType::Cpu,
+                Ty::Gpu => RawDeviceType::Gpu,
+                Ty::IntegratedGpu => RawDeviceType::IntegratedGpu,
+                Ty::Accelerator => RawDeviceType::Accelerator,
+                Ty::Unknown => RawDeviceType::Unknown,
+            };
+            GpuDevice {
+                kind: classify_device(&d.backend, raw),
+                name: d.name,
+                backend: d.backend,
+                memory_free: d.memory_free as u64,
+                memory_total: d.memory_total as u64,
+            }
+        })
+        .collect()
+}
+
+/// Model params with `n_gpu_layers` sized to the GPU that will actually hold
+/// the weights.
+///
+/// Previously this was a flat `u32::MAX` — correct on Apple Silicon's unified
+/// memory, but on a discrete card it asks a 6 GB GPU to hold a 20 GB model,
+/// which fails the load rather than degrading. `n_layers` is `None` because the
+/// block count is only readable once the model is open; the planner degrades to
+/// an all-or-nothing decision in that case, which still prevents the failure.
+fn model_params_for(path: &std::path::Path, label: &str) -> LlamaModelParams {
+    let model_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let plan = crate::ai::gpu_plan::plan_offload(&probe_devices(), model_bytes, None);
+
+    crate::services::logger::log("debug", "ai", format!("llamacpp: {label} offload — {}", plan.reason));
+
+    LlamaModelParams::default().with_n_gpu_layers(plan.n_gpu_layers)
 }
 
 // ── Runtime ───────────────────────────────────────────────────────────────────
@@ -343,9 +440,11 @@ impl LlamaCppRuntime {
             format!("llamacpp: loading chat model: {}", path.display()),
         );
         let model = tokio::task::spawn_blocking(move || {
-            // Offload all layers to Metal (Apple Silicon) / CUDA / CPU fallback.
-            let params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
-            LlamaModel::load_from_file(backend(), &path, &params)
+            // `backend()` first: the device list is empty until the backends
+            // have registered themselves.
+            let backend = backend();
+            let params = model_params_for(&path, "chat model");
+            LlamaModel::load_from_file(backend, &path, &params)
                 .map_err(|e| AppError::AiError(format!("Failed to load chat model: {}", e)))
         })
         .await
@@ -395,8 +494,9 @@ impl LlamaCppRuntime {
             format!("llamacpp: loading embedding model: {}", path.display()),
         );
         let model = tokio::task::spawn_blocking(move || {
-            let params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
-            LlamaModel::load_from_file(backend(), &path, &params)
+            let backend = backend();
+            let params = model_params_for(&path, "embedding model");
+            LlamaModel::load_from_file(backend, &path, &params)
                 .map_err(|e| AppError::AiError(format!("Failed to load embed model: {}", e)))
         })
         .await

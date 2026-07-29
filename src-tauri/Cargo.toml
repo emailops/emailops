@@ -164,6 +164,28 @@ metal = ["llama-cpp-2/metal"]
 cuda = ["llama-cpp-2/cuda"]
 vulkan = ["llama-cpp-2/vulkan"]
 
+# Ship every backend as a separately loadable module (GGML_BACKEND_DL) instead
+# of linking one into the binary, and let ggml pick at runtime.
+#
+# This is what makes ONE downloadable Linux/Windows artifact able to use a GPU:
+# a statically CUDA- or Vulkan-linked binary refuses to start on a machine
+# without the matching driver, so without this the choice is either CPU-only
+# builds or a separate download per backend. It also enables
+# GGML_CPU_ALL_VARIANTS, so the best CPU ISA (AVX-512/AVX2/…) is chosen at
+# runtime rather than baked in.
+#
+# The modules must travel with the app: `scripts/build_platform.sh` copies them
+# into src-tauri/resources/backends/ and the bundle config ships them, then
+# `runtime::set_backends_dir` points ggml at the resource directory on startup.
+# Build with:  make build-linux DYNAMIC_BACKENDS=1 CARGO_FEATURES=vulkan
+#
+# LINUX/WINDOWS ONLY — this does NOT build on macOS. It turns on
+# GGML_CPU_ALL_VARIANTS, whose `apple_m4` variant uses SVE intrinsics that the
+# Apple clang toolchain rejects ("'svexpa_f32' needs target feature sve").
+# macOS does not need it anyway: Metal is unified-memory and statically linked,
+# so the standard `llamacpp` build already gets full GPU acceleration there.
+dynamic-backends = ["llama-cpp-2/dynamic-backends"]
+
 [dev-dependencies]
 tempfile = "3"
 # Used by `sync::mock::MockProviderServer` to replay recorded provider HTTP

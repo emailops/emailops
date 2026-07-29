@@ -317,6 +317,17 @@ pub fn run() {
                 Err(e) => eprintln!("[startup] Warning: cannot resolve resource_dir for bundled models: {e}"),
             }
 
+            // Point ggml at the loadable backend modules that ship beside the
+            // app, so a GPU is used when one is present and the CPU backend is
+            // used when it is not. Only compiled into builds that bundle them.
+            #[cfg(all(feature = "llamacpp", feature = "dynamic-backends"))]
+            match app.path().resource_dir() {
+                Ok(resource_dir) => {
+                    ai::llama_cpp::runtime::set_backends_dir(resource_dir.join("backends"));
+                }
+                Err(e) => eprintln!("[startup] Warning: cannot resolve resource_dir for ggml backends: {e}"),
+            }
+
             // Promote the legacy free-text `ai_output_language` preference into
             // the typed `ai_output_language_v2` code, then drop the legacy key.
             // Idempotent — see `services::i18n::migrate_legacy_ai_output_language`.

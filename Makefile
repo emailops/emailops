@@ -414,15 +414,24 @@ dist-mac-intel:
 #   make dist-linux         # stage into release/ with stable names
 #
 # Embedded llama.cpp is ON (the default feature), so cmake and a C++ toolchain
-# are required — `bootstrap-linux` checks for both. For GPU builds:
-#   make build-linux CARGO_FEATURES=cuda     # NVIDIA
-#   make build-linux CARGO_FEATURES=vulkan   # AMD/Intel
+# are required — `bootstrap-linux` checks for both.
+#
+# GPU builds. Prefer DYNAMIC_BACKENDS=1: it ships each backend as a loadable
+# module so ONE artifact runs on a GPU when a driver is present and falls back
+# to CPU when it is not. Without it, a GPU-linked binary will not start at all
+# on a machine lacking the runtime, which means a separate download per backend.
+#   make build-linux DYNAMIC_BACKENDS=1 CARGO_FEATURES=vulkan  # AMD/Intel/NVIDIA
+#   make build-linux DYNAMIC_BACKENDS=1 CARGO_FEATURES=cuda    # NVIDIA only, faster
+# Vulkan is the better default for a single artifact: it covers all three
+# vendors and needs only the user's normal graphics driver at runtime, whereas
+# CUDA needs the NVIDIA toolkit at build time and NVIDIA hardware at run time.
+#
 # Unsigned by convention; Linux packages are not code-signed.
 bootstrap-linux:
 	bash scripts/bootstrap_platform.sh linux
 
 build-linux:
-	bash scripts/build_platform.sh linux
+	CARGO_FEATURES="$(CARGO_FEATURES)" DYNAMIC_BACKENDS="$(DYNAMIC_BACKENDS)" NO_DEFAULT_FEATURES="$(NO_DEFAULT_FEATURES)" bash scripts/build_platform.sh linux
 
 verify-linux:
 	bash scripts/verify_platform.sh linux
@@ -447,7 +456,7 @@ bootstrap-windows:
 	bash scripts/bootstrap_platform.sh windows
 
 build-windows:
-	bash scripts/build_platform.sh windows
+	CARGO_FEATURES="$(CARGO_FEATURES)" DYNAMIC_BACKENDS="$(DYNAMIC_BACKENDS)" NO_DEFAULT_FEATURES="$(NO_DEFAULT_FEATURES)" bash scripts/build_platform.sh windows
 
 verify-windows:
 	bash scripts/verify_platform.sh windows
