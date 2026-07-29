@@ -42,8 +42,14 @@ fn main() {
 ///
 /// The app binary is unaffected because `tauri_build::build()` embeds a
 /// manifest into it. Cargo's test harnesses get no such manifest, so the
-/// dependency is requested here via the linker instead. `rustc-link-arg-tests`
-/// scopes it to test targets only, leaving the app's own manifest untouched.
+/// dependency is requested here via the linker instead.
+///
+/// Uses the blanket `rustc-link-arg` rather than `rustc-link-arg-tests`: cargo
+/// scopes the latter to `tests/*.rs` integration targets, and the binary that
+/// actually failed is the *lib* unit-test harness, which it does not cover.
+/// The blanket form therefore also reaches the app binary and the cdylib —
+/// harmless, because requesting a side-by-side dependency that the embedded
+/// manifest already declares is idempotent.
 fn request_common_controls_v6_for_tests() {
     let is_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     let is_msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
@@ -55,7 +61,7 @@ fn request_common_controls_v6_for_tests() {
     // quoting of its own — only the inner single quotes the option's grammar
     // requires.
     println!(
-        "cargo:rustc-link-arg-tests=/MANIFESTDEPENDENCY:type='win32' \
+        "cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' \
          name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
          processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
     );
