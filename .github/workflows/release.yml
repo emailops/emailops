@@ -23,7 +23,7 @@ jobs:
       contents: write  # needed to create the GitHub Release
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
