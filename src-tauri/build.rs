@@ -26,8 +26,39 @@ fn main() {
     }
 
     emit_git_build_metadata();
+    request_common_controls_v6_for_tests();
 
     tauri_build::build()
+}
+
+/// Make Windows test binaries load comctl32 **version 6**.
+///
+/// `rfd` (pulled in by `tauri-plugin-dialog`) imports `TaskDialogIndirect`,
+/// which only version 6 exports. Windows picks the version from a side-by-side
+/// manifest: without one it loads the version 5 in System32, the import cannot
+/// be resolved, and the process dies at load time with
+/// STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) before `main` runs — which is
+/// exactly what `cargo test` hit on windows-msvc.
+///
+/// The app binary is unaffected because `tauri_build::build()` embeds a
+/// manifest into it. Cargo's test harnesses get no such manifest, so the
+/// dependency is requested here via the linker instead. `rustc-link-arg-tests`
+/// scopes it to test targets only, leaving the app's own manifest untouched.
+fn request_common_controls_v6_for_tests() {
+    let is_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let is_msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if !(is_windows && is_msvc) {
+        return;
+    }
+
+    // Passed to link.exe as a single argument, so the value carries no shell
+    // quoting of its own — only the inner single quotes the option's grammar
+    // requires.
+    println!(
+        "cargo:rustc-link-arg-tests=/MANIFESTDEPENDENCY:type='win32' \
+         name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+         processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+    );
 }
 
 /// Embed the git short sha and any tags pointing at HEAD so the app can show
