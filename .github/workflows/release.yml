@@ -67,12 +67,19 @@ jobs:
       # Tauri reads these env vars automatically to sign and notarize.
       # APPLE_SIGNING_IDENTITY  → passed to codesign
       # APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID → passed to notarytool
+      # EMAILOPS_* are the OAuth client credentials build.rs bakes into the binary.
+      # Local `make build-mac` picks them up from the gitignored .env.local; a CI
+      # build has no such file, so they must come from repository secrets or
+      # Gmail/Outlook sign-in is dead on arrival in the published DMG.
       - name: Build, sign, and notarize
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
+          EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
+          EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
         run: npm run tauri -- build --target universal-apple-darwin
 
       - name: Verify signing and notarization
@@ -160,6 +167,10 @@ jobs:
       # the downloadable build must stay portable).
       - name: Build
         shell: bash
+        env:
+          EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
+          EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
+          EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
         run: make build-${{ matrix.platform }}
 
       - name: Verify

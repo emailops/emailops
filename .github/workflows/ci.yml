@@ -246,10 +246,17 @@ jobs:
       # Invoke the same Makefile targets developers run locally, so CI and
       # local builds cannot drift apart. They require a POSIX shell, which is
       # why the Windows leg runs under bash (Git Bash ships on the runner).
+      # OAuth client credentials are baked in at compile time by build.rs. Without
+      # them the bundle installs and launches but Gmail/Outlook sign-in fails with
+      # "Missing … OAuth client ID". No Outlook secret: that app is registered as a
+      # public client using PKCE, which by definition has none.
       - name: Build bundle
         shell: bash
         env:
           NO_DEFAULT_FEATURES: "1"
+          EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
+          EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
+          EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
         run: make build-${{ matrix.platform }}
 
       - name: Verify bundle
