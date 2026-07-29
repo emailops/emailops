@@ -76,9 +76,10 @@ fn ensure_models_symlink(source_dir: &Path, demo_dir: &Path) -> Result<(), Box<d
     } else if dst.exists() {
         return Ok(());
     }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&src, &dst)?;
-    println!("[embed] symlinked {} -> {}", dst.display(), src.display());
+    // Was `#[cfg(unix)]`-gated, which silently did nothing off Unix and then
+    // claimed success on the next line.
+    emailops_lib::util::fs_link::link_file(&src, &dst)?;
+    println!("[embed] linked {} -> {}", dst.display(), src.display());
     Ok(())
 }
 

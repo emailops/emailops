@@ -440,8 +440,13 @@ where
     let dir = dest.parent().expect("model path always has a parent");
     std::fs::create_dir_all(dir).map_err(|e| AppError::IoError(format!("Cannot create models directory: {}", e)))?;
 
-    std::os::unix::fs::symlink(source, &dest)
-        .map_err(|e| AppError::IoError(format!("Failed to link model file: {}", e)))?;
+    crate::util::fs_link::link_file(source, &dest).map_err(|e| {
+        AppError::IoError(format!(
+            "Failed to link model file: {}. {}",
+            e,
+            crate::util::fs_link::link_failure_hint(std::env::consts::OS)
+        ))
+    })?;
 
     Ok(dest)
 }
@@ -614,11 +619,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(dest, model_path(&data_dir, ModelKind::Chat, "fixture-chat"));
-        let meta = std::fs::symlink_metadata(&dest).unwrap();
-        assert!(meta.file_type().is_symlink(), "destination must be a symlink");
-        assert_eq!(std::fs::read_link(&dest).unwrap(), source);
+        // Platform-independent: the link resolves to the source's bytes and
+        // costs no second copy.
+        assert_eq!(std::fs::read(&dest).unwrap(), content);
         // Source is untouched.
         assert_eq!(std::fs::read(&source).unwrap(), content);
+
+        if produced_a_symlink(&dest) {
+            assert_eq!(std::fs::read_link(&dest).unwrap(), source);
+        }
     }
 
     #[tokio::test]
@@ -715,6 +724,19 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"already here");
     }
 
+    /// Whether `link_file` produced a real symlink at `path`.
+    ///
+    /// On Unix it always does. On Windows a symlink needs Developer Mode or an
+    /// elevated process, so an ordinary user gets the hard-link fallback
+    /// instead — which is fine for linking a model, but is not a symlink and
+    /// therefore cannot dangle or be reported via `read_link`. Tests that pin
+    /// symlink-specific behaviour consult this rather than assuming.
+    fn produced_a_symlink(path: &Path) -> bool {
+        std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+
     // ── list_local_models symlink-awareness ──────────────────────────────────
 
     #[test]
@@ -730,7 +752,7 @@ mod tests {
         std::fs::write(&target, vec![1u8; 12345]).unwrap();
 
         let link_path = chat_dir.join("linked-model.gguf");
-        std::os::unix::fs::symlink(&target, &link_path).unwrap();
+        crate::util::fs_link::link_file(&target, &link_path).unwrap();
 
         let models = list_local_models(&data_dir);
         let linked = models
@@ -741,7 +763,9 @@ mod tests {
             linked.size_bytes, 12345,
             "must report the target's size, not the symlink's"
         );
-        assert!(linked.is_linked, "symlinked entry must be flagged is_linked");
+        if produced_a_symlink(&link_path) {
+            assert!(linked.is_linked, "symlinked entry must be flagged is_linked");
+        }
     }
 
     #[test]
@@ -773,16 +797,24 @@ mod tests {
         let target = external_dir.join("real.gguf");
         std::fs::write(&target, b"content").unwrap();
         let link_path = chat_dir.join("dangling-model.gguf");
-        std::os::unix::fs::symlink(&target, &link_path).unwrap();
+        crate::util::fs_link::link_file(&target, &link_path).unwrap();
+        let was_symlink = produced_a_symlink(&link_path);
 
-        // Now remove the target — the symlink becomes dangling.
+        // Now remove the target.
         std::fs::remove_file(&target).unwrap();
 
         let models = list_local_models(&data_dir);
-        assert!(
-            !models.iter().any(|m| m.id == "dangling-model"),
-            "a dangling symlink must be excluded, not reported with size 0"
-        );
+        let listed = models.iter().any(|m| m.id == "dangling-model");
+
+        if was_symlink {
+            assert!(!listed, "a dangling symlink must be excluded, not reported with size 0");
+        } else {
+            // A hard link keeps the file alive after its other name is
+            // removed, so there is nothing dangling and the model is still
+            // genuinely usable. Listing it is the correct answer, not a bug.
+            assert!(listed, "a hard link outlives the removal of its target");
+            assert_eq!(std::fs::read(&link_path).unwrap(), b"content");
+        }
     }
 
     // ── delete_local_model on a linked entry ─────────────────────────────────
@@ -799,7 +831,7 @@ mod tests {
         let target = external_dir.join("real.gguf");
         std::fs::write(&target, b"user's original model bytes").unwrap();
         let link_path = chat_dir.join("fixture-chat.gguf");
-        std::os::unix::fs::symlink(&target, &link_path).unwrap();
+        crate::util::fs_link::link_file(&target, &link_path).unwrap();
 
         delete_local_model(&data_dir, ModelKind::Chat, "fixture-chat").unwrap();
 
