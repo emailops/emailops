@@ -122,6 +122,8 @@ jobs:
   test-windows:
     name: Lint & Tests (Windows)
     runs-on: windows-latest
+    # A hung step on Windows otherwise burns the default 6-hour budget.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -170,13 +172,10 @@ jobs:
           Write-Host "=== DLLs sitting next to the test binaries ==="
           Get-ChildItem -Recurse -Filter *.dll src-tauri/target/debug |
             Select-Object -First 60 FullName, Length, LastWriteTime | Format-Table -AutoSize
-          Write-Host "=== Attempt to launch the lib test exe ==="
-          foreach ($exe in $exes) {
-            $p = Start-Process -FilePath $exe -ArgumentList '--list' -NoNewWindow -Wait -PassThru `
-                   -RedirectStandardOutput out.txt -RedirectStandardError err.txt
-            Write-Host "$exe -> exit 0x$('{0:X}' -f $p.ExitCode)"
-            Get-Content err.txt -ErrorAction SilentlyContinue | Select-Object -First 20
-          }
+          # Deliberately NOT launching the failing binary. A load failure raises
+          # a Windows hard-error dialog, which on a headless runner blocks
+          # forever — the first version of this step hung for 45 minutes. The
+          # import table above is the diagnostic; the exit code is already known.
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
