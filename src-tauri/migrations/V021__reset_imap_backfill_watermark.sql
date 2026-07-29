@@ -1,0 +1,14 @@
+-- Clear the IMAP backfill watermark poisoned by the broken INBOX lister.
+--
+-- `ImapClient::list_messages` ignored the `before` bound and never paginated,
+-- so the backfill pass kept re-listing the newest 100 INBOX UIDs. Those were
+-- always already stored, so sync concluded "nothing new in the backfill window"
+-- and latched `backfill_swept_from` — permanently closing the window. Inboxes
+-- were then frozen at whatever the first sync happened to pull, with no way to
+-- reach older mail short of widening `sync_from_timestamp`.
+--
+-- The lister now honours `before` and pages backwards, so every IMAP watermark
+-- written by the old code is meaningless. Reset it and let the fixed sweep
+-- re-derive it. Gmail / Outlook watermarks are untouched — their listers always
+-- paginated correctly.
+UPDATE accounts SET backfill_swept_from = NULL WHERE provider = 'imap';

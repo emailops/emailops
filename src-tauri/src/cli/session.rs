@@ -90,6 +90,12 @@ impl CliSession {
         let data_dir = resolve_data_dir(cli.data_dir.clone());
         let db = Arc::new(Database::new(data_dir.clone())?);
 
+        // Credential reads (sync auth, remote AI providers) resolve through a
+        // process-global DB handle in dev builds. Bind it — but don't warm the
+        // cache: a one-shot command shouldn't hit the keychain for accounts it
+        // never touches.
+        crate::services::accounts::bind_credential_db(&db);
+
         // Logs go to stderr so stdout stays a clean data/JSON channel. The gate
         // is shared with the session so chat turns can flip it per `--trace`.
         let log_quiet = Arc::new(AtomicBool::new(cli.quiet));
