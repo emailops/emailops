@@ -1,0 +1,547 @@
+# Ground-truth-legitimate mail. This is the hard half of the corpus and the one
+# that decides whether the feature is usable: every case here that gets badged
+# is a false positive, and the phishing axis has a zero-tolerance budget.
+#
+# Roughly half of these are ADVERSARIAL-LEGIT — real mail that carries the
+# surface features of an attack (link-dense HTML, urgency wording, a Reply-To on
+# another domain, a first-contact sender, a money request). A naive detector
+# flags them; a good one does not.
+#
+# Everything is synthetic. Domains use the RFC 2606 `.example` TLD.
+
+- id: legit-invoice-link-heavy-html
+  tier: smoke
+  raw_headers: |
+    From: "Northwind Billing" <billing@northwind.example>
+    Reply-To: billing@northwind.example
+    Return-Path: <bounces@northwind.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
+        dkim=pass header.d=northwind.example; dmarc=pass
+    Subject: Invoice NW-2214 is ready
+  body: |
+    <p>Your invoice is available.</p>
+    <p><a href="https://northwind.example/inv/2214">View invoice</a> ·
+    <a href="https://northwind.example/pay/2214">Pay now</a> ·
+    <a href="https://northwind.example/help">Help</a> ·
+    <a href="https://northwind.example/terms">Terms</a></p>
+  known_contact_domains: [northwind.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-receipt-with-noreply-reply-to
+  tier: smoke
+  raw_headers: |
+    From: "Contoso Store" <noreply@contoso.example>
+    Reply-To: support@contoso-support.example
+    Return-Path: <bounces@contoso.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=contoso.example;
+        dkim=pass header.d=contoso.example; dmarc=pass
+    Subject: Your order 88213 has shipped
+  body: |
+    Thanks for your order. Tracking: https://contoso.example/track/88213
+  known_contact_domains: [contoso.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-newsletter-the-user-actually-reads
+  tier: smoke
+  raw_headers: |
+    From: "Systems Weekly" <hello@systemsweekly.example>
+    List-Id: Systems Weekly <list.systemsweekly.example>
+    List-Unsubscribe: <https://systemsweekly.example/unsub/abc>
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=systemsweekly.example;
+        dkim=pass header.d=systemsweekly.example; dmarc=pass
+    Subject: Issue 142 — write-ahead logs in practice
+  body: |
+    This week: how WAL checkpointing interacts with long-running readers.
+  known_contact_domains: [systemsweekly.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    # Engaged: the user opens and replies to this. Bulk markers alone must not
+    # be enough to deprioritize mail somebody actually reads.
+    graymail: clean
+
+- id: legit-cold-intro-first-contact
+  tier: smoke
+  raw_headers: |
+    From: "Dana Ruiz" <dana@brightpath.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=brightpath.example;
+        dkim=pass header.d=brightpath.example; dmarc=pass
+    Subject: Intro from the Tuesday meetup
+  body: |
+    We spoke briefly after your talk — would you be open to a short call next week?
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-password-reset-urgent-wording
+  tier: smoke
+  raw_headers: |
+    From: "Acme Security" <security@acme.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=acme.example;
+        dkim=pass header.d=acme.example; dmarc=pass
+    Subject: Action required: confirm your password reset within 30 minutes
+  body: |
+    We received a request to reset your password. If this was not you, ignore this message.
+    Reset: https://acme.example/reset/9f2a
+  known_contact_domains: [acme.example]
+  sender_engaged: true
+  expect:
+    # Urgency lexicon plus a credential-shaped subject, but the authentication
+    # is clean and the domain is one the user corresponds with.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-bank-statement-notification
+  tier: smoke
+  raw_headers: |
+    From: "Meridian Bank" <alerts@meridianbank.example>
+    Return-Path: <bounces@meridianbank.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=meridianbank.example;
+        dkim=pass header.d=meridianbank.example; dmarc=pass
+    Subject: Your February statement is available
+  body: |
+    Sign in to view your statement: https://meridianbank.example/statements
+  known_contact_domains: [meridianbank.example]
+  sender_engaged: true
+  expect:
+    # The exact shape phishing imitates. Authentication is what separates them.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-thread-reply-user-started
+  tier: smoke
+  raw_headers: |
+    From: "Sam Okafor" <sam@partnerco.example>
+    In-Reply-To: <thread-771@yourdomain.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
+        dkim=pass header.d=partnerco.example; dmarc=pass
+    Subject: Re: Q2 rollout dates
+  body: |
+    Works for us. Let's lock the 14th.
+  known_contact_domains: [partnerco.example]
+  sender_engaged: true
+  own_thread: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-ci-build-notification-link-dense
+  tier: smoke
+  raw_headers: |
+    From: "Build Bot" <ci@builds.internal.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=builds.internal.example;
+        dkim=pass header.d=internal.example; dmarc=pass
+    Subject: main is green (build 4471)
+  body: |
+    <a href="https://builds.internal.example/4471">Build</a>
+    <a href="https://builds.internal.example/4471/logs">Logs</a>
+    <a href="https://builds.internal.example/4471/artifacts">Artifacts</a>
+    <a href="https://builds.internal.example/4471/coverage">Coverage</a>
+    <a href="https://builds.internal.example/4471/diff">Diff</a>
+  known_contact_domains: [internal.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-shared-document-notification
+  tier: smoke
+  raw_headers: |
+    From: "Docs" <notify@docs.example>
+    Reply-To: no-reply@docs.example
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=docs.example;
+        dkim=pass header.d=docs.example; dmarc=pass
+    Subject: Priya shared "Q3 planning" with you
+  body: |
+    Open the document: https://docs.example/d/91baf
+  known_contact_domains: [docs.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-calendar-invite-with-attachment
+  tier: smoke
+  raw_headers: |
+    From: "Lena Fischer" <lena@partnerco.example>
+    Content-Type: multipart/mixed; boundary="b1"
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
+        dkim=pass header.d=partnerco.example; dmarc=pass
+    Subject: Invitation: design review
+  body: |
+    Adding the review to your calendar.
+  attachment_names: ["invite.ics"]
+  known_contact_domains: [partnerco.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-recruiter-outreach-first-contact
+  tier: smoke
+  raw_headers: |
+    From: "Toni Vargas" <toni@hiringpartners.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=hiringpartners.example;
+        dkim=pass header.d=hiringpartners.example; dmarc=pass
+    Subject: Staff engineer role — worth a chat?
+  body: |
+    I work with a team building storage infrastructure and thought of your background.
+  expect:
+    phishing: clean
+    spam: clean
+    # Unsolicited and one-way, but a real human writing to one person. Bulk
+    # markers are absent, so this is not graymail either.
+    graymail: clean
+
+- id: legit-vendor-payment-request-known-domain
+  tier: smoke
+  raw_headers: |
+    From: "Northwind Billing" <billing@northwind.example>
+    Reply-To: billing@northwind.example
+    Return-Path: <bounces@northwind.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
+        dkim=pass header.d=northwind.example; dmarc=pass
+    Subject: Reminder: invoice NW-2201 due Friday
+  body: |
+    A friendly reminder that invoice NW-2201 is due on Friday. Bank details are unchanged
+    and match those on the signed contract.
+  known_contact_domains: [northwind.example]
+  sender_engaged: true
+  expect:
+    # A money request with a deadline — the BEC surface — but from the
+    # established domain, authenticated, with no Reply-To divergence.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-conference-ticket-image-heavy
+  tier: smoke
+  raw_headers: |
+    From: "StorageConf" <tickets@storageconf.example>
+    List-Unsubscribe: <https://storageconf.example/unsub/x9>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=storageconf.example;
+        dkim=pass header.d=storageconf.example; dmarc=pass
+    Subject: Your ticket for StorageConf
+  body: |
+    <img src="https://storageconf.example/qr/8812.png" alt="ticket">
+    <p>Show this at the door.</p>
+  known_contact_domains: [storageconf.example]
+  sender_engaged: true
+  expect:
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-no-headers-captured-yet
+  tier: smoke
+  raw_headers: ""
+  body: |
+    Confirming Thursday at 10.
+  known_contact_domains: [partnerco.example]
+  sender_engaged: true
+  expect:
+    # Backfill has not reached this message. With no authentication evidence the
+    # detector must stay silent rather than guess — and silence must not be
+    # scored as a false positive.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-user-marked-not-junk
+  tier: smoke
+  raw_headers: |
+    From: "Deals Weekly" <offers@dealsweekly.example>
+    List-Id: Deals Weekly <list.dealsweekly.example>
+    List-Unsubscribe: <https://dealsweekly.example/unsub/q1>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=dealsweekly.example;
+        dkim=pass header.d=dealsweekly.example; dmarc=pass
+    Subject: 40% off this week only
+  body: |
+    Our biggest sale of the season.
+  user_marked_not_junk: true
+  expect:
+    # The user overruled the detector. That decision is permanent and survives
+    # retrains and model-version bumps — one re-flagged message destroys trust
+    # in the whole feature.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-server-scanned-and-cleared
+  tier: smoke
+  raw_headers: |
+    From: "Ana Delgado" <ana@partnerco.example>
+    X-Spam-Status: No, score=-2.1 required=5.0 tests=BAYES_00,SPF_PASS
+    X-Spam-Flag: NO
+    X-Spam-Score: -2.1
+    X-Spam-Bar: /
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
+        dkim=pass header.d=partnerco.example; dmarc=pass
+    Subject: Notes from Tuesday
+  body: |
+    Sending over the notes we discussed. Shout if anything looks off.
+  known_contact_domains: [partnerco.example]
+  expect:
+    # REGRESSION. The server's scanner stamps X-Spam-Status/Flag on every clean
+    # message it processes, so these headers record that a scan RAN, not that it
+    # found something. Reading their presence as a verdict flagged 93% of a real
+    # mailbox — every one of which the scanner had explicitly cleared.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-server-cleared-unengaged-first-contact
+  tier: smoke
+  raw_headers: |
+    From: "Marc Oliveira" <marc@newvendor.example>
+    X-Spam-Status: No, score=0.4 required=5.0
+    X-Spam-Flag: NO
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=newvendor.example;
+        dkim=pass header.d=newvendor.example; dmarc=pass
+    Subject: Quote for the storage upgrade
+  body: |
+    Attaching our quote. Happy to walk through it whenever suits.
+  expect:
+    # A stranger, with none of the local suppressors available — no engagement,
+    # no known domain, no thread. The server's clearance has to carry it.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-server-cleared-with-a-bare-high-score
+  tier: smoke
+  raw_headers: |
+    From: "Billing" <billing@northwind.example>
+    X-Spam-Status: No, score=10.2 required=25.0
+    X-Spam-Flag: NO
+    X-Spam-Score: 10
+    X-Spam-Bar: ++++++++++
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
+        dkim=pass header.d=northwind.example; dmarc=pass
+    Subject: Invoice NW-3301
+  body: |
+    <p>Your invoice is ready. <a href="https://northwind.example/inv/3301">View</a></p>
+  known_contact_domains: [northwind.example]
+  sender_engaged: true
+  expect:
+    # A score of 10 is spam on one server and unremarkable on another — the
+    # threshold lives in `required`, which here is 25. A bare score must never
+    # be read as a verdict.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-display-name-with-at-company
+  tier: smoke
+  raw_headers: |
+    From: "Blanca @ Marketplace" <marketing@marketplace.example>
+    Return-Path: <bounce-mc.eu4_9910233.881204-7c1a99b@mail42.marketplace.example>
+    List-Unsubscribe: <https://marketplace.example/unsub/aa1>
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=mail42.marketplace.example;
+        dkim=pass header.d=marketplace.example; dmarc=pass
+    Subject: Three listings that match your criteria
+  body: |
+    A short round-up of what came onto the marketplace this week.
+  sender_engaged: false
+  expect:
+    # REGRESSION, from a real mailbox. "Name @ Company" is an extremely common
+    # legitimate display-name style. Reading the text after the at-sign as a
+    # domain made the impersonation check fire on ordinary marketing mail.
+    phishing: clean
+    spam: clean
+    # Bulk and unengaged, so graymail is the correct call — but on the graymail
+    # axis only, never as an identity attack.
+    graymail: junk
+    reasons_include: [list_unsubscribe_present, no_engagement]
+
+- id: legit-esp-bounce-domain-differs
+  tier: smoke
+  raw_headers: |
+    From: "Platform Weekly" <hello@platformweekly.example>
+    Return-Path: <1axcae88fgpjx8cge3rq0zxxf0i34eyznjj52i-user=example.com@bounce.mailer.example>
+    List-Id: Platform Weekly <list.platformweekly.example>
+    List-Unsubscribe: <https://platformweekly.example/u/9f>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=bounce.mailer.example;
+        dkim=pass header.d=platformweekly.example; dmarc=pass
+    Subject: Issue 88 — platform teams and cognitive load
+  body: |
+    This week's reading on platform engineering.
+  sender_engaged: false
+  expect:
+    # REGRESSION, from a real mailbox. Every ESP on earth sends with a bounce
+    # domain that differs from the From domain, and so does ordinary forwarding.
+    # Return-Path divergence must never be enough, on its own, to make an
+    # authentication failure read as impersonation.
+    phishing: clean
+    spam: clean
+    graymail: junk
+    reasons_include: [list_id_present, no_engagement]
+
+- id: legit-transactional-from-a-service-in-use
+  tier: smoke
+  raw_headers: |
+    From: "Teamchat" <notify@teamchat.example>
+    Return-Path: <bounces+9912@notifications.teamchat.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=notifications.teamchat.example;
+        dkim=pass header.d=teamchat.example; dmarc=pass
+    Subject: New messages in #general
+  body: |
+    You have unread mentions: https://teamchat.example/app
+  known_contact_domains: [teamchat.example]
+  sender_engaged: true
+  expect:
+    # Per-recipient transactional notification with no bulk markers at all —
+    # not a broadcast, so not graymail either.
+    phishing: clean
+    spam: clean
+    graymail: clean
+
+- id: legit-newsletter-with-preheader
+  tier: smoke
+  raw_headers: |
+    From: "Work Marketplace" <notifications@workmarket.example>
+    List-Unsubscribe: <https://workmarket.example/unsub/k1>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=workmarket.example;
+        dkim=pass header.d=workmarket.example; dmarc=pass
+    Subject: 3 new proposals on your project
+  body: |
+    <div style="display:none;font-size:0;color:#ffffff;max-height:0;overflow:hidden">
+      See the latest proposals on your open project
+    </div>
+    <p>Three freelancers responded. <a href="https://workmarket.example/p/71">View proposals</a></p>
+  known_contact_domains: [workmarket.example]
+  sender_engaged: true
+  expect:
+    # REGRESSION, measured on a real mailbox. The preheader div — display:none
+    # plus font-size:0 plus white text — is how essentially every HTML newsletter
+    # renders its preview line, and treating it as concealed filler flagged a
+    # quarter of all legitimate mail.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-server-barely-flagged
+  tier: smoke
+  raw_headers: |
+    From: "Nuria Bastida" <nuria@consultores-red.example>
+    Authentication-Results: mx.example.com; spf=softfail smtp.mailfrom=consultores-red.example;
+        dkim=pass header.d=consultores-red.example; dmarc=none
+    X-Spam-Status: Yes, score=5.4 required=5.0
+    X-Spam-Flag: YES
+    X-Spam-Report: Spam detection software has identified this incoming email as possible spam.
+        Content analysis details: (5.4 points, 5.0 required) pts rule name description
+        3.0 SPF_SOFTFAIL SPF: sender does not match SPF record (softfail)
+        1.2 MISSING_HEADERS Missing To: header
+        1.2 AEAT_SUSPECT_RECEIVED No description available
+        -0.1 DKIM_VALID Message has at least one valid DKIM signature
+    Subject: Retomamos el contacto
+  body: |
+    ¡Muy buenas! ¿Qué tal estás? Espero que los proyectos vayan bien.
+    Te escribo porque hace tiempo que no hablamos y quería presentarte a alguien.
+  expect:
+    # REGRESSION, from a real mailbox. The server flagged this at 5.4 against its
+    # own threshold of 5.0 — it barely fired, more than half the points came from
+    # an SPF softfail (the state forwarded mail and small senders land in), and
+    # the message carries a VALID DKIM signature.
+    #
+    # A flag that marginal is not the same evidence as one at 12.7. The
+    # `BarelyCleared` concept already existed for the "No" side; this pins the
+    # missing symmetry on the "Yes" side. Without it the detector inherits every
+    # borderline call the server ever made.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-server-barely-flagged-threshold-only-in-report
+  tier: smoke
+  raw_headers: |
+    From: "Tomás Iriarte" <tomas@obra-viva.example>
+    Authentication-Results: mx.example.com; spf=softfail smtp.mailfrom=obra-viva.example;
+        dkim=pass header.d=obra-viva.example; dmarc=none
+    X-Spam-Status: Yes, score=5.6
+    X-Spam-Flag: YES
+    X-Spam-Report: Content analysis details: (5.6 points, 5.0 required) pts rule name
+        3.0 SPF_SOFTFAIL SPF: sender does not match SPF record (softfail)
+    Subject: Propuesta de colaboración
+  body: |
+    Buenos días, adjunto la propuesta que comentamos la semana pasada.
+    Quedo atento a tus comentarios.
+  expect:
+    # Same regression, second half. This server omits `required=` from
+    # X-Spam-Status and only reports the threshold inside X-Spam-Report, in a
+    # different format ("(5.6 points, 5.0 required)"). Parsing only the first
+    # header made every flag from such a server look equally decisive — the fix
+    # above changed nothing until this second format was read too.
+    spam: clean
+    phishing: clean
+    graymail: clean
+
+- id: legit-one-off-from-an-esp
+  tier: smoke
+  raw_headers: |
+    From: "Talent Partners" <consultants@talentpartners.example>
+    List-Unsubscribe: <https://talentpartners.example/u/aa>
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=talentpartners.example;
+        dkim=pass header.d=talentpartners.example; dmarc=pass
+    Subject: Consultant Task — Senior Storage Architect, Copenhagen
+  body: |
+    <p>A client is looking for a storage architect for a six-month engagement.
+    <a href="https://talentpartners.example/roles/8812">Full brief</a> ·
+    <a href="https://talentpartners.example/apply/8812">Apply</a> ·
+    <a href="https://talentpartners.example/contact">Contact us</a></p>
+  sender_engaged: false
+  sender_message_count: 1
+  expect:
+    # REGRESSION, from a real mailbox: four recruiter job offers and a conference
+    # invitation were all badged as unwanted bulk.
+    #
+    # `List-Unsubscribe` marks an ESP, not an unwanted sender — it is mandatory
+    # for every bulk sender under the rules Gmail and Yahoo enforce, so it sits
+    # on a one-off job offer exactly as it sits on a daily digest. And "you never
+    # replied" says nothing about a sender who wrote once: there was no repeated
+    # opportunity to answer. Graymail is bulk mail that KEEPS ARRIVING.
+    graymail: clean
+    spam: clean
+    phishing: clean
+
+- id: gray-recurring-sender-with-the-same-markers
+  tier: smoke
+  raw_headers: |
+    From: "Weekly Roundup" <digest@talentpartners.example>
+    List-Unsubscribe: <https://talentpartners.example/u/bb>
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=talentpartners.example;
+        dkim=pass header.d=talentpartners.example; dmarc=pass
+    Subject: This week's open roles
+  body: |
+    <p>Twelve new roles this week. <a href="https://talentpartners.example/weekly">Browse</a></p>
+  sender_engaged: false
+  sender_message_count: 14
+  expect:
+    # The contrast case. Identical headers and markers to the one above; the only
+    # difference is that this sender keeps writing and never gets a reply. That
+    # is what graymail actually is, and the pair pins the distinction so a future
+    # change cannot collapse them back together.
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [list_unsubscribe_present, no_engagement]

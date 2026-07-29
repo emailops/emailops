@@ -40,11 +40,22 @@ const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 30_000;
 
-/// Fields fetched on every message list/get so we can build a full `Email`
-/// without a second round-trip. Kept as a constant so every query stays in
-/// sync — if you change one, change both.
+/// Fields fetched on the single-message get so we can build a full `Email`
+/// without a second round-trip. List queries use their own, much narrower
+/// projection ([`GraphMessageRef`]).
+///
+/// `internetMessageHeaders` is the only way to get RFC 5322 headers out of
+/// Graph, and Graph omits the property entirely unless it is explicitly
+/// selected — unlike Gmail and IMAP, where the headers already arrive with the
+/// message. It is requested only on the single-message get (this constant's one
+/// caller), never on list queries, because it is bulky.
+///
+/// Graph caps the returned header list (~256 entries) and some tenants omit it
+/// altogether. That is why an absent header set must degrade to `Unknown`
+/// rather than to a confident `Clean`.
 const MESSAGE_SELECT_FIELDS: &str = "id,conversationId,internetMessageId,subject,bodyPreview,\
-    body,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,inferenceClassification";
+    body,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,inferenceClassification,\
+    internetMessageHeaders";
 
 // ── Deserialization types ─────────────────────────────────────────────────────
 
@@ -104,6 +115,16 @@ struct GraphMessage {
     has_attachments: Option<bool>,
     #[serde(rename = "inferenceClassification")]
     inference_classification: Option<String>,
+    /// Only present when `internetMessageHeaders` is in `$select`, and even
+    /// then some tenants withhold it.
+    #[serde(rename = "internetMessageHeaders")]
+    internet_message_headers: Option<Vec<GraphHeader>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphHeader {
+    name: Option<String>,
+    value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -967,6 +988,17 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         .and_then(parse_iso_to_unix)
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
+    // `None` (property withheld, or fetched before it was selected) must stay
+    // distinguishable from "captured and empty": the detector treats the former
+    // as Unknown, not as Clean.
+    let headers = msg.internet_message_headers.as_ref().map(|list| {
+        let pairs: Vec<(String, String)> = list
+            .iter()
+            .filter_map(|h| Some((h.name.clone()?, h.value.clone().unwrap_or_default())))
+            .collect();
+        crate::sync::header_capture::capture(&pairs)
+    });
+
     let email = Email {
         id: msg.id.clone(),
         account_id: String::new(), // set by caller
@@ -989,6 +1021,7 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         // message is sent iff it came from the Sent folder, which the insert
         // derives from the caller's `mailbox` value.
         is_sent: false,
+        headers,
     };
 
     (email, category)
@@ -1306,6 +1339,7 @@ mod tests {
             is_read: Some(true),
             has_attachments: Some(false),
             inference_classification: Some("focused".to_string()),
+            internet_message_headers: None,
         };
         let (email, cat) = parse_message(msg);
         assert_eq!(cat, EmailCategory::Primary);
@@ -1338,6 +1372,7 @@ mod tests {
             is_read: None,
             has_attachments: None,
             inference_classification: Some("other".to_string()),
+            internet_message_headers: None,
         };
         let (email, cat) = parse_message(msg);
         assert_eq!(cat, EmailCategory::Updates);

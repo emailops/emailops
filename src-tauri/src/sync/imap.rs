@@ -459,6 +459,10 @@ impl ImapClient {
         let (body, snippet) = extract_body(&parsed);
         let attachments = extract_attachments(&parsed);
 
+        // Preserve message order: `capture` depends on it for both the topmost
+        // Authentication-Results and the bottom-most Received.
+        let header_pairs: Vec<(String, String)> = hdrs.iter().map(|h| (h.get_key(), h.get_value())).collect();
+
         let email = Email {
             id: uid.to_string(),
             account_id: String::new(),
@@ -481,6 +485,11 @@ impl ImapClient {
             // came from the Sent mailbox, which the insert derives from the
             // caller's `mailbox` value.
             is_sent: false,
+            // The RFC822 fetch already carried every header; before this we
+            // read five and dropped the rest. This is also where a server-side
+            // SpamAssassin / rspamd verdict lives, which matters most on IMAP
+            // precisely because IMAP hosts filter least.
+            headers: Some(crate::sync::header_capture::capture(&header_pairs)),
         };
 
         Ok((email, attachments))

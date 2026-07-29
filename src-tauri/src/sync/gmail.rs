@@ -608,6 +608,10 @@ impl GmailClient {
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         let headers = &msg.payload.headers;
 
+        // Preserve message order: `capture` depends on it for both the topmost
+        // Authentication-Results and the bottom-most Received.
+        let header_pairs: Vec<(String, String)> = headers.iter().map(|h| (h.name.clone(), h.value.clone())).collect();
+
         let subject = headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("Subject"))
@@ -702,6 +706,10 @@ impl GmailClient {
             // view about it — the sender is no help when the message went out
             // through a send-as alias.
             is_sent: labels.iter().any(|l| l == "SENT"),
+            // `?format=full` already returns the complete header list; before
+            // this we read five of them and discarded the rest. No extra
+            // network cost.
+            headers: Some(crate::sync::header_capture::capture(&header_pairs)),
         };
 
         Ok((email, category, attachment_infos))

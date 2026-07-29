@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub mod error;
+pub mod headers;
 pub mod lens;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +56,16 @@ pub struct Email {
     /// in the Sent view.
     #[serde(default)]
     pub is_sent: bool,
+    /// Captured RFC 5322 headers, when the provider supplied them.
+    ///
+    /// Transport only: carried from the provider parse to `insert_emails_batch`,
+    /// which writes them to `email_headers`. Never read back on this struct —
+    /// use `Database::get_email_headers_batch`. Skipped in serialization and in
+    /// the generated TS so the frontend DTO is unchanged; the frontend has no
+    /// business with raw headers.
+    #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub headers: Option<crate::models::headers::RawHeaders>,
 }
 
 fn default_mailbox() -> String {

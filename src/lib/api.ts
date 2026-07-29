@@ -36,6 +36,9 @@ import type {
   EmbeddingsConfig,
   FilteredEmailsResult,
   FilterSuggestion,
+  JunkConfig,
+  JunkStats,
+  JunkVerdict,
   Lens,
   LensPreviewRow,
   LensRowsPage,
@@ -916,6 +919,30 @@ export async function getEmailTagsBatch(emailIds: string[]): Promise<EmailTag[]>
   return invoke('get_email_tags_batch', { emailIds });
 }
 
+// ── Junk detection ──────────────────────────────────────────────────────────
+
+/** Verdicts keyed by email id. A missing key means "not scored yet". */
+export async function getJunkVerdicts(emailIds: string[]): Promise<Record<string, JunkVerdict>> {
+  return invoke('get_junk_verdicts', { emailIds });
+}
+
+/**
+ * Record the user's correction. `isJunk: false` is permanent — it survives
+ * re-scoring, model bumps and backfills.
+ */
+export async function setJunkFeedback(accountId: string, emailId: string, isJunk: boolean): Promise<void> {
+  return invoke('set_junk_feedback', { accountId, emailId, isJunk });
+}
+
+export async function getJunkEnabled(): Promise<boolean> {
+  return invoke('get_junk_enabled');
+}
+
+/** Fire-and-forget: scores previously-synced mail on the background queue. */
+export async function backfillJunkScores(accountId: string): Promise<void> {
+  return invoke('backfill_junk_scores', { accountId });
+}
+
 export async function countUnclassifiedEmails(accountId: string): Promise<number> {
   return invoke('count_unclassified_emails', { accountId });
 }
@@ -1501,4 +1528,25 @@ export async function previewLensExtraction(
     prompt,
     sampleSize: sampleSize ?? null,
   });
+}
+
+/**
+ * Confirm a message is junk and file it in the server's Junk folder where the
+ * provider supports moves (IMAP today). Resolves to `false` when the account has
+ * no server-side Junk folder — the local override is recorded either way.
+ */
+export async function reportJunkToProvider(accountId: string, emailId: string): Promise<boolean> {
+  return invoke('report_junk_to_provider', { accountId, emailId });
+}
+
+export async function getJunkConfig(): Promise<JunkConfig> {
+  return invoke('get_junk_config');
+}
+
+export async function setJunkConfig(config: JunkConfig): Promise<void> {
+  return invoke('set_junk_config', { config });
+}
+
+export async function getJunkStats(accountId: string): Promise<JunkStats> {
+  return invoke('get_junk_stats', { accountId });
 }

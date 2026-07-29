@@ -142,5 +142,32 @@
     "aiTranslation": "Traducción con IA · {{language}}",
     "truncatedNotice": "El correo era demasiado largo: solo se tradujo el comienzo.",
     "failed": "Error al traducir: {{error}}"
+  },
+  "junk": {
+    "kind": {
+      "phishing": "Este mensaje podría estar suplantando a alguien",
+      "spam": "Esto parece correo basura no solicitado",
+      "graymail": "Correo masivo que no sueles leer",
+      "legit": ""
+    },
+    "notJunk": "No es basura",
+    "isJunk": "Confirmar basura",
+    "reason": {
+      "display_name_impersonation": "El nombre del remitente coincide con un contacto, pero la dirección no",
+      "lookalike_domain": "El dominio del remitente imita a uno con el que te escribes",
+      "punycode_domain": "El dominio del remitente usa caracteres que imitan a otros",
+      "reply_to_mismatch": "Las respuestas irían a un dominio distinto al del remitente",
+      "dmarc_fail": "Falló DMARC: no se pudo verificar el remitente visible",
+      "spf_fail": "Falló SPF: el servidor emisor no está autorizado para este dominio",
+      "dangerous_attachment": "Lleva un tipo de adjunto que se usa para distribuir malware",
+      "display_name_contains_address": "El nombre del remitente está escrito para parecer otra dirección",
+      "server_spam_flag": "Tu servidor de correo lo marcó como spam",
+      "mixed_script_display_name": "El nombre del remitente mezcla alfabetos para disfrazarse"
+    },
+    "isJunkHint": "También lo archiva en la carpeta Junk del servidor para que su filtro aprenda",
+    "confirmedAndFiled": "Confirmado como basura y archivado en la carpeta Junk del servidor",
+    "confirmedLocally": "Confirmado como basura (esta cuenta no tiene carpeta Junk en el servidor)",
+    "confirmFailed": "No se pudo archivar el mensaje en el servidor",
+    "hideFlagged": "Ocultar {{count}} mensajes de basura"
   }
 }

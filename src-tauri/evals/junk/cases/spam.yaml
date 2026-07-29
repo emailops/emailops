@@ -1,0 +1,128 @@
+# Unsolicited bulk junk — the classic category. On IMAP accounts the server's
+# own X-Spam-* verdict carries most of the recall here for free, which is why
+# capturing it is the single highest-value part of Stage 1.
+#
+# All synthetic. Domains use the RFC 2606 `.example` TLD.
+
+- id: spam-server-flagged-by-imap-host
+  tier: smoke
+  raw_headers: |
+    From: "Winner Notification" <promo@lucky-draw-intl.example>
+    X-Spam-Flag: YES
+    X-Spam-Status: Yes, score=9.8 required=5.0 tests=BAYES_99,HTML_IMAGE_ONLY
+    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=none
+    Subject: You have been selected
+  body: |
+    Claim your prize within 24 hours.
+  expect:
+    spam: junk
+    phishing: clean
+    graymail: clean
+    reasons_include: [server_spam_flag]
+
+- id: spam-url-shortener-and-shouting
+  tier: smoke
+  raw_headers: |
+    From: "DEALS" <blast@offer-network.example>
+    Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=offer-network.example;
+        dkim=none; dmarc=fail
+    Subject: LIMITED TIME!!! ACT NOW BEFORE IT IS TOO LATE
+  body: |
+    CLICK HERE NOW: https://shrt.example/a1 https://shrt.example/b2 https://shrt.example/c3
+  expect:
+    spam: junk
+    phishing: clean
+    graymail: clean
+    reasons_include: [excessive_caps, url_shortener, spf_fail]
+
+- id: spam-raw-ip-link
+  tier: smoke
+  raw_headers: |
+    From: "Delivery Service" <notice@parcel-alerts.example>
+    Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=parcel-alerts.example;
+        dkim=none; dmarc=fail
+    Subject: Your parcel could not be delivered
+  body: |
+    Reschedule delivery: http://203.0.113.77/redelivery?id=8812
+  expect:
+    spam: junk
+    phishing: clean
+    graymail: clean
+    reasons_include: [raw_ip_link, spf_fail]
+
+# NOTE: there is deliberately no hidden-text case. The signal was removed after
+# measuring it on a real mailbox, where the CSS it keyed on (display:none +
+# font-size:0 + white text) turned out to be how essentially every HTML
+# newsletter renders its preheader. See `content::has_hidden_text`. The
+# behaviour that replaced it is pinned by `legit-newsletter-with-preheader`.
+
+- id: spam-link-farm-unknown-sender
+  tier: smoke
+  raw_headers: |
+    From: "Affiliate Network" <mail@click-partners.example>
+    Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=click-partners.example;
+        dkim=none; dmarc=fail
+    Subject: Top offers this week
+  body: |
+    <a href="https://a1.example/x">one</a> <a href="https://b2.example/x">two</a>
+    <a href="https://c3.example/x">three</a> <a href="https://d4.example/x">four</a>
+    <a href="https://e5.example/x">five</a> <a href="https://f6.example/x">six</a>
+  expect:
+    spam: junk
+    phishing: clean
+    graymail: clean
+    reasons_include: [high_link_density, spf_fail, first_contact]
+
+- id: spam-link-text-href-mismatch
+  tier: smoke
+  raw_headers: |
+    From: "Account Services" <svc@billing-notices.example>
+    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=fail
+    Subject: Subscription renewal
+  body: |
+    <a href="https://collector-host.example/track/9f">https://meridianbank.example/account</a>
+  expect:
+    spam: junk
+    phishing: clean
+    graymail: clean
+    reasons_include: [link_text_href_mismatch]
+
+- id: spam-urgency-in-spanish
+  tier: smoke
+  raw_headers: |
+    From: "CloudStorage" <noreply@unrelated-host.example>
+    Return-Path: <noreply@unrelated-host.example>
+    X-Spam-Status: No, score=2.6 required=5.0
+    X-Spam-Flag: NO
+    Subject: 🚫 Tus fotos y videos se eliminarán el 11 de marzo
+  body: |
+    URGENTE. Sus archivos serán eliminados.
+    Acción requerida para conservar sus datos: https://unrelated-host.example/r/9f
+  expect:
+    # REGRESSION, from a real mailbox. The pressure and credential lexicons were
+    # English-only, so a Spanish-language attack scored zero on every content
+    # signal. The app ships en/es/fr/de; the lexicons have to as well.
+    #
+    # Deliberately takes NO position on the spam band. Pressure wording plus a
+    # credential ask from a first-time sender is genuinely ambiguous — a real
+    # "confirm your email address" from a service you just signed up for has the
+    # same shape — so this evidence belongs in the uncertain band, and inflating
+    # weights until the case went green would have manufactured false positives.
+    # What the case proves is that the lexicon fires at all in Spanish.
+    phishing: clean
+    graymail: clean
+    reasons_include: [urgency_lexicon, first_contact]
+
+- id: spam-urgency-in-german
+  tier: smoke
+  raw_headers: |
+    From: "Konto-Service" <service@unbekannt-host.example>
+    Subject: Dringend - Ihr Konto wird gesperrt
+  body: |
+    Ihr Konto wird gesperrt. Bitte Passwort bestätigen: https://unbekannt-host.example/k/2
+  expect:
+    # Same reasoning as the Spanish case: proves the German lexicon fires,
+    # claims no band the evidence alone cannot support.
+    phishing: clean
+    graymail: clean
+    reasons_include: [urgency_lexicon, first_contact]

@@ -422,6 +422,10 @@ pub async fn sync_account_with_provider(
 
     let mut global_done: u32 = 0;
     let mut first_batch = true;
+    // Built lazily on the first chunk and reused for the whole sync: the contact
+    // reference set and the trained models do not change mid-run, and rebuilding
+    // them per twenty-message chunk would be the dominant cost of scoring.
+    let mut junk_ctx: Option<crate::services::junk::signals::AccountContext> = None;
     let mut window_oldest_ts: Option<i64> = None;
     let mut window_newest_ts: Option<i64> = None;
     let format_window_date = |ts: i64| -> String {
@@ -552,6 +556,37 @@ pub async fn sync_account_with_provider(
 
             let ids_to_remove: Vec<String> = chunk_emails.iter().map(|(e, _)| e.id.clone()).collect();
             let _ = db.remove_failed_emails_batch(account_id, &ids_to_remove);
+
+            // Score BEFORE announcing the batch. Junk detection is fully
+            // deterministic — no model, no network, a few indexed reads per
+            // message — so unlike classification it has no reason to run later.
+            // Doing it afterwards is what made a message appear in the inbox and
+            // then visibly change into junk a moment later.
+            //
+            // The context (contact reference set, trained models) is built once
+            // for the whole sync rather than once per twenty-message chunk.
+            if crate::services::junk::is_enabled(db) {
+                if junk_ctx.is_none() {
+                    match crate::services::junk::signals::AccountContext::load(db, account_id) {
+                        Ok(ctx) => junk_ctx = Some(ctx),
+                        Err(e) => emit_account_log(
+                            "warn",
+                            "sync",
+                            &account.email,
+                            &format!("Junk context unavailable, scoring deferred: {e}"),
+                        ),
+                    }
+                }
+                if let Some(ctx) = junk_ctx.as_ref() {
+                    if let Err(e) =
+                        crate::services::junk::score_ids_with_context(db, account_id, ctx, &ids_to_remove).await
+                    {
+                        // Never fail a sync over scoring: the post-sync pass
+                        // picks up anything missed.
+                        emit_account_log("warn", "sync", &account.email, &format!("Junk scoring failed: {e}"));
+                    }
+                }
+            }
 
             all_new_ids.extend(ids_to_remove);
             synced_count += chunk_emails.len() as u32;
@@ -870,6 +905,31 @@ async fn enqueue_ai_followups(
                         &email_classify,
                         &format!("Classification failed: {}", e),
                     );
+                }
+            })
+            .await;
+    }
+
+    // Junk scoring. Deterministic and model-free, so it runs on every new
+    // message with no AI gate — it is cheaper than the classification pass it
+    // sits beside.
+    {
+        let db_junk = Arc::clone(db);
+        let aid_junk = account_id.to_string();
+        let email_junk = account_email.to_string();
+        let task_label = format!("junk:score:{}:{}", aid_junk, label_suffix);
+        ai_background
+            .submit_named(&task_label, async move {
+                // Retrain first, so new mail is scored against a model that has
+                // seen everything up to now — including any corrections the user
+                // made since the last sync.
+                if let Err(e) = crate::services::junk::train_models(&db_junk, &aid_junk).await {
+                    emit_account_log("warn", "sync", &email_junk, &format!("Junk model training failed: {e}"));
+                }
+                match crate::services::junk::score_new_emails(&db_junk, &aid_junk).await {
+                    Ok(0) => {}
+                    Ok(n) => emit_account_log("debug", "sync", &email_junk, &format!("Junk scoring: {n} message(s)")),
+                    Err(e) => emit_account_log("error", "sync", &email_junk, &format!("Junk scoring failed: {e}")),
                 }
             })
             .await;
@@ -1994,6 +2054,7 @@ mod extra_mailbox_window_tests {
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            headers: None,
         }
     }
 
@@ -2364,6 +2425,7 @@ mod sync_anchor_tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            headers: None,
         }
     }
 
@@ -2471,6 +2533,7 @@ mod backfill_watermark_persistence_tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            headers: None,
         };
         db.insert_email(&existing).expect("seed inbox email");
 

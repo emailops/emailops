@@ -74,6 +74,15 @@ pub struct AccountDashboard {
     pub embedded_count: i64,
     /// Eligible-for-embedding denominator: applies `EmbeddingsConfig.categories`.
     pub embedded_eligible: i64,
+    /// Emails with a junk verdict. Scoring is deterministic and runs on every
+    /// message, so the denominator is simply `synced_count`.
+    pub junk_scored_count: i64,
+    /// Flagged as an impersonation attempt. Broken out from the other two
+    /// because it is the only one that is a security finding rather than a
+    /// tidiness one.
+    pub junk_phishing_count: i64,
+    pub junk_spam_count: i64,
+    pub junk_graymail_count: i64,
 }
 
 /// Build the cache key used to persist a per-account server total in
@@ -185,6 +194,10 @@ fn collect_one(db: &Arc<Database>, account: Account) -> Result<AccountDashboard>
     let task_eligible: i64;
     let embedded_count: i64;
     let embedded_eligible: i64;
+    let junk_scored_count: i64;
+    let mut junk_phishing_count = 0i64;
+    let mut junk_spam_count = 0i64;
+    let mut junk_graymail_count = 0i64;
 
     {
         let conn = db.reader();
@@ -307,6 +320,36 @@ fn collect_one(db: &Arc<Database>, account: Account) -> Result<AccountDashboard>
             task_cfg.backfill_min_timestamp(chrono::Utc::now().timestamp()),
         )?;
         embedded_eligible = count_eligible(&conn, &account.id, &account.email, &emb_cfg.categories, false)?;
+
+        // Junk coverage. A verdict exists for every scored message regardless
+        // of outcome, so `junk_scored_count` is the progress denominator; the
+        // per-kind counts are what the user actually cares about. A `not_junk`
+        // override excludes a message from the flagged counts — the dashboard
+        // must never report a badge the user has already dismissed.
+        junk_scored_count = conn.query_row(
+            "SELECT COUNT(*) FROM email_junk WHERE account_id = ?1",
+            params![account.id],
+            |r| r.get::<_, i64>(0),
+        )?;
+
+        let mut stmt = conn.prepare(
+            "SELECT primary_kind, COUNT(*) FROM email_junk
+             WHERE account_id = ?1 AND band = 'junk'
+               AND (user_override IS NULL OR user_override <> 'not_junk')
+             GROUP BY primary_kind",
+        )?;
+        let rows = stmt.query_map(params![account.id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (kind, count) = row?;
+            match kind.as_str() {
+                "phishing" => junk_phishing_count = count,
+                "spam" => junk_spam_count = count,
+                "graymail" => junk_graymail_count = count,
+                _ => {}
+            }
+        }
     }
 
     let synced_since = synced_since.or(account.sync_from_timestamp);
@@ -334,6 +377,10 @@ fn collect_one(db: &Arc<Database>, account: Account) -> Result<AccountDashboard>
         task_eligible,
         embedded_count,
         embedded_eligible,
+        junk_scored_count,
+        junk_phishing_count,
+        junk_spam_count,
+        junk_graymail_count,
     })
 }
 

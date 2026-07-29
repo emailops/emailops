@@ -22,7 +22,9 @@
     "aisearch": "Búsqueda con IA",
     "aisearchDesc": "Embeddings y búsqueda semántica",
     "privacy": "Privacidad y seguridad",
-    "privacyDesc": "Contraseña, contenido remoto"
+    "privacyDesc": "Contraseña, contenido remoto",
+    "junk": "Basura",
+    "junkDesc": "Spam, suplantación y correo masivo"
   },
   "appearance": {
     "language": "Idioma de la interfaz",
@@ -437,5 +439,36 @@
     "enableDesc": "Muestra botones de traducción en correos en otros idiomas y en la ventana de redacción.",
     "promptTitle": "Prompt de traducción",
     "promptDesc": "Se usa al traducir un correo o un borrador."
+  },
+  "junk": {
+    "enabled": "Detectar correo basura",
+    "enabledDesc": "Puntúa cada mensaje localmente buscando spam, suplantación y correo masivo no deseado. Sin modelo, sin red — nada sale de tu equipo.",
+    "flaggedActionTitle": "Qué hacer con lo marcado",
+    "action": {
+      "dim": "Atenuarlo en la lista",
+      "hide": "Sacarlo de la bandeja"
+    },
+    "actionDesc": {
+      "dim": "Sigue donde estaba, solo que la vista lo salta más fácil. Recuperable de un vistazo.",
+      "hide": "Se quita de la lista de la bandeja. Sigue accesible desde la búsqueda y desde las carpetas de tu proveedor."
+    },
+    "neverMoves": "Ninguna de las dos opciones mueve ni borra nada en el servidor. Eso solo lo hace el botón «Confirmar basura», y solo cuando lo pulsas tú.",
+    "phishing": "Avisar de intentos de suplantación",
+    "phishingDesc": "Desactivado por defecto. Es la única comprobación que acusa a un mensaje de fraude, y tiene mucha menos evidencia detrás que las otras dos — un banner rojo equivocado cuesta más confianza de la que gana uno acertado.",
+    "statusTitle": "Estado",
+    "scored": "Mensajes puntuados",
+    "unscored": "Sin puntuar",
+    "foundSpam": "Marcados como spam",
+    "foundGraymail": "Marcados como masivo",
+    "foundPhishing": "Marcados como suplantación",
+    "yourFeedback": "Tus correcciones (basura / no basura)",
+    "model": {
+      "spam": "Modelo de spam",
+      "graymail": "Modelo de masivo"
+    },
+    "modelInUse": "en uso — {{pos}} basura / {{neg}} legítimos",
+    "modelNotYet": "aún sin etiquetas suficientes — {{pos}} basura / {{neg}} legítimos",
+    "backfill": "Puntuar {{count}} mensajes antiguos",
+    "backfillStarted": "Puntuando mensajes antiguos en segundo plano"
   }
 }

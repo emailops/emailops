@@ -22,7 +22,9 @@
     "aisearch": "AI Search",
     "aisearchDesc": "Embedding & semantic search options",
     "privacy": "Privacy & Security",
-    "privacyDesc": "Password, remote content"
+    "privacyDesc": "Password, remote content",
+    "junk": "Junk",
+    "junkDesc": "Spam, impersonation and bulk mail"
   },
   "appearance": {
     "language": "Display language",
@@ -437,5 +439,36 @@
     "enableDesc": "Show Translate buttons on emails in other languages and in the compose window.",
     "promptTitle": "Translation prompt",
     "promptDesc": "Used when translating an email or a compose draft."
+  },
+  "junk": {
+    "enabled": "Detect junk mail",
+    "enabledDesc": "Scores every message locally for spam, impersonation and unwanted bulk. No model, no network — nothing leaves your machine.",
+    "flaggedActionTitle": "What to do with flagged mail",
+    "action": {
+      "dim": "Fade it in the list",
+      "hide": "Keep it out of the inbox"
+    },
+    "actionDesc": {
+      "dim": "Still in place, just easier for the eye to skip. Fully recoverable at a glance.",
+      "hide": "Removed from the inbox list. Still reachable through search and your provider’s own folders."
+    },
+    "neverMoves": "Neither option ever moves or deletes mail on the server. Only the “Confirm junk” button does that, and only when you press it.",
+    "phishing": "Warn about impersonation attempts",
+    "phishingDesc": "Off by default. This is the only check that accuses a message of fraud, and it has far less evidence behind it than the other two — a wrong red banner costs more trust than a correct one earns.",
+    "statusTitle": "Status",
+    "scored": "Messages scored",
+    "unscored": "Not scored yet",
+    "foundSpam": "Marked as spam",
+    "foundGraymail": "Marked as bulk",
+    "foundPhishing": "Marked as impersonation",
+    "yourFeedback": "Your corrections (junk / not junk)",
+    "model": {
+      "spam": "Spam model",
+      "graymail": "Bulk model"
+    },
+    "modelInUse": "in use — {{pos}} junk / {{neg}} legitimate",
+    "modelNotYet": "not enough labels yet — {{pos}} junk / {{neg}} legitimate",
+    "backfill": "Score {{count}} older messages",
+    "backfillStarted": "Scoring older messages in the background"
   }
 }

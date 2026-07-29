@@ -22,7 +22,11 @@
     "classified": "Classified",
     "memoriesAnalyzed": "Memories analyzed",
     "tasksAnalyzed": "Tasks analyzed",
-    "embeddings": "Embeddings"
+    "embeddings": "Embeddings",
+    "junkScored": "Junk scored",
+    "junkPhishing": "{{count}} phishing",
+    "junkSpam": "{{count}} spam",
+    "junkGraymail": "{{count}} bulk"
   },
   "queues": {
     "title": "Background queues",

@@ -245,6 +245,13 @@ name = "agent_search_eval"
 required-features = ["eval"]
 
 [[example]]
+# Junk detector gate — synthetic corpus, no model, no DB. Exits non-zero when
+# the false-positive budget is blown.
+#   cargo run --features eval --example junk_eval
+name = "junk_eval"
+required-features = ["eval"]
+
+[[example]]
 # Evaluation harness for the AI draft generator. Gated behind `eval` so it is
 # never compiled by default. Usage:
 #   cargo run --features eval --example draft_eval -- --n 5

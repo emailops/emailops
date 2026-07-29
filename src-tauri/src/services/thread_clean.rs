@@ -652,6 +652,7 @@ mod tests {
             category: "primary".into(),
             mailbox: "inbox".into(),
             is_sent: false,
+            headers: None,
         };
         let mut e2 = e1.clone();
         e2.id = "e2".into();
@@ -698,6 +699,7 @@ mod tests {
             category: "primary".into(),
             mailbox: "inbox".into(),
             is_sent: false,
+            headers: None,
         };
         let out = format_thread_context(&[e], |_| Some("Body".to_string()), 1000);
         assert!(

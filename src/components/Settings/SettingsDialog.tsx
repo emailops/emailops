@@ -10,6 +10,7 @@ import { AiTranslationSettings } from './AiTranslationSettings';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
+import { JunkSettings } from './JunkSettings';
 import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
 import { PrivacySettings } from './PrivacySettings';
@@ -20,6 +21,7 @@ export type SettingsTab =
   | 'calendar'
   | 'ai'
   | 'classification'
+  | 'junk'
   | 'tasks'
   | 'memory'
   | 'lenses'
@@ -54,6 +56,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'calendar' },
   { id: 'ai' },
   { id: 'classification' },
+  { id: 'junk' },
   { id: 'tasks', experimental: true },
   { id: 'memory', experimental: true },
   { id: 'lenses', experimental: true },
@@ -210,6 +213,7 @@ export function SettingsDialog({
               embedded
             />
           )}
+          {tab === 'junk' && <JunkSettings activeAccountId={effectiveAccountId} />}
           {tab === 'tasks' && (
             <TasksSettings
               activeAccountId={effectiveAccountId}

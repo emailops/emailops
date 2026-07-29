@@ -9,6 +9,7 @@ import type { Email, EmailAttachmentMeta } from '@/types';
 import { CalendarInviteCard } from './CalendarInviteCard';
 import { EmailAttachments } from './EmailAttachments';
 import { EmailBody } from './EmailBody';
+import { JunkBanner } from './JunkBanner';
 import { TranslatedEmailBody, TranslationControls } from './TranslationControls';
 
 export interface ThreadEmailItemProps {
@@ -153,6 +154,9 @@ export function ThreadEmailItem({
           </div>
         ) : (
           <>
+            {/* Above everything else in the message: a warning about what the
+                message IS has to be read before the message itself. */}
+            <JunkBanner emailId={email.id} accountId={email.accountId} />
             {translationEnabled && aiEnabled && <TranslationControls emailId={email.id} />}
             {showTranslated && translation ? (
               <TranslatedEmailBody

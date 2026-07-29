@@ -64,6 +64,7 @@ import {
   useTasksEnabledStore,
   useTranslationEnabledStore,
 } from '@/stores/featureToggleStore';
+import { useJunkStore } from '@/stores/junkStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
@@ -711,6 +712,33 @@ function AppInner() {
           'ai',
           `${provider}/${model} → ${operation}: ${tokens} tokens${costStr}`,
         );
+      }),
+    );
+
+    // The junk display preference drives whether flagged rows are faded or
+    // removed from the list, so it has to be in the store before the first render
+    // of the inbox rather than fetched per row.
+    void useJunkStore.getState().loadConfig();
+
+    // Junk verdicts land asynchronously after each sync pass. Merge the chip
+    // into whatever tags the row already cached rather than replacing them —
+    // classification and junk scoring run independently and neither should
+    // clobber the other's result.
+    unlisteners.push(
+      listen<{ emailId: string; kind: string }>('email-junk-scored', (event) => {
+        const { emailId, kind } = event.payload;
+        const now = Math.floor(Date.now() / 1000);
+        // Clear the junk store's cached miss so an open message picks up a
+        // verdict that landed after it was first rendered.
+        useJunkStore.getState().invalidate(emailId);
+        void useJunkStore.getState().loadVerdicts([emailId]);
+        const existing = useTagStore.getState().tagsByEmail[emailId] ?? [];
+        useTagStore
+          .getState()
+          .setEmailTags(emailId, [
+            ...existing.filter((t) => t.tagType !== 'junk'),
+            { emailId, tagType: 'junk', tagValue: kind, confidence: null, createdAt: now },
+          ]);
       }),
     );
 

@@ -223,6 +223,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            headers: None,
         }
     }
 

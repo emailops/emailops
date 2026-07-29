@@ -287,3 +287,39 @@ message fetch for mail that is immediately discarded — expensive on promotions
 mailboxes); adding `in:inbox` as another positive OR term alongside the category clauses
 (matches the entire inbox regardless of selection, silently discarding the user's
 deliberate Promotions/Social exclusions).
+
+## 2026-07-28 — Junk detection is local-flag-only, three-axis, and gated on false positives
+
+**Decision:** Junk detection (spam / phishing-BEC / graymail) scores messages **locally
+only** — it never moves, deletes or reports a message on the server, and the IMAP
+`move_message` seam stays untouched. Messages are scored on **three independent axes**
+that are never collapsed into one number, each with its own band and its own
+false-positive budget. The measurement harness (`make eval-junk`,
+`src-tauri/evals/junk/cases/`) is authoritative: a **false positive on legitimate mail
+fails the build**, while a missed junk message is only a warning. The phishing axis has a
+zero-tolerance budget on the curated synthetic corpus; spam is capped at 0.5% and
+graymail at 2%. No statistical model is trained for the phishing axis.
+
+**Context:** Gmail and Outlook already filter server-side, so the value is concentrated
+where they don't help: IMAP accounts with weak server filtering, targeted BEC that
+consumer filters pass through because it has no links and no bad grammar, and bulk mail
+that is legitimate but unwanted. Those three fail in different ways and warrant different
+treatment — badging a newsletter as a fraud attempt is as wrong as missing the fraud — so
+one score cannot serve all three. The cost asymmetry is the governing constraint: a user
+who misses one real invoice starts checking the junk group every time, which is exactly
+the work the feature was supposed to remove. That makes precision, not recall, the thing
+to optimize, and it has to be enforced mechanically rather than by intent. Phishing gets
+no per-user statistical model because a mailbox yields a handful of positives at best;
+the axis stays deterministic plus (later) an LLM band that may only move a score *within*
+the uncertain range and can never clear a hard deterministic failure.
+
+**Rejected:** A single junk score with one threshold (cannot express "bulk but
+legitimate", and forces newsletters and wire fraud onto the same UI treatment);
+server-side moves to the Junk folder in v1 (a false positive then hides mail in every
+client, not just EmailOps — needs a demonstrated FP rate first, and Gmail/Outlook do not
+implement the move seam anyway); an LLM classifier on every message (~600 tokens each,
+weaker calibration than cheap statistical methods, and it cannot see the headers that
+actually decide phishing); training the class prior from the provider's spam folder (that
+folder is not a random sample of the inbox, so the empirical prior is wrong — it is fixed
+by configuration instead); hiding junk from the inbox by default (deprioritize-and-
+collapse keeps every message one click away and keeps the failure mode recoverable).

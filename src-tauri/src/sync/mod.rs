@@ -3,6 +3,7 @@ pub mod draft_plan;
 pub mod folder_plan;
 pub mod gmail;
 pub mod gmail_calendar;
+pub mod header_capture;
 pub mod imap;
 pub mod mime_builder;
 #[cfg(any(test, debug_assertions))]

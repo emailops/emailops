@@ -813,6 +813,14 @@ export interface AccountDashboard {
   embeddedCount: number;
   /** Eligible-for-embedding denominator (embeddings_categories filter). */
   embeddedEligible: number;
+  /** Messages with a junk verdict. The denominator is `syncedCount`: scoring is
+   *  deterministic and runs on every message, so there is no eligibility filter. */
+  junkScoredCount: number;
+  /** Flagged as impersonation. Counted separately from the other two because it
+   *  is a security finding, not a tidiness one. Excludes `not_junk` overrides. */
+  junkPhishingCount: number;
+  junkSpamCount: number;
+  junkGraymailCount: number;
 }
 
 export interface RefreshServerTotalResponse {
@@ -1055,4 +1063,74 @@ export interface LensPreviewRow {
   data: Record<string, unknown>;
   status: string;
   errorMessage: string | null;
+}
+
+// ── Junk detection ──────────────────────────────────────────────────────────
+// Mirrors `services::junk::verdict` + `db::emails::junk::StoredJunkVerdict`.
+// `src/types/generated/` is unused in this repo, so these are maintained here.
+
+/**
+ * `unknown` is deliberately distinct from `clean`: it means the evidence needed
+ * to decide was unavailable (no captured headers yet, or a provider that
+ * withheld them). The UI must render nothing for it — never a "looks fine" badge.
+ */
+export type JunkBand = 'clean' | 'unknown' | 'uncertain' | 'junk';
+export type JunkKind = 'legit' | 'spam' | 'phishing' | 'graymail';
+export type JunkAxis = 'phishing' | 'spam' | 'graymail';
+export type JunkMethod = 'deterministic' | 'statistical' | 'llm';
+
+/** One piece of evidence. `code` is a closed enum rendered through i18n. */
+export interface JunkReason {
+  code: string;
+  axis: JunkAxis;
+  weight: number;
+  detail?: string | null;
+}
+
+export interface JunkVerdict {
+  emailId: string;
+  spamScore: number;
+  phishScore: number;
+  grayScore: number;
+  band: JunkBand;
+  primaryKind: JunkKind;
+  reasons: JunkReason[];
+  method: JunkMethod;
+  modelVersion: number;
+  scoredAt: number;
+  /** 'not_junk' is permanent and outranks every score. */
+  userOverride?: string | null;
+}
+
+/** What the inbox does with a flagged message. Never deletes, never moves on the
+ *  server — the strongest option still leaves the message where the server put it. */
+export type JunkFlaggedAction = 'dim' | 'hide';
+
+export interface JunkConfig {
+  enabled: boolean;
+  /** Off by default: this axis accuses a message of impersonation and has too
+   *  little ground truth behind it to be trusted with that. */
+  phishingEnabled: boolean;
+  flaggedAction: JunkFlaggedAction;
+}
+
+export interface JunkModelInfo {
+  axis: string;
+  positives: number;
+  negatives: number;
+  /** Trained and in use are not the same thing: below the label floor a model
+   *  exists but is not allowed to vote. */
+  inUse: boolean;
+  trainedAt: number | null;
+}
+
+export interface JunkStats {
+  scored: number;
+  unscored: number;
+  phishing: number;
+  spam: number;
+  graymail: number;
+  markedJunk: number;
+  markedNotJunk: number;
+  models: JunkModelInfo[];
 }

@@ -142,5 +142,32 @@
     "aiTranslation": "KI-Übersetzung · {{language}}",
     "truncatedNotice": "Die E-Mail war zu lang – nur der Anfang wurde übersetzt.",
     "failed": "Übersetzung fehlgeschlagen: {{error}}"
+  },
+  "junk": {
+    "kind": {
+      "phishing": "Diese Nachricht gibt sich möglicherweise als jemand anderes aus",
+      "spam": "Das sieht nach unerwünschter Werbung aus",
+      "graymail": "Massenmail, die Sie normalerweise nicht lesen",
+      "legit": ""
+    },
+    "notJunk": "Kein Spam",
+    "isJunk": "Als Spam bestätigen",
+    "reason": {
+      "display_name_impersonation": "Der Absendername stimmt mit einem Kontakt überein, die Adresse nicht",
+      "lookalike_domain": "Die Absenderdomain ahmt eine Ihrer Kontaktdomains nach",
+      "punycode_domain": "Die Absenderdomain verwendet täuschend ähnliche Zeichen",
+      "reply_to_mismatch": "Antworten gingen an eine andere Domain als den Absender",
+      "dmarc_fail": "DMARC fehlgeschlagen: Der sichtbare Absender konnte nicht überprüft werden",
+      "spf_fail": "SPF fehlgeschlagen: Der sendende Server ist für diese Domain nicht autorisiert",
+      "dangerous_attachment": "Enthält einen Anhangstyp, der zur Verbreitung von Schadsoftware dient",
+      "display_name_contains_address": "Der Absendername ist so geschrieben, dass er wie eine andere Adresse aussieht",
+      "server_spam_flag": "Ihr Mailserver hat dies als Spam markiert",
+      "mixed_script_display_name": "Der Absendername mischt Alphabete zur Tarnung"
+    },
+    "isJunkHint": "Legt die Nachricht auch im Junk-Ordner des Servers ab, damit dessen Filter lernt",
+    "confirmedAndFiled": "Als Spam bestätigt und im Junk-Ordner des Servers abgelegt",
+    "confirmedLocally": "Als Spam bestätigt (dieses Konto hat keinen Junk-Ordner)",
+    "confirmFailed": "Nachricht konnte auf dem Server nicht abgelegt werden",
+    "hideFlagged": "{{count}} Spam-Nachrichten ausblenden"
   }
 }
