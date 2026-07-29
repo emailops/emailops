@@ -469,6 +469,7 @@
     "modelInUse": "in use — {{pos}} junk / {{neg}} legitimate",
     "modelNotYet": "not enough labels yet — {{pos}} junk / {{neg}} legitimate",
     "backfill": "Score {{count}} older messages",
-    "backfillStarted": "Scoring older messages in the background"
+    "backfillStarted": "Scoring older messages in the background",
+    "backfillRunning": "Scoring… {{count}} left"
   }
 }

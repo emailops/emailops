@@ -469,6 +469,7 @@
     "modelInUse": "actif — {{pos}} / {{neg}}",
     "modelNotYet": "pas assez d'étiquettes — {{pos}} / {{neg}}",
     "backfill": "Analyser {{count}} anciens messages",
-    "backfillStarted": "Analyse des anciens messages en arrière-plan"
+    "backfillStarted": "Analyse des anciens messages en arrière-plan",
+    "backfillRunning": "Analyse… {{count}} restants"
   }
 }

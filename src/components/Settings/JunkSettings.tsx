@@ -86,10 +86,36 @@ export function JunkSettings({ activeAccountId }: JunkSettingsProps) {
       addLog('info', 'system', t('settings:junk.backfillStarted'));
     } catch (e) {
       setError(errorText(e));
-    } finally {
       setBackfilling(false);
     }
   }, [activeAccountId, addLog, t]);
+
+  // The command returns as soon as the work is queued, so without this the
+  // panel keeps showing the same "score N older messages" and the click looks
+  // like it did nothing. Poll until the queue drains, then stop — a spinner
+  // that never resolves is its own kind of broken.
+  useEffect(() => {
+    if (!backfilling || !activeAccountId) return;
+    let cancelled = false;
+    let ticks = 0;
+    const timer = window.setInterval(async () => {
+      ticks += 1;
+      try {
+        const next = await api.getJunkStats(activeAccountId);
+        if (cancelled) return;
+        setStats(next);
+        // Give up watching after ~2 minutes. The work continues in the
+        // background either way; only the live counter stops.
+        if (next.unscored === 0 || ticks > 60) setBackfilling(false);
+      } catch {
+        if (!cancelled) setBackfilling(false);
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [backfilling, activeAccountId]);
 
   return (
     <div className="space-y-5">
@@ -184,7 +210,9 @@ export function JunkSettings({ activeAccountId }: JunkSettingsProps) {
             disabled={backfilling || !config.enabled || stats.unscored === 0}
             className="mt-3 rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50"
           >
-            {t('settings:junk.backfill', { count: stats.unscored })}
+            {backfilling
+              ? t('settings:junk.backfillRunning', { count: stats.unscored })
+              : t('settings:junk.backfill', { count: stats.unscored })}
           </button>
         </section>
       )}

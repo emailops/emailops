@@ -469,6 +469,7 @@
     "modelInUse": "aktiv — {{pos}} / {{neg}}",
     "modelNotYet": "noch zu wenige Labels — {{pos}} / {{neg}}",
     "backfill": "{{count}} ältere Nachrichten bewerten",
-    "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet"
+    "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet",
+    "backfillRunning": "Wird bewertet… noch {{count}}"
   }
 }

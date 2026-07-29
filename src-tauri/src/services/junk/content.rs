@@ -195,7 +195,13 @@ pub fn extract_links(body: &str) -> Vec<String> {
 /// Bare `http(s)://…` runs that are not already inside an `href`.
 fn extract_bare_urls(text: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let lower = text.to_lowercase();
+    // `to_ascii_lowercase`, NOT `to_lowercase`. Byte offsets found in this
+    // string are used to slice the ORIGINAL, and a full Unicode lowercasing can
+    // change a string's byte length — 'İ' (U+0130) becomes two characters — so
+    // the offsets stop lining up and the slice lands mid-character and panics.
+    // The literals matched here are all ASCII, so an ASCII fold is both correct
+    // and length-preserving.
+    let lower = text.to_ascii_lowercase();
     let mut cursor = 0usize;
     while cursor < text.len() {
         let Some(found) = lower[cursor..].find("http") else {
@@ -232,7 +238,13 @@ fn extract_bare_urls(text: &str) -> Vec<String> {
 /// every synced message and only needs the attribute values.
 fn extract_hrefs(html: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let lower = html.to_lowercase();
+    // `to_ascii_lowercase`, NOT `to_lowercase`. Byte offsets found in this
+    // string are used to slice the ORIGINAL, and a full Unicode lowercasing can
+    // change a string's byte length — 'İ' (U+0130) becomes two characters — so
+    // the offsets stop lining up and the slice lands mid-character and panics.
+    // The literals matched here are all ASCII, so an ASCII fold is both correct
+    // and length-preserving.
+    let lower = html.to_ascii_lowercase();
     let mut cursor = 0usize;
     while let Some(found) = lower[cursor..].find("href=") {
         let start = cursor + found + "href=".len();
@@ -252,7 +264,13 @@ fn extract_hrefs(html: &str) -> Vec<String> {
 /// Anchor bodies, paired with their href, for mismatch detection.
 fn extract_anchor_pairs(html: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let lower = html.to_lowercase();
+    // `to_ascii_lowercase`, NOT `to_lowercase`. Byte offsets found in this
+    // string are used to slice the ORIGINAL, and a full Unicode lowercasing can
+    // change a string's byte length — 'İ' (U+0130) becomes two characters — so
+    // the offsets stop lining up and the slice lands mid-character and panics.
+    // The literals matched here are all ASCII, so an ASCII fold is both correct
+    // and length-preserving.
+    let lower = html.to_ascii_lowercase();
     let mut cursor = 0usize;
     while let Some(found) = lower[cursor..].find("<a ") {
         let tag_start = cursor + found;
@@ -538,6 +556,29 @@ mod tests {
         let body = r#"<a href="https://acme.example/inv/1">invoice</a>"#;
         assert!(links_include_sender_domain(body, "billing@acme.example"));
         assert!(!links_include_sender_domain(body, "blast@offer-network.example"));
+    }
+
+    #[test]
+    fn a_body_containing_length_changing_characters_does_not_panic() {
+        // REGRESSION, found scoring a real mailbox: byte offsets were taken from
+        // a `to_lowercase()` copy and used to slice the original. Full Unicode
+        // lowercasing is not length-preserving — 'İ' (U+0130) lowercases to two
+        // characters — so every offset past one shifted and the slice landed
+        // mid-character. That is a panic, not a wrong answer, and it killed the
+        // whole scoring batch.
+        let body = format!(
+            "<p>{}</p><a href=\"https://acme.example/x\">link</a> https://other.example/y",
+            "İ".repeat(40)
+        );
+        let signals = analyse("Konu İstanbul", &body, &[]);
+        assert_eq!(signals.link_count, 2, "both links found past the multi-byte run");
+    }
+
+    #[test]
+    fn upper_case_markup_is_still_matched() {
+        // The ASCII fold has to keep working for the thing it is there for.
+        let signals = analyse("", r#"<A HREF="https://acme.example/x">go</A>"#, &[]);
+        assert_eq!(signals.link_count, 1);
     }
 
     #[test]
