@@ -203,7 +203,7 @@ pub fn run() {
     // credential store (macOS Keychain, Windows Credential Manager, Linux
     // Secret Service). Must run before any keyring_core::Entry::new(...) call.
     if let Err(e) = services::keychain::init_native_store() {
-        fatal_startup_error("initialise the OS keychain", &e.to_string());
+        fatal_startup_error("initialise the OS keychain", &e.to_string(), None);
     }
 
     tauri::Builder::default()
@@ -238,7 +238,7 @@ pub fn run() {
                 }
                 _ => match app.path().app_data_dir() {
                     Ok(dir) => dir,
-                    Err(e) => fatal_startup_error("locate its data directory", &e.to_string()),
+                    Err(e) => fatal_startup_error("locate its data directory", &e.to_string(), None),
                 },
             };
             eprintln!(
@@ -267,7 +267,7 @@ pub fn run() {
                 // would ever see, which made a broken install look like a
                 // normal second launch.
                 Err(util::instance_lock::LockError::Unavailable(detail)) => {
-                    fatal_startup_error("lock its data directory", &detail);
+                    fatal_startup_error("lock its data directory", &detail, Some(&app_data_dir));
                 }
             }
             eprintln!(
@@ -278,7 +278,7 @@ pub fn run() {
             let t = std::time::Instant::now();
             let db = match Database::new(app_data_dir.clone()) {
                 Ok(db) => db,
-                Err(e) => fatal_startup_error("open its local database", &e.to_string()),
+                Err(e) => fatal_startup_error("open its local database", &e.to_string(), Some(&app_data_dir)),
             };
             eprintln!(
                 "[startup] [{:.0}ms] database initialized",
@@ -730,15 +730,61 @@ pub fn run() {
 
 // ── Fatal startup errors ──────────────────────────────────────────────────────
 
+/// What the user should actually do about a fatal startup failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupRemedy {
+    /// Default assumption: a full startup disk or a file-permission problem.
+    Environment,
+    /// The data directory was written by a newer build than this one, so the
+    /// remedy is to change the *app*, not the disk.
+    DataFromNewerVersion,
+}
+
+/// Classify a fatal startup detail so the copy names a remedy that can work.
+///
+/// Refinery reports a binary/schema mismatch two ways: `MissingVersion` when
+/// the database records a migration this binary does not embed, and
+/// `DivergentVersion` when the same version has different content. Both mean
+/// this install is older than its data — typically because an uninstall left
+/// the data directory behind and an older build was then installed over it.
+/// Refinery is right to refuse: older code cannot read a newer schema.
+fn classify_startup_failure(detail: &str) -> StartupRemedy {
+    let detail = detail.to_lowercase();
+    if detail.contains("is missing from the filesystem") || detail.contains("is different than filesystem one") {
+        StartupRemedy::DataFromNewerVersion
+    } else {
+        StartupRemedy::Environment
+    }
+}
+
 /// Build the user-facing message for a fatal startup failure. Kept pure so it
 /// can be unit-tested without exiting the process.
-fn format_startup_error(stage: &str, detail: &str) -> String {
-    format!(
-        "EmailOps could not start because it failed to {stage}.\n\n\
-         This is often caused by a full startup disk or a file-permission \
-         problem. Free up disk space and try opening EmailOps again.\n\n\
-         Details: {detail}"
-    )
+///
+/// `app_data_dir` is optional because the earliest call sites run before it has
+/// been resolved; when known it is named so "start fresh" is actionable.
+fn format_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::path::Path>) -> String {
+    let remedy = match classify_startup_failure(detail) {
+        StartupRemedy::Environment => "This is often caused by a full startup disk or a file-permission \
+             problem. Free up disk space and try opening EmailOps again."
+            .to_string(),
+        StartupRemedy::DataFromNewerVersion => {
+            // Only offer the destructive escape hatch when we can say exactly
+            // what to delete.
+            let start_fresh = match app_data_dir {
+                Some(dir) => format!(
+                    "\n\nTo start fresh instead, delete this folder — that removes locally stored \
+                     mail and settings, and accounts have to be added again:\n{}",
+                    dir.display()
+                ),
+                None => String::new(),
+            };
+            format!(
+                "Its local data was created by a newer version of EmailOps, which this version \
+                 cannot read. Installing the latest version of EmailOps will fix this.{start_fresh}"
+            )
+        }
+    };
+    format!("EmailOps could not start because it failed to {stage}.\n\n{remedy}\n\nDetails: {detail}")
 }
 
 /// Abort startup gracefully: log the reason, show the user a readable dialog,
@@ -746,27 +792,28 @@ fn format_startup_error(stage: &str, detail: &str) -> String {
 /// not trip the `panic_cannot_unwind` abort path when called from inside the
 /// macOS launch callback.
 ///
-/// The data directory is unknown at the earliest call sites (resolving it is
-/// itself one of the steps that can fail), so the crash report falls back to
-/// the system temp directory — see `util::startup_dialog`.
-fn fatal_startup_error(stage: &str, detail: &str) -> ! {
-    let message = format_startup_error(stage, detail);
+/// `app_data_dir` is `None` at the earliest call sites (resolving it is itself
+/// one of the steps that can fail); the crash report then falls back to the
+/// system temp directory — see `util::startup_dialog`.
+fn fatal_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::path::Path>) -> ! {
+    let message = format_startup_error(stage, detail, app_data_dir);
     eprintln!("[startup][fatal] {message}");
     // The frontend window is never shown on this path, so the logger emission
     // is mostly for parity; the dialog and crash report are what the user
     // actually sees.
     services::logger::log("error", "system", message.clone());
-    util::startup_dialog::show(None, &message);
+    util::startup_dialog::show(app_data_dir, &message);
     std::process::exit(1);
 }
 
 #[cfg(test)]
 mod startup_error_tests {
-    use super::format_startup_error;
+    use super::{classify_startup_failure, format_startup_error, StartupRemedy};
+    use std::path::Path;
 
     #[test]
     fn message_names_the_stage_and_includes_details() {
-        let msg = format_startup_error("open its local database", "disk I/O error (SQLITE_FULL)");
+        let msg = format_startup_error("open its local database", "disk I/O error (SQLITE_FULL)", None);
         assert!(
             msg.contains("open its local database"),
             "stage must appear in the message"
@@ -780,9 +827,95 @@ mod startup_error_tests {
     #[test]
     fn message_hints_at_disk_space() {
         // The most common real cause is a full disk — the user-facing copy must
-        // point them at it so they can self-recover.
-        let msg = format_startup_error("locate its data directory", "permission denied");
-        assert!(msg.to_lowercase().contains("disk"), "message should hint at disk space");
+        // point them at it so they can self-recover. The phrase spans a `\`
+        // line-continuation, so it also pins that the copy renders with the
+        // right spacing.
+        let msg = format_startup_error("locate its data directory", "permission denied", None);
+        assert!(
+            msg.contains("a file-permission problem"),
+            "disk/permission copy must render contiguously: {msg}"
+        );
+    }
+
+    #[test]
+    fn classifies_refinery_mismatches_as_stale_install() {
+        // Refinery reports a binary/schema mismatch two ways. Both mean the
+        // data directory outlived a newer install.
+        for detail in [
+            "DB migration failed: migration V18__email_headers is missing from the filesystem",
+            "DB migration failed: applied migration V18__email_headers is different than filesystem one V18__other",
+        ] {
+            assert_eq!(
+                classify_startup_failure(detail),
+                StartupRemedy::DataFromNewerVersion,
+                "{detail} must be classified as a version mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_everything_else_as_environmental() {
+        for detail in ["disk I/O error (SQLITE_FULL)", "permission denied", "unable to open"] {
+            assert_eq!(
+                classify_startup_failure(detail),
+                StartupRemedy::Environment,
+                "{detail} must keep the disk/permission copy"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_install_blames_the_app_version_not_the_disk() {
+        // Regression: installing a build that predates V018 over a data
+        // directory a newer build had already migrated produced the generic
+        // "free up disk space" copy, sending the user after a cause that
+        // cannot possibly be it.
+        let msg = format_startup_error(
+            "open its local database",
+            "DB migration failed: migration V18__email_headers is missing from the filesystem",
+            Some(Path::new("/data/EmailOps")),
+        );
+        // The phrase spans a `\` line-continuation, pinning the rendered
+        // spacing as well as the wording.
+        assert!(
+            msg.contains("newer version of EmailOps, which this version cannot read"),
+            "must say the data came from a newer version: {msg}"
+        );
+        assert!(
+            !msg.to_lowercase().contains("free up disk space"),
+            "must not blame disk space: {msg}"
+        );
+    }
+
+    #[test]
+    fn stale_install_names_the_data_folder_to_remove() {
+        // "Start fresh" is only actionable if the user is told what to delete.
+        let msg = format_startup_error(
+            "open its local database",
+            "DB migration failed: migration V18__email_headers is missing from the filesystem",
+            Some(Path::new("/data/EmailOps")),
+        );
+        assert!(msg.contains("/data/EmailOps"), "must name the data folder: {msg}");
+        assert!(
+            msg.contains("removes locally stored mail and settings"),
+            "the destructive warning must render contiguously: {msg}"
+        );
+    }
+
+    #[test]
+    fn stale_install_copy_survives_an_unknown_data_folder() {
+        // The data directory is unknown at the earliest call sites; the advice
+        // must still make sense without a path to name.
+        let msg = format_startup_error(
+            "open its local database",
+            "DB migration failed: migration V18__email_headers is missing from the filesystem",
+            None,
+        );
+        assert!(msg.to_lowercase().contains("newer version"), "{msg}");
+        assert!(
+            !msg.contains("Data folder:"),
+            "must not print an empty data folder line: {msg}"
+        );
     }
 }
 
