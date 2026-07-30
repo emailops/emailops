@@ -101,8 +101,12 @@ impl Database {
         // email_extraction_status, embedding_chunks, email_tags, attachments,
         // email_attachment_meta, chat_message_sources via FOREIGN KEYs on
         // email_id.
-        tx.execute("DELETE FROM emails WHERE account_id = ?1", params![id])?;
+        // `drafts` MUST go before `emails`: a reply draft's `drafts.email_id`
+        // references `emails(id)` with no ON DELETE action, so deleting the
+        // emails first raises FOREIGN KEY constraint failed and rolls the whole
+        // transaction back — the account becomes permanently undeletable.
         tx.execute("DELETE FROM drafts WHERE account_id = ?1", params![id])?;
+        tx.execute("DELETE FROM emails WHERE account_id = ?1", params![id])?;
         tx.execute("DELETE FROM sync_state WHERE account_id = ?1", params![id])?;
 
         // Dev-mode credential stores have no FK; delete explicitly.

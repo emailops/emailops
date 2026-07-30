@@ -887,6 +887,35 @@ fn delete_account_cascades_drafts() {
 }
 
 #[test]
+fn delete_account_removes_reply_draft_referencing_own_email() {
+    // A reply draft carries `email_id` pointing at the email it answers, and
+    // that FK has no ON DELETE action. Deleting `emails` before `drafts` makes
+    // SQLite raise FOREIGN KEY constraint failed and roll the whole
+    // transaction back, leaving the account permanently undeletable.
+    let db = test_db();
+    db.insert_account(&make_account("acc-reply", "reply@example.com"))
+        .unwrap();
+    db.insert_email(&make_email("email-reply", "acc-reply", 1000)).unwrap();
+    db.save_draft(&SaveDraftRequest {
+        email_id: Some("email-reply".to_string()),
+        ..make_draft_with_id("draft-reply", "acc-reply")
+    })
+    .unwrap();
+
+    db.delete_account("acc-reply")
+        .expect("account with a reply draft must be deletable");
+
+    assert!(
+        db.get_account("acc-reply").unwrap().is_none(),
+        "account row must be gone after deletion"
+    );
+    assert!(
+        db.list_drafts("acc-reply").unwrap().is_empty(),
+        "reply draft must be removed with the account"
+    );
+}
+
+#[test]
 fn update_account_enabled_persists() {
     let db = test_db();
     db.insert_account(&make_account("acc-e", "e@example.com")).unwrap();

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use uuid::Uuid;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, OAuthTokens};
+use crate::services::logger;
 use crate::sync::gmail::GmailClient;
 use crate::sync::imap::{ImapClient, ImapCredentials};
 use crate::sync::oauth::{self, OAuthConfig};
@@ -39,8 +41,23 @@ static TOKEN_CACHE: std::sync::LazyLock<RwLock<HashMap<String, OAuthTokens>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 static TOKEN_DB: std::sync::LazyLock<RwLock<Option<Arc<Database>>>> = std::sync::LazyLock::new(|| RwLock::new(None));
 
+/// Forces the keychain-backed credential path in a debug build. Set only by
+/// tests: `remove_account`'s ordering guarantee (credentials are torn down
+/// *after* the account row is gone) is only observable when credential deletion
+/// can actually fail, and the dev `dev_tokens` / `dev_imap_creds` path is a
+/// local DB write that effectively cannot.
+static FORCE_KEYCHAIN_CREDS: AtomicBool = AtomicBool::new(false);
+
 fn use_dev_tokens() -> bool {
-    cfg!(debug_assertions)
+    cfg!(debug_assertions) && !FORCE_KEYCHAIN_CREDS.load(Ordering::Relaxed)
+}
+
+/// Route credential reads/writes through the keychain for the duration of a
+/// test. Callers must hold `events::seam_test_lock()` and reset this to `false`
+/// before releasing it.
+#[cfg(test)]
+fn force_keychain_creds_for_testing(enabled: bool) {
+    FORCE_KEYCHAIN_CREDS.store(enabled, Ordering::Relaxed);
 }
 
 pub async fn add_account(db: &Arc<Database>, provider_name: &str, sync_from_timestamp: Option<i64>) -> Result<Account> {
@@ -119,20 +136,44 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
         .map(|a| a.provider == "imap")
         .unwrap_or(false);
 
-    // Delete credentials from keyring
-    if is_imap {
-        let _ = delete_imap_credentials(account_id);
-    } else {
-        delete_tokens(account_id)?;
-    }
-
-    // Delete from database (cascades to attachments table rows)
+    // The DB is the source of truth for whether the account exists, so it goes
+    // FIRST and its failure aborts the removal. Tearing credentials down first
+    // meant any later failure left the account row present but with its secrets
+    // already destroyed — unusable and undeletable, because every retry hit the
+    // same failure again. (Cascades to attachments and the other
+    // account-scoped tables.)
     db.delete_account(account_id)?;
+
+    // Past this point the account is gone. Credential and on-disk cleanup can
+    // only leak, never corrupt, so their failures are logged to the output panel
+    // instead of returned: an `Err` here would report a deletion that actually
+    // succeeded as a failure, and no retry could ever clear it.
+    let cred_result = if is_imap {
+        delete_imap_credentials(account_id)
+    } else {
+        delete_tokens(account_id)
+    };
+    if let Err(e) = cred_result {
+        logger::log(
+            "error",
+            "account",
+            format!("Account removed, but clearing its stored credentials failed: {e}"),
+        );
+    }
 
     // Delete attachment files from disk
     let att_dir = app_data_dir.join("attachments").join(account_id);
     if att_dir.exists() {
-        let _ = std::fs::remove_dir_all(&att_dir);
+        if let Err(e) = std::fs::remove_dir_all(&att_dir) {
+            logger::log(
+                "error",
+                "account",
+                format!(
+                    "Account removed, but deleting its attachment files at {} failed: {e}",
+                    att_dir.display()
+                ),
+            );
+        }
     }
 
     Ok(())
@@ -660,6 +701,10 @@ pub fn available_categories_for_account(db: &Database, account_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::AppLogEvent;
+    use crate::services::events::seam_test_lock;
+    use crate::services::keychain::{self, Keychain};
+    use crate::services::secrets_vault;
     use std::sync::Mutex;
 
     // `store_imap_credentials` reads the process-global `TOKEN_DB` in dev mode,
@@ -687,6 +732,13 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+        }
+    }
+
+    fn oauth_account(id: &str, email: &str) -> Account {
+        Account {
+            provider: "gmail".into(),
+            ..imap_account(id, email)
         }
     }
 
@@ -760,6 +812,81 @@ mod tests {
         assert!(
             db.get_dev_tokens("oauth-1").expect("get_dev_tokens").is_some(),
             "dev_tokens row must exist after persisting"
+        );
+    }
+
+    /// Keychain backend that fails every operation, standing in for a locked or
+    /// otherwise unavailable OS keychain.
+    struct FailingKeychain;
+
+    impl Keychain for FailingKeychain {
+        fn get_password(&self, _service: &str, _account: &str) -> Result<Option<String>> {
+            Err(AppError::KeyringError("keychain unavailable".into()))
+        }
+        fn set_password(&self, _service: &str, _account: &str, _password: &str) -> Result<()> {
+            Err(AppError::KeyringError("keychain unavailable".into()))
+        }
+        fn delete_password(&self, _service: &str, _account: &str) -> Result<()> {
+            Err(AppError::KeyringError("keychain unavailable".into()))
+        }
+    }
+
+    /// Run `remove_account` with the keychain path forced on and a failing
+    /// keychain installed, returning the result plus every log event emitted.
+    /// Resets the credential-path override before returning so a failed
+    /// assertion can't leak keychain mode into another test.
+    fn remove_with_failing_keychain(db: &Arc<Database>, account_id: &str) -> (Result<()>, Vec<AppLogEvent>) {
+        keychain::install(Arc::new(FailingKeychain));
+        secrets_vault::reset_for_testing();
+        let logs = logger::install_for_testing();
+        force_keychain_creds_for_testing(true);
+
+        let result = remove_account(db, account_id, std::path::Path::new("/nonexistent"));
+
+        force_keychain_creds_for_testing(false);
+        (result, logs.events())
+    }
+
+    // Regression: `remove_account` tore credentials down *before* the DB
+    // transaction, so a failure anywhere after that point (an FK violation, a
+    // locked keychain) left the account row present but with its secrets gone —
+    // unusable AND undeletable, because every retry hit the same failure. The DB
+    // is the source of truth, so it must go first; credential cleanup afterwards
+    // can only leak, never block the delete.
+    #[test]
+    fn remove_account_deletes_the_account_even_when_keychain_teardown_fails() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.insert_account(&oauth_account("gmail-gone", "gone@example.com"))
+            .expect("insert account");
+
+        let (result, _logs) = remove_with_failing_keychain(&db, "gmail-gone");
+
+        result.expect("a keychain failure must not block removing the account");
+        assert!(
+            db.get_account("gmail-gone").expect("get_account").is_none(),
+            "account row must be gone even though credential teardown failed"
+        );
+    }
+
+    // The IMAP branch did `let _ = delete_imap_credentials(...)`, discarding the
+    // error entirely — the repo forbids dropping errors on the floor, and it
+    // meant a leaked keychain item left no trace for the user or a bug report.
+    #[test]
+    fn remove_account_logs_imap_credential_failure_instead_of_discarding_it() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.insert_account(&imap_account("imap-gone", "imap@example.com"))
+            .expect("insert account");
+
+        let (result, logs) = remove_with_failing_keychain(&db, "imap-gone");
+
+        result.expect("removal succeeds despite the credential failure");
+        assert!(
+            logs.iter().any(|e| e.level == "error" && e.source == "account"),
+            "IMAP credential teardown failure must be logged, got: {logs:?}"
         );
     }
 

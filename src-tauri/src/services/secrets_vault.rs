@@ -194,15 +194,17 @@ pub fn reset_for_testing() {
 mod tests {
     use super::*;
     use crate::services::keychain::{self, InMemoryKeychain, Keychain};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::{Arc, MutexGuard};
 
-    /// The vault cache and the keychain backend are process globals — tests
-    /// must not interleave. Each test takes this lock, resets the cache, and
-    /// installs a fresh in-memory keychain.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // The vault cache and the keychain backend are process globals — tests must
+    // not interleave. Each test takes the shared seam lock (the same one the
+    // `events` / `logger` / `clock` seam tests hold, so a keychain fake here
+    // can't race a keychain fake installed from another module), resets the
+    // cache, and installs a fresh in-memory keychain.
+    use crate::services::events::seam_test_lock;
 
     fn setup() -> (MutexGuard<'static, ()>, Arc<InMemoryKeychain>) {
-        let guard = TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = seam_test_lock();
         reset_for_testing();
         let kc = keychain::install_for_testing();
         (guard, kc)
@@ -281,7 +283,7 @@ mod tests {
             }
         }
 
-        let guard = TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = seam_test_lock();
         reset_for_testing();
         let kc = Arc::new(VaultWriteFails(InMemoryKeychain::new()));
         keychain::install(kc.clone());
