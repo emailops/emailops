@@ -6,6 +6,9 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true
+      },
+      "wix": {
+        "fragmentPaths": ["./wix/emailops-uninstall.wxs"]
       }
     }
   }

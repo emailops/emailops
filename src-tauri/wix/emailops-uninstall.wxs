@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MSI has no built-in equivalent of the "delete app data?" checkbox that
+  Tauri's default NSIS uninstaller already ships (installer.nsi's
+  un.ConfirmShow / $DeleteAppDataCheckboxState, gated on `$UpdateMode <> 1`).
+  This fragment adds the same behavior for the WiX/MSI installer.
+
+  Default is "keep data" (EMAILOPS_KEEP_DATA = 1): the prompt only flips it
+  to delete when a real interactive user clicks Yes. This matters for two
+  reasons besides matching NSIS's opt-in default:
+    - Enterprise/unattended uninstalls run with UILevel <= 3 (no dialogs);
+      EmailOpsAskDeleteData is skipped entirely for those, so a MsgBox never
+      blocks a silent `msiexec /x ... /quiet` waiting on input that can't come.
+    - `NOT UPGRADINGPRODUCTCODE` mirrors the existing `RemoveShortcuts`
+      condition elsewhere in main.wxs: during a MajorUpgrade,
+      RemoveExistingProducts re-runs *this* product's own uninstall sequence
+      the next time a newer version replaces it, and that must not prompt to
+      wipe user data just because the app was updated.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <Property Id="EMAILOPS_KEEP_DATA" Value="1" />
+
+    <CustomAction Id="EmailOpsAskDeleteData" Script="vbscript" Execute="immediate" Return="ignore">
+      <![CDATA[
+        result = MsgBox("Also delete EmailOps application data (mailbox database, drafts, settings, and logs)?" & Chr(13) & Chr(10) & "This cannot be undone.", 36, "EmailOps Uninstall")
+        If result = 6 Then
+          Session.Property("EMAILOPS_KEEP_DATA") = "0"
+        End If
+      ]]>
+    </CustomAction>
+
+    <CustomAction Id="EmailOpsRemoveAppData"
+                  Directory="TARGETDIR"
+                  ExeCommand='cmd.exe /c (rmdir /s /q "%APPDATA%\com.emailops.app" &amp; rmdir /s /q "%LOCALAPPDATA%\com.emailops.app") &amp; exit 0'
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="EmailOpsAskDeleteData" After="InstallInitialize">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>
+      <Custom Action="EmailOpsRemoveAppData" After="EmailOpsAskDeleteData">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT EMAILOPS_KEEP_DATA="1"</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>
