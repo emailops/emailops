@@ -52,7 +52,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
-import { useAccountStore } from '@/stores/accountStore';
+import { selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -259,6 +259,11 @@ function AppInner() {
     clearError: clearAccountError,
     refetch: fetchAccounts,
   } = useAccounts();
+
+  // `accounts` can drop the id `removeAccount` filters it out synchronously,
+  // before the `onDelete` handler below gets to clear this state — so this
+  // can legitimately be null for one render right after a successful delete.
+  const accountSettingsAccount = selectAccountById(accounts, accountSettingsAccountId);
 
   // Per-account calendar-integration opt-in (Settings → Calendar). The
   // backend gates sync/notifications/chat on the same pref; this store only
@@ -1547,9 +1552,9 @@ function AppInner() {
         />
       )}
 
-      {accountSettingsAccountId && (
+      {accountSettingsAccount && (
         <AccountSettingsDialog
-          account={accounts.find((a) => a.id === accountSettingsAccountId)!}
+          account={accountSettingsAccount}
           onClose={() => setAccountSettingsAccountId(null)}
           onSaved={async () => {
             setAccountSettingsAccountId(null);

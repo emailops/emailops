@@ -38,6 +38,20 @@ export function selectEffectiveAccountId(accounts: Account[], activeAccountId: s
   return accounts.find((a) => a.enabled)?.id ?? accounts[0]?.id ?? null;
 }
 
+/**
+ * Account backing an id-keyed dialog (e.g. AccountSettingsDialog), or `null`
+ * if it's gone. `removeAccount` filters `accounts` synchronously before the
+ * caller clears its own "which account" id state, so there's a render frame
+ * where the id still points at an account that just disappeared — a plain
+ * `accounts.find(...)!` returns `undefined` there and crashes the component
+ * (v0.6.4 regression: deleting an account blanked the whole app). Callers
+ * should treat `null` as "unmount the dialog", not throw.
+ */
+export function selectAccountById(accounts: Account[], id: string | null): Account | null {
+  if (!id) return null;
+  return accounts.find((a) => a.id === id) ?? null;
+}
+
 export interface SyncProgress {
   accountId: string;
   status: string;
@@ -222,6 +236,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       }));
     } catch (error) {
       set({ error: errorText(error), errorAccountId: null, isLoading: false });
+      throw error;
     }
   },
 
