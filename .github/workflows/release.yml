@@ -160,17 +160,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake
 
+      # Vulkan SDK provides the headers/loader and the glslc shader compiler
+      # that ggml's Vulkan backend needs at *build* time. Only the runtime
+      # loader needs to be present on the end user's machine (any GPU driver
+      # ships it); the SDK itself is a build-only dependency.
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/lunarg.gpg > /dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list "https://packages.lunarg.com/vulkan/lunarg-vulkan-$(lsb_release -cs).list"
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: humbletim/setup-vulkan-sdk@v1.2
+        with:
+          vulkan-query-version: latest
+          vulkan-use-cache: true
+
       - run: npm ci
 
-      # Full build, embedded llama.cpp included (CPU backend — a CUDA- or
-      # Vulkan-linked binary refuses to start without the matching driver, so
-      # the downloadable build must stay portable).
+      # Full build with dynamic ggml backends (DYNAMIC_BACKENDS=1): one
+      # portable artifact that loads the Vulkan backend at runtime when a GPU
+      # driver is present and falls back to CPU when it is not. Vulkan is the
+      # single-artifact choice over CUDA — it covers AMD/Intel/NVIDIA and only
+      # needs the user's normal graphics driver, not the NVIDIA toolkit.
       - name: Build
         shell: bash
         env:
           EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
           EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
+          DYNAMIC_BACKENDS: "1"
+          CARGO_FEATURES: vulkan
         run: make build-${{ matrix.platform }}
 
       - name: Verify

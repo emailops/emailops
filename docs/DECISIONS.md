@@ -356,3 +356,28 @@ certificate import, notarization and keychain teardown with no analogue elsewher
 merging them would risk a working signed pipeline for no gain); code-signing the Windows
 installers (needs an OV/EV certificate the project does not hold — unsigned artifacts
 ship with a SmartScreen warning until one is acquired).
+
+## 2026-07-30 — Windows and Linux releases build with Vulkan via dynamic backends
+
+**Decision:** `make build-linux` / `make build-windows` in CI now pass
+`DYNAMIC_BACKENDS=1 CARGO_FEATURES=vulkan`, so the released `.deb`/`.AppImage` and
+`.msi`/NSIS artifacts ship ggml's Vulkan backend as a loadable module alongside the CPU
+one, picked at runtime by VRAM/driver detection. The Vulkan SDK (headers, loader,
+`glslc`) is installed in the CI job as a build-only dependency — end users only need
+their normal GPU driver, which already ships the Vulkan runtime loader.
+**Context:** This directly supersedes the "GPU-linked build refuses to start without
+the matching driver" reasoning in the 2026-07-29 entry above — the `dynamic-backends`
+Cargo feature (Linux/Windows only; macOS links Metal statically since every
+Apple-Silicon Mac has it, so there is no missing-driver case to guard against there)
+removed that failure mode by making the GPU backend a module the binary probes for and
+loads conditionally, rather than something linked into it. Once that existed, shipping
+CPU-only on Windows/Linux was leaving local-AI performance on the table for every user
+with a discrete GPU, for no remaining safety reason.
+**Rejected:** CUDA instead of Vulkan (faster on NVIDIA, but needs the NVIDIA toolkit at
+build time and CUDA hardware at run time — Vulkan covers AMD/Intel/NVIDIA from one
+build and only needs the driver every desktop already has); shipping separate
+CPU-only and GPU-enabled artifacts (doubles the release matrix and asks users to know
+their own hardware before downloading — dynamic backends exist specifically so one
+artifact suffices); building both `vulkan` and `cuda` into the same binary (dynamic
+backends pick one at build time; shipping both would double the bundled module size for
+a codepath most users on a given machine never take).
