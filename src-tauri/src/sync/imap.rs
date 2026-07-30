@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::models::error::{AppError, Result};
 use crate::models::Email;
 use crate::sync::folder_plan::{self, resolve_role_folder, ListedFolder, WellKnownFolder};
+use crate::sync::imap_search;
 use crate::sync::provider::{
     self, AttachmentInfo, EmailAttachment, EmailBody, EmailCategory, EmailProvider, MessageRef,
 };
@@ -363,22 +364,22 @@ impl ImapClient {
         folder: &ImapFolder,
     ) -> bool {
         match folder {
-            ImapFolder::Inbox => session.select("INBOX").is_ok(),
-            ImapFolder::Custom(path) => session.select(path).is_ok(),
+            ImapFolder::Inbox => imap_search::select(session, "INBOX").is_ok(),
+            ImapFolder::Custom(path) => imap_search::select(session, path).is_ok(),
             role_folder => {
                 if let Ok(entries) = Self::list_entries_blocking(session) {
                     // `well_known()` is Some for Sent/Spam/Trash — the only
                     // variants that can reach this arm.
                     if let Some(role) = role_folder.well_known() {
                         if let Some(resolved) = resolve_role_folder(role, &entries) {
-                            if session.select(&resolved).is_ok() {
+                            if imap_search::select(session, &resolved).is_ok() {
                                 return true;
                             }
                         }
                     }
                 }
                 for &candidate in role_folder.legacy_candidates() {
-                    if session.select(candidate).is_ok() {
+                    if imap_search::select(session, candidate).is_ok() {
                         return true;
                     }
                 }
@@ -796,12 +797,8 @@ impl EmailProvider for ImapClient {
                 // cap then discarded exactly the old mail we were after.
                 let query = build_search_query(after_timestamp, before_timestamp);
 
-                session
-                    .select("INBOX")
-                    .map_err(|e| AppError::SyncError(format!("IMAP SELECT INBOX failed: {e}")))?;
-                let inbox_uids = session
-                    .uid_search(&query)
-                    .map_err(|e| AppError::SyncError(format!("IMAP SEARCH failed: {e}")))?;
+                imap_search::select(&mut session, "INBOX")?;
+                let inbox_uids = imap_search::uid_search(&mut session, &query)?;
 
                 // Fetch Sent folder UIDs with NO date filter ("ALL").
                 //
@@ -812,8 +809,10 @@ impl EmailProvider for ImapClient {
                 // and never re-downloads already-synced messages.
                 let mut sent_uids: Vec<u32> = Vec::new();
                 if include_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
-                    if let Ok(uids) = session.uid_search("ALL") {
-                        sent_uids = uids.into_iter().collect();
+                    match imap_search::uid_search(&mut session, "ALL") {
+                        Ok(uids) => sent_uids = uids,
+                        // The Sent pass is best-effort — INBOX results still stand.
+                        Err(e) => crate::services::logger::log("debug", "sync", format!("IMAP Sent SEARCH failed: {e}")),
                     }
                 }
 
@@ -861,16 +860,7 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let messages = session
-                .uid_fetch(uid.to_string(), "RFC822")
-                .map_err(|e| AppError::SyncError(format!("IMAP FETCH failed: {e}")))?;
-
-            let raw = messages
-                .iter()
-                .next()
-                .and_then(|f| f.body())
-                .ok_or_else(|| AppError::NotFound(format!("IMAP UID {uid}: body not found")))?
-                .to_vec();
+            let raw = imap_search::uid_fetch_rfc822(&mut session, uid)?;
 
             let _ = session.logout();
             Self::parse_message(uid, &raw)
@@ -921,12 +911,10 @@ impl EmailProvider for ImapClient {
 
             let query = build_search_query(after_timestamp, before_timestamp);
 
-            let uids = session
-                .uid_search(&query)
-                .map_err(|e| AppError::SyncError(format!("IMAP SEARCH failed: {e}")))?;
+            let uids = imap_search::uid_search(&mut session, &query)?;
 
             let _ = session.logout();
-            Ok(uids.into_iter().collect())
+            Ok(uids)
         })
         .await
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
@@ -978,19 +966,17 @@ impl EmailProvider for ImapClient {
 
             // A folder deleted server-side between LIST and this SELECT is not
             // an error — return empty so the caller logs and moves on.
-            if session.select(&path).is_err() {
+            if imap_search::select(&mut session, &path).is_err() {
                 let _ = session.logout();
                 return Ok(Vec::new());
             }
 
             let query = build_search_query(after_timestamp, before_timestamp);
 
-            let uids = session
-                .uid_search(&query)
-                .map_err(|e| AppError::SyncError(format!("IMAP SEARCH failed: {e}")))?;
+            let uids = imap_search::uid_search(&mut session, &query)?;
 
             let _ = session.logout();
-            Ok(uids.into_iter().collect())
+            Ok(uids)
         })
         .await
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
@@ -1202,8 +1188,8 @@ impl EmailProvider for ImapClient {
             // can re-ingest it under its new id without a full folder resync.
             let mut new_uid = None;
             if let Some(h) = header {
-                if session.select(&target_for_select).is_ok() {
-                    if let Ok(found) = session.uid_search(format!("HEADER Message-ID \"{h}\"")) {
+                if imap_search::select(&mut session, &target_for_select).is_ok() {
+                    if let Ok(found) = imap_search::uid_search(&mut session, &format!("HEADER Message-ID \"{h}\"")) {
                         new_uid = found.into_iter().max();
                     }
                 }
@@ -1252,7 +1238,7 @@ impl ImapClient {
             Err(_) => return,
         };
 
-        if session.select("INBOX").is_err() {
+        if imap_search::select(&mut session, "INBOX").is_err() {
             let _ = session.logout();
             return;
         }

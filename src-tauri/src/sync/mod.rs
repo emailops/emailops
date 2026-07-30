@@ -5,6 +5,7 @@ pub mod gmail;
 pub mod gmail_calendar;
 pub mod header_capture;
 pub mod imap;
+pub mod imap_search;
 pub mod mime_builder;
 #[cfg(any(test, debug_assertions))]
 pub mod mock;
