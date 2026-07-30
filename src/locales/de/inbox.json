@@ -160,6 +160,7 @@
       "dmarc_fail": "DMARC fehlgeschlagen: Der sichtbare Absender konnte nicht überprüft werden",
       "spf_fail": "SPF fehlgeschlagen: Der sendende Server ist für diese Domain nicht autorisiert",
       "dangerous_attachment": "Enthält einen Anhangstyp, der zur Verbreitung von Schadsoftware dient",
+      "credential_solicitation": "Fordert Sie auf, Ihr Passwort oder Ihre Kontodaten erneut einzugeben",
       "display_name_contains_address": "Der Absendername ist so geschrieben, dass er wie eine andere Adresse aussieht",
       "server_spam_flag": "Ihr Mailserver hat dies als Spam markiert",
       "mixed_script_display_name": "Der Absendername mischt Alphabete zur Tarnung"
@@ -168,6 +169,7 @@
     "confirmedAndFiled": "Als Spam bestätigt und im Junk-Ordner des Servers abgelegt",
     "confirmedLocally": "Als Spam bestätigt (dieses Konto hat keinen Junk-Ordner)",
     "confirmFailed": "Nachricht konnte auf dem Server nicht abgelegt werden",
-    "hideFlagged": "{{count}} Spam-Nachrichten ausblenden"
+    "notJunkFailed": "Es konnte nicht gespeichert werden, dass diese Nachricht kein Spam ist",
+    "hideFlagged": "Spam-Nachrichten ausblenden"
   }
 }

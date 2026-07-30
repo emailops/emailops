@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::services::junk::model::{ModelAxis, NaiveBayes, MIN_SAMPLES_PER_CLASS};
+use crate::services::junk::model::{ModelAxis, NaiveBayes};
 
 /// What the inbox does with a flagged message.
 ///
@@ -62,6 +62,9 @@ impl FlaggedAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JunkConfig {
+    /// Off by default. The detector accuses mail of being junk and fades or
+    /// hides rows on the strength of that; an install that never opted in does
+    /// not get that done to it silently.
     pub enabled: bool,
     /// Off by default: this axis renders an accusation of impersonation and has
     /// far too little ground truth behind it to be trusted with one.
@@ -72,7 +75,7 @@ pub struct JunkConfig {
 pub fn get_config(db: &Arc<Database>) -> JunkConfig {
     let pref = |key: &str| db.get_preference(key).ok().flatten();
     JunkConfig {
-        enabled: pref("junk_enabled").map(|v| v != "false").unwrap_or(true),
+        enabled: pref("junk_enabled").map(|v| v == "true").unwrap_or(false),
         phishing_enabled: pref("junk_phishing_enabled").map(|v| v == "true").unwrap_or(false),
         flagged_action: pref("junk_flagged_action")
             .map(|v| FlaggedAction::parse(&v))
@@ -119,8 +122,7 @@ pub struct JunkStats {
 }
 
 pub fn get_stats(db: &Arc<Database>, account_id: &str) -> Result<JunkStats> {
-    let (scored, unscored, phishing, spam, graymail, marked_junk, marked_not_junk) =
-        db.junk_stats_counts(account_id)?;
+    let counts = db.junk_stats_counts(account_id)?;
 
     let mut models = Vec::new();
     for axis in ModelAxis::ALL {
@@ -144,16 +146,88 @@ pub fn get_stats(db: &Arc<Database>, account_id: &str) -> Result<JunkStats> {
     }
 
     Ok(JunkStats {
-        scored,
-        unscored,
-        phishing,
-        spam,
-        graymail,
-        marked_junk,
-        marked_not_junk,
+        scored: counts.scored,
+        unscored: counts.unscored,
+        phishing: counts.phishing,
+        spam: counts.spam,
+        graymail: counts.graymail,
+        marked_junk: counts.marked_junk,
+        marked_not_junk: counts.marked_not_junk,
         models,
     })
 }
 
-/// Exposed so the UI can explain why a model is not voting yet.
-pub const MIN_LABELS_PER_CLASS: u32 = MIN_SAMPLES_PER_CLASS;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Arc<Database> {
+        Arc::new(Database::new_for_testing().expect("test db"))
+    }
+
+    #[test]
+    fn junk_detection_is_off_until_the_user_asks_for_it() {
+        // The detector accuses mail of being junk and fades or hides rows on the
+        // strength of that. It does not get to start doing so on an install that
+        // never opted in — `is_enabled` gates both the sync hook and the
+        // backfill, so an unset preference means no scoring at all.
+        assert!(!get_config(&test_db()).enabled);
+    }
+
+    #[test]
+    fn phishing_stays_off_by_default_too() {
+        assert!(!get_config(&test_db()).phishing_enabled);
+    }
+
+    #[test]
+    fn flagged_action_defaults_to_the_recoverable_one() {
+        assert_eq!(get_config(&test_db()).flagged_action, FlaggedAction::Dim);
+    }
+
+    #[test]
+    fn enabling_survives_a_reload() {
+        let db = test_db();
+        save_config(
+            &db,
+            &JunkConfig {
+                enabled: true,
+                phishing_enabled: true,
+                flagged_action: FlaggedAction::Hide,
+            },
+        )
+        .expect("save");
+
+        let loaded = get_config(&db);
+        assert!(loaded.enabled);
+        assert!(loaded.phishing_enabled);
+        assert_eq!(loaded.flagged_action, FlaggedAction::Hide);
+    }
+
+    #[test]
+    fn switching_back_off_is_not_read_as_unset() {
+        // Guards the shape of the parse: an explicit "false" and a missing key
+        // must both mean off, but a flipped predicate would make one of them
+        // silently mean on.
+        let db = test_db();
+        save_config(
+            &db,
+            &JunkConfig {
+                enabled: true,
+                phishing_enabled: false,
+                flagged_action: FlaggedAction::Dim,
+            },
+        )
+        .expect("save on");
+        save_config(
+            &db,
+            &JunkConfig {
+                enabled: false,
+                phishing_enabled: false,
+                flagged_action: FlaggedAction::Dim,
+            },
+        )
+        .expect("save off");
+
+        assert!(!get_config(&db).enabled);
+    }
+}

@@ -623,7 +623,6 @@ pub fn run() {
             commands::classification::delete_classification_rule,
             commands::junk::get_junk_verdicts,
             commands::junk::set_junk_feedback,
-            commands::junk::get_junk_enabled,
             commands::junk::backfill_junk_scores,
             commands::junk::report_junk_to_provider,
             commands::junk::get_junk_config,

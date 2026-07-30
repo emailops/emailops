@@ -28,6 +28,7 @@ const HEADLINE_REASONS = [
   'dmarc_fail',
   'spf_fail',
   'dangerous_attachment',
+  'credential_solicitation',
   'display_name_contains_address',
   'server_spam_flag',
   'mixed_script_display_name',
@@ -89,9 +90,18 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
     void loadVerdicts([emailId]);
   }, [emailId, loadVerdicts]);
 
-  const handleNotJunk = useCallback(() => {
-    void setFeedback(accountId, emailId, false);
-  }, [accountId, emailId, setFeedback]);
+  // Same error contract as "Confirm junk" below. The store writes optimistically
+  // and rolls back on failure, but a rollback the user cannot see just looks
+  // like the button did nothing — so the failure has to be said out loud.
+  const handleNotJunk = useCallback(async () => {
+    try {
+      await setFeedback(accountId, emailId, false);
+    } catch (err) {
+      const message = `${t('inbox:junk.notJunkFailed')}: ${errorText(err)}`;
+      addLog('error', 'system', message);
+      addToast({ message, sticky: true });
+    }
+  }, [accountId, emailId, setFeedback, addLog, addToast, t]);
 
   // Confirming files the message in the server's Junk folder where the provider
   // supports it, so the server's own filter learns too — the detector never
@@ -150,7 +160,7 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
         </button>
         <button
           type="button"
-          onClick={handleNotJunk}
+          onClick={() => void handleNotJunk()}
           className={`underline hover:no-underline font-medium ${style.button}`}
         >
           {t('inbox:junk.notJunk')}

@@ -308,17 +308,28 @@ impl Database {
     }
 }
 
+/// Counts behind the settings status block.
+///
+/// A named struct rather than the seven-wide tuple this used to return: the
+/// three flagged counts and the two override counts are all `i64` and all
+/// plausible in any position, so a caller transposing two of them would compile
+/// cleanly and quietly report the wrong numbers to the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JunkCounts {
+    pub scored: i64,
+    pub unscored: i64,
+    pub phishing: i64,
+    pub spam: i64,
+    pub graymail: i64,
+    pub marked_junk: i64,
+    pub marked_not_junk: i64,
+}
+
 impl Database {
     /// Counts for the settings status block.
-    #[allow(clippy::type_complexity)]
-    pub fn junk_stats_counts(&self, account_id: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64)> {
+    pub fn junk_stats_counts(&self, account_id: &str) -> Result<JunkCounts> {
         let conn = self.reader();
         let one = |sql: &str| -> Result<i64> { Ok(conn.query_row(sql, params![account_id], |r| r.get::<_, i64>(0))?) };
-        let scored = one("SELECT COUNT(*) FROM email_junk WHERE account_id = ?1")?;
-        let unscored = one(
-            "SELECT COUNT(*) FROM emails e LEFT JOIN email_junk j ON j.email_id = e.id
-             WHERE e.account_id = ?1 AND e.is_deleted = 0 AND j.email_id IS NULL",
-        )?;
         // Flagged counts exclude a `not_junk` override: the status block must
         // never report a badge the user already dismissed.
         let by_kind = |kind: &str| -> Result<i64> {
@@ -337,15 +348,18 @@ impl Database {
                 |r| r.get::<_, i64>(0),
             )?)
         };
-        Ok((
-            scored,
-            unscored,
-            by_kind("phishing")?,
-            by_kind("spam")?,
-            by_kind("graymail")?,
-            overrides("junk")?,
-            overrides("not_junk")?,
-        ))
+        Ok(JunkCounts {
+            scored: one("SELECT COUNT(*) FROM email_junk WHERE account_id = ?1")?,
+            unscored: one(
+                "SELECT COUNT(*) FROM emails e LEFT JOIN email_junk j ON j.email_id = e.id
+                 WHERE e.account_id = ?1 AND e.is_deleted = 0 AND j.email_id IS NULL",
+            )?,
+            phishing: by_kind("phishing")?,
+            spam: by_kind("spam")?,
+            graymail: by_kind("graymail")?,
+            marked_junk: overrides("junk")?,
+            marked_not_junk: overrides("not_junk")?,
+        })
     }
 }
 

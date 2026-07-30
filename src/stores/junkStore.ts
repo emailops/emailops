@@ -118,6 +118,11 @@ export const useJunkStore = create<JunkStore>((set, get) => ({
   },
 
   setFeedback: async (accountId: string, emailId: string, isJunk: boolean) => {
+    // Captured before anything is overwritten, so a failed write can put the
+    // UI back exactly as the user found it.
+    const previousVerdict = get().verdictsByEmail[emailId];
+    const previousTags = useTagStore.getState().tagsByEmail[emailId];
+
     // Optimistic: the user's correction should feel instant, and the backend
     // write is what makes it durable.
     set((state) => {
@@ -135,15 +140,16 @@ export const useJunkStore = create<JunkStore>((set, get) => ({
     // from here. Without this the message stays faded with its chip after the
     // user has just said it is fine — the correction would look ignored until
     // the next reload.
-    const tags = useTagStore.getState().tagsByEmail[emailId] ?? [];
-    const withoutJunk = tags.filter((t) => t.tagType !== 'junk');
+    const withoutJunk = (previousTags ?? []).filter((t) => t.tagType !== 'junk');
     if (isJunk) {
       useTagStore.getState().setEmailTags(emailId, [
         ...withoutJunk,
         {
           emailId,
           tagType: 'junk',
-          tagValue: 'spam',
+          // The kind the detector settled on, so confirming a phishing warning
+          // does not silently relabel the message as ordinary spam.
+          tagValue: previousVerdict?.primaryKind !== 'legit' ? (previousVerdict?.primaryKind ?? 'spam') : 'spam',
           confidence: null,
           createdAt: Math.floor(Date.now() / 1000),
         },
@@ -152,6 +158,20 @@ export const useJunkStore = create<JunkStore>((set, get) => ({
       useTagStore.getState().setEmailTags(emailId, withoutJunk);
     }
 
-    await api.setJunkFeedback(accountId, emailId, isJunk);
+    try {
+      await api.setJunkFeedback(accountId, emailId, isJunk);
+    } catch (err) {
+      // Undo the optimistic write. The user disagreed with a verdict and the
+      // app failed to record it; leaving the message looking corrected is a
+      // claim that survives until the next reload and then silently reverses.
+      set((state) => {
+        if (!previousVerdict) return state;
+        return { verdictsByEmail: { ...state.verdictsByEmail, [emailId]: previousVerdict } };
+      });
+      if (previousTags) useTagStore.getState().setEmailTags(emailId, previousTags);
+      // Re-thrown so the caller can tell the user. Swallowing it here is what
+      // made the failure invisible in the first place.
+      throw err;
+    }
   },
 }));

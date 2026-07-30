@@ -213,7 +213,9 @@ export function SettingsDialog({
               embedded
             />
           )}
-          {tab === 'junk' && <JunkSettings activeAccountId={effectiveAccountId} />}
+          {/* No account prop: the panel reports on every connected mailbox, not
+              on whichever one the rest of the app has selected. */}
+          {tab === 'junk' && <JunkSettings />}
           {tab === 'tasks' && (
             <TasksSettings
               activeAccountId={effectiveAccountId}

@@ -15,6 +15,7 @@
 //! The measurement gate lives in `evals::junk` and runs as `make eval-junk`.
 //! Every behaviour change here is a diff on that report.
 
+#[cfg(test)]
 mod architecture_tests;
 pub mod auth;
 pub mod config;
@@ -269,7 +270,13 @@ pub async fn train_models(db: &Arc<Database>, account_id: &str) -> Result<Vec<(&
     Ok(out)
 }
 
-/// Record the user's correction and re-score so the badge updates immediately.
+/// Record the user's correction.
+///
+/// Deliberately does NOT re-score: the stored override outranks whatever
+/// `judge()` would say next, so re-running it would change nothing the user can
+/// see and would cost a full signal materialization on a button press. The
+/// correction reaches the model on the next `train_models` pass instead, where
+/// it carries `FEEDBACK_WEIGHT`.
 pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, is_junk: bool) -> Result<()> {
     let verdict = if is_junk { "junk" } else { "not_junk" };
     db.set_junk_override(email_id, account_id, Some(verdict), now_secs())?;

@@ -44,11 +44,6 @@ pub async fn set_junk_feedback(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn get_junk_enabled(state: State<'_, AppState>) -> Result<bool, AppError> {
-    Ok(junk::is_enabled(&state.db))
-}
-
 /// Score already-synced mail that predates the feature.
 ///
 /// Returns immediately; the work runs on the background queue and reports

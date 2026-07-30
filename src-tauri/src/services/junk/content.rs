@@ -85,8 +85,8 @@ const URGENCY_PHRASES: &[&str] = &[
     "tiempo limitado",
     "date prisa",
     "no pierdas",
-    // French
-    "urgent",
+    // French ("urgent" is already listed above — the same spelling in both
+    // languages, and listing it twice used to score one word as two hits)
     "action requise",
     "immédiatement",
     "immediatement",
@@ -181,6 +181,37 @@ const CREDENTIAL_PHRASES: &[&str] = &[
     "identität bestätigen",
     "konto entsperren",
 ];
+
+/// How many *distinct* phrases from a lexicon appear in the text.
+///
+/// Not `filter(contains).count()`. The lexicons are multilingual and their
+/// entries genuinely overlap — "urgent" is the same word in English and French,
+/// and the Spanish "urgente" contains it — so a naive count turns one occurrence
+/// of one word into two or three hits. `urgency_hits >= 2` is written to require
+/// two *independent* pressure phrases, and an inflated count defeats exactly
+/// that.
+///
+/// A match that is merely a fragment of another match is dropped. That can
+/// undercount when both the long and the short form appear in different places
+/// (a body containing "urgente" here and a standalone "urgent" there scores 1),
+/// which is the safe direction: this lexicon is the weakest evidence in the
+/// detector and its job is to corroborate, never to accuse on its own.
+fn distinct_phrase_hits(haystack: &str, phrases: &[&str]) -> usize {
+    let mut matched: Vec<&str> = Vec::new();
+    for phrase in phrases {
+        if haystack.contains(phrase) && !matched.contains(phrase) {
+            matched.push(phrase);
+        }
+    }
+    matched
+        .iter()
+        .filter(|candidate| {
+            !matched
+                .iter()
+                .any(|other| other.len() > candidate.len() && other.contains(*candidate))
+        })
+        .count()
+}
 
 /// Every link in the message: `href` attributes plus bare URLs in plain text.
 ///
@@ -421,7 +452,7 @@ pub fn analyse(subject: &str, body: &str, attachment_names: &[String]) -> Conten
 
     let plain = strip_tags(body);
     let haystack = format!("{} {}", subject, plain).to_lowercase();
-    let urgency_hits = URGENCY_PHRASES.iter().filter(|p| haystack.contains(*p)).count();
+    let urgency_hits = distinct_phrase_hits(&haystack, URGENCY_PHRASES);
     // A credential request with nowhere to send them is not an attack.
     let credential_solicitation = CREDENTIAL_PHRASES.iter().any(|p| haystack.contains(*p)) && !hrefs.is_empty();
 
@@ -549,6 +580,30 @@ mod tests {
     fn urgency_phrases_are_counted_across_subject_and_body() {
         let s = analyse("Act now", "Your account will be suspended immediately", &[]);
         assert!(s.urgency_hits >= 2, "got {}", s.urgency_hits);
+    }
+
+    #[test]
+    fn one_pressure_word_counts_once_however_many_lexicons_list_it() {
+        // REGRESSION: the lexicon named "urgent" twice — once as the English
+        // entry, once as the French one — so a single occurrence scored two
+        // hits and tripped the `urgency_hits >= 2` threshold on its own. That
+        // threshold exists precisely to require two *independent* pressure
+        // phrases before the signal fires.
+        assert_eq!(analyse("", "This is urgent, please read.", &[]).urgency_hits, 1);
+    }
+
+    #[test]
+    fn a_word_that_merely_contains_a_shorter_entry_is_not_two_hits() {
+        // Spanish "urgente" contains the English "urgent". Substring matching
+        // scored that as two separate pressure phrases from one word.
+        assert_eq!(analyse("", "Es urgente responder.", &[]).urgency_hits, 1);
+    }
+
+    #[test]
+    fn the_urgency_lexicon_lists_no_phrase_twice() {
+        let mut seen = BTreeSet::new();
+        let duplicates: Vec<&&str> = URGENCY_PHRASES.iter().filter(|p| !seen.insert(**p)).collect();
+        assert!(duplicates.is_empty(), "duplicated entries: {duplicates:?}");
     }
 
     #[test]

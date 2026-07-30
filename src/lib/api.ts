@@ -934,10 +934,6 @@ export async function setJunkFeedback(accountId: string, emailId: string, isJunk
   return invoke('set_junk_feedback', { accountId, emailId, isJunk });
 }
 
-export async function getJunkEnabled(): Promise<boolean> {
-  return invoke('get_junk_enabled');
-}
-
 /** Fire-and-forget: scores previously-synced mail on the background queue. */
 export async function backfillJunkScores(accountId: string): Promise<void> {
   return invoke('backfill_junk_scores', { accountId });

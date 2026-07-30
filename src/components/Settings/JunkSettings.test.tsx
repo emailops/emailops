@@ -25,17 +25,47 @@ vi.mock('@/stores/logStore', () => ({
   useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
 }));
 
+interface TestAccount {
+  id: string;
+  email: string;
+  enabled: boolean;
+}
+
+// Hoisted so the module mock below can read whatever a test assigns, without
+// tripping the temporal-dead-zone problem `vi.mock` hoisting otherwise creates.
+const mocks = vi.hoisted(() => ({ accounts: [] as { id: string; email: string; enabled: boolean }[] }));
+
 vi.mock('@/stores/accountStore', () => ({
-  useAccountStore: (selector: (s: { accounts: unknown[] }) => unknown) => selector({ accounts: [] }),
+  useAccountStore: (selector: (s: { accounts: unknown[] }) => unknown) => selector({ accounts: mocks.accounts }),
 }));
 
 const getJunkConfig = vi.fn(() => Promise.resolve({ enabled: true, phishingEnabled: false, flaggedAction: 'dim' }));
 const setJunkConfig = vi.fn(() => Promise.resolve());
+/** Stats shaped like the backend's, with the counts a test wants to see. */
+function statsFor(scored: number, unscored: number) {
+  return {
+    scored,
+    unscored,
+    phishing: 0,
+    spam: 0,
+    graymail: 0,
+    markedJunk: 0,
+    markedNotJunk: 0,
+    models: [] as never[],
+  };
+}
+
+// Annotated, not inferred: the default implementation only ever rejects, so
+// inference would pin the mock to `Promise<never>` and reject every resolving
+// override a test installs.
+const getJunkStats = vi.fn(
+  (_accountId: string): Promise<ReturnType<typeof statsFor>> => Promise.reject(new Error('no stats in this test')),
+);
 
 vi.mock('@/lib/api', () => ({
   getJunkConfig: (...args: unknown[]) => getJunkConfig(...(args as [])),
   setJunkConfig: (...args: unknown[]) => setJunkConfig(...(args as [])),
-  getJunkStats: vi.fn(() => Promise.reject(new Error('no stats in this test'))),
+  getJunkStats: (...args: unknown[]) => getJunkStats(...(args as [string])),
   backfillJunkScores: vi.fn(() => Promise.resolve()),
   getJunkVerdicts: vi.fn(() => Promise.resolve({})),
   setJunkFeedback: vi.fn(() => Promise.resolve()),
@@ -65,6 +95,9 @@ describe('JunkSettings', () => {
     useJunkStore.setState({ flaggedAction: 'dim' });
     setJunkConfig.mockClear();
     setJunkConfig.mockImplementation(() => Promise.resolve());
+    getJunkStats.mockClear();
+    getJunkStats.mockImplementation(() => Promise.reject(new Error('no stats in this test')));
+    mocks.accounts = [];
   });
 
   afterEach(() => {
@@ -76,7 +109,7 @@ describe('JunkSettings', () => {
 
   async function mount() {
     await act(async () => {
-      root.render(<JunkSettings activeAccountId="acct-1" />);
+      root.render(<JunkSettings />);
     });
     // Drain the config load so the radios reflect the persisted preference.
     await act(async () => {
@@ -117,6 +150,65 @@ describe('JunkSettings', () => {
 
     expect(radioFor(container, 'hide').checked).toBe(true);
     expect(useJunkStore.getState().flaggedAction).toBe('hide');
+  });
+
+  // Regression: the panel asked for stats for `activeAccountId` alone, so on an
+  // install with several mailboxes connected it reported on exactly one of them
+  // — and which one depended on whatever the rest of the app had selected. The
+  // counts, the trained models and the "score N older messages" button are all
+  // per-account, so all of them have to be per-account on screen too.
+  describe('with several accounts connected', () => {
+    const accounts: TestAccount[] = [
+      { id: 'acct-1', email: 'first@example.com', enabled: true },
+      { id: 'acct-2', email: 'second@example.com', enabled: true },
+    ];
+
+    beforeEach(() => {
+      mocks.accounts = accounts;
+      getJunkStats.mockImplementation((accountId: string) =>
+        Promise.resolve(accountId === 'acct-1' ? statsFor(11, 2) : statsFor(97, 0)),
+      );
+    });
+
+    it('asks for stats for every account, not just the active one', async () => {
+      await mount();
+
+      const asked = getJunkStats.mock.calls.map(([id]) => id);
+      expect(new Set(asked)).toEqual(new Set(['acct-1', 'acct-2']));
+    });
+
+    it('names every account and shows its own counts', async () => {
+      await mount();
+
+      const text = container.textContent ?? '';
+      expect(text).toContain('first@example.com');
+      expect(text).toContain('second@example.com');
+      // Both accounts' scored counts, so neither block is showing the other's.
+      expect(text).toContain('11');
+      expect(text).toContain('97');
+    });
+
+    it('gives each account its own backfill button', async () => {
+      await mount();
+
+      // Only the backfill buttons — the two ToggleSwitches render buttons too.
+      // `t` is mocked to echo the key, so the label is the key itself.
+      const backfillButtons = Array.from(container.querySelectorAll('button')).filter(
+        (b) => b.textContent === 'settings:junk.backfill',
+      );
+      expect(backfillButtons).toHaveLength(accounts.length);
+      // acct-2 has nothing left to score, so its button must be disabled while
+      // acct-1's (2 unscored) is live. A single shared button could not express that.
+      expect(backfillButtons.map((b) => b.disabled)).toEqual([false, true]);
+    });
+
+    it('skips disabled accounts — nothing syncs into them to score', async () => {
+      mocks.accounts = [accounts[0] as TestAccount, { id: 'acct-3', email: 'off@example.com', enabled: false }];
+      await mount();
+
+      expect(container.textContent ?? '').not.toContain('off@example.com');
+      expect(getJunkStats.mock.calls.map(([id]) => id)).not.toContain('acct-3');
+    });
   });
 
   it('scrolls its own content with the same padding as every other settings panel', async () => {

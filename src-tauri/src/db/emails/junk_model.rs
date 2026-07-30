@@ -237,10 +237,13 @@ impl Database {
         for (email_id, positive) in relevant {
             let row = conn
                 .query_row(
+                    // Scoped on the account as well as the id: the label file is
+                    // hand-maintained, and a stale entry must not reach across
+                    // accounts into mail it does not describe.
                     "SELECT e.subject, e.snippet, e.sender_email, h.x_mailer
                      FROM emails e LEFT JOIN email_headers h ON h.email_id = e.id
-                     WHERE e.id = ?1",
-                    params![email_id],
+                     WHERE e.id = ?1 AND e.account_id = ?2",
+                    params![email_id, account_id],
                     |r| {
                         Ok(TrainingRow {
                             subject: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
@@ -395,6 +398,43 @@ mod tests {
 
         let gray_rows = db.get_junk_training_rows("a1", ModelAxis::Graymail, 100).expect("rows");
         assert!(gray_rows.iter().any(|r| r.positive && r.weight == FEEDBACK_WEIGHT));
+    }
+
+    #[test]
+    fn a_golden_label_cannot_pull_a_row_from_another_account() {
+        // Every account-scoped read must require the account id. The label file
+        // carries an `account_id` per entry, but the lookup keyed on `email_id`
+        // alone — so a stale or mistyped entry silently trained one account's
+        // model on another account's mail.
+        let db = seeded();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('a2', 'imap', 'other@example.com', 'O', 0)",
+                [],
+            )
+            .expect("second account");
+        insert(&db, "i1", "inbox", false, "t1");
+
+        // The entry claims a1, but the message belongs to a1 — so a1 sees it…
+        let label = |account: &str| crate::services::junk::golden::GoldenEntry {
+            email_id: "i1".to_string(),
+            account_id: account.to_string(),
+            label: crate::services::junk::golden::GoldenLabel::Spam,
+            source: crate::services::junk::golden::LabelSource::Manual,
+            labeled_at: 0,
+        };
+        assert_eq!(
+            db.golden_training_rows("a1", ModelAxis::Spam, &[label("a1")])
+                .expect("rows")
+                .len(),
+            1
+        );
+        // …and a2 must not, even though the entry names a2.
+        assert!(db
+            .golden_training_rows("a2", ModelAxis::Spam, &[label("a2")])
+            .expect("rows")
+            .is_empty());
     }
 
     #[test]

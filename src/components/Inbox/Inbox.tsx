@@ -259,10 +259,13 @@ export function Inbox({
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
 
-  // How many of the loaded messages are flagged, regardless of the current
-  // setting. Shown next to the toggle so the count is visible in both states —
-  // a checkbox that hides an unknown number of messages is not something a user
-  // can reason about.
+  // Whether any of the loaded messages are flagged, regardless of the current
+  // setting — the toggle only appears when it would do something.
+  //
+  // Deliberately not shown as a number. This counts the *loaded* rows, and the
+  // list loads incrementally, so the figure climbed as the user scrolled: a
+  // label that changes while you read it describes nothing, and reads as though
+  // junk were arriving live.
   const flaggedCount = useMemo(
     () => filteredEmails.filter((email) => isJunkFlagged(junkVerdicts[email.id])).length,
     [filteredEmails, junkVerdicts],
@@ -497,7 +500,7 @@ export function Inbox({
             checked={junkFlaggedAction === 'hide'}
             onChange={(e) => void setJunkFlaggedAction(e.target.checked ? 'hide' : 'dim')}
           />
-          <span>{t('inbox:junk.hideFlagged', { count: flaggedCount })}</span>
+          <span>{t('inbox:junk.hideFlagged')}</span>
         </label>
       )}
       <VirtualEmailList

@@ -683,143 +683,6 @@ async fn run_chat(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use crate::db::Database;
-
-    use super::super::session::CliSession;
-    use super::super::OutputMode;
-    use super::*;
-
-    fn seed_account(db: &Arc<Database>, id: &str, email: &str, enabled: bool) {
-        db.connection()
-            .execute(
-                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
-                 VALUES (?1, 'gmail', ?2, ?2, 0, 0, ?3)",
-                rusqlite::params![id, email, enabled as i32],
-            )
-            .expect("seed account");
-    }
-
-    /// Build a session straight from parts (bypassing `bootstrap`, which would
-    /// touch the keychain and install global seams) so dispatch can be exercised
-    /// against an in-memory DB.
-    fn test_session(db: Arc<Database>, account: Option<&str>) -> CliSession {
-        CliSession {
-            db,
-            account: account.map(str::to_string),
-            model: "test-model".to_string(),
-            mode: OutputMode::Json,
-            style: crate::cli::RenderStyle::Json,
-            quiet: true,
-            log_quiet: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-            data_dir: PathBuf::from("/tmp/emailops-cli-test"),
-            conversation_id: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn dispatch_accounts_succeeds_against_seeded_db() {
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        seed_account(&db, "a1", "solo@example.com", true);
-        let mut session = test_session(db, Some("a1"));
-        dispatch(&mut session, Command::Accounts { action: None })
-            .await
-            .expect("accounts ok");
-    }
-
-    #[tokio::test]
-    async fn dispatch_show_missing_id_is_not_found() {
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        let mut session = test_session(db, None);
-        let err = dispatch(&mut session, Command::Show { id: "ghost".into() })
-            .await
-            .expect_err("missing email must error");
-        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
-    }
-
-    #[tokio::test]
-    async fn dispatch_emails_without_resolvable_account_errors() {
-        // No accounts and no --account hint → require_account fails before any query.
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        let mut session = test_session(db, None);
-        let err = dispatch(
-            &mut session,
-            Command::Emails {
-                limit: 10,
-                offset: 0,
-                mailbox: None,
-                category: None,
-            },
-        )
-        .await
-        .expect_err("ambiguous account must error");
-        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
-    }
-
-    #[tokio::test]
-    async fn dispatch_sync_unknown_account_is_not_found() {
-        // The positional hint doesn't match any account, so it fails fast in the
-        // lookup — never reaching the network/provider path.
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        seed_account(&db, "a1", "real@example.com", true);
-        let mut session = test_session(db, Some("a1"));
-        let err = dispatch(
-            &mut session,
-            Command::Sync {
-                account: Some("ghost@example.com".into()),
-            },
-        )
-        .await
-        .expect_err("unknown sync account must error");
-        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
-    }
-
-    fn save_draft(db: &Arc<Database>, id: &str, account_id: &str) {
-        db.save_draft(&crate::models::SaveDraftRequest {
-            id: Some(id.to_string()),
-            email_id: None,
-            account_id: account_id.to_string(),
-            to_addresses: vec!["alina@example.com".to_string()],
-            cc_addresses: Vec::new(),
-            subject: "Confirmar reunión".to_string(),
-            body: "Hola Alina".to_string(),
-            body_html: None,
-            provider_draft_id: None,
-            attachments: None,
-        })
-        .expect("save draft");
-    }
-
-    #[test]
-    fn collect_referenced_drafts_resolves_known_ids_and_skips_missing() {
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        seed_account(&db, "a1", "solo@example.com", true);
-        save_draft(&db, "d1", "a1");
-
-        let got = collect_referenced_drafts(&db, &["d1".to_string(), "ghost".to_string()]).expect("collect ok");
-        assert_eq!(got.len(), 1, "missing id skipped, known id resolved");
-        assert_eq!(got[0].id, "d1");
-        assert_eq!(got[0].subject, "Confirmar reunión");
-    }
-
-    #[test]
-    fn collect_referenced_drafts_empty_when_no_refs() {
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        assert!(collect_referenced_drafts(&db, &[]).expect("collect ok").is_empty());
-    }
-
-    #[tokio::test]
-    async fn dispatch_doctor_succeeds_and_is_read_only() {
-        let db = Arc::new(Database::new_for_testing().expect("test db"));
-        seed_account(&db, "a1", "solo@example.com", true);
-        let mut session = test_session(db, Some("a1"));
-        dispatch(&mut session, Command::Doctor).await.expect("doctor ok");
-    }
-}
-
 /// Private golden-set operations: seed, review, hand-label, measure.
 ///
 /// The label file holds pointers only — id, account, label, source — so the
@@ -972,4 +835,141 @@ async fn run_golden(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::db::Database;
+
+    use super::super::session::CliSession;
+    use super::super::OutputMode;
+    use super::*;
+
+    fn seed_account(db: &Arc<Database>, id: &str, email: &str, enabled: bool) {
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, 'gmail', ?2, ?2, 0, 0, ?3)",
+                rusqlite::params![id, email, enabled as i32],
+            )
+            .expect("seed account");
+    }
+
+    /// Build a session straight from parts (bypassing `bootstrap`, which would
+    /// touch the keychain and install global seams) so dispatch can be exercised
+    /// against an in-memory DB.
+    fn test_session(db: Arc<Database>, account: Option<&str>) -> CliSession {
+        CliSession {
+            db,
+            account: account.map(str::to_string),
+            model: "test-model".to_string(),
+            mode: OutputMode::Json,
+            style: crate::cli::RenderStyle::Json,
+            quiet: true,
+            log_quiet: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            data_dir: PathBuf::from("/tmp/emailops-cli-test"),
+            conversation_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_accounts_succeeds_against_seeded_db() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "solo@example.com", true);
+        let mut session = test_session(db, Some("a1"));
+        dispatch(&mut session, Command::Accounts { action: None })
+            .await
+            .expect("accounts ok");
+    }
+
+    #[tokio::test]
+    async fn dispatch_show_missing_id_is_not_found() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let mut session = test_session(db, None);
+        let err = dispatch(&mut session, Command::Show { id: "ghost".into() })
+            .await
+            .expect_err("missing email must error");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn dispatch_emails_without_resolvable_account_errors() {
+        // No accounts and no --account hint → require_account fails before any query.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let mut session = test_session(db, None);
+        let err = dispatch(
+            &mut session,
+            Command::Emails {
+                limit: 10,
+                offset: 0,
+                mailbox: None,
+                category: None,
+            },
+        )
+        .await
+        .expect_err("ambiguous account must error");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn dispatch_sync_unknown_account_is_not_found() {
+        // The positional hint doesn't match any account, so it fails fast in the
+        // lookup — never reaching the network/provider path.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "real@example.com", true);
+        let mut session = test_session(db, Some("a1"));
+        let err = dispatch(
+            &mut session,
+            Command::Sync {
+                account: Some("ghost@example.com".into()),
+            },
+        )
+        .await
+        .expect_err("unknown sync account must error");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    fn save_draft(db: &Arc<Database>, id: &str, account_id: &str) {
+        db.save_draft(&crate::models::SaveDraftRequest {
+            id: Some(id.to_string()),
+            email_id: None,
+            account_id: account_id.to_string(),
+            to_addresses: vec!["alina@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Confirmar reunión".to_string(),
+            body: "Hola Alina".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
+        })
+        .expect("save draft");
+    }
+
+    #[test]
+    fn collect_referenced_drafts_resolves_known_ids_and_skips_missing() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "solo@example.com", true);
+        save_draft(&db, "d1", "a1");
+
+        let got = collect_referenced_drafts(&db, &["d1".to_string(), "ghost".to_string()]).expect("collect ok");
+        assert_eq!(got.len(), 1, "missing id skipped, known id resolved");
+        assert_eq!(got[0].id, "d1");
+        assert_eq!(got[0].subject, "Confirmar reunión");
+    }
+
+    #[test]
+    fn collect_referenced_drafts_empty_when_no_refs() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        assert!(collect_referenced_drafts(&db, &[]).expect("collect ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_doctor_succeeds_and_is_read_only() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "solo@example.com", true);
+        let mut session = test_session(db, Some("a1"));
+        dispatch(&mut session, Command::Doctor).await.expect("doctor ok");
+    }
 }

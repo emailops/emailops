@@ -153,6 +153,12 @@ pub enum ReasonCode {
     DangerousAttachment,
     ExcessiveCaps,
     UrgencyLexicon,
+    /// The message asks the reader to hand over access AND gives them somewhere
+    /// to do it. Distinct from [`Self::UrgencyLexicon`]: urgency is a pressure
+    /// tactic plenty of legitimate mail uses, whereas this is the payload of
+    /// credential phishing. Reporting one as the other told the user the wrong
+    /// thing about their own mail and left the banner with nothing to show.
+    CredentialSolicitation,
     HiddenText,
 
     // ── Suppressors ──────────────────────────────────────────────────────
@@ -563,7 +569,13 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     let content = content::analyse(&signals.subject, &signals.body, &signals.attachment_names);
 
     let sender_domain = signals.sender_domain().unwrap_or_default();
-    let first_contact = signals.is_first_contact();
+    // Computed once. `sender_domain_known()` normalizes and reduces every entry
+    // in the contact reference set — up to `MAX_KNOWN_CONTACTS` (2,000) domains
+    // — and it was being called four times per message (directly, plus inside
+    // `is_first_contact`). On a 500-message scoring batch that is millions of
+    // redundant string allocations for an answer that cannot change mid-verdict.
+    let sender_domain_known = signals.sender_domain_known();
+    let first_contact = !signals.sender_engaged && !sender_domain_known;
 
     let mut phishing = AxisBuilder::new(JunkAxis::Phishing);
     let mut spam = AxisBuilder::new(JunkAxis::Spam);
@@ -595,7 +607,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // perfectly — the attacker owns the sending domain — so no amount of
     // authentication evidence will catch it.
     let impersonates = !display.is_empty()
-        && !signals.sender_domain_known()
+        && !sender_domain_known
         && !signals.sender_engaged
         && signals
             .known_contact_names
@@ -677,10 +689,10 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
 
     // Asking for credentials and providing somewhere to enter them is an
     // identity attack in its own right, even with no domain to imitate.
-    let credential_attack = content.credential_solicitation && !signals.sender_domain_known();
+    let credential_attack = content.credential_solicitation && !sender_domain_known;
     phishing.add_if(
         credential_attack,
-        ReasonCode::UrgencyLexicon,
+        ReasonCode::CredentialSolicitation,
         weights.credential_solicitation,
         None,
     );
@@ -691,7 +703,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // consumer-facing junk mail.
     spam.add_if(
         credential_attack,
-        ReasonCode::UrgencyLexicon,
+        ReasonCode::CredentialSolicitation,
         weights.credential_solicitation_spam,
         None,
     );
@@ -921,7 +933,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // Correspondence plus clean authentication is the strongest exculpatory
     // evidence available: the user has replied to this address (or its domain)
     // and the message provably comes from it.
-    let vouched = auth.fully_aligned() && (signals.sender_engaged || signals.sender_domain_known());
+    let vouched = auth.fully_aligned() && (signals.sender_engaged || sender_domain_known);
     if vouched {
         suppressors.push(ReasonCode::EngagedSender);
     }
@@ -1146,6 +1158,33 @@ mod tests {
         s.known_contact_names = vec!["Sam Okafor".to_string()];
         s.known_contact_domains = vec!["partnerco.example".to_string()];
         assert!(!judged(&s).phishing.band.is_flagged());
+    }
+
+    #[test]
+    fn a_credential_request_is_reported_as_one_and_not_as_urgency() {
+        // REGRESSION: asking a stranger to re-enter their password was recorded
+        // under `UrgencyLexicon` on both axes. These reasons are rendered to the
+        // user, so that told them the wrong thing about their own mail — and
+        // because the banner only lists headline codes, a message flagged purely
+        // on credential solicitation showed a phishing warning with no reason at
+        // all underneath it.
+        let s = signals(
+            &format!("{FAILING}From: IT <helpdesk@mail-verify-host.example>\n"),
+            r#"Confirm your password now: <a href="https://mail-verify-host.example/login">here</a>"#,
+        );
+        let verdict = judged(&s);
+        let codes = verdict.all_reason_codes();
+        assert!(codes.contains(&ReasonCode::CredentialSolicitation), "got {codes:?}");
+        assert!(
+            verdict
+                .reason_codes_for(JunkAxis::Phishing)
+                .contains(&ReasonCode::CredentialSolicitation),
+            "the phishing axis must name its own evidence"
+        );
+        assert!(
+            !codes.contains(&ReasonCode::UrgencyLexicon),
+            "no urgency phrase is present in this message: {codes:?}"
+        );
     }
 
     // ── Suppressors ───────────────────────────────────────────────────────
