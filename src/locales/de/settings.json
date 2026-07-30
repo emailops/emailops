@@ -22,7 +22,9 @@
     "aisearch": "KI-Suche",
     "aisearchDesc": "Embeddings und semantische Suche",
     "privacy": "Datenschutz & Sicherheit",
-    "privacyDesc": "Passwort, externe Inhalte"
+    "privacyDesc": "Passwort, externe Inhalte",
+    "junk": "Spam",
+    "junkDesc": "Spam, Identitätsmissbrauch und Massenmail"
   },
   "appearance": {
     "language": "Anzeigesprache",
@@ -437,5 +439,37 @@
     "enableDesc": "Zeigt Übersetzen-Schaltflächen bei E-Mails in anderen Sprachen und im Verfassen-Fenster.",
     "promptTitle": "Übersetzungs-Prompt",
     "promptDesc": "Wird beim Übersetzen einer E-Mail oder eines Entwurfs verwendet."
+  },
+  "junk": {
+    "enabled": "Spam erkennen",
+    "enabledDesc": "Bewertet jede Nachricht lokal. Kein Modell, kein Netzwerk — nichts verlässt Ihren Rechner.",
+    "flaggedActionTitle": "Was mit markierter Post geschehen soll",
+    "action": {
+      "dim": "In der Liste abschwächen",
+      "hide": "Aus dem Posteingang nehmen"
+    },
+    "actionDesc": {
+      "dim": "Bleibt an Ort und Stelle, nur leichter zu überspringen.",
+      "hide": "Aus der Liste entfernt. Weiterhin über die Suche und die Ordner Ihres Anbieters erreichbar."
+    },
+    "neverMoves": "Keine der Optionen verschiebt oder löscht etwas auf dem Server. Das tut nur die Schaltfläche „Als Spam bestätigen“, und nur wenn Sie sie drücken.",
+    "phishing": "Vor Identitätsmissbrauch warnen",
+    "phishingDesc": "Standardmäßig aus. Dies ist die einzige Prüfung, die einer Nachricht Betrug vorwirft, und sie hat weit weniger Belege hinter sich als die anderen beiden.",
+    "statusTitle": "Status",
+    "scored": "Bewertete Nachrichten",
+    "unscored": "Noch nicht bewertet",
+    "foundSpam": "Als Spam markiert",
+    "foundGraymail": "Als Massenmail markiert",
+    "foundPhishing": "Als Identitätsmissbrauch markiert",
+    "yourFeedback": "Ihre Korrekturen",
+    "model": {
+      "spam": "Spam-Modell",
+      "graymail": "Massenmail-Modell"
+    },
+    "modelInUse": "aktiv — {{pos}} / {{neg}}",
+    "modelNotYet": "noch zu wenige Labels — {{pos}} / {{neg}}",
+    "backfill": "{{count}} ältere Nachrichten bewerten",
+    "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet",
+    "backfillRunning": "Wird bewertet… noch {{count}}"
   }
 }

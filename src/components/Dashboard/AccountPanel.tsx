@@ -166,7 +166,37 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
           denominator={data.embeddedEligible}
           color="bg-amber-500"
         />
+        <ProgressBar
+          label={t('dashboard:accounts.junkScored')}
+          numerator={data.junkScoredCount}
+          denominator={data.syncedCount}
+          color="bg-slate-500"
+        />
       </div>
+
+      {/* What the junk detector found. Severity-ordered, and phishing is
+          separated from the other two because it is a security finding rather
+          than a tidiness one. Hidden entirely when nothing was flagged — an
+          all-zero row is noise. */}
+      {data.junkPhishingCount + data.junkSpamCount + data.junkGraymailCount > 0 && (
+        <div className="flex flex-wrap gap-2 pt-2 text-xs">
+          {data.junkPhishingCount > 0 && (
+            <span className="rounded-full bg-red-100 text-red-800 px-2 py-0.5">
+              {t('dashboard:accounts.junkPhishing', { count: data.junkPhishingCount })}
+            </span>
+          )}
+          {data.junkSpamCount > 0 && (
+            <span className="rounded-full bg-orange-100 text-orange-800 px-2 py-0.5">
+              {t('dashboard:accounts.junkSpam', { count: data.junkSpamCount })}
+            </span>
+          )}
+          {data.junkGraymailCount > 0 && (
+            <span className="rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">
+              {t('dashboard:accounts.junkGraymail', { count: data.junkGraymailCount })}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

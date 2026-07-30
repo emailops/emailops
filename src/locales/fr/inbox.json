@@ -142,5 +142,34 @@
     "aiTranslation": "Traduction IA · {{language}}",
     "truncatedNotice": "L'e-mail était trop long : seul le début a été traduit.",
     "failed": "Échec de la traduction : {{error}}"
+  },
+  "junk": {
+    "kind": {
+      "phishing": "Ce message usurpe peut-être une identité",
+      "spam": "Cela ressemble à du courrier indésirable",
+      "graymail": "Courrier de masse que vous ne lisez pas",
+      "legit": ""
+    },
+    "notJunk": "Pas indésirable",
+    "isJunk": "Confirmer",
+    "reason": {
+      "display_name_impersonation": "Le nom de l'expéditeur correspond à un contact, mais pas l'adresse",
+      "lookalike_domain": "Le domaine de l'expéditeur imite un domaine que vous connaissez",
+      "punycode_domain": "Le domaine de l'expéditeur utilise des caractères trompeurs",
+      "reply_to_mismatch": "Les réponses iraient vers un domaine différent de l'expéditeur",
+      "dmarc_fail": "Échec DMARC : l'expéditeur visible n'a pas pu être vérifié",
+      "spf_fail": "Échec SPF : le serveur d'envoi n'est pas autorisé pour ce domaine",
+      "dangerous_attachment": "Contient un type de pièce jointe utilisé pour diffuser des logiciels malveillants",
+      "credential_solicitation": "Vous demande de ressaisir votre mot de passe ou vos informations de compte",
+      "display_name_contains_address": "Le nom de l'expéditeur est écrit pour ressembler à une autre adresse",
+      "server_spam_flag": "Votre serveur de messagerie a marqué ce message comme spam",
+      "mixed_script_display_name": "Le nom de l'expéditeur mélange des alphabets pour se déguiser"
+    },
+    "isJunkHint": "Le classe aussi dans le dossier Indésirables du serveur pour que son filtre apprenne",
+    "confirmedAndFiled": "Confirmé comme indésirable et classé dans le dossier du serveur",
+    "confirmedLocally": "Confirmé comme indésirable (ce compte n'a pas de dossier Indésirables)",
+    "confirmFailed": "Impossible de classer le message sur le serveur",
+    "notJunkFailed": "Impossible d'enregistrer que ce message n'est pas indésirable",
+    "hideFlagged": "Masquer les indésirables"
   }
 }

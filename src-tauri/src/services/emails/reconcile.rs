@@ -249,6 +249,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            headers: None,
         }
     }
 

@@ -22,7 +22,11 @@
     "classified": "Clasificados",
     "memoriesAnalyzed": "Memorias analizadas",
     "tasksAnalyzed": "Tareas analizadas",
-    "embeddings": "Embeddings"
+    "embeddings": "Embeddings",
+    "junkScored": "Analizado por basura",
+    "junkPhishing": "{{count}} phishing",
+    "junkSpam": "{{count}} spam",
+    "junkGraymail": "{{count}} masivo"
   },
   "queues": {
     "title": "Colas en segundo plano",

@@ -22,7 +22,11 @@
     "classified": "Klassifiziert",
     "memoriesAnalyzed": "Erinnerungen analysiert",
     "tasksAnalyzed": "Aufgaben analysiert",
-    "embeddings": "Embeddings"
+    "embeddings": "Embeddings",
+    "junkScored": "Spam-Analyse",
+    "junkPhishing": "{{count}} Phishing",
+    "junkSpam": "{{count}} Spam",
+    "junkGraymail": "{{count}} Massenmail"
   },
   "queues": {
     "title": "Hintergrund-Warteschlangen",

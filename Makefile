@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts
 
 # ── Bundled AI models ────────────────────────────────────────────────────────
 # The Nomic embedding model ships inside the .app so first-run users don't
@@ -453,6 +453,15 @@ dist-cli-mac:
 #   make cask TAG=v0.6.2   # from a specific tag
 cask:
 	bash scripts/generate_cask.sh $(TAG)
+
+# Junk detector gate (spam / phishing / graymail). Synthetic corpus, no model,
+# no DB — runs in seconds. Exits non-zero when the false-positive budget is
+# blown. A missed spam message is a warning; a false positive on real mail is a
+# build failure.
+#   make eval-junk
+#   make eval-junk ARGS="--case phish-bec-lookalike-domain-reply-to-mismatch"
+eval-junk:
+	bash scripts/eval_junk.sh $(ARGS)
 
 # Regenerate the evaluations index (manifest.json + instructions to open index.html)
 eval-index:

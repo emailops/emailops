@@ -239,6 +239,55 @@ pub enum Command {
         id: Option<String>,
     },
 
+    /// Score mail for spam / phishing / graymail, or explain a verdict.
+    ///
+    /// Deterministic and model-free: no llama.cpp load, no network. Safe to run
+    /// against a live install.
+    Junk {
+        /// Score every unscored message in the account, not just the newest
+        /// batch. Newest-first, resumable, safe to interrupt.
+        #[arg(long)]
+        all: bool,
+        /// Retrain the per-account statistical models from labels already in
+        /// the mailbox (provider spam folder, replied-to threads, your own
+        /// corrections). No model download, no network.
+        #[arg(long)]
+        train: bool,
+        /// Score exactly this email id.
+        #[arg(long, value_name = "ID", conflicts_with_all = ["explain", "all"])]
+        id: Option<String>,
+        /// Print the full signal set and every reason behind one message's
+        /// verdict. The debugging surface for "why was this flagged?".
+        #[arg(long, value_name = "ID")]
+        explain: Option<String>,
+        /// Seed the private golden set from labels that are INDEPENDENT of the
+        /// detector: the provider's own Spam folder and your corrections in the
+        /// app. Never overwrites a hand label.
+        #[arg(long)]
+        bootstrap_labels: bool,
+        /// List unlabelled messages to review, newest first.
+        #[arg(long, value_name = "N")]
+        review: Option<usize>,
+        /// Spread the review sample across the whole mailbox instead of taking
+        /// the newest. Use this to gather `legit` labels: a recent window during
+        /// a spam wave is almost all junk, and the headline metric is computed
+        /// from the legitimate side.
+        #[arg(long)]
+        sample: bool,
+        /// Record a hand label: `--label <email-id>=<legit|spam|phishing|graymail>`.
+        #[arg(long, value_name = "ID=LABEL")]
+        label: Option<String>,
+        /// Score the stored verdicts against the golden set and print the
+        /// confusion matrix plus the ids to go and look at.
+        #[arg(long)]
+        measure: bool,
+        /// Export the labelled messages as a self-contained corpus under
+        /// private-evals/junk/cases/. Survives UID changes and DB rebuilds, and
+        /// is runnable by the normal eval harness. CONTAINS REAL MAIL.
+        #[arg(long)]
+        export_cases: bool,
+    },
+
     /// Generate search embeddings for pending emails.
     Embed {
         /// Rows to embed per batch.

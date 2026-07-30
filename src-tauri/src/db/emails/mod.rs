@@ -14,6 +14,9 @@ pub mod contacts;
 pub mod crud;
 pub mod failed;
 pub mod folder_ops;
+pub mod headers;
+pub mod junk;
+pub mod junk_model;
 pub mod search;
 
 #[cfg(test)]
@@ -52,6 +55,10 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         category: row.get::<_, String>(13).unwrap_or_else(|_| "primary".to_string()),
         mailbox: row.get::<_, String>(14).unwrap_or_else(|_| "inbox".to_string()),
         is_sent: row.get::<_, i32>(15).unwrap_or(0) != 0,
+        // Write-only transport field. Headers live in their own table and are
+        // read via `get_email_headers_batch`, not hydrated onto every Email —
+        // the vast majority of reads (list views, search) never need them.
+        headers: None,
     })
 }
 

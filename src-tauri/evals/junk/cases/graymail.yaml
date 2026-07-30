@@ -1,0 +1,120 @@
+# Graymail: legitimate bulk mail the user does not engage with. Not spam, not an
+# attack — just noise. The action is deprioritize-and-collapse, never hide, and
+# the budget for getting it wrong is the loosest of the three axes because being
+# wrong costs the user a glance rather than a missed invoice.
+#
+# The distinguishing signal is ENGAGEMENT, not content: the identical newsletter
+# is `graymail: clean` in legit.yaml when the user reads and replies to it.
+#
+# All synthetic. Domains use the RFC 2606 `.example` TLD.
+
+- id: gray-unread-newsletter-no-engagement
+  tier: smoke
+  raw_headers: |
+    From: "Retail Digest" <news@retaildigest.example>
+    List-Id: Retail Digest <list.retaildigest.example>
+    List-Unsubscribe: <https://retaildigest.example/unsub/k2>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=retaildigest.example;
+        dkim=pass header.d=retaildigest.example; dmarc=pass
+    Subject: This week in retail
+  body: |
+    Store openings, closures and the week's numbers.
+  sender_engaged: false
+  expect:
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [list_id_present, list_unsubscribe_present, no_engagement]
+
+- id: gray-provider-promotions-category
+  tier: smoke
+  raw_headers: |
+    From: "Gadget Store" <marketing@gadgetstore.example>
+    List-Unsubscribe: <https://gadgetstore.example/unsub/p9>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=gadgetstore.example;
+        dkim=pass header.d=gadgetstore.example; dmarc=pass
+    Subject: New arrivals just landed
+  body: |
+    Browse the new season range.
+  provider_category: promotions
+  sender_engaged: false
+  expect:
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [bulk_category, list_unsubscribe_present, no_engagement]
+
+- id: gray-precedence-bulk-announcement
+  tier: smoke
+  raw_headers: |
+    From: "Platform Updates" <updates@platformco.example>
+    Precedence: bulk
+    List-Unsubscribe: <https://platformco.example/unsub/t4>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=platformco.example;
+        dkim=pass header.d=platformco.example; dmarc=pass
+    Subject: Changes to our terms of service
+  body: |
+    We are updating our terms effective next month.
+  sender_engaged: false
+  expect:
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [precedence_bulk, no_engagement]
+
+- id: gray-one-click-compliant-esp
+  tier: smoke
+  raw_headers: |
+    From: "Travel Deals" <deals@flyaway.example>
+    List-Id: Travel Deals <list.flyaway.example>
+    List-Unsubscribe: <https://flyaway.example/unsub/z7>, <mailto:unsub@flyaway.example>
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=flyaway.example;
+        dkim=pass header.d=flyaway.example; dmarc=pass
+    Subject: Weekend fares from your airport
+  body: |
+    Fares refreshed for the coming weekend.
+  sender_engaged: false
+  expect:
+    # Fully compliant, fully authenticated bulk mail. Graymail yes — but the
+    # list markers must actively SUPPRESS the spam and phishing axes. Legitimate
+    # ESP mail is the single largest source of false positives.
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [list_unsubscribe_one_click, list_id_present, no_engagement]
+
+- id: gray-social-network-notification
+  tier: smoke
+  raw_headers: |
+    From: "Connectly" <notifications@connectly.example>
+    List-Unsubscribe: <https://connectly.example/settings/email>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=connectly.example;
+        dkim=pass header.d=connectly.example; dmarc=pass
+    Subject: You have 4 new profile views
+  body: |
+    See who viewed your profile this week.
+  provider_category: social
+  sender_engaged: false
+  expect:
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [bulk_category, no_engagement]
+
+- id: gray-product-digest-one-way
+  tier: smoke
+  raw_headers: |
+    From: "Toolchain Weekly" <digest@toolchain.example>
+    List-Id: Toolchain Weekly <list.toolchain.example>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=toolchain.example;
+        dkim=pass header.d=toolchain.example; dmarc=pass
+    Subject: 12 releases you may have missed
+  body: |
+    A roundup of this month's releases across the ecosystem.
+  sender_engaged: false
+  expect:
+    graymail: junk
+    spam: clean
+    phishing: clean
+    reasons_include: [list_id_present, no_engagement]

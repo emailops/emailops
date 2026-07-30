@@ -9,6 +9,7 @@ import {
   isUnifiedMode,
   reduceSyncProgress,
   type SyncProgress,
+  selectAccountById,
   selectEffectiveAccountId,
   toQueryAccountId,
   useAccountStore,
@@ -97,6 +98,27 @@ describe('selectEffectiveAccountId', () => {
   });
 });
 
+describe('selectAccountById', () => {
+  const accounts = [makeAccount('a'), makeAccount('b')];
+
+  it('returns the matching account', () => {
+    expect(selectAccountById(accounts, 'b')).toEqual(makeAccount('b'));
+  });
+
+  it('returns null for a null id', () => {
+    expect(selectAccountById(accounts, null)).toBeNull();
+  });
+
+  it('returns null instead of undefined when the id has no match (regression)', () => {
+    // AccountSettingsDialog used to receive `accounts.find(...)!` directly —
+    // when the account was deleted out from under a still-open dialog, that
+    // resolved to `undefined` at runtime (the `!` is compile-time only) and
+    // crashed the whole app via the root ErrorBoundary. `null` lets the
+    // caller unmount the dialog instead of rendering it with no account.
+    expect(selectAccountById(accounts, 'deleted-id')).toBeNull();
+  });
+});
+
 // ── reduceSyncProgress ────────────────────────────────────────────────────────
 
 describe('reduceSyncProgress', () => {
@@ -176,6 +198,20 @@ describe('removeAccount', () => {
     });
     await useAccountStore.getState().removeAccount('a');
     expect(useAccountStore.getState().activeAccountId).toBe(ALL_ACCOUNTS_ID);
+  });
+
+  it('rethrows on failure so the confirm dialog can show the real error (regression)', async () => {
+    // Without the rethrow, the delete confirmation UI closes as if the
+    // deletion succeeded — App.tsx logs "Account deleted" and the caller's
+    // catch block (which surfaces `deleteError`) never runs — while the
+    // account silently remains in the list underneath a stale success log.
+    useAccountStore.setState({ accounts: [makeAccount('a')] });
+    vi.mocked(api.removeAccount).mockRejectedValue(new Error('database is locked'));
+
+    await expect(useAccountStore.getState().removeAccount('a')).rejects.toThrow('database is locked');
+
+    expect(useAccountStore.getState().accounts).toEqual([makeAccount('a')]);
+    expect(useAccountStore.getState().error).toBe('database is locked');
   });
 });
 

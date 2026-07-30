@@ -22,7 +22,11 @@
     "classified": "Classés",
     "memoriesAnalyzed": "Mémoires analysées",
     "tasksAnalyzed": "Tâches analysées",
-    "embeddings": "Embeddings"
+    "embeddings": "Embeddings",
+    "junkScored": "Analyse indésirable",
+    "junkPhishing": "{{count}} hameçonnage",
+    "junkSpam": "{{count}} spam",
+    "junkGraymail": "{{count}} masse"
   },
   "queues": {
     "title": "Files d'arrière-plan",

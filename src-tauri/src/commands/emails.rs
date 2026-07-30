@@ -82,7 +82,7 @@ pub async fn get_folders(
 
 /// Load an account and build its provider — shared by the folder-management
 /// commands below.
-async fn account_and_provider(
+pub(crate) async fn account_and_provider(
     state: &State<'_, AppState>,
     app: AppHandle,
     account_id: &str,

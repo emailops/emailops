@@ -13,6 +13,7 @@ pub mod dashboard;
 pub mod drafts;
 pub mod emails;
 pub mod filters;
+pub mod junk;
 pub mod lenses;
 pub mod memory;
 pub mod preferences;

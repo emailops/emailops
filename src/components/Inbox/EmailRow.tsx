@@ -71,7 +71,19 @@ export function EmailRow({
   // Exclude the company tag from the right-hand chip list — it's already
   // rendered as an uppercase prefix on the subject, so showing it again on
   // the tasks/tags side is just visual noise.
-  const emailTags = aiEnabled ? storedTags.filter((t) => t.tagType !== 'company') : [];
+  // Junk chips survive the AI switch. Junk detection is fully deterministic —
+  // header authentication, domain comparison, list markers — with no model and
+  // no network, so it is not "AI-derived metadata" the user opted out of. More
+  // importantly, hiding a phishing warning because someone turned off AI would
+  // be a security regression, not a preference.
+  const emailTags = aiEnabled
+    ? storedTags.filter((t) => t.tagType !== 'company')
+    : storedTags.filter((t) => t.tagType === 'junk');
+  // Deprioritize rather than hide. The message stays exactly where the server
+  // put it — we never move mail — but a flagged row recedes so the eye skips it.
+  // Dimming is dropped while the row is selected, so opening a flagged message
+  // never leaves the user reading faded text.
+  const junkTag = storedTags.find((t) => t.tagType === 'junk');
   // Company tag is rendered as an uppercase chip prefix on the subject so the
   // user can scan which client/vendor a thread belongs to at a glance. We hide
   // it when the value contains '@' — that's the per-address shape produced by
@@ -494,7 +506,7 @@ export function EmailRow({
         tabIndex={0}
         className={`group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
           isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''}`}
+        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
         onClick={onClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

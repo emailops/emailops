@@ -3580,6 +3580,7 @@ mod tests {
             category: "primary".into(),
             mailbox: "inbox".into(),
             is_sent: false,
+            headers: None,
         };
         ScoredEmail {
             email,

@@ -4,6 +4,7 @@ import { accountColorClass } from '@/lib/colors';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
+import { isHiddenFromInbox, isFlagged as isJunkFlagged, useJunkStore } from '@/stores/junkStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import type { RulePrefill } from './EmailRow';
@@ -245,6 +246,32 @@ export function Inbox({
     return filtered;
   }, [emails, selectedCategories, activeFilter, navigationMode, showCategoryFilter, searchQuery, isSyncing]);
 
+  // Junk removal is applied last and only when the user asked for it. It is a
+  // view filter, nothing more: the message stays where the server put it and
+  // remains reachable through search and the provider's own folders. A search
+  // or an explicit smart filter bypasses it — when the user went looking for
+  // something, hiding results would be the wrong answer.
+  const junkFlaggedAction = useJunkStore((s) => s.flaggedAction);
+  const junkVerdicts = useJunkStore((s) => s.verdictsByEmail);
+  const visibleEmails = useMemo(() => {
+    if (junkFlaggedAction !== 'hide') return filteredEmails;
+    if (searchQuery || activeFilter) return filteredEmails;
+    return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
+  }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+
+  // Whether any of the loaded messages are flagged, regardless of the current
+  // setting — the toggle only appears when it would do something.
+  //
+  // Deliberately not shown as a number. This counts the *loaded* rows, and the
+  // list loads incrementally, so the figure climbed as the user scrolled: a
+  // label that changes while you read it describes nothing, and reads as though
+  // junk were arriving live.
+  const flaggedCount = useMemo(
+    () => filteredEmails.filter((email) => isJunkFlagged(junkVerdicts[email.id])).length,
+    [filteredEmails, junkVerdicts],
+  );
+  const setJunkFlaggedAction = useJunkStore((s) => s.setFlaggedAction);
+
   // Auto-expand the category selection to "All" when the active filter would
   // show an empty list despite emails being available in other categories.
   // Common after the first sync of a new account: the default selection is
@@ -291,6 +318,7 @@ export function Inbox({
   useEffect(() => {
     if (filteredEmails.length === 0) return;
     const ids = filteredEmails.map((e) => e.id);
+    void useJunkStore.getState().loadVerdicts(ids);
     void loadTags(ids);
   }, [filteredEmails, loadTags]);
 
@@ -464,8 +492,19 @@ export function Inbox({
           </div>
         )}
       </div>
+      {flaggedCount > 0 && !searchQuery && !activeFilter && (
+        <label className="flex items-center gap-2 px-4 py-1.5 text-xs text-gray-500 border-b border-gray-100 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="rounded border-gray-300"
+            checked={junkFlaggedAction === 'hide'}
+            onChange={(e) => void setJunkFlaggedAction(e.target.checked ? 'hide' : 'dim')}
+          />
+          <span>{t('inbox:junk.hideFlagged')}</span>
+        </label>
+      )}
       <VirtualEmailList
-        emails={filteredEmails}
+        emails={visibleEmails}
         selectedEmailId={selectedEmailId}
         focusEmailId={focusEmailId}
         scrollContainerRef={scrollContainerRef}

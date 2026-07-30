@@ -202,6 +202,96 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             Ok(())
         }
 
+        Command::Junk {
+            all,
+            train,
+            id,
+            explain,
+            bootstrap_labels,
+            review,
+            sample,
+            label,
+            measure,
+            export_cases,
+        } => {
+            let account = session.require_account()?;
+
+            if bootstrap_labels || review.is_some() || label.is_some() || measure || export_cases {
+                return run_golden(session, &account, bootstrap_labels, review, sample, label, export_cases).await;
+            }
+
+            if let Some(email_id) = explain {
+                // The "why was this flagged?" surface. Prints the materialized
+                // signals alongside the verdict, so a wrong call can be traced
+                // to the input that caused it rather than guessed at.
+                let ctx = crate::services::junk::signals::AccountContext::load(&session.db, &account)?;
+                let Some(signals) = crate::services::junk::signals::materialize(&session.db, &ctx, &email_id)? else {
+                    return Err(AppError::NotFound(format!("email {email_id}")));
+                };
+                let verdict = crate::services::junk::verdict::judge(
+                    &signals,
+                    &crate::services::junk::verdict::Weights::default(),
+                );
+                if session.mode == OutputMode::Json {
+                    output::emit_ok(serde_json::json!({
+                        "email_id": email_id,
+                        "signals": signals,
+                        "verdict": verdict,
+                    }))?;
+                } else {
+                    println!("{email_id}");
+                    println!(
+                        "  phishing {:?} ({:.2})  spam {:?} ({:.2})  graymail {:?} ({:.2})",
+                        verdict.phishing.band,
+                        verdict.phishing.score,
+                        verdict.spam.band,
+                        verdict.spam.score,
+                        verdict.graymail.band,
+                        verdict.graymail.score
+                    );
+                    println!("  primary: {:?}  method: {:?}", verdict.primary, verdict.method);
+                    for reason in &verdict.reasons {
+                        let detail = reason.detail.as_deref().unwrap_or("");
+                        println!(
+                            "    {:?} [{:?}] +{:.2} {}",
+                            reason.code, reason.axis, reason.weight, detail
+                        );
+                    }
+                }
+                return Ok(());
+            }
+
+            if train {
+                let trained = crate::services::junk::train_models(&session.db, &account).await?;
+                if session.mode == OutputMode::Json {
+                    let axes: Vec<_> = trained
+                        .iter()
+                        .map(|(axis, pos, neg)| serde_json::json!({ "axis": axis, "positives": pos, "negatives": neg }))
+                        .collect();
+                    output::emit_ok(serde_json::json!({ "trained": axes }))?;
+                } else {
+                    for (axis, pos, neg) in &trained {
+                        println!("Trained {axis}: {pos} positive / {neg} negative samples");
+                    }
+                }
+                return Ok(());
+            }
+
+            let scored = match (all, id) {
+                (_, Some(email_id)) => {
+                    crate::services::junk::score_email_by_id(&session.db, &account, &email_id).await?
+                }
+                (true, None) => crate::services::junk::backfill_account(&session.db, &account).await?,
+                (false, None) => crate::services::junk::score_new_emails(&session.db, &account).await?,
+            };
+            if session.mode == OutputMode::Json {
+                output::emit_ok(serde_json::json!({ "scored": scored }))?;
+            } else {
+                println!("Scored {scored} email(s).");
+            }
+            Ok(())
+        }
+
         Command::Embed { batch } => {
             let account = session.require_account()?;
             let count =
@@ -590,6 +680,160 @@ async fn run_chat(
         output::emit_ok(data)?;
     }
 
+    Ok(())
+}
+
+/// Private golden-set operations: seed, review, hand-label, measure.
+///
+/// The label file holds pointers only — id, account, label, source — so the
+/// user's mail never leaves SQLite.
+async fn run_golden(
+    session: &mut CliSession,
+    account: &str,
+    bootstrap_labels: bool,
+    review: Option<usize>,
+    sample: bool,
+    label: Option<String>,
+    export_cases: bool,
+) -> Result<()> {
+    use crate::services::junk::golden;
+
+    let path = golden::default_path();
+    let mut entries = golden::load(&path)?;
+
+    if bootstrap_labels {
+        let seeded = golden::bootstrap(&session.db, account, 5_000)?;
+        let before = entries.len();
+        entries = golden::merge(entries, seeded);
+        golden::save(&path, &entries)?;
+        let added = entries.len().saturating_sub(before);
+        if session.mode == OutputMode::Json {
+            output::emit_ok(serde_json::json!({
+                "path": path.display().to_string(),
+                "total": entries.len(),
+                "added": added,
+            }))?;
+        } else {
+            println!("Seeded {added} label(s); {} total → {}", entries.len(), path.display());
+            println!("Only provider-folder and user-override labels are seeded — everything else");
+            println!("would grade the detector against its own inputs. Use --review to add more.");
+        }
+        return Ok(());
+    }
+
+    if let Some(spec) = label {
+        let (email_id, value) = spec
+            .split_once('=')
+            .ok_or_else(|| AppError::InvalidInput("expected --label <email-id>=<label>".into()))?;
+        let parsed = golden::GoldenLabel::parse(value)
+            .ok_or_else(|| AppError::InvalidInput(format!("unknown label {value:?}")))?;
+        entries = golden::merge(
+            entries,
+            vec![golden::GoldenEntry {
+                email_id: email_id.to_string(),
+                account_id: account.to_string(),
+                label: parsed,
+                source: golden::LabelSource::Manual,
+                labeled_at: crate::services::clock::now_secs(),
+            }],
+        );
+        golden::save(&path, &entries)?;
+        if session.mode == OutputMode::Json {
+            output::emit_ok(serde_json::json!({ "email_id": email_id, "label": parsed.as_str() }))?;
+        } else {
+            println!("Labelled {email_id} as {}", parsed.as_str());
+        }
+        return Ok(());
+    }
+
+    if let Some(n) = review {
+        let ids = golden::unlabelled(&session.db, account, &entries, n, sample)?;
+        let mut rows = Vec::new();
+        for id in &ids {
+            let Some(email) = session.db.get_email_by_id(id)? else {
+                continue;
+            };
+            rows.push(serde_json::json!({
+                "email_id": id,
+                "from": email.sender_email,
+                "subject": email.subject,
+                "mailbox": email.mailbox,
+            }));
+        }
+        if session.mode == OutputMode::Json {
+            output::emit_ok(serde_json::json!({ "unlabelled": rows }))?;
+        } else {
+            for row in &rows {
+                println!(
+                    "{}\n    {}  {}",
+                    row["email_id"].as_str().unwrap_or_default(),
+                    row["from"].as_str().unwrap_or_default(),
+                    row["subject"].as_str().unwrap_or_default(),
+                );
+            }
+            println!("\nLabel with: junk --label <email-id>=<legit|spam|phishing|graymail>");
+        }
+        return Ok(());
+    }
+
+    if export_cases {
+        let path = std::path::PathBuf::from("private-evals/junk/cases/real.yaml");
+        let (written, missing) = golden::export_cases(&session.db, &entries, &path)?;
+        if session.mode == OutputMode::Json {
+            output::emit_ok(serde_json::json!({
+                "path": path.display().to_string(),
+                "written": written,
+                "missing": missing,
+            }))?;
+        } else {
+            println!("Exported {written} case(s) → {}", path.display());
+            if missing > 0 {
+                println!("{missing} label(s) pointed at messages no longer in the database.");
+                println!("That is the dangling-pointer problem this export exists to prevent.");
+            }
+            println!();
+            println!("⚠️  This file contains REAL MAIL — subjects, addresses, headers, bodies.");
+            println!("    Never commit or share it. Run it with:");
+            println!("      make eval-junk ARGS=\"--cases-dir private-evals/junk/cases\"");
+        }
+        return Ok(());
+    }
+
+    // measure
+    let report = golden::measure(&session.db, &entries)?;
+    if session.mode == OutputMode::Json {
+        output::emit_ok(serde_json::to_value(&report).map_err(|e| AppError::InvalidInput(e.to_string()))?)?;
+    } else {
+        println!("Golden set: {} labelled message(s) with a stored verdict", report.total);
+        println!("  by source: {:?}", report.by_source);
+        println!();
+        println!(
+            "  TP {}   FP {}   TN {}   FN {}",
+            report.true_pos, report.false_pos, report.true_neg, report.false_neg
+        );
+        let fmt = |v: Option<f64>| v.map(|x| format!("{x:.3}")).unwrap_or_else(|| "n/a".into());
+        println!(
+            "  precision {}   recall {}",
+            fmt(report.precision()),
+            fmt(report.recall())
+        );
+        println!(
+            "  legit_fp_rate {}   <- the number that decides if this is usable",
+            fmt(report.legit_fp_rate())
+        );
+        if !report.false_positive_ids.is_empty() {
+            println!("\n  FALSE POSITIVES (labelled legit, detector flagged) — go look at these:");
+            for id in report.false_positive_ids.iter().take(20) {
+                println!("    junk --explain {id}");
+            }
+        }
+        if !report.false_negative_ids.is_empty() {
+            println!("\n  missed ({}):", report.false_negative_ids.len());
+            for id in report.false_negative_ids.iter().take(10) {
+                println!("    {id}");
+            }
+        }
+    }
     Ok(())
 }
 

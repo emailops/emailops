@@ -52,7 +52,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
-import { useAccountStore } from '@/stores/accountStore';
+import { selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -64,6 +64,7 @@ import {
   useTasksEnabledStore,
   useTranslationEnabledStore,
 } from '@/stores/featureToggleStore';
+import { useJunkStore } from '@/stores/junkStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
@@ -258,6 +259,11 @@ function AppInner() {
     clearError: clearAccountError,
     refetch: fetchAccounts,
   } = useAccounts();
+
+  // `accounts` can drop the id `removeAccount` filters it out synchronously,
+  // before the `onDelete` handler below gets to clear this state — so this
+  // can legitimately be null for one render right after a successful delete.
+  const accountSettingsAccount = selectAccountById(accounts, accountSettingsAccountId);
 
   // Per-account calendar-integration opt-in (Settings → Calendar). The
   // backend gates sync/notifications/chat on the same pref; this store only
@@ -711,6 +717,33 @@ function AppInner() {
           'ai',
           `${provider}/${model} → ${operation}: ${tokens} tokens${costStr}`,
         );
+      }),
+    );
+
+    // The junk display preference drives whether flagged rows are faded or
+    // removed from the list, so it has to be in the store before the first render
+    // of the inbox rather than fetched per row.
+    void useJunkStore.getState().loadConfig();
+
+    // Junk verdicts land asynchronously after each sync pass. Merge the chip
+    // into whatever tags the row already cached rather than replacing them —
+    // classification and junk scoring run independently and neither should
+    // clobber the other's result.
+    unlisteners.push(
+      listen<{ emailId: string; kind: string }>('email-junk-scored', (event) => {
+        const { emailId, kind } = event.payload;
+        const now = Math.floor(Date.now() / 1000);
+        // Clear the junk store's cached miss so an open message picks up a
+        // verdict that landed after it was first rendered.
+        useJunkStore.getState().invalidate(emailId);
+        void useJunkStore.getState().loadVerdicts([emailId]);
+        const existing = useTagStore.getState().tagsByEmail[emailId] ?? [];
+        useTagStore
+          .getState()
+          .setEmailTags(emailId, [
+            ...existing.filter((t) => t.tagType !== 'junk'),
+            { emailId, tagType: 'junk', tagValue: kind, confidence: null, createdAt: now },
+          ]);
       }),
     );
 
@@ -1519,9 +1552,9 @@ function AppInner() {
         />
       )}
 
-      {accountSettingsAccountId && (
+      {accountSettingsAccount && (
         <AccountSettingsDialog
-          account={accounts.find((a) => a.id === accountSettingsAccountId)!}
+          account={accountSettingsAccount}
           onClose={() => setAccountSettingsAccountId(null)}
           onSaved={async () => {
             setAccountSettingsAccountId(null);

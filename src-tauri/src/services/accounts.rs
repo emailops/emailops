@@ -212,15 +212,24 @@ pub fn update_account_sync_from(
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found after update", account_id)))
 }
 
+/// Register the database that backs dev-mode credential storage.
+///
+/// Every credential read goes through this global in debug builds, so any
+/// process that resolves account credentials must bind it before syncing or
+/// chatting — including headless ones (`emailops-cli`) that never warm the
+/// cache. Binding is deliberately separate from [`warm_token_cache`]: warming
+/// reads the keychain for every account, which a one-shot CLI command has no
+/// reason to pay for.
+pub fn bind_credential_db(db: &Arc<Database>) {
+    let mut db_ref = TOKEN_DB.write().unwrap_or_else(PoisonError::into_inner);
+    *db_ref = Some(Arc::clone(db));
+}
+
 /// Pre-load tokens for all accounts into the in-memory cache.
 /// Call once at startup so the keychain is accessed in a single batch,
 /// producing at most one macOS authorization prompt.
 pub fn warm_token_cache(db: &Arc<Database>) {
-    // Store DB ref for dev-mode token access
-    {
-        let mut db_ref = TOKEN_DB.write().unwrap_or_else(PoisonError::into_inner);
-        *db_ref = Some(Arc::clone(db));
-    }
+    bind_credential_db(db);
 
     #[cfg(debug_assertions)]
     eprintln!("[dev] Using SQLite for credential storage (no keychain)");
@@ -704,6 +713,26 @@ mod tests {
             db.get_imap_settings("acc-1").expect("get_imap_settings").is_some(),
             "imap_account_settings row must exist after persisting"
         );
+    }
+
+    // Regression: `emailops-cli` builds its own `Database` and never called
+    // `warm_token_cache`, so the process-global credential DB stayed empty and
+    // every credential read failed with "DB not initialized for dev credential
+    // storage" — `emailops-cli sync` could not authenticate against ANY account
+    // in a dev build. Binding must be separable from warming, because the CLI
+    // must not touch the keychain for accounts a one-shot command never uses.
+    #[test]
+    fn bind_credential_db_makes_stored_imap_credentials_readable() {
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let account = imap_account("cli-1", "hello@example.com");
+        persist_imap_account(&db, &account, &imap_creds()).expect("persist should succeed");
+
+        let creds = get_imap_credentials("cli-1").expect("credentials must resolve after binding");
+        assert_eq!(creds.host, "imap.example.com");
+        assert_eq!(creds.username, "hello@example.com");
     }
 
     // Consistency with the IMAP path: the account row must be inserted before

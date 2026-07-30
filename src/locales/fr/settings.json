@@ -22,7 +22,9 @@
     "aisearch": "Recherche IA",
     "aisearchDesc": "Embeddings et recherche sémantique",
     "privacy": "Confidentialité et sécurité",
-    "privacyDesc": "Mot de passe, contenu distant"
+    "privacyDesc": "Mot de passe, contenu distant",
+    "junk": "Indésirables",
+    "junkDesc": "Spam, usurpation et courrier de masse"
   },
   "appearance": {
     "language": "Langue de l'interface",
@@ -437,5 +439,37 @@
     "enableDesc": "Affiche des boutons de traduction sur les e-mails dans d'autres langues et dans la fenêtre de rédaction.",
     "promptTitle": "Prompt de traduction",
     "promptDesc": "Utilisé pour traduire un e-mail ou un brouillon."
+  },
+  "junk": {
+    "enabled": "Détecter le courrier indésirable",
+    "enabledDesc": "Analyse chaque message localement. Aucun modèle, aucun réseau — rien ne quitte votre machine.",
+    "flaggedActionTitle": "Que faire des messages signalés",
+    "action": {
+      "dim": "Les atténuer dans la liste",
+      "hide": "Les sortir de la boîte de réception"
+    },
+    "actionDesc": {
+      "dim": "Toujours à leur place, simplement plus faciles à ignorer.",
+      "hide": "Retirés de la liste. Toujours accessibles par la recherche et les dossiers de votre fournisseur."
+    },
+    "neverMoves": "Aucune de ces options ne déplace ni ne supprime quoi que ce soit sur le serveur. Seul le bouton « Confirmer » le fait, et seulement si vous le pressez.",
+    "phishing": "Avertir des tentatives d'usurpation",
+    "phishingDesc": "Désactivé par défaut. C'est la seule vérification qui accuse un message de fraude, et elle repose sur beaucoup moins de preuves que les deux autres.",
+    "statusTitle": "État",
+    "scored": "Messages analysés",
+    "unscored": "Pas encore analysés",
+    "foundSpam": "Marqués comme spam",
+    "foundGraymail": "Marqués comme masse",
+    "foundPhishing": "Marqués comme usurpation",
+    "yourFeedback": "Vos corrections",
+    "model": {
+      "spam": "Modèle spam",
+      "graymail": "Modèle masse"
+    },
+    "modelInUse": "actif — {{pos}} / {{neg}}",
+    "modelNotYet": "pas assez d'étiquettes — {{pos}} / {{neg}}",
+    "backfill": "Analyser {{count}} anciens messages",
+    "backfillStarted": "Analyse des anciens messages en arrière-plan",
+    "backfillRunning": "Analyse… {{count}} restants"
   }
 }

@@ -34,6 +34,14 @@ const TAG_COLORS: Record<string, Record<string, string>> = {
   topic: {
     _default: 'bg-amber-50 text-amber-700',
   },
+  // Severity-ordered on purpose: an impersonation attempt and an unwanted
+  // newsletter must not look alike at a glance.
+  junk: {
+    phishing: 'bg-red-100 text-red-800',
+    spam: 'bg-orange-100 text-orange-800',
+    graymail: 'bg-slate-100 text-slate-600',
+    _default: 'bg-slate-100 text-slate-600',
+  },
 };
 
 function getChipColor(tagType: string, tagValue: string): string {
@@ -47,8 +55,9 @@ export function TagChips({ tags, compact = false, nowrap = false }: TagChipsProp
 
   const sizeClass = compact ? 'text-[10px] px-1.5 py-0' : 'text-xs px-2 py-0.5';
 
-  // Sort: priority first, then intent, then topic
-  const order = ['priority', 'intent', 'topic'];
+  // Sort: junk first (it changes how the whole row should be read), then
+  // priority, intent, topic.
+  const order = ['junk', 'priority', 'intent', 'topic'];
   const sorted = [...tags].sort((a, b) => order.indexOf(a.tagType) - order.indexOf(b.tagType));
 
   return (

@@ -1,7 +1,7 @@
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Account, SyncStatus};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 const ACCOUNT_COLUMNS: &str = "id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp";
 
@@ -155,6 +155,32 @@ impl Database {
         conn.execute(
             "UPDATE accounts SET sync_from_timestamp = ?1 WHERE id = ?2",
             params![sync_from_timestamp, account_id],
+        )?;
+        Ok(())
+    }
+
+    /// Backfill progress, kept separate from the user's `sync_from_timestamp`
+    /// preference. See `V017__accounts_backfill_swept_from.sql` for semantics.
+    pub fn get_account_backfill_swept_from(&self, account_id: &str) -> Result<Option<i64>> {
+        let conn = self.reader();
+        let swept = conn
+            .query_row(
+                "SELECT backfill_swept_from FROM accounts WHERE id = ?1",
+                params![account_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(swept)
+    }
+
+    /// Record that the backfill swept from `swept_from` upward and found
+    /// nothing new. Never touches `sync_from_timestamp`.
+    pub fn set_account_backfill_swept_from(&self, account_id: &str, swept_from: Option<i64>) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "UPDATE accounts SET backfill_swept_from = ?1 WHERE id = ?2",
+            params![swept_from, account_id],
         )?;
         Ok(())
     }

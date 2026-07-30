@@ -16,6 +16,7 @@ pub mod embeddings;
 pub mod events;
 pub mod filters;
 pub mod i18n;
+pub mod junk;
 pub mod keychain;
 pub mod lenses;
 pub mod logger;

@@ -49,6 +49,20 @@ impl Database {
         Ok(())
     }
 
+    /// Remove one tag type from an email.
+    ///
+    /// Needed by junk scoring: when a re-score clears a message the derived
+    /// `junk` chip has to go with it, or a stale badge outlives the verdict
+    /// behind it.
+    pub fn delete_email_tag(&self, email_id: &str, tag_type: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "DELETE FROM email_tags WHERE email_id = ?1 AND tag_type = ?2",
+            params![email_id, tag_type],
+        )?;
+        Ok(())
+    }
+
     /// Set all classification tags for an email at once.
     pub fn set_email_classification(
         &self,

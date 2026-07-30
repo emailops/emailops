@@ -49,6 +49,13 @@ impl Database {
                 "INSERT OR REPLACE INTO email_bodies (email_id, body) VALUES (?1, ?2)",
                 params![email.id, email.body],
             )?;
+            // Captured RFC 5322 headers, when the provider supplied them. No row
+            // at all when it didn't: the junk detector distinguishes "no
+            // evidence" from "checked and clean", so a fabricated empty row
+            // would be a lie.
+            if let Some(headers) = &email.headers {
+                super::headers::insert_email_headers_tx(&tx, &email.id, &email.account_id, headers, now)?;
+            }
             // Manual FTS insert with stripped HTML (triggers removed)
             let body_text = strip_html_for_fts(&email.body);
             tx.execute(

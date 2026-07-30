@@ -142,5 +142,34 @@
     "aiTranslation": "AI translation · {{language}}",
     "truncatedNotice": "This email was too long — only the beginning was translated.",
     "failed": "Translation failed: {{error}}"
+  },
+  "junk": {
+    "kind": {
+      "phishing": "This message may be impersonating someone",
+      "spam": "This looks like unsolicited junk",
+      "graymail": "Bulk mail you do not usually read",
+      "legit": ""
+    },
+    "notJunk": "Not junk",
+    "isJunk": "Confirm junk",
+    "reason": {
+      "display_name_impersonation": "The sender name matches a contact, but the address does not",
+      "lookalike_domain": "The sender domain imitates one you correspond with",
+      "punycode_domain": "The sender domain uses look-alike characters",
+      "reply_to_mismatch": "Replies would go to a different domain than the sender",
+      "dmarc_fail": "Failed DMARC: the visible sender could not be verified",
+      "spf_fail": "Failed SPF: the sending server is not authorised for this domain",
+      "dangerous_attachment": "Carries an attachment type used to deliver malware",
+      "credential_solicitation": "Asks you to re-enter your password or account details",
+      "display_name_contains_address": "The sender name is written to look like a different address",
+      "server_spam_flag": "Your mail server marked this as spam",
+      "mixed_script_display_name": "The sender name mixes alphabets to disguise itself"
+    },
+    "isJunkHint": "Also file it in the server's Junk folder so your provider's filter learns",
+    "confirmedAndFiled": "Confirmed as junk and filed in the server Junk folder",
+    "confirmedLocally": "Confirmed as junk (this account has no server Junk folder)",
+    "confirmFailed": "Could not file the message on the server",
+    "notJunkFailed": "Could not record that this message is not junk",
+    "hideFlagged": "Hide junk messages"
   }
 }

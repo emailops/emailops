@@ -1,0 +1,13 @@
+-- Separate the backfill progress watermark from the user's sync-from preference.
+--
+-- `sync_from_timestamp` is the date the USER chose ("All mail" = NULL). Sync
+-- used to overwrite that same column with its own backfill progress, which
+-- silently destroyed an explicit "All mail" and pinned the account's floor to
+-- whatever happened to be the oldest local row — including the user's own Sent
+-- mail. Progress now lives here instead, so the preference is never clobbered.
+--
+-- Semantics: `backfill_swept_from = F` means "we swept from F upward to the
+-- oldest stored inbox email and found nothing new". Sync skips the backfill
+-- pass while the requested floor is >= F, and re-opens it if the user later
+-- asks for older history.
+ALTER TABLE accounts ADD COLUMN backfill_swept_from INTEGER;
