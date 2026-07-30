@@ -812,7 +812,9 @@ impl EmailProvider for ImapClient {
                     match imap_search::uid_search(&mut session, "ALL") {
                         Ok(uids) => sent_uids = uids,
                         // The Sent pass is best-effort — INBOX results still stand.
-                        Err(e) => crate::services::logger::log("debug", "sync", format!("IMAP Sent SEARCH failed: {e}")),
+                        Err(e) => {
+                            crate::services::logger::log("debug", "sync", format!("IMAP Sent SEARCH failed: {e}"))
+                        }
                     }
                 }
 
