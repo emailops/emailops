@@ -102,16 +102,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk
 
-      # `vulkan-query-version`/`vulkan-use-cache` were this action's inputs at
-      # some earlier version; @v1 now warns "Unexpected input(s)" and silently
-      # ignores both, falling back to its own default (latest) — harmless
-      # today, but silent drift like this is exactly what breaks the next
-      # time the action changes again. Use its real current input name.
+      # humbletim/setup-vulkan-sdk installs the Windows SDK via a raw `7z x`
+      # extraction of the installer .exe rather than actually running it —
+      # LunarG's Windows installer is a Qt Installer Framework executable, and
+      # extracting its payload does not reproduce the real installed layout
+      # (Include/, Lib/, Bin/ at the SDK root), so CMake's find_package(Vulkan)
+      # fails with "missing: Vulkan_LIBRARY Vulkan_INCLUDE_DIR" downstream even
+      # though hundreds of MB got extracted somewhere. Run the installer for
+      # real, silently, with its documented unattended flags instead.
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows'
-        uses: humbletim/setup-vulkan-sdk@v1
-        with:
-          vulkan-version: latest
+        shell: pwsh
+        run: |
+          $ver = (Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/latest/windows.txt" -UseBasicParsing).Content.Trim()
+          $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe"
+          Write-Host "Installing Vulkan SDK $ver from $url"
+          Invoke-WebRequest -Uri $url -OutFile VulkanSDK.exe
+          Start-Process -FilePath .\VulkanSDK.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
+
+          $installDir = "C:\VulkanSDK\$ver"
+          if (-not (Test-Path "$installDir\Include\vulkan\vulkan.h")) {
+            Write-Error "Vulkan SDK install did not produce the expected layout at $installDir"
+            exit 1
+          }
+          echo "VULKAN_SDK=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$installDir\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - run: npm ci
 
@@ -128,19 +143,7 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
-        run: |
-          # humbletim/setup-vulkan-sdk exports VULKAN_SDK from a bash step on
-          # this Git-Bash-on-Windows runner, so it's a POSIX-style path
-          # (/d/a/...). CMake's FindVulkan.cmake runs inside a native cmake.exe
-          # subprocess and can't parse that — find_package(Vulkan) fails with
-          # "missing: Vulkan_LIBRARY Vulkan_INCLUDE_DIR" even though the SDK is
-          # right there. Convert to a native Windows path (cygpath ships with
-          # Git Bash) before the build sees it.
-          if [ "$RUNNER_OS" = "Windows" ] && [ -n "${VULKAN_SDK:-}" ]; then
-            export VULKAN_SDK="$(cygpath -w "$VULKAN_SDK")"
-            echo "VULKAN_SDK (native): $VULKAN_SDK"
-          fi
-          make build-${{ matrix.platform }}
+        run: make build-${{ matrix.platform }}
 
       - name: Verify
         shell: bash
@@ -168,7 +171,12 @@ jobs:
           # and give it a virtual display via Xvfb.
           sudo apt-get install -y xvfb dbus-x11 gnome-keyring
           DEB="$(find release -maxdepth 1 -name '*.deb' | head -1)"
-          sudo apt-get install -y "$DEB"
+          # apt-get needs an explicit ./ (or absolute path) to treat this as a
+          # local file — without it, apt parses "release/EmailOps-linux.deb"
+          # as its own package/release-suite syntax (pkgname/suite), taking
+          # everything before the LAST slash as a package name to look up,
+          # hence "Unable to locate package release".
+          sudo apt-get install -y "./$DEB"
           xvfb-run -a dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
             emailops > /tmp/smoke.log 2>&1 &
