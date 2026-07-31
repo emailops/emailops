@@ -79,7 +79,18 @@ jobs:
           - os: ubuntu-22.04
             platform: linux
             target: x86_64-unknown-linux-gnu
-          - os: windows-latest
+          # Pinned to windows-2022, NOT windows-latest, for the same reason
+          # the Linux leg is pinned above: `windows-latest` silently moved to
+          # a new image mid-investigation (Visual Studio 18 Enterprise / MSVC
+          # 14.51, in place of VS 2022 Build Tools / MSVC 14.44), and that
+          # newer toolset hits a C1041 "cannot open program database" during
+          # CMake's own internal C-compiler-ABI-detection try_compile for
+          # llama-cpp-sys-2's vulkan-shaders-gen sub-project — a step that
+          # runs during `cmake -B` (configure), before this job's cargo
+          # invocation ever gets a chance to influence build parallelism.
+          # windows-2022 keeps the known-good VS 2022 Build Tools toolset
+          # this pipeline was built and validated against.
+          - os: windows-2022
             platform: windows
             target: x86_64-pc-windows-msvc
 
