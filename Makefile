@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -463,6 +463,39 @@ verify-windows:
 
 dist-windows:
 	bash scripts/dist_platform.sh windows
+
+# ── Azure GPU test VM ────────────────────────────────────────────────────────
+#
+#   make testvm-status     # VMs, snapshots, remaining T4 quota
+#   make testvm-linux      # restore the Linux GPU VM from its snapshot
+#   make testvm-windows    # create the Windows 11 GPU VM
+#   make testvm-stop       # deallocate (stops compute billing)
+#   make testvm-destroy    # snapshot the OS disk, then delete VM/disk/NIC
+#
+# The one box where GPU offload can actually be verified — CI runners have no
+# GPU, so their smoke test only ever exercises the CPU fallback path. The
+# NCASv3_T4 quota fits exactly ONE of these VMs, so Linux and Windows take
+# turns: destroy one before creating the other. `testvm-destroy` snapshots
+# first so the swap back is a restore, not an hour of reprovisioning.
+#
+# Runbook, costs, and gotchas: docs/TEST-VMS.md
+testvm-status:
+	bash scripts/testvm.sh status
+
+testvm-linux:
+	bash scripts/testvm.sh create-linux
+
+testvm-windows:
+	bash scripts/testvm.sh create-windows
+
+testvm-start:
+	bash scripts/testvm.sh start
+
+testvm-stop:
+	bash scripts/testvm.sh stop
+
+testvm-destroy:
+	bash scripts/testvm.sh destroy
 
 # ── emailops-cli release binary (universal, signed + notarized) ──────────────
 # Build a standalone `emailops-cli` to distribute alongside the desktop app so
