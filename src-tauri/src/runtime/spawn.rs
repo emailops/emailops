@@ -16,16 +16,52 @@ use std::future::Future;
 
 use crate::runtime::ctx;
 
+/// Neither current call site awaits or otherwise inspects the returned handle
+/// (both are fire-and-forget background tasks), so the two concrete types —
+/// `tauri::async_runtime::JoinHandle` is its own enum, not a `tokio::task::JoinHandle`
+/// alias — never need to unify across a call site.
+#[cfg(feature = "desktop")]
+type SpawnHandle<T> = tauri::async_runtime::JoinHandle<T>;
+#[cfg(not(feature = "desktop"))]
+type SpawnHandle<T> = tokio::task::JoinHandle<T>;
+
 /// `tokio::spawn`, preserving the ambient user context.
-pub fn spawn<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+///
+/// Desktop builds route through `tauri::async_runtime::spawn` rather than raw
+/// `tokio::spawn`: this is called from `services/connectivity.rs` inside
+/// Tauri's `.setup()` hook, where `tokio::runtime::Handle::current()` panics
+/// with "there is no reactor running" even though Tauri's own runtime is
+/// live — `tauri::async_runtime::spawn` bridges onto it directly instead of
+/// relying on the ambient handle. Headless (non-`desktop`) builds keep plain
+/// `tokio::spawn`, since every call site there is invoked from inside a real
+/// `#[tokio::main]`/`#[tokio::test]` context.
+pub fn spawn<F>(future: F) -> SpawnHandle<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
     match ctx::try_current() {
-        Some(cx) => tokio::spawn(async move { ctx::scope(cx, future).await }),
-        None => tokio::spawn(future),
+        Some(cx) => spawn_raw(async move { ctx::scope(cx, future).await }),
+        None => spawn_raw(future),
     }
+}
+
+#[cfg(feature = "desktop")]
+fn spawn_raw<F>(future: F) -> SpawnHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tauri::async_runtime::spawn(future)
+}
+
+#[cfg(not(feature = "desktop"))]
+fn spawn_raw<F>(future: F) -> SpawnHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tokio::spawn(future)
 }
 
 /// `tokio::task::spawn_blocking`, preserving the ambient user context.
@@ -76,6 +112,18 @@ mod tests {
             Arc::new(VecLogger::new()),
             Arc::new(InMemoryKeychain::new()),
         )
+    }
+
+    // Regression: `services/connectivity.rs` calls `spawn()` synchronously
+    // from inside Tauri's `.setup()` hook, where `tokio::runtime::Handle::
+    // current()` panics with "there is no reactor running" even though
+    // Tauri's own runtime is live — a plain (non-`#[tokio::test]`) function
+    // has no ambient tokio runtime either, reproducing that exact condition.
+    // Raw `tokio::spawn` would panic synchronously at the call site; this
+    // must not.
+    #[test]
+    fn spawn_does_not_panic_without_an_ambient_tokio_runtime() {
+        spawn(async {});
     }
 
     #[tokio::test]
