@@ -14,6 +14,7 @@ import { useEmails } from './useEmails';
 vi.mock('@/lib/api', () => ({
   getEmails: vi.fn(async () => []),
   getEmailCount: vi.fn(async () => 0),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 let container: HTMLDivElement;

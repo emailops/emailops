@@ -23,6 +23,7 @@ vi.mock('@/lib/api', () => ({
   pinFilter: vi.fn(async () => {}),
   removeFilter: vi.fn(async () => {}),
   deleteFilterPref: vi.fn(async () => {}),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';

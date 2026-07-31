@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/api', () => ({
   getPref: vi.fn(),
   setPref: vi.fn(),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';

@@ -20,6 +20,7 @@ vi.mock('@/lib/api', () => ({
   getJunkConfig: vi.fn(() => Promise.resolve({ enabled: true, phishingEnabled: false, flaggedAction: 'dim' })),
   setJunkConfig: vi.fn(() => Promise.resolve()),
   getJunkVerdicts: vi.fn(() => Promise.resolve({})),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import type { JunkVerdict } from '@/types';

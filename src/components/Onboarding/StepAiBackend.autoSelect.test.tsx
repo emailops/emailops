@@ -133,6 +133,7 @@ vi.mock('@/lib/api', () => ({
   startModelDownload: vi.fn(() => Promise.resolve()),
   cancelModelDownload: vi.fn(() => Promise.resolve()),
   testAiProvider: vi.fn(() => Promise.resolve()),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import { StepAiBackend } from './StepAiBackend';

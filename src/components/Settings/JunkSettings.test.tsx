@@ -69,6 +69,7 @@ vi.mock('@/lib/api', () => ({
   backfillJunkScores: vi.fn(() => Promise.resolve()),
   getJunkVerdicts: vi.fn(() => Promise.resolve({})),
   setJunkFeedback: vi.fn(() => Promise.resolve()),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import { useJunkStore } from '@/stores/junkStore';

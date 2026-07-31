@@ -19,6 +19,7 @@ vi.mock('@/lib/api', () => ({
   listAccounts: vi.fn(async () => []),
   removeAccount: vi.fn(async () => {}),
   syncAccount: vi.fn(async () => {}),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';

@@ -55,6 +55,7 @@ vi.mock('@/lib/api', () => ({
   cancelModelDownload: vi.fn(() => Promise.resolve()),
   deleteLocalModel: vi.fn(() => Promise.resolve()),
   regenerateEmbeddings: vi.fn(() => Promise.resolve()),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import { AiSettings } from './AiSettings';

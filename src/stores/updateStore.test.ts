@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/api', () => ({
   getAvailableUpdate: vi.fn(),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';

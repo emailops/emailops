@@ -7,6 +7,7 @@ vi.mock('@/lib/api', () => ({
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';

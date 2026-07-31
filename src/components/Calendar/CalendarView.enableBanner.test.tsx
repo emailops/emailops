@@ -26,6 +26,7 @@ vi.mock('@/lib/api', () => ({
   getCalendarEvents: vi.fn(),
   syncCalendarNow: vi.fn(),
   reauthenticateAccount: vi.fn(),
+  currentPlatform: vi.fn(() => ''),
 }));
 
 import * as api from '@/lib/api';
