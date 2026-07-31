@@ -44,6 +44,7 @@ export function Select<T extends string>({
   align = 'left',
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
+  const [openDirection, setOpenDirection] = useState<'down' | 'up'>('down');
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,6 +62,20 @@ export function Select<T extends string>({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+    // A native <select> auto-flips its popup upward when there's no room
+    // below (e.g. a trigger pinned to a bottom toolbar); this custom popup
+    // needs the same or it renders clipped/off-screen there. One estimate
+    // up front (not a measure-then-correct two-pass) is enough since the
+    // trigger's own position doesn't change while the popup is open.
+    const rect = containerRef.current.getBoundingClientRect();
+    const estimatedPopupHeight = Math.min(options.length * 32 + 8, 256); // matches max-h-64
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setOpenDirection(spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow ? 'up' : 'down');
+  }, [open, options.length]);
 
   const selected = options.find((o) => o.value === value);
 
@@ -97,7 +112,9 @@ export function Select<T extends string>({
         <div
           role="listbox"
           aria-label={ariaLabel}
-          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} mt-1 z-20 max-h-64 overflow-y-auto bg-[#333] border border-gray-600 rounded shadow-lg py-1 ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
+          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${
+            openDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+          } z-20 max-h-64 overflow-y-auto bg-[#333] border border-gray-600 rounded shadow-lg py-1 ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
         >
           {options.map((opt) => (
             <button

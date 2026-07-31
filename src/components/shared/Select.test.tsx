@@ -112,4 +112,48 @@ describe('Select', () => {
     });
     expect(container.textContent).toContain('Choose a fruit');
   });
+
+  describe('flip-up positioning near the bottom edge', () => {
+    // A native <select>'s popup auto-flips upward when there's no room below
+    // (e.g. a trigger pinned to a bottom toolbar) — this custom popup must
+    // match that or it renders off-screen/clipped there.
+    const originalInnerHeight = window.innerHeight;
+
+    afterEach(() => {
+      Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true });
+    });
+
+    function stubTriggerPosition(top: number, bottom: number) {
+      const button = container.querySelector('button[aria-haspopup="listbox"]');
+      if (!(button instanceof HTMLElement)) throw new Error('trigger not rendered');
+      const containerEl = button.parentElement;
+      if (!(containerEl instanceof HTMLElement)) throw new Error('container not rendered');
+      containerEl.getBoundingClientRect = () =>
+        ({ top, bottom, left: 0, right: 0, width: 100, height: bottom - top, x: 0, y: top }) as DOMRect;
+    }
+
+    it('opens downward when there is enough room below', () => {
+      Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+      act(() => {
+        root.render(<Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" />);
+      });
+      stubTriggerPosition(20, 40);
+      clickTrigger();
+      const listbox = container.querySelector('[role="listbox"]');
+      expect(listbox?.className).toContain('top-full');
+      expect(listbox?.className).not.toContain('bottom-full');
+    });
+
+    it('flips upward when the trigger sits near the bottom of the viewport', () => {
+      Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+      act(() => {
+        root.render(<Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" />);
+      });
+      stubTriggerPosition(770, 790);
+      clickTrigger();
+      const listbox = container.querySelector('[role="listbox"]');
+      expect(listbox?.className).toContain('bottom-full');
+      expect(listbox?.className).not.toContain('top-full');
+    });
+  });
 });
