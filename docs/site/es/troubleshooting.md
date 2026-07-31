@@ -53,7 +53,7 @@ en silencio a la CPU — la app sigue funcionando, solo que más lenta. Comprueb
    normal de tu tarjeta; no hace falta ningún kit CUDA ni SDK del fabricante.
 2. **Que Vulkan vea el dispositivo.** Ejecuta `vulkaninfo --summary` (de `vulkan-tools`). Si
    no detecta ningún dispositivo, el problema está por debajo de EmailOps — arregla antes la
-   pila de controladores.
+   stack de controladores.
 3. **Margen de VRAM.** Si el registro descarga solo *algunas* capas, el modelo es mayor que la
    VRAM libre de la tarjeta. Elige un modelo más pequeño o baja la ventana de contexto.
 

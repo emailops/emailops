@@ -24,8 +24,8 @@ ningún correo sale nunca de tu máquina.
 
 ### El catálogo de modelos {#the-model-catalog}
 
-El backend integrado descarga modelos de un catálogo curado, cada uno fijado a una suma de
-verificación:
+El backend integrado descarga modelos de un catálogo curado, cada uno fijado a un checksum
+verificado:
 
 | Modelo | Tamaño de descarga | Memoria necesaria para ejecutarlo |
 |---|---|---|
@@ -61,7 +61,7 @@ solo si al hardware le sobra margen. Los requisitos completos están en
 - **Ventana de contexto** — cuántos tokens puede atender el modelo por turno. Más grande cabe
   más correo recuperado y cuesta más memoria — es lo primero que conviene bajar cuando un
   modelo entra justo.
-- **Modo de razonamiento** — cadena de pensamiento en los modelos compatibles. Más lento, más
+- **Modo de razonamiento** — chain-of-thought en los modelos compatibles. Más lento, más
   preciso, y puedes mostrar u ocultar la traza.
 - **Limitar el procesado de IA a correos recientes** — omite embeddings y clasificación
   para el correo con más de N días.

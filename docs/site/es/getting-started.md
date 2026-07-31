@@ -53,7 +53,7 @@ alemán).
 El último paso añade tu primer buzón. EmailOps admite:
 
 - **Gmail** — inicia sesión en el navegador y concede el acceso. Los tokens van directos al
-  llavero del sistema.
+  almacén de credenciales del sistema.
 - **Outlook / Microsoft 365** — el mismo flujo por navegador, vía la API Microsoft Graph.
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge o cualquier servidor
   personalizado. Introduce los datos del servidor y las credenciales directamente.
