@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState } from './types';
 
@@ -16,38 +17,32 @@ interface OllamaPanelProps {
  */
 export function OllamaPanel({ config, setConfig, ollamaModels, ollamaEmbedModels }: OllamaPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
+  const chatModelOptions =
+    ollamaModels.length === 0
+      ? [{ value: config.model, label: config.model || t('settings:ai.noModelsFound') }]
+      : ollamaModels.map((m) => ({ value: m, label: m }));
+  const embedModelOptions = ollamaEmbedModels.map((m) => ({ value: m, label: m }));
   return (
     <div className="space-y-4">
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.chatModel')}</label>
-        <select
+        <Select
           value={config.model}
-          onChange={(e) => setConfig({ ...config, model: e.target.value })}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        >
-          {ollamaModels.length === 0 && (
-            <option value={config.model}>{config.model || t('settings:ai.noModelsFound')}</option>
-          )}
-          {ollamaModels.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+          options={chatModelOptions}
+          onChange={(value) => setConfig({ ...config, model: value })}
+          ariaLabel={t('settings:ai.chatModel')}
+          fullWidth
+        />
       </div>
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
-        <select
+        <Select
           value={config.embeddingModel}
-          onChange={(e) => setConfig({ ...config, embeddingModel: e.target.value })}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        >
-          {ollamaEmbedModels.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+          options={embedModelOptions}
+          onChange={(value) => setConfig({ ...config, embeddingModel: value })}
+          ariaLabel={t('settings:ai.embeddingModel')}
+          fullWidth
+        />
       </div>
       <ThinkingToggle
         enabled={config.thinkingEnabled}

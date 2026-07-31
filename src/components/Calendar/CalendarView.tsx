@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { eventsAfterDelete } from '@/lib/calendarEvent';
 import { addDays, monthGrid, resolveCalendarAccountId, startOfDay, weekDays } from '@/lib/calendarGrid';
@@ -455,18 +456,16 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           {t('common:actions.refresh')}
         </button>
         {/* Compact per-account selector — the calendar never offers "All accounts". */}
-        <select
-          value={selectedAccountId ?? ''}
-          onChange={(e) => handleSelectAccount(e.target.value)}
-          title={t('calendar:selectAccount')}
-          className="max-w-[200px] border border-gray-300 rounded-md px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
-        >
-          {calendarAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.email}
-            </option>
-          ))}
-        </select>
+        <div className="max-w-[200px]">
+          <Select
+            value={selectedAccountId ?? ''}
+            onChange={handleSelectAccount}
+            options={calendarAccounts.map((a) => ({ value: a.id, label: a.email }))}
+            ariaLabel={t('calendar:selectAccount')}
+            placeholder={t('calendar:selectAccount')}
+            align="right"
+          />
+        </div>
       </div>
 
       {/* Grid */}

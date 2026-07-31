@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
+import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftAttachmentInput, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -337,19 +338,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         {/* From */}
         <div className="flex items-center gap-2 mb-2">
           <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:from')}</span>
-          <select
-            value={fromAccountId}
-            onChange={(e) => setFromAccountId(e.target.value)}
-            className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:border-primary-500 outline-none"
-          >
-            {accounts
-              .filter((a) => a.enabled)
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.email}
-                </option>
-              ))}
-          </select>
+          <div className="flex-1">
+            <Select
+              value={fromAccountId}
+              onChange={setFromAccountId}
+              options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+              ariaLabel={t('compose:from')}
+              fullWidth
+            />
+          </div>
         </div>
 
         {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}

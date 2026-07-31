@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
@@ -306,18 +307,16 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
           <section className="space-y-3">
             <label className="block max-w-xs">
               <span className="mb-1 block text-gray-400">{t('lenses:apply.applyToAccount')}</span>
-              <select
+              <Select
                 value={templateAccountId}
-                onChange={(e) => setTemplateAccountId(e.target.value)}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-              >
-                <option value="">{t('lenses:apply.allAccounts')}</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.email}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: t('lenses:apply.allAccounts') },
+                  ...accounts.map((a) => ({ value: a.id, label: a.email })),
+                ]}
+                onChange={(value) => setTemplateAccountId(value)}
+                ariaLabel={t('lenses:apply.applyToAccount')}
+                fullWidth
+              />
             </label>
             {templatesLoading ? (
               <div className="py-6 text-center text-gray-500">{t('lenses:loadingTemplates')}</div>
@@ -381,30 +380,30 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="mb-1 block text-gray-400">{t('lenses:scope.account')}</span>
-                  <select
+                  <Select
                     value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="">{t('lenses:scope.allAccounts')}</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.email}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: '', label: t('lenses:scope.allAccounts') },
+                      ...accounts.map((a) => ({ value: a.id, label: a.email })),
+                    ]}
+                    onChange={(value) => setAccountId(value)}
+                    ariaLabel={t('lenses:scope.account')}
+                    fullWidth
+                  />
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-gray-400">{t('lenses:scope.direction')}</span>
-                  <select
+                  <Select
                     value={direction}
-                    onChange={(e) => setDirection(e.target.value as LensDirection)}
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="either">{t('lenses:scope.either')}</option>
-                    <option value="inbound">{t('lenses:scope.inboundOnly')}</option>
-                    <option value="outbound">{t('lenses:scope.outboundOnly')}</option>
-                  </select>
+                    options={[
+                      { value: 'either', label: t('lenses:scope.either') },
+                      { value: 'inbound', label: t('lenses:scope.inboundOnly') },
+                      { value: 'outbound', label: t('lenses:scope.outboundOnly') },
+                    ]}
+                    onChange={(value) => setDirection(value as LensDirection)}
+                    ariaLabel={t('lenses:scope.direction')}
+                    fullWidth
+                  />
                 </label>
               </div>
 
@@ -528,17 +527,14 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                         <span className="mb-1 block text-[10px] uppercase text-gray-500">
                           {t('lenses:columns.type')}
                         </span>
-                        <select
+                        <Select
                           value={c.type}
-                          onChange={(e) => updateColumn(idx, { type: e.target.value as LensColumnType })}
-                          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
-                        >
-                          {COLUMN_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
+                          options={COLUMN_TYPES.map((colType) => ({ value: colType, label: colType }))}
+                          onChange={(value) => updateColumn(idx, { type: value as LensColumnType })}
+                          ariaLabel={t('lenses:columns.type')}
+                          size="xs"
+                          fullWidth
+                        />
                       </label>
                       <div className="col-span-2 flex items-end gap-3">
                         <label className="flex items-center gap-1 text-[11px] text-gray-300">

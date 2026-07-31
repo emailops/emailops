@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -305,66 +306,45 @@ export function NewEventDialog({
 
           <div className="flex gap-3">
             <div className="flex-1 min-w-0">
-              <label
-                htmlFor="new-event-start"
-                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-              >
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                 {t('calendar:create.startTime')}
               </label>
-              <select
-                id="new-event-start"
-                value={startMin}
-                onChange={(e) => handleStartChange(Number(e.target.value))}
-                className="w-full border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
-              >
-                {startOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {timeLabel(m)}
-                  </option>
-                ))}
-              </select>
+              <Select
+                value={String(startMin)}
+                onChange={(value) => handleStartChange(Number(value))}
+                options={startOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
+                ariaLabel={t('calendar:create.startTime')}
+                fullWidth
+              />
             </div>
             <div className="flex-1 min-w-0">
-              <label
-                htmlFor="new-event-end"
-                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-              >
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                 {t('calendar:create.endTime')}
               </label>
-              <select
-                id="new-event-end"
-                value={endMin}
-                onChange={(e) => setEndMin(Number(e.target.value))}
-                className="w-full border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
-              >
-                {endOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {timeLabel(m)}
-                  </option>
-                ))}
-              </select>
+              <Select
+                value={String(endMin)}
+                onChange={(value) => setEndMin(Number(value))}
+                options={endOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
+                ariaLabel={t('calendar:create.endTime')}
+                fullWidth
+              />
             </div>
           </div>
 
           <div>
-            <label
-              htmlFor="new-event-recurrence"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-            >
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
               {t('calendar:create.recurrence.label')}
             </label>
-            <select
-              id="new-event-recurrence"
+            <Select
               value={recurrence}
-              onChange={(e) => setRecurrence(e.target.value as CalendarRecurrence)}
-              className="w-full border border-gray-300 rounded-md px-2 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
-            >
-              {recurrenceOpts.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {t(`calendar:create.recurrence.${o.labelKey}`, o.params)}
-                </option>
-              ))}
-            </select>
+              onChange={setRecurrence}
+              options={recurrenceOpts.map((o) => ({
+                value: o.value,
+                label: t(`calendar:create.recurrence.${o.labelKey}`, o.params),
+              }))}
+              ariaLabel={t('calendar:create.recurrence.label')}
+              fullWidth
+            />
           </div>
 
           <div>

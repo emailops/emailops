@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { type Language, NATIVE_NAMES, SUPPORTED_LANGUAGES, useUiLanguage } from '@/i18n';
+import { LanguageSelect } from '@/components/shared/LanguageSelect';
+import { Select } from '@/components/shared/Select';
+import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
 import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
@@ -177,17 +179,13 @@ export function SettingsDialog({
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700 flex-shrink-0">
             {accounts.length > 1 &&
             (tab === 'classification' || tab === 'tasks' || tab === 'memory' || tab === 'aisearch') ? (
-              <select
+              <Select
                 value={selectedAccountId ?? ''}
-                onChange={(e) => handleAccountChange(e.target.value)}
-                className="bg-[#333] text-gray-200 border border-gray-600 rounded px-2 py-1 text-sm focus:border-primary-500 outline-none"
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.email}
-                  </option>
-                ))}
-              </select>
+                options={accounts.map((a) => ({ value: a.id, label: a.email }))}
+                onChange={handleAccountChange}
+                ariaLabel="Account"
+                size="xs"
+              />
             ) : (
               <div />
             )}
@@ -282,23 +280,14 @@ function AppearancePanel({
       <section>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.language')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('settings:appearance.languageHelp')}</p>
-        <select
+        <LanguageSelect
+          ariaLabel={t('settings:appearance.language')}
           value={language}
           disabled={isLanguageLoading}
-          onChange={(e) => {
-            const next = e.target.value as Language;
-            // Fire-and-forget — `useUiLanguage` handles errors internally and
-            // the dropdown re-reads from i18n state on next render.
-            void setLanguage(next);
-          }}
-          className="bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-60"
-        >
-          {SUPPORTED_LANGUAGES.map((code) => (
-            <option key={code} value={code}>
-              {NATIVE_NAMES[code]}
-            </option>
-          ))}
-        </select>
+          // Fire-and-forget — `useUiLanguage` handles errors internally and
+          // the dropdown re-reads from i18n state on next render.
+          onChange={(next) => void setLanguage(next)}
+        />
       </section>
       <section>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.layout')}</h3>

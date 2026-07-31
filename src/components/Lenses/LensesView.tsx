@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { Select } from '@/components/shared/Select';
 import { errorText } from '@/lib/errors';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
@@ -189,19 +190,17 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           {activeLens && (
             <label className="flex items-center gap-1 text-[11px] text-gray-400">
               {t('lenses:groupBy')}
-              <select
+              <Select
                 value={groupBy ?? ''}
-                onChange={(e) => setGroupBy(e.currentTarget.value || null)}
-                className="rounded border border-gray-600 bg-[#1e1e1e] px-1.5 py-1 text-xs text-gray-200 focus:outline-none"
-              >
-                <option value="">{t('lenses:dashes')}</option>
-                <option value="quarter">{t('lenses:quarter')}</option>
-                {groupableColumns.map((c) => (
-                  <option key={c.key} value={c.key}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: t('lenses:dashes') },
+                  { value: 'quarter', label: t('lenses:quarter') },
+                  ...groupableColumns.map((c) => ({ value: c.key, label: c.label })),
+                ]}
+                onChange={(value) => setGroupBy(value || null)}
+                ariaLabel={t('lenses:groupBy')}
+                size="xs"
+              />
             </label>
           )}
           {activeLens && (

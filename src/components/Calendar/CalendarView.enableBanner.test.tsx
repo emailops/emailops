@@ -181,10 +181,35 @@ describe('CalendarView enable-calendar banner', () => {
 });
 
 describe('CalendarView selector follows the current account', () => {
-  function accountSelect(): HTMLSelectElement {
-    const el = container.querySelector('select');
-    if (!(el instanceof HTMLSelectElement)) throw new Error('account selector not rendered');
+  // The account selector is the custom `Select` component (a button + popup,
+  // not a native <select>) — see src/components/shared/Select.tsx. Its
+  // trigger displays the selected option's label, which CalendarView.tsx
+  // sets to `a.email` (test fixtures below all use `${id}@example.com`), so
+  // the id round-trips through the email's local part.
+  function selectorButton(): HTMLButtonElement {
+    const el = container.querySelector('button[aria-haspopup="listbox"]');
+    if (!(el instanceof HTMLButtonElement)) throw new Error('account selector not rendered');
     return el;
+  }
+
+  function selectedAccountId(): string {
+    const email = selectorButton().textContent?.trim() ?? '';
+    const id = email.split('@')[0];
+    if (!id) throw new Error(`could not resolve account id from selector label "${email}"`);
+    return id;
+  }
+
+  async function chooseAccount(id: string) {
+    await act(async () => {
+      selectorButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const option = [...container.querySelectorAll('[role="option"]')].find((el) =>
+      el.textContent?.startsWith(`${id}@`),
+    );
+    if (!option) throw new Error(`no option found for account id "${id}"`);
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
   }
 
   it('opening the view switches the selector to the account the user is in', async () => {
@@ -195,7 +220,7 @@ describe('CalendarView selector follows the current account', () => {
     await mount([gmailOn, gmailOther], ['g-on', 'g-other'], 'g-other');
 
     // …but the view opens on the account the user is currently in.
-    expect(accountSelect().value).toBe('g-other');
+    expect(selectedAccountId()).toBe('g-other');
   });
 
   it('keeps the persisted selection when the current account has no enabled calendar', async () => {
@@ -204,7 +229,7 @@ describe('CalendarView selector follows the current account', () => {
     );
     await mount([gmailOn, gmailOther, makeAccount('i', 'imap')], ['g-on', 'g-other'], 'i');
 
-    expect(accountSelect().value).toBe('g-on');
+    expect(selectedAccountId()).toBe('g-on');
   });
 
   it('a late sync for the previously selected account cannot overwrite the events', async () => {
@@ -228,7 +253,7 @@ describe('CalendarView selector follows the current account', () => {
     );
 
     await mount([gmailOn, gmailOther], ['g-on', 'g-other'], 'g-other');
-    expect(accountSelect().value).toBe('g-other');
+    expect(selectedAccountId()).toBe('g-other');
     expect(container.textContent).toContain('current-account-event');
 
     // The stale sync finishes AFTER the view moved on to the other account.
@@ -243,14 +268,11 @@ describe('CalendarView selector follows the current account', () => {
 
   it('a manual selector change sticks after the auto-switch', async () => {
     await mount([gmailOn, gmailOther], ['g-on', 'g-other'], 'g-other');
-    expect(accountSelect().value).toBe('g-other');
+    expect(selectedAccountId()).toBe('g-other');
 
-    await act(async () => {
-      accountSelect().value = 'g-on';
-      accountSelect().dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    await chooseAccount('g-on');
 
-    expect(accountSelect().value).toBe('g-on');
+    expect(selectedAccountId()).toBe('g-on');
     expect(api.setPref).toHaveBeenCalledWith('calendar_selected_account', 'g-on');
   });
 });

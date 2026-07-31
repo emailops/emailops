@@ -1,6 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
@@ -147,39 +148,26 @@ function ModelSelector() {
     }
   };
 
-  const selectCls =
-    'bg-[#333] text-gray-300 text-[10px] border border-gray-600 rounded px-1.5 py-0.5 outline-none hover:border-gray-500 focus:border-primary-500 cursor-pointer';
-
   return (
     <div className="flex items-center gap-1">
       {/* Provider selector */}
-      <select
+      <Select
         value={provider}
-        onChange={(e) => void handleProviderChange(e.target.value as Provider)}
-        className={selectCls}
-        title={t('dashboard:log.aiBackend')}
-      >
-        {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-          <option key={p} value={p}>
-            {PROVIDER_LABELS[p]}
-          </option>
-        ))}
-      </select>
+        onChange={(value) => void handleProviderChange(value)}
+        options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({ value: p, label: PROVIDER_LABELS[p] }))}
+        ariaLabel={t('dashboard:log.aiBackend')}
+        size="xs"
+      />
 
       {/* Model selector — hidden for openrouter (free-form model configured in AI Settings). */}
       {provider !== 'openrouter' && models.length > 0 && (
-        <select
+        <Select
           value={currentModel}
-          onChange={(e) => void handleModelChange(e.target.value)}
-          className={selectCls}
-          title={t('dashboard:log.aiModel')}
-        >
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => void handleModelChange(value)}
+          options={models.map((m) => ({ value: m, label: m }))}
+          ariaLabel={t('dashboard:log.aiModel')}
+          size="xs"
+        />
       )}
     </div>
   );
@@ -242,19 +230,16 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
 
         <div className="flex items-center gap-2">
           {/* Source filter */}
-          <select
+          <Select
             value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value as LogSource | 'all')}
-            className="bg-[#333] text-gray-300 text-[10px] border border-gray-600 rounded px-1.5 py-0.5 outline-none hover:border-gray-500 focus:border-primary-500 cursor-pointer"
-            title={t('dashboard:log.filterByModule')}
-          >
-            <option value="all">{t('dashboard:log.allModules')}</option>
-            {ALL_SOURCES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+            onChange={setSourceFilter}
+            options={[
+              { value: 'all' as const, label: t('dashboard:log.allModules') },
+              ...ALL_SOURCES.map((s) => ({ value: s, label: s })),
+            ]}
+            ariaLabel={t('dashboard:log.filterByModule')}
+            size="xs"
+          />
           <ModelSelector />
           <button
             onClick={onOpenAiSettings}

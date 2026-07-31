@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
@@ -233,30 +234,25 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                   placeholder={t('contacts:view.searchPlaceholder')}
                   className="flex-1 max-w-md px-3 py-2 text-sm border border-gray-300 rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none"
                 />
-                <select
+                <Select
                   value={sort}
-                  onChange={(e) => setSort(e.target.value as ContactSort)}
-                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:border-primary-500 outline-none"
-                >
-                  {SORT_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {t('contacts:view.sortPrefix', { label: t(`contacts:sort.${o.labelKey}` as const) })}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setSort}
+                  options={SORT_OPTIONS.map((o) => ({
+                    value: o.value,
+                    label: t('contacts:view.sortPrefix', { label: t(`contacts:sort.${o.labelKey}` as const) }),
+                  }))}
+                  ariaLabel="Sort contacts"
+                />
                 {distinctCompanies.length > 0 && (
-                  <select
+                  <Select
                     value={companyFilter ?? ''}
-                    onChange={(e) => setCompanyFilter(e.target.value || null)}
-                    className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:border-primary-500 outline-none"
-                  >
-                    <option value="">{t('contacts:view.allCompanies')}</option>
-                    {distinctCompanies.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(value) => setCompanyFilter(value || null)}
+                    options={[
+                      { value: '', label: t('contacts:view.allCompanies') },
+                      ...distinctCompanies.map((c) => ({ value: c, label: c })),
+                    ]}
+                    ariaLabel="Filter by company"
+                  />
                 )}
               </div>
 

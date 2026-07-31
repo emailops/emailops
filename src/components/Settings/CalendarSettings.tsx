@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
@@ -227,23 +228,23 @@ export function CalendarSettings() {
         <section>
           <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.leadTimeLabel')}</h3>
           <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.leadTimeDesc')}</p>
-          <select
-            value={leadMinutes}
+          <Select
+            value={String(leadMinutes)}
             disabled={!isLoaded || !notificationsEnabled}
-            onChange={(e) => persistLeadMinutes(Number.parseInt(e.target.value, 10))}
-            className="bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-60"
-          >
-            {/* Include an out-of-list stored value (backend accepts 1–120) so the
-                select never silently shows the wrong lead time. */}
-            {(LEAD_TIME_OPTIONS.includes(leadMinutes as (typeof LEAD_TIME_OPTIONS)[number])
-              ? [...LEAD_TIME_OPTIONS]
-              : [...LEAD_TIME_OPTIONS, leadMinutes].sort((a, b) => a - b)
-            ).map((minutes) => (
-              <option key={minutes} value={minutes}>
-                {t('settings:calendar.minutesOption', { n: minutes })}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => persistLeadMinutes(Number.parseInt(value, 10))}
+            ariaLabel={t('settings:calendar.leadTimeLabel')}
+            options={
+              // Include an out-of-list stored value (backend accepts 1–120) so the
+              // select never silently shows the wrong lead time.
+              (LEAD_TIME_OPTIONS.includes(leadMinutes as (typeof LEAD_TIME_OPTIONS)[number])
+                ? [...LEAD_TIME_OPTIONS]
+                : [...LEAD_TIME_OPTIONS, leadMinutes].sort((a, b) => a - b)
+              ).map((minutes) => ({
+                value: String(minutes),
+                label: t('settings:calendar.minutesOption', { n: minutes }),
+              }))
+            }
+          />
         </section>
       </div>
     </div>

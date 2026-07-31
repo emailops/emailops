@@ -3,6 +3,7 @@
 
 import { useTranslation } from 'react-i18next';
 
+import { Select } from '@/components/shared/Select';
 import { NATIVE_NAMES, SUPPORTED_LANGUAGES } from '../../../i18n';
 
 import type { RoutingMode } from './types';
@@ -59,15 +60,17 @@ export function AiSharedPreferences({
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.routingMode')}</label>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.routingModeHelp')}</p>
-        <select
+        <Select
           value={routingMode}
-          onChange={(e) => onRoutingModeChange(e.target.value as RoutingMode)}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        >
-          <option value="always_rag">{t('settings:ai.routingAlwaysRag')}</option>
-          <option value="auto">{t('settings:ai.routingAuto')}</option>
-          <option value="always_tools">{t('settings:ai.routingAlwaysTools')}</option>
-        </select>
+          options={[
+            { value: 'always_rag', label: t('settings:ai.routingAlwaysRag') },
+            { value: 'auto', label: t('settings:ai.routingAuto') },
+            { value: 'always_tools', label: t('settings:ai.routingAlwaysTools') },
+          ]}
+          onChange={onRoutingModeChange}
+          ariaLabel={t('settings:ai.routingMode')}
+          fullWidth
+        />
       </div>
 
       {/* Keep-alive */}
@@ -130,18 +133,15 @@ export function AiSharedPreferences({
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.outputLanguage')}</label>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.outputLanguageHelp')}</p>
-        <select
+        <Select
           value={aiOutputLanguage}
-          onChange={(e) => onOutputLanguageChange(e.target.value)}
-          className="bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        >
-          <option value={SAME_AS_UI}>{t('common:language.sameAsUi')}</option>
-          {SUPPORTED_LANGUAGES.map((code) => (
-            <option key={code} value={code}>
-              {NATIVE_NAMES[code]}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: SAME_AS_UI, label: t('common:language.sameAsUi') },
+            ...SUPPORTED_LANGUAGES.map((code) => ({ value: code as string, label: NATIVE_NAMES[code] })),
+          ]}
+          onChange={onOutputLanguageChange}
+          ariaLabel={t('settings:ai.outputLanguage')}
+        />
       </div>
     </>
   );

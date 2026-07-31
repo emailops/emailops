@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import type { ClassificationRule } from '@/types';
@@ -217,43 +218,37 @@ export function ClassificationRulesTab({
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">{t('settings:classification.priority')}</label>
-              <select
+              <Select
                 value={rulePriority}
-                onChange={(e) => setRulePriority(e.target.value)}
-                className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm outline-none"
-              >
-                <option value="urgent">{t('settings:classification.priorityUrgent')}</option>
-                <option value="normal">{t('settings:classification.priorityNormal')}</option>
-                <option value="low">{t('settings:classification.priorityLow')}</option>
-              </select>
+                onChange={setRulePriority}
+                options={[
+                  { value: 'urgent', label: t('settings:classification.priorityUrgent') },
+                  { value: 'normal', label: t('settings:classification.priorityNormal') },
+                  { value: 'low', label: t('settings:classification.priorityLow') },
+                ]}
+                ariaLabel={t('settings:classification.priority')}
+                fullWidth
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">{t('settings:classification.intent')}</label>
-              <select
+              <Select
                 value={ruleIntent}
-                onChange={(e) => setRuleIntent(e.target.value)}
-                className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm outline-none"
-              >
-                {intents.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
-              </select>
+                onChange={setRuleIntent}
+                options={intents.map((i) => ({ value: i, label: i }))}
+                ariaLabel={t('settings:classification.intent')}
+                fullWidth
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">{t('settings:classification.topic')}</label>
-              <select
+              <Select
                 value={ruleTopic}
-                onChange={(e) => setRuleTopic(e.target.value)}
-                className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm outline-none"
-              >
-                {topics.map((topic) => (
-                  <option key={topic} value={topic}>
-                    {topic}
-                  </option>
-                ))}
-              </select>
+                onChange={setRuleTopic}
+                options={topics.map((topic) => ({ value: topic, label: topic }))}
+                ariaLabel={t('settings:classification.topic')}
+                fullWidth
+              />
             </div>
           </div>
 

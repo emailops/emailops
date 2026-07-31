@@ -3,6 +3,7 @@
 
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { LensColumn, LensRow, LensSortSpec } from '@/types';
 
@@ -195,26 +196,24 @@ function EditableCell({ column, value, hasOverride, onSave }: EditableCellProps)
   // Generic edit: text input. Enum gets a dropdown, boolean a checkbox.
   if (column.type === 'enum' && column.enumValues) {
     return (
-      <select
-        defaultValue={String(value ?? '')}
-        // biome-ignore lint/a11y/noAutofocus: cell editor opens on user action; focus must move to the select immediately for keyboard-driven editing
-        autoFocus
-        onBlur={(e) => {
-          onSave(e.currentTarget.value || null);
-          setEditing(false);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className="rounded border border-blue-500 bg-[#1e1e1e] px-1 py-0.5 text-gray-100 focus:outline-none"
-      >
-        <option value="">{t('lenses:noneOption')}</option>
-        {column.enumValues.map((v) => (
-          <option key={v} value={v}>
-            {v}
-          </option>
-        ))}
-      </select>
+      // Select closes and commits immediately on option click (no native
+      // blur-to-save step needed); Escape still exits the editor without
+      // saving, matching the other editable-cell types below.
+      <div onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+        <Select
+          value={String(value ?? '')}
+          options={[
+            { value: '', label: t('lenses:noneOption') },
+            ...column.enumValues.map((v) => ({ value: v, label: v })),
+          ]}
+          onChange={(next) => {
+            onSave(next || null);
+            setEditing(false);
+          }}
+          ariaLabel={column.label}
+          size="xs"
+        />
+      </div>
     );
   }
 

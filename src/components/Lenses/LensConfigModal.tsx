@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
+import { Select } from '@/components/shared/Select';
 import { errorText } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
 import { useLensStore } from '@/stores/lensStore';
@@ -169,30 +170,30 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-gray-400">{t('lenses:scope.account')}</span>
-              <select
+              <Select
                 value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-              >
-                <option value="">{t('lenses:scope.allAccounts')}</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.email}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: t('lenses:scope.allAccounts') },
+                  ...accounts.map((a) => ({ value: a.id, label: a.email })),
+                ]}
+                onChange={(value) => setAccountId(value)}
+                ariaLabel={t('lenses:scope.account')}
+                fullWidth
+              />
             </label>
             <label className="block">
               <span className="mb-1 block text-gray-400">{t('lenses:scope.direction')}</span>
-              <select
+              <Select
                 value={direction}
-                onChange={(e) => setDirection(e.target.value as LensDirection)}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-              >
-                <option value="either">{t('lenses:scope.either')}</option>
-                <option value="inbound">{t('lenses:scope.inboundOnly')}</option>
-                <option value="outbound">{t('lenses:scope.outboundOnly')}</option>
-              </select>
+                options={[
+                  { value: 'either', label: t('lenses:scope.either') },
+                  { value: 'inbound', label: t('lenses:scope.inboundOnly') },
+                  { value: 'outbound', label: t('lenses:scope.outboundOnly') },
+                ]}
+                onChange={(value) => setDirection(value as LensDirection)}
+                ariaLabel={t('lenses:scope.direction')}
+                fullWidth
+              />
             </label>
           </div>
 
