@@ -213,6 +213,17 @@ pub(super) fn insert_contact_email(
     .unwrap();
 }
 
+/// Soft-delete an email (`is_deleted = 1`) without removing the row — used to
+/// verify that read paths skip trashed mail.
+pub(super) fn set_email_deleted(db: &Database, email_id: &str) {
+    db.connection()
+        .execute(
+            "UPDATE emails SET is_deleted = 1 WHERE id = ?1",
+            rusqlite::params![email_id],
+        )
+        .unwrap();
+}
+
 /// Toggle an account's `enabled` flag — used by AccountScope::AllEnabled tests.
 pub(super) fn set_account_enabled(db: &Database, account_id: &str, enabled: bool) {
     db.connection()
