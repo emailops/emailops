@@ -156,7 +156,15 @@ jobs:
           # and fail with "C1041: cannot open program database" — this is
           # MSVC's own documented fix for that race, applied via the CL env
           # var it reads for default flags on every invocation.
-          CL: /FS
+          #
+          # Double leading slash is deliberate, not a typo: this step runs
+          # under Git Bash (shell: bash), whose MSYS runtime auto-converts any
+          # single-leading-slash value into a Windows path before the child
+          # process sees it — a bare "/FS" silently became
+          # "C:/Program Files/Git/FS" here, which cl.exe then choked on as an
+          # unrecognized source file. "//FS" is the standard MSYS escape that
+          # survives as a literal "/FS" instead of being expanded.
+          CL: //FS
         run: make build-${{ matrix.platform }}
 
       - name: Verify
