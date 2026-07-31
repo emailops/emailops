@@ -6,13 +6,16 @@ weight: 10
 
 ## System requirements
 
-Running the AI **locally** is the demanding part, and it is optional. You can decline it in
-the first-run wizard and run EmailOps as a plain email client, or keep every AI feature and
-route it to a remote provider instead. The two modes have very different requirements.
+Running the AI **locally** is the part that needs more powerful hardware, and it is optional.
+You can decline it in the first-run wizard and run EmailOps as a plain email client, or keep
+every AI feature and route it to a remote provider instead. The two modes have very different
+requirements.
 
 ### With local AI {#with-local-ai}
 
-The memory that matters is the memory the model runs in, and that differs by platform.
+One of the most important requirements for running local AI is the memory available to load
+the model and its context. Depending on your machine, that means one type of memory or
+another:
 
 | | Apple Silicon Mac | Windows / Linux |
 |---|---|---|
@@ -92,7 +95,7 @@ Upgrade later with `brew upgrade --cask emailops`.
 
 ### GPU acceleration
 
-There is nothing extra to install. The Windows build carries a **Vulkan** backend that loads
+There is nothing extra to install. The Windows version carries a **Vulkan** backend that loads
 at runtime whenever a working graphics driver is present, and falls back to the CPU when it
 is not — one download either way.
 

@@ -6,15 +6,14 @@ weight: 10
 
 ## Requisitos del sistema
 
-Ejecutar la IA **en local** es la parte exigente, y es opcional. Puedes desactivarla en el
+Ejecutar la IA **en local** es la parte que requiere un hardware más potente, y es opcional. Puedes desactivarla en el
 asistente inicial y usar EmailOps como un cliente de correo normal, o conservar todas las
 funciones de IA y dirigirlas a un proveedor remoto. Los dos modos tienen requisitos muy
 distintos.
 
 ### Con IA local {#with-local-ai}
 
-La memoria que importa es aquella en la que se ejecuta el modelo, y varía según la
-plataforma.
+Uno de los requisitos más importante para ejecutar la IA local es la memoria disponible para cargar el modelo y los contextos. Dependiendo de nuestra máquina estamos hablando de un tipo de memoria o de otro:
 
 | | Mac con Apple Silicon | Windows / Linux |
 |---|---|---|
@@ -96,7 +95,7 @@ Actualiza después con `brew upgrade --cask emailops`.
 
 ### Aceleración por GPU
 
-No hay que instalar nada más. La compilación de Windows lleva un backend **Vulkan** que se
+No hay que instalar nada más. La versión de Windows lleva un backend **Vulkan** que se
 carga en tiempo de ejecución siempre que haya un controlador gráfico funcionando, y recurre a
 la CPU cuando no lo hay — la misma descarga en ambos casos.
 

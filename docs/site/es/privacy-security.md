@@ -10,7 +10,7 @@ funciones de seguridad puedes activar.
 
 ## Dónde se guardan tus datos {#where-your-data-is-stored}
 
-Todo vive en el directorio de datos de aplicación de tu sistema:
+Todo reside en el directorio de datos de aplicación de tu sistema:
 
 | Plataforma | Ubicación |
 |---|---|

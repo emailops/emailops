@@ -6,16 +6,16 @@ weight: 10
 
 ## Systemanforderungen
 
-Die KI **lokal** auszuführen ist der anspruchsvolle Teil — und optional. Sie können sie im
-Einrichtungsassistenten deaktivieren und EmailOps als reinen E-Mail-Client nutzen, oder
-alle
-KI-Funktionen behalten und sie stattdessen an einen entfernten Anbieter leiten. Die beiden
-Modi haben sehr unterschiedliche Anforderungen.
+Die KI **lokal** auszuführen ist der Teil, der leistungsfähigere Hardware erfordert — und
+optional. Sie können sie im Einrichtungsassistenten deaktivieren und EmailOps als reinen
+E-Mail-Client nutzen, oder alle KI-Funktionen behalten und sie stattdessen an einen
+entfernten Anbieter leiten. Die beiden Modi haben sehr unterschiedliche Anforderungen.
 
 ### Mit lokaler KI {#with-local-ai}
 
-Entscheidend ist der Speicher, in dem das Modell läuft — und der unterscheidet sich je nach
-Plattform.
+Eine der wichtigsten Voraussetzungen für das lokale Ausführen von KI ist der verfügbare
+Speicher zum Laden des Modells und seines Kontexts. Je nach Maschine handelt es sich dabei
+um die eine oder die andere Art von Speicher:
 
 | | Apple-Silicon-Mac | Windows / Linux |
 |---|---|---|
@@ -98,7 +98,7 @@ Später aktualisieren mit `brew upgrade --cask emailops`.
 
 ### GPU-Beschleunigung
 
-Es ist nichts zusätzlich zu installieren. Der Windows-Build enthält ein **Vulkan**-Backend,
+Es ist nichts zusätzlich zu installieren. Die Windows-Version enthält ein **Vulkan**-Backend,
 das zur Laufzeit geladen wird, sobald ein funktionierender Grafiktreiber vorhanden ist, und
 sonst auf die CPU zurückfällt — in beiden Fällen derselbe Download.
 

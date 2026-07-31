@@ -10,7 +10,7 @@ features you can turn on.
 
 ## Where your data is stored {#where-your-data-is-stored}
 
-Everything lives in your OS application data directory:
+Everything resides in your OS application data directory:
 
 | Platform | Location |
 |---|---|

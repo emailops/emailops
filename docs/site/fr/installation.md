@@ -6,16 +6,16 @@ weight: 10
 
 ## Configuration requise
 
-Exécuter l'IA **en local** est la partie exigeante, et c'est optionnel. Vous pouvez la
-désactiver dans l'assistant de premier lancement et utiliser EmailOps comme un client e-mail
-classique,
-ou conserver toutes les fonctions d'IA et les diriger vers un fournisseur distant. Les deux
-modes ont des exigences très différentes.
+Exécuter l'IA **en local** est la partie qui nécessite un matériel plus puissant, et c'est
+optionnel. Vous pouvez la désactiver dans l'assistant de premier lancement et utiliser
+EmailOps comme un client e-mail classique, ou conserver toutes les fonctions d'IA et les
+diriger vers un fournisseur distant. Les deux modes ont des exigences très différentes.
 
 ### Avec IA locale {#with-local-ai}
 
-La mémoire qui compte est celle dans laquelle le modèle s'exécute, et elle diffère selon la
-plateforme.
+L'une des exigences les plus importantes pour exécuter l'IA en local est la mémoire
+disponible pour charger le modèle et son contexte. Selon votre machine, il s'agit d'un type
+de mémoire ou d'un autre :
 
 | | Mac Apple Silicon | Windows / Linux |
 |---|---|---|
