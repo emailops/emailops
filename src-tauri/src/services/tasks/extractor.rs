@@ -8,9 +8,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::services::app_handle::AppHandle;
 use chrono::Utc;
 use serde::Deserialize;
-use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::ai::provider::CompletionOptions;

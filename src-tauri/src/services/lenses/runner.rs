@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use crate::services::app_handle::AppHandle;
 
 use crate::ai::provider::AIProvider;
 use crate::db::Database;

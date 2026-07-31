@@ -19,7 +19,7 @@ fn build_oauth_provider(
     provider_name: &str,
     access_token: String,
     refresh_token: Option<String>,
-    app: Option<tauri::AppHandle>,
+    app: Option<crate::services::app_handle::AppHandle>,
     account_id: Option<String>,
 ) -> Result<Box<dyn EmailProvider>> {
     match provider_name {
@@ -226,7 +226,7 @@ pub async fn reauthenticate_account(db: &Arc<Database>, account_id: &str) -> Res
     // Drop the scheduler's dedup state so the next auto-sync tick reports
     // again from scratch — the user has just taken action and a stale dedup
     // entry would otherwise silence a *new* error that surfaces post-reauth.
-    crate::services::sync_scheduler::clear_sync_error_dedup(account_id);
+    crate::services::sync_error_dedup::clear_sync_error_dedup(account_id);
 
     Ok(())
 }

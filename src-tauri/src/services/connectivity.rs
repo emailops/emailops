@@ -18,8 +18,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::services::app_handle::AppHandle;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 
 /// Endpoint to probe. Picked because it is globally anycasted, returns small
 /// responses, and is unaffected by individual provider outages (e.g. Gmail
@@ -66,7 +68,7 @@ impl ConnectivityMonitor {
             }
         };
 
-        tauri::async_runtime::spawn(async move {
+        crate::runtime::spawn::spawn(async move {
             // Run one probe immediately so the cached state reflects reality
             // before the first PROBE_INTERVAL elapses.
             probe_once(&client, &online, &app).await;

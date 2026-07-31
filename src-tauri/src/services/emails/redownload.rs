@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use crate::services::app_handle::AppHandle;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};

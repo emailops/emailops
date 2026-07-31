@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use crate::services::app_handle::AppHandle;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
@@ -100,7 +100,7 @@ fn spawn_authoritative_refresh(
     provider_message_id: String,
     account_email: String,
 ) {
-    tauri::async_runtime::spawn(async move {
+    crate::runtime::spawn::spawn(async move {
         match provider.get_message(&provider_message_id).await {
             Ok((mut email, _category, attachment_infos)) => {
                 // get_message returns the provider's view; account_id is local.

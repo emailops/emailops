@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::services::app_handle::AppHandle;
 use regex::Regex;
-use tauri::{AppHandle, Emitter};
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};

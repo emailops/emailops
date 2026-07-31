@@ -1,8 +1,10 @@
+use crate::services::app_handle::AppHandle;
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};

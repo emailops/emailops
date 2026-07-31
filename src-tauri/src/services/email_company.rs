@@ -28,7 +28,9 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter};
+use crate::services::app_handle::AppHandle;
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 
 use crate::db::Database;
 use crate::models::error::Result;

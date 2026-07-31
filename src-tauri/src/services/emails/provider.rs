@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use crate::services::app_handle::AppHandle;
 
 use crate::models::error::{AppError, Result};
 use crate::models::Account;

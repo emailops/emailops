@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
+use crate::services::app_handle::AppHandle;
 use serde_json::json;
-use tauri::AppHandle;
 
 use crate::ai::provider::{AIProvider, AiMessage, CompletionOptions};
 use crate::db::Database;

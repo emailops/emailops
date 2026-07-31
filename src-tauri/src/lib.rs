@@ -11,17 +11,30 @@
 // `allow-expect-in-tests = true` in `clippy.toml`.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+// These are used only by the desktop shell (`run()`, `AppState`, the instance lock);
+// the state they used to serve now lives in `runtime::core`.
+// Used by the desktop shell (`run()`, `AppState`, the instance lock). The state
+// these used to serve now lives in `runtime::core`.
+#[cfg(feature = "desktop")]
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(feature = "desktop")]
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(feature = "desktop")]
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "desktop")]
 use tauri::webview::PageLoadEvent;
+#[cfg(feature = "desktop")]
 use tauri::Manager;
 
 pub mod ai;
+// The Tauri command layer. Gated so the crate can be built as a headless library
+// (`--no-default-features`) for the CLI and for server front ends.
+#[cfg(feature = "desktop")]
 pub mod commands;
 pub mod db;
 pub mod models;
+pub mod runtime;
 pub mod services;
 pub mod sync;
 pub mod util;
@@ -40,7 +53,9 @@ pub mod cli;
 
 pub use db::Database;
 pub use models::error::{AppError, Result};
+pub use runtime::AppCore;
 
+#[cfg(feature = "desktop")]
 fn should_load_dotenv_with(debug_build: bool, env_override: Option<&str>) -> bool {
     debug_build
         || matches!(
@@ -49,130 +64,54 @@ fn should_load_dotenv_with(debug_build: bool, env_override: Option<&str>) -> boo
         )
 }
 
+#[cfg(feature = "desktop")]
 fn should_load_dotenv() -> bool {
     let env_override = std::env::var("EMAILOPS_LOAD_DOTENV").ok();
     should_load_dotenv_with(cfg!(debug_assertions), env_override.as_deref())
 }
 
+/// Tauri's managed state: an [`AppCore`] plus the desktop-only background scheduler.
+///
+/// `AppState` used to own every field directly. Those fields moved to [`AppCore`]
+/// (`runtime/core.rs`) so that the CLI and a server can build the same state without
+/// Tauri. `AppState` keeps `Deref<Target = AppCore>`, so the ~200 command handlers that
+/// read `state.db`, `state.ai_background`, `state.dispatcher`, or call
+/// `state.sync_queue_for(...)` continue to compile unchanged.
+#[cfg(feature = "desktop")]
 pub struct AppState {
-    pub db: Arc<Database>,
-    pub app_data_dir: PathBuf,
-    /// Queue for interactive AI tasks (chat, draft generation). Concurrency 1
-    /// so a user-facing request always gets full model throughput.
-    pub ai_queue: services::task_queue::TaskQueue,
-    /// Queue for background AI tasks (classification, embeddings after sync).
-    /// Concurrency 1 so background work doesn't compete with interactive requests.
-    pub ai_background: services::task_queue::TaskQueue,
-    /// Queue for fast DB-only background tasks. Higher concurrency since there is no
-    /// shared GPU/CPU bottleneck.
-    pub db_queue: services::task_queue::TaskQueue,
-    /// Per-account sync queues. Each account gets its own concurrency-1
-    /// `TaskQueue` lazily on first manual sync, so one slow provider can't
-    /// stall manual syncs of other accounts. A single account is still
-    /// serialized inside `sync_account` by `sync_locks` (try_lock); the
-    /// per-account queue exists for dashboard visibility and so multiple
-    /// rapid clicks on the same account land in a FIFO instead of bailing
-    /// out via the lock.
-    pub sync_queues: Arc<Mutex<HashMap<String, services::task_queue::TaskQueue>>>,
-    /// Background sync scheduler (Gmail polling + IMAP IDLE).
+    core: Arc<AppCore>,
+    /// Background sync scheduler (Gmail polling + IMAP IDLE). Desktop-only: it owns
+    /// long-lived OS threads and `tauri::async_runtime` handles. A server supervises
+    /// syncing with its own reconcile loop instead.
     pub scheduler: services::sync_scheduler::SyncScheduler,
-    /// Per-account abort flags. Set to `true` before deleting an account so any
-    /// in-progress sync exits cleanly at the next batch boundary.
-    pub sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-    /// Per-account sync mutex. Held for the duration of a sync so concurrent
-    /// calls (UI trigger + scheduler tick) bail out immediately via try_lock.
-    pub sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    /// Background internet-connectivity probe. Exposes a cached boolean used
-    /// by the `is_online` command and emits `app-connectivity-changed` events
-    /// on state transitions.
-    pub connectivity: services::connectivity::ConnectivityMonitor,
-    /// Typed dispatcher for background tasks.
-    ///
-    /// Use `state.dispatcher.dispatch(BackgroundTask::…, || Box::pin(async { … }))`
-    /// in command handlers instead of calling `queue.submit_named` directly.
-    /// This makes it possible to swap in a `FakeDispatcher` in tests and assert
-    /// exactly which tasks were enqueued, without running the underlying futures.
-    ///
-    /// Production: `RealDispatcher` routes each task to the correct `TaskQueue`.
-    /// Tests:      `FakeDispatcher` records tasks and ignores the future closure.
-    pub dispatcher: Arc<dyn services::background_tasks::TaskDispatcher>,
-    /// Chat tool registry. Built once at startup with every production tool
-    /// pre-registered (see `services::chat::tools::default_registry`).
-    /// `run_chat_turn` consults it both for the LLM's tool-definitions array
-    /// (filtered by Settings feature flags) and for dispatching tool calls.
-    pub tool_registry: Arc<services::chat::tools::ToolRegistry>,
 }
 
+#[cfg(feature = "desktop")]
+impl std::ops::Deref for AppState {
+    type Target = AppCore;
+    fn deref(&self) -> &AppCore {
+        &self.core
+    }
+}
+
+#[cfg(feature = "desktop")]
 impl AppState {
+    /// Wrap an already-built core together with the desktop scheduler.
+    pub fn new(core: Arc<AppCore>, scheduler: services::sync_scheduler::SyncScheduler) -> Self {
+        Self { core, scheduler }
+    }
+
+    /// The shared core, for handing to code that must not depend on Tauri.
+    pub fn core(&self) -> Arc<AppCore> {
+        Arc::clone(&self.core)
+    }
+
     /// Construct an `AppState` suitable for unit/integration tests.
-    ///
-    /// * Uses the provided in-memory database (from `Database::new_for_testing()`).
-    /// * Wires stub scheduler and connectivity monitor (no real I/O).
-    /// * Task queues are created with minimal concurrency.
-    /// * All hash-maps start empty.
     #[cfg(test)]
     pub fn for_testing(db: Arc<Database>) -> Self {
-        let ai_queue = services::task_queue::TaskQueue::new(1, "ai");
-        let ai_background = services::task_queue::TaskQueue::new(1, "ai_bg");
-        let db_queue = services::task_queue::TaskQueue::new(1, "db");
         Self {
-            db,
-            // `std::env::temp_dir()` rather than a literal "/tmp/..." — the
-            // latter is not a valid path on Windows.
-            app_data_dir: std::env::temp_dir().join("emailops-test"),
-            ai_queue,
-            ai_background,
-            db_queue,
-            sync_queues: Arc::new(Mutex::new(HashMap::new())),
+            core: Arc::new(AppCore::for_testing(db)),
             scheduler: services::sync_scheduler::SyncScheduler::stub(),
-            sync_abort_flags: Arc::new(Mutex::new(HashMap::new())),
-            sync_locks: Arc::new(Mutex::new(HashMap::new())),
-            connectivity: services::connectivity::ConnectivityMonitor::stub(),
-            dispatcher: Arc::new(services::background_tasks::FakeDispatcher::new()),
-            tool_registry: Arc::new(services::chat::tools::default_registry()),
-        }
-    }
-
-    /// Get-or-create the dedicated sync queue for `account_id`. Each queue
-    /// is concurrency 1 so the same account never has two downloads
-    /// in-flight via the queue path; different accounts run on independent
-    /// queues so a slow provider for one account cannot block another.
-    pub fn sync_queue_for(&self, account_id: &str) -> services::task_queue::TaskQueue {
-        let mut map = self.sync_queues.lock().unwrap_or_else(PoisonError::into_inner);
-        map.entry(account_id.to_string())
-            .or_insert_with(|| services::task_queue::TaskQueue::new(1, "sync"))
-            .clone()
-    }
-
-    /// Aggregate snapshot of every per-account sync queue, presented to the
-    /// dashboard as a single "sync" queue. Running/pending tasks are merged
-    /// as-is (their `name` already carries the account id via
-    /// `submit_named`); history is merged across accounts and truncated to
-    /// the most recent 5 globally so the panel stays compact. Effective
-    /// concurrency is reported as the number of distinct per-account queues
-    /// (each contributes one parallel slot).
-    pub fn sync_queue_snapshot(&self) -> services::task_queue::QueueStateSnapshot {
-        let queues: Vec<services::task_queue::TaskQueue> = {
-            let map = self.sync_queues.lock().unwrap_or_else(PoisonError::into_inner);
-            map.values().cloned().collect()
-        };
-        let mut running = Vec::new();
-        let mut pending = Vec::new();
-        let mut history = Vec::new();
-        for q in &queues {
-            let snap = q.snapshot();
-            running.extend(snap.running);
-            pending.extend(snap.pending);
-            history.extend(snap.history);
-        }
-        history.sort_by_key(|h| std::cmp::Reverse(h.finished_at));
-        history.truncate(5);
-        services::task_queue::QueueStateSnapshot {
-            name: "sync".to_string(),
-            concurrency: queues.len().max(1),
-            running,
-            pending,
-            history,
         }
     }
 }
@@ -187,6 +126,7 @@ impl AppState {
 // The only remaining `.expect(...)` is the final `Builder::run()` (the event
 // loop itself failing to start has no graceful recovery).
 #[allow(clippy::expect_used)]
+#[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Dotenv is a developer convenience only. In release builds, keep it off
@@ -455,20 +395,20 @@ pub fn run() {
                 t.elapsed().as_secs_f64() * 1000.0
             );
 
-            app.manage(AppState {
+            let core = Arc::new(AppCore {
                 db: db.clone(),
                 app_data_dir,
                 ai_queue,
                 ai_background,
                 db_queue,
                 sync_queues,
-                scheduler,
                 sync_abort_flags,
                 sync_locks,
                 connectivity,
                 dispatcher,
                 tool_registry: Arc::new(services::chat::tools::default_registry()),
             });
+            app.manage(AppState::new(core, scheduler));
 
             // Warm up the AI provider in the background so the first chat turn
             // doesn't pay the full cold-load cost of a multi-GB GGUF. Runs on
@@ -762,6 +702,7 @@ fn classify_startup_failure(detail: &str) -> StartupRemedy {
 ///
 /// `app_data_dir` is optional because the earliest call sites run before it has
 /// been resolved; when known it is named so "start fresh" is actionable.
+#[cfg(feature = "desktop")]
 fn format_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::path::Path>) -> String {
     let remedy = match classify_startup_failure(detail) {
         StartupRemedy::Environment => "This is often caused by a full startup disk or a file-permission \
@@ -795,6 +736,7 @@ fn format_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::pa
 /// `app_data_dir` is `None` at the earliest call sites (resolving it is itself
 /// one of the steps that can fail); the crash report then falls back to the
 /// system temp directory — see `util::startup_dialog`.
+#[cfg(feature = "desktop")]
 fn fatal_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::path::Path>) -> ! {
     let message = format_startup_error(stage, detail, app_data_dir);
     eprintln!("[startup][fatal] {message}");
@@ -807,6 +749,7 @@ fn fatal_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::pat
 }
 
 #[cfg(test)]
+#[cfg(feature = "desktop")]
 mod startup_error_tests {
     use super::{classify_startup_failure, format_startup_error, StartupRemedy};
     use std::path::Path;
@@ -920,6 +863,7 @@ mod startup_error_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "desktop")]
 mod env_loading_tests {
     use super::should_load_dotenv_with;
 
@@ -949,6 +893,7 @@ mod env_loading_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "desktop")]
 mod appstate_tests {
     use std::sync::Arc;
 

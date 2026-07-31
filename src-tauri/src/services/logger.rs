@@ -39,16 +39,19 @@ pub trait Logger: Send + Sync {
 }
 
 /// Production logger: forwards events to the frontend via `AppHandle::emit`.
+#[cfg(feature = "desktop")]
 pub struct TauriLogger {
     app: tauri::AppHandle,
 }
 
+#[cfg(feature = "desktop")]
 impl TauriLogger {
     pub fn new(app: tauri::AppHandle) -> Self {
         Self { app }
     }
 }
 
+#[cfg(feature = "desktop")]
 impl Logger for TauriLogger {
     fn log(&self, event: AppLogEvent) {
         use tauri::Emitter;
@@ -111,6 +114,12 @@ static LOGGER: std::sync::LazyLock<RwLock<Arc<dyn Logger>>> =
 
 /// Get a handle to the active logger backend.
 pub fn current() -> Arc<dyn Logger> {
+    // A per-user context, when one is installed, always wins: it is how a server
+    // keeps one user's logger from resolving to another user's. Desktop, CLI and
+    // tests install no context and fall through to the process-global backend.
+    if let Some(cx) = crate::runtime::ctx::try_current() {
+        return cx.logger.clone();
+    }
     LOGGER.read().unwrap_or_else(PoisonError::into_inner).clone()
 }
 

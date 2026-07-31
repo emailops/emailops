@@ -3,7 +3,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
@@ -13,21 +13,11 @@ use crate::models::error::AppError;
 use crate::models::{Account, AppLogEvent};
 use crate::services::task_queue::TaskQueue;
 
-// In-memory per-account dedup: stores the last error message we emitted to
-// the output panel. Suppresses repeated identical "auto-sync failed" logs
-// every 60 s when the underlying state cannot change without user action
-// (e.g. NeedsReauth — keyring entry missing). Cleared on the first
-// successful sync after recovery, or explicitly after re-authentication.
-static LAST_SYNC_ERROR: std::sync::LazyLock<RwLock<HashMap<String, String>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
-
-/// Drop the dedup state for an account so the next sync attempt logs/emits
-/// regardless of prior error history. Call after re-authentication so the
-/// user sees a fresh log line if a different problem now surfaces.
-pub fn clear_sync_error_dedup(account_id: &str) {
-    let mut guard = LAST_SYNC_ERROR.write().unwrap_or_else(PoisonError::into_inner);
-    guard.remove(account_id);
-}
+// The dedup map and its public `clear_sync_error_dedup` moved to
+// `services::sync_error_dedup` so `services::accounts` can clear it after
+// re-authentication without depending on this desktop-only module.
+pub use crate::services::sync_error_dedup::clear_sync_error_dedup;
+use crate::services::sync_error_dedup::LAST_SYNC_ERROR;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

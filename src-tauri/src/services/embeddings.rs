@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use crate::services::app_handle::AppHandle;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter};
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 
 use crate::db::Database;
 use crate::models::error::Result;

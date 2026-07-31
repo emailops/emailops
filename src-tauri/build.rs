@@ -28,7 +28,13 @@ fn main() {
     emit_git_build_metadata();
     request_common_controls_v6_for_tests();
 
-    tauri_build::build()
+    // `tauri-build` is an optional build-dependency, enabled only by the `desktop`
+    // feature. Headless builds (`--no-default-features`) skip it entirely: there is
+    // no tauri.conf.json to process, no capabilities to compile, and no context to
+    // generate. Cargo compiles build scripts with the package's feature cfgs, so a
+    // plain `#[cfg]` is enough here.
+    #[cfg(feature = "desktop")]
+    tauri_build::build();
 }
 
 /// Make Windows test binaries load comctl32 **version 6**.

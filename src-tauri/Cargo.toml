@@ -20,14 +20,14 @@ name = "emailops_lib"
 crate-type = ["lib", "cdylib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-os = "2"
-tauri-plugin-notification = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-shell = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-os = { version = "2", optional = true }
+tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -117,7 +117,7 @@ opentelemetry-otlp = { version = "0.32", optional = true, default-features = fal
 # Enables tauri::test::mock_builder for the eval examples so they can build an
 # AppHandle outside the desktop runtime. Turn on with:
 #   cargo run --features eval --example chat_eval
-eval = ["tauri/test"]
+eval = ["desktop", "tauri/test"]
 # Generate TypeScript types from Rust structs via ts-rs.
 # cargo test --features ts export_bindings
 ts = ["dep:ts-rs"]
@@ -134,7 +134,21 @@ cli = ["dep:reedline", "dep:rpassword", "dep:termimad"]
 # Embedded llama.cpp inference — enabled by default for production builds.
 # Disable with --no-default-features to skip the C++/cmake toolchain for
 # fast iteration or CI jobs that only need Ollama/OpenRouter.
-default = ["llamacpp"]
+default = ["desktop", "llamacpp"]
+
+# The Tauri desktop shell: the `commands/` layer, `run()`, the background sync
+# scheduler and the GitHub updater. Turning it OFF yields a headless library —
+# `db`, `ai`, `sync` and `services` with no Tauri in the dependency graph — which
+# is what the CLI and any server front end build against.
+#   cargo check --no-default-features
+desktop = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:tauri-plugin-shell",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-os",
+    "dep:tauri-plugin-notification",
+]
 llamacpp = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
 
 # Phoenix (Arize AI) observability via OpenTelemetry OTLP.
@@ -312,4 +326,4 @@ name = "translation_eval"
 required-features = ["eval"]
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-shell = "2"
+tauri-plugin-shell = { version = "2", optional = true }

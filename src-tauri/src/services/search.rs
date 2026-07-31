@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::services::app_handle::AppHandle;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::ai::ollama::{parse_search_query_patterns, OllamaClient, ParsedSearchQuery};

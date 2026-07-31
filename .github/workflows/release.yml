@@ -190,6 +190,28 @@ jobs:
 
       - run: npm ci
 
+      # llama-cpp-sys-2's vendored ggml-vulkan/CMakeLists.txt nests a second,
+      # independent CMake project (ExternalProject_Add(vulkan-shaders-gen))
+      # inside the main build. With the default "Visual Studio" generator,
+      # that inner project's own compiler-ABI-detection try_compile step
+      # (CMakeDetermineCCompiler.cmake, run once per nested configure,
+      # unrelated to and unaffected by cargo/cmake's own --parallel/--jobs
+      # settings) deterministically fails with "C1041: cannot open program
+      # database ... if multiple CL.EXE write to the same .PDB file, please
+      # use /FS" — an MSBuild-in-MSBuild wedge other projects vendoring the
+      # same ggml CMakeLists.txt have hit identically (e.g.
+      # FactusConsulting/whisper-dictate#662). Ninja invokes cl.exe one
+      # translation unit at a time with no nested-MSBuild parallel-project
+      # layer, so it doesn't have this failure mode — force it for both the
+      # outer and (inherited) inner CMake configures. Needs vcvars on PATH
+      # first since, unlike the "Visual Studio" generator, Ninja does not
+      # locate MSVC itself.
+      - name: Set up MSVC dev environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       # Full build with dynamic ggml backends (DYNAMIC_BACKENDS=1): one
       # portable artifact that loads the Vulkan backend at runtime when a GPU
       # driver is present and falls back to CPU when it is not. Vulkan is the
@@ -208,6 +230,7 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
+          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Ninja' || '' }}
         run: make build-${{ matrix.platform }}
 
       # TEMPORARY debugging aid (see debug_windows input above) — remove

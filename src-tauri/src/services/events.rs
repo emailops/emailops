@@ -41,16 +41,19 @@ pub trait EventSink: Send + Sync {
 }
 
 /// Production sink: forwards events to the front-end via `AppHandle::emit`.
+#[cfg(feature = "desktop")]
 pub struct TauriEventSink {
     app: tauri::AppHandle,
 }
 
+#[cfg(feature = "desktop")]
 impl TauriEventSink {
     pub fn new(app: tauri::AppHandle) -> Self {
         Self { app }
     }
 }
 
+#[cfg(feature = "desktop")]
 impl EventSink for TauriEventSink {
     fn emit(&self, name: &str, payload: Value) {
         use tauri::Emitter;
@@ -144,6 +147,12 @@ static SINK: std::sync::LazyLock<RwLock<Arc<dyn EventSink>>> =
 
 /// Get a handle to the active sink backend.
 pub fn current() -> Arc<dyn EventSink> {
+    // A per-user context, when one is installed, always wins: it is how a server
+    // keeps one user's sink from resolving to another user's. Desktop, CLI and
+    // tests install no context and fall through to the process-global backend.
+    if let Some(cx) = crate::runtime::ctx::try_current() {
+        return cx.sink.clone();
+    }
     SINK.read().unwrap_or_else(PoisonError::into_inner).clone()
 }
 

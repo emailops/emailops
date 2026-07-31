@@ -130,6 +130,12 @@ static KEYCHAIN: std::sync::LazyLock<RwLock<Arc<dyn Keychain>>> =
 /// this to access OS credentials; tests install an in-memory backend via
 /// [`install_for_testing`] before calling.
 pub fn current() -> Arc<dyn Keychain> {
+    // A per-user context, when one is installed, always wins: it is how a server
+    // keeps one user's keychain from resolving to another user's. Desktop, CLI and
+    // tests install no context and fall through to the process-global backend.
+    if let Some(cx) = crate::runtime::ctx::try_current() {
+        return cx.keychain.clone();
+    }
     KEYCHAIN.read().unwrap_or_else(PoisonError::into_inner).clone()
 }
 

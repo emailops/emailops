@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use tauri::AppHandle;
+use crate::services::app_handle::AppHandle;
 use tokio::time::sleep;
 
 use crate::db::folders::FolderUpsert;
