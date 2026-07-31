@@ -44,16 +44,27 @@ case "$PLATFORM" in
       echo "── shared libraries ──"
       # An unresolved library here means the app dies instantly on a clean
       # machine — the single most common Linux packaging failure.
-      if command -v ldd >/dev/null 2>&1; then
-        UNRESOLVED=$(ldd "$BIN" 2>/dev/null | grep 'not found' || true)
+      #
+      # Checked against the binary as *installed*, not the raw build output:
+      # with DYNAMIC_BACKENDS, the binary carries an $ORIGIN-relative rpath
+      # into the bundle's backends/ resource dir, which only exists alongside
+      # it once unpacked in the real usr/bin + usr/lib layout — ldd against
+      # the bare target/.../release/emailops would always report those as
+      # "not found" even when the shipped package is completely correct.
+      if command -v ldd >/dev/null 2>&1 && [ -n "$DEB" ] && command -v dpkg-deb >/dev/null 2>&1; then
+        DEB_EXTRACT_DIR="$(mktemp -d)"
+        trap 'rm -rf "$DEB_EXTRACT_DIR"' EXIT
+        dpkg-deb -x "$DEB" "$DEB_EXTRACT_DIR"
+        INSTALLED_BIN="$(find "$DEB_EXTRACT_DIR/usr/bin" -maxdepth 1 -type f | head -1)"
+        UNRESOLVED=$(ldd "$INSTALLED_BIN" 2>/dev/null | grep 'not found' || true)
         if [ -n "$UNRESOLVED" ]; then
-          fail "unresolved shared libraries:"
+          fail "unresolved shared libraries (checked as installed from the .deb):"
           echo "$UNRESOLVED" | sed 's/^/      /'
         else
-          pass "all shared libraries resolve"
+          pass "all shared libraries resolve (checked as installed from the .deb)"
         fi
       else
-        echo "  i ldd unavailable; skipping linkage check"
+        echo "  i ldd or dpkg-deb unavailable, or no .deb built; skipping linkage check"
       fi
     fi
 

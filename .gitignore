@@ -88,6 +88,10 @@ private-evals/*
 !private-evals/README.md
 !private-evals/*.example
 
+# Personal cloud infra scripts (Azure subscription IDs, IPs, SSH details) —
+# not shared across developer machines.
+private-scripts/
+
 # Repo-local app data used by Makefile dev/demo workflows.
 .emailops-data/
 .emailops-data-fresh/
