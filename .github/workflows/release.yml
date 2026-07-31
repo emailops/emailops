@@ -102,12 +102,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk
 
+      # `vulkan-query-version`/`vulkan-use-cache` were this action's inputs at
+      # some earlier version; @v1 now warns "Unexpected input(s)" and silently
+      # ignores both, falling back to its own default (latest) — harmless
+      # today, but silent drift like this is exactly what breaks the next
+      # time the action changes again. Use its real current input name.
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows'
         uses: humbletim/setup-vulkan-sdk@v1
         with:
-          vulkan-query-version: latest
-          vulkan-use-cache: true
+          vulkan-version: latest
 
       - run: npm ci
 
@@ -124,7 +128,19 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
-        run: make build-${{ matrix.platform }}
+        run: |
+          # humbletim/setup-vulkan-sdk exports VULKAN_SDK from a bash step on
+          # this Git-Bash-on-Windows runner, so it's a POSIX-style path
+          # (/d/a/...). CMake's FindVulkan.cmake runs inside a native cmake.exe
+          # subprocess and can't parse that — find_package(Vulkan) fails with
+          # "missing: Vulkan_LIBRARY Vulkan_INCLUDE_DIR" even though the SDK is
+          # right there. Convert to a native Windows path (cygpath ships with
+          # Git Bash) before the build sees it.
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "${VULKAN_SDK:-}" ]; then
+            export VULKAN_SDK="$(cygpath -w "$VULKAN_SDK")"
+            echo "VULKAN_SDK (native): $VULKAN_SDK"
+          fi
+          make build-${{ matrix.platform }}
 
       - name: Verify
         shell: bash
