@@ -174,8 +174,15 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
     }
     let (auth_url, csrf_token) = auth_request.url();
 
-    // Open browser for user authorization
-    open::that(auth_url.as_str()).map_err(|e| AppError::OAuthError(format!("Failed to open browser: {}", e)))?;
+    // Open browser for user authorization. `that_detached` (not `that`) is
+    // required here: `open::that` blocks the calling thread until the
+    // launched application *exits* — on macOS `open -a` hands off via
+    // LaunchServices and returns immediately, masking this, but on Linux
+    // `open::that` execs the browser directly and waits on it, so this
+    // Tauri command would never resolve until the user closed every window
+    // of their browser. `that_detached` launches and returns immediately.
+    open::that_detached(auth_url.as_str())
+        .map_err(|e| AppError::OAuthError(format!("Failed to open browser: {}", e)))?;
 
     // Wait for the callback
     let code = wait_for_callback(listener, csrf_token.secret())?;
