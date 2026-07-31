@@ -70,6 +70,19 @@ jobs:
         with:
           ref: ${{ inputs.tag_name }}
 
+      # Windows Defender's real-time scanning transiently locks a freshly
+      # written file for AV inspection, which is the classic explanation for
+      # an intermittent "cannot open program database" MSVC error on a GH
+      # Windows runner — it presented identically to a genuine parallel-write
+      # race (same MSVC error text) but persisted even after forcing the
+      # build fully serial (CMAKE_BUILD_PARALLEL_LEVEL=1), which a real race
+      # could not survive. Exclude the whole checkout before any compiling
+      # starts.
+      - name: Exclude workspace from Windows Defender (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
+
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
