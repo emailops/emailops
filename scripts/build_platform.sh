@@ -145,6 +145,23 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     # are ever writing a .pdb concurrently, regardless of whether that
     # particular invocation picked up /FS.
     CARGO_JOBS_ARGS+=(--jobs 1)
+
+    # CMAKE_GENERATOR=Ninja (set by the CI workflow, via ilammy/msvc-dev-cmd +
+    # this env var) routes around the C1041 race above entirely — Ninja
+    # invokes cl.exe one translation unit at a time with no nested-MSBuild
+    # parallel-project layer for llama-cpp-sys-2's vulkan-shaders-gen
+    # ExternalProject sub-build to race inside of. But once msvc-dev-cmd has
+    # populated VCToolsInstallDir/INCLUDE/LIB, rustc's own linker search
+    # trusts that an MSVC environment is already configured and falls back to
+    # a plain PATH lookup for "link.exe" instead of doing its own
+    # registry-based MSVC detection — and on this "shell: bash" step, Git
+    # Bash's own coreutils `usr/bin/link.exe` (a hardlink tool, not a linker)
+    # sits earlier on PATH than MSVC's, so cargo silently invokes the wrong
+    # one and every crate fails to link with a confusing "extra operand"
+    # error. Pin the linker explicitly so cargo never has to search PATH.
+    if [ -n "${VCToolsInstallDir:-}" ]; then
+      export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER="${VCToolsInstallDir}bin\\Hostx64\\x64\\link.exe"
+    fi
   fi
 
   # Two-pass build. `tauri build` validates bundle.resources while compiling,
