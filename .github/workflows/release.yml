@@ -1,12 +1,31 @@
 name: Release
 
-# Release-on-tag-push is temporarily disabled while we cut releases by
-# building locally with `make build-mac` and uploading the .dmg manually
-# to the GitHub Release page. Re-enable by uncommenting the `push.tags`
-# block below; `workflow_dispatch` is kept on so the workflow can still be
-# triggered from the Actions UI when we want CI to build a tag's bundle.
+# Linux + Windows only. macOS is deliberately NOT built here — it's signed and
+# notarized locally via `make build-mac` and uploaded by hand (the `release`
+# skill drives that flow end to end), and that's a permanent choice, not a
+# stopgap: keeping macOS out of this workflow means the signing/notarization
+# secrets never need to touch a job whose only job is producing unsigned
+# Linux/Windows installers. `workflow_dispatch` takes an explicit `tag_name`
+# so it can be triggered from any ref (e.g. `main` right after pushing a tag)
+# and still reliably attach its artifacts to that tag's release — including a
+# release the `release` skill already created for the macOS DMG.
+#
+# Set `dry_run: true` to build/verify/smoke-test without touching the public
+# releases page at all — the installers land as a downloadable workflow
+# artifact instead. Use this to validate a change to this workflow or the
+# build scripts before it's ever tied to a real release tag.
 on:
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Ref to build: a release tag (e.g. v0.6.5) for a real release, or any branch/tag when dry_run is checked."
+        required: true
+        type: string
+      dry_run:
+        description: "Build, verify, and smoke-test only — never create/update the GitHub Release. Artifacts are uploaded as a workflow artifact instead so they can still be inspected."
+        required: false
+        type: boolean
+        default: false
   # push:
   #   tags:
   #     - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -16,101 +35,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  release-macos:
-    name: Release (macOS universal)
-    runs-on: macos-26
-    permissions:
-      contents: write  # needed to create the GitHub Release
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          key: macos-universal
-
-      # Import the Developer ID Application certificate into a short-lived
-      # keychain that only exists for the duration of this job.
-      - name: Import Developer ID Application certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
-
-          security create-keychain -p "" build.keychain
-          security import /tmp/certificate.p12 -k ~/Library/Keychains/build.keychain \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security list-keychains -d user -s ~/Library/Keychains/build.keychain \
-            $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s ~/Library/Keychains/build.keychain
-          security unlock-keychain -p "" ~/Library/Keychains/build.keychain
-          security set-keychain-settings ~/Library/Keychains/build.keychain
-          # Allow codesign to access the key without an interactive prompt.
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" \
-            ~/Library/Keychains/build.keychain
-
-          rm /tmp/certificate.p12
-
-      - run: npm ci
-
-      # Tauri reads these env vars automatically to sign and notarize.
-      # APPLE_SIGNING_IDENTITY  → passed to codesign
-      # APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID → passed to notarytool
-      # EMAILOPS_* are the OAuth client credentials build.rs bakes into the binary.
-      # Local `make build-mac` picks them up from the gitignored .env.local; a CI
-      # build has no such file, so they must come from repository secrets or
-      # Gmail/Outlook sign-in is dead on arrival in the published DMG.
-      - name: Build, sign, and notarize
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
-          EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
-          EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
-        run: npm run tauri -- build --target universal-apple-darwin
-
-      - name: Verify signing and notarization
-        run: make verify-mac
-
-      # Copy the versioned bundle DMG to a stable, versionless name so the
-      # release exposes a permanent "latest" download URL:
-      #   .../releases/latest/download/EmailOps-macos.dmg
-      - name: Stage stable-named DMG
-        run: make dist-mac
-
-      # Delete the ephemeral keychain so the certificate doesn't linger.
-      - name: Delete build keychain
-        if: always()
-        run: security delete-keychain ~/Library/Keychains/build.keychain || true
-
-      # Upload both the stable-named DMG (permanent latest link) and the
-      # versioned bundle DMG (kept as a per-release archival artifact).
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: |
-            release/EmailOps-macos.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-
-  # Linux (.deb + .AppImage) and Windows (.msi + NSIS .exe). Deliberately a
-  # separate job from the macOS one rather than a matrix leg: the macOS path
-  # carries certificate import, notarization and keychain teardown that have no
-  # analogue here, and folding them together would put that working, signed
-  # pipeline at risk for no benefit.
+  # Deliberately one job with a platform matrix, not split per-OS: unlike the
+  # macOS build there's no certificate import/notarization/keychain teardown
+  # that would need special-casing per leg, so a matrix is the right amount
+  # of shared structure.
   #
   # NOT code-signed. Linux packages conventionally are not; Windows installers
   # would need an OV/EV certificate the project does not hold, so users see a
@@ -120,7 +48,7 @@ jobs:
   # Asset names match `scripts/dist_platform.sh`, which mirrors `dist-mac`'s
   # convention so every platform has a permanent latest-download URL:
   #   .../releases/latest/download/EmailOps-linux.AppImage
-  release-desktop:
+  release:
     name: Release (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -139,6 +67,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag_name }}
 
       - uses: actions/setup-node@v6
         with:
@@ -204,8 +134,78 @@ jobs:
         shell: bash
         run: make dist-${{ matrix.platform }}
 
+      # Proves the installed binary actually starts and resolves its shared
+      # libraries/DLLs on a clean machine — exactly the failure mode a
+      # DYNAMIC_BACKENDS packaging regression takes (missing rpath target,
+      # missing DLL next to the exe). It does NOT prove GPU offload works:
+      # these runners have no GPU, so Vulkan always falls back to CPU here.
+      # That still needs an occasional check on real GPU hardware.
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # EmailOps touches the OS keychain (Secret Service) at startup, and
+          # this runner — like a bare cloud VM — has no D-Bus session bus or
+          # logged-in desktop by default. Same fix as private testing: wrap
+          # the launch in dbus-run-session + an unlocked throwaway keyring,
+          # and give it a virtual display via Xvfb.
+          sudo apt-get install -y xvfb dbus-x11 gnome-keyring
+          DEB="$(find release -maxdepth 1 -name '*.deb' | head -1)"
+          sudo apt-get install -y "$DEB"
+          xvfb-run -a dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
+            emailops > /tmp/smoke.log 2>&1 &
+            APP_PID=$!
+            sleep 8
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "ERROR: emailops exited within 8s of launch" >&2
+              cat /tmp/smoke.log >&2
+              exit 1
+            fi
+            echo "emailops is running (pid $APP_PID) after 8s — smoke test passed"
+            kill "$APP_PID"
+          '
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem -Path release -Filter *.msi | Select-Object -First 1).FullName
+          if (-not $msi) { Write-Error "no .msi found under release/"; exit 1 }
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn" -Wait
+
+          # Don't assume the exact WiX install path — search for it instead,
+          # since this is the first time this install has ever been exercised.
+          $exe = Get-ChildItem -Path "$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter emailops.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { Write-Error "installed emailops.exe not found under Program Files"; exit 1 }
+
+          $proc = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          $stillRunning = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+          if (-not $stillRunning) {
+            Write-Error "emailops.exe exited within 8s of launch (missing DLL or startup crash)"
+            exit 1
+          }
+          Write-Host "emailops.exe is running (pid $($proc.Id)) after 8s — smoke test passed"
+          Stop-Process -Id $proc.Id -Force
+
+      # Dry-run path: never touch the public releases page. Upload the built
+      # installers as a plain workflow artifact instead, so a validation run
+      # can still be inspected/downloaded without publishing anything.
+      - name: Upload artifacts (dry run only)
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: emailops-${{ matrix.platform }}-dry-run
+          path: release/*
+          if-no-files-found: error
+
       - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag_name }}
           generate_release_notes: true
           files: release/*

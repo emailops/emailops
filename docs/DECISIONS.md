@@ -381,3 +381,39 @@ their own hardware before downloading — dynamic backends exist specifically so
 artifact suffices); building both `vulkan` and `cuda` into the same binary (dynamic
 backends pick one at build time; shipping both would double the bundled module size for
 a codepath most users on a given machine never take).
+
+## 2026-07-31 — Linux/Windows releases stay a separate, auto-published CI job; macOS stays fully manual
+
+**Decision:** `.github/workflows/release.yml`'s `release-macos` job is removed entirely,
+not merely left unused — macOS releases are built, signed, and notarized locally
+(`make build-mac`) and uploaded by hand, permanently, not as a stopgap. The remaining
+job builds and auto-publishes Linux (`.deb`/`.AppImage`) and Windows (`.msi`/NSIS `.exe`)
+via `softprops/action-gh-release`'s upsert-by-tag behavior, gated behind a mandatory,
+automated smoke test (install the built package on the same runner, launch it, confirm
+the process survives a few seconds) that must pass before the release is published.
+`workflow_dispatch` takes an explicit `tag_name` input so the workflow reliably attaches
+its artifacts to a specific tag's release regardless of which ref triggered the run —
+including a release the developer already created by hand for the macOS DMGs. A
+`dry_run` input skips the release-publish step entirely (installers land as a plain
+workflow artifact instead), so a change to this workflow or the build scripts can be
+validated against real GitHub-hosted runners without ever touching the public releases
+page or requiring a real tag.
+**Context:** No Linux or Windows asset has ever shipped on a GitHub release, and the
+workflow that would build them had never actually been run — `gh run list` came back
+empty. The developer explicitly prefers keeping macOS signing entirely out of CI (no
+certificate/notarization secrets need to live in a job whose only purpose is unsigned
+Linux/Windows installers), and explicitly wants Linux/Windows release-testing to be
+automatic rather than requiring a manually-managed VM (the GPU test VM used to debug the
+Windows DLL-staging and Linux dropdown/OAuth fixes this session is private, per-developer
+infrastructure — not something CI or a future contributor can rely on). The smoke test
+specifically targets the failure mode a `DYNAMIC_BACKENDS` packaging regression takes
+(binary fails to start because a shared library/DLL doesn't resolve) — GH-hosted runners
+have no GPU, so it cannot and does not attempt to verify GPU offload; that still requires
+occasional testing on real GPU hardware.
+**Rejected:** keeping `release-macos` in the same workflow gated behind a
+`workflow_dispatch` platform-select input (adds complexity for a job that should simply
+never run again, versus deleting it outright); relying on `push: tags` to infer the
+release tag (still disabled — releases are cut via the `release` skill, which triggers
+this workflow explicitly once the tag exists on `origin`); a local Docker/VM-based smoke
+test script instead of an in-CI step (doesn't scale to "every release, automatically" and
+reintroduces the manual-VM friction this decision is meant to remove).

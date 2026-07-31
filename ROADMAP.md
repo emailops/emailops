@@ -18,11 +18,16 @@ priority.
 
 ## On the radar (0.7.0+)
 
-- **Windows bundle**. Tauri 2 supports it; we just need a CI job, an
-  installer (MSI / NSIS), and to validate the keychain abstraction
-  against Windows Credential Manager.
-- **Linux bundle**. AppImage + `.deb`; keychain via Secret Service /
-  libsecret.
+- **Windows bundle**. Build/CI infra is done — `.msi`/NSIS `.exe` via
+  `make build-windows`, a CI release job with automated smoke-testing, and
+  the keychain abstraction validated against Windows Credential Manager.
+  Not yet a public release: no `.msi`/`.exe` has shipped on the GitHub
+  releases page yet — that's the remaining step.
+- **Linux bundle**. Build/CI infra is done — AppImage + `.deb` via
+  `make build-linux`, keychain via Secret Service/libsecret, a CI release
+  job with automated smoke-testing, and Vulkan GPU offload verified on real
+  GPU hardware. Not yet a public release: no `.deb`/`.AppImage` has shipped
+  on the GitHub releases page yet — that's the remaining step.
 - **Calendar integration** (Google Calendar + Microsoft Graph) so
   EmailOps can surface "this email implies an event."
 - **Auto-send with approval workflows** for AI drafts (currently the

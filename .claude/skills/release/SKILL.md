@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new signed + notarized EmailOps macOS release — version bump across all source-of-truth files, CHANGELOG, quality gates, universal app + standalone CLI builds, commit, tag, and (confirmation-gated) push. The GitHub release is never created automatically; the skill prints the exact info to publish it manually. After the developer publishes the release, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
+description: Cut a new EmailOps release across all three platforms — version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish), then the Linux/Windows CI build (triggered and watched, auto-published on success), a doc-staleness check, commit, tag, and (confirmation-gated) push. The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep
@@ -8,9 +8,21 @@ allowed-tools: Bash, Read, Edit, Write, Grep
 
 # Release EmailOps
 
-You are cutting a new release of EmailOps (a Tauri macOS app). Follow the phases
-below in order. Run each phase, report a short status line, and **stop on the
-first failure** — never paper over a failing gate.
+You are cutting a new release of EmailOps (a Tauri app shipping on macOS, Linux,
+and Windows). Follow the phases below in order. Run each phase, report a short
+status line, and **stop on the first failure** — never paper over a failing gate.
+
+## Platforms at a glance
+
+- **macOS**: built, signed, and notarized **locally** on the developer's
+  machine (Phases 5-5b), uploaded to the GitHub release **by hand** (Phase 8).
+  This is a permanent choice, not a stopgap — signing secrets never need to
+  touch CI for this platform.
+- **Linux + Windows**: built in CI (`.github/workflows/release.yml`), unsigned
+  by convention, smoke-tested on the same runner, and **auto-published** to the
+  same tagged release (Phase 7b). The skill triggers this and waits for it.
+- Both share one version bump and one git tag — there is no separate release
+  cycle per platform.
 
 ## Golden rule: when in doubt, ask
 
@@ -158,16 +170,86 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-**Do not create the GitHub release yourself.** Even if `gh` is installed and
-authenticated, never run `gh release create` (or otherwise publish the release)
-as part of this skill. The developer creates the GitHub release manually — your
-job ends at printing the exact info they need (see Phase 8).
+**Do not upload the macOS DMGs yourself.** Even if `gh` is installed and
+authenticated, never run `gh release create`/`gh release upload` for the macOS
+assets as part of this skill. The developer uploads those manually — your job
+for macOS ends at printing the exact info they need (see Phase 8). This does
+**not** apply to Linux/Windows — those *are* auto-published by CI, deliberately
+(Phase 7b), since they carry no signing secrets to protect.
 
-## Phase 8 — Print the manual GitHub-release info
+## Phase 7b — Trigger and watch the Linux/Windows CI release build
 
-The GitHub release is always created by the developer by hand. Gather and print
-everything they need to do it, so it is copy-paste ready. Verify each fact
-before printing it (don't assume):
+Run this **after** the tag is pushed (Phase 7) — the workflow builds a specific
+tag, so it must exist on `origin` first.
+
+```bash
+gh workflow run release.yml --ref main -f tag_name=vX.Y.Z
+```
+
+To validate a change to this workflow or the build scripts *without* publishing
+anything (e.g. after editing `scripts/build_platform.sh` or this workflow
+itself), add `-f dry_run=true` — the build/verify/smoke-test steps still run in
+full, but the installers land as a downloadable workflow artifact instead of a
+GitHub Release, and `tag_name` can be any existing branch/tag, not just a real
+release tag.
+
+Then poll until it finishes — do not block silently for a long time without
+telling the user; there is currently no empirical timing for this build (it has
+never been run to completion as of this skill's last update), so warn that it
+may take a while:
+
+```bash
+gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,url
+# then, once you have the run id:
+gh run watch <run-id>
+```
+
+- **On failure**: stop and ask. Report which platform leg failed (Linux,
+  Windows, or both) and the run URL. Do not proceed to Phase 8 implying the
+  release is complete when one platform is missing — a release with only
+  macOS assets (or only some platforms) is a legitimate outcome only if the
+  developer explicitly accepts it after seeing the failure.
+- **On success**: both `.deb`/`.AppImage` and `.msi`/setup `.exe` are already
+  attached to the `vX.Y.Z` GitHub release (the workflow creates it if it
+  doesn't exist yet, via `softprops/action-gh-release`'s upsert-by-tag
+  behavior — safe to run before *or* after the developer manually uploads the
+  macOS DMGs in Phase 8, since it only adds files, never removes or renames
+  what's already there). Note in your status line that the smoke tests passed
+  — this confirms the installed binary starts and resolves its shared
+  libraries/DLLs on a clean machine, **not** that GPU offload works (CI
+  runners have no GPU; that still needs an occasional real-hardware check).
+
+## Phase 7c — Doc staleness check (run every release, not just once)
+
+Before publishing, check whether anything user-facing or platform-specific in
+the docs has fallen behind what this release actually ships. Report findings
+as a checklist — **do not silently auto-edit prose docs**; ask the developer to
+confirm each change first, since these are user-facing/marketing copy:
+
+1. **`README.md` download section.** If this release's GitHub assets (from
+   Phase 7b) include Linux/Windows installers for the first time, or the
+   README still reads "on the roadmap" for a platform that has now shipped,
+   flag it and offer to update the download links.
+2. **`ROADMAP.md`.** Check for entries describing work this release just
+   completed (compare against the new CHANGELOG section) — flag any that now
+   read as still-pending when they're done.
+3. **`docs/*.md`.** Scan for platform-specific claims that may be stale given
+   what changed (e.g. a doc that only describes a macOS-only install flow,
+   when this release adds a Linux/Windows equivalent). Flag, don't rewrite.
+4. **`docs/DECISIONS.md`.** Ask the developer whether anything in this release
+   constitutes a durable decision worth logging there (that file is
+   append-only and durable-decisions-only by convention — not every release
+   needs an entry, but the skill should ask rather than assume).
+
+## Phase 8 — Print the manual GitHub-release info (macOS only)
+
+The macOS assets are always uploaded by the developer by hand — Linux/Windows
+are not (Phase 7b already attached them, or created the release if it didn't
+exist). Gather and print everything the developer needs for the macOS side, so
+it is copy-paste ready. Verify each fact before printing it (don't assume). If
+Phase 7b already created the release, `gh release create` below will fail
+(release exists) — use `gh release upload` instead; check which applies with
+`gh release view vX.Y.Z` first and print the correct command.
 
 1. **Confirm the assets exist.** Stat each stable-named DMG and compute its
    SHA-256 so the developer can sanity-check the uploads. The release attaches
@@ -199,8 +281,11 @@ Then print, in your final message:
   copies; GitHub serves the latest-download link by filename, so a versioned
   name would not be reachable through the permanent URL.
 - **The raw release notes** (inline) plus the temp-file path.
-- **Both ways to publish**, and let the developer pick:
-  - *gh CLI* (run from repo root):
+- **Both ways to publish**, and let the developer pick. Which `gh` command
+  applies depends on whether Phase 7b already created the release (check with
+  `gh release view vX.Y.Z >/dev/null 2>&1` — exit 0 means it exists):
+  - *gh CLI, release does not exist yet* (Phase 7b hasn't run or hasn't
+    finished — this creates it):
 
     ```bash
     gh release create vX.Y.Z \
@@ -210,9 +295,19 @@ Then print, in your final message:
       release/EmailOps-CLI-macos.dmg
     ```
 
+  - *gh CLI, release already exists* (Phase 7b already created it with the
+    Linux/Windows assets — this just adds the macOS DMGs to it):
+
+    ```bash
+    gh release upload vX.Y.Z \
+      release/EmailOps-macos.dmg \
+      release/EmailOps-CLI-macos.dmg
+    ```
+
     If `gh` is not installed, mention it (`brew install gh && gh auth login`).
-  - *Web UI*: open `https://github.com/emailops/emailops/releases/new`, choose
-    the existing `vX.Y.Z` tag, set the title, paste the notes, drag in **both**
+  - *Web UI*: open `https://github.com/emailops/emailops/releases/new` (or
+    `.../releases/edit/vX.Y.Z` if it already exists), choose the `vX.Y.Z` tag,
+    set the title if new, paste the notes if new, drag in **both**
     `release/EmailOps-macos.dmg` and `release/EmailOps-CLI-macos.dmg` (keep the
     filenames as-is), keep "Set as the latest release" checked, and publish.
 
@@ -290,7 +385,9 @@ version. If an asset is bad, cut a new patch release instead.
 ## Done
 
 Report: the new version, that gates/build/verify passed, the commit + tag
-created, the push state (pushed or pending), that the GitHub release is left
-for the developer to create manually (with the info from Phase 8 printed above),
-and the Homebrew cask state (updated + pushed to the tap, or pending the
-release publish).
+created, the push state (pushed or pending), the Linux/Windows CI result
+(run URL, conclusion, smoke-test outcome per platform), any doc-staleness
+findings from Phase 7c and whether the developer acted on them, that the macOS
+GitHub release upload is left for the developer to do manually (with the info
+from Phase 8 printed above), and the Homebrew cask state (updated + pushed to
+the tap, or pending the release publish).
