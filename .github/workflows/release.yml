@@ -148,6 +148,15 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
+          # Windows/MSVC only, harmless elsewhere (gcc/clang ignore this env
+          # var): llama-cpp-sys-2's vendored CMake build compiles its
+          # vulkan-shaders-gen sub-tool with parallel cl.exe invocations
+          # (CMAKE_BUILD_PARALLEL_LEVEL=4, set by the crate itself). Without
+          # /FS, concurrent cl.exe processes race on the same debug .pdb file
+          # and fail with "C1041: cannot open program database" — this is
+          # MSVC's own documented fix for that race, applied via the CL env
+          # var it reads for default flags on every invocation.
+          CL: /FS
         run: make build-${{ matrix.platform }}
 
       - name: Verify
