@@ -144,7 +144,8 @@ pub fn install(backend: Arc<dyn Keychain>) {
 /// inspect state directly if it needs to.
 ///
 /// Returns the same Arc that is now stored in the global — modifications via
-/// either reference are visible to both.
+/// either reference are visible to both. Callers must already hold
+/// `events::seam_test_lock()`, which serializes every process-global seam.
 #[cfg(test)]
 pub fn install_for_testing() -> Arc<InMemoryKeychain> {
     let kc = Arc::new(InMemoryKeychain::new());

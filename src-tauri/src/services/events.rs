@@ -177,12 +177,13 @@ pub fn install_for_testing() -> Arc<VecEventSink> {
     sink
 }
 
-/// Shared serialization lock for every test that touches the process-global
-/// `SINK` or `LOGGER`. Because `events::emit` reads the global sink and
-/// `logger::log` reads the global logger, tests in *different* modules
-/// (`events`, `logger`, `emails::events`, …) race unless they all serialize on
-/// the same mutex — a per-module lock only protects intra-module tests. Any new
-/// seam-touching test must hold this guard.
+/// Shared serialization lock for every test that touches a process-global seam
+/// — `SINK`, `LOGGER`, or `KEYCHAIN`. Because `events::emit` reads the global
+/// sink, `logger::log` reads the global logger, and `keychain::current()` reads
+/// the global backend, tests in *different* modules (`events`, `logger`,
+/// `emails::events`, `secrets_vault`, `accounts`, …) race unless they all
+/// serialize on the same mutex — a per-module lock only protects intra-module
+/// tests. Any new seam-touching test must hold this guard.
 #[cfg(test)]
 pub(crate) fn seam_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static M: std::sync::Mutex<()> = std::sync::Mutex::new(());

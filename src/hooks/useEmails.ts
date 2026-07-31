@@ -34,6 +34,12 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
   useEffect(() => {
     if (activeAccountId) {
       fetchEmails(queryAccountId, activeFilter, selectedCategories, false, mailbox);
+    } else {
+      // No account selected — either startup before accounts load (list is
+      // already empty, a no-op) or the last remaining account was just
+      // deleted (activeAccountId dropped to null). Without this, the
+      // previously active account's emails stayed in the store forever.
+      reset();
     }
   }, [
     activeAccountId,
@@ -44,6 +50,7 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
     fetchEmails,
     selectedCategories,
     mailbox,
+    reset,
   ]);
 
   const loadMore = useCallback(() => {
