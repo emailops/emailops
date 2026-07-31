@@ -9,7 +9,17 @@
 set -euo pipefail
 
 MANIFEST="src-tauri/Cargo.toml"
-BIN="src-tauri/target/release/emailops-cli"
+
+# Git Bash / MSYS2 (the POSIX shell this script needs on Windows, per
+# CLAUDE.md) reports one of these via `uname -s`; cargo names the built
+# binary emailops-cli.exe there, not emailops-cli — without this, the
+# executable check below always failed with "expected binary not found".
+EXE_SUFFIX=""
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) EXE_SUFFIX=".exe" ;;
+esac
+
+BIN="src-tauri/target/release/emailops-cli${EXE_SUFFIX}"
 
 # Pick an install dir: explicit PREFIX wins, else first writable candidate.
 if [ -n "${PREFIX:-}" ]; then
@@ -33,7 +43,7 @@ if [ ! -x "$ABS_BIN" ]; then
   exit 1
 fi
 
-LINK="$DEST_DIR/emailops-cli"
+LINK="$DEST_DIR/emailops-cli${EXE_SUFFIX}"
 ln -sf "$ABS_BIN" "$LINK"
 echo "Symlinked $LINK -> $ABS_BIN"
 

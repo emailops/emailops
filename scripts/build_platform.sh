@@ -58,6 +58,10 @@ if [ -n "$CARGO_FEATURES" ]; then
 fi
 
 BACKENDS_RES_DIR="src-tauri/resources/backends"
+# Windows-only: the same base libs are ALSO staged here (see the "KNOWN GAP"
+# note below) so tauri.backends.windows.conf.json can map them next to
+# emailops.exe, not just into backends/.
+BASE_LIBS_ROOT_RES_DIR="src-tauri/resources/backends-root"
 
 if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   CARGO_ARGS+=(--features dynamic-backends)
@@ -129,16 +133,30 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # type-f-only copy silently drops it and leaves the dependency unresolvable
   # under the correct name.
   #
-  # KNOWN GAP (Windows): this stages ggml-base.dll etc. into backends/, but
-  # unlike the Linux rpath fix above there is no Windows equivalent here yet —
-  # Windows' default DLL search order checks the exe's own directory, not a
-  # backends\ subdirectory, so a staged DLL sitting only in backends/ may
-  # still fail to resolve as an implicit load-time dependency of emailops.exe.
-  # This needs verifying on an actual Windows build before trusting it.
   BASE_LIB_SRC_DIR="$(dirname "$SRC_DIR")/lib"
   find "$BASE_LIB_SRC_DIR" -maxdepth 1 \( -type f -o -type l \) \
     \( -name 'libggml*.so*' -o -name 'libllama*.so*' -o -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
     -exec cp -a {} "$BACKENDS_RES_DIR/" \; 2>/dev/null || true
+
+  if [ "$PLATFORM" = "windows" ]; then
+    # Windows' default DLL search order for an *implicit* link-time dependency
+    # (ggml-base.dll/ggml.dll/llama.dll/llama-common.dll are each a direct
+    # `cargo:rustc-link-lib=dylib=...` of the main binary, resolved by the OS
+    # loader before any Rust code runs — unlike the hot-swappable backend
+    # modules above, which the app itself dlopen's from an explicit path via
+    # `load_backends_from_path`) only checks the executable's own directory,
+    # system directories, and PATH. It does NOT check a backends\
+    # subdirectory, so staging these only into backends/ (as above) leaves
+    # the installed app failing to start with "The code execution cannot
+    # proceed because ggml-base.dll was not found." Stage a second copy into
+    # a resource dir that tauri.backends.windows.conf.json maps to the bundle
+    # root (".") instead.
+    rm -rf "$BASE_LIBS_ROOT_RES_DIR"
+    mkdir -p "$BASE_LIBS_ROOT_RES_DIR"
+    find "$BASE_LIB_SRC_DIR" -maxdepth 1 -type f -iname '*.dll' \
+      \( -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
+      -exec cp {} "$BASE_LIBS_ROOT_RES_DIR/" \;
+  fi
 
   echo "[build-$PLATFORM] staged $(ls -1 "$BACKENDS_RES_DIR" | wc -l | tr -d ' ') backend module(s) from $SRC_DIR"
   ls -1 "$BACKENDS_RES_DIR" | sed 's/^/    /'
@@ -151,11 +169,13 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     # libggml-base.so.0 must already be on the search path or the whole
     # AppImage bundle step aborts (rather than just skipping the AppImage).
     export LD_LIBRARY_PATH="$PWD/$BACKENDS_RES_DIR:${LD_LIBRARY_PATH:-}"
+  elif [ "$PLATFORM" = "windows" ]; then
+    CONFIG="$CONFIG src-tauri/tauri.backends.windows.conf.json"
   fi
 else
   # Stale modules from a previous GPU build would otherwise be bundled into a
   # CPU-only artifact and loaded at runtime.
-  rm -rf "$BACKENDS_RES_DIR"
+  rm -rf "$BACKENDS_RES_DIR" "$BASE_LIBS_ROOT_RES_DIR"
 fi
 
 echo "[build-$PLATFORM] target=$TARGET config=$CONFIG"

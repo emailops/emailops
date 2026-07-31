@@ -102,6 +102,37 @@ case "$PLATFORM" in
     echo "── signing ──"
     echo "  i unsigned by design — no code-signing certificate is configured."
     echo "    Users will see a SmartScreen warning on first run."
+
+    echo "── dynamic-backends DLL staging ──"
+    # ggml-base.dll/ggml.dll/llama.dll/llama-common.dll are implicit link-time
+    # dependencies of emailops.exe, resolved by Windows' default DLL search
+    # order (exe's own directory, system dirs, PATH) — NOT a backends\
+    # subdirectory. build_platform.sh stages a second copy into
+    # resources/backends-root/ for tauri.backends.windows.conf.json to place
+    # at the bundle root; if that staging silently regresses, the installed
+    # app fails to start with "ggml-base.dll was not found". This checks the
+    # pre-bundle staging inputs (an installer isn't easily unpacked from a
+    # bash script), so it can't catch a bundler misconfiguration — only that
+    # the build script produced what the bundler needs.
+    BACKENDS_DIR="src-tauri/resources/backends"
+    ROOT_DIR="src-tauri/resources/backends-root"
+    if [ ! -d "$BACKENDS_DIR" ]; then
+      echo "  i no resources/backends/ staged; not a DYNAMIC_BACKENDS build, skipping"
+    else
+      BASE_LIBS=$(find "$BACKENDS_DIR" -maxdepth 1 -type f \( -iname 'ggml*.dll' -o -iname 'llama*.dll' \))
+      if [ -z "$BASE_LIBS" ]; then
+        echo "  i no ggml*/llama* base libs in resources/backends/; skipping"
+      elif [ ! -d "$ROOT_DIR" ]; then
+        fail "resources/backends-root/ is missing but base libs were staged into backends/ — DLLs will not resolve at exe startup"
+      else
+        MISSING=0
+        while IFS= read -r lib; do
+          name="$(basename "$lib")"
+          [ -f "$ROOT_DIR/$name" ] || { fail "base lib '$name' missing from resources/backends-root/"; MISSING=1; }
+        done <<< "$BASE_LIBS"
+        [ "$MISSING" -eq 0 ] && pass "all base libs in backends/ are mirrored into backends-root/ (bundle root)"
+      fi
+    fi
     ;;
 
   "")
