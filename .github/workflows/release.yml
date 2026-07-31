@@ -63,7 +63,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned to 22.04, NOT ubuntu-latest. glibc is only backward
+          # compatible: a binary built against glibc 2.35 runs on 2.39, but not
+          # the reverse — so the runner image sets the *minimum* glibc a user
+          # needs, and `ubuntu-latest` silently raises that floor whenever
+          # GitHub rolls the image. It rolled to 24.04 (glibc 2.39), which made
+          # the .deb and .AppImage refuse to start on Ubuntu 22.04 with
+          # "version `GLIBC_2.38' not found" — a release regression with no
+          # accompanying code change. 22.04 is the oldest LTS that still ships
+          # libwebkit2gtk-4.1 (the .deb's declared dependency), so it is the
+          # lowest floor reachable without a Tauri webkit downgrade, and it
+          # covers 22.04/24.04/25.x, Debian 12+, and RHEL 9 derivatives.
+          # When GitHub retires the 22.04 image, replace this with a
+          # `container: ubuntu:22.04` on a newer runner rather than bumping it.
+          - os: ubuntu-22.04
             platform: linux
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
@@ -106,7 +119,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake
+          # libclang-dev (bindgen), xdg-utils and libfuse2 (linuxdeploy's
+          # AppImage bundling) are the same build-only prerequisites
+          # `make bootstrap-linux` checks for. They are listed explicitly
+          # rather than relied upon because the runner image preinstalling
+          # them is an accident of the image, not a guarantee — and now that
+          # this job is pinned to a specific image, an image that happens to
+          # omit one would fail the build with a confusing downstream error.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake libclang-dev xdg-utils libfuse2
 
       # Vulkan SDK provides the headers/loader and the glslc shader compiler
       # that ggml's Vulkan backend needs at *build* time. Only the runtime
