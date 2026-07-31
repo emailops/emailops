@@ -7,7 +7,7 @@ weight: 60
 ## Les fonctions d'IA sont indisponibles
 
 Avec le backend **intégré**, vérifiez que le modèle recommandé a fini de se télécharger dans
-**Réglages → Backend et modèles d'IA**. Un téléchargement interrompu rend le modèle
+**Paramètres → IA : backend et modèles**. Un téléchargement interrompu rend le modèle
 inutilisable — supprimez-le et téléchargez-le à nouveau.
 
 Si vous êtes passé à **Ollama**, assurez-vous que le démon tourne et est joignable sur
@@ -33,7 +33,7 @@ des dizaines de secondes. Ce qui aide, à peu près par ordre d'efficacité :
    [catalogue de modèles](../ai-features/#the-model-catalog) pour le chiffre de chaque modèle.
 2. **Prenez un modèle plus petit.** Qwen 3.5 4B est le choix recommandé par défaut, et ce
    n'est pas un hasard.
-3. **Augmentez « garder le modèle chargé »** dans les réglages d'IA pour qu'il ne soit pas
+3. **Augmentez « Maintenir le modèle chargé »** dans les réglages d'IA pour qu'il ne soit pas
    rechargé depuis le disque à chaque question.
 4. **Réduisez la fenêtre de contexte** — une fenêtre plus petite signifie moins à traiter par
    tour, et c'est le premier réglage à baisser quand un modèle tient tout juste.
@@ -66,18 +66,18 @@ normal.
 
 ## La recherche ne renvoie que des résultats par mots-clés
 
-La recherche sémantique a besoin d'embeddings. Ouvrez **Réglages → Recherche IA**, vérifiez
+La recherche sémantique a besoin d'embeddings. Ouvrez **Paramètres → Recherche IA**, vérifiez
 que les catégories qui vous intéressent sont sélectionnées et laissez la passe d'embeddings se
 terminer. Après un changement de modèle d'embeddings, reconstruisez l'index depuis le même
 écran.
 
-Vérifiez aussi la **limite d'ancienneté** dans les réglages d'IA — le courrier plus ancien que
+Vérifiez aussi **Limiter le traitement IA aux courriels récents** dans les réglages d'IA — le courrier plus ancien que
 cette fenêtre est délibérément ignoré.
 
 ## La classification n'étiquette rien
 
-- Vérifiez que **classer automatiquement les nouveaux e-mails** est activé dans
-  **Réglages → Classification IA**.
+- Vérifiez que **Classer automatiquement les nouveaux courriels** est activé dans
+  **Paramètres → Classification par IA**.
 - Regardez quelles catégories Gmail sont sélectionnées ; si aucune ne l'est, rien n'est
   classé.
 - Pour le courrier arrivé avant l'activation, utilisez **Classer les non classés**, ou

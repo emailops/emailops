@@ -49,7 +49,7 @@ sind:
 
 Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
-**Einstellungen → KI-Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
+**Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
 
 ## Keine Telemetrie
 

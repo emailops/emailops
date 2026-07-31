@@ -64,7 +64,7 @@ Semantic search needs embeddings. Open **Settings → AI Search**, check that th
 you care about are selected, and let the embedding pass finish. After changing the embedding
 model, rebuild the index from the same screen.
 
-Also check the **age cutoff** in AI settings — mail older than that window is skipped
+Also check **Limit AI processing to recent emails** in AI settings — mail older than that window is skipped
 deliberately.
 
 ## Classification is not tagging anything

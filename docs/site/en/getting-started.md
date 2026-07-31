@@ -54,7 +54,7 @@ The last step adds your first mailbox. EmailOps supports:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge or any custom server. Enter
   the server details and credentials directly.
 
-Add more accounts any time from **Settings → Accounts**. With several connected you get a
+Add more accounts any time with **Add account** in the sidebar. With several connected you get a
 unified "All accounts" inbox on top of the per-account views.
 
 ## After the wizard
@@ -81,5 +81,6 @@ Once the first sync finishes:
 3. Consider setting a **main password** in **Settings → Privacy & Security** if you want the
    app locked on startup — see [Privacy & security](../privacy-security/).
 
-Both classification and embedding respect an age cutoff (**Settings → AI Backend & Models**),
+Both classification and embedding respect **Limit AI processing to recent emails**
+(**Settings → AI Backend & Models**),
 so a decade-old archive does not get processed unless you ask for it.

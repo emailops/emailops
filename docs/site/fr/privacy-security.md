@@ -48,7 +48,7 @@ communique exactement avec ces destinations, toutes identifiables :
 
 La dernière ligne est le seul chemin par lequel votre courrier peut atteindre un tiers ; il est
 désactivé par défaut et exige une modification délibérée dans
-**Réglages → Backend et modèles d'IA** ainsi que votre propre clé d'API.
+**Paramètres → IA : backend et modèles** ainsi que votre propre clé d'API.
 
 ## Aucune télémétrie
 
@@ -90,7 +90,7 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
 
 ## Verrouiller l'application
 
-Définissez un **mot de passe principal** dans **Réglages → Confidentialité et sécurité** et
+Définissez un **mot de passe principal** dans **Paramètres → Confidentialité et sécurité** et
 EmailOps reste verrouillé au démarrage jusqu'à sa saisie. Il n'existe aucune récupération — si
 vous l'oubliez, vous réinstallez sur un répertoire de données neuf et resynchronisez depuis
 votre fournisseur.

@@ -32,7 +32,7 @@ Vues mois, semaine et jour par compte pour Google Agenda et Outlook. Vous receve
 avant chaque événement, avec un bouton **Rejoindre** en un clic pour les liens Meet, Teams,
 Webex et Zoom. La synchronisation du calendrier est active par défaut pour les comptes Gmail
 et Outlook et peut être désactivée compte par compte, tout comme le délai de notification,
-dans **Réglages → Calendrier**.
+dans **Paramètres → Calendrier**.
 
 ## Vue des pièces jointes
 
@@ -51,9 +51,10 @@ EmailOps note localement chaque message entrant pour détecter le spam et le cou
 non désiré. Aucun modèle ni appel réseau n'intervient, et vos corrections (« indésirable » /
 « légitime ») entraînent le filtre au fil du temps. Vous décidez du sort du courrier signalé :
 
-- **L'estomper dans la liste** — il reste en place, l'œil le saute simplement plus facilement.
-- **Le sortir de la boîte de réception** — retiré de la liste, mais toujours accessible par la
-  recherche et dans les dossiers de votre fournisseur.
+- **Les atténuer dans la liste** — ils restent en place, l'œil les saute simplement plus
+  facilement.
+- **Les sortir de la boîte de réception** — retirés de la liste, mais toujours accessibles
+  par la recherche et dans les dossiers de votre fournisseur.
 
 Aucune des deux options ne déplace ni ne supprime quoi que ce soit sur le serveur ; seul un
 **Confirmer l'indésirable** explicite le fait. Un avertissement d'usurpation d'identité /

@@ -14,7 +14,7 @@ EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Ch
 - **IA activée** — chat, brouillons, classification et recherche sémantique s'exécutent tous
   sur cette machine.
 - **Client e-mail simple** — aucun modèle n'est téléchargé et aucun appel d'IA n'est jamais
-  effectué. Vous pourrez activer l'IA plus tard dans **Réglages → Backend et modèles d'IA**,
+  effectué. Vous pourrez activer l'IA plus tard dans **Paramètres → IA : backend et modèles**,
   et la désactiver tout aussi facilement.
 
 ## 2. Backend et modèle d'IA
@@ -45,7 +45,7 @@ recherche.
 ## 3. Disposition de la boîte
 
 Choisissez la disposition — **divisée** (liste à gauche, message à droite) ou **pleine
-largeur** (un panneau à la fois). Modifiable à tout moment dans **Réglages → Apparence**, avec
+largeur** (un panneau à la fois). Modifiable à tout moment dans **Paramètres → Apparence**, avec
 la langue de l'interface (français, anglais, espagnol, allemand).
 
 ## 4. Connecter un compte
@@ -58,7 +58,8 @@ La dernière étape ajoute votre première boîte. EmailOps prend en charge :
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge ou tout serveur personnalisé.
   Saisissez directement les paramètres du serveur et les identifiants.
 
-Ajoutez d'autres comptes quand vous voulez depuis **Réglages → Comptes**. Avec plusieurs
+Ajoutez d'autres comptes quand vous voulez avec **Ajouter un compte** dans la barre
+latérale. Avec plusieurs
 comptes connectés, vous obtenez une boîte unifiée « Tous les comptes » en plus des vues par
 compte.
 
@@ -84,11 +85,12 @@ Une fois la première synchronisation terminée :
    sujet — voir [Fonctions d'IA](../ai-features/#classification).
 2. Les **embeddings** sont générés en arrière-plan pour donner de la matière à la recherche
    sémantique. Vous pouvez suivre la progression et reconstruire l'index dans
-   **Réglages → Recherche IA**.
+   **Paramètres → Recherche IA**.
 3. Envisagez de définir un **mot de passe principal** dans
-   **Réglages → Confidentialité et sécurité** si vous voulez que l'application se verrouille
+   **Paramètres → Confidentialité et sécurité** si vous voulez que l'application se verrouille
    au démarrage — voir [Confidentialité et sécurité](../privacy-security/).
 
-La classification comme les embeddings respectent une limite d'ancienneté
-(**Réglages → Backend et modèles d'IA**) : une archive vieille de dix ans n'est pas traitée
+La classification comme les embeddings respectent **Limiter le traitement IA aux
+courriels récents**
+(**Paramètres → IA : backend et modèles**) : une archive vieille de dix ans n'est pas traitée
 sauf si vous le demandez.

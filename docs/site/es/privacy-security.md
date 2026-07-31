@@ -47,7 +47,7 @@ estos destinos, todos identificables:
 | OpenRouter | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 
 La última fila es la única vía por la que tu correo puede llegar a un tercero, está desactivada
-por defecto y requiere un cambio deliberado en **Ajustes → Backend y modelos de IA** más tu
+por defecto y requiere un cambio deliberado en **Ajustes → IA: backend y modelos** más tu
 propia clave de API.
 
 ## Sin telemetría

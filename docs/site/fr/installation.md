@@ -140,7 +140,7 @@ ceux-ci convient :
 - **GNOME Keyring** (`gnome-keyring`) — la valeur par défaut sur GNOME, Ubuntu, Fedora
   Workstation.
 - **KWallet** (`kwalletmanager` avec l'interface Secret Service) — l'équivalent KDE.
-- **KeePassXC** avec *Réglages → Intégration Secret Service* activée.
+- **KeePassXC** avec *Paramètres → Intégration Secret Service* activée.
 
 Sur un gestionnaire de fenêtres minimal ou une session sans interface, il n'y a souvent aucun
 trousseau en cours d'exécution. Installez l'un des précédents et assurez-vous qu'il est

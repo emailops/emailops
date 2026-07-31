@@ -6,7 +6,7 @@ weight: 60
 
 ## KI-Funktionen sind nicht verfügbar
 
-Prüfen Sie beim **integrierten** Backend unter **Einstellungen → KI-Backend & Modelle**, ob
+Prüfen Sie beim **integrierten** Backend unter **Einstellungen → KI: Backend & Modelle**, ob
 das empfohlene Modell fertig heruntergeladen wurde. Ein abgebrochener Download macht das
 Modell unbrauchbar — entfernen Sie es und laden Sie es erneut.
 
@@ -71,13 +71,14 @@ ob die gewünschten Kategorien ausgewählt sind, und lassen Sie den Embedding-Du
 abschließen. Nach einem Wechsel des Embedding-Modells bauen Sie den Index im selben Dialog neu
 auf.
 
-Prüfen Sie außerdem die **Altersgrenze** in den KI-Einstellungen — ältere E-Mails werden
+Prüfen Sie außerdem **KI-Verarbeitung auf neuere E-Mails beschränken** in den
+KI-Einstellungen — ältere E-Mails werden
 bewusst übersprungen.
 
 ## Die Klassifizierung kennzeichnet nichts
 
 - Prüfen Sie, ob **neue E-Mails automatisch klassifizieren** unter
-  **Einstellungen → KI-Klassifizierung** aktiv ist.
+  **Einstellungen → KI-Klassifikation** aktiv ist.
 - Sehen Sie nach, welche Gmail-Kategorien ausgewählt sind; ist keine ausgewählt, wird nichts
   klassifiziert.
 - Für E-Mails, die vor dem Einschalten eintrafen, verwenden Sie **Nicht klassifizierte

@@ -10,7 +10,7 @@ ningún correo sale nunca de tu máquina.
 
 ## Elegir un backend {#choosing-a-backend}
 
-**Ajustes → Backend y modelos de IA** controla dónde ocurre la inferencia:
+**Ajustes → IA: backend y modelos** controla dónde ocurre la inferencia:
 
 - **En la app (local)** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
   tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
@@ -63,8 +63,8 @@ solo si al hardware le sobra margen. Los requisitos completos están en
   modelo entra justo.
 - **Modo de razonamiento** — cadena de pensamiento en los modelos compatibles. Más lento, más
   preciso, y puedes mostrar u ocultar la traza.
-- **Límite de antigüedad** — omite embeddings y clasificación para el correo con más de N
-  días.
+- **Limitar el procesado de IA a correos recientes** — omite embeddings y clasificación
+  para el correo con más de N días.
 
 ## Chatea con tu buzón
 
@@ -82,7 +82,7 @@ configurable:
 
 Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recuperación
 (reescritura de consulta, reordenación) en
-**Ajustes → Backend y modelos de IA → Prompts de chat**.
+**Ajustes → IA: backend y modelos → Prompts del chat**.
 
 ## Borradores con IA
 
@@ -145,7 +145,7 @@ ejecutas desde la barra lateral.
 
 ## Apagarlo todo
 
-**Ajustes → Backend y modelos de IA → Funciones de IA** es un interruptor general.
+**Ajustes → IA: backend y modelos → Funciones de IA** es un interruptor general.
 Desactívalo y EmailOps funciona como un cliente de correo normal: sin chat, sin clasificación,
 sin embeddings, sin ningún modelo cargado. Tus datos locales de IA se conservan por si vuelves
 a activarlo.

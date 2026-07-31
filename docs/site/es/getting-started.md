@@ -14,7 +14,7 @@ EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
 - **IA activada** — chat, borradores, clasificación y búsqueda semántica se ejecutan en esta
   máquina.
 - **Cliente de correo sin más** — no se descarga ningún modelo ni se hace ninguna llamada de
-  IA. Puedes activar la IA más tarde en **Ajustes → Backend y modelos de IA**, y desactivarla
+  IA. Puedes activar la IA más tarde en **Ajustes → IA: backend y modelos**, y desactivarla
   con la misma facilidad.
 
 ## 2. Backend y modelo de IA
@@ -58,7 +58,7 @@ El último paso añade tu primer buzón. EmailOps admite:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge o cualquier servidor
   personalizado. Introduce los datos del servidor y las credenciales directamente.
 
-Añade más cuentas cuando quieras desde **Ajustes → Cuentas**. Con varias conectadas obtienes
+Añade más cuentas cuando quieras con **Añadir cuenta** en la barra lateral. Con varias conectadas obtienes
 una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 
 ## Después del asistente
@@ -86,6 +86,7 @@ Cuando termine la primera sincronización:
    quieres que la app se bloquee al arrancar — consulta
    [Privacidad y seguridad](../privacy-security/).
 
-Tanto la clasificación como los embeddings respetan un límite de antigüedad
-(**Ajustes → Backend y modelos de IA**), así que un archivo de hace una década no se procesa a
+Tanto la clasificación como los embeddings respetan **Limitar el procesado de IA a
+correos recientes**
+(**Ajustes → IA: backend y modelos**), así que un archivo de hace una década no se procesa a
 menos que lo pidas.

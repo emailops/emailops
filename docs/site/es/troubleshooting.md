@@ -7,7 +7,7 @@ weight: 60
 ## Las funciones de IA no están disponibles
 
 Con el backend **integrado**, comprueba que el modelo recomendado terminó de descargarse en
-**Ajustes → Backend y modelos de IA**. Una descarga interrumpida deja el modelo inservible —
+**Ajustes → IA: backend y modelos**. Una descarga interrumpida deja el modelo inservible —
 bórralo y descárgalo otra vez.
 
 Si cambiaste a **Ollama**, asegúrate de que el demonio está en marcha y accesible en
@@ -67,17 +67,17 @@ están seleccionadas las categorías que te interesan y deja que termine la pasa
 embeddings. Tras cambiar el modelo de embeddings, reconstruye el índice desde esa misma
 pantalla.
 
-Revisa también el **límite de antigüedad** en los ajustes de IA — el correo más antiguo que
+Revisa también **Limitar el procesado de IA a correos recientes** en los ajustes de IA — el correo más antiguo que
 esa ventana se omite a propósito.
 
 ## La clasificación no etiqueta nada
 
-- Confirma que **clasificar automáticamente el correo nuevo** está activado en
+- Confirma que **Clasificar nuevos correos automáticamente** está activado en
   **Ajustes → Clasificación con IA**.
 - Comprueba qué categorías de Gmail están seleccionadas; si no hay ninguna, no se clasifica
   nada.
 - Para el correo que llegó antes de activarlo, usa **Clasificar sin clasificar**, o
-  **Reclasificar todo** tras cambiar el prompt o las reglas.
+  **Reclasificar todos** tras cambiar el prompt o las reglas.
 
 ## La sincronización de Gmail se atasca o avisa de límites
 

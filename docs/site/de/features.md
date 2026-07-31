@@ -28,7 +28,7 @@ praktisch, um einen Kunden, ein Projekt oder eine Newsletter-Flut am Stück abzu
 ## Kalender
 
 Monats-, Wochen- und Tagesansichten je Konto für Google Kalender und Outlook. Sie erhalten vor
-jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Beitreten** für Meet-, Teams-, Webex-
+jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Teilnehmen** für Meet-, Teams-, Webex-
 und Zoom-Links. Die Kalendersynchronisierung ist für Gmail- und Outlook-Konten standardmäßig
 aktiv und lässt sich je Konto abschalten — ebenso die Vorlaufzeit der Benachrichtigung — unter
 **Einstellungen → Kalender**.
@@ -51,7 +51,7 @@ Junk“) trainieren den Filter mit der Zeit. Sie entscheiden, was mit markierter
 
 - **In der Liste abschwächen** — sie bleibt vorhanden, ist für das Auge nur leicht zu
   überspringen.
-- **Aus dem Posteingang heraushalten** — aus der Liste entfernt, aber weiterhin über die Suche
+- **Aus dem Posteingang nehmen** — aus der Liste entfernt, aber weiterhin über die Suche
   und die Ordner Ihres Anbieters erreichbar.
 
 Keine der beiden Optionen verschiebt oder löscht etwas auf dem Server; das tut nur ein

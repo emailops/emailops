@@ -10,7 +10,7 @@ keine E-Mail jemals Ihre Maschine.
 
 ## Backend wählen {#choosing-a-backend}
 
-**Einstellungen → KI-Backend & Modelle** legt fest, wo die Inferenz stattfindet:
+**Einstellungen → KI: Backend & Modelle** legt fest, wo die Inferenz stattfindet:
 
 - **In der App (lokal)** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren, kein
   Daemon, kein Netzwerkverkehr. Das ist der Standard. Sie nutzt automatisch Ihre GPU, wenn
@@ -64,8 +64,8 @@ steigen Sie nur auf, wenn die Hardware Luft hat. Die vollständigen Anforderunge
   zum Verkleinern, wenn ein Modell nur knapp passt.
 - **Denkmodus** — Gedankenkette bei unterstützten Modellen. Langsamer, genauer, und Sie können
   die Argumentationsspur ein- oder ausblenden.
-- **Altersgrenze** — überspringt Embeddings und Klassifizierung für E-Mails, die älter als N
-  Tage sind.
+- **KI-Verarbeitung auf neuere E-Mails beschränken** — überspringt Embeddings und
+  Klassifizierung für E-Mails, die älter als N Tage sind.
 
 ## Mit dem Postfach chatten
 
@@ -77,12 +77,12 @@ Unter der Haube kombiniert der Chat Retrieval (semantische Suche über Ihre inde
 E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus ist
 einstellbar:
 
-- **Immer zuerst RAG** — der Standard; Kontext abrufen, dann antworten.
+- **Immer RAG zuerst** — der Standard; Kontext abrufen, dann antworten.
 - **Automatisch** — eine Heuristik wählt je Frage zwischen Retrieval und Tools.
-- **Immer zuerst Tools** — direkt zu den strukturierten Abfragen.
+- **Immer Tools zuerst** — direkt zu den strukturierten Abfragen.
 
 Fortgeschrittene können den System-Prompt und die Retrieval-Prompts (Query-Umschreibung,
-Reranking) unter **Einstellungen → KI-Backend & Modelle → Chat-Prompts** bearbeiten.
+Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** bearbeiten.
 
 ## KI-Entwürfe
 
@@ -145,7 +145,7 @@ Seitenleiste anlegen und ausführen.
 
 ## Alles abschalten
 
-**Einstellungen → KI-Backend & Modelle → KI-Funktionen** ist ein Hauptschalter. Schalten Sie
+**Einstellungen → KI: Backend & Modelle → KI-Funktionen** ist ein Hauptschalter. Schalten Sie
 ihn aus, und EmailOps läuft als reiner E-Mail-Client: kein Chat, keine Klassifizierung, keine
 Embeddings, kein geladenes Modell. Ihre vorhandenen lokalen KI-Daten bleiben erhalten, falls
 Sie ihn wieder einschalten.

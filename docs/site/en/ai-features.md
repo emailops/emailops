@@ -60,7 +60,8 @@ headroom. Full requirements are in [Installation](../installation/#with-local-ai
   only just fits.
 - **Thinking mode** — chain-of-thought reasoning on supported models. Slower, more accurate,
   and you can show or hide the reasoning trace.
-- **Age cutoff** — skip embedding and classification for mail older than N days.
+- **Limit AI processing to recent emails** — skip embedding and classification for mail
+  older than N days.
 
 ## Chat with your mailbox
 

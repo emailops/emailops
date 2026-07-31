@@ -14,7 +14,7 @@ EmailOps prüft Ihre Hardware und empfiehlt, ob lokale KI aktiviert werden soll.
 - **KI aktiviert** — Chat, Entwürfe, Klassifizierung und semantische Suche laufen alle auf
   dieser Maschine.
 - **Reiner E-Mail-Client** — es wird kein Modell heruntergeladen und nie ein KI-Aufruf
-  gemacht. Sie können die KI später unter **Einstellungen → KI-Backend & Modelle** einschalten
+  gemacht. Sie können die KI später unter **Einstellungen → KI: Backend & Modelle** einschalten
   und ebenso leicht wieder aus.
 
 ## 2. KI-Backend und Modell
@@ -44,7 +44,7 @@ unter macOS in der App enthalten — für die Suche gibt es also nichts herunter
 ## 3. Layout des Posteingangs
 
 Wählen Sie die Aufteilung — **geteilt** (Liste links, Nachricht rechts) oder **volle Breite**
-(ein Bereich nach dem anderen). Jederzeit änderbar unter **Einstellungen → Darstellung**,
+(ein Bereich nach dem anderen). Jederzeit änderbar unter **Einstellungen → Erscheinungsbild**,
 zusammen mit der Sprache der Oberfläche (Deutsch, Englisch, Spanisch, Französisch).
 
 ## 4. Ein Konto verbinden
@@ -57,7 +57,7 @@ Der letzte Schritt fügt Ihr erstes Postfach hinzu. EmailOps unterstützt:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge oder ein beliebiger eigener
   Server. Serverdaten und Zugangsdaten direkt eingeben.
 
-Weitere Konten fügen Sie jederzeit unter **Einstellungen → Konten** hinzu. Mit mehreren
+Weitere Konten fügen Sie jederzeit über **Konto hinzufügen** in der Seitenleiste hinzu. Mit mehreren
 verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereinten Posteingang
 „Alle Konten“.
 
@@ -87,6 +87,7 @@ Sobald die erste Synchronisierung abgeschlossen ist:
    die App beim Start gesperrt sein soll — siehe
    [Datenschutz und Sicherheit](../privacy-security/).
 
-Klassifizierung und Embeddings berücksichtigen beide eine Altersgrenze
-(**Einstellungen → KI-Backend & Modelle**), sodass ein zehn Jahre altes Archiv nur auf
+Klassifizierung und Embeddings berücksichtigen beide **KI-Verarbeitung auf neuere
+E-Mails beschränken**
+(**Einstellungen → KI: Backend & Modelle**), sodass ein zehn Jahre altes Archiv nur auf
 ausdrücklichen Wunsch verarbeitet wird.

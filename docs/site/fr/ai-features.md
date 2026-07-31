@@ -10,7 +10,7 @@ e-mail ne quitte jamais votre machine.
 
 ## Choisir un backend {#choosing-a-backend}
 
-**Réglages → Backend et modèles d'IA** détermine où se déroule l'inférence :
+**Paramètres → IA : backend et modèles** détermine où se déroule l'inférence :
 
 - **Dans l'app (local)** — un runtime llama.cpp intégré. Rien à installer, pas de démon, pas
   de trafic réseau. C'est le choix par défaut. Il utilise automatiquement votre GPU quand il y
@@ -55,7 +55,8 @@ recommandé et ne montez que si le matériel a de la marge. Les exigences compl�
 
 ### Réglages de performance
 
-- **Garder le modèle chargé** — combien de temps le modèle reste en mémoire entre deux tours
+- **Maintenir le modèle chargé** — combien de temps le modèle reste en mémoire entre deux
+  tours
   (30 minutes par défaut). Des valeurs plus élevées évitent le rechargement lent ; `0` le
   libère immédiatement et rend la mémoire aux autres applications.
 - **Fenêtre de contexte** — combien de jetons le modèle peut traiter par tour. Plus grande,
@@ -63,8 +64,8 @@ recommandé et ne montez que si le matériel a de la marge. Les exigences compl�
   réglage à baisser quand un modèle tient tout juste.
 - **Mode raisonnement** — chaîne de pensée sur les modèles compatibles. Plus lent, plus
   précis, et vous pouvez afficher ou masquer la trace.
-- **Limite d'ancienneté** — ignore embeddings et classification pour le courrier de plus de
-  N jours.
+- **Limiter le traitement IA aux courriels récents** — ignore embeddings et classification
+  pour le courrier de plus de N jours.
 
 ## Discuter avec votre boîte
 
@@ -76,13 +77,13 @@ Sous le capot, le chat combine la récupération (recherche sémantique sur vos 
 et des appels d'outils (interrogations directes de la base). Le mode de routage est
 configurable :
 
-- **Toujours RAG d'abord** — le mode par défaut ; récupérer le contexte, puis répondre.
+- **Toujours RAG en premier** — le mode par défaut ; récupérer le contexte, puis répondre.
 - **Auto** — une heuristique choisit récupération ou outils selon la question.
-- **Toujours les outils d'abord** — passer directement aux requêtes structurées.
+- **Toujours les outils en premier** — passer directement aux requêtes structurées.
 
 Les utilisateurs avancés peuvent modifier le prompt système et les prompts de récupération
 (réécriture de requête, reclassement) dans
-**Réglages → Backend et modèles d'IA → Prompts de chat**.
+**Paramètres → IA : backend et modèles → Prompts du chat**.
 
 ## Brouillons d'IA
 
@@ -113,7 +114,7 @@ Les e-mails sont indexés localement pour que la recherche corresponde au sens e
 aux mots-clés — décrivez ce dont vous vous souvenez et EmailOps le retrouve. Cela alimente
 aussi « trouver des messages similaires » et l'étape de récupération du chat. Choisissez les
 catégories indexées et reconstruisez l'index de zéro après un changement de modèle
-d'embeddings, dans **Réglages → Recherche IA**.
+d'embeddings, dans **Paramètres → Recherche IA**.
 
 ## Traduction
 
@@ -145,7 +146,7 @@ créez et exécutez depuis la barre latérale.
 
 ## Tout désactiver
 
-**Réglages → Backend et modèles d'IA → Fonctions d'IA** est un interrupteur général.
+**Paramètres → IA : backend et modèles → Fonctions IA** est un interrupteur général.
 Désactivez-le et EmailOps fonctionne comme un client e-mail classique : pas de chat, pas de
 classification, pas d'embeddings, aucun modèle chargé. Vos données d'IA locales sont
 conservées au cas où vous le réactiveriez.
