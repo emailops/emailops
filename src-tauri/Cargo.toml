@@ -33,7 +33,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
 # Pinned to 0.38 (not 0.40) because `refinery` 0.9.1 caps its rusqlite range
 # at <=0.38. Bump together once refinery widens that bound.
-rusqlite = { version = "0.38", features = ["bundled", "backup"] }
+rusqlite = { version = "0.39", features = ["bundled", "backup"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
