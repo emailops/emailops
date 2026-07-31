@@ -156,4 +156,68 @@ describe('Select', () => {
       expect(listbox?.className).not.toContain('top-full');
     });
   });
+
+  describe('variant', () => {
+    it('defaults to the dark surface palette', () => {
+      act(() => {
+        root.render(<Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" />);
+      });
+      const button = container.querySelector('button[aria-haspopup="listbox"]');
+      expect(button?.className).toContain('bg-[#333]');
+      expect(button?.className).not.toContain('bg-white');
+    });
+
+    it('uses the light surface palette when variant="light"', () => {
+      act(() => {
+        root.render(
+          <Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" variant="light" />,
+        );
+      });
+      const button = container.querySelector('button[aria-haspopup="listbox"]');
+      expect(button?.className).toContain('bg-white');
+      expect(button?.className).not.toContain('bg-[#333]');
+      clickTrigger();
+      const listbox = container.querySelector('[role="listbox"]');
+      expect(listbox?.className).toContain('bg-white');
+    });
+  });
+
+  describe('platform-specific popup (only Linux/WebKitGTK needs an owned popup)', () => {
+    afterEach(() => {
+      vi.doUnmock('@/lib/api');
+      vi.resetModules();
+    });
+
+    async function renderWithPlatform(platform: string) {
+      vi.resetModules();
+      vi.doMock('@/lib/api', () => ({ currentPlatform: () => platform }));
+      const { Select: PlatformSelect } = await import('./Select');
+      await act(async () => {
+        root.render(<PlatformSelect value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" />);
+      });
+    }
+
+    it('owns the popup markup on Linux', async () => {
+      await renderWithPlatform('linux');
+      expect(container.querySelector('button[aria-haspopup="listbox"]')).not.toBeNull();
+      expect(container.querySelector('select')).toBeNull();
+    });
+
+    it('falls back to a real native <select> on macOS', async () => {
+      await renderWithPlatform('macos');
+      expect(container.querySelector('select')).not.toBeNull();
+      expect(container.querySelector('button[aria-haspopup="listbox"]')).toBeNull();
+    });
+
+    it('falls back to a real native <select> on Windows', async () => {
+      await renderWithPlatform('windows');
+      expect(container.querySelector('select')).not.toBeNull();
+      expect(container.querySelector('button[aria-haspopup="listbox"]')).toBeNull();
+    });
+
+    it('treats an unknown platform (e.g. this test environment) as needing the owned popup', async () => {
+      await renderWithPlatform('');
+      expect(container.querySelector('button[aria-haspopup="listbox"]')).not.toBeNull();
+    });
+  });
 });

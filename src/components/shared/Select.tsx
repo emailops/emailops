@@ -1,9 +1,12 @@
-// Custom dropdown replacing native <select> app-wide. WebKitGTK on Linux
+// Custom dropdown replacing native <select> on Linux only. WebKitGTK there
 // renders a native <select>'s option popup via the GTK theme, not page CSS,
 // so a native select shows a light popup even inside this app's dark
-// surfaces — owning the popup markup here lets it actually be styled.
+// surfaces — owning the popup markup lets it actually be styled. macOS and
+// Windows don't have that bug, so they keep the real native <select> (OS
+// popup + keyboard/a11y behavior for free) — see NEEDS_OWNED_POPUP below.
 
 import { useEffect, useRef, useState } from 'react';
+import { currentPlatform } from '@/lib/api';
 
 export interface SelectOption<T extends string> {
   value: T;
@@ -23,6 +26,10 @@ interface SelectProps<T extends string> {
   className?: string;
   /** Which edge the popup panel hangs from. Default 'left'. */
   align?: 'left' | 'right';
+  /** Surface this sits on: 'dark' (default) matches the app's dark chrome
+   *  (Settings, Lenses, Calendar, LogPanel); 'light' matches the compose
+   *  surfaces (white/gray-50 backgrounds). */
+  variant?: 'dark' | 'light';
 }
 
 const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
@@ -30,6 +37,32 @@ const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
   sm: 'px-3 py-2 text-sm',
   md: 'px-3 py-2.5 text-sm',
 };
+
+const VARIANT_CLASSES = {
+  dark: {
+    trigger: 'bg-[#333] text-gray-300 border border-gray-600 focus:border-primary-500',
+    placeholder: 'text-gray-500',
+    popup: 'bg-[#333] border border-gray-600',
+    optionHover: 'hover:bg-[#444]',
+    optionText: 'text-gray-300',
+    optionSelectedText: 'text-primary-400',
+  },
+  light: {
+    trigger:
+      'bg-white text-gray-900 border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100',
+    placeholder: 'text-gray-400',
+    popup: 'bg-white border border-gray-200',
+    optionHover: 'hover:bg-gray-50',
+    optionText: 'text-gray-700',
+    optionSelectedText: 'text-primary-600',
+  },
+} as const;
+
+// The host platform never changes mid-session, so this is computed once at
+// module load rather than per render. Unknown platforms (tests, a plain
+// browser) fall back to the owned-popup behavior — the same "assume
+// non-Apple desktop" convention src/lib/platform.ts already uses.
+const NEEDS_OWNED_POPUP = currentPlatform() !== 'macos' && currentPlatform() !== 'windows';
 
 export function Select<T extends string>({
   value,
@@ -42,13 +75,20 @@ export function Select<T extends string>({
   fullWidth = false,
   className = '',
   align = 'left',
+  variant = 'dark',
 }: SelectProps<T>) {
+  const colors = VARIANT_CLASSES[variant];
+
+  // Hooks below must run unconditionally on every render (NEEDS_OWNED_POPUP
+  // is a module-level constant, never changes for a mounted instance, but
+  // the lint rule can't know that) — the native-vs-owned branch happens only
+  // in the returned JSX, after all hooks have been called.
   const [open, setOpen] = useState(false);
   const [openDirection, setOpenDirection] = useState<'down' | 'up'>('down');
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!NEEDS_OWNED_POPUP || !open) return;
     const onDocMouseDown = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     };
@@ -64,7 +104,7 @@ export function Select<T extends string>({
   }, [open]);
 
   useEffect(() => {
-    if (!open || !containerRef.current) return;
+    if (!NEEDS_OWNED_POPUP || !open || !containerRef.current) return;
     // A native <select> auto-flips its popup upward when there's no room
     // below (e.g. a trigger pinned to a bottom toolbar); this custom popup
     // needs the same or it renders clipped/off-screen there. One estimate
@@ -76,6 +116,29 @@ export function Select<T extends string>({
     const spaceAbove = rect.top;
     setOpenDirection(spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow ? 'up' : 'down');
   }, [open, options.length]);
+
+  if (!NEEDS_OWNED_POPUP) {
+    return (
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value as T)}
+        className={`rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
+      >
+        {placeholder !== undefined && (
+          <option value="" disabled hidden>
+            {placeholder}
+          </option>
+        )}
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
 
   const selected = options.find((o) => o.value === value);
 
@@ -96,9 +159,9 @@ export function Select<T extends string>({
         onClick={() => {
           if (!disabled) setOpen((v) => !v);
         }}
-        className={`flex items-center justify-between gap-1.5 bg-[#333] text-gray-300 border border-gray-600 rounded outline-none focus:border-primary-500 disabled:opacity-60 disabled:cursor-not-allowed ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
+        className={`flex items-center justify-between gap-1.5 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
       >
-        <span className={selected ? '' : 'text-gray-500'}>{selected ? selected.label : (placeholder ?? '')}</span>
+        <span className={selected ? '' : colors.placeholder}>{selected ? selected.label : (placeholder ?? '')}</span>
         <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path
             fillRule="evenodd"
@@ -114,7 +177,7 @@ export function Select<T extends string>({
           aria-label={ariaLabel}
           className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${
             openDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          } z-20 max-h-64 overflow-y-auto bg-[#333] border border-gray-600 rounded shadow-lg py-1 ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
+          } z-20 max-h-64 overflow-y-auto rounded shadow-lg py-1 ${colors.popup} ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
         >
           {options.map((opt) => (
             <button
@@ -124,8 +187,8 @@ export function Select<T extends string>({
               aria-selected={opt.value === value}
               disabled={opt.disabled}
               onClick={() => selectOption(opt)}
-              className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-[#444] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent ${
-                opt.value === value ? 'text-primary-400' : 'text-gray-300'
+              className={`block w-full text-left px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent ${colors.optionHover} ${
+                opt.value === value ? colors.optionSelectedText : colors.optionText
               }`}
             >
               {opt.label}
