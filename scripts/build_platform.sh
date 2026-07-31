@@ -93,6 +93,27 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
        "src-tauri/target/$TARGET/release/deps" \
        -maxdepth 1 \( -iname 'libggml*.so*' -o -iname 'libllama*.so*' \) -delete 2>/dev/null || true
 
+  if [ "$PLATFORM" = "windows" ]; then
+    # llama-cpp-sys-2's vendored CMake build compiles its vulkan-shaders-gen
+    # sub-tool with parallel cl.exe invocations (CMAKE_BUILD_PARALLEL_LEVEL=4,
+    # set by the crate itself) — without /FS, concurrent cl.exe processes
+    # race on the same debug .pdb file and fail with "C1041: cannot open
+    # program database". MSVC's documented fix is the CL env var it reads for
+    # default flags on every invocation.
+    #
+    # Scoped to just this cargo invocation, not the whole script: this step
+    # runs under Git Bash, whose MSYS runtime mangles a bare "/FS" into
+    # "C:/Program Files/Git/FS" (both single- and double-leading-slash — the
+    # doubled-slash escape is for argv, not env var values inherited by a
+    # native child process, which is what happens here). MSYS_NO_PATHCONV
+    # disables that conversion, but it's a blunt, process-wide switch — set
+    # earlier (e.g. for the whole build step in CI) it also broke
+    # fetch_bundled_models.sh's own legitimate curl download, which relies on
+    # the same conversion for its POSIX-style output path.
+    export CL="/FS"
+    export MSYS_NO_PATHCONV=1
+  fi
+
   # Two-pass build. `tauri build` validates bundle.resources while compiling,
   # so the backend modules must already be staged — but they only exist AFTER
   # llama-cpp-sys-2's build script has run. So compile first, stage, then

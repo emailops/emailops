@@ -140,6 +140,11 @@ jobs:
       # driver is present and falls back to CPU when it is not. Vulkan is the
       # single-artifact choice over CUDA — it covers AMD/Intel/NVIDIA and only
       # needs the user's normal graphics driver, not the NVIDIA toolkit.
+      # The Windows-only MSVC PDB-race workaround (CL=/FS + MSYS_NO_PATHCONV)
+      # lives inside scripts/build_platform.sh, scoped to just the cargo
+      # build invocation — setting MSYS_NO_PATHCONV for this entire step
+      # broke fetch_bundled_models.sh's own curl download, which relies on
+      # the same MSYS path conversion this disables.
       - name: Build
         shell: bash
         env:
@@ -148,24 +153,6 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
-          # Windows/MSVC only, harmless elsewhere (gcc/clang ignore this env
-          # var): llama-cpp-sys-2's vendored CMake build compiles its
-          # vulkan-shaders-gen sub-tool with parallel cl.exe invocations
-          # (CMAKE_BUILD_PARALLEL_LEVEL=4, set by the crate itself). Without
-          # /FS, concurrent cl.exe processes race on the same debug .pdb file
-          # and fail with "C1041: cannot open program database" — this is
-          # MSVC's own documented fix for that race, applied via the CL env
-          # var it reads for default flags on every invocation.
-          #
-          # This step runs under Git Bash (shell: bash) on the Windows
-          # runner, whose MSYS runtime mangles single-leading-slash VALUES
-          # (not just argv) when handing off to native child processes — a
-          # plain "/FS" silently became "C:/Program Files/Git/FS" here, and a
-          # doubled "//FS" made no difference (that escape is for argv, not
-          # this). MSYS_NO_PATHCONV disables the conversion outright so CL's
-          # value survives verbatim.
-          CL: /FS
-          MSYS_NO_PATHCONV: "1"
         run: make build-${{ matrix.platform }}
 
       - name: Verify
