@@ -112,6 +112,19 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     # the same conversion for its POSIX-style output path.
     export CL="/FS"
     export MSYS_NO_PATHCONV=1
+
+    # CL=/FS alone turned out not to reach this specific race: the printed
+    # cl.exe command line for the failing try_compile has no /FS on it, so
+    # whatever invokes it here (MSBuild driving the vulkan-shaders-gen
+    # sub-project's CMakeTestCCompiler.cmake bootstrap) isn't inheriting the
+    # ambient CL env var the way a plain shell cl.exe call would. Rather than
+    # chase exactly why, remove the race at its source: force this build to
+    # a single job so no two cl.exe processes are ever writing a .pdb
+    # concurrently in the first place. CMAKE_BUILD_PARALLEL_LEVEL is read
+    # from the environment by `cmake --build` (the -D of the same name
+    # llama-cpp-sys-2 passes at configure time is inert — that variable isn't
+    # a real CMake cache setting, only an env var `cmake --build` consults).
+    export CMAKE_BUILD_PARALLEL_LEVEL=1
   fi
 
   # Two-pass build. `tauri build` validates bundle.resources while compiling,
