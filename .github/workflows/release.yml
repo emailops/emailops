@@ -232,7 +232,11 @@ jobs:
           # logged-in desktop by default. Same fix as private testing: wrap
           # the launch in dbus-run-session + an unlocked throwaway keyring,
           # and give it a virtual display via Xvfb.
-          sudo apt-get install -y xvfb dbus-x11 gnome-keyring
+          # imagemagick provides `import`, used below to capture what the app
+          # actually painted — a process that is merely alive can still be
+          # showing a blank window (WebKitGTK's compositing path fails exactly
+          # that way on headless boxes), which a liveness check cannot detect.
+          sudo apt-get install -y xvfb dbus-x11 gnome-keyring imagemagick
           DEB="$(find release -maxdepth 1 -name '*.deb' | head -1)"
           # apt-get needs an explicit ./ (or absolute path) to treat this as a
           # local file — without it, apt parses "release/EmailOps-linux.deb"
@@ -240,7 +244,14 @@ jobs:
           # everything before the LAST slash as a package name to look up,
           # hence "Unable to locate package release".
           sudo apt-get install -y "./$DEB"
-          xvfb-run -a dbus-run-session -- bash -c '
+          # WEBKIT_DISABLE_COMPOSITING_MODE: there is no usable GL stack on a
+          # runner, and without this the webview can come up blank — which
+          # would make the screenshot below a white rectangle rather than a
+          # useful artifact.
+          export WEBKIT_DISABLE_COMPOSITING_MODE=1
+          # -a picks a free display but does not tell us which; a fixed screen
+          # size and a known display are needed so `import` can find it.
+          xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
             emailops > /tmp/smoke.log 2>&1 &
             APP_PID=$!
@@ -251,6 +262,10 @@ jobs:
               exit 1
             fi
             echo "emailops is running (pid $APP_PID) after 8s — smoke test passed"
+            # A few extra seconds so the frontend has actually rendered rather
+            # than being caught mid-paint.
+            sleep 7
+            import -window root /tmp/smoke-linux.png || echo "WARN: screenshot capture failed"
             kill "$APP_PID"
           '
 
@@ -276,7 +291,40 @@ jobs:
             exit 1
           }
           Write-Host "emailops.exe is running (pid $($proc.Id)) after 8s — smoke test passed"
+
+          # Best-effort screen capture. GitHub's Windows runners execute in a
+          # service session, so CopyFromScreen may return a black frame or
+          # throw outright depending on whether a desktop is attached. That is
+          # a limitation of the runner, not a release defect, so this must
+          # never fail the build — the Linux screenshot is the reliable one.
+          Start-Sleep -Seconds 7
+          try {
+            Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+            $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bmp.Save("$env:RUNNER_TEMP\smoke-windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            Write-Host "screenshot saved to $env:RUNNER_TEMP\smoke-windows.png"
+          } catch {
+            Write-Host "WARN: screenshot capture unavailable on this runner: $_"
+          }
           Stop-Process -Id $proc.Id -Force
+
+      # `always()`: the screenshot is most valuable precisely when the smoke
+      # test just failed — a blank window or a visible error dialog explains a
+      # startup failure that the process-liveness check can only report as a
+      # bare exit code. Uploaded on real releases too, not just dry runs.
+      - name: Upload smoke-test screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-screenshot-${{ matrix.platform }}
+          path: |
+            /tmp/smoke-linux.png
+            ${{ runner.temp }}/smoke-windows.png
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Dry-run path: never touch the public releases page. Upload the built
       # installers as a plain workflow artifact instead, so a validation run

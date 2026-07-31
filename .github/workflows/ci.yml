@@ -165,7 +165,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Pinned to match the release job's image (see release.yml) so the
+        # C++/CMake path is exercised against the same toolchain that actually
+        # ships. On ubuntu-latest this job would compile with a newer gcc than
+        # any released artifact ever uses.
+        os: [ubuntu-22.04, windows-latest]
     steps:
       - uses: actions/checkout@v6
 
@@ -212,7 +216,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned to match the release job (see release.yml): this job exists
+          # to validate the packaging step, which it can only do faithfully on
+          # the image the shipped bundle is actually built on.
+          - os: ubuntu-22.04
             platform: linux
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
