@@ -29,8 +29,8 @@ Apunta `EMAILOPS_DATA_DIR` a otro sitio antes de arrancar para usar otra ubicaci
 segundo perfil, o un volumen cifrado.
 
 **Las credenciales no están ahí.** Los tokens OAuth y las contraseñas IMAP van al almacén de
-credenciales del sistema: Keychain en macOS, el Administrador de credenciales en Windows o un
-keyring Secret Service en Linux. Nunca se escriben en un archivo de configuración y sobreviven
+credenciales del sistema: el Llavero en macOS, el Administrador de credenciales en Windows o un
+llavero Secret Service en Linux. Nunca se escriben en un archivo de configuración y sobreviven
 a la desinstalación de la app.
 
 ## No hay ningún servidor de EmailOps

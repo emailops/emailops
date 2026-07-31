@@ -63,7 +63,7 @@ Ambos modos necesitan uno de estos:
 
 - **macOS** Monterey (12) o posterior — Apple Silicon o Intel.
 - **Windows** 10 u 11, 64 bits.
-- **Linux** 64 bits, con WebKitGTK y un keyring Secret Service — mira
+- **Linux** 64 bits, con WebKitGTK y un llavero Secret Service — mira
   [Linux](#linux) más abajo.
 
 ## macOS
@@ -126,11 +126,11 @@ Lo que necesitas es el stack normal de controladores Vulkan de tu tarjeta —
 mayoría de distribuciones de escritorio ya instalan. Si `vulkaninfo` detecta un dispositivo,
 EmailOps lo usará.
 
-### Hace falta un keyring
+### Hace falta un llavero
 
 EmailOps nunca escribe las credenciales de las cuentas en un archivo: los tokens OAuth y las
 contraseñas IMAP van al almacén de credenciales del sistema. macOS y Windows traen uno
-(Keychain y el Administrador de credenciales); en Linux tienes que aportarlo tú.
+(el Llavero y el Administrador de credenciales); en Linux tienes que aportarlo tú.
 
 Necesitas un proveedor de **Secret Service** instalado y desbloqueado. Cualquiera de estos
 sirve:
@@ -139,7 +139,7 @@ sirve:
 - **KWallet** (`kwalletmanager` con la interfaz Secret Service) — el equivalente en KDE.
 - **KeePassXC** con *Ajustes → Integración con Secret Service* activada.
 
-En un gestor de ventanas mínimo o en una sesión sin escritorio a menudo no hay ningún keyring
+En un gestor de ventanas mínimo o en una sesión sin escritorio a menudo no hay ningún llavero
 en marcha. Instala uno de los anteriores y asegúrate de que está desbloqueado cuando arranca
 EmailOps — de lo contrario, añadir una cuenta falla, porque no hay dónde guardar las
 credenciales de forma segura.
@@ -162,8 +162,7 @@ sistema:
 
 - **Correo, contactos, eventos de calendario, embeddings** — una base de datos SQLite local.
 - **Modelos de IA descargados** — una carpeta `models/` junto a la base de datos.
-- **Tokens OAuth y contraseñas** — el almacén de credenciales del sistema, nunca un archivo
-  en claro.
+- **Tokens OAuth y contraseñas** — el llavero del sistema, nunca un archivo en claro.
 
 Para mover o compartir un directorio de datos (para pruebas o un segundo perfil), define la
 variable de entorno `EMAILOPS_DATA_DIR` antes de arrancar. Las rutas exactas por plataforma, y
@@ -220,10 +219,10 @@ rm -rf ~/.config/com.emailops.app
 
 ### Credenciales guardadas
 
-En todas las plataformas, los tokens OAuth y las contraseñas IMAP viven en el almacén de
-credenciales del sistema y no en el directorio de datos, así que sobreviven a todo lo anterior. Elimina las
-entradas `com.emailops.app` de Keychain Access (macOS), el Administrador de credenciales
-(Windows) o tu gestor de keyring (Linux) si también quieres deshacerte de ellas.
+En todas las plataformas, los tokens OAuth y las contraseñas IMAP viven en el llavero del
+sistema y no en el directorio de datos, así que sobreviven a todo lo anterior. Elimina las
+entradas `com.emailops.app` de Acceso a Llaveros (macOS), el Administrador de credenciales
+(Windows) o tu gestor de llavero (Linux) si también quieres deshacerte de ellas.
 
 ## Compilar desde el código fuente
 

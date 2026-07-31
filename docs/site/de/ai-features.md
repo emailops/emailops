@@ -62,7 +62,7 @@ steigen Sie nur auf, wenn die Hardware Luft hat. Die vollständigen Anforderunge
 - **Kontextfenster** — wie viele Token das Modell pro Anfrage berücksichtigen kann. Größer
   fasst mehr abgerufene E-Mails und kostet mehr Speicher — das ist die erste Stellschraube
   zum Verkleinern, wenn ein Modell nur knapp passt.
-- **Denkmodus** — Gedankenkette bei unterstützten Modellen. Langsamer, genauer, und Sie können
+- **Denkmodus** — Chain-of-Thought bei unterstützten Modellen. Langsamer, genauer, und Sie können
   die Argumentationsspur ein- oder ausblenden.
 - **KI-Verarbeitung auf neuere E-Mails beschränken** — überspringt Embeddings und
   Klassifizierung für E-Mails, die älter als N Tage sind.

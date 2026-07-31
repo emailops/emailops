@@ -7,7 +7,8 @@ weight: 10
 ## Systemanforderungen
 
 Die KI **lokal** auszuführen ist der anspruchsvolle Teil — und optional. Sie können sie im
-Einrichtungsassistenten ablehnen und EmailOps als reinen E-Mail-Client nutzen, oder alle
+Einrichtungsassistenten deaktivieren und EmailOps als reinen E-Mail-Client nutzen, oder
+alle
 KI-Funktionen behalten und sie stattdessen an einen entfernten Anbieter leiten. Die beiden
 Modi haben sehr unterschiedliche Anforderungen.
 

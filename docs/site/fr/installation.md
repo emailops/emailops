@@ -6,8 +6,9 @@ weight: 10
 
 ## Configuration requise
 
-Exécuter l'IA **en local** est la partie exigeante, et c'est optionnel. Vous pouvez la refuser
-dans l'assistant de premier lancement et utiliser EmailOps comme un client e-mail classique,
+Exécuter l'IA **en local** est la partie exigeante, et c'est optionnel. Vous pouvez la
+désactiver dans l'assistant de premier lancement et utiliser EmailOps comme un client e-mail
+classique,
 ou conserver toutes les fonctions d'IA et les diriger vers un fournisseur distant. Les deux
 modes ont des exigences très différentes.
 

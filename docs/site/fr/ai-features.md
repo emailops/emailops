@@ -62,7 +62,7 @@ recommandé et ne montez que si le matériel a de la marge. Les exigences compl�
 - **Fenêtre de contexte** — combien de jetons le modèle peut traiter par tour. Plus grande,
   elle contient davantage d'e-mails récupérés et coûte plus de mémoire — c'est le premier
   réglage à baisser quand un modèle tient tout juste.
-- **Mode raisonnement** — chaîne de pensée sur les modèles compatibles. Plus lent, plus
+- **Mode raisonnement** — chain-of-thought sur les modèles compatibles. Plus lent, plus
   précis, et vous pouvez afficher ou masquer la trace.
 - **Limiter le traitement IA aux courriels récents** — ignore embeddings et classification
   pour le courrier de plus de N jours.

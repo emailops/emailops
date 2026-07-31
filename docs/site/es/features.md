@@ -59,8 +59,8 @@ basura** explícito. Hay un aviso opcional de suplantación/phishing, desactivad
 ## Controles de privacidad y seguridad
 
 Una contraseña principal bloquea la app al arrancar, las imágenes remotas y los píxeles de
-seguimiento se bloquean hasta que los permitas, y las credenciales viven en el almacén de
-credenciales del sistema. Todo ello se detalla en [Privacidad y seguridad](../privacy-security/).
+seguimiento se bloquean hasta que los permitas, y las credenciales viven en el llavero del
+sistema. Todo ello se detalla en [Privacidad y seguridad](../privacy-security/).
 
 ## Interfaz
 
