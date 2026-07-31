@@ -13,7 +13,7 @@ EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Ch
 
 - **IA activée** — chat, brouillons, classification et recherche sémantique s'exécutent tous
   sur cette machine.
-- **Client e-mail simple** — aucun modèle n'est téléchargé et aucun appel d'IA n'est jamais
+- **Client de messagerie simple** — aucun modèle n'est téléchargé et aucun appel d'IA n'est jamais
   effectué. Vous pourrez activer l'IA plus tard dans **Paramètres → IA : backend et modèles**,
   et la désactiver tout aussi facilement.
 

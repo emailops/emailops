@@ -55,7 +55,7 @@ Junk“) trainieren den Filter mit der Zeit. Sie entscheiden, was mit markierter
   und die Ordner Ihres Anbieters erreichbar.
 
 Keine der beiden Optionen verschiebt oder löscht etwas auf dem Server; das tut nur ein
-ausdrückliches **Junk bestätigen**. Eine optionale Warnung vor Identitätsmissbrauch/Phishing
+ausdrückliches **Als Spam bestätigen**. Eine optionale Warnung vor Identitätsmissbrauch/Phishing
 ist verfügbar und standardmäßig aus.
 
 ## Datenschutz- und Sicherheitseinstellungen

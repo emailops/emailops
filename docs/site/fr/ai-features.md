@@ -100,7 +100,7 @@ quoi filtrer.
 
 La classification fonctionne en deux couches :
 
-1. Les **règles** correspondent à des motifs d'expéditeur ou d'objet (`*@*.beehiiv.com`,
+1. Les **Règles** correspondent à des motifs d'expéditeur ou d'objet (`*@*.beehiiv.com`,
    `*facture*`) et attribuent des étiquettes instantanément, sans appel au modèle.
 2. **Le modèle** traite tout ce que les règles ne couvrent pas, avec un prompt d'instructions
    que vous pouvez modifier.

@@ -13,7 +13,7 @@ EmailOps prüft Ihre Hardware und empfiehlt, ob lokale KI aktiviert werden soll.
 
 - **KI aktiviert** — Chat, Entwürfe, Klassifizierung und semantische Suche laufen alle auf
   dieser Maschine.
-- **Reiner E-Mail-Client** — es wird kein Modell heruntergeladen und nie ein KI-Aufruf
+- **Einfacher E-Mail-Client** — es wird kein Modell heruntergeladen und nie ein KI-Aufruf
   gemacht. Sie können die KI später unter **Einstellungen → KI: Backend & Modelle** einschalten
   und ebenso leicht wieder aus.
 
@@ -25,7 +25,7 @@ Wenn Sie die KI aktiviert haben, wählen Sie, wo die Inferenz stattfindet:
 |---|---|
 | **In der App (lokal)** | Der Standard. Eine in EmailOps eingebettete llama.cpp-Laufzeit. Kein Daemon, keine Einrichtung, kein Netzwerk. |
 | **Ollama (lokal)** | Nutzt Ihren vorhandenen Ollama-Server unter `http://localhost:11434`. |
-| **OpenRouter (remote)** | Sendet Prompts an eine kostenpflichtige Cloud-API. Optional, pro Funktion, standardmäßig aus. |
+| **OpenRouter (entfernt)** | Sendet Prompts an eine kostenpflichtige Cloud-API. Optional, pro Funktion, standardmäßig aus. |
 
 Wählen Sie beim eingebauten Backend ein Chat-Modell aus dem Katalog. **Qwen 3.5 4B** ist der
 empfohlene Standard: rund 3 GB Download, benötigt etwa 8 GB Arbeitsspeicher zum Ausführen und

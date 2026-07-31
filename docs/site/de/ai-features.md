@@ -19,7 +19,7 @@ keine E-Mail jemals Ihre Maschine.
 - **Ollama (lokal)** — ein Ollama-Server, den Sie bereits unter `http://localhost:11434`
   betreiben. Praktisch, wenn Sie eine gemeinsame Modellbibliothek pflegen, oder auf
   Intel-Macs, wo die eingebettete Laufzeit fehlt.
-- **OpenRouter (remote)** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
+- **OpenRouter (entfernt)** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
   bleibt sie aus, bis Sie sie aktivieren.
 
@@ -78,7 +78,7 @@ E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus i
 einstellbar:
 
 - **Immer RAG zuerst** — der Standard; Kontext abrufen, dann antworten.
-- **Automatisch** — eine Heuristik wählt je Frage zwischen Retrieval und Tools.
+- **Auto** — eine Heuristik wählt je Frage zwischen Retrieval und Tools.
 - **Immer Tools zuerst** — direkt zu den strukturierten Abfragen.
 
 Fortgeschrittene können den System-Prompt und die Retrieval-Prompts (Query-Umschreibung,

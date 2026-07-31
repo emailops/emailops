@@ -3,10 +3,20 @@
 # Verify that UI labels quoted in docs/site/<lang>/ match the app's own
 # translations in src/locales/<lang>/.
 #
-# The docs tell people to click things ("Settings → AI Search"). If the app's
-# German tab says „KI-Klassifikation" and the German docs say
-# „KI-Klassifizierung", the reader hunts for a menu item that does not exist.
-# This checks every `**A → B**` path in the docs against the real strings.
+# The docs tell people to click things. If the app's German tab says
+# „KI-Klassifikation" and the German docs say „KI-Klassifizierung", the reader
+# hunts for a menu item that does not exist. Two checks:
+#
+#   1. Settings paths — every segment of a `**A → B**` path must be a real
+#      string in that language's locale files.
+#   2. Control labels — English is the oracle. A `**bold**` span whose text is
+#      verbatim an English UI string is a control reference, so the span at the
+#      same position in es/fr/de must likewise be a real string in that
+#      language. Bold prose (emphasis, filenames, product names) is untouched.
+#
+# Check 2 relies on bold spans lining up positionally across translations,
+# which is a consequence of translating page-for-page. If a translation adds or
+# drops a bold span the script says so rather than guessing.
 #
 # Usage: scripts/check-docs-labels.sh   (exit 0 = every quoted label exists)
 
@@ -17,9 +27,11 @@ python3 - <<'PY'
 import json, pathlib, re, sys
 
 LANGS = ["en", "es", "fr", "de"]
+REF = "en"
+DOCS = pathlib.Path("docs/site")
 
-# Paths that belong to the operating system, not to EmailOps.
-IGNORE = {
+# Path segments that belong to another program, not to EmailOps.
+IGNORE_SEGMENTS = {
     # Windows' own Settings app, quoted in the uninstall instructions.
     "Configuración", "Apps", "Installed apps", "Applications",
     "Applications installées", "Aplicaciones", "Aplicaciones instaladas",
@@ -29,6 +41,14 @@ IGNORE = {
     "Integración con Secret Service", "Secret-Service-Integration",
 }
 
+# English bold spans that happen to collide with a UI string but are ordinary
+# prose in context, so translations are not expected to quote a control.
+# Keyed by "<file>:<english text>".
+NOT_A_CONTROL = {
+    "getting-started.md:Embeddings",   # "Embeddings are generated in the background"
+}
+
+
 def locale_strings(lang):
     out = set()
     def walk(o):
@@ -36,42 +56,76 @@ def locale_strings(lang):
             for v in o.values():
                 walk(v)
         elif isinstance(o, str):
-            out.add(o.strip())
+            out.add(" ".join(o.split()))
     for f in pathlib.Path("src/locales", lang).glob("*.json"):
         walk(json.load(open(f, encoding="utf-8")))
     return out
 
-def matches(segment, strings):
-    if segment in strings:
+
+def is_ui(text, strings):
+    if text in strings:
         return True
     # The UI often appends a unit: "Context window (tokens)".
-    return any(s.startswith(segment + " (") for s in strings)
+    return any(s.startswith(text + " (") for s in strings)
 
-problems = 0
+
+def bold_spans(lang, name):
+    text = pathlib.Path(DOCS, lang, name).read_text(encoding="utf-8")
+    return [" ".join(b.split()) for b in re.findall(r"\*\*([^*]+)\*\*", text)]
+
+
+STRINGS = {l: locale_strings(l) for l in LANGS}
+problems = []
+
+# --- 1. settings paths ------------------------------------------------------
 for lang in LANGS:
-    strings = locale_strings(lang)
-    docs = sorted(pathlib.Path("docs/site", lang).glob("*.md"))
-    if not docs:
-        print(f"{lang}: no docs", file=sys.stderr)
-        problems += 1
-        continue
-    seen = set()
-    for p in docs:
-        text = p.read_text(encoding="utf-8")
-        for bold in re.findall(r"\*\*([^*]+→[^*]+)\*\*", text):
-            for seg in (s.strip() for s in bold.split("→")):
-                if not seg or seg in IGNORE or seg in seen:
+    checked = 0
+    for p in sorted(DOCS.joinpath(lang).glob("*.md")):
+        for bold in re.findall(r"\*\*([^*]+→[^*]+)\*\*", p.read_text(encoding="utf-8")):
+            for seg in (" ".join(s.split()) for s in bold.split("→")):
+                if not seg or seg in IGNORE_SEGMENTS:
                     continue
-                seen.add(seg)
-                if not matches(seg, strings):
-                    print(f"  {lang}: {seg!r} is not a string in src/locales/{lang}/"
-                          f"  (in {p.name})")
-                    problems += 1
-    print(f"{lang}: checked {len(seen)} distinct UI labels")
+                checked += 1
+                if not is_ui(seg, STRINGS[lang]):
+                    problems.append(f"{lang}/{p.name}: path segment {seg!r} is not in src/locales/{lang}/")
+    print(f"{lang}: {checked} settings-path segments checked")
+
+# --- 2. control labels, English as the oracle -------------------------------
+names = sorted(p.name for p in DOCS.joinpath(REF).glob("*.md"))
+controls = 0
+for name in names:
+    ref_spans = bold_spans(REF, name)
+    for lang in LANGS:
+        if lang == REF:
+            continue
+        spans = bold_spans(lang, name)
+        if len(spans) != len(ref_spans):
+            problems.append(
+                f"{lang}/{name}: {len(spans)} bold spans but {REF} has {len(ref_spans)} — "
+                f"cannot align control labels; keep the translation span-for-span"
+            )
+            continue
+        for i, ref_text in enumerate(ref_spans):
+            if f"{name}:{ref_text}" in NOT_A_CONTROL:
+                continue
+            if not is_ui(ref_text, STRINGS[REF]):
+                continue
+            if lang == LANGS[1]:
+                controls += 1
+            if not is_ui(spans[i], STRINGS[lang]):
+                problems.append(
+                    f"{lang}/{name}: {spans[i]!r} should be the app's label — "
+                    f"{REF} quotes the control {ref_text!r} here"
+                )
+print(f"{REF}: {controls} control labels enforced across {len(LANGS) - 1} translations")
 
 if problems:
-    print(f"\n{problems} label(s) do not exist in the app — fix the docs or the locale.",
-          file=sys.stderr)
+    print("\nlabel check FAILED:", file=sys.stderr)
+    for p in problems:
+        print(f"  - {p}", file=sys.stderr)
+    print("\nFix the docs to quote the app's string, or add a NOT_A_CONTROL entry "
+          "if the English is prose.", file=sys.stderr)
     sys.exit(1)
+
 print("\nall quoted UI labels exist in the app's translations")
 PY

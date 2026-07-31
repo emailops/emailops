@@ -77,7 +77,7 @@ llamadas a herramientas (consultas directas a la base de datos). El modo de enru
 configurable:
 
 - **Siempre RAG primero** — el predeterminado; recupera contexto y luego responde.
-- **Automático** — una heurística elige recuperación o herramientas según la pregunta.
+- **Auto** — una heurística elige recuperación o herramientas según la pregunta.
 - **Siempre herramientas primero** — va directo a las consultas estructuradas.
 
 Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recuperación
@@ -99,7 +99,7 @@ que filtrar.
 
 La clasificación funciona en dos capas:
 
-1. Las **reglas** casan patrones de remitente o asunto (`*@*.beehiiv.com`, `*factura*`) y
+1. Las **Reglas** casan patrones de remitente o asunto (`*@*.beehiiv.com`, `*factura*`) y
    asignan etiquetas al instante, sin llamar al modelo.
 2. **El modelo** se ocupa de todo lo que las reglas no cubren, con un prompt de instrucciones
    que puedes editar.

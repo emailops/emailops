@@ -13,7 +13,7 @@ EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
 
 - **IA activada** — chat, borradores, clasificación y búsqueda semántica se ejecutan en esta
   máquina.
-- **Cliente de correo sin más** — no se descarga ningún modelo ni se hace ninguna llamada de
+- **Cliente de correo simple** — no se descarga ningún modelo ni se hace ninguna llamada de
   IA. Puedes activar la IA más tarde en **Ajustes → IA: backend y modelos**, y desactivarla
   con la misma facilidad.
 

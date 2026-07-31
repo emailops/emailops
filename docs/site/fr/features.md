@@ -57,7 +57,7 @@ non désiré. Aucun modèle ni appel réseau n'intervient, et vos corrections (�
   par la recherche et dans les dossiers de votre fournisseur.
 
 Aucune des deux options ne déplace ni ne supprime quoi que ce soit sur le serveur ; seul un
-**Confirmer l'indésirable** explicite le fait. Un avertissement d'usurpation d'identité /
+**Confirmer** explicite le fait. Un avertissement d'usurpation d'identité /
 hameçonnage est proposé en option, désactivé par défaut.
 
 ## Contrôles de confidentialité et de sécurité
