@@ -125,6 +125,30 @@ case "$PLATFORM" in
 
     if have cmake; then ok "cmake"; else need "cmake" "winget install Kitware.CMake"; fi
 
+    # bindgen (llama-cpp-sys-2's FFI layer) needs libclang.dll at build time.
+    # GitHub's windows-latest runner ships LLVM preinstalled, which is why this
+    # gap stayed invisible until a from-scratch VM build hit it (bindgen fails
+    # with "Unable to find libclang").
+    if have clang; then
+      ok "libclang (via LLVM)"
+    else
+      need "libclang (required by bindgen for llama-cpp-sys-2)" "winget install LLVM.LLVM"
+    fi
+
+    # DYNAMIC_BACKENDS=1 builds nest llama-cpp-sys-2's vendored CMake build
+    # several directories deep (target/<triple>/release/build/llama-cpp-sys-2-*/
+    # out/build/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/...), which
+    # exceeds Windows' 260-char MAX_PATH by default and fails with MSB3491
+    # ("exceeds the OS max path limit") — invisible on GitHub's runners, which
+    # have this enabled already. Query, don't auto-elevate: this needs admin
+    # and a registry write, same reasoning as not auto-running apt-get above.
+    LONGPATHS_ENABLED="$(reg query 'HKLM\SYSTEM\CurrentControlSet\Control\FileSystem' /v LongPathsEnabled 2>/dev/null | grep -o '0x[0-9]*' || echo 0x0)"
+    if [ "$LONGPATHS_ENABLED" = "0x1" ]; then
+      ok "Windows long path support"
+    else
+      need "Windows long path support (required for DYNAMIC_BACKENDS builds)" "reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\" /v LongPathsEnabled /t REG_DWORD /d 1 /f  (run as Administrator)"
+    fi
+
     # WebView2 ships with Windows 11 and current Windows 10. The installer can
     # also fetch it at install time — see tauri.windows.conf.json's
     # webviewInstallMode — so this is a warning rather than a hard requirement.

@@ -93,13 +93,15 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
        "src-tauri/target/$TARGET/release/deps" \
        -maxdepth 1 \( -iname 'libggml*.so*' -o -iname 'libllama*.so*' \) -delete 2>/dev/null || true
 
+  CARGO_JOBS_ARGS=()
   if [ "$PLATFORM" = "windows" ]; then
     # llama-cpp-sys-2's vendored CMake build compiles its vulkan-shaders-gen
-    # sub-tool with parallel cl.exe invocations (CMAKE_BUILD_PARALLEL_LEVEL=4,
-    # set by the crate itself) — without /FS, concurrent cl.exe processes
-    # race on the same debug .pdb file and fail with "C1041: cannot open
-    # program database". MSVC's documented fix is the CL env var it reads for
-    # default flags on every invocation.
+    # sub-tool (and runs CMake's own C/CXX compiler-ABI detection try_compiles
+    # for that sub-project) with concurrent cl.exe invocations — without /FS,
+    # they race on the same debug .pdb file and fail with "C1041: cannot open
+    # program database ... if multiple CL.EXE write to the same .PDB file,
+    # please use /FS". MSVC's documented fix is the CL env var, read for
+    # default flags on every cl.exe invocation.
     #
     # Scoped to just this cargo invocation, not the whole script: this step
     # runs under Git Bash, whose MSYS runtime mangles a bare "/FS" into
@@ -113,18 +115,36 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     export CL="/FS"
     export MSYS_NO_PATHCONV=1
 
-    # CL=/FS alone turned out not to reach this specific race: the printed
-    # cl.exe command line for the failing try_compile has no /FS on it, so
-    # whatever invokes it here (MSBuild driving the vulkan-shaders-gen
-    # sub-project's CMakeTestCCompiler.cmake bootstrap) isn't inheriting the
-    # ambient CL env var the way a plain shell cl.exe call would. Rather than
-    # chase exactly why, remove the race at its source: force this build to
-    # a single job so no two cl.exe processes are ever writing a .pdb
-    # concurrently in the first place. CMAKE_BUILD_PARALLEL_LEVEL is read
-    # from the environment by `cmake --build` (the -D of the same name
-    # llama-cpp-sys-2 passes at configure time is inert — that variable isn't
-    # a real CMake cache setting, only an env var `cmake --build` consults).
-    export CMAKE_BUILD_PARALLEL_LEVEL=1
+    # CL=/FS alone doesn't reach this race: CMake's own internal compiler-ABI
+    # detection (CMakeTestCCompiler.cmake / CMakeTestCXXCompiler.cmake, run
+    # for the vulkan-shaders-gen sub-project's own from-scratch `project()`
+    # bootstrap) compiles a scratch test file using CMake's hardcoded default
+    # debug flags, not our CMAKE_C_FLAGS/CMAKE_CXX_FLAGS overrides — so /FS
+    # never reaches that specific cl.exe invocation no matter how it's passed
+    # in. Confirmed against a real CI failure log: our
+    # -DCMAKE_C_FLAGS="... /FS ..." was present in the cmake configure
+    # command, yet C1041 still fired from exactly this ABI-detection step.
+    #
+    # CMAKE_BUILD_PARALLEL_LEVEL is a red herring here: passing it via -D at
+    # configure time is inert (CMake warns "Manually-specified variables were
+    # not used by the project"), and exporting it as an env var is *also*
+    # inert in practice — the `cmake` crate (which llama-cpp-sys-2 uses to
+    # drive the build) constructs its `cmake --build ... --parallel N` call
+    # from cargo's own NUM_JOBS env var, not CMAKE_BUILD_PARALLEL_LEVEL. Cargo
+    # sets NUM_JOBS itself (to match its own build concurrency) for every
+    # build script invocation, overriding whatever we export ahead of time —
+    # confirmed both by reading the vendored `cmake` crate source and by the
+    # real CI log still showing `--parallel 4` despite
+    # CMAKE_BUILD_PARALLEL_LEVEL=1 being exported.
+    #
+    # Remove the race at its source instead: force this cargo invocation
+    # itself to a single job. That makes cargo set NUM_JOBS=1 for the
+    # build script, which the `cmake` crate turns into `--parallel 1` for
+    # every cmake-driven sub-build (the main ggml build and the
+    # vulkan-shaders-gen ExternalProject alike) — so no two cl.exe processes
+    # are ever writing a .pdb concurrently, regardless of whether that
+    # particular invocation picked up /FS.
+    CARGO_JOBS_ARGS+=(--jobs 1)
   fi
 
   # Two-pass build. `tauri build` validates bundle.resources while compiling,
@@ -132,7 +152,7 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # llama-cpp-sys-2's build script has run. So compile first, stage, then
   # bundle (the second cargo invocation is a cache hit).
   echo "[build-$PLATFORM] pass 1/2: compiling to produce ggml backend modules"
-  cargo build --release --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
+  cargo build --release "${CARGO_JOBS_ARGS[@]}" --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
 
   # llama-cpp-sys-2 installs the modules under its OUT_DIR and advertises the
   # location via `cargo:backends_dir`. Locate the most recent one rather than
