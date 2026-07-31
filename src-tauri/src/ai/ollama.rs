@@ -14,7 +14,29 @@ use crate::ai::provider::{
 };
 use crate::models::error::{AppError, Result};
 
-const OLLAMA_BASE_URL: &str = "http://localhost:11434";
+const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
+
+/// Base URL of the Ollama server.
+///
+/// Defaults to the local daemon, which is what a desktop install has. Overridable via
+/// `OLLAMA_HOST` (the same variable Ollama's own CLI uses) so the runtime can be pointed
+/// at a container, another machine on the LAN, or a sidecar in a compose stack — none of
+/// which are reachable on `localhost` from inside a server process.
+fn ollama_base_url() -> String {
+    std::env::var("OLLAMA_HOST")
+        .ok()
+        .map(|raw| raw.trim().trim_end_matches('/').to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            // `OLLAMA_HOST` is conventionally bare `host:port`; accept either form.
+            if raw.starts_with("http://") || raw.starts_with("https://") {
+                raw
+            } else {
+                format!("http://{raw}")
+            }
+        })
+        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string())
+}
 const DEFAULT_MODEL: &str = "gemma4:e2b";
 const EMBEDDING_MODEL: &str = "nomic-embed-text";
 
@@ -250,7 +272,7 @@ impl OllamaClient {
 
         Self {
             client,
-            base_url: OLLAMA_BASE_URL.to_string(),
+            base_url: ollama_base_url(),
             model: model.unwrap_or(DEFAULT_MODEL).to_string(),
             embedding_model: embedding_model.unwrap_or(EMBEDDING_MODEL).to_string(),
             keep_alive: DEFAULT_KEEP_ALIVE.to_string(),
@@ -1561,5 +1583,64 @@ mod date_parser_tests {
     fn rejects_junk() {
         assert!(parse_date_to_timestamp("yesterday").is_none());
         assert!(parse_date_to_timestamp("2025-01").is_none());
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::ollama_base_url;
+
+    /// These mutate a process-global env var, so they must not run concurrently.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        M.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn with_host<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = env_lock();
+        let previous = std::env::var("OLLAMA_HOST").ok();
+        match value {
+            Some(v) => std::env::set_var("OLLAMA_HOST", v),
+            None => std::env::remove_var("OLLAMA_HOST"),
+        }
+        let out = f();
+        match previous {
+            Some(v) => std::env::set_var("OLLAMA_HOST", v),
+            None => std::env::remove_var("OLLAMA_HOST"),
+        }
+        out
+    }
+
+    #[test]
+    fn defaults_to_the_local_daemon() {
+        with_host(None, || assert_eq!(ollama_base_url(), "http://localhost:11434"));
+    }
+
+    #[test]
+    fn accepts_a_bare_host_and_port() {
+        // The form Ollama's own CLI uses.
+        with_host(Some("ollama:11434"), || {
+            assert_eq!(ollama_base_url(), "http://ollama:11434")
+        });
+    }
+
+    #[test]
+    fn accepts_a_full_url_unchanged() {
+        with_host(Some("http://10.0.0.5:11434"), || {
+            assert_eq!(ollama_base_url(), "http://10.0.0.5:11434")
+        });
+    }
+
+    #[test]
+    fn strips_a_trailing_slash() {
+        // Endpoints are built as `{base}/api/...`; a trailing slash would double it.
+        with_host(Some("http://ollama:11434/"), || {
+            assert_eq!(ollama_base_url(), "http://ollama:11434")
+        });
+    }
+
+    #[test]
+    fn an_empty_value_falls_back_to_the_default() {
+        with_host(Some("   "), || assert_eq!(ollama_base_url(), "http://localhost:11434"));
     }
 }
