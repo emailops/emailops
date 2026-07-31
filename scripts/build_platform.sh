@@ -41,6 +41,24 @@ if [ ! -f "$CONFIG" ]; then
   exit 1
 fi
 
+# Windows only: llama-cpp-sys-2's nested CMake ExternalProject
+# (vulkan-shaders-gen) builds several directories deep under a hash-named
+# target/.../build/ subdir, and the resulting absolute object-file path
+# exceeds CMake's own CMAKE_OBJECT_PATH_MAX safety threshold (250 chars) even
+# with Windows' long-path support enabled — CMake warns about it, then cl.exe
+# fails with the exact same "C1041: cannot open program database" text it
+# shows for a genuine concurrent-write race, even for a single, uncontended
+# compile. Root-caused on a from-scratch VM: the fix that actually worked
+# there was shortening the checkout path. On GH Actions the checkout path
+# itself (D:\a\emailops\emailops) is fixed by convention, but CARGO_TARGET_DIR
+# controls where cargo (and everything nested under it) puts its build output,
+# and that's the overwhelming majority of the path length — point it at a
+# short, fixed location instead of the default `target/` under the checkout.
+if [ "$PLATFORM" = "windows" ]; then
+  export CARGO_TARGET_DIR="C:/ct"
+fi
+TARGET_DIR="${CARGO_TARGET_DIR:-src-tauri/target}"
+
 # The bundled embedding GGUF must exist before tauri-build validates
 # bundle.resources.
 bash scripts/fetch_bundled_models.sh
@@ -88,9 +106,9 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # now-stale OUT_DIR), so the guard is fooled and the next build's hard_link()
   # call panics with AlreadyExists on the very entry it thought was absent.
   # Removing them first makes repeated builds idempotent instead of one-shot.
-  find "src-tauri/target/$TARGET/release" \
-       "src-tauri/target/$TARGET/release/examples" \
-       "src-tauri/target/$TARGET/release/deps" \
+  find "$TARGET_DIR/$TARGET/release" \
+       "$TARGET_DIR/$TARGET/release/examples" \
+       "$TARGET_DIR/$TARGET/release/deps" \
        -maxdepth 1 \( -iname 'libggml*.so*' -o -iname 'libllama*.so*' \) -delete 2>/dev/null || true
 
   CARGO_JOBS_ARGS=()
@@ -174,12 +192,12 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # llama-cpp-sys-2 installs the modules under its OUT_DIR and advertises the
   # location via `cargo:backends_dir`. Locate the most recent one rather than
   # parsing build output, so this survives cargo rebuilding the sys crate.
-  SRC_DIR="$(find "src-tauri/target/$TARGET/release/build" -type d -name backends -path '*llama-cpp-sys-2*' \
+  SRC_DIR="$(find "$TARGET_DIR/$TARGET/release/build" -type d -name backends -path '*llama-cpp-sys-2*' \
              -exec ls -dt {} + 2>/dev/null | head -1 || true)"
 
   if [ -z "$SRC_DIR" ] || [ -z "$(ls -A "$SRC_DIR" 2>/dev/null)" ]; then
     echo "ERROR: dynamic-backends requested but no backend modules were produced." >&2
-    echo "       Looked under src-tauri/target/$TARGET/release/build/*llama-cpp-sys-2*/out/backends" >&2
+    echo "       Looked under $TARGET_DIR/$TARGET/release/build/*llama-cpp-sys-2*/out/backends" >&2
     echo "       Check that the dynamic-backends feature reached llama-cpp-sys-2." >&2
     exit 1
   fi
@@ -262,4 +280,4 @@ else
   npm run tauri -- build --target "$TARGET" "${CONFIG_ARGS[@]}"
 fi
 
-echo "[build-$PLATFORM] done — artifacts under src-tauri/target/$TARGET/release/bundle/"
+echo "[build-$PLATFORM] done — artifacts under $TARGET_DIR/$TARGET/release/bundle/"

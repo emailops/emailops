@@ -21,10 +21,19 @@ FAILED=0
 fail() { echo "  ❌ $1"; FAILED=1; }
 pass() { echo "  ✅ $1"; }
 
+# Must match build_platform.sh's CARGO_TARGET_DIR override for Windows (see
+# that script for why): this runs as a separate CI step, so it can't inherit
+# an `export` from the Build step's own shell — it has to compute the same
+# value independently.
+if [ "$PLATFORM" = "windows" ]; then
+  export CARGO_TARGET_DIR="C:/ct"
+fi
+TARGET_DIR="${CARGO_TARGET_DIR:-src-tauri/target}"
+
 case "$PLATFORM" in
   linux)
-    BUNDLE="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
-    BIN="src-tauri/target/x86_64-unknown-linux-gnu/release/emailops"
+    BUNDLE="$TARGET_DIR/x86_64-unknown-linux-gnu/release/bundle"
+    BIN="$TARGET_DIR/x86_64-unknown-linux-gnu/release/emailops"
 
     echo "── artifacts ──"
     DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -1 || true)
@@ -77,8 +86,8 @@ case "$PLATFORM" in
     ;;
 
   windows)
-    BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-    BIN="src-tauri/target/x86_64-pc-windows-msvc/release/emailops.exe"
+    BUNDLE="$TARGET_DIR/x86_64-pc-windows-msvc/release/bundle"
+    BIN="$TARGET_DIR/x86_64-pc-windows-msvc/release/emailops.exe"
 
     echo "── artifacts ──"
     MSI=$(find "$BUNDLE/msi" -name '*.msi' 2>/dev/null | head -1 || true)

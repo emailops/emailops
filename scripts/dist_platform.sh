@@ -19,6 +19,15 @@ cd "$ROOT"
 
 mkdir -p release
 
+# Must match build_platform.sh's CARGO_TARGET_DIR override for Windows (see
+# that script for why): this runs as a separate CI step, so it can't inherit
+# an `export` from the Build step's own shell — it has to compute the same
+# value independently.
+if [ "$PLATFORM" = "windows" ]; then
+  export CARGO_TARGET_DIR="C:/ct"
+fi
+TARGET_DIR="${CARGO_TARGET_DIR:-src-tauri/target}"
+
 # stage <source-glob-dir> <extension> <destination-name> <required>
 stage() {
   local dir="$1" ext="$2" dest="$3" required="$4"
@@ -38,13 +47,13 @@ stage() {
 
 case "$PLATFORM" in
   linux)
-    BUNDLE="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
+    BUNDLE="$TARGET_DIR/x86_64-unknown-linux-gnu/release/bundle"
     stage "$BUNDLE/appimage" AppImage EmailOps-linux.AppImage required
     stage "$BUNDLE/deb"      deb      EmailOps-linux.deb      required
     stage "$BUNDLE/rpm"      rpm      EmailOps-linux.rpm      optional
     ;;
   windows)
-    BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+    BUNDLE="$TARGET_DIR/x86_64-pc-windows-msvc/release/bundle"
     stage "$BUNDLE/msi"  msi EmailOps-windows.msi        required
     # Tauri names the NSIS output `<product>_<version>_<arch>-setup.exe`.
     stage "$BUNDLE/nsis" exe EmailOps-windows-setup.exe  required
