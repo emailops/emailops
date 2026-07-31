@@ -114,8 +114,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # The per-version download filename LunarG actually serves
+          # (vulkansdk-windows-X64-<ver>.exe) doesn't match the naming this
+          # originally guessed (VulkanSDK-<ver>-Installer.exe, 404s) — use the
+          # "latest" alias URL to fetch the installer (verified working) and
+          # only use the version-lookup endpoint to know where it installs to.
           $ver = (Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/latest/windows.txt" -UseBasicParsing).Content.Trim()
-          $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe"
+          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe?u="
           Write-Host "Installing Vulkan SDK $ver from $url"
           Invoke-WebRequest -Uri $url -OutFile VulkanSDK.exe
           Start-Process -FilePath .\VulkanSDK.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
