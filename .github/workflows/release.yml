@@ -110,10 +110,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Key includes matrix.os, not just matrix.platform: pinning the Linux
+      # leg to ubuntu-22.04 (see above) while the cache key stayed
+      # "release-linux" restored artifacts built on the previously-used
+      # ubuntu-latest (24.04, glibc 2.39) — which then failed to even
+      # execute on 22.04's glibc 2.35 with "GLIBC_2.39 not found". The OS
+      # is part of what makes a cached build valid; it belongs in the key.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: release-${{ matrix.platform }}
+          key: release-${{ matrix.os }}
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
