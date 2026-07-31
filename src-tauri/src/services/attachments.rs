@@ -91,6 +91,26 @@ fn sanitize_download_filename(filename: &str) -> String {
     }
 }
 
+/// Derive a filesystem-safe extension from a (possibly attacker-controlled)
+/// attachment filename, for embedding into a generated `<uuid>.<ext>` path.
+///
+/// The naive `filename.rsplit('.').next()` this replaced returns the whole
+/// filename verbatim whenever it contains no `.` (or the tail after the last
+/// `.` when it does), slashes included — a crafted attachment name like
+/// `malicious/nested/injected-payload` (no dot) injected arbitrary nested
+/// directory structure into the write path instead of the intended flat
+/// `attachments/<account_id>/<file>` layout. Sanitizing through
+/// `sanitize_download_filename` first strips any path separators, so the
+/// result can never contain `/` or `\`.
+fn safe_extension(filename: &str) -> String {
+    let safe_name = sanitize_download_filename(filename);
+    Path::new(&safe_name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "bin".to_string())
+}
+
 /// Pick a non-colliding destination path in `dir` for `filename`, appending
 /// ` (1)`, ` (2)`, … before the extension while a file with that name exists.
 pub fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
@@ -450,7 +470,7 @@ pub async fn process_attachments_for_email(
             };
 
             // Determine file extension and path
-            let ext = info.filename.rsplit('.').next().unwrap_or("bin");
+            let ext = safe_extension(&info.filename);
             let file_id = uuid::Uuid::new_v4().to_string();
             let relative_path = format!("attachments/{}/{}.{}", email.account_id, file_id, ext);
             let absolute_path = app_data_dir.join(&relative_path);
@@ -548,7 +568,7 @@ pub async fn auto_download_attachments(
             continue; // No data source available
         };
 
-        let ext = info.filename.rsplit('.').next().unwrap_or("bin");
+        let ext = safe_extension(&info.filename);
         let file_id = uuid::Uuid::new_v4().to_string();
         let relative_path = format!("attachments/{}/auto/{}.{}", email.account_id, file_id, ext);
         let absolute_path = app_data_dir.join(&relative_path);
@@ -1223,6 +1243,84 @@ mod tests {
         assert_eq!(stored.len(), 1);
         let on_disk = std::fs::read(tmp.path().join(&stored[0].file_path)).expect("read on-disk attachment");
         assert_eq!(on_disk, payload, "decoded bytes must match original payload");
+    }
+
+    /// Regression: the destination path used to be built from
+    /// `info.filename.rsplit('.').next()` directly. A dot-free attacker
+    /// filename (a crafted attachment name, applied the moment the email is
+    /// synced — no user interaction required) makes that "extension" the
+    /// *entire* filename, slashes included, injecting arbitrary nested
+    /// directory structure into the write path instead of a flat
+    /// `attachments/<account_id>/<file>.<ext>` layout. The stored `file_path`
+    /// must always be exactly 3 segments deep, with no attacker-controlled
+    /// path separators surviving into it.
+    #[tokio::test]
+    async fn process_attachments_for_email_confines_hostile_filename_extension() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+
+        let account_id = "acc-evil";
+        make_account(&db, account_id, "gmail", "me@example.com");
+        let email = make_email(account_id, "msg-evil", "attacker@example.com", "Invoice");
+        db.insert_email(&email).expect("insert email");
+
+        let rule = create_rule(
+            &db,
+            account_id,
+            "anything from attacker",
+            Some("attacker@example.com"),
+            None,
+            None,
+            vec!["self".into()],
+        )
+        .expect("create rule");
+
+        // No '.' anywhere: `rsplit('.').next()` on a dot-free string returns
+        // the string unchanged, so every slash in it used to land straight in
+        // the constructed path.
+        let infos = vec![AttachmentInfo {
+            attachment_id: String::new(),
+            filename: "malicious/nested/injected-payload".into(),
+            mime_type: "application/octet-stream".into(),
+            size: 4,
+            inline_data: Some({
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(b"evil")
+            }),
+        }];
+
+        let fake = FakeEmailProvider::new("me@example.com", "Me");
+        process_attachments_for_email(
+            &db,
+            &fake,
+            &email,
+            &infos,
+            std::slice::from_ref(&rule),
+            tmp.path(),
+            None,
+        )
+        .await
+        .expect("must not error even on a hostile filename");
+
+        let stored = db.get_attachments_for_rule(&rule.id).expect("query");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored[0].file_path.matches('/').count(),
+            2,
+            "file_path must stay exactly `attachments/<account_id>/<file>`, no injected nesting: {}",
+            stored[0].file_path
+        );
+        assert!(
+            stored[0].file_path.starts_with(&format!("attachments/{account_id}/")),
+            "file_path must live directly under attachments/<account_id>/: {}",
+            stored[0].file_path
+        );
+
+        let written = tmp.path().join(&stored[0].file_path);
+        assert!(
+            written.is_file(),
+            "attachment must be written to the expected flat path"
+        );
     }
 
     /// Regression: an email synced WITHOUT its attachment (0 meta rows, despite
