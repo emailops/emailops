@@ -169,11 +169,12 @@ cli-demo:
 #
 # Pinned to `--cases-dir src-tauri/evals/chat/cases` (the PUBLIC cases) so the
 # demo-DB run never tries to use `private-evals/chat/cases/`, whose cases
-# target the developer's real mailbox accounts (e.g. `gerodp@gmail.com`) that
-# don't exist in the demo DB. The CLI's auto-resolver prefers `private-evals/`
-# when present (see `cli/eval.rs:resolve_cases_dir`), which would otherwise
-# blow up with "account 'gerodp@gmail.com' not found in DB" the moment the
-# user runs `make cli-eval` with private cases on disk.
+# target the developer's real mailbox account (`$(EMAILOPS_PERSONAL_ACCOUNT)`,
+# set in the gitignored `.env.local`) which doesn't exist in the demo DB. The
+# CLI's auto-resolver prefers `private-evals/` when present (see
+# `cli/eval.rs:resolve_cases_dir`), which would otherwise blow up with
+# "account '<your-address>' not found in DB" the moment the user runs
+# `make cli-eval` with private cases on disk.
 #   make cli-eval ARGS="--tier smoke --json"
 #   make cli-eval ARGS="--case kickoff_date_es"
 cli-eval:

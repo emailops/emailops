@@ -18,6 +18,19 @@ commands (`accounts`, `emails`, `show`, `search`, `stats`, `doctor`, `config get
 are safe to run while the desktop app is open. Run heavy **write** commands
 (`sync`, `classify`, `embed`) with the app closed to avoid contention.
 
+> **Examples below use `$EMAILOPS_PERSONAL_ACCOUNT`** rather than a literal
+> address, so nothing in this repo hardcodes a real mailbox. Set it in
+> `.env.local` (gitignored — see `.env.local.example`). The Makefile picks it
+> up automatically via `-include .env.local`, but your *shell* does not, so
+> export it once per session before running the examples verbatim:
+>
+> ```bash
+> export EMAILOPS_PERSONAL_ACCOUNT=$(sed -n 's/^EMAILOPS_PERSONAL_ACCOUNT=//p' .env.local)
+> ```
+>
+> Don't `source .env.local` to do this — it is a **Makefile** fragment, not a
+> shell env file (it uses `?=` and `$(HOME)`), so a shell will error on it.
+
 ---
 
 ## Building & running
@@ -264,7 +277,7 @@ Download new mail. The positional `account` overrides the global `--account` /
 default. v1 sync is download-only (no AI follow-ups / attachment fetches).
 
 ```bash
-make cli-run ARGS="sync gerodp@gmail.com"
+make cli-run ARGS="sync $EMAILOPS_PERSONAL_ACCOUNT"
 ```
 
 ### `classify [--all]`
@@ -312,7 +325,7 @@ the desktop app's own settings.
 | Action | Example |
 |---|---|
 | `get <key>` | `config get default-account` |
-| `set <key> <value>` | `config set default-account gerodp@gmail.com` |
+| `set <key> <value>` | `config set default-account you@example.com` |
 | `unset <key>` | `config unset default-account` |
 | `list` | `config list` |
 
@@ -323,7 +336,7 @@ Keys:
 | `default-account` | Account (id or email) used when `--account` is omitted and more than one account is enabled. Stored canonicalized to the account **id**, so resolution is stable regardless of how you typed it. |
 
 ```bash
-make cli-fast ARGS="config set default-account gerodp@gmail.com --json"
+make cli-fast ARGS="config set default-account $EMAILOPS_PERSONAL_ACCOUNT --json"
 make cli-fast ARGS="config list --json"
 ```
 
