@@ -31,7 +31,7 @@ Common development operations live in the root `Makefile`. **Before reaching for
 - **App run:** `make dev` (repo-local data dir) / `make dev-fresh` (throwaway data dir) / `make dev-trace` (tracing feature enabled)
 - **Demo data:** `make demo-db` / `make demo-embed` / `make demo` (run app against demo DB) — plus `-es` variants for Spanish demo data
 - **Quality gates:** `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
-- **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`, `make build-mac-intel`, `make verify-mac-intel`
+- **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`, `make build-mac-intel`, `make verify-mac-intel`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Linux / Windows Release Builds" below
 - **Hooks / deps:** `make install`, `make hooks`, `make audit`, `make clean`
 
 When you do need to run something the Makefile does not cover, prefer extending it (add a new target) over scattering one-off shell snippets across the codebase or your chat output — that way the next agent or developer can find it the same way.
@@ -81,6 +81,19 @@ Use the Makefile release targets; do not hand-roll `npm run tauri build` command
 - Intel Mac release: run `make build-mac-intel && make verify-mac-intel`. This targets `x86_64-apple-darwin`, uses `src-tauri/tauri.intel.conf.json`, disables default features to omit embedded llama.cpp, and verifies no `.gguf` model files are bundled. Intel users can still configure Ollama or OpenRouter.
 - Always run the matching `verify-*` target before publishing a DMG; it checks codesigning, architectures, Gatekeeper assessment, notarization stapling, and the Intel no-bundled-model guard.
 - Homebrew: after the DMGs are uploaded to the GitHub release, run `make cask` to regenerate `homebrew/Casks/emailops.rb` from the release assets (GitHub-computed sha256 digests, per-arch URLs) and copy it into the `emailops/homebrew-tap` repo. Full flow and invariants: `homebrew/README.md`. Never replace a DMG asset on an already-tagged release — the cask pins its sha256.
+
+## Linux / Windows Release Builds
+
+Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_platform.sh`, `scripts/dist_platform.sh`, `scripts/bootstrap_platform.sh` — one script per concern, dispatched by platform argument); do not hand-roll `npm run tauri build` commands.
+
+- One-time setup: run `make bootstrap-linux` (or `bootstrap-windows`). It only **checks** prerequisites and prints the exact install command for anything missing — it never runs `sudo apt-get` itself, so it's safe to run on a machine you don't want silently modified.
+- Linux: `make build-linux && make verify-linux`. Builds `.deb` + `.AppImage` for `x86_64-unknown-linux-gnu`.
+- Windows: `make build-windows && make verify-windows`. Builds `.msi` + NSIS `.exe` for `x86_64-pc-windows-msvc`. The Makefile requires a POSIX shell — run these from Git Bash or MSYS2, not `cmd.exe`/PowerShell.
+- Set `CARGO_FEATURES=vulkan DYNAMIC_BACKENDS=1` on either build target to ship the Vulkan GPU backend as a loadable module the binary probes for at runtime (falls back to CPU when no compatible driver is present) — this is what CI's release job uses. A plain `make build-linux`/`build-windows` with no env vars produces a CPU-only artifact. See `docs/DECISIONS.md` ("Windows and Linux releases build with Vulkan via dynamic backends") for why dynamic backends exist instead of a statically-linked GPU build.
+- `make dist-linux` / `make dist-windows` stage artifacts under `release/` with the same stable-name convention as `dist-mac` (`EmailOps-linux.AppImage`, `EmailOps-linux.deb`, `EmailOps-windows.msi`, `EmailOps-windows-setup.exe`), so the GitHub release always has a permanent latest-download URL.
+- Neither platform is code-signed: Linux packages conventionally aren't, and Windows would need an EV/OV certificate the project doesn't hold — unsigned installers show a SmartScreen warning on first run.
+- **The `DYNAMIC_BACKENDS=1` path has real, non-obvious packaging gotchas** that only surfaced the first time it was ever built outside CI's `ubuntu-latest` runner (whose image happens to ship several build-only prerequisites preinstalled, which hid these gaps): the direct shared-library dependencies of the main binary (`libggml-base`/`libggml`/`libllama`/`libllama-common`, distinct from the dlopen'd backend modules like `libggml-vulkan.so`) must be staged into the bundle and given a Linux rpath separately, and a vendored crate's build script has a stale-symlink idempotency bug that makes a second build fail unless those symlinks are cleaned first. Read the comments in `scripts/build_platform.sh` before touching this path — they explain each workaround inline. `bootstrap-linux` now also checks for `libclang`/`xdg-open`/`libfuse2` (needed by `bindgen` and by `linuxdeploy`'s AppImage bundling respectively) for the same reason.
+- This path currently has no per-PR CI coverage — only the manually-triggered release workflow exercises it (the tag-push trigger is disabled). A regression here is caught only at actual release time; be extra careful with changes to `scripts/build_platform.sh` or the `dynamic-backends` Cargo feature.
 
 ## Architecture Principles
 

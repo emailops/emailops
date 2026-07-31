@@ -69,6 +69,10 @@ case "$PLATFORM" in
       librsvg2-dev
       patchelf
       cmake
+      libclang-dev
+      clang
+      xdg-utils
+      libfuse2
     )
 
     if have pkg-config; then ok "pkg-config"; else need "pkg-config" "sudo apt-get install -y pkg-config"; fi
@@ -82,6 +86,26 @@ case "$PLATFORM" in
     if have cmake; then ok "cmake"; else need "cmake" "sudo apt-get install -y cmake"; fi
     if have c++; then ok "c++ compiler"; else need "c++ compiler" "sudo apt-get install -y build-essential"; fi
     if have patchelf; then ok "patchelf (required to bundle an AppImage)"; else need "patchelf" "sudo apt-get install -y patchelf"; fi
+
+    # bindgen (llama-cpp-sys-2's FFI layer) needs libclang at build time — a
+    # bare Ubuntu image lacks it (GitHub's ubuntu-latest runner ships it
+    # preinstalled, which is why this gap stayed invisible until a from-scratch
+    # VM build hit it).
+    if ldconfig -p 2>/dev/null | grep -q libclang.so; then
+      ok "libclang"
+    else
+      need "libclang (required by bindgen for llama-cpp-sys-2)" "sudo apt-get install -y libclang-dev clang"
+    fi
+
+    # linuxdeploy (which builds the .AppImage) is itself an AppImage: it needs
+    # `xdg-open` at bundle time and, to run itself, either working FUSE or
+    # APPIMAGE_EXTRACT_AND_RUN=1 as a fallback on machines without /dev/fuse.
+    if have xdg-open; then ok "xdg-open (required to bundle an AppImage)"; else need "xdg-open" "sudo apt-get install -y xdg-utils"; fi
+    if ldconfig -p 2>/dev/null | grep -q libfuse.so.2; then
+      ok "libfuse2 (or set APPIMAGE_EXTRACT_AND_RUN=1 if unavailable)"
+    else
+      need "libfuse2 (required for linuxdeploy to self-mount; alternative: export APPIMAGE_EXTRACT_AND_RUN=1)" "sudo apt-get install -y libfuse2"
+    fi
 
     echo
     echo "  Full apt one-liner:"
