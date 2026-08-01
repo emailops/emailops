@@ -130,6 +130,120 @@ c.captureScreen('shot.png'); api.shutdown()"
 > you ever run it from a shared/NAT'd network where the allowlisted address
 > is not exclusively yours.
 
+## Running a release artifact (Windows)
+
+`make testvm-windows` always creates from the base `WIN_IMAGE` (no
+snapshot-restore path exists yet for Windows, unlike Linux) — the VM needs
+first-login OOBE completed before anything else works, and OpenSSH is not
+enabled by default.
+
+```bash
+make testvm-windows                  # create, ~5-10 min (NVIDIA driver install)
+```
+
+**Enable SSH** (control-plane channel, no inbound port needed to get started):
+
+```bash
+PUB_KEY="$(cat private-scripts/emailops_gpu_test_key.pub)"
+az vm run-command invoke -g EMAILOPS-LINUX-GPU-TEST-RG -n emailops-win-gpu \
+  --command-id RunPowerShellScript --scripts @private-scripts/enable-ssh.ps1 \
+  --parameters "pubKey=${PUB_KEY}"
+# Then, same profile-scoping fix as any fresh Windows box (see Gotchas):
+az vm run-command invoke -g EMAILOPS-LINUX-GPU-TEST-RG -n emailops-win-gpu \
+  --command-id RunPowerShellScript \
+  --scripts "Set-NetFirewallRule -Name OpenSSH-Server-In-TCP -Profile Any"
+```
+
+**Complete first-login OOBE.** A freshly created Windows 11 VM has never had
+anyone log in, so there is no interactive desktop session yet — GUI apps
+launched over SSH run in a different, non-interactive window station and
+their windows never render (`Start-Process` reports the process "Responding"
+but no window ever appears, and screenshot capture throws `The handle is
+invalid`). RDP in once to drive OOBE and get a real interactive session:
+
+```bash
+# FreeRDP + Xvfb + ImageMagick in a throwaway container — avoids needing
+# XQuartz/X11 on the Mac itself.
+docker run --rm -d --name rdp-capture debian:bookworm-slim sleep 3600
+docker exec rdp-capture bash -c "apt-get update -qq && apt-get install -y -qq xvfb freerdp2-x11 imagemagick xdotool"
+docker exec -d rdp-capture bash -c "Xvfb :1 -screen 0 1600x1000x24 > /tmp/xvfb.log 2>&1"
+docker exec rdp-capture bash -c "DISPLAY=:1 xfreerdp /v:<ip> /u:azureuser /p:'<password>' /cert:ignore /w:1600 /h:1000 &"
+# Screenshot the virtual display at any point:
+docker exec rdp-capture bash -c "DISPLAY=:1 import -window root /tmp/shot.png"
+docker cp rdp-capture:/tmp/shot.png ./shot.png
+# Click through OOBE (privacy settings -> Accept), then the desktop appears.
+docker exec rdp-capture bash -c "DISPLAY=:1 xdotool mousemove <x> <y> click 1"
+```
+
+Once OOBE is done, this session persists — launch/interact with the app the
+same way (`xdotool mousemove ... click 1`, screenshot after each step) rather
+than going back to SSH's `Start-Process`, which will hit the same
+non-interactive-window-station problem for *any* GUI app on this VM, not
+just first boot.
+
+**Install the release artifact + prerequisites.** Same signed-URL pattern as
+Linux (`docs/TEST-VMS.md`'s Linux section above) to avoid a GitHub token on
+the VM. Unlike the NSIS `.exe` installer, the raw `.msi` does **not**
+bootstrap the VC++ Redistributable — install it explicitly first, or every
+launch dies silently with exit code `-1073741515`
+(`STATUS_DLL_NOT_FOUND`/`0xC0000135`) and empty stdout/stderr (GUI-subsystem
+apps don't reliably surface output through `-RedirectStandardOutput` either,
+so check `$proc.ExitCode` — see Gotchas):
+
+```powershell
+Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile C:\vc_redist.x64.exe
+Start-Process -FilePath C:\vc_redist.x64.exe -ArgumentList '/install','/quiet','/norestart' -Wait
+Start-Process msiexec.exe -ArgumentList '/i C:\art\EmailOps-windows.msi /quiet /qn /norestart' -Wait
+```
+
+**Get a chat model loaded without real email credentials.** Onboarding
+requires an account before the Chat view unlocks, and OAuth/IMAP needs real
+credentials you should not put on a throwaway VM. Skip account setup in the
+wizard, then insert a synthetic row directly (find `sqlite3.exe` via the
+[official Windows build](https://sqlite.org/download.html) if not already on
+the VM — a bare Windows 11 image doesn't ship one):
+
+```powershell
+$now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+& sqlite3.exe "$env:APPDATA\com.emailops.app\emailops.db" `
+  "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) VALUES ('test-account-1', 'imap', 'test@example.test', 'GPU Test Account', $now, 0, 1);"
+```
+
+The account will show an "Authentication required" banner (expected — no
+real credentials exist) but that's enough to unlock Chat, which works
+without a working sync. Restart the app after inserting the row (accounts
+load once at startup); delete `emailops.db-wal`/`emailops.db-shm` first if
+the app was already running when you touched the DB, or SQLite will try to
+replay a stale WAL against rows it didn't see change.
+
+## Windows GPU limitation: `Standard_NC4as_T4_v3` cannot validate Vulkan
+
+**This VM series cannot be used to confirm Windows GPU offload.** Its Tesla
+T4 runs in **TCC** (Tesla Compute Cluster) driver mode — confirmed via
+`nvidia-smi -q | Select-String -Context 0,2 'Driver Model'` — which is
+compute-only (CUDA) and does not expose a Vulkan-capable ICD. `nvidia-smi -dm
+0` (the documented way to request WDDM) returns `Unable to set driver model
+... Not Supported`: this is a hard limitation of the NC-series SKU, not a
+driver/config problem fixable from inside the VM.
+
+Symptom if you hit this: chat works end-to-end and produces a real answer,
+but at CPU-fallback speed (~3 tok/s on `qwen3.5-4b-q4_k_m`, matching the 1.5
+tok/s CPU baseline below, not the 33-36 tok/s GPU one) — and
+`nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader`
+polled during inference stays at `0 %, 9 MiB` throughout, i.e. the GPU is
+never touched despite `ggml-vulkan.dll` being present and correctly staged
+in the installed app's `backends\` directory (rule out a packaging bug
+before assuming it's this TCC issue — check the DLL is actually there
+first).
+
+**To actually validate Windows Vulkan offload, use a WDDM-capable GPU VM
+series instead** — e.g. the NV-series (`Standard_NV6ads_A10_v5` or similar),
+which is built for GPU-accelerated remote visualization/RDP and ships a
+WDDM driver by default. That requires its own quota request and is not
+wired into `scripts/testvm.sh` yet (which only provisions
+`Standard_NC4as_T4_v3`, shared with the Linux leg's quota) — follow-up work,
+not something to improvise by reusing the existing NC-series VM.
+
 ## Gotchas
 
 - **Use absolute paths in launcher scripts.** Started via `setsid` from an
@@ -166,3 +280,20 @@ Linux `.deb` installed natively on Ubuntu 22.04, chat against the demo mailbox:
 
 Confirms `libggml-vulkan.so` ships in the `.deb` and the dynamic-backend
 packaging resolves correctly against the driver's own Vulkan ICD.
+
+## Verified baseline (2026-08-01, v0.6.4 / commit 9501e95)
+
+Windows `.msi` installed natively on the same VM series, chat against a
+synthetic single-account DB (see above):
+
+| | tok/s | Notes |
+|---|---|---|
+| CPU fallback | 3.2 | `nvidia-smi` confirms 0% GPU util throughout — this VM series cannot reach Vulkan, see above |
+
+Confirms the app installs, starts, loads the embedded model, and answers a
+chat message end to end on Windows — including every fix from the
+`worktree-cross-platform` build-pipeline work (C1041 CMake race, MSVC
+linker, path-length limit, `bin/` vs `lib/` DLL staging). Does **not**
+confirm GPU offload — see the TCC limitation above. A real Windows
+Vulkan-vs-CPU comparison, matching the Linux table, is still open work
+pending a WDDM-capable VM series.
