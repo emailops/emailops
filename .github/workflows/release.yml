@@ -230,7 +230,6 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: vulkan
-          CMAKE_GENERATOR: ${{ runner.os == 'Windows' && 'Ninja' || '' }}
         run: make build-${{ matrix.platform }}
 
       # TEMPORARY debugging aid (see debug_windows input above) — remove
@@ -349,14 +348,21 @@ jobs:
       # test just failed — a blank window or a visible error dialog explains a
       # startup failure that the process-liveness check can only report as a
       # bare exit code. Uploaded on real releases too, not just dry runs.
+      #
+      # Single, platform-specific path (not both candidates listed together):
+      # actions/upload-artifact@v7 computes a shared root directory across
+      # every listed path and rejects one that isn't under the workspace —
+      # `runner.temp` on Windows (D:\a\_temp) sits outside the checkout root
+      # (D:\a\emailops\emailops), so listing the Linux path
+      # (/tmp/smoke-linux.png) alongside it failed with "rootDirectory ... is
+      # not a parent directory of the file" even on a job that never produces
+      # the other platform's screenshot at all.
       - name: Upload smoke-test screenshot
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-screenshot-${{ matrix.platform }}
-          path: |
-            /tmp/smoke-linux.png
-            ${{ runner.temp }}/smoke-windows.png
+          path: ${{ runner.os == 'Windows' && format('{0}\smoke-windows.png', runner.temp) || '/tmp/smoke-linux.png' }}
           if-no-files-found: ignore
           retention-days: 14
 
