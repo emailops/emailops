@@ -223,6 +223,22 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # under the correct name.
   #
   BASE_LIB_SRC_DIR="$(dirname "$SRC_DIR")/lib"
+  if [ "$PLATFORM" = "windows" ] && [ -z "$(find "$BASE_LIB_SRC_DIR" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
+    # CMake's default GNUInstallDirs convention puts *runtime* DLLs in bin/ on
+    # Windows, reserving lib/ for the .lib import-library stubs the linker
+    # needs at build time — unlike Linux, where .so files conventionally
+    # install to lib/ (what the lib/ assumption above is based on, and is
+    # correct there). First real Windows build to reach this staging step at
+    # all (every earlier attempt died earlier, at the C1041 CMake bug), so
+    # this fallback was never exercised until now.
+    BIN_CANDIDATE="$(dirname "$SRC_DIR")/bin"
+    if [ -n "$(find "$BIN_CANDIDATE" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
+      BASE_LIB_SRC_DIR="$BIN_CANDIDATE"
+    else
+      echo "[build-$PLATFORM] WARNING: no *.dll under $(dirname "$SRC_DIR")/lib or /bin — listing $(dirname "$SRC_DIR") for diagnosis:" >&2
+      find "$(dirname "$SRC_DIR")" -maxdepth 2 >&2 || true
+    fi
+  fi
   find "$BASE_LIB_SRC_DIR" -maxdepth 1 \( -type f -o -type l \) \
     \( -name 'libggml*.so*' -o -name 'libllama*.so*' -o -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
     -exec cp -a {} "$BACKENDS_RES_DIR/" \; 2>/dev/null || true
