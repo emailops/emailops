@@ -125,21 +125,28 @@ case "$PLATFORM" in
     # the build script produced what the bundler needs.
     BACKENDS_DIR="src-tauri/resources/backends"
     ROOT_DIR="src-tauri/resources/backends-root"
+    # Only the base libs — NOT the hot-swappable backend modules
+    # (ggml-cpu-*.dll, ggml-vulkan.dll, etc.), which also live in backends/
+    # but must NOT be mirrored to backends-root/: they're dlopen'd explicitly
+    # from backends/ only, so duplicating them at the bundle root would be
+    # silently wrong, not just redundant. A `ggml*.dll`/`llama*.dll` glob
+    # matches both sets — this checks the fixed, documented set of four
+    # implicit link-time dependencies by exact name instead.
+    BASE_LIB_NAMES="ggml-base.dll ggml.dll llama.dll llama-common.dll"
     if [ ! -d "$BACKENDS_DIR" ]; then
       echo "  i no resources/backends/ staged; not a DYNAMIC_BACKENDS build, skipping"
     else
-      BASE_LIBS=$(find "$BACKENDS_DIR" -maxdepth 1 -type f \( -iname 'ggml*.dll' -o -iname 'llama*.dll' \))
-      if [ -z "$BASE_LIBS" ]; then
-        echo "  i no ggml*/llama* base libs in resources/backends/; skipping"
-      elif [ ! -d "$ROOT_DIR" ]; then
-        fail "resources/backends-root/ is missing but base libs were staged into backends/ — DLLs will not resolve at exe startup"
-      else
-        MISSING=0
-        while IFS= read -r lib; do
-          name="$(basename "$lib")"
-          [ -f "$ROOT_DIR/$name" ] || { fail "base lib '$name' missing from resources/backends-root/"; MISSING=1; }
-        done <<< "$BASE_LIBS"
-        [ "$MISSING" -eq 0 ] && pass "all base libs in backends/ are mirrored into backends-root/ (bundle root)"
+      FOUND_ANY=0
+      MISSING=0
+      for name in $BASE_LIB_NAMES; do
+        [ -f "$BACKENDS_DIR/$name" ] || continue
+        FOUND_ANY=1
+        [ -f "$ROOT_DIR/$name" ] || { fail "base lib '$name' missing from resources/backends-root/"; MISSING=1; }
+      done
+      if [ "$FOUND_ANY" -eq 0 ]; then
+        echo "  i no ggml-base/ggml/llama/llama-common base libs in resources/backends/; skipping"
+      elif [ "$MISSING" -eq 0 ]; then
+        pass "all base libs in backends/ are mirrored into backends-root/ (bundle root)"
       fi
     fi
     ;;
