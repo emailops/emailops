@@ -120,7 +120,12 @@ mod tests {
     // Tauri's own runtime is live — a plain (non-`#[tokio::test]`) function
     // has no ambient tokio runtime either, reproducing that exact condition.
     // Raw `tokio::spawn` would panic synchronously at the call site; this
-    // must not.
+    // must not. Desktop-only: every non-desktop call site is invoked from
+    // inside a real #[tokio::main]/#[tokio::test] context (see spawn_raw's
+    // doc comment), so this synthetic no-runtime scenario doesn't reflect a
+    // real headless call site — plain tokio::spawn panicking here is correct,
+    // expected behavior for that build.
+    #[cfg(feature = "desktop")]
     #[test]
     fn spawn_does_not_panic_without_an_ambient_tokio_runtime() {
         spawn(async {});

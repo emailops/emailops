@@ -19,6 +19,18 @@ name = "emailops_lib"
 # until/unless we ship a mobile target.
 crate-type = ["lib", "cdylib"]
 
+# Explicit (rather than the implicit src/main.rs-derived) so it can be gated
+# behind `desktop`, matching emailops-cli's own required-features below.
+# main.rs calls the `desktop`-gated `emailops_lib::run()` unconditionally, so
+# without this, `--no-default-features` (which excludes `desktop`) fails to
+# build/check/test this bin target — breaking `make test-fast` / `check-fast`
+# / `clippy-fast`, which all pass `--no-default-features` for faster
+# iteration and were never meant to build the full desktop app.
+[[bin]]
+name = "emailops"
+path = "src/main.rs"
+required-features = ["desktop"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 
