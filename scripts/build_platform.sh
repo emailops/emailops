@@ -68,7 +68,14 @@ bash scripts/fetch_bundled_models.sh
 CARGO_ARGS=()
 if [ "$NO_DEFAULT_FEATURES" = "1" ]; then
   echo "[build-$PLATFORM] building WITHOUT embedded llama.cpp"
-  CARGO_ARGS+=(--no-default-features)
+  # `default = ["desktop", "llamacpp"]` in Cargo.toml — --no-default-features
+  # drops both, not just llamacpp. This script only ever builds the desktop
+  # bundle, so re-add `desktop` explicitly or the `emailops` bin (which is
+  # `required-features = ["desktop"]`) never gets built: cargo silently
+  # matches zero bin targets, tauri-bundler still reports "Built application
+  # at: <path>", and the actual bundling step then fails with "can't open
+  # main binary ... No such file or directory".
+  CARGO_ARGS+=(--no-default-features --features desktop)
 fi
 if [ -n "$CARGO_FEATURES" ]; then
   echo "[build-$PLATFORM] extra cargo features: $CARGO_FEATURES"
