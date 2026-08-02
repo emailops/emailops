@@ -43,8 +43,14 @@
 pub type AppHandle = tauri::AppHandle;
 
 /// Zero-sized stand-in used when the crate is built without Tauri.
+///
+/// Deliberately `Clone` but not `Copy`: the real `tauri::AppHandle` is only
+/// `Clone` (it wraps an `Arc` internally), so every `app.clone()` call site
+/// written for that type must keep compiling — and staying non-`Copy` here
+/// stops clippy's `clone_on_copy` lint from flagging those call sites when
+/// linting this stub build (`--no-default-features`).
 #[cfg(not(feature = "desktop"))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppHandle;
 
 #[cfg(not(feature = "desktop"))]

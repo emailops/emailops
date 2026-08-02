@@ -17,6 +17,7 @@
 // these used to serve now lives in `runtime::core`.
 #[cfg(feature = "desktop")]
 use std::collections::HashMap;
+#[cfg(feature = "desktop")]
 use std::path::PathBuf;
 #[cfg(feature = "desktop")]
 use std::sync::atomic::AtomicBool;
@@ -671,6 +672,7 @@ pub fn run() {
 // ── Fatal startup errors ──────────────────────────────────────────────────────
 
 /// What the user should actually do about a fatal startup failure.
+#[cfg(feature = "desktop")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StartupRemedy {
     /// Default assumption: a full startup disk or a file-permission problem.
@@ -688,6 +690,7 @@ enum StartupRemedy {
 /// this install is older than its data — typically because an uninstall left
 /// the data directory behind and an older build was then installed over it.
 /// Refinery is right to refuse: older code cannot read a newer schema.
+#[cfg(feature = "desktop")]
 fn classify_startup_failure(detail: &str) -> StartupRemedy {
     let detail = detail.to_lowercase();
     if detail.contains("is missing from the filesystem") || detail.contains("is different than filesystem one") {

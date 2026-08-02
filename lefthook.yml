@@ -32,9 +32,13 @@ pre-commit:
       run: npx tsc --noEmit
     clippy:
       glob: "src-tauri/src/**/*.rs"
-      # --tests matches CI (ci.yml lint-backend) so test-only lint failures
-      # surface before push, not on the runner.
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml --tests -- -D warnings
+      # --no-default-features --tests matches CI (ci.yml lint-backend and the
+      # Windows job) exactly. CI never lints the default-features build, so
+      # this flag isn't optional — a plain `cargo clippy --tests` here can be
+      # green locally while the identical command still fails on the runner
+      # (bit us once: AppHandle's stub type is Copy only under
+      # --no-default-features, and clippy::clone_on_copy only fires there).
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
     rustfmt-check:
       glob: "src-tauri/src/**/*.rs"
       run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
@@ -53,7 +57,8 @@ pre-push:
   parallel: true
   commands:
     clippy:
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml --tests -- -D warnings
+      # See the pre-commit clippy comment above — must match CI's exact flags.
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
     rust-tests:
       run: cargo test --manifest-path src-tauri/Cargo.toml
     secrets-check:

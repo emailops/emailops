@@ -154,7 +154,7 @@ Every user-facing operation must emit log entries so they appear in the output p
 ## Git Conventions
 - NEVER commit not push changes automatically. Developer will do
 - NEVER include claude or other agent as author or co-author in commits
-- After implementing a feature, bug fix, or any moderate change, run the full pre-commit hook suite locally (`npx lefthook run pre-commit` or, if some files are unstaged, the equivalent commands directly: `npx biome check src/`, `npx tsc --noEmit`, `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, plus the `no-invoke-outside-api` grep check). Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures.
+- After implementing a feature, bug fix, or any moderate change, run the full pre-commit hook suite locally (`npx lefthook run pre-commit` or, if some files are unstaged, the equivalent commands directly: `npx biome check src/`, `npx tsc --noEmit`, `cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings` (must match CI's exact flags — see `lefthook.yml`'s clippy comment), `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, plus the `no-invoke-outside-api` grep check). Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures.
 - For changes that affect Rust behavior, also run `cargo test --manifest-path src-tauri/Cargo.toml` (matches the pre-push hook) before declaring the work done.
 
 ### Branch Naming
