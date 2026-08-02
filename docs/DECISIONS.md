@@ -417,3 +417,45 @@ release tag (still disabled — releases are cut via the `release` skill, which 
 this workflow explicitly once the tag exists on `origin`); a local Docker/VM-based smoke
 test script instead of an in-CI step (doesn't scale to "every release, automatically" and
 reintroduces the manual-VM friction this decision is meant to remove).
+
+## 2026-08-03 — Windows CUDA ships as an additional, opt-in release asset alongside Vulkan
+
+**Decision:** `.github/workflows/release.yml` gains a `release-windows-cuda` job,
+independent of the existing `release` matrix, that builds Windows with
+`DYNAMIC_BACKENDS=1 CARGO_FEATURES=cuda` and publishes `EmailOps-windows-cuda.msi` /
+`-setup.exe` to the same release tag. This does **not** replace the Vulkan Windows
+build from the 2026-07-30 entry — Vulkan stays the recommended default (broader
+hardware coverage, no NVIDIA toolkit needed at build time); CUDA is offered for users
+who specifically want it, not promoted over Vulkan. Two build-script fixes landed
+alongside this: `scripts/build_platform.sh` now only forces the `--jobs 1` MSVC
+PDB-race workaround when `CARGO_FEATURES` contains `vulkan` — that race is specific to
+`vulkan-shaders-gen`, a CMake sub-project a CUDA-only build never configures — and
+`scripts/dist_platform.sh` takes an optional variant suffix (`windows cuda` →
+`EmailOps-windows-cuda.msi`) so two Windows installers can coexist in one release
+without overwriting each other.
+**Context:** Directly asked for after validating the Windows CUDA path end-to-end on a
+real Tesla T4 test VM: real GPU offload confirmed (VRAM resident, a utilization spike,
+and an explicit `llamacpp: ... offloading all layers` log line), and a from-scratch
+release compile timed at 270m40s with the (misapplied) `--jobs 1` workaround vs 31m54s
+once scoped to Vulkan only — an 8.5x difference that changes the calculus on whether a
+CUDA CI leg is affordable at all. Every other llama.cpp-embedding project surveyed for
+this decision (llama.cpp itself, Ollama, koboldcpp) builds Windows CUDA in CI the same
+way: GitHub-hosted CPU-only runners (compile-only, no GPU to test offload on — this
+project's own `release-windows-cuda` job accordingly only smoke-tests that the binary
+starts and resolves `ggml-cuda.dll`, the same limitation the Vulkan legs already carry),
+gated to manual dispatch or tag/release pushes, never per-PR. `CMAKE_CUDA_ARCHITECTURES`
+is deliberately left unset rather than pinned to the T4's `sm_75` (which is what the
+timing test above actually used, to isolate the `--jobs 1` variable) — ggml-cuda's own
+upstream `CMakeLists.txt` already curates a virtual-PTX-plus-real-SASS architecture list
+for cross-generation compatibility (llama.cpp's own CI takes the same approach: it
+never overrides this at the workflow level either), and shipping a `sm_75`-only binary
+would silently break or force slow PTX-JIT recompilation on every non-Turing GPU.
+**Rejected:** pinning `CMAKE_CUDA_ARCHITECTURES` to a fixed list in CI for a faster
+build (the `--jobs 1` fix alone recovers the vast majority of the win; trading real
+multi-GPU-generation compatibility for a further speedup wasn't judged worth it without
+a concrete need); running the CUDA leg on every PR (every comparable project gates this
+to manual/release triggers given the build cost, and this project's own CI has no GPU
+to validate offload on regardless of trigger frequency); a self-hosted GPU runner for
+the build step (no project surveyed does this even for GPU-relevant testing, let alone
+routine compilation — occasional real-hardware validation, as already established for
+Vulkan, stays the pattern rather than adding standing GPU-runner infrastructure).

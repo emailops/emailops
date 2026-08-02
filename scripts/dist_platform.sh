@@ -4,15 +4,28 @@
 #
 #   scripts/dist_platform.sh linux
 #   scripts/dist_platform.sh windows
+#   scripts/dist_platform.sh windows cuda   # -> EmailOps-windows-cuda.msi etc.
 #
 # Tauri embeds the version in every bundle filename, which breaks permanent
 # download links. The names below match `dist-mac`'s convention so every
 # platform is reachable at
 #   https://github.com/emailops/emailops/releases/latest/download/<name>
+#
+# The optional second arg is a variant suffix, needed when a platform ships
+# more than one downloadable build of the same installer type (currently:
+# Windows Vulkan, the default GPU-agnostic build, alongside Windows CUDA,
+# NVIDIA-only and faster to build but not the recommended default) — without
+# it, both variants would stage to the same filename and the second `cp`
+# would silently overwrite the first in the same release.
 
 set -euo pipefail
 
 PLATFORM="${1:-}"
+VARIANT="${2:-}"
+SUFFIX=""
+if [ -n "$VARIANT" ]; then
+  SUFFIX="-$VARIANT"
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -54,9 +67,9 @@ case "$PLATFORM" in
     ;;
   windows)
     BUNDLE="$TARGET_DIR/x86_64-pc-windows-msvc/release/bundle"
-    stage "$BUNDLE/msi"  msi EmailOps-windows.msi        required
+    stage "$BUNDLE/msi"  msi "EmailOps-windows${SUFFIX}.msi"        required
     # Tauri names the NSIS output `<product>_<version>_<arch>-setup.exe`.
-    stage "$BUNDLE/nsis" exe EmailOps-windows-setup.exe  required
+    stage "$BUNDLE/nsis" exe "EmailOps-windows${SUFFIX}-setup.exe"  required
     ;;
   "")
     echo "usage: $0 <linux|windows>" >&2; exit 2 ;;

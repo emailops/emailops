@@ -1,6 +1,6 @@
 name: Release
 
-# Linux + Windows only. macOS is deliberately NOT built here — it's signed and
+# Linux + Windows (Vulkan) + Windows (CUDA). macOS is deliberately NOT built here — it's signed and
 # notarized locally via `make build-mac` and uploaded by hand (the `release`
 # skill drives that flow end to end), and that's a permanent choice, not a
 # stopgap: keeping macOS out of this workflow means the signing/notarization
@@ -360,6 +360,136 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: emailops-${{ matrix.platform }}-dry-run
+          path: release/*
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          generate_release_notes: true
+          files: release/*
+
+  # Windows-only, NVIDIA-only additional download alongside the Vulkan build
+  # above (which stays the recommended default: it covers AMD/Intel/NVIDIA
+  # off the user's normal graphics driver, no NVIDIA toolkit required at
+  # build time). This exists for users who specifically want CUDA — measured
+  # slower than Vulkan for the same model/quant on the same Tesla T4
+  # (7.8-8.2 tok/s vs 33-36 tok/s), so it is offered, not promoted.
+  #
+  # A completely separate job (not a third matrix leg on `release` above):
+  # it needs a different GPU SDK (CUDA Toolkit, not Vulkan SDK) and a
+  # differently-named output (`dist_platform.sh windows cuda`), and giving it
+  # its own `release/` directory means it can never collide with the Vulkan
+  # Windows job's own artifacts even though both jobs upload to the same
+  # release tag.
+  release-windows-cuda:
+    name: Release (windows-cuda)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - name: Exclude workspace from Windows Defender
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-windows-cuda
+
+      # Version pinned to what was actually validated end-to-end on a real
+      # Tesla T4 (build + install + real GPU offload confirmed via nvidia-smi
+      # and an explicit `llamacpp: ... offloading all layers` log line) —
+      # not just "whatever's latest". `method: local` (the action's default)
+      # downloads and silently runs NVIDIA's own installer, same as the
+      # manual install this was validated against; sub-packages filtering is
+      # Linux-only in this action, so it isn't set here.
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "13.0.0"
+          method: network
+
+      - run: npm ci
+
+      # See the comment on the equivalent step in the `release` job above —
+      # same MSVC-environment requirement (Ninja generator needs vcvars on
+      # PATH). The vulkan-shaders-gen PDB-race workaround that job also
+      # needs does NOT apply here: GGML_VULKAN is never turned on for a
+      # CUDA-only build (confirmed in llama-cpp-sys-2's build.rs), so
+      # scripts/build_platform.sh skips forcing --jobs 1 for this feature
+      # set — validated at 31m54s for a from-scratch release compile here,
+      # vs 270m40s when --jobs 1 was applied unconditionally.
+      - name: Set up MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build
+        shell: bash
+        env:
+          EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
+          EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
+          EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
+          DYNAMIC_BACKENDS: "1"
+          CARGO_FEATURES: cuda
+        run: make build-windows
+
+      - name: Verify
+        shell: bash
+        run: make verify-windows
+
+      - name: Stage stable-named artifacts
+        shell: bash
+        run: bash scripts/dist_platform.sh windows cuda
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem -Path release -Filter *cuda*.msi | Select-Object -First 1).FullName
+          if (-not $msi) { Write-Error "no cuda .msi found under release/"; exit 1 }
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn" -Wait
+
+          $exe = Get-ChildItem -Path "$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter emailops.exe -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { Write-Error "installed emailops.exe not found under Program Files"; exit 1 }
+
+          $proc = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          $stillRunning = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+          if (-not $stillRunning) {
+            Write-Error "emailops.exe exited within 8s of launch (missing DLL or startup crash)"
+            exit 1
+          }
+          Write-Host "emailops.exe is running (pid $($proc.Id)) after 8s — smoke test passed"
+
+          # No GPU on this runner, so this only proves the CUDA-enabled binary
+          # starts and resolves its DLLs (ggml-cuda.dll included) — not that
+          # offload actually engages. That still needs an occasional check on
+          # real GPU hardware, same caveat as the Vulkan legs above.
+          Stop-Process -Id $proc.Id -Force
+
+      - name: Upload artifacts (dry run only)
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: emailops-windows-cuda-dry-run
           path: release/*
           if-no-files-found: error
 

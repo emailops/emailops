@@ -169,7 +169,18 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     # vulkan-shaders-gen ExternalProject alike) — so no two cl.exe processes
     # are ever writing a .pdb concurrently, regardless of whether that
     # particular invocation picked up /FS.
-    CARGO_JOBS_ARGS+=(--jobs 1)
+    #
+    # Scoped to vulkan specifically (not "any Windows build"): vulkan-shaders-gen
+    # is only ever configured when GGML_VULKAN is ON (see llama-cpp-sys-2's
+    # build.rs), which only happens for CARGO_FEATURES=vulkan. A CUDA build
+    # never touches that sub-project, so it never hits this race — verified by
+    # timing a from-scratch CUDA release compile at 270m40s forced to --jobs 1
+    # vs 31m54s with full parallelism restored (8.5x, on a 4-vCPU test VM).
+    # Applying --jobs 1 unconditionally to every Windows build (as this used
+    # to) silently paid that ~4.5h tax on every CUDA build for no reason.
+    if [[ "$CARGO_FEATURES" == *"vulkan"* ]]; then
+      CARGO_JOBS_ARGS+=(--jobs 1)
+    fi
 
     # CMAKE_GENERATOR=Ninja routes around the C1041 race above entirely —
     # Ninja invokes cl.exe one translation unit at a time with no
