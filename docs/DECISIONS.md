@@ -459,3 +459,47 @@ to validate offload on regardless of trigger frequency); a self-hosted GPU runne
 the build step (no project surveyed does this even for GPU-relevant testing, let alone
 routine compilation — occasional real-hardware validation, as already established for
 Vulkan, stays the pattern rather than adding standing GPU-runner infrastructure).
+
+## 2026-08-03 — Stored credentials never cross the IPC boundary to the webview
+
+**Decision:** Backend responses that describe a stored credential carry only its
+*presence*, never its value. `get_imap_settings` returns `hasPassword` and the
+non-secret server fields; the password itself stays in the keychain. The
+re-auth/edit dialog therefore opens with an empty password box, and saving with an
+empty box means "keep the stored password" (`resolve_update_password`). The
+`get_imap_credentials` Tauri command — which returned the plaintext password and
+had no frontend caller — was removed rather than kept as a trap. Credential structs
+(`ImapCredentials`, `OAuthTokens`) also implement `Debug` by hand so a stray
+`{:?}` cannot print a secret; `Serialize` still emits real values, which is how
+they reach the keychain.
+**Context:** The renderer that would have held the password is the same webview
+that displays untrusted email HTML. Sanitization is good but is one bug away from
+being the only thing between a malicious message and a live IMAP credential, so the
+secret should simply not be reachable from that process. The "keep the stored
+password" rule is what makes an empty box a valid save rather than an accidental
+credential wipe.
+**Rejected:** sending the password and relying on DOMPurify + CSP to protect it
+(defence in depth argues for not having the secret there at all); masking it as
+`••••••` in the payload (a placeholder that round-trips is indistinguishable from a
+real password on save, and the real one still crossed the boundary); requiring the
+user to retype the password on every settings change (punishes the common case of
+editing only a port or server name).
+
+## 2026-08-03 — `data:` in CSP `object-src`/`frame-src` is load-bearing
+
+**Decision:** `data:` stays in the `object-src` and `frame-src` directives of the
+production CSP. `blob:` was removed from both. A test in
+`EmailHtmlFrame.csp.test.ts` pins *both* halves so neither is changed by accident.
+**Context:** `object-src data: blob:` looks like gratuitous CSP weakening and was
+flagged as such in a security review. It is not: `AttachmentViewer` builds a
+`data:<mime>;base64,…` URI and renders it through `<object>` for PDFs and
+`<iframe>` for HTML attachments, and `AttachmentTabView` does the same — dropping
+`data:` silently breaks attachment preview. `blob:` genuinely was unused (there is
+no `URL.createObjectURL` call anywhere in `src/`), so it was dropped. Email bodies
+are unaffected either way: they render in a `srcdoc` iframe, which is governed by
+the parent's CSP rather than `frame-src`.
+**Rejected:** removing `data:` as well (breaks PDF/HTML attachment preview —
+verified, not theorised); switching the attachment viewer to `asset:` or `blob:`
+URLs so `data:` could be dropped (a real option, but a behaviour change to a
+working feature for a marginal CSP win; revisit only if attachment sizes make the
+base64 round-trip a performance problem).
