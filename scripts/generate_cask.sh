@@ -76,7 +76,7 @@ mkdir -p "$OUT_DIR"
 if [ -n "$INTEL_SHA" ]; then
   cat > "$OUT" <<EOF
 cask "emailops" do
-  arch arm: "", intel: "-intel"
+  arch intel: "-intel"
 
   version "$VERSION"
   sha256 arm:   "$ARM_SHA",
