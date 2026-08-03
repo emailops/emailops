@@ -25,23 +25,78 @@ pub fn hash_password(password: &str) -> Result<String> {
 ///
 /// Supports both:
 /// - **Argon2id** — PHC string starting with `$argon2`
-/// - **Legacy SHA-256** — 64-char lowercase hex (transparently migrated)
+/// - **Legacy SHA-256** — exactly 64 lowercase hex chars (transparently migrated)
 ///
-/// Returns `Ok(true)` on match, `Ok(false)` on mismatch, `Err` only if
-/// `stored_hash` is neither format.
+/// Returns `Ok(true)` on match, `Ok(false)` on mismatch, and `Err` when
+/// `stored_hash` matches neither format — a corrupt or truncated record is a
+/// different problem from a wrong password and must not masquerade as one.
 pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
-    if needs_rehash(stored_hash) {
-        return Ok(sha2_hex(password) == stored_hash);
+    if is_legacy_sha256(stored_hash) {
+        return Ok(legacy_matches(password, stored_hash));
+    }
+    if !stored_hash.starts_with("$argon2") {
+        return Err(AppError::AuthError(
+            "Stored password hash is not in a recognised format. Reset the main password to continue.".to_string(),
+        ));
     }
     let parsed =
         PasswordHash::new(stored_hash).map_err(|e| AppError::AuthError(format!("Invalid stored hash: {e}")))?;
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+    // A PHC string can parse while carrying no hash component at all (e.g.
+    // `$argon2id$broken`, where "broken" is read as the salt). `verify_password`
+    // reports that as `Error::Password` — indistinguishable from a wrong
+    // password — so catch it here instead of telling the user their correct
+    // password is wrong, forever.
+    if parsed.hash.is_none() {
+        return Err(AppError::AuthError(
+            "Stored password hash is incomplete. Reset the main password to continue.".to_string(),
+        ));
+    }
+    // Only `Error::Password` means "wrong password". Every other error means the
+    // stored PHC string is unusable (missing salt/hash, unknown params), which is
+    // a corrupt record — reporting it as a wrong password would lock the user out
+    // with no way to tell the difference.
+    match Argon2::default().verify_password(password.as_bytes(), &parsed) {
+        Ok(()) => Ok(true),
+        Err(argon2::password_hash::Error::Password) => Ok(false),
+        Err(e) => Err(AppError::AuthError(format!(
+            "Stored password hash is unusable ({e}). Reset the main password to continue."
+        ))),
+    }
 }
 
-/// Returns `true` when `stored_hash` is in a legacy (non-Argon2) format and
-/// should be upgraded after a successful verify.
+/// Returns `true` when `stored_hash` is a legacy hash that should be upgraded
+/// after a successful verify.
+///
+/// Only says `true` for something that really is a legacy digest — a malformed
+/// value is neither format and is rejected by [`verify_password`] instead of
+/// being silently compared against.
 pub fn needs_rehash(stored_hash: &str) -> bool {
-    !stored_hash.starts_with("$argon2")
+    is_legacy_sha256(stored_hash)
+}
+
+/// Exactly 64 lowercase hex characters — the shape [`sha2_hex`] emits. Anything
+/// else is not a legacy hash, however superficially similar.
+fn is_legacy_sha256(stored_hash: &str) -> bool {
+    stored_hash.len() == 64
+        && stored_hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Compare a candidate password against a legacy digest in constant time.
+///
+/// `==` on `str` short-circuits at the first differing byte, which leaks how much
+/// of the digest matched. Argon2's own `verify_password` is already constant
+/// time; this brings the legacy path in line.
+fn legacy_matches(password: &str, stored_hash: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    let computed = sha2_hex(password);
+    // Length is already pinned by `is_legacy_sha256`, but compare defensively so
+    // this helper is safe to call directly (the tests do).
+    if computed.len() != stored_hash.len() {
+        return false;
+    }
+    computed.as_bytes().ct_eq(stored_hash.as_bytes()).into()
 }
 
 fn sha2_hex(password: &str) -> String {
@@ -104,5 +159,63 @@ mod tests {
     fn needs_rehash_false_for_argon2_hash() {
         let h = hash_password("x").unwrap();
         assert!(!needs_rehash(&h));
+    }
+
+    // Regression: anything not starting with `$argon2` was treated as a legacy
+    // SHA-256 hex digest, so a truncated or garbled stored hash silently became
+    // a comparison that could never match. The user was told "Password is
+    // incorrect" forever with no way to tell a wrong password from a corrupt
+    // record — and the doc comment claimed an `Err` was returned for exactly
+    // this case, which was unreachable.
+    #[test]
+    fn verify_rejects_a_stored_hash_that_is_neither_format() {
+        for stored in [
+            "",                 // empty
+            "not-a-hash",       // garbage
+            "abc123",           // too short to be a sha256 hex digest
+            &"a".repeat(63),    // one nibble short
+            &"a".repeat(65),    // one nibble long
+            &"A".repeat(64),    // uppercase — not the format we ever wrote
+            &"z".repeat(64),    // right length, not hex
+            "$argon2id$broken", // argon2-shaped but unparseable
+        ] {
+            let result = verify_password("whatever", stored);
+            assert!(
+                result.is_err(),
+                "a stored hash of {stored:?} must be reported as invalid, not as a failed match"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_hex_digests_are_still_accepted_case_sensitively() {
+        // The legacy writer emitted lowercase hex; that must keep verifying.
+        let stored = legacy_hash("legacy");
+        assert_eq!(stored.len(), 64);
+        assert!(verify_password("legacy", &stored).unwrap());
+    }
+
+    // A near-miss on the stored hash must not leak how far the comparison got.
+    #[test]
+    fn legacy_comparison_is_constant_time() {
+        let stored = legacy_hash("legacy");
+        // Behavioural proxy for the property: the comparison is routed through a
+        // constant-time primitive, so a first-byte mismatch and a last-byte
+        // mismatch are both simply "false".
+        let mut first_byte_differs = stored.clone().into_bytes();
+        first_byte_differs[0] ^= 0x01;
+        let mut last_byte_differs = stored.clone().into_bytes();
+        let last = last_byte_differs.len() - 1;
+        last_byte_differs[last] ^= 0x01;
+
+        assert!(!legacy_matches(
+            "legacy",
+            std::str::from_utf8(&first_byte_differs).unwrap()
+        ));
+        assert!(!legacy_matches(
+            "legacy",
+            std::str::from_utf8(&last_byte_differs).unwrap()
+        ));
+        assert!(legacy_matches("legacy", &stored));
     }
 }

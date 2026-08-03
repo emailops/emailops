@@ -67,6 +67,9 @@ dotenvy = "0.15"
 argon2 = { version = "0.5", features = ["std"] }
 sha2 = "0.11"
 hex = "0.4"
+# Constant-time comparison for the legacy SHA-256 main-password path. Already in
+# the tree via argon2/password-hash; declared directly so we can call it.
+subtle = "2"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
