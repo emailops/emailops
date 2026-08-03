@@ -5,7 +5,7 @@ intentionally absent — milestones land when they're ready. If something
 here matters to you, open an issue or a PR; community input shapes
 priority.
 
-> The current shipping version is **0.5.0** (see [CHANGELOG.md](CHANGELOG.md)).
+> The current shipping version is **0.6.5** (see [CHANGELOG.md](CHANGELOG.md)).
 
 ## Next up (targeting 0.6.0)
 
@@ -18,16 +18,6 @@ priority.
 
 ## On the radar (0.7.0+)
 
-- **Windows bundle**. Build/CI infra is done — `.msi`/NSIS `.exe` via
-  `make build-windows`, a CI release job with automated smoke-testing, and
-  the keychain abstraction validated against Windows Credential Manager.
-  Not yet a public release: no `.msi`/`.exe` has shipped on the GitHub
-  releases page yet — that's the remaining step.
-- **Linux bundle**. Build/CI infra is done — AppImage + `.deb` via
-  `make build-linux`, keychain via Secret Service/libsecret, a CI release
-  job with automated smoke-testing, and Vulkan GPU offload verified on real
-  GPU hardware. Not yet a public release: no `.deb`/`.AppImage` has shipped
-  on the GitHub releases page yet — that's the remaining step.
 - **Calendar integration** (Google Calendar + Microsoft Graph) so
   EmailOps can surface "this email implies an event."
 - **Auto-send with approval workflows** for AI drafts (currently the

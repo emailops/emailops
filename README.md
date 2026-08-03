@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Privacy-first, Local AI-native desktop email client (currently Mac only).
+Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linux.
 
 ## Screenshots
 
@@ -10,9 +10,11 @@ Privacy-first, Local AI-native desktop email client (currently Mac only).
 
 ## Download
 
-Download **macOS** releases from: [Releases page](https://github.com/emailops/emailops/releases/latest).
+- **macOS**: [EmailOps-macos.dmg](https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg)
+- **Windows**: [EmailOps-windows-setup.exe](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-setup.exe) (recommended — Vulkan GPU acceleration, auto-detects a compatible driver and falls back to CPU). NVIDIA users can instead get the [CUDA build](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-cuda-setup.exe).
+- **Linux**: [EmailOps-linux.AppImage](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.AppImage) (no install needed) or [EmailOps-linux.deb](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.deb) for Debian/Ubuntu.
 
-Windows and Linux releases are on the [roadmap](ROADMAP.md).
+All installers, checksums, and older versions are on the [Releases page](https://github.com/emailops/emailops/releases/latest).
 
 ## Features
 
