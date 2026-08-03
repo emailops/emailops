@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.5] — 2026-08-03
+
+### Added
+
+- **Linux and Windows releases** — `.deb`/`.AppImage` for Linux, `.msi`/NSIS
+  installer for Windows, both with optional GPU acceleration via Vulkan
+  (auto-detects a compatible driver, falls back to CPU otherwise).
+- **Windows CUDA build** — an additional NVIDIA-only download for users who
+  specifically want it; Vulkan remains the recommended default since it
+  covers more hardware.
+
+### Fixed
+
+- **Security:** stopped sending the stored IMAP password to the frontend
+  process; malformed stored password hashes are now rejected instead of
+  silently accepted.
+- **Security:** block remote media and unsafe URL schemes in untrusted email
+  content.
+- OAuth account connection no longer hangs indefinitely after the browser
+  opens.
+- Calendar sync no longer treats a rate-limited retry response as success.
+- Fixed dropdown popup styling and positioning issues on Linux and Windows.
+- Fixed a blank band appearing above inbox rows after returning from an
+  email.
+
 ## [0.6.4] — 2026-07-24
 
 ### Fixed
