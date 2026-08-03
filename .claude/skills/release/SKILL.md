@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new EmailOps release across all three platforms — version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish), then the Linux/Windows CI build (triggered and watched, auto-published on success), a doc-staleness check, commit, tag, and (confirmation-gated) push. The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
+description: Cut a new EmailOps release across all three platforms — version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish) with a local install + launch smoke test, a doc-staleness check (app docs + public website) before tagging, commit, tag, (confirmation-gated) push, then the Linux/Windows CI build (triggered and watched, auto-published on success). The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep
@@ -145,6 +145,96 @@ This copies the notarized `.dmg` to `release/EmailOps-CLI-macos.dmg`, reachable
 at `releases/latest/download/EmailOps-CLI-macos.dmg`. Requires the aarch64 +
 x86_64 Rust targets that `make bootstrap-mac` installs.
 
+## Phase 5c — Local install smoke test
+
+Static verification (`verify-mac`) proves the bundle is signed/notarized
+correctly, not that it actually launches and renders. Before committing/tagging,
+install the freshly built app locally and confirm it runs:
+
+1. If `/Applications/EmailOps.app` already exists, back it up rather than
+   deleting it — `mv /Applications/EmailOps.app /Applications/EmailOps-<old-version>-backup.app` —
+   so the previous version is recoverable if something goes wrong.
+2. Mount the versionless DMG staged in Phase 5 and install the new build:
+
+   ```bash
+   hdiutil attach release/EmailOps-macos.dmg -nobrowse -mountpoint /tmp/emailops-dmg-mount
+   ditto /tmp/emailops-dmg-mount/EmailOps.app /Applications/EmailOps.app
+   hdiutil detach /tmp/emailops-dmg-mount
+   ```
+
+3. Confirm the installed build is actually the new version:
+   `defaults read /Applications/EmailOps.app/Contents/Info.plist CFBundleShortVersionString`.
+4. Launch it (`open /Applications/EmailOps.app`), wait a few seconds, then
+   confirm the process really started — `pgrep -fl "/Applications/EmailOps.app/Contents/MacOS/emailops"`.
+   A launch that silently fails to spawn is a real failure; do not treat
+   `open` returning immediately as success.
+5. **A keychain-access system dialog may appear** ("EmailOps wants to access
+   key ... in your keychain"). This is expected: a freshly re-signed build
+   gets a new code signature, which invalidates the previous keychain ACL
+   grant for the stored credentials item, so macOS re-prompts. **Never enter
+   the keychain password yourself** — ask the developer to click
+   Allow/Always Allow and enter it, then continue once they confirm.
+6. Take a screenshot **scoped to just the app's window, not the full
+   screen** — a full-screen capture leaks whatever else is on the developer's
+   desktop, and the app itself will be showing their real mailbox (personal
+   data). Get the window bounds and capture just that region:
+
+   ```bash
+   osascript -e 'tell application "System Events" to tell process "emailops" to set frontmost to true'
+   osascript -e 'tell application "System Events" to tell process "emailops" to {position of window 1, size of window 1}'
+   # then, using the returned x, y, w, h:
+   screencapture -x -R<x>,<y>,<w>,<h> <path>.png
+   ```
+
+   Read the image back before sending it, to confirm it actually shows the
+   running app (not a blank/loading state) and nothing unexpected is in
+   frame.
+7. Share the screenshot with the developer as visual proof the signed bundle
+   actually launches and renders — this is a stronger signal than the static
+   `verify-mac` checks alone.
+8. If anything looks wrong (crash, blank window, error banner), stop and
+   report it — same rule as every other phase.
+
+## Phase 5d — Doc staleness check (run every release, not just once)
+
+Do this **before committing/tagging** — once a tag is pushed, you want docs and
+the public website already caught up, not a follow-up commit chasing it. Check
+whether anything user-facing or platform-specific has fallen behind what this
+release actually ships, based on the new CHANGELOG section from Phase 3 (the
+Phase 7b CI build hasn't run yet at this point, so judge "did this release add
+a platform for the first time" from the CHANGELOG entries, not from actual
+produced GitHub-release assets). Report findings as a checklist — **do not
+silently auto-edit prose docs or website copy**; ask the developer to confirm
+each change first, since this is user-facing/marketing content:
+
+1. **`README.md` download section.** If this release's CHANGELOG entries
+   introduce Linux/Windows installers for the first time, or the README still
+   reads "on the roadmap" for a platform that has now shipped (this or a prior
+   release), flag it and offer to update the download links.
+2. **`ROADMAP.md`.** Check for entries describing work this release just
+   completed (compare against the new CHANGELOG section) — flag any that now
+   read as still-pending when they're done.
+3. **`docs/*.md`.** Scan for platform-specific claims that may be stale given
+   what changed (e.g. a doc that only describes a macOS-only install flow,
+   when this release adds a Linux/Windows equivalent). Flag, don't rewrite.
+4. **`docs/DECISIONS.md`.** Ask the developer whether anything in this release
+   constitutes a durable decision worth logging there (that file is
+   append-only and durable-decisions-only by convention — not every release
+   needs an entry, but the skill should ask rather than assume).
+5. **Public website** (`getemailops.com`, source at
+   `/Users/gerodp/CTO/AI/Email/landingpage_cursor/emailops_web`, a separate
+   Hugo repo/remote from this one, deployed via AWS Amplify on push to
+   `main`). Check whether its download/pricing/feature copy needs updating for
+   this release — new platform support, new download links, a changed feature
+   set. That repo's own `AGENTS.md` tells agents to never commit/push there by
+   default; that guardrail is overridden only when the developer explicitly
+   asks in this session, same as any other confirmation-gated push elsewhere
+   in this skill. **Do not push website changes yet even if the developer asks
+   for them here** — hold them until after Phase 7b confirms the CI build for
+   the platforms in question actually succeeded (no point publishing new
+   download links for a build that just failed); push then, still
+   confirmation-gated.
+
 ## Phase 6 — Commit + tag
 
 Once gates and build pass:
@@ -219,27 +309,9 @@ gh run watch <run-id>
   libraries/DLLs on a clean machine, **not** that GPU offload works (CI
   runners have no GPU; that still needs an occasional real-hardware check).
 
-## Phase 7c — Doc staleness check (run every release, not just once)
-
-Before publishing, check whether anything user-facing or platform-specific in
-the docs has fallen behind what this release actually ships. Report findings
-as a checklist — **do not silently auto-edit prose docs**; ask the developer to
-confirm each change first, since these are user-facing/marketing copy:
-
-1. **`README.md` download section.** If this release's GitHub assets (from
-   Phase 7b) include Linux/Windows installers for the first time, or the
-   README still reads "on the roadmap" for a platform that has now shipped,
-   flag it and offer to update the download links.
-2. **`ROADMAP.md`.** Check for entries describing work this release just
-   completed (compare against the new CHANGELOG section) — flag any that now
-   read as still-pending when they're done.
-3. **`docs/*.md`.** Scan for platform-specific claims that may be stale given
-   what changed (e.g. a doc that only describes a macOS-only install flow,
-   when this release adds a Linux/Windows equivalent). Flag, don't rewrite.
-4. **`docs/DECISIONS.md`.** Ask the developer whether anything in this release
-   constitutes a durable decision worth logging there (that file is
-   append-only and durable-decisions-only by convention — not every release
-   needs an entry, but the skill should ask rather than assume).
+Once Phase 7b's CI build succeeds, this is also the point to follow through on
+any website updates queued back in Phase 5d — now that the platforms in
+question are confirmed actually working, not just built.
 
 ## Phase 8 — Print the manual GitHub-release info (macOS only)
 
@@ -384,10 +456,12 @@ version. If an asset is bad, cut a new patch release instead.
 
 ## Done
 
-Report: the new version, that gates/build/verify passed, the commit + tag
-created, the push state (pushed or pending), the Linux/Windows CI result
-(run URL, conclusion, smoke-test outcome per platform), any doc-staleness
-findings from Phase 7c and whether the developer acted on them, that the macOS
+Report: the new version, that gates/build/verify passed, the local install
+smoke-test result (with screenshot), any doc-staleness findings from Phase 5d
+(app docs and website) and whether the developer acted on them, the commit +
+tag created, the push state (pushed or pending), the Linux/Windows CI result
+(run URL, conclusion, smoke-test outcome per platform), the website push state
+(updated + pushed, or held pending developer confirmation), that the macOS
 GitHub release upload is left for the developer to do manually (with the info
 from Phase 8 printed above), and the Homebrew cask state (updated + pushed to
 the tap, or pending the release publish).
