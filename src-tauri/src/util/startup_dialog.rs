@@ -65,6 +65,19 @@ pub struct DialogCommand {
     pub message_via_env: bool,
 }
 
+/// Absolute path to a helper under the Windows system directory.
+///
+/// `%SystemRoot%` is read from the environment (it is always set on Windows) and
+/// falls back to the conventional `C:\Windows`. Building the path here rather
+/// than relying on PATH lookup is what stops a same-directory `powershell.exe`
+/// from being picked up — see the `DialogOs::Windows` arm.
+///
+/// `relative` is a `System32`-relative path, e.g. `"notepad.exe"`.
+fn windows_system32_path(relative: &str) -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    format!("{}\\System32\\{}", root.trim_end_matches('\\'), relative)
+}
+
 /// Ordered list of dialog helpers to try for `os`.
 ///
 /// Returns an empty list for platforms with no known helper, which callers must
@@ -113,8 +126,14 @@ pub fn dialog_commands(os: DialogOs, message: &str) -> Vec<DialogCommand> {
         // PowerShell ships with every supported Windows version. The message
         // travels through the environment, so newlines and quotes in the OS
         // error text cannot break the command line.
+        //
+        // Named by absolute path on purpose: `CreateProcessW` searches the
+        // application directory and the current directory before PATH, so a bare
+        // "powershell" lets a `powershell.exe` sitting next to the app (or in
+        // whatever directory the app happened to be launched from) run instead
+        // of the real one.
         DialogOs::Windows => vec![DialogCommand {
-            program: "powershell".into(),
+            program: windows_system32_path("WindowsPowerShell\\v1.0\\powershell.exe"),
             args: vec![
                 "-NoProfile".into(),
                 "-NonInteractive".into(),
@@ -224,6 +243,24 @@ mod tests {
         );
     }
 
+    // Windows resolves a bare program name against the application directory and
+    // the current directory *before* PATH, so `Command::new("powershell")` will
+    // happily run a `powershell.exe` that someone dropped next to the app. An
+    // absolute path under %SystemRoot% removes the search entirely.
+    #[test]
+    fn windows_dialog_helper_is_an_absolute_path() {
+        let cmds = dialog_commands(DialogOs::Windows, "boom");
+        let program = &cmds[0].program;
+        assert!(
+            program.contains(':') && program.contains('\\'),
+            "expected an absolute Windows path, got {program:?}"
+        );
+        assert!(
+            program.to_lowercase().ends_with("powershell.exe"),
+            "expected powershell.exe, got {program:?}"
+        );
+    }
+
     #[test]
     fn linux_falls_back_across_desktop_environments() {
         let cmds = dialog_commands(DialogOs::Linux, "keyring unavailable");
@@ -251,7 +288,13 @@ mod tests {
     fn windows_passes_the_message_through_the_environment() {
         let cmds = dialog_commands(DialogOs::Windows, "line one\nline \"two\"");
         assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0].program, "powershell");
+        // Absolute path, not a bare name — see
+        // `windows_dialog_helper_is_an_absolute_path`.
+        assert!(
+            cmds[0].program.to_lowercase().ends_with("powershell.exe"),
+            "expected powershell.exe, got {:?}",
+            cmds[0].program
+        );
         assert!(cmds[0].message_via_env, "message must not be inlined into the command");
         assert!(
             cmds[0].args.iter().all(|a| !a.contains("line one")),

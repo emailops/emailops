@@ -206,8 +206,18 @@ pub fn plan_reveal(os: &str, path: &Path, is_dir: bool) -> RevealAction {
         // Explorer wants the path glued to the switch as a single argument:
         // `explorer /select,C:\dir\file.txt`. It also exits non-zero on
         // success, which is why the executor spawns rather than waits.
+        //
+        // Named by absolute path: `CreateProcessW` searches the application and
+        // current directory before PATH, so a bare "explorer" could resolve to a
+        // planted `explorer.exe`. Explorer lives directly under %SystemRoot%,
+        // not System32.
         "windows" => RevealAction::Select {
-            program: "explorer".into(),
+            program: format!(
+                "{}\\explorer.exe",
+                std::env::var("SystemRoot")
+                    .unwrap_or_else(|_| "C:\\Windows".to_string())
+                    .trim_end_matches('\\')
+            ),
             args: vec![format!("/select,{}", path.to_string_lossy())],
         },
         // No file manager is guaranteed across desktop environments, and the
@@ -925,7 +935,17 @@ mod tests {
         let action = plan_reveal("windows", path, false);
         match action {
             RevealAction::Select { program, args } => {
-                assert_eq!(program, "explorer");
+                // Absolute path, not a bare name: Windows searches the app and
+                // current directory before PATH, so a bare "explorer" is a
+                // binary-planting vector.
+                assert!(
+                    program.to_lowercase().ends_with("\\explorer.exe"),
+                    "expected an absolute path to explorer.exe, got {program:?}"
+                );
+                assert!(
+                    program.contains(':'),
+                    "expected a drive-qualified absolute path, got {program:?}"
+                );
                 assert_eq!(args.len(), 1, "the switch and path must be one argument");
                 assert_eq!(args[0], r"/select,C:\Users\x\Downloads\invoice.pdf");
             }
