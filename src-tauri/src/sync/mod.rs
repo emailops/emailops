@@ -4,6 +4,7 @@ pub mod folder_plan;
 pub mod gmail;
 pub mod gmail_calendar;
 pub mod header_capture;
+pub(crate) mod http_retry;
 pub mod imap;
 pub mod imap_search;
 pub mod mime_builder;

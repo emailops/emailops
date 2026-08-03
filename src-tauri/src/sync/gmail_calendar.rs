@@ -10,6 +10,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendarEvent};
+use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision};
 
 const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const MAX_RETRIES: u32 = 3;
@@ -89,6 +90,10 @@ impl GoogleCalendarClient {
     {
         let mut backoff_ms = INITIAL_BACKOFF_MS;
         let mut refreshed = false;
+        // Carried so the give-up error names the real cause instead of a bare
+        // "failed after N retries".
+        let mut last_cause = String::from("no attempt was made");
+
         for attempt in 0..=MAX_RETRIES {
             let token = self
                 .access_token
@@ -96,31 +101,38 @@ impl GoogleCalendarClient {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             let response = build(&self.client, &token).send().await;
-            match response {
-                Ok(resp) if resp.status() == StatusCode::UNAUTHORIZED && !refreshed => {
+
+            let outcome = match &response {
+                Ok(resp) => Attempt::Status(resp.status().as_u16()),
+                Err(_) => Attempt::TransportError,
+            };
+            match &response {
+                Ok(resp) => last_cause = format!("HTTP {}", resp.status()),
+                Err(e) => last_cause = e.to_string(),
+            }
+
+            match classify_attempt(outcome, attempt, MAX_RETRIES, refreshed) {
+                // Only a genuine success reaches the caller. A throttled or 5xx
+                // response must never be handed back as a valid payload.
+                RetryDecision::Return => {
+                    return response
+                        .map_err(|e| AppError::SyncError(format!("Google Calendar {operation} failed: {e}")))
+                }
+                RetryDecision::RefreshAndRetry => {
                     refreshed = true;
                     self.refresh_access_token().await?;
                 }
-                Ok(resp)
-                    if (resp.status() == StatusCode::TOO_MANY_REQUESTS || resp.status().is_server_error())
-                        && attempt < MAX_RETRIES =>
-                {
+                RetryDecision::Backoff => {
                     sleep(Duration::from_millis(backoff_ms)).await;
                     backoff_ms *= 2;
                 }
-                Ok(resp) => return Ok(resp),
-                Err(e) if attempt < MAX_RETRIES => {
-                    let _ = e; // transient transport error — retry with backoff
-                    sleep(Duration::from_millis(backoff_ms)).await;
-                    backoff_ms *= 2;
-                }
-                Err(e) => {
-                    return Err(AppError::SyncError(format!("Google Calendar {operation} failed: {e}")));
-                }
+                RetryDecision::GiveUp => break,
             }
         }
+
         Err(AppError::SyncError(format!(
-            "Google Calendar {operation} failed after {MAX_RETRIES} retries"
+            "Google Calendar {operation} failed after {} attempts: {last_cause}",
+            MAX_RETRIES + 1
         )))
     }
 }
