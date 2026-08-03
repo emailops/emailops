@@ -1,11 +1,13 @@
 // Lens table — renders rows grouped or flat, with sortable column headers
 // and inline-editable cells. Extracted from LensesView.tsx.
 
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { LensColumn, LensRow, LensSortSpec } from '@/types';
+import { planUrlCell } from './lensUrlCell';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,17 +115,26 @@ function Cell({ column, value, hasOverride }: CellProps) {
     case 'number':
       return <span className={cls}>{fmt.number(Number(value))}</span>;
     case 'url': {
-      const href = String(value);
+      // Lens values come out of email bodies, so the scheme must be validated
+      // before this becomes a live link — same rule the chat and email-body
+      // renderers apply. Anything not http(s) renders as inert text.
+      const plan = planUrlCell(value);
+      if (plan.kind === 'text') {
+        return <span className={`${cls} break-all`}>{plan.text}</span>;
+      }
       return (
-        <a
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          className="text-blue-400 hover:underline"
-          onClick={(e) => e.stopPropagation()}
+        <button
+          type="button"
+          className="text-blue-400 hover:underline break-all text-left"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Hand off to the OS browser instead of navigating the app's own
+            // webview away from the running app.
+            openExternal(plan.href).catch((err) => console.error('Failed to open URL:', err));
+          }}
         >
-          {href}
-        </a>
+          {plan.href}
+        </button>
       );
     }
     case 'text':

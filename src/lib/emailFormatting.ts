@@ -142,11 +142,20 @@ export function sanitizeEmailHtml(html: string): string {
   return clean;
 }
 
+/** Elements that fetch a remote URL on their own, without user interaction.
+ *  DOMPurify's `html` profile allows `audio`/`video`/`source`/`track` through,
+ *  so gating only `img` left a wide-open tracking channel. */
+const REMOTE_FETCHING_TAGS = new Set(['IMG', 'SOURCE', 'VIDEO', 'AUDIO', 'TRACK']);
+
+/** URL-bearing attributes on those elements. */
+const REMOTE_URL_ATTRS = ['src', 'poster'] as const;
+
 /**
- * Like `sanitizeEmailHtml`, but also optionally blocks remote images.
- * When `allowRemoteContent` is false, remote `src` attributes on `<img>` and
- * `<source>` elements are stripped. `hasBlockedImages` tells the caller whether
- * any were removed so it can show a "Load images" banner.
+ * Like `sanitizeEmailHtml`, but also optionally blocks remote content.
+ * When `allowRemoteContent` is false, remote `src`/`poster`/`srcset` attributes
+ * are stripped from every element that fetches on its own
+ * ([`REMOTE_FETCHING_TAGS`]). `hasBlockedImages` tells the caller whether any
+ * were removed so it can show a "Load images" banner.
  *
  * To show images after blocking, call this again with `allowRemoteContent: true`
  * and the original (pre-sanitized) HTML — no need to store any intermediate state.
@@ -171,15 +180,22 @@ export function sanitizeEmailHtmlFull(
   if (!allowRemoteContent) {
     DOMPurify.addHook('afterSanitizeAttributes', (node) => {
       const el = node as Element;
-      if (el.tagName === 'IMG' || el.tagName === 'SOURCE') {
-        const src = el.getAttribute?.('src') ?? '';
-        if (/^https?:\/\//i.test(src)) {
-          el.removeAttribute('src');
+      if (!REMOTE_FETCHING_TAGS.has(el.tagName)) return;
+
+      // `poster` is the sneakiest of these: a <video poster="https://…"> fetches
+      // on render with no user interaction, making it a guaranteed read receipt.
+      for (const attr of REMOTE_URL_ATTRS) {
+        const value = el.getAttribute?.(attr) ?? '';
+        if (/^https?:\/\//i.test(value)) {
+          el.removeAttribute(attr);
           hasBlockedImages = true;
         }
-        if (el.getAttribute?.('srcset')) {
-          el.removeAttribute('srcset');
-        }
+      }
+      // srcset holds a comma-separated candidate list rather than one URL, so it
+      // is dropped wholesale rather than pattern-matched.
+      if (el.getAttribute?.('srcset')) {
+        el.removeAttribute('srcset');
+        hasBlockedImages = true;
       }
     });
   }

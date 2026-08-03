@@ -29,10 +29,53 @@ function scriptSrcDirective(csp: string): string {
   return directive;
 }
 
+function directive(csp: string, name: string): string {
+  const found = csp
+    .split(';')
+    .map((d) => d.trim())
+    .find((d) => d.startsWith(`${name} `) || d === name);
+  if (!found) throw new Error(`No ${name} directive in CSP`);
+  return found;
+}
+
 describe('EmailHtmlFrame bridge script CSP', () => {
   it('the production CSP allows the inline bridge script via its sha256 hash', async () => {
     const csp = tauriConf.app.security.csp;
     const scriptSrc = scriptSrcDirective(csp);
     expect(scriptSrc).toContain(await expectedScriptHash());
+  });
+});
+
+describe('production CSP hardening', () => {
+  // `blob:` was allowed in object-src/frame-src but nothing ever produced a blob
+  // URL — there is no `URL.createObjectURL` call anywhere in src/. Dropping it
+  // removes a plugin/frame instantiation channel at zero cost.
+  it('does not allow blob: in object-src or frame-src', () => {
+    const csp = tauriConf.app.security.csp;
+    expect(directive(csp, 'object-src')).not.toContain('blob:');
+    expect(directive(csp, 'frame-src')).not.toContain('blob:');
+  });
+
+  // `data:` however is LOAD-BEARING and must stay. AttachmentViewer builds a
+  // `data:<mime>;base64,…` URI and renders it through `<object>` for PDFs and
+  // `<iframe>` for HTML attachments (AttachmentTabView does the same). Removing
+  // `data:` here silently breaks attachment preview — it looks like a safe
+  // hardening step and is not. Pinned so nobody "tightens" it again.
+  it('keeps data: in object-src and frame-src for the attachment viewer', () => {
+    const csp = tauriConf.app.security.csp;
+    expect(directive(csp, 'object-src')).toContain('data:');
+    expect(directive(csp, 'frame-src')).toContain('data:');
+  });
+
+  it('still allows the asset protocol needed by the attachment viewer', () => {
+    const csp = tauriConf.app.security.csp;
+    expect(directive(csp, 'object-src')).toContain('asset:');
+    expect(directive(csp, 'frame-src')).toContain('asset:');
+  });
+
+  it('keeps script-src free of unsafe-inline and unsafe-eval', () => {
+    const scriptSrc = scriptSrcDirective(tauriConf.app.security.csp);
+    expect(scriptSrc).not.toContain('unsafe-inline');
+    expect(scriptSrc).not.toContain('unsafe-eval');
   });
 });

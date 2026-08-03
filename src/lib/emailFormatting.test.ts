@@ -1,5 +1,67 @@
 import { describe, expect, it } from 'vitest';
-import { getSafeExternalUrl, parseMailtoUrl, sanitizeCssValue, sanitizeEmailHtml } from './emailFormatting';
+import {
+  getSafeExternalUrl,
+  parseMailtoUrl,
+  sanitizeCssValue,
+  sanitizeEmailHtml,
+  sanitizeEmailHtmlFull,
+} from './emailFormatting';
+
+// ---------------------------------------------------------------------------
+// sanitizeEmailHtmlFull — remote-content gating
+// ---------------------------------------------------------------------------
+
+describe('sanitizeEmailHtmlFull remote-content gating', () => {
+  // Regression: the blocking hook only inspected IMG and SOURCE, so a sender
+  // could get a guaranteed read-receipt through <video>/<audio> even with
+  // "load remote images" off. `poster` is the worst of them — it fetches on
+  // render with no user interaction at all.
+  it('strips remote media sources on video and audio, not just images', () => {
+    const html =
+      '<video src="https://tracker.example/x.mp4" poster="https://tracker.example/p.jpg"></video>' +
+      '<audio src="https://tracker.example/a.mp3"></audio>';
+
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(html, false);
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('strips a remote video poster even when the video has no src', () => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(
+      '<video poster="https://tracker.example/p.jpg"></video>',
+      false,
+    );
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('keeps remote media when the user has allowed remote content', () => {
+    const html = '<video src="https://cdn.example/x.mp4" poster="https://cdn.example/p.jpg"></video>';
+
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(html, true);
+
+    expect(clean).toContain('https://cdn.example/x.mp4');
+    expect(clean).toContain('https://cdn.example/p.jpg');
+    expect(hasBlockedImages).toBe(false);
+  });
+
+  it('still blocks remote images (the original behaviour)', () => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull('<img src="https://tracker.example/i.png">', false);
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('leaves inline data: media alone — it discloses nothing to the sender', () => {
+    const dataUri = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(`<img src="${dataUri}">`, false);
+
+    expect(clean).toContain(dataUri);
+    expect(hasBlockedImages).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // sanitizeCssValue
