@@ -363,12 +363,36 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+      # Each of the 3 platform jobs (linux, windows here, windows-cuda below)
+      # hits this same tag, so `generate_release_notes: true` would call
+      # GitHub's auto-generate API 3 times against an already-existing
+      # release; it *appends* to the current body rather than replacing it,
+      # producing duplicated "What's Changed"/"New Contributors" blocks (hit
+      # in practice on the v0.6.5 release). Extracting the matching
+      # CHANGELOG.md section instead is idempotent — every job writes the
+      # same text, so re-running never duplicates anything, and it carries
+      # real bug-fix prose instead of a bare PR-title list.
+      - name: Extract release notes from CHANGELOG
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          VERSION="${{ inputs.tag_name }}"
+          VERSION="${VERSION#v}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) { exit }
+              if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > "${{ runner.temp }}/release-notes.md"
+
       - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag_name }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
           files: release/*
 
   # Windows-only, NVIDIA-only additional download alongside the Vulkan build
@@ -507,10 +531,27 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+      # See the matching comment on the linux/windows job's step of the same
+      # name — idempotent across all 3 job runs, unlike generate_release_notes.
+      - name: Extract release notes from CHANGELOG
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          VERSION="${{ inputs.tag_name }}"
+          VERSION="${VERSION#v}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) { exit }
+              if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > "${{ runner.temp }}/release-notes.md"
+
       - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag_name }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
           files: release/*
