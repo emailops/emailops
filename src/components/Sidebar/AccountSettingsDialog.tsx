@@ -113,6 +113,11 @@ export function AccountSettingsDialog({
   const [imapTestStatus, setImapTestStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [imapTestMessage, setImapTestMessage] = useState<string | null>(null);
   const [imapLoadError, setImapLoadError] = useState<string | null>(null);
+  // A password is stored in the keychain but deliberately not loaded into the
+  // form. An empty password box is therefore valid: the backend keeps the
+  // stored secret. "Test connection" still needs a real password, so it stays
+  // gated on the box having content.
+  const [imapHasStoredPassword, setImapHasStoredPassword] = useState(false);
 
   useEffect(() => {
     if (isGmail) {
@@ -128,31 +133,43 @@ export function AccountSettingsDialog({
         .finally(() => setIsLoading(false));
     } else if (isImap) {
       // getImapSettings always returns the server fields from the DB mirror,
-      // even when the keychain entry is gone. `hasPassword: false` means the
-      // password specifically is missing — the dialog pre-fills everything
-      // else and asks the user to retype the password (the common re-auth
-      // case after a provider rotated their app password). Only the catch
-      // path runs when something is genuinely broken (unknown account, DB
-      // failure, etc.) in which case we fall back to pre-filling the
-      // username from the account email.
+      // even when the keychain entry is gone OR unreadable. It never returns
+      // the password itself: the box stays empty and an empty box on save means
+      // "keep the stored password".
+      //
+      // `hasPassword: false` means the password is genuinely unavailable, so the
+      // user must retype it. `keychainError` distinguishes "you never saved one"
+      // from "the keychain refused to open" — the latter is not the user's
+      // fault and needs different wording. Only the catch path runs when
+      // something is genuinely broken (unknown account, DB failure), in which
+      // case we fall back to pre-filling the username from the account email.
       api
         .getImapSettings(account.id)
         .then((s) => {
           setImapHost(s.host);
           setImapPort(s.port);
           setImapUsername(s.username || account.email);
-          setImapPassword(s.password);
+          setImapPassword('');
           setSmtpHost(s.smtpHost);
           setSmtpPort(s.smtpPort);
           setImapDirty(false);
-          setImapLoadError(
-            s.hasPassword
-              ? null
-              : 'Saved password is missing from the keychain. Re-enter your password to reconnect — the server settings below have been kept.',
-          );
+          setImapHasStoredPassword(s.hasPassword);
+          if (s.hasPassword) {
+            setImapLoadError(null);
+          } else if (s.keychainError) {
+            setImapLoadError(
+              `The keychain could not be opened (${s.keychainError}), so your saved password is unavailable. ` +
+                'The server settings below have been kept — re-enter your password to reconnect.',
+            );
+          } else {
+            setImapLoadError(
+              'Saved password is missing from the keychain. Re-enter your password to reconnect — the server settings below have been kept.',
+            );
+          }
         })
         .catch((e) => {
           setImapLoadError(errorText(e));
+          setImapHasStoredPassword(false);
           setImapUsername((prev) => prev || account.email);
         })
         .finally(() => setIsLoading(false));
@@ -402,7 +419,7 @@ export function AccountSettingsDialog({
                   <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.imapHint')}</p>
                   {imapLoadError && (
                     <div className="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300">
-                      {imapLoadError}. Enter your credentials below to sign in again.
+                      {imapLoadError}
                     </div>
                   )}
                   <div className="space-y-3">
@@ -469,6 +486,7 @@ export function AccountSettingsDialog({
                           type={showImapPassword ? 'text' : 'password'}
                           autoComplete="new-password"
                           value={imapPassword}
+                          placeholder={imapHasStoredPassword ? 'Leave blank to keep the saved password' : undefined}
                           onChange={(e) => {
                             setImapPassword(e.target.value);
                             markImapDirty();
@@ -661,7 +679,12 @@ export function AccountSettingsDialog({
                 isCustomInvalid ||
                 (isImap &&
                   imapDirty &&
-                  (!imapHost || !imapUsername || !imapPassword || !smtpHost || !imapPort || !smtpPort))
+                  (!imapHost ||
+                    !imapUsername ||
+                    (!imapPassword && !imapHasStoredPassword) ||
+                    !smtpHost ||
+                    !imapPort ||
+                    !smtpPort))
               }
               className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
             >

@@ -126,16 +126,19 @@ export interface ImapCredentialsView {
   smtpPort: number;
 }
 
-export async function getImapCredentials(accountId: string): Promise<ImapCredentialsView> {
-  return invoke('get_imap_credentials', { accountId });
-}
-
-/** Server settings + best-effort password for the re-auth dialog. When the
- *  keychain entry is missing the server fields still come back populated (from
- *  the DB mirror) and `hasPassword` is false so the dialog can pre-fill
- *  everything except the password and prompt for just that. */
-export interface ImapSettingsForEdit extends ImapCredentialsView {
+/** Server settings for the re-auth dialog.
+ *
+ *  Deliberately carries NO password — only `hasPassword`. The stored secret is
+ *  never sent to the webview (it would sit in the same renderer that displays
+ *  untrusted email HTML); saving with an empty password reuses it instead.
+ *
+ *  The server fields come back populated from the DB mirror even when the
+ *  keychain entry is missing *or* unreadable. `keychainError` is set only in the
+ *  unreadable case, so the dialog can explain why rather than implying the user
+ *  never saved a password. */
+export interface ImapSettingsForEdit extends Omit<ImapCredentialsView, 'password'> {
   hasPassword: boolean;
+  keychainError: string | null;
 }
 
 export async function getImapSettings(accountId: string): Promise<ImapSettingsForEdit> {
@@ -149,6 +152,8 @@ export async function isOnline(): Promise<boolean> {
   return invoke('is_online');
 }
 
+/** Save IMAP settings. An empty `password` means "keep the stored one" — the
+ *  dialog never receives the current password, so it cannot echo it back. */
 export async function updateImapCredentials(accountId: string, credentials: ImapCredentialsView): Promise<void> {
   return invoke('update_imap_credentials', {
     accountId,

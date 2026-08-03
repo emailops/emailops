@@ -460,7 +460,6 @@ pub fn run() {
             commands::accounts::add_account,
             commands::accounts::test_imap_connection,
             commands::accounts::add_imap_account,
-            commands::accounts::get_imap_credentials,
             commands::accounts::get_imap_settings,
             commands::accounts::update_imap_credentials,
             commands::accounts::list_accounts,

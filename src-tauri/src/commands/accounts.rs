@@ -10,34 +10,6 @@ use crate::services;
 use crate::sync::imap::ImapCredentials;
 use crate::AppState;
 
-/// Frontend-facing DTO for IMAP credentials (camelCase field names).
-/// The backend `ImapCredentials` uses snake_case for on-disk keychain JSON, so
-/// we expose a separate DTO here to keep the JS boundary camelCase without
-/// changing the stored serialization format.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImapCredentialsDto {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: String,
-    pub smtp_host: String,
-    pub smtp_port: u16,
-}
-
-impl From<ImapCredentials> for ImapCredentialsDto {
-    fn from(c: ImapCredentials) -> Self {
-        Self {
-            host: c.host,
-            port: c.port,
-            username: c.username,
-            password: c.password,
-            smtp_host: c.smtp_host,
-            smtp_port: c.smtp_port,
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn add_account(
     state: State<'_, AppState>,
@@ -107,16 +79,12 @@ pub async fn test_imap_connection(
     services::accounts::test_imap_connection(credentials).await
 }
 
-#[tauri::command]
-pub async fn get_imap_credentials(account_id: String) -> Result<ImapCredentialsDto, AppError> {
-    services::accounts::get_imap_credentials(&account_id).map(Into::into)
-}
-
-/// Load IMAP server settings for the re-auth/edit dialog. Unlike
-/// `get_imap_credentials`, this returns a partial result (with `hasPassword:
-/// false` and an empty password string) when only the keychain entry is
-/// missing — so the dialog can still pre-fill host/port/username/smtp settings
-/// from the DB and prompt the user only for the password.
+/// Load IMAP server settings for the re-auth/edit dialog.
+///
+/// Never returns the password — only `hasPassword`, so the dialog knows whether
+/// to offer "leave blank to keep the current password". When the keychain is
+/// missing *or* unreadable, the server fields still come back from the DB mirror
+/// and `keychainError` explains why the password is unavailable.
 #[tauri::command]
 pub async fn get_imap_settings(
     state: State<'_, AppState>,
@@ -145,6 +113,10 @@ pub async fn update_imap_credentials(
     if account.provider != "imap" {
         return Err(AppError::InvalidInput("Account is not an IMAP account".to_string()));
     }
+
+    // An empty password means the user left the box untouched — the dialog is
+    // never given the stored password to echo back, so reuse it here.
+    let password = services::accounts::resolve_update_password(&account_id, &password)?;
 
     let credentials = ImapCredentials {
         host,

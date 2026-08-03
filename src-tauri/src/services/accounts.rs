@@ -446,10 +446,20 @@ pub struct ImapEditSettings {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub password: String,
     pub smtp_host: String,
     pub smtp_port: u16,
+    /// Whether a usable password is stored. The password itself is deliberately
+    /// NOT included: the dialog only needs to know whether to say "leave blank
+    /// to keep the current password", and shipping the plaintext secret to the
+    /// webview would expose it to the same renderer that displays untrusted
+    /// email HTML. A blank password on save reuses the stored one — see
+    /// [`resolve_update_password`].
     pub has_password: bool,
+    /// Set when the keychain could not be read at all (as opposed to simply
+    /// having no entry). The server fields below still come from the DB mirror;
+    /// this tells the UI to explain *why* the password is unavailable instead of
+    /// implying the user never saved one.
+    pub keychain_error: Option<String>,
 }
 
 /// Load IMAP settings for the re-auth dialog. Pulls server settings from the DB
@@ -464,30 +474,47 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
     match get_imap_credentials(account_id) {
         Ok(creds) => {
             // Backfill DB so future loads don't depend on the keychain entry.
-            let _ = db.upsert_imap_settings(
+            // A failure here is not fatal (the settings are already in hand) but
+            // must not be silent — a mirror that never gets written is exactly
+            // what leaves the re-auth dialog empty later on.
+            if let Err(e) = db.upsert_imap_settings(
                 account_id,
                 &creds.host,
                 creds.port,
                 &creds.username,
                 &creds.smtp_host,
                 creds.smtp_port,
-            );
+            ) {
+                crate::services::logger::log(
+                    "error",
+                    "account",
+                    format!("could not mirror IMAP settings for {account_id}: {e}"),
+                );
+            }
             Ok(ImapEditSettings {
                 host: creds.host,
                 port: creds.port,
                 username: creds.username,
-                password: creds.password,
                 smtp_host: creds.smtp_host,
                 smtp_port: creds.smtp_port,
                 has_password: true,
+                keychain_error: None,
             })
         }
-        Err(AppError::NeedsReauth { .. }) => {
-            // Password missing — fall back to DB settings so the user only has
-            // to re-enter their password. If the DB also has nothing, the
-            // dialog gets blank server fields *with* `has_password = false` so
-            // it can show a clear "credentials missing — please enter" state
-            // rather than silently displaying empty inputs.
+        // Two distinct failures, one response: the password is unavailable but
+        // the *server* settings are not secret and live in the DB mirror, so
+        // the dialog can pre-fill everything except the password.
+        //
+        // `NeedsReauth` — no keychain entry (cleared, or a provider rotated an
+        // app password). `KeyringError` — the keychain exists but could not be
+        // read (locked, or the running binary's code signature no longer
+        // matches the item's ACL; macOS reports both as errSecAuthFailed).
+        // Propagating the latter used to blank the server fields.
+        Err(e @ (AppError::NeedsReauth { .. } | AppError::KeyringError(_))) => {
+            let keychain_error = match &e {
+                AppError::KeyringError(_) => Some(e.to_string()),
+                _ => None,
+            };
             let settings = db.get_imap_settings(account_id)?;
             let (host, port, username, smtp_host, smtp_port) =
                 settings.unwrap_or_else(|| (String::new(), 993, String::new(), String::new(), 465));
@@ -495,12 +522,31 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
                 host,
                 port,
                 username,
-                password: String::new(),
                 smtp_host,
                 smtp_port,
                 has_password: false,
+                keychain_error,
             })
         }
+        Err(e) => Err(e),
+    }
+}
+
+/// Resolve the password to store for an IMAP settings update.
+///
+/// An empty `provided` means "the user left the password box alone" — reuse the
+/// stored secret. This is what lets [`ImapEditSettings`] omit the password
+/// entirely instead of round-tripping it through the webview. A blank box with
+/// nothing stored is a user error, not a licence to save an empty credential.
+pub fn resolve_update_password(account_id: &str, provided: &str) -> Result<String> {
+    if !provided.is_empty() {
+        return Ok(provided.to_string());
+    }
+    match get_imap_credentials(account_id) {
+        Ok(creds) if !creds.password.is_empty() => Ok(creds.password),
+        Ok(_) | Err(AppError::NeedsReauth { .. }) => Err(AppError::InvalidInput(
+            "No password is stored for this account — enter one to continue.".to_string(),
+        )),
         Err(e) => Err(e),
     }
 }
@@ -740,6 +786,152 @@ mod tests {
             provider: "gmail".into(),
             ..imap_account(id, email)
         }
+    }
+
+    // A `{:?}` on a credential struct — in a log line, a panic message, or a
+    // tracing span — must not print the secret. Both types derived Debug, so any
+    // future debug-print would have leaked one.
+    #[test]
+    fn credential_debug_output_redacts_secrets() {
+        let creds = imap_creds();
+        let rendered = format!("{creds:?}");
+        assert!(
+            !rendered.contains("app-password"),
+            "IMAP password leaked into Debug output: {rendered}"
+        );
+        // The non-secret fields are what make a log line useful — keep them.
+        assert!(rendered.contains("imap.example.com"), "host should still be visible");
+        assert!(rendered.contains("<set>"), "presence of a password should be visible");
+
+        let tokens = OAuthTokens {
+            access_token: "ya29.super-secret".into(),
+            refresh_token: Some("1//refresh-secret".into()),
+            expires_at: Some(42),
+        };
+        let rendered = format!("{tokens:?}");
+        assert!(
+            !rendered.contains("super-secret") && !rendered.contains("refresh-secret"),
+            "OAuth tokens leaked into Debug output: {rendered}"
+        );
+        assert!(rendered.contains("42"), "non-secret expiry should still be visible");
+    }
+
+    // Redaction must not break the keychain round-trip: Serialize still has to
+    // emit the real values.
+    #[test]
+    fn credential_serialization_still_carries_the_secret() {
+        let json = serde_json::to_string(&imap_creds()).expect("serialize");
+        assert!(
+            json.contains("app-password"),
+            "the keychain blob must contain the real password"
+        );
+    }
+
+    // Regression: the re-auth dialog blanked the IMAP server fields whenever the
+    // keychain returned an *error* rather than "no entry". Only
+    // `AppError::NeedsReauth` fell back to the `imap_account_settings` mirror;
+    // every `KeyringError` propagated, so a keychain that was present but
+    // unreadable (locked, or an app whose code signature no longer matches the
+    // item's ACL — macOS reports both as errSecAuthFailed) produced empty
+    // host/port/SMTP inputs even though those non-secret values were sitting in
+    // the DB. The mirror exists precisely so the user only has to retype the
+    // password.
+    #[test]
+    fn imap_edit_settings_fall_back_to_the_db_mirror_when_the_keychain_errors() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        // Populate the DB mirror through the normal dev-storage path.
+        let account = imap_account("acct-1", "hello@example.com");
+        persist_imap_account(&db, &account, &imap_creds()).expect("persist should succeed");
+
+        // Now make the keychain fail every read, and force the keychain path.
+        keychain::install(Arc::new(FailingKeychain));
+        secrets_vault::reset_for_testing();
+        force_keychain_creds_for_testing(true);
+
+        let loaded = load_imap_settings_for_edit(&db, "acct-1");
+
+        force_keychain_creds_for_testing(false);
+        keychain::install(Arc::new(keychain::InMemoryKeychain::new()));
+        secrets_vault::reset_for_testing();
+
+        let settings = loaded.expect("a keychain error must not blank the stored server settings");
+        assert_eq!(
+            settings.host, "imap.example.com",
+            "IMAP host must survive a keychain error"
+        );
+        assert_eq!(settings.port, 993);
+        assert_eq!(settings.username, "hello@example.com");
+        assert_eq!(settings.smtp_host, "smtp.example.com");
+        assert_eq!(settings.smtp_port, 465);
+        assert!(!settings.has_password, "the password is genuinely unavailable");
+        assert!(
+            settings.keychain_error.is_some(),
+            "the keychain failure must still be reported, not silently swallowed"
+        );
+    }
+
+    // The re-auth dialog only ever needs to know *whether* a password exists —
+    // shipping the plaintext one to the webview put a live credential in the
+    // same renderer that displays untrusted email HTML.
+    #[test]
+    fn imap_edit_settings_never_carry_a_plaintext_password() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let account = imap_account("acct-2", "hello@example.com");
+        persist_imap_account(&db, &account, &imap_creds()).expect("persist should succeed");
+
+        let settings = load_imap_settings_for_edit(&db, "acct-2").expect("settings load");
+
+        assert!(settings.has_password, "the stored password is intact");
+        let serialized = serde_json::to_string(&settings).expect("serialize");
+        assert!(
+            !serialized.contains("app-password"),
+            "the plaintext password must never cross the IPC boundary: {serialized}"
+        );
+    }
+
+    // A save that leaves the password box untouched must reuse the stored
+    // secret rather than overwrite it with an empty string. This is what makes
+    // it safe to stop sending the password to the frontend at all.
+    #[test]
+    fn blank_password_on_update_reuses_the_stored_one() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let account = imap_account("acct-3", "hello@example.com");
+        persist_imap_account(&db, &account, &imap_creds()).expect("persist should succeed");
+
+        let resolved = resolve_update_password("acct-3", "").expect("blank password must resolve to the stored one");
+        assert_eq!(resolved, "app-password");
+
+        let typed = resolve_update_password("acct-3", "freshly-typed").expect("a typed password wins");
+        assert_eq!(typed, "freshly-typed");
+    }
+
+    // ...but a blank password with nothing stored is a user error, not an
+    // invitation to save an empty credential.
+    #[test]
+    fn blank_password_with_nothing_stored_is_rejected() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let err = resolve_update_password("no-such-account", "")
+            .expect_err("a blank password with no stored credential must fail");
+        assert!(
+            matches!(err, AppError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
     }
 
     // Regression: adding an IMAP account stored credentials *before* inserting

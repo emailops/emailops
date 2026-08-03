@@ -141,7 +141,7 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
 }
 
 /// Credentials for an IMAP account (stored in keychain as JSON).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImapCredentials {
     pub host: String,
     pub port: u16,
@@ -149,6 +149,22 @@ pub struct ImapCredentials {
     pub password: String,
     pub smtp_host: String,
     pub smtp_port: u16,
+}
+
+/// Hand-written so a stray `{:?}` cannot print the account password. Host, port
+/// and username are not secret and are the fields worth seeing in a log.
+/// `Serialize` still emits the password — that is how it reaches the keychain.
+impl std::fmt::Debug for ImapCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImapCredentials")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &crate::models::Redacted(!self.password.is_empty()))
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .finish()
+    }
 }
 
 pub struct ImapClient {

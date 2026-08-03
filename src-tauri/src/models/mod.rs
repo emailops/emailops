@@ -82,11 +82,34 @@ pub struct SyncStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: Option<i64>,
+}
+
+/// Hand-written so a stray `{:?}` — in a log line, a `.expect()` message, or a
+/// `tracing` span — cannot print bearer tokens. `Serialize` still emits the real
+/// values: that is how they reach the keychain.
+impl std::fmt::Debug for OAuthTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthTokens")
+            .field("access_token", &Redacted(!self.access_token.is_empty()))
+            .field("refresh_token", &Redacted(self.refresh_token.is_some()))
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+/// Renders as `<set>` / `<unset>` so debug output stays useful without
+/// disclosing the secret itself.
+pub(crate) struct Redacted(pub bool);
+
+impl std::fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0 { "<set>" } else { "<unset>" })
+    }
 }
 
 // Folders
