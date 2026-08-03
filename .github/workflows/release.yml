@@ -387,7 +387,21 @@ jobs:
   release-windows-cuda:
     name: Release (windows-cuda)
     runs-on: windows-2022
-    timeout-minutes: 90
+    # 90 min (matching the Vulkan legs) wasn't enough on the very first run:
+    # that measured a Build step still going at 82 min when the job was
+    # cancelled, for two reasons neither Vulkan leg hits — (1) a stone-cold
+    # Swatinem/rust-cache (first-ever run of this cache key, so every one of
+    # the ~800 dependency crates compiled from scratch, not just
+    # llama-cpp-sys-2), and (2) standard GitHub-hosted Windows runners have 2
+    # cores, not the 4 the timing this workflow is based on (see
+    # docs/DECISIONS.md, 2026-08-03 entry) was measured on — parallelism
+    # gains from the --jobs 1 fix scale with core count. A cancelled job never
+    # reaches its own `Post Run Swatinem/rust-cache` step, so it saves no
+    # cache either — this generous limit is mainly to let the first run
+    # actually finish and warm the cache; every run after should be far
+    # faster (only changed crates rebuild) and this can likely come back down
+    # once that's confirmed.
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
