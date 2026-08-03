@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { INITIAL_SCROLL_RESTORE, planScrollRestore, type ScrollRestoreState } from '@/lib/scrollRestore';
 import type { Email } from '@/types';
 import type { RulePrefill } from './EmailRow';
 import { EmailRow } from './EmailRow';
@@ -65,6 +66,48 @@ export function VirtualEmailList({
     getItemKey: (index) => emails[index].id,
     overscan: 5,
   });
+
+  // Survive the `display: none` hide that full-width layout applies while an
+  // email is open (App.tsx keeps the inbox mounted rather than unmounting it).
+  //
+  // `display: none` resets the container's scrollTop to 0 WITHOUT firing a
+  // scroll event, and the virtualizer only learns its offset from scroll events
+  // — so on the way back it kept rendering the window for the pre-hide offset
+  // while the container sat at 0, leaving a blank band above the rows until the
+  // user scrolled. Writing the saved scrollTop back on re-show both returns the
+  // user to where they were and fires the scroll event that resyncs the
+  // virtualizer.
+  //
+  // Visibility is read from layout (`clientHeight === 0`) rather than a prop,
+  // because what matters is what the browser actually did to scrollTop.
+  const restoreRef = useRef<ScrollRestoreState>(INITIAL_SCROLL_RESTORE);
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const observe = () => {
+      const plan = planScrollRestore(restoreRef.current, {
+        hidden: el.clientHeight === 0,
+        scrollTop: el.scrollTop,
+      });
+      restoreRef.current = plan.state;
+      if (plan.restoreTo !== null) {
+        el.scrollTop = plan.restoreTo;
+      }
+    };
+
+    // ResizeObserver is the reliable signal for both directions: hiding collapses
+    // the box to 0x0 and showing restores it, and it fires for ancestor
+    // display changes too.
+    const resizeObserver = new ResizeObserver(observe);
+    resizeObserver.observe(el);
+    el.addEventListener('scroll', observe, { passive: true });
+
+    return () => {
+      resizeObserver.disconnect();
+      el.removeEventListener('scroll', observe);
+    };
+  }, [scrollContainerRef]);
 
   // Scroll focused email into view using the virtualizer (avoids inline ref callbacks)
   useEffect(() => {

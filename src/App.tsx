@@ -1401,7 +1401,15 @@ function AppInner() {
                 );
 
                 if (inboxLayout === 'full-width') {
-                  // Keep the inbox mounted (hidden) so scroll position is preserved when going back.
+                  // Keep the inbox mounted (hidden) so its state — loaded pages,
+                  // filters, virtualizer measurements — survives going back.
+                  //
+                  // NOTE: `hidden` is display:none, which does NOT preserve
+                  // scroll position. The browser resets the scroll container's
+                  // scrollTop to 0 and fires no scroll event, which also strands
+                  // the row virtualizer on a stale offset (the "blank band above
+                  // the rows after Back" bug). VirtualEmailList saves and
+                  // restores the position itself — see src/lib/scrollRestore.ts.
                   return (
                     <>
                       <div className={hasEmailToShow ? 'hidden' : 'contents'}>{inboxList}</div>
