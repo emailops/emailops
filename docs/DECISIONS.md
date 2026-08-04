@@ -503,3 +503,50 @@ verified, not theorised); switching the attachment viewer to `asset:` or `blob:`
 URLs so `data:` could be dropped (a real option, but a behaviour change to a
 working feature for a marginal CSP win; revisit only if attachment sizes make the
 base64 round-trip a performance problem).
+
+## 2026-08-04 — The calendar shows every calendar of an account, coloured per calendar
+
+**Decision:** Calendar sync enumerates every calendar an account can see (Google
+`calendarList.list`, Graph `/me/calendars`) — its own, calendars shared with it,
+subscribed ones — instead of only the primary calendar, and tints each event
+with that calendar's own provider colour. Every calendar syncs; a per-calendar
+`is_visible` toggle (calendar-view legend + Settings → Calendar) filters at
+render time, so showing one again is instant rather than a poll away. Calendars
+without a provider colour (Graph's named presets have no documented hex) get a
+deterministic slot from an app palette, keyed on the calendar id so the colour
+never shuffles between launches. Creating events remains primary-calendar-only.
+**Context:** Only the primary calendar was ever fetched, so a shared team or
+family calendar was invisible in the app while being visible in Google's own UI.
+Two constraints shaped the answer: Google's `calendar.events` scope cannot list
+calendars, so `calendar.calendarlist.readonly` was added (the narrowest scope
+that grants it — every existing Gmail account must re-consent, and the Google
+verification submission has to list it); and providers reuse a single event id
+across every calendar an event appears in, so `calendar_events` was re-keyed to
+`(account_id, calendar_id, provider_event_id)` in V022 — under the old key one
+copy silently overwrote the other.
+**Rejected:** Syncing only the calendars the provider marks as shown
+(`selected`) with no in-app override — the provider flag is a fine *default* for
+a newly seen calendar but a poor permanent policy. Not syncing hidden calendars
+— saves API calls but makes every un-hide wait for the next 5-minute poll.
+Assigning app-palette colours to everything — would not match the colours the
+user already recognises from Google Calendar. Broadening to `calendar.readonly`
+— grants reading every calendar's full contents when only the list is needed.
+Mapping Graph's named colour presets to invented hexes — the guesses would not
+match Outlook anyway, so those calendars use the app palette instead.
+
+## 2026-08-04 — Hidden calendars are hidden from what acts, not just from the grid
+
+**Decision:** Two event listings exist. `list_calendar_events` returns every
+event and backs the calendar view, which filters client-side so the visibility
+toggle is instant. `list_visible_calendar_events` excludes hidden calendars and
+backs everything that *acts* on events: meeting notifications, the chat
+`list_calendar_events` tool (and the weekly-report preseed through it), and the
+CLI `/calendar` command. Events whose calendar has no registry row yet count as
+visible.
+**Context:** Multi-calendar sync means a hidden holiday or team calendar would
+otherwise raise desktop meeting reminders and turn up in chat answers, which
+reads as a bug — the user switched that calendar off.
+**Rejected:** One filtered listing everywhere — the calendar view needs the
+unfiltered set to re-filter locally on toggle without a refetch. Leaving
+notifications and chat unfiltered — simpler, but surfaces exactly what the user
+asked to hide.

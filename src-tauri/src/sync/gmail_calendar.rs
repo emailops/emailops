@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendarEvent};
+use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
 use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision};
 
 const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
@@ -139,15 +139,55 @@ impl GoogleCalendarClient {
 
 #[async_trait]
 impl CalendarProvider for GoogleCalendarClient {
-    async fn list_events(&self, window_start: i64, window_end: i64) -> Result<Vec<ProviderCalendarEvent>> {
+    async fn list_calendars(&self) -> Result<Vec<ProviderCalendar>> {
+        let mut calendars = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut url = format!("{}/users/me/calendarList?maxResults=250", self.base_url);
+            if let Some(token) = &page_token {
+                url.push_str(&format!("&pageToken={}", urlencoding::encode(token)));
+            }
+            let response = self.send_get_with_retry(&url, "list calendars").await?;
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(crate::sync::calendar_provider::classify_calendar_fetch_error(
+                    "Google",
+                    status,
+                    &error_text,
+                    self.account_id.as_deref(),
+                ));
+            }
+            let page: serde_json::Value = response.json().await?;
+            if let Some(items) = page.get("items").and_then(|v| v.as_array()) {
+                calendars.extend(items.iter().filter_map(parse_google_calendar));
+            }
+            page_token = page
+                .get("nextPageToken")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if page_token.is_none() {
+                break;
+            }
+        }
+        Ok(calendars)
+    }
+
+    async fn list_events(
+        &self,
+        calendar_id: &str,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<ProviderCalendarEvent>> {
         let time_min = epoch_to_rfc3339(window_start)?;
         let time_max = epoch_to_rfc3339(window_end)?;
         let mut events = Vec::new();
         let mut page_token: Option<String> = None;
         loop {
             let mut url = format!(
-                "{}/calendars/primary/events?singleEvents=true&maxResults=250&timeMin={}&timeMax={}",
+                "{}/calendars/{}/events?singleEvents=true&maxResults=250&timeMin={}&timeMax={}",
                 self.base_url,
+                urlencoding::encode(calendar_id),
                 urlencoding::encode(&time_min),
                 urlencoding::encode(&time_max),
             );
@@ -202,12 +242,19 @@ impl CalendarProvider for GoogleCalendarClient {
             .ok_or_else(|| AppError::SyncError("Google Calendar returned an unparseable created event".to_string()))
     }
 
-    async fn delete_event(&self, provider_event_id: &str, notify: bool, _message: &str) -> Result<()> {
+    async fn delete_event(
+        &self,
+        calendar_id: &str,
+        provider_event_id: &str,
+        notify: bool,
+        _message: &str,
+    ) -> Result<()> {
         // Google's API sends its standard cancellation email; a custom message
         // is not supported (`_message` intentionally unused).
         let url = format!(
-            "{}/calendars/primary/events/{}?sendUpdates={}",
+            "{}/calendars/{}/events/{}?sendUpdates={}",
             self.base_url,
+            urlencoding::encode(calendar_id),
             urlencoding::encode(provider_event_id),
             if notify { "all" } else { "none" },
         );
@@ -228,12 +275,19 @@ impl CalendarProvider for GoogleCalendarClient {
         ))
     }
 
-    async fn truncate_recurring_event(&self, master_id: &str, first_removed_start: i64, notify: bool) -> Result<()> {
+    async fn truncate_recurring_event(
+        &self,
+        calendar_id: &str,
+        master_id: &str,
+        first_removed_start: i64,
+        notify: bool,
+    ) -> Result<()> {
         // Fetch the master's recurrence, rewrite the RRULEs with an UNTIL just
         // before the first removed occurrence, and PATCH it back.
         let master_url = format!(
-            "{}/calendars/primary/events/{}",
+            "{}/calendars/{}/events/{}",
             self.base_url,
+            urlencoding::encode(calendar_id),
             urlencoding::encode(master_id)
         );
         let response = self.send_get_with_retry(&master_url, "get recurring master").await?;
@@ -343,6 +397,48 @@ impl CalendarProvider for GoogleCalendarClient {
         }
         Ok(())
     }
+}
+
+/// Google `accessRole` values we store. Anything unrecognised degrades to the
+/// least-privileged role rather than failing the sync (the DB column has a
+/// CHECK constraint, so an unknown value would abort the whole batch).
+fn normalize_access_role(raw: &str) -> String {
+    match raw {
+        "owner" | "writer" | "reader" | "freeBusyReader" => raw.to_string(),
+        _ => "reader".to_string(),
+    }
+}
+
+/// Parse one `calendarList` entry. Returns `None` for entries that carry no
+/// usable id, and for calendars the user has removed (`deleted: true`).
+///
+/// Pure so it is unit-testable without HTTP.
+fn parse_google_calendar(raw: &serde_json::Value) -> Option<ProviderCalendar> {
+    let provider_calendar_id = raw.get("id").and_then(|v| v.as_str())?.to_string();
+    if raw.get("deleted").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    // `summaryOverride` is the user's own rename and is what Google's UI shows.
+    let name = raw
+        .get("summaryOverride")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("summary").and_then(|v| v.as_str()))
+        .unwrap_or_default()
+        .to_string();
+    Some(ProviderCalendar {
+        provider_calendar_id,
+        name,
+        color: raw
+            .get("backgroundColor")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        is_primary: raw.get("primary").and_then(|v| v.as_bool()).unwrap_or(false),
+        access_role: normalize_access_role(raw.get("accessRole").and_then(|v| v.as_str()).unwrap_or_default()),
+        // Only an explicit `false` hides a calendar: a missing flag must never
+        // make a calendar silently vanish from the app.
+        selected: raw.get("selected").and_then(|v| v.as_bool()).unwrap_or(true),
+    })
 }
 
 fn epoch_to_rfc3339(epoch_seconds: i64) -> Result<String> {
@@ -576,6 +672,121 @@ fn parse_google_time(time: &serde_json::Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── parse_google_calendar ──────────────────────────────────────────────
+
+    #[test]
+    fn parses_a_shared_calendar_with_its_colour_and_access_role() {
+        let raw = serde_json::json!({
+            "id": "team123@group.calendar.google.com",
+            "summary": "Team calendar",
+            "backgroundColor": "#33b679",
+            "foregroundColor": "#000000",
+            "colorId": "8",
+            "selected": true,
+            "accessRole": "reader",
+        });
+
+        let calendar = parse_google_calendar(&raw).expect("parse");
+
+        assert_eq!(calendar.provider_calendar_id, "team123@group.calendar.google.com");
+        assert_eq!(calendar.name, "Team calendar");
+        assert_eq!(calendar.color, "#33b679");
+        assert_eq!(calendar.access_role, "reader");
+        assert!(!calendar.is_primary);
+        assert!(calendar.selected);
+    }
+
+    #[test]
+    fn primary_calendar_is_flagged() {
+        let raw = serde_json::json!({
+            "id": "someone@example.com",
+            "summary": "someone@example.com",
+            "primary": true,
+            "accessRole": "owner",
+        });
+
+        let calendar = parse_google_calendar(&raw).expect("parse");
+
+        assert!(calendar.is_primary);
+        assert_eq!(calendar.access_role, "owner");
+    }
+
+    #[test]
+    fn a_renamed_calendar_uses_the_users_own_name() {
+        // summaryOverride is what Google's own UI shows for a calendar the
+        // user renamed locally.
+        let raw = serde_json::json!({
+            "id": "shared@group.calendar.google.com",
+            "summary": "Original owner's name",
+            "summaryOverride": "What I call it",
+            "accessRole": "reader",
+        });
+
+        assert_eq!(parse_google_calendar(&raw).expect("parse").name, "What I call it");
+    }
+
+    #[test]
+    fn deleted_calendars_are_skipped() {
+        let raw = serde_json::json!({
+            "id": "gone@group.calendar.google.com",
+            "summary": "Removed",
+            "deleted": true,
+            "accessRole": "reader",
+        });
+
+        assert!(parse_google_calendar(&raw).is_none());
+    }
+
+    #[test]
+    fn a_missing_selected_flag_keeps_the_calendar_visible() {
+        // Only an explicit false hides a calendar — a calendar must never
+        // vanish from the app just because the field was omitted.
+        let raw = serde_json::json!({
+            "id": "cal@group.calendar.google.com",
+            "summary": "No selected field",
+            "accessRole": "owner",
+        });
+
+        assert!(parse_google_calendar(&raw).expect("parse").selected);
+    }
+
+    #[test]
+    fn a_calendar_hidden_in_google_starts_hidden() {
+        let raw = serde_json::json!({
+            "id": "holidays@group.v.calendar.google.com",
+            "summary": "Holidays",
+            "selected": false,
+            "accessRole": "reader",
+        });
+
+        assert!(!parse_google_calendar(&raw).expect("parse").selected);
+    }
+
+    #[test]
+    fn an_unknown_access_role_degrades_to_reader() {
+        // The DB column has a CHECK constraint; an unrecognised role must not
+        // abort the whole calendar batch.
+        let raw = serde_json::json!({
+            "id": "cal@group.calendar.google.com",
+            "summary": "Odd",
+            "accessRole": "somethingNew",
+        });
+
+        assert_eq!(parse_google_calendar(&raw).expect("parse").access_role, "reader");
+    }
+
+    #[test]
+    fn a_calendar_without_a_colour_parses_with_an_empty_colour() {
+        let raw = serde_json::json!({ "id": "cal@group.calendar.google.com", "summary": "Plain" });
+
+        assert_eq!(parse_google_calendar(&raw).expect("parse").color, "");
+    }
+
+    #[test]
+    fn an_entry_without_an_id_is_skipped() {
+        assert!(parse_google_calendar(&serde_json::json!({ "summary": "Nameless" })).is_none());
+    }
 
     #[test]
     fn parses_timed_event_with_meet_conference() {

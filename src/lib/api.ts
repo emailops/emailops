@@ -13,6 +13,7 @@ import type {
   Attachment,
   AttachmentRule,
   BackfillStatus,
+  Calendar,
   CalendarEvent,
   CalendarInvite,
   CatalogModel,
@@ -1370,6 +1371,18 @@ export async function getCalendarEvents(
   return invoke('get_calendar_events', { accountId, rangeStart, rangeEnd });
 }
 
+/** Every calendar the account can see (its own, shared with it, subscribed),
+ *  primary first. Drives per-calendar colours and the show/hide filter. */
+export async function getCalendars(accountId: string): Promise<Calendar[]> {
+  return invoke('get_calendars', { accountId });
+}
+
+/** Show or hide one calendar in the calendar view. Hidden calendars keep
+ *  syncing in the background, so toggling one back on is instant. */
+export async function setCalendarVisible(accountId: string, calendarId: string, visible: boolean): Promise<void> {
+  return invoke('set_calendar_visible', { accountId, calendarId, visible });
+}
+
 /** Create a calendar event on the provider (double-click "New event" flow).
  *  Times are unix seconds; the backend validates (non-empty title, end >
  *  start, attendee shape — max 100) and returns the stored event — for Gmail
@@ -1408,12 +1421,20 @@ export async function createCalendarEvent(
  *  occurrence. */
 export async function deleteCalendarEvent(
   accountId: string,
+  calendarId: string,
   providerEventId: string,
   notifyAttendees: boolean,
   message: string,
   scope: CalendarDeleteScope = 'instance',
 ): Promise<void> {
-  return invoke('delete_calendar_event', { accountId, providerEventId, notifyAttendees, message, scope });
+  return invoke('delete_calendar_event', {
+    accountId,
+    calendarId,
+    providerEventId,
+    notifyAttendees,
+    message,
+    scope,
+  });
 }
 
 /** The calendar invite (.ics) carried by an email, or null when the email

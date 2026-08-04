@@ -54,7 +54,15 @@ describe('TimeGrid initial scroll', () => {
 
   function mount() {
     act(() => {
-      root.render(<TimeGrid days={[day]} events={[]} onSelectEvent={() => {}} onCreateSlot={() => {}} />);
+      root.render(
+        <TimeGrid
+          days={[day]}
+          events={[]}
+          colorFor={() => '#039be5'}
+          onSelectEvent={() => {}}
+          onCreateSlot={() => {}}
+        />,
+      );
     });
   }
 

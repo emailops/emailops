@@ -1,6 +1,8 @@
 //! Calendar event storage. Rows are provider-expanded recurrence instances
-//! keyed by `(account_id, provider_event_id)`; all reads are account-scoped
-//! (the calendar surface is per-account by decision — docs/DECISIONS.md).
+//! keyed by `(account_id, calendar_id, provider_event_id)`; all reads are
+//! account-scoped (the calendar surface is per-account by decision —
+//! docs/DECISIONS.md). One account can hold several calendars: its own, plus
+//! any shared with it — see `db::calendars` for the registry.
 
 use crate::db::Database;
 use crate::models::error::Result;
@@ -75,9 +77,11 @@ impl Database {
     }
 
     /// Insert or update a batch of events in one transaction. Conflict target
-    /// is `(account_id, provider_event_id)` — a re-synced instance updates in
-    /// place and keeps its row id and `notified_at` marker (so an event whose
-    /// details change after the reminder fired is not re-notified).
+    /// is `(account_id, calendar_id, provider_event_id)` — a re-synced instance
+    /// updates in place and keeps its row id and `notified_at` marker (so an
+    /// event whose details change after the reminder fired is not re-notified).
+    /// The calendar is part of the key because providers reuse one event id
+    /// across every calendar the event is visible in.
     pub fn upsert_calendar_events(&self, events: &[CalendarEvent]) -> Result<()> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
@@ -89,8 +93,7 @@ impl Database {
                      meeting_link, meeting_platform, status, html_link, notified_at, created_at, updated_at,
                      recurring_event_id
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-                 ON CONFLICT (account_id, provider_event_id) DO UPDATE SET
-                     calendar_id = excluded.calendar_id,
+                 ON CONFLICT (account_id, calendar_id, provider_event_id) DO UPDATE SET
                      title = excluded.title,
                      description = excluded.description,
                      location = excluded.location,
@@ -163,28 +166,69 @@ impl Database {
         Ok(result)
     }
 
-    /// Delete one event by its provider id (incremental sync saw a cancellation).
-    pub fn delete_calendar_event(&self, account_id: &str, provider_event_id: &str) -> Result<()> {
+    /// Like [`Self::list_calendar_events`], but excluding calendars the user
+    /// hid in Settings → Calendar.
+    ///
+    /// This is the listing for anything that *acts* on events — meeting
+    /// reminders, the chat calendar tool — because a hidden calendar must not
+    /// pop up a notification or turn up in a chat answer. The calendar view
+    /// deliberately uses the unfiltered listing instead and filters client-side,
+    /// so toggling a calendar back on is instant rather than a refetch.
+    ///
+    /// Events whose calendar has no registry row yet (synced before the
+    /// registry existed) count as visible — never silently drop them.
+    pub fn list_visible_calendar_events(
+        &self,
+        account_id: &str,
+        range_start: i64,
+        range_end: i64,
+    ) -> Result<Vec<CalendarEvent>> {
+        let conn = self.reader();
+        let sql = format!(
+            "SELECT {EVENT_COLUMNS} FROM calendar_events
+             WHERE account_id = ?1 AND start_time < ?3 AND end_time > ?2 AND status != 'cancelled'
+               AND calendar_id NOT IN (
+                   SELECT provider_calendar_id FROM calendars
+                   WHERE account_id = ?1 AND is_visible = 0
+               )
+             ORDER BY start_time ASC, end_time ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![account_id, range_start, range_end], row_to_event)?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    /// Delete one event from one calendar (the user deleted it, or an
+    /// incremental sync saw a cancellation).
+    pub fn delete_calendar_event(&self, account_id: &str, calendar_id: &str, provider_event_id: &str) -> Result<()> {
         let conn = self.connection();
         conn.execute(
-            "DELETE FROM calendar_events WHERE account_id = ?1 AND provider_event_id = ?2",
-            params![account_id, provider_event_id],
+            "DELETE FROM calendar_events WHERE account_id = ?1 AND calendar_id = ?2 AND provider_event_id = ?3",
+            params![account_id, calendar_id, provider_event_id],
         )?;
         Ok(())
     }
 
-    /// One event by its provider id — the delete command resolves the clicked
-    /// instance into its series linkage this way.
+    /// One event by its calendar + provider id — the delete command resolves
+    /// the clicked instance into its series linkage this way. The calendar is
+    /// part of the lookup because the same event id can exist in several.
     pub fn get_calendar_event_by_provider_id(
         &self,
         account_id: &str,
+        calendar_id: &str,
         provider_event_id: &str,
     ) -> Result<Option<CalendarEvent>> {
         let conn = self.reader();
-        let sql =
-            format!("SELECT {EVENT_COLUMNS} FROM calendar_events WHERE account_id = ?1 AND provider_event_id = ?2");
+        let sql = format!(
+            "SELECT {EVENT_COLUMNS} FROM calendar_events
+             WHERE account_id = ?1 AND calendar_id = ?2 AND provider_event_id = ?3"
+        );
         let mut stmt = conn.prepare(&sql)?;
-        match stmt.query_row(params![account_id, provider_event_id], row_to_event) {
+        match stmt.query_row(params![account_id, calendar_id, provider_event_id], row_to_event) {
             Ok(event) => Ok(Some(event)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
@@ -194,12 +238,18 @@ impl Database {
     /// Delete every stored instance of a recurring series (whole-series delete).
     /// Matches instances linked via `recurring_event_id` AND a possible master
     /// row stored under the master id itself.
-    pub fn delete_calendar_events_for_master(&self, account_id: &str, master_id: &str) -> Result<()> {
+    pub fn delete_calendar_events_for_master(
+        &self,
+        account_id: &str,
+        calendar_id: &str,
+        master_id: &str,
+    ) -> Result<()> {
         let conn = self.connection();
         conn.execute(
             "DELETE FROM calendar_events
-             WHERE account_id = ?1 AND (recurring_event_id = ?2 OR provider_event_id = ?2)",
-            params![account_id, master_id],
+             WHERE account_id = ?1 AND calendar_id = ?2
+               AND (recurring_event_id = ?3 OR provider_event_id = ?3)",
+            params![account_id, calendar_id, master_id],
         )?;
         Ok(())
     }
@@ -209,14 +259,15 @@ impl Database {
     pub fn delete_calendar_events_for_master_from(
         &self,
         account_id: &str,
+        calendar_id: &str,
         master_id: &str,
         from_start: i64,
     ) -> Result<()> {
         let conn = self.connection();
         conn.execute(
             "DELETE FROM calendar_events
-             WHERE account_id = ?1 AND recurring_event_id = ?2 AND start_time >= ?3",
-            params![account_id, master_id, from_start],
+             WHERE account_id = ?1 AND calendar_id = ?2 AND recurring_event_id = ?3 AND start_time >= ?4",
+            params![account_id, calendar_id, master_id, from_start],
         )?;
         Ok(())
     }
@@ -226,19 +277,59 @@ impl Database {
     /// every fetched instance with `updated_at = run_started_at`, so anything
     /// older inside the window was removed upstream. Upsert-then-sweep (rather
     /// than delete-then-insert) keeps `notified_at` on surviving rows.
+    ///
+    /// Scoped to `calendar_ids` — the calendars whose fetch actually succeeded
+    /// this run. A calendar that errored is left completely untouched instead
+    /// of having its events blanked by a sweep that never saw them.
     pub fn delete_stale_calendar_events(
         &self,
         account_id: &str,
+        calendar_ids: &[String],
         window_start: i64,
         window_end: i64,
         run_started_at: i64,
     ) -> Result<()> {
+        if calendar_ids.is_empty() {
+            return Ok(());
+        }
         let conn = self.connection();
-        conn.execute(
+        let placeholders = (0..calendar_ids.len())
+            .map(|i| format!("?{}", i + 5))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
             "DELETE FROM calendar_events
-             WHERE account_id = ?1 AND start_time >= ?2 AND start_time < ?3 AND updated_at < ?4",
-            params![account_id, window_start, window_end, run_started_at],
-        )?;
+             WHERE account_id = ?1 AND start_time >= ?2 AND start_time < ?3 AND updated_at < ?4
+               AND calendar_id IN ({placeholders})"
+        );
+        let mut args: Vec<&dyn rusqlite::ToSql> = vec![&account_id, &window_start, &window_end, &run_started_at];
+        for id in calendar_ids {
+            args.push(id);
+        }
+        conn.execute(&sql, args.as_slice())?;
+        Ok(())
+    }
+
+    /// Drop every event belonging to a calendar the account no longer has
+    /// (unsubscribed, or sharing revoked). Called only after a successful
+    /// calendar-list fetch — otherwise a transient list failure would delete
+    /// the whole mirror.
+    pub fn delete_calendar_events_not_in(&self, account_id: &str, live_calendar_ids: &[String]) -> Result<()> {
+        let conn = self.connection();
+        if live_calendar_ids.is_empty() {
+            conn.execute("DELETE FROM calendar_events WHERE account_id = ?1", params![account_id])?;
+            return Ok(());
+        }
+        let placeholders = (0..live_calendar_ids.len())
+            .map(|i| format!("?{}", i + 2))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("DELETE FROM calendar_events WHERE account_id = ?1 AND calendar_id NOT IN ({placeholders})");
+        let mut args: Vec<&dyn rusqlite::ToSql> = vec![&account_id];
+        for id in live_calendar_ids {
+            args.push(id);
+        }
+        conn.execute(&sql, args.as_slice())?;
         Ok(())
     }
 
@@ -285,11 +376,15 @@ mod tests {
     use super::*;
 
     fn event(account_id: &str, provider_event_id: &str, start: i64, end: i64) -> CalendarEvent {
+        event_in(account_id, "primary", provider_event_id, start, end)
+    }
+
+    fn event_in(account_id: &str, calendar_id: &str, provider_event_id: &str, start: i64, end: i64) -> CalendarEvent {
         CalendarEvent {
-            id: format!("{account_id}:{provider_event_id}"),
+            id: format!("{account_id}:{calendar_id}:{provider_event_id}"),
             account_id: account_id.to_string(),
             provider_event_id: provider_event_id.to_string(),
-            calendar_id: "primary".to_string(),
+            calendar_id: calendar_id.to_string(),
             title: "Standup".to_string(),
             description: String::new(),
             location: String::new(),
@@ -356,6 +451,140 @@ mod tests {
     }
 
     #[test]
+    fn visible_listing_skips_events_from_hidden_calendars() {
+        // Meeting reminders and the chat calendar tool must not surface a
+        // calendar the user switched off in Settings → Calendar.
+        let db = test_db();
+        db.upsert_calendars(&[
+            crate::models::Calendar {
+                id: "acc1:primary".to_string(),
+                account_id: "acc1".to_string(),
+                provider_calendar_id: "primary".to_string(),
+                name: "Personal".to_string(),
+                color: "#039be5".to_string(),
+                is_primary: true,
+                access_role: "owner".to_string(),
+                is_visible: true,
+                sort_order: 0,
+                created_at: 0,
+                updated_at: 0,
+            },
+            crate::models::Calendar {
+                id: "acc1:holidays".to_string(),
+                account_id: "acc1".to_string(),
+                provider_calendar_id: "holidays".to_string(),
+                name: "Holidays".to_string(),
+                color: "#0b8043".to_string(),
+                is_primary: false,
+                access_role: "reader".to_string(),
+                is_visible: false,
+                sort_order: 1,
+                created_at: 0,
+                updated_at: 0,
+            },
+        ])
+        .expect("seed calendars");
+        db.upsert_calendar_events(&[
+            event_in("acc1", "primary", "mine", 100, 200),
+            event_in("acc1", "holidays", "bank-holiday", 100, 200),
+        ])
+        .expect("upsert");
+
+        let all = db.list_calendar_events("acc1", 0, 1_000).expect("list all");
+        let visible = db.list_visible_calendar_events("acc1", 0, 1_000).expect("list visible");
+
+        assert_eq!(
+            all.len(),
+            2,
+            "the calendar view still gets every event to filter itself"
+        );
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].provider_event_id, "mine");
+    }
+
+    #[test]
+    fn visible_listing_keeps_events_whose_calendar_is_not_registered_yet() {
+        // Events synced before the registry exists (or by an older build) must
+        // not silently vanish from reminders.
+        let db = test_db();
+        db.upsert_calendar_events(&[event_in("acc1", "primary", "ev1", 100, 200)])
+            .expect("upsert");
+
+        let visible = db.list_visible_calendar_events("acc1", 0, 1_000).expect("list");
+
+        assert_eq!(visible.len(), 1);
+    }
+
+    #[test]
+    fn the_same_event_id_in_two_calendars_is_stored_twice() {
+        // Google reuses one event id across every copy of a meeting you are an
+        // attendee on, so a meeting visible in both your own calendar and a
+        // calendar shared with you arrives twice with the same id. Keying on
+        // (account, event) alone made the second copy overwrite the first.
+        let db = test_db();
+        let mine = event_in("acc1", "primary", "shared-ev", 100, 200);
+        let theirs = event_in("acc1", "team@group.calendar.google.com", "shared-ev", 100, 200);
+
+        db.upsert_calendar_events(&[mine, theirs]).expect("upsert");
+
+        let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
+        assert_eq!(events.len(), 2, "one row per (calendar, event), not one per event");
+        let mut calendars: Vec<&str> = events.iter().map(|e| e.calendar_id.as_str()).collect();
+        calendars.sort_unstable();
+        assert_eq!(calendars, vec!["primary", "team@group.calendar.google.com"]);
+    }
+
+    #[test]
+    fn stale_sweep_spares_calendars_that_were_not_synced_this_run() {
+        // A calendar whose fetch failed (access revoked mid-run, provider 5xx)
+        // is skipped, not swept — otherwise one flaky shared calendar would
+        // blank its events on every failed poll.
+        let db = test_db();
+        let fresh = event_in("acc1", "primary", "ev1", 100, 200);
+        let mut untouched = event_in("acc1", "team@group.calendar.google.com", "ev2", 100, 200);
+        untouched.updated_at = 1_000;
+        db.upsert_calendar_events(&[fresh, untouched]).expect("upsert");
+
+        // Only "primary" synced successfully in a run that started at 5_000.
+        db.delete_stale_calendar_events("acc1", &["primary".to_string()], 0, 1_000, 5_000)
+            .expect("sweep");
+
+        let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].calendar_id, "team@group.calendar.google.com");
+    }
+
+    #[test]
+    fn stale_sweep_removes_events_of_the_synced_calendar() {
+        let db = test_db();
+        let mut stale = event_in("acc1", "primary", "ev1", 100, 200);
+        stale.updated_at = 1_000;
+        db.upsert_calendar_events(&[stale]).expect("upsert");
+
+        db.delete_stale_calendar_events("acc1", &["primary".to_string()], 0, 1_000, 5_000)
+            .expect("sweep");
+
+        assert!(db.list_calendar_events("acc1", 0, 1_000).expect("list").is_empty());
+    }
+
+    #[test]
+    fn events_of_a_calendar_the_user_no_longer_has_are_dropped() {
+        let db = test_db();
+        db.upsert_calendar_events(&[
+            event_in("acc1", "primary", "ev1", 100, 200),
+            event_in("acc1", "gone@group.calendar.google.com", "ev2", 100, 200),
+        ])
+        .expect("upsert");
+
+        db.delete_calendar_events_not_in("acc1", &["primary".to_string()])
+            .expect("sweep orphans");
+
+        let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].calendar_id, "primary");
+    }
+
+    #[test]
     fn upsert_then_list_roundtrips_all_fields() {
         let db = test_db();
         let e = event("acc1", "ev1", 100, 200);
@@ -394,11 +623,11 @@ mod tests {
         assert_eq!(
             events.len(),
             1,
-            "conflict on (account, provider_event) must not duplicate"
+            "conflict on (account, calendar, provider_event) must not duplicate"
         );
         assert_eq!(events[0].title, "Standup (moved)");
         assert_eq!(events[0].start_time, 150);
-        assert_eq!(events[0].id, "acc1:ev1", "row id survives updates");
+        assert_eq!(events[0].id, "acc1:primary:ev1", "row id survives updates");
     }
 
     #[test]
@@ -406,7 +635,8 @@ mod tests {
         let db = test_db();
         db.upsert_calendar_events(&[event("acc1", "ev1", 100, 200)])
             .expect("insert");
-        db.mark_calendar_event_notified("acc1:ev1", 90).expect("mark notified");
+        db.mark_calendar_event_notified("acc1:primary:ev1", 90)
+            .expect("mark notified");
 
         db.upsert_calendar_events(&[event("acc1", "ev1", 110, 210)])
             .expect("re-sync");
@@ -465,7 +695,7 @@ mod tests {
         db.upsert_calendar_events(&[event("acc1", "ev1", 100, 200), event("acc1", "ev2", 300, 400)])
             .expect("upsert");
 
-        db.delete_calendar_event("acc1", "ev1").expect("delete");
+        db.delete_calendar_event("acc1", "primary", "ev1").expect("delete");
 
         let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
         assert_eq!(events.len(), 1);
@@ -487,7 +717,7 @@ mod tests {
         outside.updated_at = 1_000;
         db.upsert_calendar_events(&[stale, fresh, outside]).expect("upsert");
 
-        db.delete_stale_calendar_events("acc1", 0, 300, 5_000)
+        db.delete_stale_calendar_events("acc1", &["primary".to_string()], 0, 300, 5_000)
             .expect("delete stale");
 
         let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
@@ -528,17 +758,25 @@ mod tests {
         let db = test_db();
         db.upsert_calendar_events(&[event("acc1", "ev1", 100, 200)])
             .expect("upsert");
-        let found = db.get_calendar_event_by_provider_id("acc1", "ev1").expect("get");
+        let found = db
+            .get_calendar_event_by_provider_id("acc1", "primary", "ev1")
+            .expect("get");
         assert_eq!(found.expect("some").provider_event_id, "ev1");
         assert!(db
-            .get_calendar_event_by_provider_id("acc1", "missing")
+            .get_calendar_event_by_provider_id("acc1", "primary", "missing")
             .expect("get")
             .is_none());
         assert!(
-            db.get_calendar_event_by_provider_id("acc2", "ev1")
+            db.get_calendar_event_by_provider_id("acc2", "primary", "ev1")
                 .expect("get")
                 .is_none(),
             "account-scoped"
+        );
+        assert!(
+            db.get_calendar_event_by_provider_id("acc1", "other@group.calendar.google.com", "ev1")
+                .expect("get")
+                .is_none(),
+            "calendar-scoped: the same event id in another calendar is a different row"
         );
     }
 
@@ -554,7 +792,7 @@ mod tests {
         ])
         .expect("upsert");
 
-        db.delete_calendar_events_for_master("acc1", "m")
+        db.delete_calendar_events_for_master("acc1", "primary", "m")
             .expect("delete series");
 
         let acc1: Vec<String> = db
@@ -577,7 +815,7 @@ mod tests {
         ])
         .expect("upsert");
 
-        db.delete_calendar_events_for_master_from("acc1", "m", 200)
+        db.delete_calendar_events_for_master_from("acc1", "primary", "m", 200)
             .expect("truncate");
 
         let remaining: Vec<String> = db

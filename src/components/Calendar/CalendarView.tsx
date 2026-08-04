@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
+import { calendarColorMap, FALLBACK_CALENDAR_COLORS, hiddenCalendarIds, visibleEvents } from '@/lib/calendarColor';
 import { eventsAfterDelete } from '@/lib/calendarEvent';
 import { addDays, monthGrid, resolveCalendarAccountId, startOfDay, weekDays } from '@/lib/calendarGrid';
 import { errorText, isAuthError } from '@/lib/errors';
@@ -11,7 +12,7 @@ import {
   useCalendarIntegrationStore,
 } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
-import type { Account, CalendarEvent } from '@/types';
+import type { Account, Calendar, CalendarEvent } from '@/types';
 import { EventDetailDialog } from './EventDetailDialog';
 import { MonthGrid } from './MonthGrid';
 import { NewEventDialog } from './NewEventDialog';
@@ -118,6 +119,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +173,58 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
     void loadEvents(selectedAccountId, rangeStart, rangeEnd);
   }, [selectedAccountId, rangeStart, rangeEnd, loadEvents]);
 
+  // The account's calendar registry: colours for the grids and the legend's
+  // show/hide toggles. Reloaded after each sync, which is what refreshes
+  // colours and picks up newly shared calendars.
+  const loadCalendars = useCallback(
+    async (accountId: string) => {
+      try {
+        setCalendars(await api.getCalendars(accountId));
+      } catch (e) {
+        // Non-fatal: without the registry every event falls back to a palette
+        // colour and nothing is hidden, so the calendar still renders.
+        addLog('error', 'sync', `Failed to load calendars: ${errorText(e)}`);
+      }
+    },
+    [addLog],
+  );
+
+  useEffect(() => {
+    if (!selectedAccountId) {
+      setCalendars([]);
+      return;
+    }
+    void loadCalendars(selectedAccountId);
+  }, [selectedAccountId, loadCalendars]);
+
+  const colorMap = useMemo(() => calendarColorMap(calendars), [calendars]);
+  const colorFor = useCallback(
+    (calendarId: string) => colorMap.get(calendarId) ?? FALLBACK_CALENDAR_COLORS[0],
+    [colorMap],
+  );
+  const hidden = useMemo(() => hiddenCalendarIds(calendars), [calendars]);
+  const shownEvents = useMemo(() => visibleEvents(events, hidden), [events, hidden]);
+
+  // Optimistic toggle: flip locally first so the grid re-filters instantly,
+  // then persist. On failure we reload the registry so the UI never keeps a
+  // toggle the DB rejected.
+  const toggleCalendar = useCallback(
+    async (calendar: Calendar) => {
+      if (!selectedAccountId) return;
+      const next = !calendar.isVisible;
+      setCalendars((current) =>
+        current.map((c) => (c.providerCalendarId === calendar.providerCalendarId ? { ...c, isVisible: next } : c)),
+      );
+      try {
+        await api.setCalendarVisible(selectedAccountId, calendar.providerCalendarId, next);
+      } catch (e) {
+        addLog('error', 'sync', `Failed to update calendar visibility: ${errorText(e)}`);
+        void loadCalendars(selectedAccountId);
+      }
+    },
+    [selectedAccountId, addLog, loadCalendars],
+  );
+
   // Keep the latest range in a ref so a finishing sync reloads what's visible now.
   const rangeRef = useRef({ rangeStart, rangeEnd });
   rangeRef.current = { rangeStart, rangeEnd };
@@ -192,6 +246,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         if (syncIdRef.current !== syncId) return;
         const { rangeStart: start, rangeEnd: end } = rangeRef.current;
         await loadEvents(accountId, start, end);
+        await loadCalendars(accountId);
       } catch (e) {
         const msg = errorText(e);
         addLog('error', 'sync', `Calendar sync failed: ${msg}`);
@@ -207,7 +262,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         if (syncIdRef.current === syncId) setIsSyncing(false);
       }
     },
-    [addLog, loadEvents],
+    [addLog, loadEvents, loadCalendars],
   );
 
   // Inline re-auth from the banner: run the OAuth flow for the selected
@@ -468,17 +523,58 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         </div>
       </div>
 
+      {/* Calendar legend: which calendar each colour means, and a click to
+          show/hide it. Only shown when the account has more than one calendar
+          — a single-calendar account gains nothing from a one-item legend. */}
+      {calendars.length > 1 && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-gray-200 flex-shrink-0 flex-wrap">
+          {calendars.map((calendar) => (
+            <button
+              key={calendar.providerCalendarId}
+              onClick={() => void toggleCalendar(calendar)}
+              title={
+                calendar.isVisible
+                  ? t('calendar:calendars.hideOne', { name: calendar.name })
+                  : t('calendar:calendars.showOne', { name: calendar.name })
+              }
+              aria-pressed={calendar.isVisible}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
+                calendar.isVisible
+                  ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  : 'border-gray-200 text-gray-400 hover:bg-gray-50'
+              }`}
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/10"
+                style={{
+                  backgroundColor: calendar.isVisible ? colorFor(calendar.providerCalendarId) : 'transparent',
+                  borderColor: colorFor(calendar.providerCalendarId),
+                }}
+              />
+              <span className="max-w-[160px] truncate">{calendar.name || calendar.providerCalendarId}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Grid */}
       {viewMode === 'month' ? (
         <MonthGrid
           anchor={anchor}
-          events={events}
+          events={shownEvents}
+          colorFor={colorFor}
           onSelectEvent={setSelectedEvent}
           onOpenDay={openDay}
           onCreateSlot={openCreateSlot}
         />
       ) : (
-        <TimeGrid days={days} events={events} onSelectEvent={setSelectedEvent} onCreateSlot={openCreateSlot} />
+        <TimeGrid
+          days={days}
+          events={shownEvents}
+          colorFor={colorFor}
+          onSelectEvent={setSelectedEvent}
+          onCreateSlot={openCreateSlot}
+        />
       )}
 
       {enableCalendarOverlay}

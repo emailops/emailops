@@ -19,6 +19,25 @@ pub fn provider_supports_calendar(provider: &str) -> bool {
     matches!(provider, "gmail" | "outlook")
 }
 
+/// A provider-neutral calendar the account can see: its own calendars, plus
+/// any shared with it or subscribed to. Sourced from Google
+/// `calendarList.list` and Graph `/me/calendars`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderCalendar {
+    pub provider_calendar_id: String,
+    pub name: String,
+    /// Provider colour as "#rrggbb"; empty when the provider reported none.
+    pub color: String,
+    pub is_primary: bool,
+    /// "owner" | "writer" | "reader" | "freeBusyReader" — Graph is mapped onto
+    /// the same set (`canEdit` → writer, otherwise reader).
+    pub access_role: String,
+    /// Whether the provider's own UI currently shows this calendar. Seeds the
+    /// local visibility toggle the first time we see the calendar and is
+    /// ignored afterwards (the user's choice wins from then on).
+    pub selected: bool,
+}
+
 /// A provider-neutral calendar event instance, already expanded (one value per
 /// occurrence). Times are UTC epoch seconds.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,25 +121,41 @@ pub struct NewCalendarEvent {
 
 #[async_trait]
 pub trait CalendarProvider: Send + Sync {
-    /// Every event instance overlapping `[window_start, window_end)`,
-    /// recurrences expanded. Cancelled instances may be included (callers
-    /// filter on `status`).
-    async fn list_events(&self, window_start: i64, window_end: i64) -> Result<Vec<ProviderCalendarEvent>>;
+    /// Every calendar the account can see, in the provider's own list order.
+    async fn list_calendars(&self) -> Result<Vec<ProviderCalendar>>;
+
+    /// Every event instance in `calendar_id` overlapping
+    /// `[window_start, window_end)`, recurrences expanded. Cancelled instances
+    /// may be included (callers filter on `status`).
+    async fn list_events(
+        &self,
+        calendar_id: &str,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<ProviderCalendarEvent>>;
 
     /// Create an event on the primary calendar and return it as the provider
     /// now sees it (id assigned, conference link attached when requested).
+    /// Creating into a secondary calendar is deliberately not offered.
     async fn create_event(&self, event: &NewCalendarEvent) -> Result<ProviderCalendarEvent>;
 
-    /// Delete (cancel) an event. When `notify` is true, attendees receive a
-    /// cancellation; `message` rides along where the provider supports it
-    /// (Graph `/cancel` comment — Google's API only sends its standard
-    /// cancellation email, so the message is ignored there).
-    async fn delete_event(&self, provider_event_id: &str, notify: bool, message: &str) -> Result<()>;
+    /// Delete (cancel) an event from `calendar_id`. When `notify` is true,
+    /// attendees receive a cancellation; `message` rides along where the
+    /// provider supports it (Graph `/cancel` comment — Google's API only sends
+    /// its standard cancellation email, so the message is ignored there).
+    async fn delete_event(&self, calendar_id: &str, provider_event_id: &str, notify: bool, message: &str)
+        -> Result<()>;
 
     /// End a recurring series just before `first_removed_start` ("delete this
     /// and following events"): occurrences from that instant on stop existing,
     /// earlier ones survive.
-    async fn truncate_recurring_event(&self, master_id: &str, first_removed_start: i64, notify: bool) -> Result<()>;
+    async fn truncate_recurring_event(
+        &self,
+        calendar_id: &str,
+        master_id: &str,
+        first_removed_start: i64,
+        notify: bool,
+    ) -> Result<()>;
 
     /// RSVP to an invitation identified by its iCalendar UID (from the
     /// invite's .ics). `self_email` is the account's own address — the
@@ -165,28 +200,39 @@ impl RsvpResponse {
     }
 }
 
+/// The calendar id every single-calendar test fixture uses.
+#[cfg(any(test, debug_assertions))]
+pub const FAKE_PRIMARY_CALENDAR: &str = "primary";
+
 /// In-memory fake for service tests. Returns the configured events (filtered
 /// to the requested window) or the configured error, and records created
 /// events so tests can assert on them.
 #[cfg(any(test, debug_assertions))]
 pub struct FakeCalendarProvider {
-    pub events: Vec<ProviderCalendarEvent>,
+    pub calendars: Vec<ProviderCalendar>,
+    /// Events per `provider_calendar_id`.
+    pub events_by_calendar: std::collections::HashMap<String, Vec<ProviderCalendarEvent>>,
     pub error: Option<String>,
+    /// Calendars whose `list_events` fails, so tests can exercise the
+    /// per-calendar failure isolation without failing the whole sync.
+    pub failing_calendars: std::collections::HashSet<String>,
     pub created: std::sync::Mutex<Vec<NewCalendarEvent>>,
-    /// `(provider_event_id, notify, message)` per delete call.
-    pub deleted: std::sync::Mutex<Vec<(String, bool, String)>>,
-    /// `(master_id, first_removed_start, notify)` per truncate call.
-    pub truncated: std::sync::Mutex<Vec<(String, i64, bool)>>,
+    /// `(calendar_id, provider_event_id, notify, message)` per delete call.
+    pub deleted: std::sync::Mutex<Vec<(String, String, bool, String)>>,
+    /// `(calendar_id, master_id, first_removed_start, notify)` per truncate call.
+    pub truncated: std::sync::Mutex<Vec<(String, String, i64, bool)>>,
     /// `(ical_uid, google_status, self_email)` per RSVP call.
     pub rsvps: std::sync::Mutex<Vec<(String, String, String)>>,
 }
 
 #[cfg(any(test, debug_assertions))]
 impl FakeCalendarProvider {
-    pub fn with_events(events: Vec<ProviderCalendarEvent>) -> Self {
+    fn empty() -> Self {
         Self {
-            events,
+            calendars: Vec::new(),
+            events_by_calendar: std::collections::HashMap::new(),
             error: None,
+            failing_calendars: std::collections::HashSet::new(),
             created: std::sync::Mutex::new(Vec::new()),
             deleted: std::sync::Mutex::new(Vec::new()),
             truncated: std::sync::Mutex::new(Vec::new()),
@@ -194,31 +240,87 @@ impl FakeCalendarProvider {
         }
     }
 
-    pub fn failing(message: &str) -> Self {
-        Self {
-            events: Vec::new(),
-            error: Some(message.to_string()),
-            created: std::sync::Mutex::new(Vec::new()),
-            deleted: std::sync::Mutex::new(Vec::new()),
-            truncated: std::sync::Mutex::new(Vec::new()),
-            rsvps: std::sync::Mutex::new(Vec::new()),
+    /// A single primary calendar holding `events` — the shape most tests want.
+    pub fn with_events(events: Vec<ProviderCalendarEvent>) -> Self {
+        Self::with_calendars(vec![(Self::primary_calendar(), events)])
+    }
+
+    /// Several calendars, each with its own events.
+    pub fn with_calendars(calendars: Vec<(ProviderCalendar, Vec<ProviderCalendarEvent>)>) -> Self {
+        let mut fake = Self::empty();
+        for (calendar, events) in calendars {
+            fake.events_by_calendar
+                .insert(calendar.provider_calendar_id.clone(), events);
+            fake.calendars.push(calendar);
         }
+        fake
+    }
+
+    /// Fixture calendar with sensible defaults.
+    pub fn calendar(provider_calendar_id: &str, name: &str, color: &str) -> ProviderCalendar {
+        ProviderCalendar {
+            provider_calendar_id: provider_calendar_id.to_string(),
+            name: name.to_string(),
+            color: color.to_string(),
+            is_primary: provider_calendar_id == FAKE_PRIMARY_CALENDAR,
+            access_role: "owner".to_string(),
+            selected: true,
+        }
+    }
+
+    pub fn primary_calendar() -> ProviderCalendar {
+        Self::calendar(FAKE_PRIMARY_CALENDAR, "Personal", "#039be5")
+    }
+
+    /// Make `list_events` fail for one calendar while the rest succeed.
+    pub fn failing_calendar(mut self, provider_calendar_id: &str) -> Self {
+        self.failing_calendars.insert(provider_calendar_id.to_string());
+        self
+    }
+
+    pub fn failing(message: &str) -> Self {
+        let mut fake = Self::empty();
+        fake.calendars.push(Self::primary_calendar());
+        fake.error = Some(message.to_string());
+        fake
     }
 }
 
 #[cfg(any(test, debug_assertions))]
 #[async_trait]
 impl CalendarProvider for FakeCalendarProvider {
-    async fn list_events(&self, window_start: i64, window_end: i64) -> Result<Vec<ProviderCalendarEvent>> {
+    async fn list_calendars(&self) -> Result<Vec<ProviderCalendar>> {
         if let Some(message) = &self.error {
             return Err(crate::models::error::AppError::SyncError(message.clone()));
         }
+        Ok(self.calendars.clone())
+    }
+
+    async fn list_events(
+        &self,
+        calendar_id: &str,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<ProviderCalendarEvent>> {
+        if let Some(message) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        if self.failing_calendars.contains(calendar_id) {
+            return Err(crate::models::error::AppError::SyncError(format!(
+                "calendar {calendar_id} is unavailable"
+            )));
+        }
         Ok(self
-            .events
-            .iter()
-            .filter(|e| e.start_time < window_end && e.end_time > window_start)
-            .cloned()
-            .collect())
+            .events_by_calendar
+            .get(calendar_id)
+            .map(|events| {
+                events
+                    .iter()
+                    .filter(|e| e.start_time < window_end && e.end_time > window_start)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     async fn create_event(&self, event: &NewCalendarEvent) -> Result<ProviderCalendarEvent> {
@@ -256,25 +358,47 @@ impl CalendarProvider for FakeCalendarProvider {
         })
     }
 
-    async fn delete_event(&self, provider_event_id: &str, notify: bool, message: &str) -> Result<()> {
+    async fn delete_event(
+        &self,
+        calendar_id: &str,
+        provider_event_id: &str,
+        notify: bool,
+        message: &str,
+    ) -> Result<()> {
         if let Some(error) = &self.error {
             return Err(crate::models::error::AppError::SyncError(error.clone()));
         }
         self.deleted
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((provider_event_id.to_string(), notify, message.to_string()));
+            .push((
+                calendar_id.to_string(),
+                provider_event_id.to_string(),
+                notify,
+                message.to_string(),
+            ));
         Ok(())
     }
 
-    async fn truncate_recurring_event(&self, master_id: &str, first_removed_start: i64, notify: bool) -> Result<()> {
+    async fn truncate_recurring_event(
+        &self,
+        calendar_id: &str,
+        master_id: &str,
+        first_removed_start: i64,
+        notify: bool,
+    ) -> Result<()> {
         if let Some(error) = &self.error {
             return Err(crate::models::error::AppError::SyncError(error.clone()));
         }
         self.truncated
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((master_id.to_string(), first_removed_start, notify));
+            .push((
+                calendar_id.to_string(),
+                master_id.to_string(),
+                first_removed_start,
+                notify,
+            ));
         Ok(())
     }
 

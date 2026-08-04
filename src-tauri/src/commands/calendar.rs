@@ -1,6 +1,26 @@
-use crate::models::CalendarEvent;
+use crate::models::{Calendar, CalendarEvent};
 use crate::{AppError, AppState};
 use tauri::State;
+
+/// Every calendar the account can see (its own, shared-with-it, subscribed),
+/// in the provider's list order with the primary first. The frontend uses this
+/// for per-calendar colours and the show/hide filter.
+#[tauri::command]
+pub async fn get_calendars(state: State<'_, AppState>, account_id: String) -> Result<Vec<Calendar>, AppError> {
+    state.db.list_calendars(&account_id)
+}
+
+/// Show or hide one calendar in the calendar view. Hidden calendars keep
+/// syncing, so toggling one back on is instant.
+#[tauri::command]
+pub async fn set_calendar_visible(
+    state: State<'_, AppState>,
+    account_id: String,
+    calendar_id: String,
+    visible: bool,
+) -> Result<(), AppError> {
+    state.db.set_calendar_visible(&account_id, &calendar_id, visible)
+}
 
 /// Events overlapping `[range_start, range_end)` for one account. The calendar
 /// surface is per-account only (docs/DECISIONS.md) — there is deliberately no
@@ -64,9 +84,13 @@ pub async fn create_calendar_event(
 /// sends a cancellation; `message` is included where supported (Outlook —
 /// Google's API only sends its standard cancellation email).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command boundary — mirrors the dialog's fields 1:1
 pub async fn delete_calendar_event(
     state: State<'_, AppState>,
     account_id: String,
+    // Option so pre-multi-calendar callers keep working; the event carries its
+    // own calendar id, and everything synced before V022 lived in "primary".
+    calendar_id: Option<String>,
     provider_event_id: String,
     notify_attendees: bool,
     // Option so a frontend `null` / omitted field can never fail arg
@@ -87,6 +111,7 @@ pub async fn delete_calendar_event(
         &state.db,
         &account.id,
         provider.as_ref(),
+        calendar_id.as_deref().unwrap_or("primary"),
         &provider_event_id,
         scope,
         notify_attendees,

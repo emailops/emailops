@@ -139,7 +139,7 @@ impl Tool for ListCalendarEventsTool {
             ));
         }
         let (start, end) = resolve_window(&args, chrono::Utc::now().timestamp());
-        let events = match ctx.db.list_calendar_events(ctx.account_id, start, end) {
+        let events = match ctx.db.list_visible_calendar_events(ctx.account_id, start, end) {
             Ok(events) => events,
             Err(e) => return Ok(ToolOutput::text(format!("Calendar error: {e}"))),
         };

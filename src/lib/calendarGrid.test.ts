@@ -9,10 +9,13 @@ import {
   eventColumnGeometry,
   eventsForDay,
   eventTextMode,
+  isMultiDayEvent,
   layoutDayEvents,
+  layoutEventSpans,
   monthGrid,
   resolveCalendarAccountId,
   slotFromOffsetY,
+  spanLaneCount,
   startOfDay,
   startOfWeekMonday,
   startsIn,
@@ -429,5 +432,165 @@ describe('resolveCalendarAccountId', () => {
 
   it('returns null when no account is enabled', () => {
     expect(resolveCalendarAccountId([{ id: 'x', enabled: false }], 'x', 'x')).toBeNull();
+  });
+});
+
+// ── Multi-day events ─────────────────────────────────────────────────────────
+
+describe('isMultiDayEvent', () => {
+  it('treats a normal timed meeting as single-day', () => {
+    const e = makeEvent({ startTime: sec(2026, 8, 7, 10, 0), endTime: sec(2026, 8, 7, 11, 0) });
+    expect(isMultiDayEvent(e)).toBe(false);
+  });
+
+  it('treats a late-night meeting crossing midnight as single-day', () => {
+    // 11:00 PM – 12:30 AM is a 90-minute meeting, not a multi-day event — it
+    // belongs in the time grid as two blocks, not in the spanning band.
+    const e = makeEvent({ startTime: sec(2026, 8, 7, 23, 0), endTime: sec(2026, 8, 8, 0, 30) });
+    expect(isMultiDayEvent(e)).toBe(false);
+  });
+
+  it('treats a one-day all-day event as single-day', () => {
+    const e = makeEvent({
+      isAllDay: true,
+      startTime: sec(2026, 8, 7),
+      endTime: sec(2026, 8, 8), // exclusive end — exactly 24h
+    });
+    expect(isMultiDayEvent(e)).toBe(false);
+  });
+
+  it('treats a multi-day all-day event as multi-day', () => {
+    const e = makeEvent({ isAllDay: true, startTime: sec(2026, 8, 7), endTime: sec(2026, 8, 10) });
+    expect(isMultiDayEvent(e)).toBe(true);
+  });
+
+  it('treats a timed event longer than a day as multi-day', () => {
+    const e = makeEvent({ startTime: sec(2026, 8, 7, 23, 0), endTime: sec(2026, 8, 10, 0, 30) });
+    expect(isMultiDayEvent(e)).toBe(true);
+  });
+});
+
+describe('layoutEventSpans', () => {
+  const week = weekDays(day(2026, 8, 3)); // Mon 3 Aug – Sun 9 Aug
+
+  it('turns a multi-day event into one span across the days it covers', () => {
+    const vacation = makeEvent({
+      id: 'offsite',
+      title: 'Team offsite',
+      startTime: sec(2026, 8, 5, 9, 0),
+      endTime: sec(2026, 8, 7, 18, 0),
+    });
+
+    const spans = layoutEventSpans([vacation], week);
+
+    expect(spans).toHaveLength(1);
+    expect(spans[0].startIndex).toBe(2); // Wed 5
+    expect(spans[0].endIndex).toBe(4); // Fri 7
+    expect(spans[0].continuesBefore).toBe(false);
+    expect(spans[0].continuesAfter).toBe(false);
+  });
+
+  it('ignores single-day events — they stay in the grid', () => {
+    const meeting = makeEvent({ startTime: sec(2026, 8, 5, 10, 0), endTime: sec(2026, 8, 5, 11, 0) });
+    expect(layoutEventSpans([meeting], week)).toEqual([]);
+  });
+
+  it('clamps a span that starts before the visible week and flags the continuation', () => {
+    const e = makeEvent({ startTime: sec(2026, 7, 30, 9, 0), endTime: sec(2026, 8, 5, 18, 0) });
+
+    const [span] = layoutEventSpans([e], week);
+
+    expect(span.startIndex).toBe(0);
+    expect(span.endIndex).toBe(2);
+    expect(span.continuesBefore).toBe(true);
+    expect(span.continuesAfter).toBe(false);
+  });
+
+  it('clamps a span that runs past the visible week and flags the continuation', () => {
+    const e = makeEvent({ startTime: sec(2026, 8, 6, 9, 0), endTime: sec(2026, 8, 20, 18, 0) });
+
+    const [span] = layoutEventSpans([e], week);
+
+    expect(span.startIndex).toBe(3);
+    expect(span.endIndex).toBe(6);
+    expect(span.continuesAfter).toBe(true);
+  });
+
+  it('flags both continuations for an event covering the whole visible week', () => {
+    const e = makeEvent({ startTime: sec(2026, 7, 1), endTime: sec(2026, 9, 1) });
+
+    const [span] = layoutEventSpans([e], week);
+
+    expect(span.startIndex).toBe(0);
+    expect(span.endIndex).toBe(6);
+    expect(span.continuesBefore).toBe(true);
+    expect(span.continuesAfter).toBe(true);
+  });
+
+  it('drops events that do not reach the visible week at all', () => {
+    const e = makeEvent({ startTime: sec(2026, 6, 1), endTime: sec(2026, 6, 5) });
+    expect(layoutEventSpans([e], week)).toEqual([]);
+  });
+
+  it('stacks overlapping spans on separate lanes', () => {
+    const a = makeEvent({ id: 'a', startTime: sec(2026, 8, 3), endTime: sec(2026, 8, 6) });
+    const b = makeEvent({ id: 'b', startTime: sec(2026, 8, 4), endTime: sec(2026, 8, 8) });
+
+    const spans = layoutEventSpans([a, b], week);
+
+    expect(spans.find((s) => s.event.id === 'a')?.lane).toBe(0);
+    expect(spans.find((s) => s.event.id === 'b')?.lane).toBe(1);
+  });
+
+  it('reuses a lane once the previous span in it has ended', () => {
+    const early = makeEvent({ id: 'early', startTime: sec(2026, 8, 3), endTime: sec(2026, 8, 5) });
+    const late = makeEvent({ id: 'late', startTime: sec(2026, 8, 6), endTime: sec(2026, 8, 8) });
+
+    const spans = layoutEventSpans([early, late], week);
+
+    expect(spans.every((s) => s.lane === 0)).toBe(true);
+  });
+
+  it('keeps a one-day gap between spans in the same lane readable', () => {
+    // Touching spans (one ends Tue, the next starts Wed) must not share a lane
+    // edge-to-edge ambiguity — the later one may reuse the lane only when a
+    // full day separates them in the grid.
+    const a = makeEvent({ id: 'a', startTime: sec(2026, 8, 3), endTime: sec(2026, 8, 5) }); // Mon–Tue
+    const b = makeEvent({ id: 'b', startTime: sec(2026, 8, 5), endTime: sec(2026, 8, 7) }); // Wed–Thu
+
+    const spans = layoutEventSpans([a, b], week);
+
+    expect(spans.find((s) => s.event.id === 'a')?.endIndex).toBe(1);
+    expect(spans.find((s) => s.event.id === 'b')?.startIndex).toBe(2);
+    expect(spans.every((s) => s.lane === 0)).toBe(true);
+  });
+
+  it('is stable in day view (a single visible day)', () => {
+    const e = makeEvent({ startTime: sec(2026, 8, 5, 9, 0), endTime: sec(2026, 8, 9, 18, 0) });
+
+    const [span] = layoutEventSpans([e], [day(2026, 8, 6)]);
+
+    expect(span.startIndex).toBe(0);
+    expect(span.endIndex).toBe(0);
+    expect(span.continuesBefore).toBe(true);
+    expect(span.continuesAfter).toBe(true);
+  });
+});
+
+describe('spanLaneCount', () => {
+  it('is zero without spans', () => {
+    expect(spanLaneCount([])).toBe(0);
+  });
+
+  it('counts the lanes needed to draw every span', () => {
+    const week = weekDays(day(2026, 8, 3));
+    const spans = layoutEventSpans(
+      [
+        makeEvent({ id: 'a', startTime: sec(2026, 8, 3), endTime: sec(2026, 8, 6) }),
+        makeEvent({ id: 'b', startTime: sec(2026, 8, 4), endTime: sec(2026, 8, 8) }),
+      ],
+      week,
+    );
+    expect(spanLaneCount(spans)).toBe(2);
   });
 });

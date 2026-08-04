@@ -169,6 +169,30 @@ fn default_attendee_response() -> String {
     "needsAction".to_string()
 }
 
+/// One calendar an account can see: its own calendars plus any shared with it
+/// or subscribed to. Refreshed from the provider on every sync (Google
+/// `calendarList.list` / Graph `/me/calendars`) — except `is_visible`, which is
+/// the user's local show/hide toggle and survives sync.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct Calendar {
+    pub id: String,
+    pub account_id: String,
+    pub provider_calendar_id: String,
+    pub name: String,
+    /// Provider colour as "#rrggbb"; empty when the provider reported none —
+    /// the UI then falls back to a deterministic palette slot.
+    pub color: String,
+    pub is_primary: bool,
+    /// "owner" | "writer" | "reader" | "freeBusyReader"
+    pub access_role: String,
+    pub is_visible: bool,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// One calendar event instance synced from the provider. Recurring events are
 /// stored as expanded instances (one row per occurrence in the sync window),
 /// never as RRULE masters — see `migrations/V011__calendar_events.sql`.

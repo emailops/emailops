@@ -63,6 +63,28 @@ export interface CalendarAttendee {
   response: string;
 }
 
+/** One calendar an account can see — its own, shared with it, or subscribed.
+ *  Mirrors the Rust `Calendar` struct in `src-tauri/src/models/mod.rs`.
+ *  Refreshed from the provider on every sync except `isVisible`, which is the
+ *  local show/hide toggle. */
+export interface Calendar {
+  id: string;
+  accountId: string;
+  /** Provider calendar id: an address on Google, an opaque id on Graph. */
+  providerCalendarId: string;
+  name: string;
+  /** Provider colour as "#rrggbb", or '' when the provider reported none —
+   *  resolve through `calendarColor()` rather than reading this directly. */
+  color: string;
+  isPrimary: boolean;
+  /** 'owner' | 'writer' | 'reader' | 'freeBusyReader' */
+  accessRole: string;
+  isVisible: boolean;
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** A calendar event synced from Gmail / Outlook. Mirrors the Rust
  *  `CalendarEvent` struct in `src-tauri/src/models/mod.rs` (camelCase serde).
  *  `description` may contain raw provider HTML (Graph) — treat as UNTRUSTED

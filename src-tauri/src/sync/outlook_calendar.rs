@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendarEvent};
+use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
 use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision};
 
 const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -20,6 +20,9 @@ const INITIAL_BACKOFF_MS: u64 = 1_000;
 /// without a second round-trip.
 const EVENT_SELECT_FIELDS: &str = "id,subject,body,bodyPreview,location,start,end,isAllDay,isCancelled,\
     organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,originalStartTimeZone";
+
+/// Fields fetched for every calendar in `/me/calendars`.
+const CALENDAR_SELECT_FIELDS: &str = "id,name,hexColor,color,isDefaultCalendar,canEdit,owner";
 
 pub struct OutlookCalendarClient {
     client: Client,
@@ -152,13 +155,49 @@ impl OutlookCalendarClient {
 
 #[async_trait]
 impl CalendarProvider for OutlookCalendarClient {
-    async fn list_events(&self, window_start: i64, window_end: i64) -> Result<Vec<ProviderCalendarEvent>> {
+    async fn list_calendars(&self) -> Result<Vec<ProviderCalendar>> {
+        let mut calendars = Vec::new();
+        let mut url = format!(
+            "{}/me/calendars?$top=100&$select={}",
+            self.base_url, CALENDAR_SELECT_FIELDS
+        );
+        loop {
+            let response = self.send_get_with_retry(&url, "list calendars").await?;
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(crate::sync::calendar_provider::classify_calendar_fetch_error(
+                    "Outlook",
+                    status,
+                    &error_text,
+                    self.account_id.as_deref(),
+                ));
+            }
+            let page: serde_json::Value = response.json().await?;
+            if let Some(items) = page.get("value").and_then(|v| v.as_array()) {
+                calendars.extend(items.iter().filter_map(parse_graph_calendar));
+            }
+            match page.get("@odata.nextLink").and_then(|v| v.as_str()) {
+                Some(next) => url = next.to_string(),
+                None => break,
+            }
+        }
+        Ok(calendars)
+    }
+
+    async fn list_events(
+        &self,
+        calendar_id: &str,
+        window_start: i64,
+        window_end: i64,
+    ) -> Result<Vec<ProviderCalendarEvent>> {
         let start = epoch_to_rfc3339(window_start)?;
         let end = epoch_to_rfc3339(window_end)?;
         let mut events = Vec::new();
         let mut url = format!(
-            "{}/me/calendarView?startDateTime={}&endDateTime={}&$top=100&$select={}",
+            "{}/me/calendars/{}/calendarView?startDateTime={}&endDateTime={}&$top=100&$select={}",
             self.base_url,
+            urlencoding::encode(calendar_id),
             urlencoding::encode(&start),
             urlencoding::encode(&end),
             EVENT_SELECT_FIELDS,
@@ -209,7 +248,15 @@ impl CalendarProvider for OutlookCalendarClient {
             .ok_or_else(|| AppError::SyncError("Outlook returned an unparseable created event".to_string()))
     }
 
-    async fn delete_event(&self, provider_event_id: &str, notify: bool, message: &str) -> Result<()> {
+    async fn delete_event(
+        &self,
+        // Graph addresses every event under `/me/events/{id}` regardless of
+        // which calendar holds it, so the calendar is not part of the URL.
+        _calendar_id: &str,
+        provider_event_id: &str,
+        notify: bool,
+        message: &str,
+    ) -> Result<()> {
         // With attendees to notify, Graph's `/cancel` action sends the
         // cancellation and supports an organizer comment; a plain DELETE
         // removes silently.
@@ -240,7 +287,14 @@ impl CalendarProvider for OutlookCalendarClient {
         ))
     }
 
-    async fn truncate_recurring_event(&self, master_id: &str, first_removed_start: i64, _notify: bool) -> Result<()> {
+    async fn truncate_recurring_event(
+        &self,
+        // See `delete_event`: Graph event ids are calendar-independent.
+        _calendar_id: &str,
+        master_id: &str,
+        first_removed_start: i64,
+        _notify: bool,
+    ) -> Result<()> {
         // Graph sends series-change updates to attendees itself; there is no
         // per-call notify switch on PATCH (`_notify` intentionally unused).
         let master_url = format!("{}/me/events/{}", self.base_url, urlencoding::encode(master_id));
@@ -460,6 +514,42 @@ fn epoch_to_graph_datetime(epoch_seconds: i64) -> Result<String> {
         .ok_or_else(|| AppError::InvalidInput(format!("timestamp {epoch_seconds} out of range")))
 }
 
+/// Parse one `/me/calendars` entry. Returns `None` for entries with no id.
+///
+/// Graph exposes a calendar's colour two ways: `hexColor` (an explicit
+/// "#rrggbb", present when the user picked a custom colour) and `color` (a
+/// named preset whose exact rendering is Outlook's, not a documented hex). We
+/// take `hexColor` when it is there and otherwise leave the colour empty so
+/// the UI assigns a palette slot — inventing hexes for the presets would only
+/// produce colours that don't match Outlook anyway.
+///
+/// Pure so it is unit-testable without HTTP.
+fn parse_graph_calendar(raw: &serde_json::Value) -> Option<ProviderCalendar> {
+    let provider_calendar_id = raw.get("id").and_then(|v| v.as_str())?.to_string();
+    let is_primary = raw.get("isDefaultCalendar").and_then(|v| v.as_bool()).unwrap_or(false);
+    let can_edit = raw.get("canEdit").and_then(|v| v.as_bool()).unwrap_or(false);
+    Some(ProviderCalendar {
+        provider_calendar_id,
+        name: raw.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        color: raw
+            .get("hexColor")
+            .and_then(|v| v.as_str())
+            .filter(|c| c.starts_with('#'))
+            .unwrap_or_default()
+            .to_string(),
+        is_primary,
+        access_role: if is_primary {
+            "owner".to_string()
+        } else if can_edit {
+            "writer".to_string()
+        } else {
+            "reader".to_string()
+        },
+        // Graph has no "shown in my UI" flag, so every calendar starts visible.
+        selected: true,
+    })
+}
+
 fn epoch_to_rfc3339(epoch_seconds: i64) -> Result<String> {
     chrono::DateTime::from_timestamp(epoch_seconds, 0)
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
@@ -569,6 +659,75 @@ fn parse_graph_time(time: &serde_json::Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── parse_graph_calendar ───────────────────────────────────────────────
+
+    #[test]
+    fn parses_the_default_calendar_as_primary_and_owned() {
+        let raw = serde_json::json!({
+            "id": "AAMkAGI2primary=",
+            "name": "Calendar",
+            "hexColor": "",
+            "color": "auto",
+            "isDefaultCalendar": true,
+            "canEdit": true,
+        });
+
+        let calendar = parse_graph_calendar(&raw).expect("parse");
+
+        assert!(calendar.is_primary);
+        assert_eq!(calendar.access_role, "owner");
+        assert!(calendar.selected, "Graph has no per-calendar visibility flag");
+    }
+
+    #[test]
+    fn a_shared_read_only_calendar_parses_as_reader() {
+        let raw = serde_json::json!({
+            "id": "AAMkAGI2shared=",
+            "name": "Team calendar",
+            "isDefaultCalendar": false,
+            "canEdit": false,
+        });
+
+        let calendar = parse_graph_calendar(&raw).expect("parse");
+
+        assert_eq!(calendar.access_role, "reader");
+        assert!(!calendar.is_primary);
+        assert_eq!(calendar.name, "Team calendar");
+    }
+
+    #[test]
+    fn a_shared_editable_calendar_parses_as_writer() {
+        let raw = serde_json::json!({
+            "id": "AAMkAGI2writable=",
+            "name": "Project",
+            "isDefaultCalendar": false,
+            "canEdit": true,
+        });
+
+        assert_eq!(parse_graph_calendar(&raw).expect("parse").access_role, "writer");
+    }
+
+    #[test]
+    fn a_custom_hex_colour_is_carried_through() {
+        let raw = serde_json::json!({ "id": "AAMkAGI2=", "name": "Red one", "hexColor": "#a4373a" });
+
+        assert_eq!(parse_graph_calendar(&raw).expect("parse").color, "#a4373a");
+    }
+
+    #[test]
+    fn a_named_preset_colour_leaves_the_colour_for_the_app_to_pick() {
+        // Graph's `color` presets have no documented hex; guessing one would
+        // not match Outlook, so the UI assigns a palette slot instead.
+        let raw = serde_json::json!({ "id": "AAMkAGI2=", "name": "Preset", "hexColor": "", "color": "lightGreen" });
+
+        assert_eq!(parse_graph_calendar(&raw).expect("parse").color, "");
+    }
+
+    #[test]
+    fn an_entry_without_an_id_is_skipped() {
+        assert!(parse_graph_calendar(&serde_json::json!({ "name": "Nameless" })).is_none());
+    }
 
     #[test]
     fn parses_teams_event_with_online_meeting() {

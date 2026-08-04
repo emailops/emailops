@@ -432,7 +432,8 @@
     "notificationsDesc": "Soyez averti avant une réunion, avec un lien direct pour la rejoindre.",
     "leadTimeLabel": "Délai de notification",
     "leadTimeDesc": "Combien de temps avant le début de la réunion la notification est envoyée.",
-    "minutesOption": "{{n}} minutes"
+    "minutesOption": "{{n}} minutes",
+    "primaryCalendar": "principal"
   },
   "aiTranslation": {
     "enable": "Activer la traduction IA",

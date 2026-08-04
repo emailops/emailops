@@ -432,7 +432,8 @@
     "notificationsDesc": "Get notified before an upcoming meeting, with a direct join link.",
     "leadTimeLabel": "Notification lead time",
     "leadTimeDesc": "How long before the meeting starts the notification fires.",
-    "minutesOption": "{{n}} minutes"
+    "minutesOption": "{{n}} minutes",
+    "primaryCalendar": "primary"
   },
   "aiTranslation": {
     "enable": "Enable AI translation",
