@@ -1,14 +1,18 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
+import { eventBlockStyle, eventChipStyle } from '@/lib/calendarColor';
 import {
   addDays,
   EVENT_MIN_BLOCK_PX,
   eventColumnGeometry,
   eventsForDay,
   eventTextMode,
+  isMultiDayEvent,
   layoutDayEvents,
+  layoutEventSpans,
   slotFromOffsetY,
+  spanLaneCount,
   startOfDay,
 } from '@/lib/calendarGrid';
 import type { CalendarEvent } from '@/types';
@@ -18,11 +22,16 @@ const HOUR_PX = 48;
 const MINUTES_PER_DAY = 24 * 60;
 /** On mount / view switch the grid scrolls so this hour sits at the top. */
 const INITIAL_SCROLL_HOUR = 7;
+/** Height of one lane in the multi-day spanning band (bar + gap). */
+const SPAN_LANE_PX = 20;
 
 interface TimeGridProps {
   /** The local days to render as columns (7 for week view, 1 for day view). */
   days: Date[];
   events: CalendarEvent[];
+  /** Resolved colour per `calendarId`, so each calendar's events are tinted
+   *  with the colour the provider shows them in. */
+  colorFor: (calendarId: string) => string;
   onSelectEvent: (event: CalendarEvent) => void;
   /** Double-click on an empty slot → propose a new event `[start, end)` (unix seconds). */
   onCreateSlot: (start: number, end: number) => void;
@@ -33,7 +42,7 @@ interface TimeGridProps {
  * absolutely-positioned event blocks. Overlapping events share the column
  * width via `layoutDayEvents`.
  */
-export function TimeGrid({ days, events, onSelectEvent, onCreateSlot }: TimeGridProps) {
+export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }: TimeGridProps) {
   const { t, i18n } = useTranslation(['calendar']);
   const { time } = useFormatters();
   const todayMs = startOfDay(new Date()).getTime();
@@ -74,10 +83,16 @@ export function TimeGrid({ days, events, onSelectEvent, onCreateSlot }: TimeGrid
     [i18n.language],
   );
 
+  // Multi-day events are drawn once as a bar across the days they cover, not
+  // repeated as a full-height block in every column — so they are pulled out of
+  // the per-day lists entirely.
+  const spans = useMemo(() => layoutEventSpans(events, days), [events, days]);
+  const laneCount = spanLaneCount(spans);
+
   const perDay = useMemo(
     () =>
       days.map((day) => {
-        const dayEvents = eventsForDay(events, day);
+        const dayEvents = eventsForDay(events, day).filter((e) => !isMultiDayEvent(e));
         return {
           day,
           allDay: dayEvents.filter((e) => e.isAllDay),
@@ -87,34 +102,97 @@ export function TimeGrid({ days, events, onSelectEvent, onCreateSlot }: TimeGrid
     [days, events],
   );
 
+  // "Aug 5, 9:00 AM – Aug 7, 6:00 PM" for the bar's tooltip. All-day events
+  // carry an exclusive midnight end, so step back a second to name the last
+  // day the user actually sees the event on.
+  const spanRangeFmt = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.language || 'en', {
+        month: 'short',
+        day: 'numeric',
+      }),
+    [i18n.language],
+  );
+  const spanTooltip = (event: (typeof events)[number]) => {
+    const lastMoment = event.isAllDay ? event.endTime - 1 : event.endTime;
+    const range = `${spanRangeFmt.format(event.startTime * 1000)} – ${spanRangeFmt.format(lastMoment * 1000)}`;
+    return event.isAllDay
+      ? `${event.title} · ${range}`
+      : `${event.title} · ${range} · ${time(event.startTime)} – ${time(event.endTime)}`;
+  };
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Day headers + all-day row */}
-      <div className="flex border-b border-gray-200 flex-shrink-0">
-        <div className="w-14 flex-shrink-0 border-r border-gray-100" />
-        {perDay.map(({ day, allDay }) => (
-          <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 py-1">
-            <div
-              className={`text-xs text-center font-semibold mb-1 ${
-                day.getTime() === todayMs ? 'text-primary-600' : 'text-gray-600'
-              }`}
-            >
-              {dayLabelFmt.format(day)}
+      {/* Day headers, multi-day band, all-day row */}
+      <div className="border-b border-gray-200 flex-shrink-0">
+        {/* Day labels */}
+        <div className="flex">
+          <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+          {perDay.map(({ day }) => (
+            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 py-1">
+              <div
+                className={`text-xs text-center font-semibold ${
+                  day.getTime() === todayMs ? 'text-primary-600' : 'text-gray-600'
+                }`}
+              >
+                {dayLabelFmt.format(day)}
+              </div>
             </div>
-            <div className="space-y-0.5">
-              {allDay.map((event) => (
+          ))}
+        </div>
+
+        {/* Multi-day events: one continuous bar per event, spanning the days it
+            covers, with a chevron where it runs past the visible range. */}
+        {spans.length > 0 && (
+          <div className="flex">
+            <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+            <div className="flex-1 min-w-0 relative" style={{ height: laneCount * SPAN_LANE_PX }}>
+              {spans.map(({ event, startIndex, endIndex, continuesBefore, continuesAfter, lane }) => (
                 <button
                   key={event.id}
                   onClick={() => onSelectEvent(event)}
-                  title={`${event.title} · ${t('calendar:allDay')}`}
-                  className="w-full text-left px-1.5 py-0.5 rounded text-[11px] leading-tight truncate bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+                  title={spanTooltip(event)}
+                  className={`absolute text-left px-1.5 py-0.5 text-[11px] leading-tight truncate transition-opacity hover:opacity-80 flex items-center gap-1 ${
+                    continuesBefore ? '' : 'rounded-l'
+                  } ${continuesAfter ? '' : 'rounded-r'}`}
+                  style={{
+                    top: lane * SPAN_LANE_PX,
+                    left: `calc(${(startIndex / days.length) * 100}% + 2px)`,
+                    width: `calc(${((endIndex - startIndex + 1) / days.length) * 100}% - 4px)`,
+                    height: SPAN_LANE_PX - 2,
+                    ...eventChipStyle(colorFor(event.calendarId)),
+                  }}
                 >
-                  {event.title || '—'}
+                  {continuesBefore && <span aria-hidden="true">‹</span>}
+                  <span className="truncate flex-1">{event.title || '—'}</span>
+                  {continuesAfter && <span aria-hidden="true">›</span>}
                 </button>
               ))}
             </div>
           </div>
-        ))}
+        )}
+
+        {/* Single-day all-day events, per column */}
+        <div className="flex">
+          <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+          {perDay.map(({ day, allDay }) => (
+            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 pb-1">
+              <div className="space-y-0.5">
+                {allDay.map((event) => (
+                  <button
+                    key={event.id}
+                    onClick={() => onSelectEvent(event)}
+                    title={`${event.title} · ${t('calendar:allDay')}`}
+                    className="w-full text-left px-1.5 py-0.5 rounded text-[11px] leading-tight truncate transition-opacity hover:opacity-80"
+                    style={eventChipStyle(colorFor(event.calendarId))}
+                  >
+                    {event.title || '—'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Scrollable time grid */}
@@ -176,16 +254,13 @@ export function TimeGrid({ days, events, onSelectEvent, onCreateSlot }: TimeGrid
                       onClick={() => onSelectEvent(event)}
                       onDoubleClick={(e) => e.stopPropagation()}
                       title={`${event.title} · ${time(event.startTime)} – ${time(event.endTime)}`}
-                      className={`absolute text-left rounded px-1.5 py-0.5 text-[11px] leading-tight overflow-hidden border transition-colors flex flex-col items-stretch justify-start ${
-                        event.status === 'tentative'
-                          ? 'bg-primary-50 border-dashed border-primary-300 text-primary-700 hover:bg-primary-100'
-                          : 'bg-primary-100 border-primary-200 text-primary-900 hover:bg-primary-200'
-                      }`}
+                      className="absolute text-left rounded px-1.5 py-0.5 text-[11px] leading-tight overflow-hidden border text-gray-900 transition-opacity hover:opacity-80 flex flex-col items-stretch justify-start"
                       style={{
                         top,
                         height,
                         left: `${leftPct}%`,
                         width: `calc(${widthPct}% - 2px)`,
+                        ...eventBlockStyle(colorFor(event.calendarId), event.status === 'tentative'),
                       }}
                     >
                       {textMode === 'two-lines' && (

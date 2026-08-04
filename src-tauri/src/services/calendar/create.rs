@@ -53,6 +53,18 @@ pub fn validate_new_event(input: &NewCalendarEvent) -> Result<()> {
     Ok(())
 }
 
+/// The account's primary calendar id, falling back to the provider's
+/// `"primary"` alias when the registry has not been populated yet (an event
+/// created before the first calendar sync completes).
+fn primary_calendar_id(db: &Database, account_id: &str) -> Result<String> {
+    Ok(db
+        .list_calendars(account_id)?
+        .into_iter()
+        .find(|c| c.is_primary)
+        .map(|c| c.provider_calendar_id)
+        .unwrap_or_else(|| "primary".to_string()))
+}
+
 /// Create the event on the provider's primary calendar, store the returned
 /// instance locally, and hand it back for immediate rendering.
 pub async fn create_calendar_event(
@@ -64,7 +76,12 @@ pub async fn create_calendar_event(
 ) -> Result<CalendarEvent> {
     validate_new_event(&input)?;
     let created = provider.create_event(&input).await?;
-    let rows = plan_event_rows(account_id, std::slice::from_ref(&created), now);
+    // Store the primary calendar's real provider id, not the "primary" alias
+    // the create call uses: the registry is keyed by the real id, so the alias
+    // would break the colour lookup and let the next sync insert a duplicate
+    // row for the same event under a different calendar_id.
+    let calendar_id = primary_calendar_id(db, account_id)?;
+    let rows = plan_event_rows(account_id, &calendar_id, std::slice::from_ref(&created), now);
     let row = rows
         .into_iter()
         .next()

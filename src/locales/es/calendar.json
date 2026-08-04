@@ -99,5 +99,9 @@
     "change": "Cambiar",
     "authError": "No se pudo enviar tu respuesta. Inicia sesión de nuevo en esta cuenta para conceder acceso al calendario.",
     "error": "No se pudo enviar tu respuesta: {{message}}"
+  },
+  "calendars": {
+    "hideOne": "Ocultar {{name}}",
+    "showOne": "Mostrar {{name}}"
   }
 }

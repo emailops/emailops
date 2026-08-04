@@ -27,6 +27,11 @@ const GMAIL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar.events",
+    // Enumerating the account's other and shared calendars (and their colours)
+    // needs `calendarList.list`, which `calendar.events` does not cover.
+    // This is the narrowest scope that grants it — do NOT widen to
+    // `calendar.readonly`, which also grants reading every calendar's contents.
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ];
 
 // Microsoft Graph (Outlook / Office 365) OAuth configuration.
@@ -377,6 +382,39 @@ mod tests {
                 .iter()
                 .any(|s| s == "https://www.googleapis.com/auth/calendar.events"),
             "Gmail OAuth must request event read/write access to Google Calendar, got: {:?}",
+            config.scopes
+        );
+    }
+
+    #[test]
+    fn gmail_scopes_include_calendar_list_enumeration() {
+        // `calendar.events` grants event access on a calendar you can already
+        // name, but not `calendarList.list` — without this scope the app can
+        // never discover the user's other or shared calendars.
+        let config = OAuthConfig::gmail();
+        assert!(
+            config
+                .scopes
+                .iter()
+                .any(|s| s == "https://www.googleapis.com/auth/calendar.calendarlist.readonly"),
+            "Gmail OAuth must be able to enumerate the account's calendars, got: {:?}",
+            config.scopes
+        );
+    }
+
+    #[test]
+    fn gmail_scopes_omit_broad_calendar_readonly() {
+        // `calendar.calendarlist.readonly` lists calendars; `calendar.readonly`
+        // would additionally grant reading every calendar's full contents.
+        // Google's verification requires the narrowest scope that works.
+        let config = OAuthConfig::gmail();
+        assert!(
+            !config
+                .scopes
+                .iter()
+                .any(|s| s == "https://www.googleapis.com/auth/calendar.readonly"
+                    || s == "https://www.googleapis.com/auth/calendar"),
+            "a broader calendar scope than needed was requested, got: {:?}",
             config.scopes
         );
     }

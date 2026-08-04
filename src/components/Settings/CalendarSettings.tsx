@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
+import { calendarColor } from '@/lib/calendarColor';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
 import { calendarCapableAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
+import type { Calendar } from '@/types';
 
 /** Lead-time choices for the upcoming-meeting notification (minutes). */
 const LEAD_TIME_OPTIONS = [1, 5, 10, 15, 30, 60] as const;
@@ -37,6 +39,10 @@ export function CalendarSettings() {
    *  Settings. */
   const [reauthAccountId, setReauthAccountId] = useState<string | null>(null);
   const [isReauthing, setIsReauthing] = useState(false);
+  /** Calendars per account id, for the per-calendar show/hide list. Loaded
+   *  only for accounts whose integration is on — a disabled account has no
+   *  registry to show. */
+  const [calendarsByAccount, setCalendarsByAccount] = useState<Record<string, Calendar[]>>({});
 
   const runEnableSync = (accountId: string) => {
     // First sync right away so the calendar fills in without waiting for the
@@ -116,6 +122,37 @@ export function CalendarSettings() {
     };
   }, []);
 
+  // Load the calendar registry for every account whose integration is on.
+  // Keyed on the id list rather than the Set itself so enabling an account
+  // fetches its calendars without refetching the others on every render.
+  const enabledAccountKey = capableAccounts
+    .filter((a) => integrationIds.has(a.id))
+    .map((a) => a.id)
+    .sort()
+    .join(',');
+  useEffect(() => {
+    if (!integrationLoaded) return;
+    let cancelled = false;
+    const ids = enabledAccountKey ? enabledAccountKey.split(',') : [];
+    void (async () => {
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await api.getCalendars(id)] as const;
+          } catch (e) {
+            addLog('error', 'sync', `Failed to load calendars: ${errorText(e)}`);
+            return [id, [] as Calendar[]] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setCalendarsByAccount(Object.fromEntries(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabledAccountKey, integrationLoaded, addLog]);
+
   const persistEnabled = (next: boolean) => {
     const previous = notificationsEnabled;
     setNotificationsEnabled(next);
@@ -125,6 +162,33 @@ export function CalendarSettings() {
       setNotificationsEnabled(previous);
       setError(errorText(e));
       addLog('error', 'system', `Failed to save calendar notification pref: ${errorText(e)}`);
+    });
+  };
+
+  const loadCalendarsFor = (accountId: string) => {
+    api
+      .getCalendars(accountId)
+      .then((list) => setCalendarsByAccount((current) => ({ ...current, [accountId]: list })))
+      .catch((e) => {
+        // Non-fatal: the account toggle above still works, only the
+        // per-calendar list is missing.
+        addLog('error', 'sync', `Failed to load calendars: ${errorText(e)}`);
+      });
+  };
+
+  const toggleCalendarVisible = (accountId: string, calendar: Calendar, next: boolean) => {
+    setError(null);
+    setCalendarsByAccount((current) => ({
+      ...current,
+      [accountId]: (current[accountId] ?? []).map((c) =>
+        c.providerCalendarId === calendar.providerCalendarId ? { ...c, isVisible: next } : c,
+      ),
+    }));
+    api.setCalendarVisible(accountId, calendar.providerCalendarId, next).catch((e) => {
+      // Revert the optimistic flip by reloading the authoritative list.
+      setError(errorText(e));
+      addLog('error', 'system', `Failed to save calendar visibility: ${errorText(e)}`);
+      loadCalendarsFor(accountId);
     });
   };
 
@@ -157,29 +221,66 @@ export function CalendarSettings() {
             <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
               {capableAccounts.map((account) => {
                 const enabled = integrationIds.has(account.id);
+                const accountCalendars = calendarsByAccount[account.id] ?? [];
                 return (
-                  <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                    <div className="min-w-0">
-                      <span className="text-sm text-gray-100 block truncate">{account.email}</span>
-                      <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={enabled}
-                      aria-label={t('settings:calendar.accountToggleAria', { email: account.email })}
-                      disabled={!integrationLoaded}
-                      onClick={() => toggleAccountIntegration(account.id, !enabled)}
-                      className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-                        enabled ? 'bg-primary-600' : 'bg-neutral-600'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                          enabled ? 'translate-x-5' : 'translate-x-1'
+                  <div key={account.id}>
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <span className="text-sm text-gray-100 block truncate">{account.email}</span>
+                        <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={enabled}
+                        aria-label={t('settings:calendar.accountToggleAria', { email: account.email })}
+                        disabled={!integrationLoaded}
+                        onClick={() => toggleAccountIntegration(account.id, !enabled)}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                          enabled ? 'bg-primary-600' : 'bg-neutral-600'
                         }`}
-                      />
-                    </button>
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                            enabled ? 'translate-x-5' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    {/* Which of the account's calendars appear in the calendar
+                        view. Hidden ones keep syncing, so re-showing one is
+                        instant. Only rendered when there is a real choice. */}
+                    {enabled && accountCalendars.length > 1 && (
+                      <div className="px-4 pb-3 -mt-1 space-y-1.5">
+                        {accountCalendars.map((calendar) => (
+                          <label
+                            key={calendar.providerCalendarId}
+                            className="flex items-center gap-2.5 cursor-pointer group"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={calendar.isVisible}
+                              onChange={(e) => toggleCalendarVisible(account.id, calendar, e.target.checked)}
+                              className="rounded border-gray-600 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
+                            />
+                            <span
+                              className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/20"
+                              style={{
+                                backgroundColor: calendarColor(calendar.color, calendar.providerCalendarId),
+                              }}
+                            />
+                            <span className="text-xs text-gray-300 truncate group-hover:text-gray-100">
+                              {calendar.name || calendar.providerCalendarId}
+                            </span>
+                            {calendar.isPrimary && (
+                              <span className="text-[10px] text-gray-500 flex-shrink-0">
+                                {t('settings:calendar.primaryCalendar')}
+                              </span>
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

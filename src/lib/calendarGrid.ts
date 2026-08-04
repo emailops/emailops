@@ -130,6 +130,103 @@ export function layoutDayEvents(events: CalendarEvent[]): PositionedEvent[] {
   return result;
 }
 
+// ── Multi-day events ─────────────────────────────────────────────────────────
+
+/** A day in seconds. An event must run *longer* than this to be multi-day. */
+const ONE_DAY_SECS = 86_400;
+
+/**
+ * Whether an event spans several days and so belongs in the spanning band
+ * above the grid rather than as a block inside the day columns.
+ *
+ * The test is duration, not "does it touch two dates": a 23:00 → 00:30 meeting
+ * touches two dates but is 90 minutes long and reads correctly as two blocks in
+ * the time grid. A one-day all-day event is exactly 24h, so the comparison is
+ * deliberately strict — only something longer than a full day spans.
+ */
+export function isMultiDayEvent(e: CalendarEvent): boolean {
+  return effectiveEnd(e) - e.startTime > ONE_DAY_SECS;
+}
+
+/** A multi-day event placed across the visible day columns. */
+export interface EventSpan {
+  event: CalendarEvent;
+  /** First covered column, clamped to the visible range. */
+  startIndex: number;
+  /** Last covered column (inclusive), clamped to the visible range. */
+  endIndex: number;
+  /** The event already started before the first visible day. */
+  continuesBefore: boolean;
+  /** The event runs past the last visible day. */
+  continuesAfter: boolean;
+  /** Stacking row, so overlapping spans never draw on top of each other. */
+  lane: number;
+}
+
+/**
+ * Place every multi-day event in `events` across the `days` columns as a single
+ * continuous bar, stacked into lanes so overlapping spans stay readable.
+ *
+ * Single-day events are skipped (they belong in the day columns), as are events
+ * that do not reach the visible range at all. Spans are clamped to the visible
+ * days, with `continuesBefore` / `continuesAfter` recording that the real event
+ * extends further.
+ */
+export function layoutEventSpans(events: CalendarEvent[], days: Date[]): EventSpan[] {
+  if (days.length === 0) return [];
+  const dayStarts = days.map((d) => Math.floor(startOfDay(d).getTime() / 1000));
+  const dayEnds = days.map((d) => Math.floor(addDays(d, 1).getTime() / 1000));
+  const rangeStart = dayStarts[0];
+  const rangeEnd = dayEnds[dayEnds.length - 1];
+
+  const candidates = events
+    .filter(isMultiDayEvent)
+    .filter((e) => e.startTime < rangeEnd && effectiveEnd(e) > rangeStart)
+    .map((event) => {
+      const end = effectiveEnd(event);
+      const startIndex = dayEnds.findIndex((dayEnd) => dayEnd > event.startTime);
+      // Last column the event still covers: exclusive end, so a span ending
+      // exactly at midnight stops on the previous day.
+      let endIndex = startIndex;
+      for (let i = days.length - 1; i >= 0; i -= 1) {
+        if (dayStarts[i] < end) {
+          endIndex = i;
+          break;
+        }
+      }
+      return {
+        event,
+        startIndex: Math.max(startIndex, 0),
+        endIndex,
+        continuesBefore: event.startTime < rangeStart,
+        continuesAfter: end > rangeEnd,
+      };
+    })
+    // Longest bars first within a start column, so the eye follows stable rows.
+    .sort(
+      (a, b) =>
+        a.startIndex - b.startIndex ||
+        b.endIndex - b.startIndex - (a.endIndex - a.startIndex) ||
+        a.event.title.localeCompare(b.event.title),
+    );
+
+  /** Last occupied column per lane; a lane frees up the column after. */
+  const laneEnds: number[] = [];
+  return candidates.map((candidate) => {
+    let lane = laneEnds.findIndex((occupiedThrough) => occupiedThrough < candidate.startIndex);
+    if (lane === -1) {
+      lane = laneEnds.length;
+    }
+    laneEnds[lane] = candidate.endIndex;
+    return { ...candidate, lane };
+  });
+}
+
+/** How many lanes the spanning band needs to draw `spans`. */
+export function spanLaneCount(spans: readonly EventSpan[]): number {
+  return spans.reduce((max, s) => Math.max(max, s.lane + 1), 0);
+}
+
 // ── Event block presentation (week/day time grid) ────────────────────────────
 
 /** What an event block has room to render, given its pixel height. */

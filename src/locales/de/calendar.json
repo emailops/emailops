@@ -99,5 +99,9 @@
     "change": "Ändern",
     "authError": "Deine Antwort konnte nicht gesendet werden. Melde dich erneut bei diesem Konto an, um Kalenderzugriff zu gewähren.",
     "error": "Deine Antwort konnte nicht gesendet werden: {{message}}"
+  },
+  "calendars": {
+    "hideOne": "{{name}} ausblenden",
+    "showOne": "{{name}} einblenden"
   }
 }

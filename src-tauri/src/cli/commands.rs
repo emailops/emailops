@@ -353,7 +353,9 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                 .map(|dt| dt.timestamp())
                 .unwrap_or(now);
             let range_end = start_of_today + days.max(1).saturating_mul(86_400);
-            let events = session.db.list_calendar_events(&account, start_of_today, range_end)?;
+            let events = session
+                .db
+                .list_visible_calendar_events(&account, start_of_today, range_end)?;
             if next {
                 // Events are start-time ordered; the first not-yet-started one
                 // is the next meeting.

@@ -99,5 +99,9 @@
     "change": "Change",
     "authError": "Couldn't send your response. Sign in to this account again to grant calendar access.",
     "error": "Couldn't send your response: {{message}}"
+  },
+  "calendars": {
+    "hideOne": "Hide {{name}}",
+    "showOne": "Show {{name}}"
   }
 }

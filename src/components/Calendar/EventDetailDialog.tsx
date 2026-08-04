@@ -91,6 +91,7 @@ export function EventDetailDialog({
       const scope = isRecurringInstance ? deleteScope : 'instance';
       await api.deleteCalendarEvent(
         accountId,
+        event.calendarId,
         event.providerEventId,
         notify,
         cancellationMessage(notify, provider, cancelMessage),

@@ -432,7 +432,8 @@
     "notificationsDesc": "Werde vor einem anstehenden Meeting benachrichtigt, mit direktem Teilnahme-Link.",
     "leadTimeLabel": "Vorlaufzeit der Benachrichtigung",
     "leadTimeDesc": "Wie lange vor Beginn des Meetings die Benachrichtigung erscheint.",
-    "minutesOption": "{{n}} Minuten"
+    "minutesOption": "{{n}} Minuten",
+    "primaryCalendar": "primär"
   },
   "aiTranslation": {
     "enable": "KI-Übersetzung aktivieren",

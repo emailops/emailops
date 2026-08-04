@@ -29,38 +29,40 @@ impl DeleteScope {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // one argument per provider call parameter
 pub async fn delete_calendar_event(
     db: &Database,
     account_id: &str,
     provider: &dyn CalendarProvider,
+    calendar_id: &str,
     provider_event_id: &str,
     scope: DeleteScope,
     notify_attendees: bool,
     cancellation_message: &str,
 ) -> Result<()> {
     let event = db
-        .get_calendar_event_by_provider_id(account_id, provider_event_id)?
+        .get_calendar_event_by_provider_id(account_id, calendar_id, provider_event_id)?
         .ok_or_else(|| AppError::NotFound(format!("calendar event '{provider_event_id}' not found")))?;
 
     match (scope, event.recurring_event_id.as_deref()) {
         // Non-recurring events: every scope collapses to a plain delete.
         (_, None) | (DeleteScope::Instance, Some(_)) => {
             provider
-                .delete_event(provider_event_id, notify_attendees, cancellation_message)
+                .delete_event(calendar_id, provider_event_id, notify_attendees, cancellation_message)
                 .await?;
-            db.delete_calendar_event(account_id, provider_event_id)?;
+            db.delete_calendar_event(account_id, calendar_id, provider_event_id)?;
         }
         (DeleteScope::All, Some(master_id)) => {
             provider
-                .delete_event(master_id, notify_attendees, cancellation_message)
+                .delete_event(calendar_id, master_id, notify_attendees, cancellation_message)
                 .await?;
-            db.delete_calendar_events_for_master(account_id, master_id)?;
+            db.delete_calendar_events_for_master(account_id, calendar_id, master_id)?;
         }
         (DeleteScope::Following, Some(master_id)) => {
             provider
-                .truncate_recurring_event(master_id, event.start_time, notify_attendees)
+                .truncate_recurring_event(calendar_id, master_id, event.start_time, notify_attendees)
                 .await?;
-            db.delete_calendar_events_for_master_from(account_id, master_id, event.start_time)?;
+            db.delete_calendar_events_for_master_from(account_id, calendar_id, master_id, event.start_time)?;
         }
     }
     Ok(())
@@ -74,7 +76,7 @@ mod tests {
 
     fn base_event(id: &str, start: i64) -> CalendarEvent {
         CalendarEvent {
-            id: format!("acc1:{id}"),
+            id: format!("acc1:primary:{id}"),
             account_id: "acc1".to_string(),
             provider_event_id: id.to_string(),
             calendar_id: "primary".to_string(),
@@ -128,6 +130,7 @@ mod tests {
             &db,
             "acc1",
             &provider,
+            "primary",
             "ev1",
             DeleteScope::Instance,
             true,
@@ -139,7 +142,12 @@ mod tests {
         let deleted = provider.deleted.lock().expect("lock");
         assert_eq!(
             *deleted,
-            vec![("ev1".to_string(), true, "Moving to next week, sorry!".to_string())]
+            vec![(
+                "primary".to_string(),
+                "ev1".to_string(),
+                true,
+                "Moving to next week, sorry!".to_string()
+            )]
         );
         assert!(db.list_calendar_events("acc1", 0, 10_000).expect("list").is_empty());
     }
@@ -149,12 +157,21 @@ mod tests {
         let db = seeded_db_with_event();
         let provider = FakeCalendarProvider::with_events(vec![]);
 
-        delete_calendar_event(&db, "acc1", &provider, "ev1", DeleteScope::Instance, false, "")
-            .await
-            .expect("delete");
+        delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "ev1",
+            DeleteScope::Instance,
+            false,
+            "",
+        )
+        .await
+        .expect("delete");
 
         let deleted = provider.deleted.lock().expect("lock");
-        assert!(!deleted[0].1, "notify flag must pass through as false");
+        assert!(!deleted[0].2, "notify flag must pass through as false");
     }
 
     #[tokio::test]
@@ -162,7 +179,17 @@ mod tests {
         let db = seeded_db_with_event();
         let provider = FakeCalendarProvider::failing("[UNAVAILABLE] delete rejected");
 
-        let result = delete_calendar_event(&db, "acc1", &provider, "ev1", DeleteScope::Instance, true, "").await;
+        let result = delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "ev1",
+            DeleteScope::Instance,
+            true,
+            "",
+        )
+        .await;
 
         assert!(result.is_err());
         assert_eq!(
@@ -177,13 +204,22 @@ mod tests {
         let db = seeded_db_with_series();
         let provider = FakeCalendarProvider::with_events(vec![]);
 
-        delete_calendar_event(&db, "acc1", &provider, "m_2", DeleteScope::Instance, false, "")
-            .await
-            .expect("delete");
+        delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "m_2",
+            DeleteScope::Instance,
+            false,
+            "",
+        )
+        .await
+        .expect("delete");
 
         let deleted = provider.deleted.lock().expect("lock");
         assert_eq!(
-            deleted[0].0, "m_2",
+            deleted[0].1, "m_2",
             "the instance id, not the master, is deleted upstream"
         );
         let remaining: Vec<String> = db
@@ -200,12 +236,12 @@ mod tests {
         let db = seeded_db_with_series();
         let provider = FakeCalendarProvider::with_events(vec![]);
 
-        delete_calendar_event(&db, "acc1", &provider, "m_2", DeleteScope::All, true, "")
+        delete_calendar_event(&db, "acc1", &provider, "primary", "m_2", DeleteScope::All, true, "")
             .await
             .expect("delete");
 
         let deleted = provider.deleted.lock().expect("lock");
-        assert_eq!(deleted[0].0, "m", "whole-series delete targets the master id");
+        assert_eq!(deleted[0].1, "m", "whole-series delete targets the master id");
         assert!(db.list_calendar_events("acc1", 0, 10_000).expect("list").is_empty());
     }
 
@@ -214,12 +250,21 @@ mod tests {
         let db = seeded_db_with_series();
         let provider = FakeCalendarProvider::with_events(vec![]);
 
-        delete_calendar_event(&db, "acc1", &provider, "m_2", DeleteScope::Following, true, "")
-            .await
-            .expect("delete");
+        delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "m_2",
+            DeleteScope::Following,
+            true,
+            "",
+        )
+        .await
+        .expect("delete");
 
         let truncated = provider.truncated.lock().expect("lock");
-        assert_eq!(*truncated, vec![("m".to_string(), 2_000, true)]);
+        assert_eq!(*truncated, vec![("primary".to_string(), "m".to_string(), 2_000, true)]);
         assert!(
             provider.deleted.lock().expect("lock").is_empty(),
             "no plain delete on Following"
@@ -237,7 +282,17 @@ mod tests {
     async fn unknown_event_is_a_not_found_error() {
         let db = seeded_db_with_event();
         let provider = FakeCalendarProvider::with_events(vec![]);
-        let result = delete_calendar_event(&db, "acc1", &provider, "ghost", DeleteScope::Instance, false, "").await;
+        let result = delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "ghost",
+            DeleteScope::Instance,
+            false,
+            "",
+        )
+        .await;
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 }

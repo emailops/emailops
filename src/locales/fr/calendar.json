@@ -99,5 +99,9 @@
     "change": "Modifier",
     "authError": "Impossible d'envoyer votre réponse. Reconnectez-vous à ce compte pour accorder l'accès au calendrier.",
     "error": "Impossible d'envoyer votre réponse : {{message}}"
+  },
+  "calendars": {
+    "hideOne": "Masquer {{name}}",
+    "showOne": "Afficher {{name}}"
   }
 }

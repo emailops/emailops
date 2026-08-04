@@ -580,7 +580,7 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
                 calendar_enabled_or_log(&db, id)
             });
         for account in accounts {
-            let events = match db.list_calendar_events(&account.id, now, now + lead_secs + 60) {
+            let events = match db.list_visible_calendar_events(&account.id, now, now + lead_secs + 60) {
                 Ok(events) => events,
                 Err(e) => {
                     crate::services::logger::log(

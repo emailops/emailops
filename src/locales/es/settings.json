@@ -432,7 +432,8 @@
     "notificationsDesc": "Recibe un aviso antes de cada reunión, con enlace directo para unirte.",
     "leadTimeLabel": "Antelación del aviso",
     "leadTimeDesc": "Cuánto tiempo antes del inicio de la reunión se envía el aviso.",
-    "minutesOption": "{{n}} minutos"
+    "minutesOption": "{{n}} minutos",
+    "primaryCalendar": "principal"
   },
   "aiTranslation": {
     "enable": "Activar traducción con IA",

@@ -13,6 +13,7 @@ mod embedded {
 pub mod accounts;
 pub mod attachments;
 pub mod calendar;
+pub mod calendars;
 pub mod chat;
 pub mod drafts;
 pub mod emails;
@@ -883,6 +884,7 @@ mod schema_parity_tests {
             "smart_filter_suggestions",
             "calendar_events",
             "calendar_sync_state",
+            "calendars",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

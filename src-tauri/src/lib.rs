@@ -510,6 +510,8 @@ pub fn run() {
             commands::search::get_ai_model,
             commands::search::set_ai_model,
             commands::calendar::get_calendar_events,
+            commands::calendar::get_calendars,
+            commands::calendar::set_calendar_visible,
             commands::calendar::create_calendar_event,
             commands::calendar::delete_calendar_event,
             commands::calendar::get_calendar_invite,
