@@ -65,7 +65,12 @@ interface ChatStore {
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
 
-  sendMessage: (content: string) => Promise<void>;
+  /**
+   * Send a turn. `contextThreadId` is the thread the main view currently
+   * shows (chat panel only) — the backend grounds the answer in it for this
+   * turn instead of running retrieval. Omitted by the full-page chat view.
+   */
+  sendMessage: (content: string, contextThreadId?: string | null) => Promise<void>;
   /** Load persisted categories preference from the DB (called once on mount). */
   loadCategoriesPref: () => Promise<void>;
   /** Update the current selection + persist it so the next session reuses it. */
@@ -199,7 +204,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  sendMessage: async (content) => {
+  sendMessage: async (content, contextThreadId) => {
     const trimmed = content.trim();
     if (!trimmed) return;
     const conversationId = get().activeConversationId;
@@ -219,6 +224,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         conversationId,
         trimmed,
         get().selectedCategories,
+        contextThreadId,
       );
       // Only mutate if we're still on the same conversation.
       if (get().activeConversationId !== conversationId) return;

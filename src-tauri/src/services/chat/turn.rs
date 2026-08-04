@@ -2062,6 +2062,111 @@ async fn run_tool_loop(
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
+/// Which grounding strategy a single chat turn should use.
+///
+/// Produced by [`plan_turn_mode`] and consumed at the top of [`run_chat_turn`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ChatTurnMode {
+    /// The conversation itself was seeded with a thread (via
+    /// `create_conversation_with_thread`) — every turn is bound to it.
+    ConversationThread,
+    /// The user is looking at this thread in the main view right now; ground
+    /// only THIS turn in it. Carries the thread id to hydrate.
+    AmbientThread(String),
+    /// No context — the normal route/retrieval/tool-loop pipeline.
+    Rag,
+}
+
+/// Decide how to ground a turn, given whether the conversation carries seeded
+/// system messages and which thread (if any) the main view currently shows.
+///
+/// Pure so the precedence rules are unit-testable without a DB or provider.
+/// A conversation-level binding always wins: a chat explicitly created *about*
+/// thread A must not silently re-point at thread B because the user scrolled
+/// somewhere else while it was open.
+pub(super) fn plan_turn_mode(system_message_count: usize, ambient_thread_id: Option<&str>) -> ChatTurnMode {
+    if system_message_count > 0 {
+        return ChatTurnMode::ConversationThread;
+    }
+    match ambient_thread_id.map(str::trim) {
+        Some(id) if !id.is_empty() => ChatTurnMode::AmbientThread(id.to_string()),
+        _ => ChatTurnMode::Rag,
+    }
+}
+
+/// Word stems that mean "produce an email for me" across the four shipped UI
+/// languages, accent-folded and lower-cased. Matched as *prefixes of whole
+/// words* so `redact` catches `redacta`/`redactar` without `borrador` firing
+/// inside an unrelated word.
+///
+/// Deliberately verb-led: bare nouns like `respuesta` / `reply` are excluded
+/// because they appear in ordinary questions about a thread ("¿qué respuesta
+/// espera?"), which must be answered as text, not turned into a draft.
+const DRAFT_INTENT_STEMS: &[&str] = &[
+    // Spanish
+    "borrador",
+    "escrib",
+    "redact",
+    "respond",
+    "contest",
+    "responde",
+    "contesta",
+    // English
+    "draft",
+    "write",
+    "compos",
+    "reply",
+    "replies",
+    // German
+    "entwurf",
+    "schreib",
+    "verfass",
+    "antwort",
+    // French
+    "brouillon",
+    "ecri",
+    "redig",
+];
+
+/// Fold the accents that separate a Spanish/French imperative from its stem
+/// (`respóndele` → `respondele`, `écris` → `ecris`) and lower-case.
+fn fold_for_intent_match(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ä' | 'ã' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ñ' => 'n',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+/// Does this prompt explicitly ask for an email to be written?
+///
+/// Gates whether `generate_email_draft` is offered at all on a thread-bound
+/// turn. Thread-bound mode exposes a single tool, and a model handed one tool
+/// plus an imperative will use it: "traduceme este email al español" saved a
+/// reply draft instead of translating the thread. Read-only intents
+/// (translate, summarise, explain, "what does this say") match nothing here,
+/// so the tool is never on the menu and the model can only answer in text.
+///
+/// Allow-list rather than block-list: an unrecognised phrasing degrades to a
+/// text answer the user can follow up on, whereas an unrecognised *read-only*
+/// phrasing under a block-list would silently save a junk draft — the failure
+/// being fixed. Pure, so the multilingual matrix is unit-testable.
+pub(super) fn wants_email_draft(prompt: &str) -> bool {
+    let folded = fold_for_intent_match(prompt);
+    folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|word| DRAFT_INTENT_STEMS.iter().any(|stem| word.starts_with(stem)))
+}
+
 /// Assemble the system prompt for a thread-bound turn: the rendered
 /// `chat.system` base, the seeded thread context message(s), and a tail
 /// instruction that grounds the model in the thread.
@@ -2094,9 +2199,13 @@ a plain question, do NOT call any tool — just answer from the thread.",
     } else {
         system.push_str(
             "\n\nIMPORTANT: You are chatting about the email thread above. Answer \
-using ONLY that thread as your source. Do not call any tools, do not search \
-other emails. If the thread does not contain enough information to answer, say \
-so plainly.",
+using ONLY that thread as your source. Do not search other emails. If the \
+thread does not contain enough information to answer, say so plainly.\n\nYou \
+have NO tools on this turn. Answer the request directly in your reply — \
+translate, summarise, explain or quote the thread inline as asked. Never \
+mention tools, tool names, or your own limitations: do not write phrases like \
+\"the tool is not available\" or \"I cannot save drafts\". If the user wants an \
+email written, simply invite them to ask you to draft a reply.",
         );
     }
 
@@ -2147,18 +2256,44 @@ async fn run_thread_bound_turn(
     let language_instruction = format!("Reply in {}.", language.english_name());
     let today = now_utc().format("%Y-%m-%d").to_string();
     let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    // Drafts are gated behind a Settings toggle (defaults ON) AND behind the
+    // user actually asking for one this turn. Both must hold: with a single
+    // tool on the menu the model treats any imperative as licence to use it,
+    // so a read-only request ("traduceme este email al español") came back as
+    // a saved reply draft instead of a translation. `wants_email_draft` keeps
+    // the tool off the menu entirely unless the turn asks for an email.
+    let drafts_available = db.is_ai_drafts_enabled().unwrap_or(true) && wants_email_draft(&user_question);
+
+    // Registry first: the rendered tool section feeds the base template below.
+    // An empty registry yields an empty section and a pure-text answer.
+    let registry: Arc<tools::ToolRegistry> = Arc::new(if drafts_available {
+        let draft_tool: Arc<dyn tools::Tool> = Arc::new(tools::generate_email_draft::GenerateEmailDraftTool);
+        tools::ToolRegistry::with_tools(vec![draft_tool])
+    } else {
+        tools::ToolRegistry::with_tools(vec![])
+    });
+
+    // `chat.system` carries a `{{ tools_section }}` placeholder. Unknown
+    // variables are left INTACT by `prompts::render` (prompts/mod.rs:197), so
+    // omitting it here shipped a literal "{{ tools_section }}" to the model —
+    // a placeholder where the tool menu belongs, which invited invented tool
+    // calls even on turns with no tools at all. Always bind it.
     let mut tpl_vars = std::collections::HashMap::new();
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("language_instruction", language_instruction);
+    tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
+    // Empty rather than omitted, for the same reason: the identity block only
+    // explains how to map "I"/"me" onto `search_emails` filters, and this path
+    // never searches. Binding it blank drops the section; omitting it would
+    // ship a literal "{{ user_identity }}" to the model.
+    tpl_vars.insert("user_identity", String::new());
     let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
     let base_system = crate::services::prompts::render(&system_template, &tpl_vars);
-
-    // Drafts are gated behind a Settings toggle (defaults ON). When enabled we
-    // expose exactly one tool — `generate_email_draft` — so the user can ask
-    // for a reply grounded in this thread; otherwise the model is told to use
-    // no tools at all and just answer from the thread.
-    let drafts_available = db.is_ai_drafts_enabled().unwrap_or(true);
+    debug_assert!(
+        !base_system.contains("{{"),
+        "thread-bound system prompt has an unbound placeholder: {base_system}"
+    );
     let system = build_thread_bound_system(&base_system, &system_messages, drafts_available);
 
     // Build the message list as (role, content) pairs for the tool loop:
@@ -2172,12 +2307,6 @@ async fn run_thread_bound_turn(
         }
     }
     initial_messages.push(("user".to_string(), user_question.clone()));
-
-    // Draft-only registry: the single tool the thread-bound model may call.
-    // `run_tool_loop` further gates it on `is_available(db)`, so a disabled
-    // drafts feature yields an empty tool menu and a pure-text answer.
-    let draft_tool: Arc<dyn tools::Tool> = Arc::new(tools::generate_email_draft::GenerateEmailDraftTool);
-    let registry: Arc<tools::ToolRegistry> = Arc::new(tools::ToolRegistry::with_tools(vec![draft_tool]));
 
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
@@ -2712,6 +2841,7 @@ pub async fn run_chat_turn(
     model: String,
     history: Vec<ChatMessage>,
     categories: Vec<String>,
+    ambient_thread_id: Option<String>,
 ) -> Result<()> {
     let turn_start = std::time::Instant::now();
 
@@ -2723,12 +2853,35 @@ pub async fn run_chat_turn(
     let provider = AiService::load_provider_with_model(&db, Some(&model))?;
 
     // ── Thread-bound short-circuit ─────────────────────────────────────
-    // If the conversation was seeded with an email thread (system-role
-    // message inserted by `create_conversation_with_thread`), skip the
-    // entire route/retrieval/tool-loop pipeline and answer using just the
-    // cleaned thread as context.
+    // Two ways a turn can be grounded in a single thread instead of running
+    // the full route/retrieval/tool-loop pipeline:
+    //   1. The conversation was seeded with one (`create_conversation_with_thread`).
+    //   2. The chat panel passed the thread the user currently has open in the
+    //      main view as ambient context for this turn only.
+    // `plan_turn_mode` owns the precedence between them.
     let system_messages = db.get_chat_system_messages(&conversation_id).unwrap_or_default();
-    if !system_messages.is_empty() {
+    let thread_context: Option<Vec<ChatMessage>> =
+        match plan_turn_mode(system_messages.len(), ambient_thread_id.as_deref()) {
+            ChatTurnMode::ConversationThread => Some(system_messages),
+            ChatTurnMode::AmbientThread(thread_id) => {
+                // Build the context fresh for this turn. A failure here (thread
+                // deleted mid-session, unreadable rows) must not kill the turn —
+                // fall back to normal retrieval so the user still gets an answer.
+                match super::conversations::build_thread_context(&db, &account_id, &thread_id) {
+                    Ok((context, _subject)) => Some(vec![ChatMessage::ephemeral_system(&conversation_id, &context)]),
+                    Err(e) => {
+                        emit_log(
+                            "warn",
+                            &format!("ambient thread context unavailable ({e}) — falling back to retrieval"),
+                        );
+                        None
+                    }
+                }
+            }
+            ChatTurnMode::Rag => None,
+        };
+
+    if let Some(system_messages) = thread_context {
         return run_thread_bound_turn(
             db,
             provider,
@@ -5029,15 +5182,153 @@ mod tests {
         let sys = build_thread_bound_system("BASE", std::slice::from_ref(&thread), false);
         assert!(sys.contains("BASE"));
         assert!(sys.contains("thread body"));
-        // With drafts off the model must be told to use no tools at all.
+        // With drafts off the model must be told it has no tools at all…
         assert!(
-            sys.contains("Do not call any tools"),
+            sys.contains("You have NO tools on this turn"),
             "missing no-tools instruction: {sys}"
         );
         assert!(
             !sys.contains("generate_email_draft"),
             "draft tool leaked when disabled: {sys}"
         );
+        // …and must be told to answer the request inline rather than explain
+        // that it can't. The "tool is not available" apology leaked the
+        // internal tool name into a user-facing reply.
+        assert!(
+            sys.contains("Never mention tools, tool names, or your own limitations"),
+            "missing no-tool-talk instruction: {sys}"
+        );
+    }
+
+    #[test]
+    fn thread_bound_binds_every_chat_system_placeholder() {
+        // `prompts::render` leaves unknown placeholders INTACT (prompts/mod.rs),
+        // so any variable the thread-bound path forgets to bind is shipped to
+        // the model verbatim. A literal "{{ tools_section }}" sitting where the
+        // tool menu belongs is what made a translate request emit an invented
+        // `generate_email_draft` call. This pins the exact variable set that
+        // path binds, so adding one to `chat.system` fails here rather than in
+        // production.
+        let db = Database::new_for_testing().expect("test db");
+        let template = crate::services::prompts::get_template(&db, "chat.system").expect("template");
+
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("today", "2026-01-01".to_string());
+        vars.insert("tomorrow", "2026-01-02".to_string());
+        vars.insert("language_instruction", "Reply in Spanish.".to_string());
+        vars.insert("tools_section", String::new());
+        vars.insert("user_identity", String::new());
+
+        let rendered = crate::services::prompts::render(&template, &vars);
+        assert!(
+            !rendered.contains("{{"),
+            "unbound placeholder in thread-bound system prompt: {rendered}"
+        );
+    }
+
+    // ── Draft-intent gating in thread-bound mode ────────────────────────
+    //
+    // Thread-bound turns expose exactly one tool. Without a gate the model
+    // reaches for it on any imperative — "traduceme este email" saved a reply
+    // draft instead of translating. Only an explicit draft/write/reply
+    // request may put the tool on the menu.
+
+    #[test]
+    fn draft_intent_read_only_requests_expose_no_tool() {
+        for prompt in [
+            "traduceme este email al español",
+            "traduce este correo",
+            "resume este hilo",
+            "resúmeme la conversación",
+            "explica qué me está pidiendo",
+            "¿de qué va este correo?",
+            "translate this email to Spanish",
+            "summarise this thread",
+            "what is she asking for?",
+            "fasse diesen Thread zusammen",
+            "übersetze diese E-Mail",
+            "résume ce fil",
+            "traduis ce courriel",
+        ] {
+            assert!(!wants_email_draft(prompt), "should NOT offer draft tool: {prompt}");
+        }
+    }
+
+    #[test]
+    fn draft_intent_explicit_requests_expose_the_tool() {
+        for prompt in [
+            "escribe una respuesta",
+            "escríbele una respuesta a Nadia",
+            "redacta un borrador",
+            "respóndele que sí",
+            "contesta este correo",
+            "draft a reply",
+            "write a reply to Nadia",
+            "reply to this email",
+            "compose a response",
+            "schreibe eine Antwort",
+            "antworte ihr",
+            "écris une réponse",
+            "rédige un brouillon",
+        ] {
+            assert!(wants_email_draft(prompt), "should offer draft tool: {prompt}");
+        }
+    }
+
+    #[test]
+    fn draft_intent_folds_accents_and_case() {
+        // Accented imperatives are the common Spanish form; the matcher must
+        // not depend on the user typing them unaccented.
+        assert!(wants_email_draft("RESPÓNDELE"));
+        assert!(wants_email_draft("Redacta un Borrador"));
+        assert!(!wants_email_draft("TRADÚCEME ESTE EMAIL"));
+    }
+
+    #[test]
+    fn draft_intent_ignores_substring_collisions() {
+        // "borrador"/"reply" must match as words, not inside unrelated ones.
+        assert!(!wants_email_draft("el correo es irreplicable"));
+        assert!(!wants_email_draft(""));
+    }
+
+    // ── Turn-mode planning (ambient view context) ───────────────────────
+
+    #[test]
+    fn turn_mode_is_rag_without_any_context() {
+        assert_eq!(plan_turn_mode(0, None), ChatTurnMode::Rag);
+    }
+
+    #[test]
+    fn turn_mode_is_conversation_bound_when_seeded_with_thread() {
+        // "Chat about this thread" seeds a role='system' message at creation;
+        // that binding owns the whole conversation.
+        assert_eq!(plan_turn_mode(1, None), ChatTurnMode::ConversationThread);
+    }
+
+    #[test]
+    fn turn_mode_uses_ambient_thread_when_view_has_one_open() {
+        // Right-hand chat panel: the thread the user is looking at grounds
+        // this turn only.
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42")),
+            ChatTurnMode::AmbientThread("t-42".to_string())
+        );
+    }
+
+    #[test]
+    fn conversation_binding_wins_over_ambient_thread() {
+        // A conversation explicitly created about thread A must not silently
+        // re-point at thread B just because the user scrolled to it.
+        assert_eq!(plan_turn_mode(1, Some("t-99")), ChatTurnMode::ConversationThread);
+    }
+
+    #[test]
+    fn blank_ambient_thread_id_is_ignored() {
+        // Defensive: an empty string from the frontend must not be treated as
+        // a real thread and send the turn down the grounded path with no
+        // context at all.
+        assert_eq!(plan_turn_mode(0, Some("")), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, Some("   ")), ChatTurnMode::Rag);
     }
 
     #[test]

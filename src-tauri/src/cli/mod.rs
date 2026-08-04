@@ -214,6 +214,12 @@ pub enum Command {
         /// Ignored together with `--conversation`.
         #[arg(long)]
         fresh: bool,
+        /// Ground the turn in this thread, exactly as the app's chat panel
+        /// does when an email is open and the context chip is armed. Answers
+        /// come from the thread only — no retrieval. Use this to exercise the
+        /// thread-bound path from the CLI.
+        #[arg(long, value_name = "THREAD_ID")]
+        thread: Option<String>,
         /// Prewarm the chat prompt-prefix cache (system message + empty
         /// sources tail) BEFORE the first question, mirroring what the app
         /// does at startup / chat-panel open. Use in benches so turn-1

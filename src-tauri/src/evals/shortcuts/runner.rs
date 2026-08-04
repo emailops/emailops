@@ -238,6 +238,7 @@ async fn run_variant(
         model.to_string(),
         history,
         categories,
+        None,
     )
     .await?;
 

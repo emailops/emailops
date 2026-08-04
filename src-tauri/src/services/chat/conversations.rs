@@ -102,6 +102,21 @@ pub fn create_conversation_with_thread(
     account_id: &str,
     thread_id: &str,
 ) -> Result<crate::models::ChatConversation> {
+    let (context, subject) = build_thread_context(db, account_id, thread_id)?;
+    let title = thread_title_from_subject(&subject);
+    db.create_chat_conversation_with_system_message(account_id, &title, &context)
+}
+
+/// Hydrate a thread into the cleaned, quote-stripped context block the chat
+/// system prompt embeds, returning it alongside the thread's subject.
+///
+/// Shared by two callers with different lifetimes for the result:
+///   - [`create_conversation_with_thread`] persists it as a role='system'
+///     message, binding the whole conversation to the thread (snapshot
+///     semantics — the chat sees the thread as of creation time).
+///   - the ambient-context path in `run_chat_turn` builds it fresh per turn,
+///     for the thread the user currently has open in the main view.
+pub fn build_thread_context(db: &Database, account_id: &str, thread_id: &str) -> Result<(String, String)> {
     let emails = db.get_thread(account_id, thread_id)?;
     if emails.is_empty() {
         return Err(crate::models::error::AppError::NotFound(format!(
@@ -125,8 +140,7 @@ pub fn create_conversation_with_thread(
         crate::services::thread_clean::chars_per_email(emails.len()),
     );
 
-    let title = thread_title_from_subject(&emails[0].subject);
-    db.create_chat_conversation_with_system_message(account_id, &title, &context)
+    Ok((context, emails[0].subject.clone()))
 }
 
 /// Strip RE:/FWD: prefixes (and locale variants) from a subject and truncate
@@ -155,6 +169,68 @@ fn thread_title_from_subject(subject: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
+
+    fn seed_thread_email(db: &Database, id: &str, account: &str, thread_id: &str, subject: &str, body: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES (?1, 'gmail', ?1, 'Test', 0)",
+            params![account],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails
+             (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+              recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,?2,?3,?4,'Dana Ito','dana@example.test','example.test','[]','[]','snip',100,0,'primary',0)",
+            params![id, account, thread_id, subject],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO email_bodies(email_id, body) VALUES (?1,?2)",
+            params![id, body],
+        )
+        .unwrap();
+    }
+
+    // ── Thread context (shared by seeded conversations + the chat panel's
+    //    ambient per-turn grounding) ───────────────────────────────────────
+
+    #[test]
+    fn thread_context_includes_body_and_returns_subject() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_thread_email(&db, "e1", "acct-1", "t-1", "Depot handover", "Keys are in the lockbox.");
+
+        let (context, subject) = build_thread_context(&db, "acct-1", "t-1").expect("context");
+
+        assert!(context.contains("Keys are in the lockbox."), "body missing: {context}");
+        assert_eq!(subject, "Depot handover");
+    }
+
+    #[test]
+    fn thread_context_errors_for_unknown_thread() {
+        // The chat panel's ambient path relies on this being an error rather
+        // than an empty-but-Ok context: an empty context would silently send a
+        // "answer only from the thread above" prompt with no thread in it. The
+        // caller catches this and falls back to normal retrieval instead.
+        let db = Database::new_for_testing().expect("test db");
+        let err = build_thread_context(&db, "acct-1", "t-missing").expect_err("should not resolve");
+        assert!(
+            matches!(err, crate::models::error::AppError::NotFound(_)),
+            "expected NotFound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn thread_context_scoped_to_its_account() {
+        // Cross-account read guard: a thread id from another account must not
+        // resolve, or the panel could ground a turn in someone else's mail.
+        let db = Database::new_for_testing().expect("test db");
+        seed_thread_email(&db, "e1", "acct-1", "t-1", "Depot handover", "Keys are in the lockbox.");
+
+        assert!(build_thread_context(&db, "acct-2", "t-1").is_err());
+    }
 
     // ── Title derivation ────────────────────────────────────────────────
 

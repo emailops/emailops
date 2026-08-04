@@ -149,6 +149,23 @@
   "threadContext": {
     "label": "Contexte du fil de courriels"
   },
+  "panel": {
+    "title": "Chat",
+    "open": "Ouvrir le panneau de chat",
+    "close": "Fermer le panneau de chat",
+    "expand": "Ouvrir la vue complète du chat",
+    "resize": "Redimensionner le panneau de chat",
+    "conversationPicker": "Changer de conversation",
+    "emptyHint": "Posez une question sur le courriel ouvert, ou sur n'importe quoi dans votre boîte.",
+    "context": {
+      "using": "Utilisé comme contexte",
+      "remove": "Ne pas utiliser ce fil comme contexte",
+      "restore": "Utiliser le fil ouvert comme contexte",
+      "noSubject": "(sans objet)",
+      "hint": "Les réponses s'appuient uniquement sur ce fil. Retirez-le pour chercher dans toute votre boîte."
+    },
+    "newChat": "Nouveau chat"
+  },
   "conversations": {
     "empty": "Aucune conversation pour le moment.",
     "confirmDelete": "Confirmer ?",

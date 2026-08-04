@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
 
@@ -13,9 +13,21 @@ interface ChatInputProps {
    *  lets the parent re-apply the same text (e.g. click the chip twice). */
   prefillText?: string;
   prefillNonce?: number;
+  /** Tighter padding + single-row floor for the narrow right-hand chat panel. */
+  compact?: boolean;
+  /** Rendered directly above the textarea — the panel's context chip slot. */
+  contextSlot?: ReactNode;
 }
 
-export function ChatInput({ onSend, disabled, placeholder, prefillText, prefillNonce }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  disabled,
+  placeholder,
+  prefillText,
+  prefillNonce,
+  compact = false,
+  contextSlot,
+}: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -56,14 +68,15 @@ export function ChatInput({ onSend, disabled, placeholder, prefillText, prefillN
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white px-6 py-4">
-      <div className="flex gap-3 items-end">
+    <div className={`border-t border-gray-200 bg-white ${compact ? 'px-3 py-3' : 'px-6 py-4'}`}>
+      {contextSlot}
+      <div className={`flex items-end ${compact ? 'gap-2' : 'gap-3'}`}>
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
-          rows={2}
+          rows={compact ? 1 : 2}
           placeholder={placeholder ?? 'Ask about your emails… (Enter to send, Shift+Enter for newline)'}
           disabled={disabled}
           className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 disabled:bg-gray-50"
@@ -72,7 +85,9 @@ export function ChatInput({ onSend, disabled, placeholder, prefillText, prefillN
           type="button"
           onClick={submit}
           disabled={disabled || value.trim().length === 0}
-          className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className={`bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+            compact ? 'px-3 py-2 text-xs' : 'px-4 py-2 text-sm'
+          }`}
         >
           Send
         </button>

@@ -163,6 +163,11 @@ pub async fn send_chat_message(
     conversation_id: String,
     content: String,
     categories: Option<Vec<String>>,
+    // Thread the user currently has open in the main view, sent by the chat
+    // panel as ambient context so the turn is answered from that thread
+    // instead of running retrieval. `None` when nothing is open, or when the
+    // user dismissed the context chip.
+    context_thread_id: Option<String>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -240,6 +245,7 @@ pub async fn send_chat_message(
     let model_for_task = model.clone();
 
     let categories_for_task = categories.clone();
+    let ambient_thread_for_task = context_thread_id.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
     state
         .ai_queue
@@ -255,6 +261,7 @@ pub async fn send_chat_message(
                 model_for_task,
                 history,
                 categories_for_task,
+                ambient_thread_for_task,
             )
             .await
             {

@@ -149,6 +149,23 @@
   "threadContext": {
     "label": "Kontext des E-Mail-Threads"
   },
+  "panel": {
+    "title": "Chat",
+    "open": "Chat-Panel öffnen",
+    "close": "Chat-Panel schließen",
+    "expand": "Vollständige Chat-Ansicht öffnen",
+    "resize": "Chat-Panel skalieren",
+    "conversationPicker": "Unterhaltung wechseln",
+    "emptyHint": "Frag zur geöffneten E-Mail oder zu allem in deinem Posteingang.",
+    "context": {
+      "using": "Wird als Kontext verwendet",
+      "remove": "Diesen Thread nicht als Kontext verwenden",
+      "restore": "Geöffneten Thread als Kontext verwenden",
+      "noSubject": "(kein Betreff)",
+      "hint": "Antworten stützen sich nur auf diesen Thread. Entferne ihn, um den gesamten Posteingang zu durchsuchen."
+    },
+    "newChat": "Neuer Chat"
+  },
   "conversations": {
     "empty": "Noch keine Unterhaltungen.",
     "confirmDelete": "Bestätigen?",
