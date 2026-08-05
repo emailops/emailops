@@ -43,6 +43,33 @@ if ! command -v pod >/dev/null 2>&1; then
     exit 1
 fi
 
+# Apple development team, for the provisioning profile a device build needs.
+#
+# Read from `.env.signing` (gitignored, same file the macOS release targets use)
+# rather than from `tauri.conf.json`, so the team id stays out of the tracked
+# tree. Tauri's `APPLE_DEVELOPMENT_TEAM` overrides `bundle.iOS.developmentTeam`,
+# so nothing needs to be committed for this to take effect.
+#
+# Absent it, only simulator builds work: the simulator does not check
+# provisioning, a device build fails at signing with "No profiles for
+# 'com.emailops.app' were found".
+if [ -z "${APPLE_DEVELOPMENT_TEAM:-}" ] && [ -f "$REPO_ROOT/.env.signing" ]; then
+    # `set -a` exports everything the file defines; scoped to a subshell-free
+    # block and turned straight back off so nothing else leaks out.
+    set -a
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/.env.signing"
+    set +a
+    if [ -n "${APPLE_TEAM_ID:-}" ]; then
+        export APPLE_DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
+    fi
+fi
+
+if [ -z "${APPLE_DEVELOPMENT_TEAM:-}" ]; then
+    echo "NOTE: no APPLE_TEAM_ID in .env.signing (and no APPLE_DEVELOPMENT_TEAM set)." >&2
+    echo "      Simulator builds work; device builds will fail at code signing." >&2
+fi
+
 # Drop the RVM gem environment for this process tree only — see note 2 above.
 run_tauri() {
     env -u GEM_HOME -u GEM_PATH -u MY_RUBY_HOME -u IRBRC \

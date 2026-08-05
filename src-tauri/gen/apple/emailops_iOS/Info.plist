@@ -19,20 +19,20 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.emailops.app.oauth.google</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.60095465878-nvq0qdolh6qj953b2ii4ec6mqn4vqokd</string>
 			</array>
+			<key>CFBundleURLName</key>
+			<string>com.googleusercontent.apps.60095465878-nvq0qdolh6qj953b2ii4ec6mqn4vqokd</string>
 		</dict>
 		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.emailops.app.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.emailops.app</string>
 			</array>
+			<key>CFBundleURLName</key>
+			<string>com.emailops.app</string>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
