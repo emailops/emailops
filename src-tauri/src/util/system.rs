@@ -1,17 +1,32 @@
 //! System-capability probes used to size AI runtime resources.
 //!
-//! Every probe here is a single portable implementation rather than a stack of
-//! `#[cfg(target_os = ...)]` arms. That is deliberate: hand-written per-OS
-//! probes could only ever be compiled on the developer's own platform, and the
-//! `#[cfg(not(any(macos, linux)))]` fallback silently returned "unknown" on
-//! Windows — which pinned the automatic context window to its smallest tier on
-//! every Windows machine. Delegating to `sysinfo` / `fs4` means the same code
-//! compiles and is exercised on all three platforms.
+//! Probes here delegate to `sysinfo` / `fs4` rather than to hand-written per-OS
+//! code wherever one implementation can serve every platform. That is
+//! deliberate: hand-written arms could only ever be compiled on the developer's
+//! own platform, and an earlier `#[cfg(not(any(macos, linux)))]` fallback
+//! silently returned "unknown" on Windows — which pinned the automatic context
+//! window to its smallest tier on every Windows machine.
+//!
+//! [`total_ram_bytes`] is the one exception, and it earns the `#[cfg]` split: on
+//! iOS the portable answer (device RAM) is not merely imprecise, it is the wrong
+//! quantity. See that function's docs.
 
 use std::path::Path;
 
-/// Total physical RAM in bytes, or `None` when the platform probe fails.
-/// Callers must treat `None` as "assume a small machine" — never as an error.
+/// Memory in bytes this process may actually use, or `None` when the probe
+/// fails. Callers must treat `None` as "assume a small machine" — never as an
+/// error.
+///
+/// On desktop this is total physical RAM: the process may use essentially all
+/// of it, and the OS will page rather than kill.
+///
+/// **iOS is different and the difference is not cosmetic.** `sysinfo` reports
+/// the device's physical RAM (8 GB on an iPhone 16 Pro), but jetsam kills any
+/// app that exceeds a per-process limit far below that. Sizing a model against
+/// the device total picks weights that cannot be loaded — on the simulator it
+/// reported the *Mac's* RAM and selected a 3 GB model that was never even
+/// downloaded. See `docs/DECISIONS.md`, "iOS targets iOS 26".
+#[cfg(not(target_os = "ios"))]
 pub fn total_ram_bytes() -> Option<u64> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
@@ -19,6 +34,25 @@ pub fn total_ram_bytes() -> Option<u64> {
     match sys.total_memory() {
         0 => None,
         bytes => Some(bytes),
+    }
+}
+
+/// iOS: bytes this process can still allocate before jetsam terminates it.
+///
+/// `os_proc_available_memory()` (`<os/proc.h>`) is the only figure that
+/// reflects the real ceiling — it already accounts for what the app has
+/// allocated and for whether the `com.apple.developer.kernel.increased-memory-limit`
+/// entitlement raised the limit. It returns 0 from contexts where it is
+/// unsupported (app extensions), which maps to `None` like any other failure.
+#[cfg(target_os = "ios")]
+pub fn total_ram_bytes() -> Option<u64> {
+    unsafe extern "C" {
+        fn os_proc_available_memory() -> usize;
+    }
+    // SAFETY: no arguments, no pointers; returns a scalar byte count.
+    match unsafe { os_proc_available_memory() } {
+        0 => None,
+        bytes => Some(bytes as u64),
     }
 }
 
@@ -132,10 +166,38 @@ mod tests {
 
     /// Runs on every platform now — on a Windows CI runner this is what proves
     /// the probe no longer returns `None` there.
+    ///
+    /// iOS is excluded from the 1 GiB floor rather than from the test: the
+    /// probe reports what jetsam will still let this process allocate, which
+    /// legitimately drops below a gigabyte on a loaded device. Asserting only
+    /// non-zero still catches a broken FFI declaration.
     #[test]
     fn total_ram_probe_returns_plausible_value() {
         let ram = total_ram_bytes().expect("RAM probe should work on every supported platform");
-        assert!(ram >= 1024 * 1024 * 1024, "expected at least 1GiB, got {ram}");
+        if cfg!(target_os = "ios") {
+            assert!(ram > 0, "iOS available-memory probe returned 0");
+        } else {
+            assert!(ram >= 1024 * 1024 * 1024, "expected at least 1GiB, got {ram}");
+        }
+    }
+
+    /// The probe must answer for *this process*, not for the machine. On iOS a
+    /// device-total answer is what selected an unloadable model; everywhere
+    /// else the two coincide, so the assertion is only meaningful on iOS —
+    /// but keeping it unconditional documents the contract at every call site.
+    #[test]
+    fn total_ram_probe_never_exceeds_a_plausible_process_ceiling() {
+        let Some(ram) = total_ram_bytes() else {
+            return; // probe failure is a documented outcome, not a test failure
+        };
+        if cfg!(target_os = "ios") {
+            // No shipping iPhone lets one process address 16 GiB. A figure at
+            // or above this means the device total leaked back in.
+            assert!(
+                ram < 16 * 1024 * 1024 * 1024,
+                "iOS probe reported {ram} bytes — that is device RAM, not the per-process limit"
+            );
+        }
     }
 
     #[test]
