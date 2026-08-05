@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` is required for `env(safe-area-inset-*)` to report
+         non-zero values on notched/Dynamic-Island iPhones; without it the CSS
+         insets in index.css resolve to 0 and the UI runs under the status bar.
+         `user-scalable=no` stops iOS zooming the whole chrome on input focus —
+         email bodies render in their own iframe and keep their own zoom. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
     <title>EmailOps</title>
   </head>
   <body>

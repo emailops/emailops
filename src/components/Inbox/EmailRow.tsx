@@ -550,9 +550,14 @@ export function EmailRow({
             {email.sender}
           </span>
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
-          <div className="flex-1 min-w-0 flex items-baseline gap-2 text-sm">
+          {/* Phones stack subject over snippet; from `md` up this is the
+              original single baseline-aligned row. The compact variant used
+              to keep the snippet inline with `truncate`, so at 390px the
+              sender and subject consumed the line and the snippet truncated
+              to nothing — the body preview was rendered but never visible. */}
+          <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-baseline gap-0 md:gap-2 text-sm">
             <span
-              className={`truncate flex-shrink-0 max-w-[50%] ${
+              className={`truncate flex-shrink-0 max-w-full md:max-w-[50%] ${
                 email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'
               }`}
               title={

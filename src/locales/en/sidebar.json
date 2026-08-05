@@ -79,5 +79,7 @@
     "companies": "Companies"
   },
   "allAccounts": "All accounts",
-  "allAccountsFooter": "Viewing all accounts"
+  "allAccountsFooter": "Viewing all accounts",
+  "openMenu": "Open navigation menu",
+  "closeMenu": "Close navigation menu"
 }

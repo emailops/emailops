@@ -43,6 +43,7 @@ import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
 import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
@@ -148,6 +149,18 @@ function AppInner() {
     parse: (raw) => (raw === 'split' || raw === 'full-width' ? raw : null),
     serialize: (v) => v,
   });
+  const { isStacked } = useResponsiveLayout();
+  // On a phone (or a desktop window dragged under the breakpoint) the two-pane
+  // split has nowhere to put the second pane, so the effective layout is forced
+  // to `full-width` — which is already a list → thread navigation stack,
+  // complete with scroll restoration (see the note at the `full-width` branch
+  // below). The user's *stored* preference is deliberately left untouched: it
+  // is a desktop preference, and clobbering it here would silently rewrite it
+  // the first time someone narrowed a window.
+  const effectiveInboxLayout: InboxLayout = isStacked ? 'full-width' : inboxLayout;
+  // Sidebar is a permanent column on desktop and an overlay drawer when
+  // stacked, where it would otherwise consume most of the viewport.
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   // The Memory and Tasks experimental flags ARE the master switches for the
   // backend extraction pipelines — they share the same `memory_enabled` /
   // `task_enabled` SQLite preference rows that `MemoryConfig.enabled` and
@@ -1207,7 +1220,10 @@ function AppInner() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    // `h-full` rather than `h-screen`: #root is already sized to 100dvh and
+    // carries the safe-area padding, and `h-screen` (100vh) would overflow it
+    // by the height of the iOS home indicator.
+    <div className="flex flex-col h-full bg-gray-50">
       {onboardingCompleted === false && (
         <OnboardingWizard
           currentLayout={inboxLayout}
@@ -1224,66 +1240,111 @@ function AppInner() {
         onReauthenticate={handleReauthenticate}
       />
 
+      {isStacked && (
+        // Stacked mode has no permanent sidebar column, so navigation needs an
+        // entry point. Rendered outside the drawer so it stays reachable.
+        <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-2 py-1">
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label={t('sidebar:openMenu')}
+            className="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 active:bg-gray-100"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M3 5h14M3 10h14M3 15h14" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          accounts={accounts}
-          activeAccount={activeAccount}
-          isUnifiedActive={isUnified}
-          onSelectAccount={(id) => {
-            setViewMode('inbox');
-            clearSearchQuery();
-            clearActiveFilter();
-            setSelectedCategories(new Set<EmailCategory>(['primary']));
-            setActiveAccount(id);
-          }}
-          onAddAccount={() => setIsAddAccountPickerOpen(true)}
-          onMoveAccountUp={moveAccountUp}
-          onMoveAccountDown={moveAccountDown}
-          onToggleAccountEnabled={setAccountEnabled}
-          onSync={handleSync}
-          onCompose={() => setIsComposeOpen(true)}
-          onGiveFeedback={handleGiveFeedback}
-          onOpenSearch={() => setIsSearchOpen(true)}
-          onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)}
-          onOpenAppSettings={() => setSettingsTab('appearance')}
-          isSyncing={isSyncing}
-          viewMode={viewMode}
-          onOpenChatView={() => setViewMode('chat')}
-          onSetViewMode={(mode) => {
-            const plan = planViewChange(mode, inboxLayout);
-            if (plan.resetInboxFilters) {
+        {isStacked && isSidebarOpen && (
+          <button
+            type="button"
+            aria-label={t('sidebar:closeMenu')}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 z-40 bg-black/40"
+          />
+        )}
+        <div
+          className={
+            isStacked
+              ? // `fixed` + translate rather than conditional mounting: keeping
+                // the Sidebar mounted preserves its internal state (expanded
+                // account groups, filter list) across open/close.
+                `fixed inset-y-0 left-0 z-50 flex w-[85%] max-w-xs transform transition-transform duration-200 ${
+                  isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                }`
+              : // `contents` makes this wrapper invisible to layout, so the
+                // desktop flex row is byte-for-byte what it was before.
+                'contents'
+          }
+        >
+          <Sidebar
+            accounts={accounts}
+            activeAccount={activeAccount}
+            isUnifiedActive={isUnified}
+            onSelectAccount={(id) => {
+              setViewMode('inbox');
               clearSearchQuery();
               clearActiveFilter();
               setSelectedCategories(new Set<EmailCategory>(['primary']));
-            }
-            if (plan.closeOpenEmail) {
-              setActiveTab(null);
-              void selectEmail(null);
-            }
-            setViewMode(mode);
-          }}
-          smartFilters={smartFilters}
-          activeFilter={activeFilter}
-          isLoadingFilters={isLoadingFilters}
-          onToggleFilter={handleToggleSmartFilter}
-          onClearFilter={clearActiveFilter}
-          onPinFilter={handlePinFilter}
-          onUnpinFilter={handleUnpinFilter}
-          onRemoveFilter={handleRemoveFilter}
-          onRefreshFilters={forceRefreshFilters}
-          isFilterPinned={isFilterPinned}
-          tasksEnabled={tasksEnabled}
-          memoriesEnabled={memoriesEnabled}
-          lensesEnabled={lensesEnabled}
-          calendarEnabled={calendarFeatureEnabled}
-          onSelectLens={(lensId) => {
-            // Selecting a lens in the sidebar: fire the store action so the
-            // Lenses view picks it up (it already subscribes to activeLensId),
-            // then switch the view mode.
-            void useLensStore.getState().selectLens(lensId);
-            setViewMode('lenses');
-          }}
-        />
+              setActiveAccount(id);
+              setIsSidebarOpen(false);
+            }}
+            onAddAccount={() => setIsAddAccountPickerOpen(true)}
+            onMoveAccountUp={moveAccountUp}
+            onMoveAccountDown={moveAccountDown}
+            onToggleAccountEnabled={setAccountEnabled}
+            onSync={handleSync}
+            onCompose={() => setIsComposeOpen(true)}
+            onGiveFeedback={handleGiveFeedback}
+            onOpenSearch={() => setIsSearchOpen(true)}
+            onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)}
+            onOpenAppSettings={() => setSettingsTab('appearance')}
+            isSyncing={isSyncing}
+            viewMode={viewMode}
+            onOpenChatView={() => setViewMode('chat')}
+            onSetViewMode={(mode) => {
+              const plan = planViewChange(mode, effectiveInboxLayout);
+              if (plan.resetInboxFilters) {
+                clearSearchQuery();
+                clearActiveFilter();
+                setSelectedCategories(new Set<EmailCategory>(['primary']));
+              }
+              if (plan.closeOpenEmail) {
+                setActiveTab(null);
+                void selectEmail(null);
+              }
+              setViewMode(mode);
+              // Dismiss the drawer so the view the user just picked is visible;
+              // on desktop this is a no-op because the drawer is never open.
+              setIsSidebarOpen(false);
+            }}
+            smartFilters={smartFilters}
+            activeFilter={activeFilter}
+            isLoadingFilters={isLoadingFilters}
+            onToggleFilter={handleToggleSmartFilter}
+            onClearFilter={clearActiveFilter}
+            onPinFilter={handlePinFilter}
+            onUnpinFilter={handleUnpinFilter}
+            onRemoveFilter={handleRemoveFilter}
+            onRefreshFilters={forceRefreshFilters}
+            isFilterPinned={isFilterPinned}
+            tasksEnabled={tasksEnabled}
+            memoriesEnabled={memoriesEnabled}
+            lensesEnabled={lensesEnabled}
+            calendarEnabled={calendarFeatureEnabled}
+            onSelectLens={(lensId) => {
+              // Selecting a lens in the sidebar: fire the store action so the
+              // Lenses view picks it up (it already subscribes to activeLensId),
+              // then switch the view mode.
+              void useLensStore.getState().selectLens(lensId);
+              setViewMode('lenses');
+              setIsSidebarOpen(false);
+            }}
+          />
+        </div>
 
         {/* `min-w-0` is load-bearing: a flex item defaults to min-width:auto,
             which refuses to shrink below its content's min-content width. With
@@ -1370,7 +1431,7 @@ function AppInner() {
                 // In full-width mode, "close/back" always returns to the inbox list by
                 // clearing both the active tab and the selected email.
                 const displayOnClose =
-                  inboxLayout === 'full-width'
+                  effectiveInboxLayout === 'full-width'
                     ? () => {
                         if (activeTab) closeTab(activeTab.id);
                         void selectEmail(null);
@@ -1404,7 +1465,7 @@ function AppInner() {
                       <AttachmentTabView
                         tab={activeTab}
                         onClose={
-                          inboxLayout === 'full-width'
+                          effectiveInboxLayout === 'full-width'
                             ? () => {
                                 closeTab(activeTab.id);
                                 void selectEmail(null);
@@ -1423,7 +1484,7 @@ function AppInner() {
                         // null in unified mode → EmailView's own fallback picks
                         // the thread's latest email's account as the reply-from.
                         activeAccountId={queryAccountId}
-                        fullWidth={inboxLayout === 'full-width'}
+                        fullWidth={effectiveInboxLayout === 'full-width'}
                         onOpenInTab={handleOpenInTab}
                       />
                     )}
@@ -1449,9 +1510,9 @@ function AppInner() {
                     isLoadingMore={isLoadingMore}
                     hasMore={hasMore}
                     totalCount={totalCount}
-                    selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
-                    disableAutoSelect={inboxLayout === 'full-width'}
-                    fullWidth={inboxLayout === 'full-width'}
+                    selectedEmailId={effectiveInboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
+                    disableAutoSelect={effectiveInboxLayout === 'full-width'}
+                    fullWidth={effectiveInboxLayout === 'full-width'}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onAddSenderFilter={addSenderAsFilter}
@@ -1469,7 +1530,7 @@ function AppInner() {
                         : activeAccount?.provider !== 'imap') && viewMode === 'inbox'
                     }
                     availableCategories={availableCategories ?? undefined}
-                    onCollapse={inboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
+                    onCollapse={effectiveInboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
                     onNewChat={aiEnabled ? () => void handleNewChat() : undefined}
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
@@ -1479,7 +1540,7 @@ function AppInner() {
                   />
                 );
 
-                if (inboxLayout === 'full-width') {
+                if (effectiveInboxLayout === 'full-width') {
                   // Keep the inbox mounted (hidden) so its state — loaded pages,
                   // filters, virtualizer measurements — survives going back.
                   //
@@ -1560,7 +1621,13 @@ function AppInner() {
         )}
       </div>
 
-      <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
+      {/* The output panel is a developer/diagnostics surface whose collapsed bar
+          still costs a permanent strip of vertical space, and its controls
+          (module filter, provider picker, gear, trash) do not fit a phone width
+          — they overlap at 390px. Desktop keeps it exactly as before. Backend
+          `app-log` events still flow into useLogStore either way, so nothing is
+          lost; the log is simply not displayed on a phone. */}
+      {!isStacked && <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />}
       <ToastHost />
 
       {isSearchOpen && (

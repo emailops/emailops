@@ -79,5 +79,7 @@
     "companies": "Unternehmen"
   },
   "allAccounts": "Alle Konten",
-  "allAccountsFooter": "Alle Konten werden angezeigt"
+  "allAccountsFooter": "Alle Konten werden angezeigt",
+  "openMenu": "Navigationsmenü öffnen",
+  "closeMenu": "Navigationsmenü schließen"
 }

@@ -10,6 +10,12 @@ use std::path::PathBuf;
 const OAUTH_ENV_KEYS: &[&str] = &[
     "EMAILOPS_GMAIL_CLIENT_ID",
     "EMAILOPS_GMAIL_CLIENT_SECRET",
+    // Google issues a *separate*, iOS-type client for mobile: it is a public
+    // client (PKCE, no secret) and its redirect is the reversed client ID as a
+    // custom URI scheme, not a loopback port. The desktop client cannot be
+    // reused — its registered redirect is loopback, and embedding the desktop
+    // client_secret in an App Store binary would ship an extractable secret.
+    "EMAILOPS_GMAIL_IOS_CLIENT_ID",
     "EMAILOPS_OUTLOOK_CLIENT_ID",
     "EMAILOPS_OUTLOOK_CLIENT_SECRET",
 ];

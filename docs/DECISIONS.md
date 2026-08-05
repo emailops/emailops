@@ -579,6 +579,69 @@ filter/search is a genuinely different retrieval mode, not just a new entry poin
 larger change, deferred); including selected body text as a quotable chip (needs new
 postMessage plumbing through the sandboxed `EmailHtmlFrame` bridge; deferred).
 
+## 2026-08-05 — iOS targets iOS 26; on-device AI is capability-tiered, not dropped
+
+**Decision:** An iOS build targets **iOS 26 as the minimum deployment version**, and
+keeps on-device AI rather than falling back to remote-only. Generation is routed by
+device capability, decided by a pure function over `(available_memory,
+Apple-Intelligence availability, iOS version)`: devices where Apple Intelligence is
+available use Apple's Foundation Models (`SystemLanguageModel`) for short structured
+work — classification, tag/priority extraction, junk detection, translation, per-email
+summaries — and offer an optional llama.cpp GGUF download (3–4B Q4) for chat over
+retrieved threads; every other device is remote-only, with Ollama-on-LAN as the
+preferred backend and OpenRouter as fallback. On iOS the memory probe must use
+`os_proc_available_memory()`, never `sysinfo`'s device-RAM figure.
+**Context:** Both mechanisms were verified on Xcode 26.6 / iOS SDK 26.5 before deciding.
+`cargo check --target aarch64-apple-ios --no-default-features` builds the headless core
+clean (272 crates, 0 errors), confirming `rusqlite`+`sqlite-vec`, `keyring`, `imap`+
+`native-tls`, `reqwest` and `lettre` all cross-compile. Adding `--features llamacpp`
+also builds clean: `llama-cpp-sys-2` parses `aarch64-apple-ios` as `AppleVariant::Other`
+and disables Metal only for watchOS, producing `libggml-metal.a` with embedded shaders
+whose objects carry `LC_BUILD_VERSION platform 2` (iOS), `minos 26.5`. On the hardware
+side, every Apple-Intelligence-eligible iPhone (15 Pro and later) has ≥8 GB RAM, which
+under the *Increased Memory Limit* entitlement yields roughly 4–5 GB — enough for the
+existing 3.0 GB Qwen 3.5 4B Q4 catalog entry. So "can run Apple Intelligence" and "can
+run a local GGUF" are the same device set, and the tiering reduces to a single bit.
+The pure-function requirement repeats the lesson of the 2026-07-29 Linux/Windows entry,
+where capability was keyed off `apple_silicon` and silently defaulted every other
+machine to the no-AI client. Note `sysinfo` on iOS reports installed device RAM, not the
+jetsam budget, so `util/system.rs:71`'s `auto_n_ctx_tier` would over-size and get the
+app killed.
+**Rejected:** iOS 27 minimum — AFM 3 there brings expanded context and full tool
+calling, which would let Apple's model drive the chat tool loop directly and remove the
+GGUF download entirely, but it cuts the addressable install base for no capability the
+llama.cpp path doesn't already cover. Remote-only on iOS — simpler, but contradicts the
+local-first positioning and would make the phone strictly worse than the desktop on the
+privacy axis that defines the product. Apple's Private Cloud Compute (32k context) as a
+default tier — it is off-device inference, so it belongs behind the same explicit opt-in
+as OpenRouter, not in the default path. Foundation Models for chat on iOS 26 — the fixed
+4096-token shared input+output window cannot hold retrieved email threads.
+
+## 2026-08-05 — Embeddings stay local on every iOS tier, via bundled llama.cpp
+
+**Decision:** Retrieval embeddings run on-device on **all** iOS devices, including
+remote-only ones, using the bundled `nomic-embed-text-v1.5-q4_k_m.gguf` through
+llama.cpp. No iOS tier ever sends text to a remote embedding endpoint, and the
+Foundation Models provider declares `BackendCapabilities { embeddings: false }` and
+delegates instead of implementing `embed`/`embed_batch`.
+**Context:** The Foundation Models framework exposes no embedding API. Apple's
+`NLContextualEmbedding` (iOS 17+) exists but is a different model and vector space, so
+adopting it would break parity with the desktop `sqlite-vec` index and force a full
+re-embed of the corpus on every device. The bundled nomic model is 80 MB with a small
+resident footprint, so it runs even on the oldest supported iPhone — which means
+retrieval never leaves the device even when generation must. This requires wiring that
+does not exist yet: `BackendCapabilities` (`src-tauri/src/ai/provider.rs:115-122`)
+declares `tools`/`streaming`/`embeddings` and defaults all three to `true`, but nothing
+in the crate reads `capabilities()` today — the sole reference is a comment in
+`services/lenses/extractor.rs:4`. The embedding call sites must honour the flag before a
+provider that cannot embed can be installed.
+**Rejected:** `NLContextualEmbedding` (no extra binary, ANE-resident, but a vector-space
+break with desktop and a re-embed cost). Remote embeddings for the remote-only tier
+(would ship every indexed email body to a third party — the one thing the architecture
+exists to prevent). Requiring embedding parity to mean shipping the same chat model
+everywhere (conflates two independent model choices; the embedder is 80 MB, the chat
+model is gigabytes).
+
 ## 2026-08-06 — One universal macOS build; embedded AI refused on Intel at runtime
 
 **Decision:** macOS ships exactly ONE artifact: a universal

@@ -208,10 +208,13 @@ export function Inbox({
     },
     [accountId, onSelectCategories, visibleCategories],
   );
-  // `min-w-0` pairs with `flex-1`: without it the column keeps its
-  // min-content width and overflows (clipping its own toolbar buttons) rather
-  // than narrowing when something else — e.g. the docked chat panel — takes
-  // horizontal space.
+  // `min-w-0` is load-bearing, not decorative: a flex item defaults to
+  // `min-width: auto`, which refuses to shrink below its content's intrinsic
+  // width. On a desktop that bites when something else — e.g. the docked chat
+  // panel — takes horizontal space, and the column overflows (clipping its own
+  // toolbar buttons) instead of narrowing. On a phone it let the header and the
+  // empty-state text push the pane wider than the screen and clip off the right
+  // edge.
   const widthClass = fullWidth ? 'flex-1 min-w-0' : 'w-96';
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -408,9 +411,12 @@ export function Inbox({
   return (
     <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
-        <div className="flex items-center gap-2">
+        {/* Phones put the search field on its own full-width row above the
+            title, the way Gmail does; `md` and up keeps the original single
+            row of [title | search | actions]. */}
+        <div className="flex flex-col md:flex-row md:items-center gap-2">
           {/* Title */}
-          <div className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] min-w-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0 max-w-full md:max-w-[45%] min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 truncate">
               {accountName ? `Inbox — ${accountName}` : 'Inbox'}
             </h2>
@@ -423,7 +429,7 @@ export function Inbox({
               Only shown in full-width layout. In split layout the lateral
               search bar is used instead, so we hide this to avoid duplication. */}
           {fullWidth && (
-            <div className="flex-1 flex justify-center min-w-0">
+            <div className="order-first md:order-none w-full md:flex-1 flex justify-center min-w-0">
               <InboxSearchBox
                 accountId={isUnified ? autocompleteAccountId : accountId}
                 externalQuery={searchQuery ?? ''}

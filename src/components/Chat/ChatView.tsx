@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
@@ -109,6 +110,15 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
     await sendMessage(content);
   };
 
+  // Stacked (phone) layout shows exactly one of the two panes at a time. Side
+  // by side, the conversation list eats most of a 390px viewport and squeezes
+  // the message column so hard the input placeholder wraps to one character
+  // per line. Local state rather than a store field: which pane a phone is
+  // showing is view-local navigation, not app state the backend or desktop
+  // cares about.
+  const { isStacked } = useResponsiveLayout();
+  const [mobileShowList, setMobileShowList] = useState(false);
+
   if (!accountId) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white text-gray-500 text-sm">
@@ -123,98 +133,122 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
   // same one-click prompts as the first-ever visit.
   const showIntro = !activeConversationId || (!isLoadingMessages && messages.length === 0);
 
+  const showList = !isStacked || mobileShowList;
+  const showPane = !isStacked || !mobileShowList;
+
   return (
     <div className="flex flex-1 overflow-hidden bg-white">
-      <ConversationList
-        conversations={conversations}
-        activeId={activeConversationId}
-        isLoading={isLoadingConversations}
-        onSelect={(id) => void selectConversation(id)}
-        onCreate={() => void handleCreate()}
-        onRename={(id, title) => void renameConversation(id, title)}
-        onDelete={(id) => void deleteConversation(id)}
-      />
+      {showList && (
+        <ConversationList
+          conversations={conversations}
+          activeId={activeConversationId}
+          isLoading={isLoadingConversations}
+          onSelect={(id) => {
+            void selectConversation(id);
+            setMobileShowList(false);
+          }}
+          onCreate={() => {
+            void handleCreate();
+            setMobileShowList(false);
+          }}
+          onRename={(id, title) => void renameConversation(id, title)}
+          onDelete={(id) => void deleteConversation(id)}
+        />
+      )}
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Unified ("All accounts") mode: conversations are hard-scoped to one
-            account — surface that scope persistently, in intro AND while a
-            conversation is open. The tooltip carries the full explanation. */}
-        {/* Not gated on unified mode: chat answers from ONE account whatever
+      {showPane && (
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {isStacked && (
+            <button
+              type="button"
+              onClick={() => setMobileShowList(true)}
+              className="flex h-11 items-center gap-2 border-b border-gray-200 px-3 text-sm text-gray-600 active:bg-gray-100"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {t('chat:conversations.title')}
+            </button>
+          )}
+          {/* Not gated on unified mode: chat answers from ONE account whatever
             the mail view is doing, so which account that is matters just as
             much when the sidebar is on a single account. The picker hides
             itself when there is only one to choose from. */}
-        <ChatAccountPicker accountId={accountId} onChange={onAccountChange} />
-        {showIntro ? (
-          <>
-            <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">
-              <div>
-                <h2 className="text-lg font-medium text-gray-900 mb-1">{t('chat:intro.title')}</h2>
-                <p className="text-sm text-gray-500 max-w-md">{t('chat:intro.body')}</p>
-              </div>
-              <div className="text-xs text-gray-500 max-w-md">
-                {t('chat:intro.retrievalRestricted', {
-                  categories: selectedCategories.length > 0 ? selectedCategories.join(', ') : 'primary',
-                })}
-              </div>
-              <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-                {SHORTCUTS.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => {
-                      const prompt = t(`chat:shortcuts.${s.id}.prompt` as const);
-                      if (s.action === 'prefill') {
-                        setInputPrefillText(prompt);
-                        // Bumping the nonce re-fires the prefill effect even
-                        // when the prompt text is unchanged (otherwise a
-                        // second click of the same chip would be a no-op).
-                        setInputPrefillNonce((n) => n + 1);
-                      } else {
-                        void handleSend(prompt);
-                      }
-                    }}
-                    disabled={isSending}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50"
-                  >
-                    <span>{s.icon}</span>
-                    <span>{t(`chat:shortcuts.${s.id}.label` as const)}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <ChatInput
-              onSend={handleSend}
-              disabled={isSending}
-              placeholder={t('chat:input.placeholderEmails')}
-              prefillText={inputPrefillText}
-              prefillNonce={inputPrefillNonce}
-            />
-          </>
-        ) : (
-          <>
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {isLoadingMessages ? (
-                <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-                  {t('common:state.loading')}
+          <ChatAccountPicker accountId={accountId} onChange={onAccountChange} />
+          {showIntro ? (
+            <>
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">
+                <div>
+                  <h2 className="text-lg font-medium text-gray-900 mb-1">{t('chat:intro.title')}</h2>
+                  <p className="text-sm text-gray-500 max-w-md">{t('chat:intro.body')}</p>
                 </div>
-              ) : (
-                <MessageList
-                  messages={messages}
-                  streamingMessageId={streamingMessageId}
-                  streamingPhase={streamingPhase}
-                  accountId={accountId}
-                  onOpenEmail={onNavigateToInbox}
-                />
-              )}
-              {error && <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>}
-            </div>
-            <ChatInput
-              onSend={handleSend}
-              disabled={isSending || streamingMessageId !== null}
-              placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
-            />
-          </>
-        )}
-      </div>
+                <div className="text-xs text-gray-500 max-w-md">
+                  {t('chat:intro.retrievalRestricted', {
+                    categories: selectedCategories.length > 0 ? selectedCategories.join(', ') : 'primary',
+                  })}
+                </div>
+                <div className="flex flex-wrap justify-center gap-2 max-w-lg">
+                  {SHORTCUTS.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        const prompt = t(`chat:shortcuts.${s.id}.prompt` as const);
+                        if (s.action === 'prefill') {
+                          setInputPrefillText(prompt);
+                          // Bumping the nonce re-fires the prefill effect even
+                          // when the prompt text is unchanged (otherwise a
+                          // second click of the same chip would be a no-op).
+                          setInputPrefillNonce((n) => n + 1);
+                        } else {
+                          void handleSend(prompt);
+                        }
+                      }}
+                      disabled={isSending}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50"
+                    >
+                      <span>{s.icon}</span>
+                      <span>{t(`chat:shortcuts.${s.id}.label` as const)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <ChatInput
+                onSend={handleSend}
+                disabled={isSending}
+                placeholder={t('chat:input.placeholderEmails')}
+                prefillText={inputPrefillText}
+                prefillNonce={inputPrefillNonce}
+              />
+            </>
+          ) : (
+            <>
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {isLoadingMessages ? (
+                  <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
+                    {t('common:state.loading')}
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={messages}
+                    streamingMessageId={streamingMessageId}
+                    streamingPhase={streamingPhase}
+                    accountId={accountId}
+                    onOpenEmail={onNavigateToInbox}
+                  />
+                )}
+                {error && (
+                  <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>
+                )}
+              </div>
+              <ChatInput
+                onSend={handleSend}
+                disabled={isSending || streamingMessageId !== null}
+                placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
+              />
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

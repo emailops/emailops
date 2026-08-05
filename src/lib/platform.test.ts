@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatShortcut, modKeyLabel } from './platform';
+import { credentialStoreKey, formatShortcut, isMobilePlatform, modKeyLabel, shouldUseStackedLayout } from './platform';
 
 describe('modKeyLabel', () => {
   it('uses the Command glyph on macOS', () => {
@@ -44,5 +44,64 @@ describe('formatShortcut', () => {
   it('renders the key verbatim', () => {
     expect(formatShortcut('macos', '0')).toBe('⌘0');
     expect(formatShortcut('windows', 'Enter')).toBe('Ctrl+Enter');
+  });
+});
+
+describe('isMobilePlatform', () => {
+  it('recognises iOS', () => {
+    expect(isMobilePlatform('ios')).toBe(true);
+  });
+
+  it('recognises Android, so the same branches serve a future Android build', () => {
+    expect(isMobilePlatform('android')).toBe(true);
+  });
+
+  it('treats every desktop platform as non-mobile', () => {
+    for (const platform of ['macos', 'windows', 'linux']) {
+      expect(isMobilePlatform(platform)).toBe(false);
+    }
+  });
+
+  it('defaults to non-mobile when the platform cannot be probed', () => {
+    // A blank platform means the Tauri OS plugin was unavailable. Desktop is
+    // the safer default: it keeps the full-featured layout rather than
+    // silently degrading a desktop user to the phone UI.
+    expect(isMobilePlatform('')).toBe(false);
+    expect(isMobilePlatform('freebsd')).toBe(false);
+  });
+});
+
+describe('credentialStoreKey', () => {
+  it('names each desktop platform’s real credential store', () => {
+    expect(credentialStoreKey('macos')).toBe('auth:onboarding.credentialStore.macos');
+    expect(credentialStoreKey('windows')).toBe('auth:onboarding.credentialStore.windows');
+    expect(credentialStoreKey('linux')).toBe('auth:onboarding.credentialStore.linux');
+  });
+
+  it('names iOS Keychain Services rather than falling through to the keyring wording', () => {
+    // This is a privacy claim shown during onboarding, so it has to be true:
+    // on iOS the `keyring` crate writes to Keychain Services, not to a Linux
+    // Secret Service daemon, which is what the fallback branch would have said.
+    expect(credentialStoreKey('ios')).toBe('auth:onboarding.credentialStore.ios');
+  });
+});
+
+describe('shouldUseStackedLayout', () => {
+  it('always stacks on a mobile platform, regardless of viewport width', () => {
+    // An iPad in landscape is wide, but the interaction model is still touch,
+    // and the split layout's hover affordances have no touch equivalent.
+    expect(shouldUseStackedLayout('ios', 1366)).toBe(true);
+    expect(shouldUseStackedLayout('ios', 390)).toBe(true);
+  });
+
+  it('stacks on a desktop platform only when the window is genuinely narrow', () => {
+    expect(shouldUseStackedLayout('macos', 600)).toBe(true);
+    expect(shouldUseStackedLayout('macos', 1200)).toBe(false);
+  });
+
+  it('uses the split layout at exactly the breakpoint', () => {
+    // 768 is the boundary: at the breakpoint there is room for both panes.
+    expect(shouldUseStackedLayout('macos', 768)).toBe(false);
+    expect(shouldUseStackedLayout('macos', 767)).toBe(true);
   });
 });

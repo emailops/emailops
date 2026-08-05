@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-ios ios-init ios-dev ios-build bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -327,6 +327,33 @@ hooks:
 # maintaining two release pipelines and an arch-detecting download page.
 bootstrap-mac:
 	rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+# ── iOS ─────────────────────────────────────────────────────────────────────
+#
+# One-time setup:
+#   make bootstrap-ios      # rust targets; reports anything else that's missing
+#   make ios-init           # generates src-tauri/gen/apple/ (Xcode project)
+#
+# Then:
+#   make ios-dev            # run on a booted simulator or attached device
+#   make ios-build          # release IPA
+#
+# All three go through scripts/ios.sh, which puts CocoaPods on PATH and strips
+# RVM's gem environment — see the comments in that script for why both are
+# required. Deployment target is pinned to iOS 26 in tauri.ios.conf.json.
+bootstrap-ios:
+	rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+	@command -v xcodebuild >/dev/null 2>&1 || echo "MISSING: full Xcode (not just Command Line Tools) — install from the App Store, then: sudo xcode-select -s /Applications/Xcode.app"
+	@command -v pod >/dev/null 2>&1 || /opt/homebrew/bin/brew list cocoapods >/dev/null 2>&1 || echo "MISSING: cocoapods — install with: /opt/homebrew/bin/brew install cocoapods"
+
+ios-init:
+	bash scripts/ios.sh init
+
+ios-dev:
+	bash scripts/ios.sh dev
+
+ios-build:
+	bash scripts/ios.sh build
 
 build-mac: fetch-bundled-models
 	@if [ ! -f .env.signing ]; then \

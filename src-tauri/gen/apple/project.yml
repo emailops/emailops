@@ -1,0 +1,114 @@
+name: emailops
+options:
+  bundleIdPrefix: com.emailops.app
+  deploymentTarget:
+    # iOS 26 per docs/DECISIONS.md. cargo-mobile2 templates this at 14.0 and
+    # Tauri's `bundle.iOS.minimumSystemVersion` does not drive it, so it is set
+    # here. Leaving it at 14.0 also produced ~183 "object file was built for
+    # newer iOS-simulator version (26.0)" linker warnings, because rustc targets
+    # 26 while Xcode was linking at 14.
+    iOS: 26.0
+fileGroups: [../../src]
+configs:
+  debug: debug
+  release: release
+settingGroups:
+  app:
+    base:
+      PRODUCT_NAME: EmailOps
+      PRODUCT_BUNDLE_IDENTIFIER: com.emailops.app
+targetTemplates:
+  app:
+    type: application
+    sources:
+      - path: Sources
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      groups: [app]
+targets:
+  emailops_iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      - path: Externals
+      - path: emailops_iOS
+      - path: assets
+        buildPhase: resources
+        type: folder
+      - path: LaunchScreen.storyboard
+    info:
+      path: emailops_iOS/Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities: [arm64, metal]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleShortVersionString: 0.6.5
+        CFBundleVersion: "0.6.5"
+        # OAuth callback schemes. iOS only hands a URL to the app if its scheme
+        # is declared here — declaring it in tauri.conf.json alone merely embeds
+        # it in the binary, which is not what the OS consults when routing.
+        # Without these the sign-in completes in Safari and simply never returns.
+        CFBundleURLTypes:
+          # Google: the reversed client ID (see sync/oauth.rs::reversed_client_id).
+          - CFBundleURLName: com.emailops.app.oauth.google
+            CFBundleURLSchemes:
+              - com.googleusercontent.apps.60095465878-nvq0qdolh6qj953b2ii4ec6mqn4vqokd
+          # Microsoft: the app's own scheme, matching the redirect URI registered
+          # under "Mobile and desktop applications" in the Azure app registration.
+          - CFBundleURLName: com.emailops.app.oauth
+            CFBundleURLSchemes:
+              - com.emailops.app
+    entitlements:
+      path: emailops_iOS/emailops_iOS.entitlements
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      base:
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64 
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      groups: [app]
+    dependencies:
+      - framework: libapp.a
+        embed: false
+      # Accelerate is NOT in cargo-mobile2's stock framework list, but ggml's
+      # CPU ops reference vDSP_* (vDSP_vmul, vDSP_sve, vDSP_vsmul, …) and
+      # llama-cpp-sys-2 links it via `cargo:rustc-link-lib=framework=Accelerate`.
+      # Cargo only builds the staticlib here — Xcode performs the final link and
+      # never sees cargo's link directives — so without this entry the build
+      # dies with "Undefined symbols for architecture arm64: _vDSP_maxv, …".
+      - sdk: Accelerate.framework
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+    preBuildScripts:
+      - script: npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
+          - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a

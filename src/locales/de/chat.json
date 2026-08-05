@@ -174,7 +174,8 @@
   "conversations": {
     "empty": "Noch keine Unterhaltungen.",
     "confirmDelete": "Bestätigen?",
-    "newChat": "Neuer Chat"
+    "newChat": "Neuer Chat",
+    "title": "Unterhaltungen"
   },
   "unifiedScopeHint": "In der Alle-Konten-Ansicht durchsucht der Chat nur {{email}}",
   "accountPicker": {

@@ -174,7 +174,8 @@
   "conversations": {
     "empty": "No conversations yet.",
     "confirmDelete": "Confirm?",
-    "newChat": "New chat"
+    "newChat": "New chat",
+    "title": "Conversations"
   },
   "unifiedScopeHint": "In All accounts view, chat searches {{email}} only",
   "accountPicker": {

@@ -174,7 +174,8 @@
   "conversations": {
     "empty": "Aucune conversation pour le moment.",
     "confirmDelete": "Confirmer ?",
-    "newChat": "Nouvelle discussion"
+    "newChat": "Nouvelle discussion",
+    "title": "Conversations"
   },
   "unifiedScopeHint": "Dans la vue tous les comptes, le chat ne recherche que dans {{email}}",
   "accountPicker": {

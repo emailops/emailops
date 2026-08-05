@@ -152,6 +152,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let setup_start = std::time::Instant::now();
 
@@ -166,6 +168,22 @@ pub fn run() {
             // sources, and progress events reach the frontend. Sibling of the
             // logger install above; until this runs the global is a NoopEventSink.
             services::events::install(Arc::new(services::events::TauriEventSink::new(app.handle().clone())));
+
+            // Mobile OAuth bridge. On iOS the authorization code arrives as a
+            // custom-scheme URL delivered by the OS, on a different call path
+            // from the `start_oauth_flow` awaiting it — this is what connects
+            // the two. Installed unconditionally (it is inert on desktop, where
+            // the loopback listener is used) so the wiring cannot drift out of
+            // sync with the platform branch in `sync::oauth`.
+            sync::oauth::mobile_callback::install(app.handle().clone());
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                app.deep_link().on_open_url(|event| {
+                    for url in event.urls() {
+                        sync::oauth::mobile_callback::deliver(url.to_string());
+                    }
+                });
+            }
 
             let t = std::time::Instant::now();
             // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.
