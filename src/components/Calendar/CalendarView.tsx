@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import * as api from '@/lib/api';
 import { calendarColorMap, FALLBACK_CALENDAR_COLORS, hiddenCalendarIds, visibleEvents } from '@/lib/calendarColor';
 import { eventsAfterDelete } from '@/lib/calendarEvent';
@@ -116,6 +117,9 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   );
 
   // View state
+  const { isStacked } = useResponsiveLayout();
+  // Overflow menu holding the controls that do not fit a phone header row.
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -405,6 +409,91 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
     </div>
   );
 
+  // The three control groups that do not survive a phone-width header row.
+  // Declared once and placed either inline (desktop) or inside the overflow
+  // menu (stacked), so the two layouts can never drift apart in behaviour.
+  const viewModeToggle = (
+    <div className="flex rounded-md border border-gray-300 overflow-hidden">
+      {(['month', 'week', 'day'] as const).map((mode) => (
+        <button
+          key={mode}
+          onClick={() => {
+            setViewMode(mode);
+            setIsMenuOpen(false);
+          }}
+          className={`flex-1 px-3 py-1.5 text-sm transition-colors ${
+            viewMode === mode ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          {t(`calendar:viewModes.${mode}` as const)}
+        </button>
+      ))}
+    </div>
+  );
+
+  const refreshButton = (
+    <button
+      onClick={() => {
+        setIsMenuOpen(false);
+        if (selectedAccountId) void runSync(selectedAccountId);
+      }}
+      disabled={isSyncing || !selectedAccountId}
+      className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+    >
+      {t('common:actions.refresh')}
+    </button>
+  );
+
+  // Compact per-account selector — the calendar never offers "All accounts".
+  const accountSelect = (
+    <Select
+      value={selectedAccountId ?? ''}
+      onChange={(id) => {
+        setIsMenuOpen(false);
+        handleSelectAccount(id);
+      }}
+      options={calendarAccounts.map((a) => ({ value: a.id, label: a.email }))}
+      ariaLabel={t('calendar:selectAccount')}
+      placeholder={t('calendar:selectAccount')}
+      align="right"
+      variant="light"
+    />
+  );
+
+  // Which calendar each colour means, and a click to show/hide it. Only worth
+  // rendering when the account has more than one calendar — a single-calendar
+  // account gains nothing from a one-item legend.
+  const calendarToggles = calendars.length > 1 && (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {calendars.map((calendar) => (
+        <button
+          key={calendar.providerCalendarId}
+          onClick={() => void toggleCalendar(calendar)}
+          title={
+            calendar.isVisible
+              ? t('calendar:calendars.hideOne', { name: calendar.name })
+              : t('calendar:calendars.showOne', { name: calendar.name })
+          }
+          aria-pressed={calendar.isVisible}
+          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
+            calendar.isVisible
+              ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              : 'border-gray-200 text-gray-400 hover:bg-gray-50'
+          }`}
+        >
+          <span
+            className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/10"
+            style={{
+              backgroundColor: calendar.isVisible ? colorFor(calendar.providerCalendarId) : 'transparent',
+              borderColor: colorFor(calendar.providerCalendarId),
+            }}
+          />
+          <span className="max-w-[160px] truncate">{calendar.name || calendar.providerCalendarId}</span>
+        </button>
+      ))}
+    </div>
+  );
+
   if (calendarAccounts.length === 0) {
     return (
       <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
@@ -450,8 +539,43 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
       )}
       {errorBanner}
 
-      {/* Header: navigation + range label + view toggle + account selector */}
+      {/* Header: navigation + range label + view toggle + account selector.
+          When stacked, everything but date navigation moves behind the
+          overflow menu — five inline controls wrapped onto three rows at phone
+          width and pushed the grid itself off the first screen. */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 flex-wrap">
+        {isStacked && (
+          <div className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsMenuOpen((open) => !open)}
+              aria-label={t('calendar:moreOptions')}
+              aria-expanded={isMenuOpen}
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-gray-600 active:bg-gray-100"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M3 6h14M3 10h14M3 14h14" strokeLinecap="round" />
+              </svg>
+            </button>
+            {isMenuOpen && (
+              <>
+                {/* Tap-anywhere-else to dismiss. Below the panel, above the grid. */}
+                <button
+                  type="button"
+                  aria-label={t('common:actions.close')}
+                  onClick={() => setIsMenuOpen(false)}
+                  className="fixed inset-0 z-40 cursor-default"
+                />
+                <div className="absolute left-0 top-full z-50 mt-1 w-64 space-y-3 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                  {viewModeToggle}
+                  <div className="flex items-center gap-2">{refreshButton}</div>
+                  {accountSelect}
+                  {calendarToggles}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <button
           onClick={goToday}
           className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
@@ -489,73 +613,19 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           </span>
         )}
         <span className="flex-1" />
-        {/* Month / Week / Day toggle */}
-        <div className="flex rounded-md border border-gray-300 overflow-hidden">
-          {(['month', 'week', 'day'] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={`px-3 py-1.5 text-sm transition-colors ${
-                viewMode === mode ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {t(`calendar:viewModes.${mode}` as const)}
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={() => selectedAccountId && runSync(selectedAccountId)}
-          disabled={isSyncing || !selectedAccountId}
-          className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-        >
-          {t('common:actions.refresh')}
-        </button>
-        {/* Compact per-account selector — the calendar never offers "All accounts". */}
-        <div className="max-w-[200px]">
-          <Select
-            value={selectedAccountId ?? ''}
-            onChange={handleSelectAccount}
-            options={calendarAccounts.map((a) => ({ value: a.id, label: a.email }))}
-            ariaLabel={t('calendar:selectAccount')}
-            placeholder={t('calendar:selectAccount')}
-            align="right"
-            variant="light"
-          />
-        </div>
+        {!isStacked && (
+          <>
+            {viewModeToggle}
+            {refreshButton}
+            <div className="max-w-[200px]">{accountSelect}</div>
+          </>
+        )}
       </div>
 
-      {/* Calendar legend: which calendar each colour means, and a click to
-          show/hide it. Only shown when the account has more than one calendar
-          — a single-calendar account gains nothing from a one-item legend. */}
-      {calendars.length > 1 && (
-        <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-gray-200 flex-shrink-0 flex-wrap">
-          {calendars.map((calendar) => (
-            <button
-              key={calendar.providerCalendarId}
-              onClick={() => void toggleCalendar(calendar)}
-              title={
-                calendar.isVisible
-                  ? t('calendar:calendars.hideOne', { name: calendar.name })
-                  : t('calendar:calendars.showOne', { name: calendar.name })
-              }
-              aria-pressed={calendar.isVisible}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                calendar.isVisible
-                  ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  : 'border-gray-200 text-gray-400 hover:bg-gray-50'
-              }`}
-            >
-              <span
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/10"
-                style={{
-                  backgroundColor: calendar.isVisible ? colorFor(calendar.providerCalendarId) : 'transparent',
-                  borderColor: colorFor(calendar.providerCalendarId),
-                }}
-              />
-              <span className="max-w-[160px] truncate">{calendar.name || calendar.providerCalendarId}</span>
-            </button>
-          ))}
-        </div>
+      {/* Calendar legend. Hidden when stacked: it is a whole row of chips above
+          the grid, and the same toggles live in the overflow menu. */}
+      {!isStacked && calendarToggles && (
+        <div className="px-4 py-1.5 border-b border-gray-200 flex-shrink-0">{calendarToggles}</div>
       )}
 
       {/* Grid */}

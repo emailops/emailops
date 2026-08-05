@@ -52,7 +52,9 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
     <div className="space-y-5">
       <p className="text-sm text-gray-400">{t('auth:onboarding.aiChoice.intro')}</p>
 
-      <div className="grid grid-cols-2 gap-3">
+      {/* One column below `md`: side by side, each card's bullet list wrapped
+          to two or three words per line at phone width. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <ChoiceCard
           selected={choice === 'ai'}
           disabled={unavailable}

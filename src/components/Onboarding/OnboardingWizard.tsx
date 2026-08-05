@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { type Language, NATIVE_NAMES, SUPPORTED_LANGUAGES, useUiLanguage } from '@/i18n';
+import { type OnboardingStep as Step, visibleOnboardingSteps } from '@/lib/onboardingSteps';
 import { useAiStore } from '@/stores/aiStore';
 import type { InboxLayout } from '@/types';
 import { StepAddAccount } from './StepAddAccount';
@@ -33,14 +35,9 @@ interface OnboardingWizardProps {
   onComplete: () => Promise<void> | void;
 }
 
-type Step = 1 | 2 | 3 | 4;
-
-function visibleSteps(aiEnabled: boolean): Step[] {
-  return aiEnabled ? [1, 2, 3, 4] : [1, 3, 4];
-}
-
 export function OnboardingWizard({ currentLayout, onChangeLayout, onComplete }: OnboardingWizardProps) {
   const [step, setStep] = useState<Step>(1);
+  const { isStacked } = useResponsiveLayout();
   // Reactive subscription — drives the Header/StepIndicator's "X of N" text.
   const { enabled: aiEnabled } = useAiStore();
 
@@ -50,21 +47,24 @@ export function OnboardingWizard({ currentLayout, onChangeLayout, onComplete }: 
   // when the user explicitly opted out. `useAiStore.getState()` bypasses the
   // stale-closure problem by reading the live store value at click time.
   const goNext = (from: Step) => {
-    const list = visibleSteps(useAiStore.getState().enabled);
+    const list = visibleOnboardingSteps(useAiStore.getState().enabled, isStacked);
     const idx = list.indexOf(from);
     if (idx >= 0 && idx < list.length - 1) setStep(list[idx + 1]);
   };
   const goBack = (from: Step) => {
-    const list = visibleSteps(useAiStore.getState().enabled);
+    const list = visibleOnboardingSteps(useAiStore.getState().enabled, isStacked);
     const idx = list.indexOf(from);
     if (idx > 0) setStep(list[idx - 1]);
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/95 p-6">
-      <div className="bg-[#1f1f20] border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
-        <Header step={step} aiEnabled={aiEnabled} />
-        <div className="flex-1 overflow-y-auto px-8 py-6">
+    // Full-bleed on a phone with its own safe-area insets — the wizard is
+    // portalled above `#root`, so it does not inherit the app's padding, and a
+    // 24px-inset card wasted width the steps' two-column choices need.
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/95 p-0 md:p-6 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:pt-6 md:pb-6">
+      <div className="bg-[#1f1f20] border-0 md:border border-gray-700 rounded-none md:rounded-xl shadow-2xl w-full max-w-none md:max-w-2xl flex flex-col h-full md:h-auto max-h-none md:max-h-[90vh] overflow-hidden">
+        <Header step={step} aiEnabled={aiEnabled} isStacked={isStacked} />
+        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-4 md:py-6">
           {step === 1 && <StepAiChoice onNext={() => goNext(1)} />}
           {step === 2 && <StepAiBackend onBack={() => goBack(2)} onNext={() => goNext(2)} />}
           {step === 3 && (
@@ -82,7 +82,7 @@ export function OnboardingWizard({ currentLayout, onChangeLayout, onComplete }: 
   );
 }
 
-function Header({ step, aiEnabled }: { step: Step; aiEnabled: boolean }) {
+function Header({ step, aiEnabled, isStacked }: { step: Step; aiEnabled: boolean; isStacked: boolean }) {
   const { t } = useTranslation(['auth']);
   const titles: Record<Step, string> = {
     1: t('auth:onboarding.wizard.title1'),
@@ -90,19 +90,19 @@ function Header({ step, aiEnabled }: { step: Step; aiEnabled: boolean }) {
     3: t('auth:onboarding.wizard.title3'),
     4: t('auth:onboarding.wizard.title4'),
   };
-  const list = visibleSteps(aiEnabled);
+  const list = visibleOnboardingSteps(aiEnabled, isStacked);
   const displayIdx = Math.max(0, list.indexOf(step)) + 1;
   return (
-    <div className="px-8 py-5 border-b border-gray-700 flex items-center justify-between">
-      <div>
+    <div className="px-4 md:px-8 py-3 md:py-5 border-b border-gray-700 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="min-w-0">
         <div className="text-xs uppercase tracking-wider text-gray-500">
           {t('auth:onboarding.wizard.stepOf', { current: displayIdx, total: list.length })}
         </div>
-        <h1 className="text-xl font-semibold text-gray-100 mt-0.5">{titles[step]}</h1>
+        <h1 className="text-lg md:text-xl font-semibold text-gray-100 mt-0.5">{titles[step]}</h1>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex flex-shrink-0 items-center gap-3 md:gap-4">
         <LanguagePicker />
-        <StepIndicator step={step} aiEnabled={aiEnabled} />
+        <StepIndicator step={step} aiEnabled={aiEnabled} isStacked={isStacked} />
       </div>
     </div>
   );
@@ -134,8 +134,8 @@ function LanguagePicker() {
   );
 }
 
-function StepIndicator({ step, aiEnabled }: { step: Step; aiEnabled: boolean }) {
-  const list = visibleSteps(aiEnabled);
+function StepIndicator({ step, aiEnabled, isStacked }: { step: Step; aiEnabled: boolean; isStacked: boolean }) {
+  const list = visibleOnboardingSteps(aiEnabled, isStacked);
   const currentIdx = list.indexOf(step);
   return (
     <div className="flex items-center gap-1.5">

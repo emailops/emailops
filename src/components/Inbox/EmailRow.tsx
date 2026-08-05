@@ -8,6 +8,7 @@ import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { computeDropdownTop } from '@/lib/dropdownPosition';
 import { writeEmailDragPayload } from '@/lib/emailDrag';
 import { folderLabel } from '@/lib/folderDisplay';
+import { formatInboxTimestamp } from '@/lib/intl';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -47,6 +48,22 @@ interface EmailRowProps {
   accountBadge?: { colorClass: string; label: string };
 }
 
+// Why the compact row wraps below `md`.
+//
+// The sibling widths on that row are fixed — `w-44` sender, `w-24` date —
+// plus a non-shrinking avatar and kebab. Together they already exceed a 390px
+// viewport, so the subject/snippet column, the only flexible child, was
+// squeezed to zero width: the body preview was rendered on every row and never
+// visible, and the row overflowed sideways off the screen. Stacking subject
+// over snippet inside that column could not help while the column itself had
+// no width, so on a phone the column takes a line of its own.
+//
+// That wrapped line is indented to start under the sender rather than under
+// the avatar: w-1.5 dot + gap-3 + w-6 avatar + gap-3
+// = 0.375 + 0.75 + 1.5 + 0.75 = 3.375rem.
+//
+// This lives outside the JSX because the no-jsx-literals hook reads prose
+// between two tags as an untranslated user-visible string.
 export function EmailRow({
   email,
   isSelected,
@@ -60,8 +77,8 @@ export function EmailRow({
   compact = false,
   accountBadge,
 }: EmailRowProps) {
-  const { t } = useTranslation(['inbox']);
-  const receivedTime = formatReceptionTime(email.timestamp);
+  const { t, i18n } = useTranslation(['inbox']);
+  const receivedTime = formatInboxTimestamp(email.timestamp, i18n.language || 'en');
   const updateEmail = useEmailStore((s) => s.updateEmail);
   const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
   const addLog = useLogStore((s) => s.addLog);
@@ -70,9 +87,9 @@ export function EmailRow({
   // explicitly opted out of seeing AI-derived metadata in the inbox.
   const aiEnabled = useAiStore((s) => s.enabled);
   const storedTags = useTagStore((s) => s.tagsByEmail[email.id] || EMPTY_TAGS);
-  // Exclude the company tag from the right-hand chip list — it's already
-  // rendered as an uppercase prefix on the subject, so showing it again on
-  // the tasks/tags side is just visual noise.
+  // Exclude the company tag from the right-hand chip list. It is deliberately
+  // absent from the row entirely (see the note below the junk tag); it still
+  // drives the sidebar's company filter.
   // Junk chips survive the AI switch. Junk detection is fully deterministic —
   // header authentication, domain comparison, list markers — with no model and
   // no network, so it is not "AI-derived metadata" the user opted out of. More
@@ -86,14 +103,11 @@ export function EmailRow({
   // Dimming is dropped while the row is selected, so opening a flagged message
   // never leaves the user reading faded text.
   const junkTag = storedTags.find((t) => t.tagType === 'junk');
-  // Company tag is rendered as an uppercase chip prefix on the subject so the
-  // user can scan which client/vendor a thread belongs to at a glance. We hide
-  // it when the value contains '@' — that's the per-address shape produced by
-  // `company_label_for` for personal-mail providers (gmail/outlook/yahoo/…),
-  // where the address itself isn't a meaningful "company" badge. Only shown
-  // when AI is enabled (consistent with the rest of the classification chips).
-  const companyRaw = aiEnabled ? storedTags.find((t) => t.tagType === 'company')?.tagValue : undefined;
-  const companyTag = companyRaw && !companyRaw.includes('@') ? companyRaw.toUpperCase() : undefined;
+  // The company tag used to render as an uppercase chip prefixed to the
+  // subject. It is no longer shown in the row at all: it repeated what the
+  // sender column already says for most mail, and it took the subject line's
+  // scarcest space on a phone. The tag itself is untouched — it still drives
+  // the sidebar's company filter.
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   /** 'move' shows the folder-picker page of the kebab menu. */
@@ -533,7 +547,8 @@ export function EmailRow({
         {/* Reserve a stable min-height so async tag/triage loading doesn't grow
             the row after measureElement has run — same fix as the non-compact
             branch, which prevents virtualizer translateY desync / overlap. */}
-        <div className="flex items-center gap-3 min-w-0 min-h-[1.75rem]">
+        {/* Wraps below `md` — see the row-wrap note above the component. */}
+        <div className="flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-0.5 md:gap-3 min-w-0 min-h-[1.75rem]">
           <span
             className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${
               !email.isRead ? 'bg-primary-600 ring-2 ring-primary-100' : 'bg-transparent'
@@ -542,7 +557,7 @@ export function EmailRow({
           />
           <Avatar name={email.sender} email={email.senderEmail} size="sm" />
           <span
-            className={`text-sm truncate w-44 flex-shrink-0 ${
+            className={`text-sm truncate flex-1 min-w-0 md:flex-none md:w-44 md:flex-shrink-0 ${
               email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
             }`}
             title={email.sender}
@@ -550,29 +565,20 @@ export function EmailRow({
             {email.sender}
           </span>
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
-          {/* Phones stack subject over snippet; from `md` up this is the
-              original single baseline-aligned row. The compact variant used
-              to keep the snippet inline with `truncate`, so at 390px the
-              sender and subject consumed the line and the snippet truncated
-              to nothing — the body preview was rendered but never visible. */}
-          <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-baseline gap-0 md:gap-2 text-sm">
+          {/* Subject over snippet below `md` — see the row-wrap note. */}
+          <div className="order-last md:order-none basis-full md:basis-auto pl-[3.375rem] md:pl-0 flex-1 min-w-0 flex flex-col md:flex-row md:items-baseline gap-0 md:gap-2 text-sm">
             <span
               className={`truncate flex-shrink-0 max-w-full md:max-w-[50%] ${
                 email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'
               }`}
-              title={
-                companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : email.subject || '(No subject)'
-              }
+              title={email.subject || '(No subject)'}
             >
-              {companyTag && (
-                <span className="inline-block rounded-full font-medium text-[11px] px-1.5 py-0 bg-slate-100 text-slate-700 mr-1.5 align-middle">
-                  {companyTag}
-                </span>
-              )}
               {email.subject || '(No subject)'}
             </span>
-            <span className="text-gray-500 truncate" title={email.snippet}>
-              — {email.snippet}
+            {/* The separating dash only makes sense while subject and snippet
+                share a line; stacked, it reads as a stray bullet. */}
+            <span className="text-gray-500 truncate md:before:content-['—'] md:before:mr-1" title={email.snippet}>
+              {email.snippet}
             </span>
           </div>
           {/* Fixed height + nowrap so multi-tag rows can't wrap and grow the
@@ -628,13 +634,8 @@ export function EmailRow({
           </div>
           <h3
             className={`text-sm mt-0.5 truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}
-            title={companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : undefined}
+            title={email.subject || '(No subject)'}
           >
-            {companyTag && (
-              <span className="inline-block rounded-full font-medium text-sm px-2 py-0.5 bg-slate-100 text-slate-700 mr-1.5 align-middle">
-                {companyTag}
-              </span>
-            )}
             {email.subject || '(No subject)'}
           </h3>
           <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{email.snippet}</p>
@@ -717,16 +718,4 @@ function TriageBadge({ status }: { status: Email['triageStatus'] }) {
   const { label, color } = config[status];
 
   return <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${color}`}>{label}</span>;
-}
-
-/** Format a unix timestamp (seconds) as HH:MM for today's emails or DD/MM/YYYY for older ones. */
-function formatReceptionTime(timestampSec: number): string {
-  const d = new Date(timestampSec * 1000);
-  const now = new Date();
-  const isToday =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (isToday) {
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  }
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }

@@ -10,6 +10,7 @@
   "integrationDisabled": "El calendario está desactivado para {{email}}.",
   "enableCalendarButton": "Activar calendario",
   "selectAccount": "Cuenta del calendario",
+  "moreOptions": "Opciones del calendario",
   "syncError": "Error del calendario: {{message}}",
   "reauthNeeded": "EmailOps todavía no tiene permiso para leer el calendario de esta cuenta. Inicia sesión de nuevo para conceder acceso al calendario.",
   "reauthButton": "Iniciar sesión de nuevo",

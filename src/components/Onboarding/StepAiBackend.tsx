@@ -390,7 +390,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <label className="block text-xs font-medium text-gray-300 mb-1">
                 {t('auth:onboarding.aiBackend.chatModel')}

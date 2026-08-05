@@ -1,6 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { accountColorClass } from '@/lib/colors';
+import { shouldShowCategoryTabs } from '@/lib/viewChrome';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
@@ -163,6 +165,7 @@ export function Inbox({
   onSearch,
 }: InboxProps) {
   const { t } = useTranslation(['inbox', 'common', 'chat']);
+  const { isStacked } = useResponsiveLayout();
   // Only render tabs for categories the active account is actually
   // syncing. Unspecified → render no tabs. Previously this fell back to a
   // hard-coded Primary/Social/Updates trio, which on a fresh app start
@@ -407,7 +410,7 @@ export function Inbox({
         ? 'No emails match the selected filters'
         : 'No emails yet — try syncing or adding an account';
 
-  const showTabs = showCategoryFilter && visibleCategories.length > 0;
+  const showTabs = shouldShowCategoryTabs(showCategoryFilter, visibleCategories.length);
   return (
     <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
@@ -415,78 +418,90 @@ export function Inbox({
             title, the way Gmail does; `md` and up keeps the original single
             row of [title | search | actions]. */}
         <div className="flex flex-col md:flex-row md:items-center gap-2">
-          {/* Title */}
-          <div className="flex items-center gap-1.5 flex-shrink-0 max-w-full md:max-w-[45%] min-w-0">
-            <h2 className="text-lg font-semibold text-gray-900 truncate">
-              {accountName ? `Inbox — ${accountName}` : 'Inbox'}
-            </h2>
-            {isSyncing && (
-              <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
-            )}
-          </div>
-
-          {/* Inline search — centered, ~50ch wide.
-              Only shown in full-width layout. In split layout the lateral
-              search bar is used instead, so we hide this to avoid duplication. */}
-          {fullWidth && (
-            <div className="order-first md:order-none w-full md:flex-1 flex justify-center min-w-0">
-              <InboxSearchBox
-                accountId={isUnified ? autocompleteAccountId : accountId}
-                externalQuery={searchQuery ?? ''}
-                onSubmit={(q) => onSearch?.(q)}
-                onClear={clearSearchQuery}
-              />
+          {/* Title. Hidden when stacked: the app's top bar already titles the
+              view there, and repeating it costs a row of a phone screen. */}
+          {!isStacked && (
+            <div className="flex items-center gap-1.5 flex-shrink-0 max-w-full md:max-w-[45%] min-w-0">
+              <h2 className="text-lg font-semibold text-gray-900 truncate">
+                {accountName ? `Inbox — ${accountName}` : 'Inbox'}
+              </h2>
+              {isSyncing && (
+                <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
+              )}
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {hasMore && !isLoadingMore && (
-              <button
-                onClick={onLoadMore}
-                className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
-              >
-                {t('inbox:loadMore')}
-              </button>
-            )}
-            {isLoadingMore && (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-                {t('common:state.loading')}
+          {/* Search and the toolbar buttons share one row on a phone — the
+              title above them is hidden there, so two rows would leave the
+              buttons alone on a line of their own. `md:contents` dissolves
+              this wrapper from `md` up, leaving the desktop row untouched. */}
+          <div className="order-first md:order-none flex w-full items-center gap-2 min-w-0 md:contents">
+            {/* Inline search — centered, ~50ch wide.
+                Only shown in full-width layout. In split layout the lateral
+                search bar is used instead, so we hide this to avoid duplication. */}
+            {fullWidth && (
+              <div className="flex-1 md:flex-1 flex justify-center min-w-0">
+                <InboxSearchBox
+                  accountId={isUnified ? autocompleteAccountId : accountId}
+                  externalQuery={searchQuery ?? ''}
+                  onSubmit={(q) => onSearch?.(q)}
+                  onClear={clearSearchQuery}
+                />
               </div>
             )}
-            {/* Always-visible new-chat affordance. Sits in the list toolbar
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Hidden when stacked: the list already loads the next page on
+                scroll, and a button competing with the search field for a
+                phone's toolbar row buys nothing. */}
+              {hasMore && !isLoadingMore && !isStacked && (
+                <button
+                  onClick={onLoadMore}
+                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+                >
+                  {t('inbox:loadMore')}
+                </button>
+              )}
+              {isLoadingMore && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
+                  {t('common:state.loading')}
+                </div>
+              )}
+              {/* Always-visible new-chat affordance. Sits in the list toolbar
                 rather than the AI FEATURES sidebar section so starting a chat
                 never depends on that section being expanded or scrolled into
                 view. Starts a fresh conversation and docks the panel. */}
-            {onNewChat && (
-              <button
-                onClick={onNewChat}
-                title={t('chat:panel.newChat')}
-                aria-label={t('chat:panel.newChat')}
-                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-              </button>
-            )}
-            {onCollapse && (
-              <button
-                onClick={onCollapse}
-                title={t('inbox:collapse')}
-                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            )}
+              {onNewChat && (
+                <button
+                  onClick={onNewChat}
+                  title={t('chat:panel.newChat')}
+                  aria-label={t('chat:panel.newChat')}
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                    />
+                  </svg>
+                </button>
+              )}
+              {onCollapse && (
+                <button
+                  onClick={onCollapse}
+                  title={t('inbox:collapse')}
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

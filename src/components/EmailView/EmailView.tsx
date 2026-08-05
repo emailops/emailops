@@ -2,6 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource } from '@/lib/api';
 import * as api from '@/lib/api';
 import { formatShortcut } from '@/lib/platform';
@@ -101,6 +102,7 @@ export function EmailView({
   const [threadMatchIdx, setThreadMatchIdx] = useState(0);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [isReplyOpen, setIsReplyOpen] = useState(false);
+  const { isStacked } = useResponsiveLayout();
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all'>('reply');
   const [replyBody, setReplyBody] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -346,25 +348,51 @@ export function EmailView({
           )}
           {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
           <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={() => {
-                setReplyMode('reply');
-                setReplyBody('');
-                setIsReplyOpen((value) => !value);
-              }}
-              className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
-            >
-              Reply
-            </button>
+            {/* Plain Reply is dropped when stacked. Two near-identical buttons
+                and the AI draft crowded a phone-width header into a wrap, and
+                reply-all is the safer default of the two — it never silently
+                drops a recipient who was on the thread. */}
+            {!isStacked && (
+              <button
+                onClick={() => {
+                  setReplyMode('reply');
+                  setReplyBody('');
+                  setIsReplyOpen((value) => !value);
+                }}
+                className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
+              >
+                Reply
+              </button>
+            )}
+            {/* Icon-only when stacked so the whole action row fits the message
+                header line instead of wrapping under it. Same single action
+                either way — it replies to the newest message in the thread. */}
             <button
               onClick={() => {
                 setReplyMode('reply-all');
                 setReplyBody('');
                 setIsReplyOpen((value) => !value);
               }}
-              className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
+              title={t('inbox:emailView.replyAll')}
+              aria-label={t('inbox:emailView.replyAll')}
+              className={
+                isStacked
+                  ? 'p-1.5 rounded text-primary-600 hover:bg-primary-50 transition-colors'
+                  : 'px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors'
+              }
             >
-              {t('inbox:emailView.replyAll')}
+              {isStacked ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6M3 10l6-6"
+                  />
+                </svg>
+              ) : (
+                t('inbox:emailView.replyAll')
+              )}
             </button>
             {aiDraftsEnabled && (
               <button
@@ -402,7 +430,7 @@ export function EmailView({
                     />
                   </svg>
                 )}
-                AI Draft
+                AI
               </button>
             )}
             <button

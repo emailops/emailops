@@ -105,6 +105,44 @@ export function formatDateTime(
   return new Intl.DateTimeFormat(locale, options).format(new Date(unixSeconds * 1000));
 }
 
+/**
+ * Format a unix-seconds timestamp the way a mail list column should read.
+ *
+ * Three tiers, each dropping the part the reader can already infer:
+ *
+ *  - **Today** → `10:04`. The date is the list's own context.
+ *  - **Earlier this year** → `9 ago` / `Aug 9`. A month name is what the eye
+ *    scans for; `03/08/2026` makes it parse three numbers to learn one thing,
+ *    and the year is redundant.
+ *  - **Another year** → `03/01/2025`. The year is the one thing an
+ *    abbreviated date cannot express, so the numeric form earns its width.
+ *
+ * "Today" is a calendar-day comparison in local time, not an elapsed duration:
+ * 23:59 yesterday is an hour old at 00:30 but is emphatically not today.
+ *
+ * `nowMs` is injectable so the tiering is testable without freezing the clock.
+ */
+export function formatInboxTimestamp(
+  unixSeconds: number | null | undefined,
+  locale: string,
+  nowMs: number = Date.now(),
+): string {
+  if (!unixSeconds) return EM_DASH;
+  const d = new Date(unixSeconds * 1000);
+  const now = new Date(nowMs);
+
+  if (d.getFullYear() !== now.getFullYear()) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  }
+
+  if (d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) {
+    return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+  }
+
+  return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(d);
+}
+
 /** Format a number with locale-aware grouping/decimal separators. */
 export function formatNumber(n: number, locale: string, options?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(locale, options).format(n);

@@ -10,6 +10,7 @@
   "integrationDisabled": "Calendar is turned off for {{email}}.",
   "enableCalendarButton": "Enable calendar",
   "selectAccount": "Calendar account",
+  "moreOptions": "Calendar options",
   "syncError": "Calendar error: {{message}}",
   "reauthNeeded": "EmailOps doesn't have permission to read this account's calendar yet. Sign in again to grant calendar access.",
   "reauthButton": "Sign in again",

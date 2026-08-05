@@ -296,8 +296,11 @@ export function AccountSettingsDialog({
   ]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-[#1f1f20] shadow-2xl max-h-[90vh] flex flex-col">
+    // Full-bleed below `md`, with its own safe-area insets: the dialog is
+    // portalled above `#root`, and the `max-w-lg` card left the category
+    // checkboxes and the Save row fighting for a phone's width.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-0 md:p-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:pt-4 md:pb-4">
+      <div className="w-full max-w-none md:max-w-lg rounded-none md:rounded-xl bg-[#1f1f20] shadow-2xl h-full md:h-auto max-h-none md:max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-700 px-6 py-4 flex-shrink-0">
           <h2 className="text-lg font-semibold text-gray-100">{t('modal:accountSettings.modalTitle')}</h2>
           <p className="mt-0.5 text-sm text-gray-500">{account.email}</p>
@@ -423,7 +426,7 @@ export function AccountSettingsDialog({
                     </div>
                   )}
                   <div className="space-y-3">
-                    <div className="grid grid-cols-[1fr_6rem] gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_6rem] gap-3">
                       <div>
                         <label className="block text-xs font-medium text-gray-300" htmlFor="imap-host">
                           {t('modal:accountSettings.imapServer')}
@@ -503,7 +506,7 @@ export function AccountSettingsDialog({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-[1fr_6rem] gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_6rem] gap-3">
                       <div>
                         <label className="block text-xs font-medium text-gray-300" htmlFor="smtp-host">
                           {t('modal:accountSettings.smtpServer')}

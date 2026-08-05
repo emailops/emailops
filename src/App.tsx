@@ -55,6 +55,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { viewTitleKey } from '@/lib/viewChrome';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
@@ -161,6 +162,14 @@ function AppInner() {
   // Sidebar is a permanent column on desktop and an overlay drawer when
   // stacked, where it would otherwise consume most of the viewport.
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // Bumped on every *open*. The drawer stays mounted while closed so it keeps
+  // its expanded groups, which also meant it kept its scroll offset and came
+  // back parked mid-list; this hands the Sidebar a change to reset on.
+  const [sidebarOpenCount, setSidebarOpenCount] = useState(0);
+  const openSidebar = useCallback(() => {
+    setSidebarOpenCount((n) => n + 1);
+    setIsSidebarOpen(true);
+  }, []);
   // The Memory and Tasks experimental flags ARE the master switches for the
   // backend extraction pipelines — they share the same `memory_enabled` /
   // `task_enabled` SQLite preference rows that `MemoryConfig.enabled` and
@@ -1155,15 +1164,21 @@ function AppInner() {
   );
 
   const handleNewChat = useCallback(async () => {
-    if (viewMode === 'chat') setViewMode('inbox');
-    setIsChatPanelOpen(true);
+    // Stacked has nowhere to dock a 280px-minimum panel beside the mail, so a
+    // new chat opens the full-page view instead. Same conversation either way.
+    if (isStacked) {
+      setViewMode('chat');
+    } else {
+      if (viewMode === 'chat') setViewMode('inbox');
+      setIsChatPanelOpen(true);
+    }
     if (!effectiveAccountId) return;
     try {
       await useChatStore.getState().createConversation(effectiveAccountId);
     } catch (e) {
       addLog('error', 'ai', `Failed to start a new chat: ${errorText(e)}`);
     }
-  }, [viewMode, effectiveAccountId, setIsChatPanelOpen, addLog]);
+  }, [isStacked, viewMode, effectiveAccountId, setIsChatPanelOpen, addLog]);
 
   const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
@@ -1219,6 +1234,18 @@ function AppInner() {
     }
   };
 
+  // Title for the stacked top bar: "<view> — <mailbox>". Folder views have no
+  // locale key (the name is the user's own), so they fall back to the server
+  // path's last segment.
+  const viewKey = viewTitleKey(viewMode);
+  const viewLabel = viewKey
+    ? t(viewKey)
+    : viewMode.startsWith('folder:')
+      ? (viewMode.slice('folder:'.length).split(/[/.]/).pop() ?? '')
+      : '';
+  const mobileHeaderScope = isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email;
+  const mobileHeaderTitle = mobileHeaderScope ? `${viewLabel} — ${mobileHeaderScope}` : viewLabel;
+
   return (
     // `h-full` rather than `h-screen`: #root is already sized to 100dvh and
     // carries the safe-area padding, and `h-screen` (100vh) would overflow it
@@ -1246,7 +1273,7 @@ function AppInner() {
         <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-2 py-1">
           <button
             type="button"
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={openSidebar}
             aria-label={t('sidebar:openMenu')}
             className="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 active:bg-gray-100"
           >
@@ -1254,6 +1281,18 @@ function AppInner() {
               <path d="M3 5h14M3 10h14M3 15h14" strokeLinecap="round" />
             </svg>
           </button>
+          {/* Which view, and whose mailbox. Each screen used to title itself,
+              which cost a row per view and left several (chat, calendar)
+              with no title at all. The trailing spacer matches the menu
+              button so the title is centered on the bar, not on the space
+              left over beside it. */}
+          <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
+            <h1 className="truncate text-sm font-semibold text-gray-900">{mobileHeaderTitle}</h1>
+            {isSyncing && (
+              <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-b-2 border-primary-600" />
+            )}
+          </div>
+          <div className="h-11 w-11 flex-shrink-0" aria-hidden="true" />
         </div>
       )}
 
@@ -1281,9 +1320,29 @@ function AppInner() {
           }
         >
           <Sidebar
+            scrollResetToken={sidebarOpenCount}
             accounts={accounts}
             activeAccount={activeAccount}
             isUnifiedActive={isUnified}
+            isChatPanelOpen={isChatPanelOpen}
+            onToggleChatPanel={() => {
+              // From the full-page chat view, "Chat" means "go back to the mail
+              // content with chat docked" — otherwise the toggle would appear to
+              // do nothing, since the panel is suppressed while that view is up.
+              // Stacked: "Chat" keeps its pre-dock meaning — open the
+              // full-page view — since there is no room to dock a panel.
+              if (isStacked) {
+                setViewMode('chat');
+                setIsSidebarOpen(false);
+                return;
+              }
+              if (viewMode === 'chat') {
+                setViewMode('inbox');
+                setIsChatPanelOpen(true);
+                return;
+              }
+              setIsChatPanelOpen((open) => !open);
+            }}
             onSelectAccount={(id) => {
               setViewMode('inbox');
               clearSearchQuery();
@@ -1606,7 +1665,10 @@ function AppInner() {
         {/* Right-docked chat. Gated on the master AI switch like every other
             AI surface, and suppressed while the full-page chat view is open so
             the same conversation isn't rendered twice side by side. */}
-        {aiEnabled && isChatPanelOpen && viewMode !== 'chat' && (
+        {/* Never docked when stacked: the panel's 280px minimum would leave a
+            phone ~110px of mail beside it. The full-page chat view is the
+            mobile equivalent, and `handleNewChat` routes there instead. */}
+        {aiEnabled && !isStacked && isChatPanelOpen && viewMode !== 'chat' && (
           <ChatPanelDock
             accountId={chatAccountId}
             onAccountChange={handleChatAccountChange}

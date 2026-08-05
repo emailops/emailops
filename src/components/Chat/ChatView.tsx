@@ -119,6 +119,19 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
   const { isStacked } = useResponsiveLayout();
   const [mobileShowList, setMobileShowList] = useState(false);
 
+  // Opening Chat on a phone starts a blank conversation instead of resuming
+  // the last one. The store outlives this component, so without it tapping
+  // Chat reopened whatever was last active — and on a phone the history that
+  // would explain *why* is on a screen of its own. Desktop keeps resuming
+  // (see the fetchConversations effect above): the list is visible there.
+  //
+  // Read through a ref so this is mount-only. Reacting to `isStacked` would
+  // wipe a live conversation the moment a desktop window is dragged narrow.
+  const entry = useRef({ isStacked, accountId });
+  useEffect(() => {
+    if (entry.current.isStacked && entry.current.accountId) void selectConversation(null);
+  }, [selectConversation]);
+
   if (!accountId) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white text-gray-500 text-sm">

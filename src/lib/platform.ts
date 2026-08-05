@@ -87,6 +87,42 @@ export function shouldUseStackedLayout(platform: string, viewportWidth: number):
   return viewportWidth < SPLIT_LAYOUT_MIN_WIDTH;
 }
 
+/** Tailwind classes for the two elements the compose window is built from. */
+export interface ComposeSurfaceClasses {
+  /** The full-viewport layer holding the backdrop and the panel. */
+  overlay: string;
+  /** The white compose panel itself. */
+  panel: string;
+}
+
+/**
+ * How large the compose window opens.
+ *
+ * On a desktop it is a centered card, deliberately narrower than the window so
+ * the mail behind it stays visible. On a phone that same card wastes the little
+ * width there is, and the `max-h-[90vh]` strip of dimmed backdrop underneath is
+ * a dismiss target sitting right where the keyboard pushes the send row — so
+ * compose takes the whole screen instead.
+ *
+ * The overlay carries safe-area padding only when stacked: the modal is
+ * portalled outside `#root`, so it does not inherit the app's insets, and a
+ * full-screen panel would otherwise run under the status bar and home
+ * indicator. The desktop card is centered and never reaches an inset edge.
+ */
+export function composeSurfaceClasses(isStacked: boolean): ComposeSurfaceClasses {
+  if (isStacked) {
+    return {
+      overlay:
+        'fixed inset-0 z-50 flex items-stretch justify-center pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
+      panel: 'relative bg-white shadow-2xl w-full h-full flex flex-col',
+    };
+  }
+  return {
+    overlay: 'fixed inset-0 z-50 flex items-center justify-center',
+    panel: 'relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]',
+  };
+}
+
 /** i18n keys naming each platform's OS credential store. */
 export type CredentialStoreKey =
   | 'auth:onboarding.credentialStore.macos'

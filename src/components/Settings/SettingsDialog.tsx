@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
 import type { Account, InboxLayout } from '@/types';
@@ -132,38 +133,72 @@ export function SettingsDialog({
 
   const effectiveAccountId = selectedAccountId;
 
+  // Only the per-account tabs offer the account selector, and only when there
+  // is more than one account to choose between.
+  const showAccountSelect =
+    accounts.length > 1 && (tab === 'classification' || tab === 'tasks' || tab === 'memory' || tab === 'aisearch');
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleOverlayClick}>
-      <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-5xl h-[85vh] shadow-xl flex overflow-hidden">
-        {/* Tab rail */}
-        <aside className="w-56 flex-shrink-0 border-r border-gray-700 bg-[#1f1f20] py-4 flex flex-col">
-          <div className="px-4 pb-3 mb-1 border-b border-gray-700">
+    // Safe-area padding below `md` only: the dialog goes edge-to-edge on a
+    // phone, so without it the tab strip sits under the status bar and the
+    // panel's last control under the home indicator.
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:pt-0 md:pb-0"
+      onClick={handleOverlayClick}
+    >
+      {/* Below `md` the two columns become two rows: the 14rem rail and the
+          panel beside it left ~10rem of readable width on a 390px screen,
+          which wrapped every label to one word per line. */}
+      <div className="bg-[#252526] border-0 md:border border-gray-700 rounded-none md:rounded-lg w-full max-w-none md:max-w-5xl h-full md:h-[85vh] shadow-xl flex flex-col md:flex-row overflow-hidden">
+        {/* Tab rail — a horizontal scroller on a phone, a column from `md` up */}
+        <aside className="w-full md:w-56 flex-shrink-0 border-b md:border-b-0 md:border-r border-gray-700 bg-[#1f1f20] py-2 md:py-4 flex flex-col min-h-0">
+          <div className="flex items-center justify-between px-4 pb-2 md:pb-3 md:mb-1 md:border-b border-gray-700">
             <h2 className="text-sm font-semibold text-gray-100">{t('settings:title')}</h2>
+            {/* Phones close from here: the panel's own header bar is empty for
+                most tabs, and reserving a row for one ✕ wasted a band of
+                screen taller than the tab strip itself. */}
+            <button
+              onClick={onClose}
+              className="md:hidden p-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+              title={t('settings:dialog.closeTitle')}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <nav className="flex-1 overflow-y-auto">
+          <nav className="flex md:flex-col overflow-x-auto md:overflow-x-hidden md:flex-1 md:overflow-y-auto">
             {visibleTabs.map((spec) => (
               <button
                 key={spec.id}
                 onClick={() => setTab(spec.id)}
-                className={`w-full text-left px-4 py-3 border-l-2 transition-colors ${
+                className={`flex-shrink-0 md:w-full text-left px-4 py-2 md:py-3 border-b-2 md:border-b-0 md:border-l-2 transition-colors ${
                   tab === spec.id
                     ? 'border-primary-500 bg-primary-900/20 text-primary-300'
                     : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-800'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{t(`settings:tabs.${spec.id}` as const)}</span>
+                  <span className="text-sm font-medium whitespace-nowrap md:whitespace-normal">
+                    {t(`settings:tabs.${spec.id}` as const)}
+                  </span>
                   {spec.experimental && (
                     <span className="px-1 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700/50">
                       {t('settings:dialog.experimental')}
                     </span>
                   )}
                 </div>
-                <div className="text-xs opacity-70 mt-0.5">{t(`settings:tabs.${spec.id}Desc` as const)}</div>
+                {/* The one-line description is what makes the rail wide; it has
+                    no room on a phone strip, where the panel below already
+                    shows the section it describes. */}
+                <div className="hidden md:block text-xs opacity-70 mt-0.5">
+                  {t(`settings:tabs.${spec.id}Desc` as const)}
+                </div>
               </button>
             ))}
           </nav>
-          <div className="px-4 pt-3 mt-1 border-t border-gray-700">
+          {/* The panel header's ✕ is the close affordance on a phone. */}
+          <div className="hidden md:block px-4 pt-3 mt-1 border-t border-gray-700">
             <button
               onClick={onClose}
               className="w-full px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
@@ -175,10 +210,13 @@ export function SettingsDialog({
 
         {/* Active panel */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-          {/* Header with account selector and close button */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700 flex-shrink-0">
-            {accounts.length > 1 &&
-            (tab === 'classification' || tab === 'tasks' || tab === 'memory' || tab === 'aisearch') ? (
+          {/* Header with account selector and close button. Hidden on a phone
+              unless the account selector is actually in it — otherwise it is a
+              bar holding nothing but a ✕ the rail already offers. */}
+          <div
+            className={`${showAccountSelect ? 'flex' : 'hidden md:flex'} items-center justify-between px-4 py-2 border-b border-gray-700 flex-shrink-0`}
+          >
+            {showAccountSelect ? (
               <Select
                 value={selectedAccountId ?? ''}
                 options={accounts.map((a) => ({ value: a.id, label: a.email }))}
@@ -273,6 +311,7 @@ function AppearancePanel({
   onChangeLayout: (layout: InboxLayout) => void;
 }) {
   const { t } = useTranslation(['common', 'settings']);
+  const { isStacked } = useResponsiveLayout();
   const { language, setLanguage, isLoading: isLanguageLoading } = useUiLanguage();
 
   return (
@@ -289,7 +328,10 @@ function AppearancePanel({
           onChange={(next) => void setLanguage(next)}
         />
       </section>
-      <section>
+      {/* Inbox layout is not offered when stacked: a phone has no room for two
+          panes, so `App` forces full-width regardless. Showing the choice let
+          the user pick "Split view" and watch nothing happen. */}
+      <section className={isStacked ? 'hidden' : undefined}>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.layout')}</h3>
         <div className="grid grid-cols-2 gap-3">
           <LayoutOption

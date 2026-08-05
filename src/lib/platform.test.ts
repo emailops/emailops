@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { credentialStoreKey, formatShortcut, isMobilePlatform, modKeyLabel, shouldUseStackedLayout } from './platform';
+import {
+  composeSurfaceClasses,
+  credentialStoreKey,
+  formatShortcut,
+  isMobilePlatform,
+  modKeyLabel,
+  shouldUseStackedLayout,
+} from './platform';
 
 describe('modKeyLabel', () => {
   it('uses the Command glyph on macOS', () => {
@@ -103,5 +110,35 @@ describe('shouldUseStackedLayout', () => {
     // 768 is the boundary: at the breakpoint there is room for both panes.
     expect(shouldUseStackedLayout('macos', 768)).toBe(false);
     expect(shouldUseStackedLayout('macos', 767)).toBe(true);
+  });
+});
+
+describe('composeSurfaceClasses', () => {
+  it('keeps the desktop compose window a centered, rounded card', () => {
+    const { panel } = composeSurfaceClasses(false);
+    expect(panel).toContain('max-w-2xl');
+    expect(panel).toContain('max-h-[90vh]');
+    expect(panel).toContain('rounded-xl');
+  });
+
+  it('fills the whole screen when stacked', () => {
+    // A 2xl-capped card with `mx-4` margins wastes the little width a phone
+    // has, and `max-h-[90vh]` leaves a strip of dimmed backdrop the user can
+    // tap by accident while typing. Compose is the whole screen instead.
+    const { panel } = composeSurfaceClasses(true);
+    expect(panel).toContain('w-full');
+    expect(panel).toContain('h-full');
+    expect(panel).not.toContain('max-w-2xl');
+    expect(panel).not.toContain('max-h-[90vh]');
+    expect(panel).not.toContain('rounded-xl');
+  });
+
+  it('insets the full-screen surface from the notch and home indicator', () => {
+    // The compose modal is portalled outside `#root`, so it does not inherit
+    // the app's safe-area padding and would otherwise run under the status bar.
+    const { overlay } = composeSurfaceClasses(true);
+    expect(overlay).toContain('env(safe-area-inset-top)');
+    expect(overlay).toContain('env(safe-area-inset-bottom)');
+    expect(composeSurfaceClasses(false).overlay).not.toContain('safe-area-inset');
   });
 });

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -16,6 +17,7 @@ import {
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
+import { composeSurfaceClasses } from '@/lib/platform';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
 
@@ -68,6 +70,8 @@ export function ComposeModal({
   onMaximize,
 }: ComposeModalProps) {
   const { t } = useTranslation(['compose', 'common']);
+  const { isStacked } = useResponsiveLayout();
+  const surface = composeSurfaceClasses(isStacked);
   const addLog = useLogStore((s) => s.addLog);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
@@ -443,14 +447,16 @@ export function ComposeModal({
   );
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className={surface.overlay}>
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
+      <div className={surface.panel}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
           <div className="flex items-center gap-1">
-            {onMaximize && (
+            {/* "Open in tab" is meaningless once the window already fills the
+                screen, and the tab layout has no back affordance on a phone. */}
+            {onMaximize && !isStacked && (
               <button
                 type="button"
                 onClick={() => onMaximize({ accountId: fromAccountId, toAddresses: toRecipients, subject, bodyHtml })}
@@ -647,8 +653,10 @@ export function ComposeModal({
           </div>
         )}
 
-        {/* Footer */}
-        <div className="px-5 py-4 border-t border-gray-200 flex items-center gap-2">
+        {/* Footer. Wraps below `md`: attach + AI draft + translate alone are
+            wider than a phone, and unwrapped they drew Cancel straight on top
+            of the translate control. */}
+        <div className="px-5 py-4 border-t border-gray-200 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -689,30 +697,34 @@ export function ComposeModal({
             </button>
           )}
           <TranslateComposeControl bodyHtml={bodyHtml} onApply={setBodyHtml} disabled={isSending || sent} />
-          <div className="flex-1" />
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSending || sent}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={
-              isSending ||
-              sent ||
-              isLoadingAttachments ||
-              mergePendingRecipient(toRecipients, toInput).length === 0 ||
-              !subject.trim() ||
-              !bodyHtml.trim()
-            }
-            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSending ? 'Sending…' : isLoadingAttachments ? 'Loading files…' : 'Send'}
-          </button>
+          <div className="hidden md:block md:flex-1" />
+          {/* `ml-auto` keeps the pair right-aligned on whichever wrapped line
+              it lands on; on desktop the spacer above already did that. */}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSending || sent}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={
+                isSending ||
+                sent ||
+                isLoadingAttachments ||
+                mergePendingRecipient(toRecipients, toInput).length === 0 ||
+                !subject.trim() ||
+                !bodyHtml.trim()
+              }
+              className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSending ? 'Sending…' : isLoadingAttachments ? 'Loading files…' : 'Send'}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

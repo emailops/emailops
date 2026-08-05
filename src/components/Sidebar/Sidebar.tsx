@@ -1,6 +1,8 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
+import { useScrollReset } from '@/hooks/useScrollReset';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
@@ -91,6 +93,10 @@ interface SidebarProps {
    *  (Settings → Calendar) — the Calendar entry is hidden otherwise. */
   calendarEnabled: boolean;
   onSelectLens: (lensId: string) => void;
+  /** Changes whenever the caller re-opens the sidebar, so it comes back scrolled
+   *  to the top instead of wherever it was left. Unused on desktop, where the
+   *  sidebar is a permanent column that is never re-opened. */
+  scrollResetToken?: number;
 }
 
 export function Sidebar({
@@ -127,7 +133,10 @@ export function Sidebar({
   lensesEnabled,
   calendarEnabled,
   onSelectLens,
+  scrollResetToken,
 }: SidebarProps) {
+  const navRef = useScrollReset<HTMLElement>(scrollResetToken);
+  const { isStacked } = useResponsiveLayout();
   const { counts } = useMemoryStore();
   const tasksBadge = counts.totalOpen + counts.awaitingThem;
   // Master AI switch — when disabled, hide Chat / Tasks / Memory entries entirely.
@@ -294,24 +303,57 @@ export function Sidebar({
                 </svg>
               </button>
             )}
+            {/* Stacked: compose collapses to an icon beside sync. The drawer is
+                the only navigation a phone has, so every full-width button in
+                this header is a row of accounts or filters pushed off screen. */}
+            {isStacked && (
+              <button
+                onClick={onCompose}
+                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+                title={t('sidebar:compose')}
+                aria-label={t('sidebar:compose')}
+              >
+                {/* Classic compose glyph — pencil over a sheet. A bare "+"
+                    reads as "add account" next to the sync icon. */}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                  />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Compose Button */}
         <button
           onClick={onCompose}
-          className="mt-3 w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+          className={`mt-3 w-full items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors ${
+            isStacked ? 'hidden' : 'flex'
+          }`}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+            />
           </svg>
           <span>{t('sidebar:compose')}</span>
         </button>
 
-        {/* Search Button */}
+        {/* Search Button. Hidden when stacked: the inbox carries a Gmail-style
+            search field at the top of the screen there, and the ⌘K shortcut
+            this row advertises needs a keyboard. */}
         <button
           onClick={onOpenSearch}
-          className="mt-3 w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+          className={`mt-3 w-full items-center gap-2 px-3 py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors ${
+            isStacked ? 'hidden' : 'flex'
+          }`}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -333,7 +375,7 @@ export function Sidebar({
         <FeedbackMenu onSelect={onGiveFeedback} />
       </div>
 
-      <nav className="flex-1 p-4 space-y-6 overflow-y-auto">
+      <nav ref={navRef} className="flex-1 p-4 space-y-6 overflow-y-auto">
         <section>
           <div className="flex items-center justify-between mb-2">
             <button
