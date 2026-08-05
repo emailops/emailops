@@ -60,7 +60,12 @@ export function ConversationList({
   };
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
+    <aside
+      // Full width on a phone, fixed column from `md` up. When the stacked chat
+      // layout shows this list it is the *only* pane, so a fixed 16rem column
+      // left a dead blank strip across the rest of the screen.
+      className="w-full md:w-64 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col"
+    >
       <div className="p-3 border-b border-gray-200">
         <button
           onClick={onCreate}
