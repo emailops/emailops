@@ -1223,8 +1223,19 @@ export async function sendChatMessage(
   conversationId: string,
   content: string,
   categories?: EmailCategory[],
+  /**
+   * Thread the user has open in the main view. When set, the backend answers
+   * from that thread instead of running retrieval (see `plan_turn_mode`), for
+   * this turn only — it is never persisted onto the conversation.
+   */
+  contextThreadId?: string | null,
 ): Promise<SendChatResponse> {
-  return invoke('send_chat_message', { conversationId, content, categories });
+  return invoke('send_chat_message', {
+    conversationId,
+    content,
+    categories,
+    contextThreadId: contextThreadId ?? null,
+  });
 }
 
 /**

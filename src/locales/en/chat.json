@@ -149,6 +149,23 @@
   "threadContext": {
     "label": "Email thread context"
   },
+  "panel": {
+    "title": "Chat",
+    "open": "Open chat panel",
+    "close": "Close chat panel",
+    "expand": "Open full chat view",
+    "resize": "Resize chat panel",
+    "conversationPicker": "Switch conversation",
+    "emptyHint": "Ask about the email you have open, or anything in your inbox.",
+    "context": {
+      "using": "Using as context",
+      "remove": "Don't use this thread as context",
+      "restore": "Use the open thread as context",
+      "noSubject": "(no subject)",
+      "hint": "Answers are grounded in this thread only. Remove it to search your whole inbox."
+    },
+    "newChat": "New chat"
+  },
   "conversations": {
     "empty": "No conversations yet.",
     "confirmDelete": "Confirm?",

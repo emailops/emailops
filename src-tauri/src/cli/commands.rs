@@ -118,8 +118,9 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             trace,
             conversation,
             fresh,
+            thread,
             prewarm,
-        } => run_chat(session, questions, trace, conversation, fresh, prewarm).await,
+        } => run_chat(session, questions, trace, conversation, fresh, thread, prewarm).await,
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -541,6 +542,7 @@ async fn run_chat(
     trace: bool,
     conversation: Option<String>,
     fresh: bool,
+    thread: Option<String>,
     prewarm: bool,
 ) -> Result<()> {
     let account_id = session.require_account()?;
@@ -620,6 +622,7 @@ async fn run_chat(
             model.clone(),
             history,
             categories.clone(),
+            thread.clone(),
         )
         .await?;
 

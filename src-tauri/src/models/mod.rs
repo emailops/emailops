@@ -710,6 +710,35 @@ pub struct ChatMessage {
     pub prompt_content: Option<String>,
 }
 
+impl ChatMessage {
+    /// An in-memory role='system' message that is never written to
+    /// `chat_messages`.
+    ///
+    /// Used for ambient view context: the chat panel grounds a turn in the
+    /// thread the user currently has open, but that binding lasts exactly one
+    /// turn. Persisting it would permanently convert the conversation into a
+    /// thread-bound one (`get_chat_system_messages` is what
+    /// `run_chat_turn` keys off), so this row deliberately stays ephemeral —
+    /// hence the non-UUID id, which makes an accidental insert easy to spot.
+    pub fn ephemeral_system(conversation_id: &str, content: &str) -> Self {
+        Self {
+            id: "ephemeral-system".to_string(),
+            conversation_id: conversation_id.to_string(),
+            role: "system".to_string(),
+            content: content.to_string(),
+            model: None,
+            token_count: None,
+            latency_ms: None,
+            created_at: 0,
+            sources: Vec::new(),
+            trace: None,
+            referenced_email_ids: Vec::new(),
+            referenced_draft_ids: Vec::new(),
+            prompt_content: None,
+        }
+    }
+}
+
 // ── Reasoning trace ────────────────────────────────────────────────────────
 
 /// Which retrieval/tool path the router picked for a given chat turn.

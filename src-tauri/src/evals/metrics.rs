@@ -59,6 +59,13 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if !case.expected_tools_not_called.is_empty() {
+        checks.push(check_tools_not_called(
+            &case.expected_tools_not_called,
+            outcome.assistant_trace.as_ref(),
+        ));
+    }
+
     if !case.expected_answer_contains.is_empty() {
         checks.push(check_answer_contains(
             &case.expected_answer_contains,
@@ -106,6 +113,43 @@ fn check_route(expected: &crate::models::RouteMode, trace: Option<&ChatTrace>) -
                 expected,
                 actual.unwrap_or_else(|| "nothing".into())
             )
+        },
+    }
+}
+
+/// Assert that none of `forbidden` was invoked this turn.
+///
+/// The inverse of [`check_tools`], for cases whose whole point is that the
+/// model answers in text: thread-bound chat puts `generate_email_draft` on the
+/// menu, and a read-only request that fires it produces a saved draft instead
+/// of the requested answer. A positive anchor can't catch that — the reply
+/// still contains plausible words — so the tool list is the real assertion.
+fn check_tools_not_called(forbidden: &[String], trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let actual: Vec<String> = trace
+        .map(|t| t.tool_calls.iter().map(|tc| tc.name.clone()).collect())
+        .unwrap_or_default();
+
+    let violations: Vec<String> = forbidden
+        .iter()
+        .filter(|needle| actual.iter().any(|a| a == *needle))
+        .cloned()
+        .collect();
+
+    let passed = violations.is_empty();
+
+    HeuristicCheck {
+        name: "tools_not_called".into(),
+        passed,
+        expected: format!("none of: {}", forbidden.join(", ")),
+        actual: if actual.is_empty() {
+            "<none>".into()
+        } else {
+            actual.join(", ")
+        },
+        detail: if passed {
+            "no forbidden tool was invoked".into()
+        } else {
+            format!("forbidden tool calls: {}", violations.join(", "))
         },
     }
 }
@@ -283,6 +327,64 @@ mod tests {
             result_chars: 0,
             elapsed_ms: 0,
         }
+    }
+
+    /// Minimal trace carrying just the tool calls under assertion.
+    /// `ChatTrace` has no `Default`, so build the required fields explicitly.
+    fn trace_with(tool_calls: Vec<ToolCallTrace>) -> ChatTrace {
+        ChatTrace {
+            route: crate::models::RouteDecision {
+                mode: crate::models::RouteMode::ToolsFirst,
+                reason: "test".into(),
+                matched_keywords: vec![],
+                classifier: "forced".into(),
+            },
+            retrieval: None,
+            tool_calls,
+            model: "test-model".into(),
+            total_elapsed_ms: 0,
+            tool_loop_ms: 0,
+            llm_streaming_ms: None,
+            llm_calls: vec![],
+        }
+    }
+
+    // ── tools_not_called ────────────────────────────────────────────────
+    // Guards the inverse of `tools_called`: a turn that must answer in text.
+    // Thread-bound chat exposes `generate_email_draft`, and a read-only
+    // request ("traduceme este email") used to fire it and save a junk draft
+    // instead of translating.
+
+    #[test]
+    fn tools_not_called_passes_when_no_tools_ran() {
+        let trace = trace_with(vec![]);
+        let check = check_tools_not_called(&["generate_email_draft".to_string()], Some(&trace));
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn tools_not_called_passes_when_a_different_tool_ran() {
+        let trace = trace_with(vec![tool_call("search_emails", serde_json::json!({}))]);
+        let check = check_tools_not_called(&["generate_email_draft".to_string()], Some(&trace));
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn tools_not_called_fails_when_the_forbidden_tool_ran() {
+        let trace = trace_with(vec![tool_call(
+            "generate_email_draft",
+            serde_json::json!({"body": "…"}),
+        )]);
+        let check = check_tools_not_called(&["generate_email_draft".to_string()], Some(&trace));
+        assert!(!check.passed, "{check:?}");
+        assert!(check.detail.contains("generate_email_draft"));
+    }
+
+    #[test]
+    fn tools_not_called_passes_when_trace_is_missing() {
+        // No trace at all means no tool ran, which satisfies the constraint.
+        let check = check_tools_not_called(&["generate_email_draft".to_string()], None);
+        assert!(check.passed, "{check:?}");
     }
 
     #[test]
