@@ -1272,9 +1272,9 @@ function AppInner() {
               ? // `fixed` + translate rather than conditional mounting: keeping
                 // the Sidebar mounted preserves its internal state (expanded
                 // account groups, filter list) across open/close.
-                `fixed inset-y-0 left-0 z-50 flex w-[85%] max-w-xs transform transition-transform duration-200 ${
-                  isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-                }`
+                `fixed inset-y-0 left-0 z-50 flex w-[85%] max-w-xs transform transition-transform duration-200 
+                  pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] 
+                  bg-gray-900 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
               : // `contents` makes this wrapper invisible to layout, so the
                 // desktop flex row is byte-for-byte what it was before.
                 'contents'
