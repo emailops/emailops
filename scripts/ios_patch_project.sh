@@ -65,6 +65,10 @@ EXPORT_OPTIONS="$APPLE_DIR/ExportOptions.plist"
 PRIVACY_SRC="$REPO_ROOT/src-tauri/ios/PrivacyInfo.xcprivacy"
 PRIVACY_DEST="$APPLE_DIR/emailops_iOS/PrivacyInfo.xcprivacy"
 BGREFRESH_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsBackgroundRefresh.m"
+FOUNDATION_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsFoundationModels.swift"
+FOUNDATION_DEST="$APPLE_DIR/Sources/emailops/EmailOpsFoundationModels.swift"
+AIBRIDGE_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsAiBridge.m"
+AIBRIDGE_DEST="$APPLE_DIR/Sources/emailops/EmailOpsAiBridge.m"
 BGREFRESH_DEST="$APPLE_DIR/Sources/emailops/EmailOpsBackgroundRefresh.m"
 
 if [ ! -f "$PROJECT_YML" ]; then
@@ -109,6 +113,19 @@ fi
 if ! grep -q 'BGTaskSchedulerPermittedIdentifiers' "$PROJECT_YML"; then
     perl -i -pe 's{^(\s*)LSRequiresIPhoneOS: true$}{$1LSRequiresIPhoneOS: true\n$1# Background refresh. The identifier must be declared here or the system\n$1# rejects the request; the handler is registered in\n$1# Sources/emailops/EmailOpsBackgroundRefresh.m.\n$1UIBackgroundModes:\n$1  - fetch\n$1BGTaskSchedulerPermittedIdentifiers:\n$1  - com.emailops.app.refresh}' "$PROJECT_YML"
     note "added the background-refresh task identifier + fetch mode"
+fi
+
+if ! grep -q 'SWIFT_VERSION' "$PROJECT_YML"; then
+    perl -i -pe 's{^(\s*)ENABLE_BITCODE: false$}{$1ENABLE_BITCODE: false\n$1# The target is otherwise pure ObjC/C++. FoundationModels is a Swift-only\n$1# framework, so reaching it needs a Swift file, which needs a language\n$1# version -- without this the compiler refuses the file outright.\n$1SWIFT_VERSION: 5.0}' "$PROJECT_YML"
+    note "added SWIFT_VERSION for the Foundation Models shim"
+fi
+
+if ! grep -q 'FoundationModels.framework' "$PROJECT_YML"; then
+    # Weak: the app deploys to iOS 26 where the framework exists, but linking
+    # it strongly makes a device that cannot load it fail at launch rather than
+    # report "unavailable" through the probe.
+    perl -i -pe 's{^(\s*)- sdk: CoreGraphics\.framework$}{$1# Apple on-device model. Weak-linked; see EmailOpsFoundationModels.swift.\n$1- sdk: FoundationModels.framework\n$1  weak: true\n$1- sdk: CoreGraphics.framework}' "$PROJECT_YML"
+    note "added FoundationModels.framework (weak)"
 fi
 
 if ! grep -q 'BackgroundTasks.framework' "$PROJECT_YML"; then
@@ -160,6 +177,24 @@ if ! cmp -s "$BGREFRESH_SRC" "$BGREFRESH_DEST"; then
     note "copied EmailOpsBackgroundRefresh.m into the generated project"
 fi
 
+if [ ! -f "$FOUNDATION_SRC" ]; then
+    echo "ERROR: $FOUNDATION_SRC not found — the Foundation Models shim is tracked outside gen/apple." >&2
+    exit 1
+fi
+if ! cmp -s "$FOUNDATION_SRC" "$FOUNDATION_DEST"; then
+    cp "$FOUNDATION_SRC" "$FOUNDATION_DEST"
+    note "copied EmailOpsFoundationModels.swift into the generated project"
+fi
+
+if [ ! -f "$AIBRIDGE_SRC" ]; then
+    echo "ERROR: $AIBRIDGE_SRC not found — the AI bridge is tracked outside gen/apple." >&2
+    exit 1
+fi
+if ! cmp -s "$AIBRIDGE_SRC" "$AIBRIDGE_DEST"; then
+    cp "$AIBRIDGE_SRC" "$AIBRIDGE_DEST"
+    note "copied EmailOpsAiBridge.m into the generated project"
+fi
+
 # ── app icons ────────────────────────────────────────────────────────────────
 
 bash "$REPO_ROOT/scripts/ios_icons.sh"
@@ -196,6 +231,10 @@ grep -qE '^\s+buildPhase: none$' "$PROJECT_YML" || fail "Externals is back in th
 grep -q 'increased-memory-limit' "$PROJECT_YML" || fail "the increased-memory-limit entitlement is missing from project.yml."
 cmp -s "$PRIVACY_SRC" "$PRIVACY_DEST" || fail "PrivacyInfo.xcprivacy did not land in the generated project."
 cmp -s "$BGREFRESH_SRC" "$BGREFRESH_DEST" || fail "EmailOpsBackgroundRefresh.m did not land in the generated project."
+cmp -s "$FOUNDATION_SRC" "$FOUNDATION_DEST" || fail "EmailOpsFoundationModels.swift did not land in the generated project."
+cmp -s "$AIBRIDGE_SRC" "$AIBRIDGE_DEST" || fail "EmailOpsAiBridge.m did not land — Rust would never receive the probe."
+grep -q 'SWIFT_VERSION' "$PROJECT_YML" || fail "SWIFT_VERSION is missing — the Swift shim would not compile."
+grep -q 'FoundationModels.framework' "$PROJECT_YML" || fail "FoundationModels.framework is missing — the availability probe would not link."
 icon="$APPLE_DIR/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
 [ -f "$icon" ] || fail "the App Store icon is missing from the asset catalog."
 # `hasAlpha: yes` here is a guaranteed upload rejection (ITMS-90717), and is
@@ -205,6 +244,12 @@ grep -q 'BackgroundTasks.framework' "$PROJECT_YML" || fail "BackgroundTasks.fram
 grep -q '<string>debugging</string>' "$EXPORT_OPTIONS" &&
     fail "ExportOptions still uses the template's 'debugging' method, which App Store Connect refuses."
 
+
+# `Externals/` (the Rust staticlib) and `assets/` (bundled resources) are build
+# outputs and gitignored, so a fresh clone or worktree has neither — and
+# xcodegen refuses to generate when a declared source directory is missing.
+# Creating them empty is enough: the build populates them.
+mkdir -p "$APPLE_DIR/Externals" "$APPLE_DIR/assets"
 
 cd "$APPLE_DIR"
 xcodegen generate

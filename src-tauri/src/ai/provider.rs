@@ -9,6 +9,9 @@ pub enum ProviderType {
     Ollama,
     OpenRouter,
     LlamaCpp,
+    /// Apple's on-device model. Short structured work only — see
+    /// `ai::foundation_models_provider`.
+    FoundationModels,
 }
 
 impl std::fmt::Display for ProviderType {
@@ -17,6 +20,7 @@ impl std::fmt::Display for ProviderType {
             ProviderType::Ollama => write!(f, "ollama"),
             ProviderType::OpenRouter => write!(f, "openrouter"),
             ProviderType::LlamaCpp => write!(f, "llamacpp"),
+            ProviderType::FoundationModels => write!(f, "foundation-models"),
         }
     }
 }

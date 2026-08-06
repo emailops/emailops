@@ -80,6 +80,10 @@ pub(crate) fn plan_aux_llm(
         ProviderType::LlamaCpp => false,
         ProviderType::Ollama => !is_small_local_model(model_name),
         ProviderType::OpenRouter => true,
+        // Apple's model never drives chat (its context cannot hold a retrieved
+        // thread), so it never reaches this plan. If it somehow does, the
+        // conservative answer is the one that spends no extra model calls.
+        ProviderType::FoundationModels => false,
     };
     let resolve = |pref: Option<&str>| match pref {
         Some("on") => true,
@@ -178,12 +182,14 @@ pub struct ScoredEmail {
 pub async fn retrieve_context(
     db: &Arc<Database>,
     provider: &dyn AIProvider,
+    embedder: Option<&dyn AIProvider>,
     account_id: &str,
     query: &str,
     categories: &[String],
     k: usize,
 ) -> Result<Vec<ScoredEmail>> {
-    let (sources, _trace) = retrieve_context_with_trace(db, provider, account_id, query, categories, k).await?;
+    let (sources, _trace) =
+        retrieve_context_with_trace(db, provider, embedder, account_id, query, categories, k).await?;
     Ok(sources)
 }
 
@@ -204,6 +210,7 @@ fn db_category_filter(categories: &[String]) -> Option<&[String]> {
 pub async fn retrieve_context_with_trace(
     db: &Arc<Database>,
     provider: &dyn AIProvider,
+    embedder: Option<&dyn AIProvider>,
     account_id: &str,
     query: &str,
     categories: &[String],
@@ -259,8 +266,14 @@ pub async fn retrieve_context_with_trace(
     let mut embedding_ms: Option<i64> = None;
     let mut vec_search_ms: Option<i64> = None;
     let vec_fut = async {
+        // Not `provider`: a backend may be able to chat and not to embed (the
+        // Foundation Models framework exposes no embedding API at all), in
+        // which case `embedder` is the local one. `None` means nothing on this
+        // machine can embed, and the caller has already been told.
+        let embedder = embedder
+            .ok_or_else(|| crate::models::error::AppError::AiError("no embedding backend is available".to_string()))?;
         let t_emb = std::time::Instant::now();
-        let emb = provider.embed(effective_query).await?.embedding;
+        let emb = embedder.embed(effective_query).await?.embedding;
         let emb_ms = t_emb.elapsed().as_millis() as i64;
         let t_vs = std::time::Instant::now();
         let scores = fetch_vector(

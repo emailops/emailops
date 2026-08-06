@@ -12,6 +12,11 @@ pub mod tracing;
 #[cfg(feature = "llamacpp")]
 pub mod llama_cpp;
 
+pub mod afm_routing;
+pub mod device_tier;
+pub mod embedding_route;
+pub mod foundation_models;
+pub mod foundation_models_provider;
 pub mod model_catalog;
 pub mod model_fit;
 pub mod model_manager;

@@ -4,6 +4,10 @@ use std::sync::Arc;
 /// Overridable via the `chat.keep_alive_seconds` preference.
 const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 
+use crate::ai::afm_routing::{plan_afm_route, AfmRoute};
+use crate::ai::embedding_route::{plan_embedding_route, EmbeddingRoute};
+use crate::ai::foundation_models::{apple_intelligence_status, generation_registered};
+use crate::ai::foundation_models_provider::{prompt_fits, FoundationModelsProvider};
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::OpenRouterClient;
 use crate::ai::provider::{AIProvider, CompletionOptions, CompletionResult, ModelInfo};
@@ -41,6 +45,11 @@ const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
 
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
+    /// The provider embeddings actually go to — `provider` itself when it can
+    /// embed, the local embedder when it cannot, `None` when neither can.
+    /// Resolved eagerly so a backend without embeddings does not discover the
+    /// problem per query, in the middle of retrieval.
+    embedder: Option<Arc<dyn AIProvider>>,
     db: Arc<Database>,
 }
 
@@ -269,14 +278,16 @@ impl AiService {
 
     pub fn new(db: Arc<Database>) -> Result<Self> {
         let provider = Self::load_provider(&db)?;
-        Ok(Self { provider, db })
+        let embedder = Self::embedder_for(&db, &provider);
+        Ok(Self { provider, embedder, db })
     }
 
     /// Build an `AiService` around an already-constructed provider. Used by
     /// eval harnesses that want to exercise the extraction pipeline with a
     /// specific embedded model without mutating the user's prefs.
     pub fn with_provider(db: Arc<Database>, provider: Arc<dyn AIProvider>) -> Self {
-        Self { provider, db }
+        let embedder = Self::embedder_for(&db, &provider);
+        Self { provider, embedder, db }
     }
 
     pub fn provider(&self) -> &dyn AIProvider {
@@ -285,7 +296,46 @@ impl AiService {
 
     pub async fn reload_provider(&mut self) -> Result<()> {
         self.provider = Self::load_provider(&self.db)?;
+        self.embedder = Self::embedder_for(&self.db, &self.provider);
         Ok(())
+    }
+
+    /// An embedding-only embedded llama.cpp backend, using the configured
+    /// embedding model and **no chat model** — `llamacpp_model_paths` maps an
+    /// empty chat id to `None`, so nothing multi-gigabyte is loaded.
+    ///
+    /// This is what keeps the iOS promise that retrieval embeddings never leave
+    /// the device on any tier, including the remote-only one: the bundled
+    /// `nomic-embed-text-v1.5` GGUF is small enough to run everywhere.
+    #[cfg(feature = "llamacpp")]
+    fn load_local_embedder(db: &Database) -> Result<Arc<dyn AIProvider>> {
+        use crate::ai::llama_cpp::LlamaCppBackend;
+        let embedding_model = db
+            .get_preference("ai_embedding_model")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if embedding_model.is_empty() {
+            return Err(AppError::AiError("no embedding model is configured".to_string()));
+        }
+        let (_, embed_path) = llamacpp_model_paths(db, "", &embedding_model);
+        if embed_path.as_ref().is_none_or(|p| !p.exists()) {
+            return Err(AppError::AiError(format!(
+                "embedding model '{embedding_model}' is not installed"
+            )));
+        }
+        let runtime =
+            get_or_create_llamacpp_runtime(None, embed_path, load_keep_alive_secs(db), load_n_ctx_override(db));
+        Ok(Arc::new(LlamaCppBackend::new(runtime, String::new(), embedding_model)))
+    }
+
+    /// Without the embedded runtime compiled in there is no local embedder at
+    /// all — the Intel-mac bundle and CI packaging builds land here.
+    #[cfg(not(feature = "llamacpp"))]
+    fn load_local_embedder(_db: &Database) -> Result<Arc<dyn AIProvider>> {
+        Err(AppError::AiError(
+            "this build has no embedded AI runtime, so it cannot embed locally".to_string(),
+        ))
     }
 
     /// Build a provider with a custom provider name and model (e.g., for classification).
@@ -293,6 +343,9 @@ impl AiService {
         let keep_alive_secs = load_keep_alive_secs(db);
         let ollama_keep_alive = format_ollama_keep_alive(keep_alive_secs);
         match provider_name {
+            "foundation-models" => Ok(Arc::new(
+                crate::ai::foundation_models_provider::FoundationModelsProvider::new(),
+            )),
             "ollama" => Ok(Arc::new(
                 OllamaClient::new_with_models(Some(model), None).with_keep_alive(ollama_keep_alive),
             )),
@@ -357,6 +410,9 @@ impl AiService {
         let ollama_keep_alive = format_ollama_keep_alive(keep_alive_secs);
 
         match config.provider.as_str() {
+            "foundation-models" => Ok(Arc::new(
+                crate::ai::foundation_models_provider::FoundationModelsProvider::new(),
+            )),
             "ollama" => Ok(Arc::new(
                 OllamaClient::new_with_models(Some(&config.model), Some(&config.embedding_model))
                     .with_keep_alive(ollama_keep_alive),
@@ -638,6 +694,16 @@ impl AiService {
                 opts.think = Some(false);
             }
         }
+        // Apple's on-device model gets first refusal on short, structured work
+        // when it is available and the user has not opted out. Anything it
+        // declines — guardrails, an oversized prompt, a transient failure —
+        // falls through to the configured backend, silently: a classification
+        // that failed because a safety filter fired is a bug, not a result.
+        if let Some(result) = self.try_apple_intelligence(prompt, operation, &opts).await {
+            self.record_usage(&result, operation)?;
+            return Ok(result.text);
+        }
+
         let t = std::time::Instant::now();
         let result = self.provider.complete(prompt, opts).await?;
         let latency_ms = t.elapsed().as_millis() as u64;
@@ -657,10 +723,115 @@ impl AiService {
         Ok(result.text)
     }
 
+    /// The provider that should serve embeddings, honouring
+    /// `capabilities().embeddings`. `None` when nothing can embed.
+    ///
+    /// Exposed because `services::chat::retrieval` holds a bare
+    /// `Arc<dyn AIProvider>` and embeds through it directly; routing there has
+    /// to consult the same decision rather than re-deriving it.
+    pub fn embedding_provider(&self) -> Option<&Arc<dyn AIProvider>> {
+        self.embedder.as_ref()
+    }
+
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let result = self.provider.embed(text).await?;
+        let provider = self.embedding_provider().ok_or_else(|| {
+            AppError::AiError(
+                "The configured AI backend cannot create embeddings, and no local embedding model is installed."
+                    .to_string(),
+            )
+        })?;
+        let result = provider.embed(text).await?;
         self.check_budget(result.cost_usd)?;
         Ok(result.embedding)
+    }
+
+    /// Try Apple's on-device model, returning `None` when it should not be
+    /// asked or when it declined.
+    ///
+    /// Never returns an error: every failure here is a reason to use the
+    /// configured backend instead, and surfacing it would turn a fallback into
+    /// a broken feature.
+    async fn try_apple_intelligence(
+        &self,
+        prompt: &str,
+        operation: &str,
+        options: &CompletionOptions,
+    ) -> Option<CompletionResult> {
+        let route = plan_afm_route(
+            operation,
+            generation_registered() && apple_intelligence_status().is_available(),
+            self.apple_intelligence_enabled(),
+            prompt_fits(prompt.chars().count()),
+        );
+        if route == AfmRoute::ConfiguredOnly {
+            return None;
+        }
+
+        match FoundationModelsProvider::new().complete(prompt, options.clone()).await {
+            Ok(result) => Some(result),
+            Err(e) => {
+                // Debug, not error: a fallback happened and the user got their
+                // answer. Logged at all because a backend that declines
+                // *everything* should be discoverable without a debugger.
+                crate::services::logger::log(
+                    "debug",
+                    "ai",
+                    format!("{operation}: Apple Intelligence declined ({e}); using the configured backend"),
+                );
+                None
+            }
+        }
+    }
+
+    /// Whether the user lets Apple's model take eligible work. Defaults to on
+    /// where the model exists: it is free, private and needs no network. The
+    /// preference exists so someone paying for a frontier model can keep it.
+    fn apple_intelligence_enabled(&self) -> bool {
+        !matches!(
+            self.db
+                .get_preference("ai_apple_intelligence_enabled")
+                .ok()
+                .flatten()
+                .as_deref(),
+            Some("false")
+        )
+    }
+
+    /// The provider that should serve embeddings for `provider`, honouring
+    /// `capabilities().embeddings`. `None` when nothing on this machine can
+    /// embed — callers degrade to keyword search and say so.
+    ///
+    /// The single executor for [`plan_embedding_route`]: `AiService` uses it,
+    /// and so does the chat turn, which holds a bare provider rather than a
+    /// service. Two implementations of this decision would be one too many.
+    ///
+    /// Building the local embedder is only attempted when it would actually be
+    /// used — otherwise this would load a second model that is never asked a
+    /// question. A failure means "no local embedder", which the planner turns
+    /// into a clear `Unavailable` instead of a backend error surfacing per
+    /// query from deep inside retrieval.
+    pub fn embedder_for(db: &Database, provider: &Arc<dyn AIProvider>) -> Option<Arc<dyn AIProvider>> {
+        let primary_embeds = provider.capabilities().embeddings;
+        let local = if primary_embeds {
+            None
+        } else {
+            match Self::load_local_embedder(db) {
+                Ok(embedder) => Some(embedder),
+                Err(e) => {
+                    crate::services::logger::log(
+                        "error",
+                        "ai",
+                        format!("backend cannot embed and no local embedder could be built: {e}"),
+                    );
+                    None
+                }
+            }
+        };
+        match plan_embedding_route(primary_embeds, local.is_some()) {
+            EmbeddingRoute::Primary => Some(provider.clone()),
+            EmbeddingRoute::LocalFallback => local,
+            EmbeddingRoute::Unavailable => None,
+        }
     }
 
     pub async fn is_available(&self) -> bool {

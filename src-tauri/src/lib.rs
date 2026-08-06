@@ -542,6 +542,7 @@ pub fn run() {
             commands::search::get_ai_model,
             commands::search::set_ai_model,
             commands::notifications::ensure_notification_permission,
+            commands::device_ai::get_device_ai_status,
             commands::calendar::get_calendar_events,
             commands::calendar::get_calendars,
             commands::calendar::set_calendar_visible,

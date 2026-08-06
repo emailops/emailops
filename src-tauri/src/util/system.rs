@@ -122,6 +122,32 @@ pub fn is_rosetta_translated() -> bool {
         .unwrap_or(false)
 }
 
+/// Major version of the running OS, or 0 when it cannot be determined.
+///
+/// `ai::device_tier` gates Apple's Foundation Models on it. Shelling out to
+/// `sw_vers` rather than binding `NSProcessInfo`: `libc` was deliberately
+/// removed from this crate (see Cargo.toml), this runs once per settings
+/// screen, and a probe failure must read as "old" rather than as "new" — 0
+/// denies the framework, which is the safe direction.
+pub fn os_major_version() -> u32 {
+    if !cfg!(any(target_os = "macos", target_os = "ios")) {
+        return 0;
+    }
+    std::process::Command::new("sw_vers")
+        .args(["-productVersion"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .split('.')
+                .next()
+                .and_then(|major| major.parse::<u32>().ok())
+        })
+        .unwrap_or(0)
+}
+
 /// Whether [`total_ram_bytes`] is a ceiling the OS enforces by killing the
 /// process, rather than a soft figure it pages around.
 ///

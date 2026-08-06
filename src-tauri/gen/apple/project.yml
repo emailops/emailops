@@ -101,6 +101,10 @@ targets:
     settings:
       base:
         ENABLE_BITCODE: false
+        # The target is otherwise pure ObjC/C++. FoundationModels is a Swift-only
+        # framework, so reaching it needs a Swift file, which needs a language
+        # version -- without this the compiler refuses the file outright.
+        SWIFT_VERSION: 5.0
         ARCHS: [arm64]
         VALID_ARCHS: arm64 
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
@@ -120,6 +124,9 @@ targets:
       - sdk: Accelerate.framework
       # BGTaskScheduler, for background refresh.
       - sdk: BackgroundTasks.framework
+      # Apple on-device model. Weak-linked; see EmailOpsFoundationModels.swift.
+      - sdk: FoundationModels.framework
+        weak: true
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework

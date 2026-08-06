@@ -2879,6 +2879,11 @@ pub async fn run_chat_turn(
     // runtime. Falls back to the preference when `model` is empty, and to Ollama
     // if the provider preference is missing or unrecognised.
     let provider = AiService::load_provider_with_model(&db, Some(&model))?;
+    // Resolved once per turn rather than per retrieval: on a backend that
+    // cannot embed this constructs the local embedder, and doing that inside
+    // the retrieval leg would pay the model load on the clock the vector
+    // timeout is measuring.
+    let embedder = AiService::embedder_for(&db, &provider);
 
     // ── Thread-bound short-circuit ─────────────────────────────────────
     // Two ways a turn can be grounded in a single thread instead of running
@@ -3066,6 +3071,7 @@ pub async fn run_chat_turn(
             match retrieve_context_with_trace(
                 &db,
                 provider.as_ref(),
+                embedder.as_deref(),
                 &account_id,
                 &user_question,
                 &categories,

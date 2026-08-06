@@ -11,6 +11,7 @@
 		093FC991C441EE6B2FC059F4 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6381EA3FA769140B15914671 /* WebKit.framework */; };
 		140311969A373065D45A4203 /* BackgroundTasks.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9710E6B21B5C032AE461131D /* BackgroundTasks.framework */; };
 		22A32E588659E365EA797245 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07AA37364A5606C1E40E097C /* Security.framework */; };
+		35FBF85916B38E8F6310559D /* EmailOpsAiBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 7C325D05EB384F8A9FDBC9F2 /* EmailOpsAiBridge.m */; };
 		3C118672E2F1715B033D58DF /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DC78E502BD1F9C75F582C4D /* Metal.framework */; };
 		3FDEE1F13671674672D2E1D8 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 74BB8BA7AA38E00BDF0BEA1E /* libapp.a */; };
 		4F00ABFFE7DAFBE7E881CBB9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = DC5EB0BCC197E2E3F23E22CF /* PrivacyInfo.xcprivacy */; };
@@ -19,8 +20,10 @@
 		9444E13857C22AA04E58349B /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 572D9E89347FAA3B938D60D9 /* QuartzCore.framework */; };
 		971B76D83B6C23941CB0E8D4 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = CCAD814C81E2CA73582C07D1 /* main.mm */; };
 		B31444CD33F32376096FC34F /* EmailOpsBackgroundRefresh.m in Sources */ = {isa = PBXBuildFile; fileRef = F3A3E911A43BAEDCFAB29152 /* EmailOpsBackgroundRefresh.m */; };
+		B7D728EC81AFBDA791B126C2 /* EmailOpsFoundationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C847C14ADAF2D3A50DAC174 /* EmailOpsFoundationModels.swift */; };
 		BBD1B3EB8D5F89BD9A1560BD /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E6C2EEFEE6FA2A81D8FC388B /* Accelerate.framework */; };
 		BE548BFB09912E831FD70AFA /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CE7840D02FC3933A72669CFD /* UIKit.framework */; };
+		DBE00E876052B19D82FF3F25 /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D4F1431290F68DB94555DEE /* FoundationModels.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		DEDEE5A2ACE08FBE5BAC87A9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01BA7CB024EA26B92881B820 /* Assets.xcassets */; };
 		ED4A9A807F4CA1EAEFB634C3 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 59DE668FD30CD5DA2D6DB59A /* assets */; };
 /* End PBXBuildFile section */
@@ -30,6 +33,7 @@
 		0197681EA670753F0B061D4D /* auth.rs */ = {isa = PBXFileReference; path = auth.rs; sourceTree = "<group>"; };
 		01BA7CB024EA26B92881B820 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		02A2E5E4A83002DAADB37FAA /* folders.rs */ = {isa = PBXFileReference; path = folders.rs; sourceTree = "<group>"; };
+		05102FF58326C6BDFC3CED06 /* device_ai.rs */ = {isa = PBXFileReference; path = device_ai.rs; sourceTree = "<group>"; };
 		0613070B14D495A81F68DF23 /* search.rs */ = {isa = PBXFileReference; path = search.rs; sourceTree = "<group>"; };
 		06778BAFE44026BE4D6DBA22 /* embeddings.rs */ = {isa = PBXFileReference; path = embeddings.rs; sourceTree = "<group>"; };
 		078ADCA34545D11D1C33BEB3 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
@@ -111,12 +115,14 @@
 		59D3E0ABF498F46615294A0E /* clock.rs */ = {isa = PBXFileReference; path = clock.rs; sourceTree = "<group>"; };
 		59DE668FD30CD5DA2D6DB59A /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		5BC2C45ACFFF5F47B85F3CF3 /* render.rs */ = {isa = PBXFileReference; path = render.rs; sourceTree = "<group>"; };
+		5C847C14ADAF2D3A50DAC174 /* EmailOpsFoundationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailOpsFoundationModels.swift; sourceTree = "<group>"; };
 		5CBA83D9A1BB43335D804BB7 /* emails.rs */ = {isa = PBXFileReference; path = emails.rs; sourceTree = "<group>"; };
 		622FA02ABC66D51C9C7B42D9 /* report.rs */ = {isa = PBXFileReference; path = report.rs; sourceTree = "<group>"; };
 		6381EA3FA769140B15914671 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		63CAD969DE198DC48901C7FD /* report.rs */ = {isa = PBXFileReference; path = report.rs; sourceTree = "<group>"; };
 		64BA9361665EC12FC9DA1F65 /* metrics.rs */ = {isa = PBXFileReference; path = metrics.rs; sourceTree = "<group>"; };
 		66BB8D906D04EA8953623A0F /* accounts.rs */ = {isa = PBXFileReference; path = accounts.rs; sourceTree = "<group>"; };
+		6726CF7594F0560FD4665613 /* foundation_models_provider.rs */ = {isa = PBXFileReference; path = foundation_models_provider.rs; sourceTree = "<group>"; };
 		67F36DE91CCB73086DA2A437 /* MODULE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = MODULE.md; sourceTree = "<group>"; };
 		683021B175EC08D4151BDAB4 /* commands.rs */ = {isa = PBXFileReference; path = commands.rs; sourceTree = "<group>"; };
 		6839256CBC871272ED262DA4 /* provider.rs */ = {isa = PBXFileReference; path = provider.rs; sourceTree = "<group>"; };
@@ -132,6 +138,7 @@
 		6FFFA78880E47F8D76ECC670 /* defaults.rs */ = {isa = PBXFileReference; path = defaults.rs; sourceTree = "<group>"; };
 		70162B32BBFC0DA54CC8ED33 /* thinking_filter.rs */ = {isa = PBXFileReference; path = thinking_filter.rs; sourceTree = "<group>"; };
 		70F5A022E3CFDB0BB0388862 /* search.rs */ = {isa = PBXFileReference; path = search.rs; sourceTree = "<group>"; };
+		71017FCA48F0E08864C25267 /* foundation_models.rs */ = {isa = PBXFileReference; path = foundation_models.rs; sourceTree = "<group>"; };
 		7137A0652E02FBEF2EFC0592 /* instance_lock.rs */ = {isa = PBXFileReference; path = instance_lock.rs; sourceTree = "<group>"; };
 		72C5A06E4B91192AFD1C6284 /* conversations.rs */ = {isa = PBXFileReference; path = conversations.rs; sourceTree = "<group>"; };
 		732DC22E389FFF9C1484F21D /* redownload.rs */ = {isa = PBXFileReference; path = redownload.rs; sourceTree = "<group>"; };
@@ -151,8 +158,10 @@
 		7B5F41230C2674AC43CCF596 /* MODULE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = MODULE.md; sourceTree = "<group>"; };
 		7B70322C01773A9824D67497 /* imap.rs */ = {isa = PBXFileReference; path = imap.rs; sourceTree = "<group>"; };
 		7C07D4754EDB0A6FA9158353 /* config.rs */ = {isa = PBXFileReference; path = config.rs; sourceTree = "<group>"; };
+		7C325D05EB384F8A9FDBC9F2 /* EmailOpsAiBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EmailOpsAiBridge.m; sourceTree = "<group>"; };
 		7CB3B2DD6CF72AAA6CBC6B40 /* model_catalog.rs */ = {isa = PBXFileReference; path = model_catalog.rs; sourceTree = "<group>"; };
 		7CD10FA576C7DEE469D28B5B /* create_task.rs */ = {isa = PBXFileReference; path = create_task.rs; sourceTree = "<group>"; };
+		7D4F1431290F68DB94555DEE /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 		7E521672C232507F9704F160 /* test_helpers.rs */ = {isa = PBXFileReference; path = test_helpers.rs; sourceTree = "<group>"; };
 		7EB8B2182A32BF16721DDE97 /* optimistic.rs */ = {isa = PBXFileReference; path = optimistic.rs; sourceTree = "<group>"; };
 		7EE83B4B41857C44F0C5CCDD /* embeddings.rs */ = {isa = PBXFileReference; path = embeddings.rs; sourceTree = "<group>"; };
@@ -172,6 +181,7 @@
 		8A984ADE181F6F7662CB92D0 /* private_eval_db.rs */ = {isa = PBXFileReference; path = private_eval_db.rs; sourceTree = "<group>"; };
 		8AD55D135AB3091EEDADA331 /* sync_error_dedup.rs */ = {isa = PBXFileReference; path = sync_error_dedup.rs; sourceTree = "<group>"; };
 		8C0D29D37311F659AEA69CBB /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		8C2D0220244A5793B3927CAC /* device_tier.rs */ = {isa = PBXFileReference; path = device_tier.rs; sourceTree = "<group>"; };
 		8C5DD3BA79DA2224D301EB9E /* sync_scheduler.rs */ = {isa = PBXFileReference; path = sync_scheduler.rs; sourceTree = "<group>"; };
 		8C710F88594A8009D7EA3E1B /* fs_link.rs */ = {isa = PBXFileReference; path = fs_link.rs; sourceTree = "<group>"; };
 		8E4AFEE5EE49D08B69BF0D49 /* recall_entity.rs */ = {isa = PBXFileReference; path = recall_entity.rs; sourceTree = "<group>"; };
@@ -195,6 +205,7 @@
 		9CE1CAC1777531EC6E6EB598 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		9D1666D14105AE6FD5507359 /* routing.rs */ = {isa = PBXFileReference; path = routing.rs; sourceTree = "<group>"; };
 		9E7EA2CC640D0A96211713F3 /* accounts.rs */ = {isa = PBXFileReference; path = accounts.rs; sourceTree = "<group>"; };
+		9F7DDB46DFA1EED858807BC1 /* embedding_route.rs */ = {isa = PBXFileReference; path = embedding_route.rs; sourceTree = "<group>"; };
 		9F8FA4AA1CBB74ED5217830D /* task_queue.rs */ = {isa = PBXFileReference; path = task_queue.rs; sourceTree = "<group>"; };
 		A0BFFB5FA663583F48E1AEB2 /* ai_models.rs */ = {isa = PBXFileReference; path = ai_models.rs; sourceTree = "<group>"; };
 		A17057B7777E2CE5501ABF5C /* runner.rs */ = {isa = PBXFileReference; path = runner.rs; sourceTree = "<group>"; };
@@ -286,7 +297,6 @@
 		E6003EA2177A68514D72A9E9 /* delete.rs */ = {isa = PBXFileReference; path = delete.rs; sourceTree = "<group>"; };
 		E6C2EEFEE6FA2A81D8FC388B /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		E71B5C40FBBAECCBB65B274D /* drafts.rs */ = {isa = PBXFileReference; path = drafts.rs; sourceTree = "<group>"; };
-		EB9C53171FADEF17015D7D33 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		ECEAA1F2F5B03BEBD25560EC /* metrics.rs */ = {isa = PBXFileReference; path = metrics.rs; sourceTree = "<group>"; };
 		EF27BF6195AF11D1A52A1138 /* MODULE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = MODULE.md; sourceTree = "<group>"; };
 		EF49569C715E8699027143C9 /* headers.rs */ = {isa = PBXFileReference; path = headers.rs; sourceTree = "<group>"; };
@@ -298,6 +308,7 @@
 		F3D8768F02E87F30BCADE89E /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
 		F444BFF29535FAA3C053FEC8 /* report.rs */ = {isa = PBXFileReference; path = report.rs; sourceTree = "<group>"; };
 		F72623C362BDA4314C9990C4 /* templates.rs */ = {isa = PBXFileReference; path = templates.rs; sourceTree = "<group>"; };
+		F7C8668AA6CA8552C5472632 /* afm_routing.rs */ = {isa = PBXFileReference; path = afm_routing.rs; sourceTree = "<group>"; };
 		F7E54EDFF73C6FEE2FABBC05 /* email_addr.rs */ = {isa = PBXFileReference; path = email_addr.rs; sourceTree = "<group>"; };
 		F7F42DAA35580DE3260D7DCD /* architecture_tests.rs */ = {isa = PBXFileReference; path = architecture_tests.rs; sourceTree = "<group>"; };
 		F8A470C978D29F8AABF1BC0D /* lenses.rs */ = {isa = PBXFileReference; path = lenses.rs; sourceTree = "<group>"; };
@@ -320,6 +331,7 @@
 				3FDEE1F13671674672D2E1D8 /* libapp.a in Frameworks */,
 				BBD1B3EB8D5F89BD9A1560BD /* Accelerate.framework in Frameworks */,
 				140311969A373065D45A4203 /* BackgroundTasks.framework in Frameworks */,
+				DBE00E876052B19D82FF3F25 /* FoundationModels.framework in Frameworks */,
 				83A9E4AB12CBDF176E0586C3 /* CoreGraphics.framework in Frameworks */,
 				3C118672E2F1715B033D58DF /* Metal.framework in Frameworks */,
 				0846B7D77D3492EB75D00D36 /* MetalKit.framework in Frameworks */,
@@ -481,6 +493,7 @@
 				E6C2EEFEE6FA2A81D8FC388B /* Accelerate.framework */,
 				9710E6B21B5C032AE461131D /* BackgroundTasks.framework */,
 				078ADCA34545D11D1C33BEB3 /* CoreGraphics.framework */,
+				7D4F1431290F68DB94555DEE /* FoundationModels.framework */,
 				74BB8BA7AA38E00BDF0BEA1E /* libapp.a */,
 				3DC78E502BD1F9C75F582C4D /* Metal.framework */,
 				7AAE9404535B4B2E31D24F5D /* MetalKit.framework */,
@@ -514,7 +527,6 @@
 		40C5D8A938A38ECF7D031C32 /* arm64 */ = {
 			isa = PBXGroup;
 			children = (
-				9AC4F3C05DBE4BDAB2A5EF65 /* debug */,
 				B94F750E06D08B6652231485 /* release */,
 			);
 			path = arm64;
@@ -574,7 +586,9 @@
 		6014AD0A68F60A7B7B5D8A2E /* emailops */ = {
 			isa = PBXGroup;
 			children = (
+				7C325D05EB384F8A9FDBC9F2 /* EmailOpsAiBridge.m */,
 				F3A3E911A43BAEDCFAB29152 /* EmailOpsBackgroundRefresh.m */,
+				5C847C14ADAF2D3A50DAC174 /* EmailOpsFoundationModels.swift */,
 				CCAD814C81E2CA73582C07D1 /* main.mm */,
 				BA5840216A2243B9B62E47B8 /* bindings */,
 			);
@@ -639,6 +653,11 @@
 		8A38EE045F644AFF9D8F091B /* ai */ = {
 			isa = PBXGroup;
 			children = (
+				F7C8668AA6CA8552C5472632 /* afm_routing.rs */,
+				8C2D0220244A5793B3927CAC /* device_tier.rs */,
+				9F7DDB46DFA1EED858807BC1 /* embedding_route.rs */,
+				6726CF7594F0560FD4665613 /* foundation_models_provider.rs */,
+				71017FCA48F0E08864C25267 /* foundation_models.rs */,
 				A55043A56E786202EB09719B /* gpu_plan.rs */,
 				A64C3820D179A869723A4CE5 /* mod.rs */,
 				7CB3B2DD6CF72AAA6CBC6B40 /* model_catalog.rs */,
@@ -680,14 +699,6 @@
 				C545A25D9BEAA1F553DC44F3 /* runner.rs */,
 			);
 			path = junk;
-			sourceTree = "<group>";
-		};
-		9AC4F3C05DBE4BDAB2A5EF65 /* debug */ = {
-			isa = PBXGroup;
-			children = (
-				EB9C53171FADEF17015D7D33 /* libapp.a */,
-			);
-			path = debug;
 			sourceTree = "<group>";
 		};
 		A4BEA7327D847DA20084FD6B /* services */ = {
@@ -770,6 +781,7 @@
 				512B74E1D49A877F0579C773 /* connectivity.rs */,
 				C687F8FEA17C24377DFD2DA2 /* contacts.rs */,
 				07C6AB9D0547779A18716433 /* dashboard.rs */,
+				05102FF58326C6BDFC3CED06 /* device_ai.rs */,
 				ADB0D16B169CD839DB713FC4 /* drafts.rs */,
 				5CBA83D9A1BB43335D804BB7 /* emails.rs */,
 				5456BA39AC51432FC047A613 /* filters.rs */,
@@ -944,7 +956,7 @@
 			path = lenses;
 			sourceTree = "<group>";
 		};
-		"TEMP_E6BEBB72-B605-4D34-8B3C-8CE86D6B11D3" /* x86_64 */ = {
+		"TEMP_44CDD2D7-312A-4CF5-BEE0-DE2A63EA98D3" /* x86_64 */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -1047,7 +1059,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				35FBF85916B38E8F6310559D /* EmailOpsAiBridge.m in Sources */,
 				B31444CD33F32376096FC34F /* EmailOpsBackgroundRefresh.m in Sources */,
+				B7D728EC81AFBDA791B126C2 /* EmailOpsFoundationModels.swift in Sources */,
 				971B76D83B6C23941CB0E8D4 /* main.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1198,8 +1212,9 @@
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.emailops.app;
-				PRODUCT_NAME = "EmailOps";
+				PRODUCT_NAME = EmailOps;
 				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};
@@ -1229,8 +1244,9 @@
 				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.emailops.app;
-				PRODUCT_NAME = "EmailOps";
+				PRODUCT_NAME = EmailOps;
 				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 			};

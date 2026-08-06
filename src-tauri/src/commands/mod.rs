@@ -10,6 +10,7 @@ pub mod classification;
 pub mod connectivity;
 pub mod contacts;
 pub mod dashboard;
+pub mod device_ai;
 pub mod drafts;
 pub mod emails;
 pub mod filters;
