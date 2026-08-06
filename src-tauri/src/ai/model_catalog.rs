@@ -54,6 +54,43 @@ pub struct CatalogModel {
 pub static CATALOG: &[CatalogModel] = &[
     // ── Chat models ─────────────────────────────────────────────────────────
     CatalogModel {
+        id: "lfm2.5-2.6b-q4_k_m",
+        display_name: "LFM2.5 2.6B",
+        kind: ModelKind::Chat,
+        // LiquidAI/LFM2.5-2.6B-GGUF/main · LFM2.5-2.6B-Q4_K_M.gguf
+        // Upstream x-linked-size and x-linked-etag (LFS sha256).
+        //
+        // The smallest chat model in the catalog by some margin — 1.67 GB of
+        // weights against the 3.0 GB Qwen 4B — which is what makes it the one
+        // that fits a phone. `ai::model_fit` compares weights plus runtime
+        // overhead against the per-process ceiling iOS actually enforces, so a
+        // smaller model widens the set of devices that can run local chat at
+        // all rather than merely running faster on the ones that already could.
+        //
+        // Liquid designs the family for on-device deployment and post-trains it
+        // for agentic work; the model card claims tool use competitive with
+        // models 4x its size, which matters here because every chat feature
+        // rides on tool calling.
+        size_bytes: 1_674_454_848,
+        // 131,072 per config.json. The runtime does not open a window this
+        // large — `auto_n_ctx_tier` caps itself at 32k — but the field reports
+        // what the model supports, as the other entries do.
+        context_window: 131_072,
+        sha256: "79fdf00351b46cf26f020aead28d01889886be87c55fa0eb907e6f9b00bfee14",
+        url: "https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-Q4_K_M.gguf",
+        // LFM Open License v1.0, not Apache: free for most use, with revenue
+        // conditions above a threshold. Worth reading before shipping it as a
+        // default rather than an opt-in download.
+        license: "lfm1.0",
+        // Weights 1.67 GB plus KV and activations. Not "recommended": on a
+        // desktop the 4B is the better answer, and this entry earns its place
+        // by fitting where that one cannot.
+        min_ram_gb: 4,
+        recommended: false,
+        supports_tools: true,
+        bundled: false,
+    },
+    CatalogModel {
         id: "qwen3.5-4b-q4_k_m",
         display_name: "Qwen 3.5 4B",
         kind: ModelKind::Chat,
