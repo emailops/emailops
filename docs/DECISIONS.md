@@ -731,6 +731,29 @@ back affordance entirely — email HTML renders in a null-origin iframe whose to
 events never reach the app, so a swipe starting over message content cannot be seen and
 the menu item is the only reliable escape from such a thread.
 
+## 2026-08-06 — The Apple team id never enters the tree, enforced by a git filter
+
+**Decision:** The Apple Development Team ID lives only in the gitignored
+`.env.signing` (read by `scripts/ios.sh` into `APPLE_DEVELOPMENT_TEAM`). The
+generated Xcode project stays tracked, but a `strip-apple-team` **clean filter**
+declared in `.gitattributes` drops `DEVELOPMENT_TEAM = "…";` from
+`src-tauri/gen/apple/emailops.xcodeproj/project.pbxproj` on the way into the
+index. `make hooks` / `make install` register it (`scripts/setup_git_filters.sh`);
+a `no-apple-team-id` pre-commit check inspects *staged* content as the backstop
+for a clone that never ran it.
+**Context:** `tauri ios dev|build` writes the team id back into that tracked file
+on every run, so keeping it out was a manual `git checkout` nobody would remember
+— and the very first commit after an iOS build would have carried it. A clean
+filter also makes `git diff`/`git status` read clean after a build, so the file
+stops showing as a permanent phantom modification while the worktree keeps the
+value Xcode needs.
+**Rejected:** Untracking `src-tauri/gen/apple/` entirely (the honest fix, since
+it is generated — but `scripts/ios_patch_project.sh` does not yet reproduce
+`CFBundleURLTypes`, so a regenerated project silently breaks OAuth; revisit once
+that gap is closed). `git update-index --skip-worktree` (per-clone, invisible,
+and it hides real changes to the file too). A pre-commit check alone (fires on
+every commit after a build and leaves the developer to clean up by hand).
+
 ## 2026-08-14 — Chat is scoped to one account, coupled to the mail list except in unified view
 
 **Decision:** A chat conversation always answers from exactly one concrete account,

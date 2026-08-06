@@ -16,6 +16,22 @@ pre-commit:
           echo "Use the typed wrappers in src/lib/api.ts instead of calling invoke() directly."
           exit 1
         fi
+    # The Apple Development Team ID belongs in `.env.signing`, never in the
+    # tree. `tauri ios dev|build` writes it into the tracked generated Xcode
+    # project on every run; the `strip-apple-team` clean filter
+    # (`make hooks` / `scripts/setup_git_filters.sh`) removes it on the way
+    # into the index. This is the backstop for a clone that never registered
+    # the filter — it reads the *staged* content, not the worktree.
+    no-apple-team-id:
+      run: |
+        staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(pbxproj|plist|yml|json)$' || true)
+        for f in $staged; do
+          if git show ":$f" 2>/dev/null | grep -q 'DEVELOPMENT_TEAM'; then
+            echo "ERROR: $f stages an Apple DEVELOPMENT_TEAM value."
+            echo "Run 'make hooks' to register the strip-apple-team git filter, then re-stage."
+            exit 1
+          fi
+        done
     # Strict JSX-literal guard. Every user-visible string must come from
     # `t()` — see `src/locales/` and `src/i18n/`. The script reports zero
     # violations after the Phase 2 component sweep. Add `// i18n-ignore`

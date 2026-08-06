@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-ios ios-init ios-dev ios-build bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-ios ios-init ios-dev ios-sim ios-build bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -267,10 +267,11 @@ record-cassette:
 build:
 	npm run build
 
-# Install dependencies + hooks
+# Install dependencies + hooks + git content filters
 install:
 	npm install
 	npx lefthook install --force
+	bash scripts/setup_git_filters.sh
 
 # Deploy (build + install to /Applications on macOS)
 deploy:
@@ -287,9 +288,11 @@ clean:
 	rm -rf dist/
 	cargo clean --manifest-path src-tauri/Cargo.toml
 
-# Install git hooks
+# Install git hooks + the repo's git content filters (keeps the Apple team id
+# out of commits — see scripts/setup_git_filters.sh)
 hooks:
 	npx lefthook install --force
+	bash scripts/setup_git_filters.sh
 
 # ── macOS release: signed + notarized universal DMG ──────────────────────────
 #
@@ -340,7 +343,9 @@ bootstrap-mac:
 #
 # All three go through scripts/ios.sh, which puts CocoaPods on PATH and strips
 # RVM's gem environment — see the comments in that script for why both are
-# required. Deployment target is pinned to iOS 26 in tauri.ios.conf.json.
+# required. Everything about the generated Xcode project that must survive
+# `ios-init` — deployment target, Accelerate, OAuth URL schemes, entitlements,
+# privacy manifest, export method — lives in scripts/ios_patch_project.sh.
 bootstrap-ios:
 	rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 	@command -v xcodebuild >/dev/null 2>&1 || echo "MISSING: full Xcode (not just Command Line Tools) — install from the App Store, then: sudo xcode-select -s /Applications/Xcode.app"
@@ -351,6 +356,14 @@ ios-init:
 
 ios-dev:
 	bash scripts/ios.sh dev
+
+# Same, pinned to a simulator. Plain `ios-dev` picks the first device it finds,
+# which is a connected iPhone whenever one is plugged in — a signed device build
+# when all you wanted was the simulator.
+#   make ios-sim DEVICE="iPhone 17 Pro"
+DEVICE ?= iPhone 17 Pro
+ios-sim:
+	bash scripts/ios.sh dev "$(DEVICE)"
 
 ios-build:
 	bash scripts/ios.sh build

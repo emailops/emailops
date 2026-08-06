@@ -1,0 +1,8 @@
+# The generated Xcode project is tracked (see docs/DECISIONS.md), but the Apple
+# Development Team ID that `tauri ios dev|build` writes into it is not. The
+# `strip-apple-team` clean filter drops that line on the way into the index.
+#
+# Register the filter once per clone with `make hooks` (or `make install`);
+# `scripts/setup_git_filters.sh` explains why git cannot do it for you. A clone
+# that skipped it is caught by the `no-apple-team-id` pre-commit check.
+src-tauri/gen/apple/emailops.xcodeproj/project.pbxproj filter=strip-apple-team
