@@ -699,6 +699,21 @@ AI-backed entry wholesale, and each experimental feature keeps its own flag on t
 **Rejected:** Keeping "AI Features" and only reordering within it — leaves the phone
 row cost and the taxonomy problem. Hiding the section on phones only — the same
 argument applies on desktop, and two divergent navigation trees is a maintenance tax.
+## 2026-08-06 — Inbox category tabs follow the mailbox, not only the saved preference
+
+**Decision:** `available_categories` for a Gmail account returns the **union** of the
+user's opted-in `gmail_categories` and the categories its stored inbox mail actually
+uses (`SELECT DISTINCT category`), in a fixed canonical order. An absent
+`account_settings:<id>` row no longer means "Primary only".
+**Context:** The settings row only exists after the user opens the account dialog and
+saves. Until then the tab strip collapsed to one entry, which `shouldShowCategoryTabs`
+correctly hides — so a freshly added Gmail account with mail filed under four categories
+showed no strip at all and had no way to reach three of them. Mail that exists must be
+reachable; the preference is an opt-in for *syncing*, not an inventory of what is there.
+**Rejected:** Defaulting the absent preference to all five categories (invents tabs for
+categories the account may never receive, and diverges from the sync-side filter that
+reads the same key). Writing a default settings row at account creation (a migration
+that guesses on the user's behalf, and still wrong the moment the mailbox changes).
 ## 2026-08-06 — Back is an edge swipe on phones, and the toolbar button goes
 
 **Decision:** On the stacked layout a rightward drag starting within 40px of the left

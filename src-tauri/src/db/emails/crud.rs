@@ -713,6 +713,24 @@ impl Database {
         Ok(count)
     }
 
+    /// Distinct `category` values across an account's live inbox mail.
+    ///
+    /// This is what the account *demonstrably* files mail under, as opposed to
+    /// what its saved settings say it should — see
+    /// `services::accounts::available_categories`, which unions the two so a
+    /// never-configured account still gets a tab per category it holds.
+    /// Soft-deleted rows are excluded: a category with nothing left to show
+    /// should not keep its tab.
+    pub fn distinct_inbox_categories(&self, account_id: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT category FROM emails
+             WHERE account_id = ?1 AND mailbox = 'inbox' AND is_deleted = 0",
+        )?;
+        let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
     /// Minimum timestamp across a set of email IDs.
     ///
     /// The extra-mailbox backfill uses this to advance its cursor backward
@@ -798,6 +816,41 @@ mod tests {
             .get_emails(AccountScope::Account(account), 50, 0, None, None, None)
             .unwrap();
         assert_eq!(all.len(), 3, "no category filter returns every inbox email");
+    }
+
+    #[test]
+    fn distinct_inbox_categories_reports_what_the_mailbox_actually_holds() {
+        let db = Database::new_for_testing().unwrap();
+
+        insert_email_with_category(&db, "p1", "acc1", "thread-a", 300, "primary");
+        insert_email_with_category(&db, "p2", "acc1", "thread-b", 290, "primary");
+        insert_email_with_category(&db, "u1", "acc1", "thread-c", 200, "updates");
+        // Another account's mail must not leak into this account's tab strip.
+        insert_email_with_category(&db, "f1", "acc2", "thread-d", 100, "forums");
+
+        let mut got = db.distinct_inbox_categories("acc1").unwrap();
+        got.sort();
+        assert_eq!(got, vec!["primary".to_string(), "updates".to_string()]);
+    }
+
+    #[test]
+    fn distinct_inbox_categories_ignores_deleted_mail() {
+        // A category whose every message is in the trash has nothing to show,
+        // so it must not earn a tab.
+        let db = Database::new_for_testing().unwrap();
+
+        insert_email_with_category(&db, "p1", "acc1", "thread-a", 300, "primary");
+        insert_email_with_category(&db, "promo1", "acc1", "thread-b", 200, "promotions");
+        db.delete_email("promo1").unwrap();
+
+        let got = db.distinct_inbox_categories("acc1").unwrap();
+        assert_eq!(got, vec!["primary".to_string()]);
+    }
+
+    #[test]
+    fn distinct_inbox_categories_is_empty_for_an_account_with_no_mail() {
+        let db = Database::new_for_testing().unwrap();
+        assert!(db.distinct_inbox_categories("acc-never-synced").unwrap().is_empty());
     }
 
     #[test]

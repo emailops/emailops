@@ -701,24 +701,46 @@ pub fn remove_imap_credentials_on_delete(account_id: &str) {
 
 // ── Per-account inbox category set ───────────────────────────────────────────
 
+/// The Gmail category taxonomy, in the order the Inbox renders its tabs.
+/// Doubles as the allowlist for values read back out of `emails.category`,
+/// which has no CHECK constraint.
+const GMAIL_CATEGORY_ORDER: [&str; 5] = ["primary", "social", "updates", "forums", "promotions"];
+
 /// Pure decision: which inbox categories are valid filter chips for an account
-/// of the given provider, given that account's saved `gmail_categories`
-/// preference (only consulted for Gmail). The Inbox component renders one tab
-/// per returned value.
+/// of the given provider. The Inbox component renders one tab per returned
+/// value (and hides the strip entirely below two).
 ///
-/// * Gmail: the user's opted-in categories (Primary / Updates / Promotions /
-///   Social / Forums). Defaults to ["primary"] if the user hasn't picked any.
+/// * Gmail: the union of the user's opted-in categories (`gmail_categories`,
+///   from `account_settings:<id>`) and the categories mail has actually been
+///   synced into (`present_categories`, distinct `emails.category` values),
+///   returned in [`GMAIL_CATEGORY_ORDER`]. Defaults to `["primary"]` when both
+///   are empty.
+///
+///   The preference alone is not enough, and treating its absence as
+///   "primary only" was the reason a fresh Gmail account never showed the
+///   strip: the settings row only exists once the user has opened the account
+///   dialog and saved, while sync has meanwhile filed mail under four
+///   different categories. Mail that exists must be reachable. The opt-in list
+///   still contributes, so a category the user asked for keeps its tab before
+///   anything has arrived in it.
 /// * Outlook: the fixed two-tab mapping the sync layer assigns —
 ///   `inferenceClassification: focused → primary`, `other → updates`. See
 ///   `sync/outlook.rs` for the source of truth.
 /// * IMAP / unknown: no categories. The Inbox UI hides the tab strip.
-pub fn available_categories(provider: &str, gmail_categories: &[String]) -> Vec<String> {
+pub fn available_categories(provider: &str, gmail_categories: &[String], present_categories: &[String]) -> Vec<String> {
     match provider {
         "gmail" => {
-            if gmail_categories.is_empty() {
+            let selected: Vec<&str> = GMAIL_CATEGORY_ORDER
+                .iter()
+                .copied()
+                .filter(|known| {
+                    gmail_categories.iter().any(|c| c == known) || present_categories.iter().any(|c| c == known)
+                })
+                .collect();
+            if selected.is_empty() {
                 vec!["primary".to_string()]
             } else {
-                gmail_categories.to_vec()
+                selected.into_iter().map(str::to_string).collect()
             }
         }
         "outlook" => vec!["primary".to_string(), "updates".to_string()],
@@ -726,9 +748,10 @@ pub fn available_categories(provider: &str, gmail_categories: &[String]) -> Vec<
     }
 }
 
-/// Thin executor that loads the account + its saved settings and delegates
-/// the decision to [`available_categories`]. Returns `NotFound` if the
-/// account id doesn't exist.
+/// Thin executor that loads the account, its saved settings and the categories
+/// its stored mail actually uses, then delegates the decision to
+/// [`available_categories`]. Returns `NotFound` if the account id doesn't
+/// exist.
 pub fn available_categories_for_account(db: &Database, account_id: &str) -> Result<Vec<String>> {
     let account = db
         .get_account(account_id)?
@@ -741,7 +764,11 @@ pub fn available_categories_for_account(db: &Database, account_id: &str) -> Resu
         }
         None => Vec::new(),
     };
-    Ok(available_categories(&account.provider, &gmail_categories))
+    // Only Gmail consults this, and the scan is index-backed
+    // (`idx_emails_category`), so it is not worth branching on the provider
+    // before asking.
+    let present = db.distinct_inbox_categories(account_id)?;
+    Ok(available_categories(&account.provider, &gmail_categories, &present))
 }
 
 #[cfg(test)]
@@ -1082,18 +1109,65 @@ mod tests {
         );
     }
 
+    /// Shorthand for the `&[String]` arguments the category planner takes.
+    fn cats(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
     #[test]
     fn gmail_returns_users_opted_in_categories() {
-        let got = available_categories("gmail", &["primary".into(), "updates".into()]);
+        let got = available_categories("gmail", &cats(&["primary", "updates"]), &[]);
         assert_eq!(got, vec!["primary", "updates"]);
     }
 
     #[test]
     fn gmail_with_empty_pref_defaults_to_primary() {
-        // First-run / migrated DBs may have no saved categories. The UI must
-        // still render at least the Primary tab so the inbox isn't blank.
-        let got = available_categories("gmail", &[]);
+        // First-run / migrated DBs may have no saved categories and no mail
+        // yet. The UI must still render at least the Primary tab so the inbox
+        // isn't blank.
+        let got = available_categories("gmail", &[], &[]);
         assert_eq!(got, vec!["primary"]);
+    }
+
+    #[test]
+    fn gmail_offers_a_tab_for_every_category_actually_in_the_mailbox() {
+        // The bug this fixes: a Gmail account that has never opened the
+        // settings dialog has no `account_settings:<id>` row, so the opt-in
+        // list is empty and the tab strip collapsed to a single "Primary" —
+        // which `shouldShowCategoryTabs` then hides entirely. The mailbox
+        // demonstrably held four categories. What is in the mailbox is the
+        // authoritative answer to "what can the user filter by".
+        let got = available_categories("gmail", &[], &cats(&["primary", "updates", "forums", "promotions"]));
+        assert_eq!(got, cats(&["primary", "updates", "forums", "promotions"]));
+    }
+
+    #[test]
+    fn gmail_unions_the_opt_in_list_with_what_was_synced() {
+        // Opting into a category that has not delivered anything yet still
+        // earns a tab (the user asked for it), and mail that arrived before
+        // the opt-in list was narrowed stays reachable.
+        let got = available_categories(
+            "gmail",
+            &cats(&["primary", "social"]),
+            &cats(&["primary", "promotions"]),
+        );
+        assert_eq!(got, cats(&["primary", "social", "promotions"]));
+    }
+
+    #[test]
+    fn gmail_returns_categories_in_a_stable_canonical_order() {
+        // Insertion order of either input must not leak into the tab order —
+        // the strip would otherwise reshuffle itself as mail arrives.
+        let got = available_categories("gmail", &cats(&["forums", "primary"]), &cats(&["promotions", "social"]));
+        assert_eq!(got, cats(&["primary", "social", "forums", "promotions"]));
+    }
+
+    #[test]
+    fn gmail_ignores_categories_outside_the_known_taxonomy() {
+        // `emails.category` has no CHECK constraint. A stray value must not
+        // become a tab the Inbox has no configuration for.
+        let got = available_categories("gmail", &[], &cats(&["primary", "category_personal", ""]));
+        assert_eq!(got, cats(&["primary"]));
     }
 
     #[test]
@@ -1102,7 +1176,7 @@ mod tests {
         // inferenceClassification (focused / other), mapped 1:1 by the sync
         // layer to primary / updates. Even if a stray pref leaks in from a
         // re-used account row, it must not influence Outlook's tab set.
-        let got = available_categories("outlook", &["promotions".into(), "social".into()]);
+        let got = available_categories("outlook", &cats(&["promotions", "social"]), &cats(&["promotions"]));
         assert_eq!(got, vec!["primary", "updates"]);
     }
 
@@ -1110,13 +1184,13 @@ mod tests {
     fn imap_has_no_category_tabs() {
         // IMAP servers don't expose a category taxonomy. The Inbox hides
         // the tab strip when this returns empty.
-        let got = available_categories("imap", &["primary".into()]);
+        let got = available_categories("imap", &cats(&["primary"]), &cats(&["primary", "updates"]));
         assert!(got.is_empty(), "expected empty, got {:?}", got);
     }
 
     #[test]
     fn unknown_provider_has_no_category_tabs() {
-        let got = available_categories("brand-new-protocol", &[]);
+        let got = available_categories("brand-new-protocol", &[], &cats(&["primary"]));
         assert!(got.is_empty(), "expected empty, got {:?}", got);
     }
 }
