@@ -10,6 +10,7 @@ import type { RuleFormPrefill } from '@/components/Attachments/RuleManagementMod
 import { RuleManagementModal } from '@/components/Attachments/RuleManagementModal';
 import { CalendarView } from '@/components/Calendar/CalendarView';
 import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
+import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
 import { ChatView } from '@/components/Chat/ChatView';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
@@ -47,6 +48,7 @@ import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
+import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
@@ -186,6 +188,12 @@ function AppInner() {
     [setLensesEnabledRaw],
   );
   const [isInboxCollapsed, setIsInboxCollapsed] = useState(false);
+  // Right-docked chat panel. Persisted so the workspace layout survives a
+  // restart, the same way `inbox_layout` does.
+  const [isChatPanelOpen, setIsChatPanelOpen] = usePersistedPref<boolean>('chat_panel_open', false, {
+    parse: (raw) => (raw === 'true' ? true : raw === 'false' ? false : null),
+    serialize: (v) => String(v),
+  });
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [composePrefillTo, setComposePrefillTo] = useState<string[] | undefined>(undefined);
@@ -1089,6 +1097,29 @@ function AppInner() {
     [setSelectedCategories],
   );
 
+  // What the right-hand chat panel offers as ambient context: the thread the
+  // main view is currently showing, or null everywhere else. Pure derivation —
+  // see `deriveChatContext` for the precedence rules.
+  const chatPanelContext = useMemo(
+    () => deriveChatContext({ viewMode, activeTab, selectedEmail }),
+    [viewMode, activeTab, selectedEmail],
+  );
+
+  // Header new-chat icon: start a fresh conversation and dock the panel in one
+  // click, from anywhere in the app. Open the panel even if creating the
+  // conversation fails — the panel's own empty state is a better place to see
+  // the error than a silently ignored click.
+  const handleNewChat = useCallback(async () => {
+    if (viewMode === 'chat') setViewMode('inbox');
+    setIsChatPanelOpen(true);
+    if (!effectiveAccountId) return;
+    try {
+      await useChatStore.getState().createConversation(effectiveAccountId);
+    } catch (e) {
+      addLog('error', 'ai', `Failed to start a new chat: ${errorText(e)}`);
+    }
+  }, [viewMode, effectiveAccountId, setIsChatPanelOpen, addLog]);
+
   const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
 
@@ -1185,6 +1216,18 @@ function AppInner() {
           onOpenAppSettings={() => setSettingsTab('appearance')}
           isSyncing={isSyncing}
           viewMode={viewMode}
+          isChatPanelOpen={isChatPanelOpen}
+          onToggleChatPanel={() => {
+            // From the full-page chat view, "Chat" means "go back to the mail
+            // content with chat docked" — otherwise the toggle would appear to
+            // do nothing, since the panel is suppressed while that view is up.
+            if (viewMode === 'chat') {
+              setViewMode('inbox');
+              setIsChatPanelOpen(true);
+              return;
+            }
+            setIsChatPanelOpen((open) => !open);
+          }}
           onSetViewMode={(mode) => {
             const plan = planViewChange(mode, inboxLayout);
             if (plan.resetInboxFilters) {
@@ -1221,7 +1264,12 @@ function AppInner() {
           }}
         />
 
-        <main className="flex flex-1 overflow-hidden">
+        {/* `min-w-0` is load-bearing: a flex item defaults to min-width:auto,
+            which refuses to shrink below its content's min-content width. With
+            the chat panel docked alongside, that made this column overflow and
+            clip its own right edge (hiding the inbox toolbar buttons) instead
+            of narrowing. */}
+        <main className="flex flex-1 min-w-0 overflow-hidden">
           {viewMode === 'contacts' ? (
             // Per-account views wrap in a column with the unified-mode scope
             // chip on top (self-gating — renders nothing outside All accounts).
@@ -1393,6 +1441,7 @@ function AppInner() {
                     }
                     availableCategories={availableCategories ?? undefined}
                     onCollapse={inboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
+                    onNewChat={aiEnabled ? () => void handleNewChat() : undefined}
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                     accountName={isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email}
@@ -1463,6 +1512,22 @@ function AppInner() {
             </div>
           )}
         </main>
+
+        {/* Right-docked chat. Gated on the master AI switch like every other
+            AI surface, and suppressed while the full-page chat view is open so
+            the same conversation isn't rendered twice side by side. */}
+        {aiEnabled && isChatPanelOpen && viewMode !== 'chat' && (
+          <ChatPanelDock
+            accountId={effectiveAccountId}
+            context={chatPanelContext}
+            onClose={() => setIsChatPanelOpen(false)}
+            onExpand={() => {
+              setIsChatPanelOpen(false);
+              setViewMode('chat');
+            }}
+            onNavigateToInbox={() => setViewMode('inbox')}
+          />
+        )}
       </div>
 
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />

@@ -1,0 +1,47 @@
+# Thread-bound chat: read-only requests must be ANSWERED, not turned into drafts.
+#
+# Thread-bound turns (the "Chat about this thread" entry point, and the chat
+# panel's ambient context chip) expose exactly one tool —
+# `generate_email_draft`. A model handed a single tool plus an imperative will
+# reach for it: "traduceme este email al español" saved an unrequested reply
+# draft and answered "Draft saved: …" instead of translating anything.
+#
+# `turn.rs::wants_email_draft` now gates the tool on explicit draft/write/reply
+# intent, so a translate request gets an empty tool menu and can only answer in
+# text. The real assertion here is `expected_tools_not_called` — a positive
+# text anchor cannot distinguish "translated the email" from "wrote a draft
+# that happens to contain those words".
+#
+# Thread `thread_4369f40221bd` is the demo DB's "How do I add a new email
+# account in EmailOps?" enquiry from a synthetic sender.
+
+- id: demo_thread_translate_answers_inline
+  question: "traduceme este email al español"
+  account: "ulises@emailopslabs.dev"
+  thread_id: "thread_4369f40221bd"
+  category: thread_bound
+  tier: smoke
+  expected_tools_not_called: ["generate_email_draft"]
+  # Content words from the source email that any faithful Spanish rendering
+  # keeps. Deliberately not full phrases — wording varies run to run.
+  expected_answer_contains: ["cuenta"]
+  # The pre-fix reply was literally "Draft saved: …"; the first partial fix
+  # leaked the internal tool name into an apology. Both must stay gone.
+  expected_answer_not_contains:
+    - "draft saved"
+    - "generate_email_draft"
+  metrics:
+    - answer_relevancy
+
+# The positive counterpart: an explicit draft request must STILL reach the tool.
+# Without this, "gate the tool off" could regress into "never offer the tool",
+# which would silently break the thread-bound draft feature.
+- id: demo_thread_explicit_draft_still_works
+  question: "escribe una respuesta a este correo"
+  account: "ulises@emailopslabs.dev"
+  thread_id: "thread_4369f40221bd"
+  category: thread_bound
+  tier: smoke
+  expected_tools_called: ["generate_email_draft"]
+  metrics:
+    - answer_relevancy

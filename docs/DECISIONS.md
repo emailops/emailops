@@ -550,6 +550,34 @@ reads as a bug — the user switched that calendar off.
 unfiltered set to re-filter locally on toggle without a refetch. Leaving
 notifications and chat unfiltered — simpler, but surfaces exactly what the user
 asked to hide.
+## 2026-08-04 — Chat docks on the right; ambient context is the open thread only
+
+**Decision:** Chat gains a persistent, resizable panel docked against the **right**
+edge of the window (Copilot/Cursor-style), alongside — not replacing — the existing
+full-page chat view. The nav sidebar's "Chat" entry toggles the panel; the panel's
+expand button opens the full view; and an always-visible icon in the email-list
+toolbar (top right, after "Load more") starts a fresh conversation and docks the
+panel in one click, so beginning a chat never depends on the collapsible AI
+FEATURES section being expanded. The panel grounds a turn in **the email thread the
+main view currently shows**, offered as a removable chip above the input, and in
+nothing else: list scope (mailbox, category, active filter, search query) and
+selected body text are deliberately not part of the context.
+**Context:** The chat was reachable only by navigating away from the mail you wanted
+to ask about, which is exactly backwards for "summarise this thread" / "draft a
+reply". Ambient thread context reuses the already-proven thread-bound turn path
+(`run_thread_bound_turn`), so the feature is a new *entry point* to grounded chat
+rather than a new retrieval mode. Per-turn plumbing (`context_thread_id` on
+`send_chat_message`) keeps the binding ephemeral: a conversation is never silently
+converted into a thread-bound one, and the user can move between threads inside a
+single conversation. `plan_turn_mode` gives a conversation-level seeded thread
+precedence over ambient context, so "Chat about this thread" keeps its meaning.
+**Rejected:** docking on the left (the nav sidebar already owns that edge; chat would
+either displace navigation or push it into the middle of the window); replacing the
+full-page view with the panel (long sessions and conversation management still want
+the room); making list scope part of the context (narrowing RAG by the visible
+filter/search is a genuinely different retrieval mode, not just a new entry point —
+larger change, deferred); including selected body text as a quotable chip (needs new
+postMessage plumbing through the sandboxed `EmailHtmlFrame` bridge; deferred).
 
 ## 2026-08-06 — One universal macOS build; embedded AI refused on Intel at runtime
 

@@ -346,6 +346,8 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
         model,
         history,
         categories,
+        // Headless REPL — no main view to take ambient thread context from.
+        None,
     )
     .await?;
 

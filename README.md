@@ -4,11 +4,11 @@
 
 Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linux.
 
-[Documentation](https://getemailops.com/docs/)
+[Documentation](https://getemailops.com/en/docs/)
 
 ## Screenshots
 
-![EmailOps chat screenshot](.github/assets/chat_screenshot.jpg)
+![EmailOps chat demo — asking a question about your inbox and getting a cited answer](.github/assets/chat_demo.gif)
 
 ## Download
 

@@ -149,6 +149,23 @@
   "threadContext": {
     "label": "Contexto del hilo de correo"
   },
+  "panel": {
+    "title": "Chat",
+    "open": "Abrir panel de chat",
+    "close": "Cerrar panel de chat",
+    "expand": "Abrir vista completa del chat",
+    "resize": "Redimensionar el panel de chat",
+    "conversationPicker": "Cambiar de conversación",
+    "emptyHint": "Pregunta sobre el correo que tienes abierto, o sobre cualquier cosa de tu bandeja.",
+    "context": {
+      "using": "Usando como contexto",
+      "remove": "No usar este hilo como contexto",
+      "restore": "Usar el hilo abierto como contexto",
+      "noSubject": "(sin asunto)",
+      "hint": "Las respuestas se basan solo en este hilo. Quítalo para buscar en toda tu bandeja."
+    },
+    "newChat": "Chat nuevo"
+  },
   "conversations": {
     "empty": "Aún no hay conversaciones.",
     "confirmDelete": "¿Confirmar?",

@@ -37,6 +37,8 @@ interface InboxProps {
    *  combine this with `showCategoryFilter` to gate visibility for non-Gmail accounts. */
   availableCategories?: EmailCategory[];
   onCollapse?: () => void;
+  /** Start a fresh chat and dock the panel. Omitted when AI is disabled. */
+  onNewChat?: () => void;
   onOpenInTab?: (email: Email) => void;
   /** Open a new chat session seeded with the cleaned email thread. */
   onChatAboutThread?: (email: Email) => void;
@@ -151,6 +153,7 @@ export function Inbox({
   showCategoryFilter = true,
   availableCategories,
   onCollapse,
+  onNewChat,
   onOpenInTab,
   onChatAboutThread,
   disableAutoSelect = false,
@@ -159,7 +162,7 @@ export function Inbox({
   accountId,
   onSearch,
 }: InboxProps) {
-  const { t } = useTranslation(['inbox', 'common']);
+  const { t } = useTranslation(['inbox', 'common', 'chat']);
   // Only render tabs for categories the active account is actually
   // syncing. Unspecified → render no tabs. Previously this fell back to a
   // hard-coded Primary/Social/Updates trio, which on a fresh app start
@@ -205,7 +208,11 @@ export function Inbox({
     },
     [accountId, onSelectCategories, visibleCategories],
   );
-  const widthClass = fullWidth ? 'flex-1' : 'w-96';
+  // `min-w-0` pairs with `flex-1`: without it the column keeps its
+  // min-content width and overflows (clipping its own toolbar buttons) rather
+  // than narrowing when something else — e.g. the docked chat panel — takes
+  // horizontal space.
+  const widthClass = fullWidth ? 'flex-1 min-w-0' : 'w-96';
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Unified ("All accounts") mode: rows get a colored per-account indicator,
@@ -441,6 +448,27 @@ export function Inbox({
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
                 {t('common:state.loading')}
               </div>
+            )}
+            {/* Always-visible new-chat affordance. Sits in the list toolbar
+                rather than the AI FEATURES sidebar section so starting a chat
+                never depends on that section being expanded or scrolled into
+                view. Starts a fresh conversation and docks the panel. */}
+            {onNewChat && (
+              <button
+                onClick={onNewChat}
+                title={t('chat:panel.newChat')}
+                aria-label={t('chat:panel.newChat')}
+                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+              </button>
             )}
             {onCollapse && (
               <button

@@ -200,6 +200,9 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         model.to_string(),
         history,
         categories,
+        // Eval cases drive the retrieval pipeline; there is no open view to
+        // ground a turn in.
+        None,
     )
     .await?;
 

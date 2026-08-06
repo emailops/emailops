@@ -106,6 +106,13 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_tools_called: Vec<String>,
 
+    /// Tool names that must NOT appear in `trace.tool_calls`. For turns whose
+    /// correct behaviour is a plain text answer — e.g. thread-bound
+    /// translate/summarise requests, which must not reach for
+    /// `generate_email_draft` and save a draft instead of answering.
+    #[serde(default)]
+    pub expected_tools_not_called: Vec<String>,
+
     /// Case-insensitive substrings that must appear in the final assistant content.
     #[serde(default)]
     pub expected_answer_contains: Vec<String>,
