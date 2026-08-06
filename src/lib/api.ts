@@ -1026,6 +1026,14 @@ export async function setPref(key: string, value: string): Promise<void> {
   return invoke('set_pref', { key, value });
 }
 
+/** OS notification permission state after asking for it if — and only if — the
+ *  system has not decided yet: `'granted' | 'denied' | 'prompt'`. Always
+ *  `'granted'` on desktop. Call this from the action that needs notifications,
+ *  never at startup: iOS raises its prompt once and a denial is permanent. */
+export async function ensureNotificationPermission(): Promise<string> {
+  return invoke('ensure_notification_permission');
+}
+
 /**
  * The context window the embedded model uses on this machine when the
  * `chat.n_ctx` preference is unset (RAM-tiered: 8192 / 16384 / 32768).

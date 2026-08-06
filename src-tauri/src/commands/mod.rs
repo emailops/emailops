@@ -16,6 +16,7 @@ pub mod filters;
 pub mod junk;
 pub mod lenses;
 pub mod memory;
+pub mod notifications;
 pub mod preferences;
 pub mod prompts;
 pub mod search;

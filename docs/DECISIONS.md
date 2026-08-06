@@ -754,6 +754,113 @@ that gap is closed). `git update-index --skip-worktree` (per-clone, invisible,
 and it hides real changes to the file too). A pre-commit check alone (fires on
 every commit after a build and leaves the developer to clean up by hand).
 
+## 2026-08-06 — The model catalog is filtered by what the device can actually run
+
+**Decision:** `list_catalog_models` and `start_model_download` both route through
+a pure `ai::model_fit::model_fit(size, min_ram_gb, memory, disk, hard_limit)`.
+Where the memory limit is **hard** (iOS: `os_proc_available_memory()` is a jetsam
+ceiling) an entry whose weights plus ~768 MB of runtime do not fit is not offered
+at all, and a direct download call is refused. Where it is **soft** (desktop, the
+OS pages) an undersized machine still gets every entry — the pre-existing
+behaviour. Disk is checked first, with 1 GB of headroom. On phones the download
+button asks for confirmation showing the size, because WKWebView cannot tell
+Wi-Fi from cellular.
+**Context:** An iPhone was offered the same catalog as a workstation, up to a
+22 GB GGUF. The old guard compared `total_ram_gb()` against `min_ram_gb`, which
+on iOS compares a ~4 GB per-process allowance against a figure describing a whole
+machine ("8+ GB RAM") — so it simultaneously offered models that would be killed
+and refused the 3 GB model that actually fits. The two limits are different in
+kind, not degree, which is why the planner takes `hard_limit` as an input rather
+than branching on `cfg!(target_os)` internally.
+**Rejected:** Hiding oversized entries in the UI only (a stale list or a direct
+command call still starts a multi-gigabyte transfer that ends in a process kill).
+Filtering on `min_ram_gb` on iOS too (rejects everything, see above). A true
+cellular check (needs an `NWPathMonitor` Swift shim — the same shim the Foundation
+Models work will add; revisit then).
+## 2026-08-06 — Notification permission is requested from the reminder toggle
+
+**Decision:** `ensure_notification_permission` is called when the user switches
+calendar reminders **on**, never at startup, and only raises the system prompt
+when the state is still undecided. A denial surfaces as an inline note saying
+in-app reminders still work.
+**Context:** Nothing requested permission at all, so on iOS the first
+`notification().show()` from the meeting loop would be dropped. iOS raises its
+prompt once and a denial is permanent until the user visits Settings, so the ask
+has to land where it explains itself — the moment someone asks to be reminded.
+**Rejected:** Requesting at launch (an unexplained prompt on first run, and it
+burns the single ask). Requesting inside the notification loop (a system dialog
+appearing out of nowhere, minutes into a meeting).
+## 2026-08-06 — iOS v1 syncs only while the app is open
+
+**Decision:** The first iOS release has no background refresh: no
+`BGTaskScheduler`, no push, no `UIBackgroundModes`. Mail and calendar move when
+the app is in the foreground, which is what the existing in-process Tokio
+schedulers already do. This is a stated product limitation, to appear in the App
+Store description and the review notes rather than be discovered.
+**Context:** iOS suspends the process on backgrounding, so the 15-second
+connectivity probe, the Gmail poll, the calendar poll and the meeting-reminder
+loop all stop. Real background delivery needs either `BGAppRefreshTask` (best
+effort, minutes-to-hours latency, still no guarantee) or provider push, and Gmail
+push requires a server to hold the subscription — which the architecture
+deliberately does not have.
+**Rejected:** Shipping `BGAppRefreshTask` for v1 (real work, and it buys
+unpredictable latency rather than "new mail arrives"). A push relay server
+(introduces exactly the always-on third party the local-first design exists to
+avoid). Saying nothing and letting reviewers and users find out.
+## 2026-08-06 — Background refresh is one bounded sync pass, not mail delivery
+
+**Decision:** iOS registers a single `BGAppRefreshTask`
+(`com.emailops.app.refresh`). When the system grants a window, the app syncs at
+most the **3 stalest** enabled accounts, oldest-first, inside a 20-second budget,
+refusing to start another account without `PER_ACCOUNT_RESERVE` (6s) left and
+stopping between accounts if iOS calls the expiration handler. The decisions are
+pure (`services::background_refresh`); the Objective-C side
+(`src-tauri/ios/EmailOpsBackgroundRefresh.m`, carried into the generated project
+by `scripts/ios_patch_project.sh`) only registers, schedules and reports
+completion. `run_refresh` is exposed to it as two `extern "C"` functions.
+**Context:** Suspended apps do not sync, so before this the inbox was as stale as
+the last time the app was open. Background refresh does not change the
+"foreground-only" decision for *delivery* — iOS grants these windows
+opportunistically, minutes to hours apart, never on demand, never in Low Power
+Mode and never after a force-quit. What it buys is that opening the app usually
+shows a current inbox instead of a spinner. Ordering by staleness rather than
+account order is what stops a short window from starving the last account
+permanently.
+**Rejected:** Syncing every account per window (the window is spent on
+connection setup, and the last account still starves). Aborting a sync mid-flight
+on expiry (a half-written sync is worse than a stale one; the flag is checked
+between accounts instead). Owning the `UIApplicationDelegate` to register the
+handler (couples us to Tauri's iOS runtime internals, which create the delegate)
+— registration happens from `+load`, falling back to
+`UIApplicationDidFinishLaunchingNotification`. Marketing it as background
+delivery: it is not, and saying so would earn a one-star review per delayed mail.
+## 2026-08-06 — iOS selects the Apple protected keychain explicitly, after first unlock
+
+**Decision:** `services::keychain::init_native_store` dispatches on a pure
+`store_choice(target_os)`: iOS installs `keyring::use_apple_keychain_store`
+(the data-protection keychain, default access group, no iCloud sync), every
+other platform keeps `keyring::use_native_store`. iOS entries are created with
+the `access-policy = AfterFirstUnlockThisDeviceOnly` modifier; no other platform
+receives modifiers.
+**Context:** `keyring::use_native_store` matches android/macos/windows/linux/
+freebsd/openbsd and falls through to keyring-core's `sample` store for anything
+else — including iOS. That store is documented as "explicitly *not* for use in
+production apps", holds credentials in memory, and does not persist between
+runs. On a device this read back correctly for the life of the process and was
+gone at next launch, so every account demanded authentication on every launch.
+It was invisible in development because `services::accounts::use_dev_tokens`
+sends debug builds to the `dev_tokens` table instead of the keychain — only a
+release build on real hardware could surface it. The access policy is the
+second half: the protected store defaults to "accessible when unlocked", which
+a background refresh (the point of which is running while the phone is in a
+pocket) could never read.
+**Rejected:** Plain `AfterFirstUnlock` — it lets a mail credential ride an
+encrypted backup onto a different device, which a local-first client should not
+do. Leaving the default `WhenUnlocked` policy — background refresh would fail
+with an unreadable-credential error every time the screen was off. Keeping
+`use_native_store` and filing an upstream issue — correct to file, but the app
+cannot ship on the sample store while waiting.
+
 ## 2026-08-14 — Chat is scoped to one account, coupled to the mail list except in unified view
 
 **Decision:** A chat conversation always answers from exactly one concrete account,

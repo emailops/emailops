@@ -3,6 +3,7 @@ pub mod agent_search;
 pub mod ai;
 pub mod app_handle;
 pub mod attachments;
+pub mod background_refresh;
 pub mod background_tasks;
 pub mod calendar;
 pub mod chat;

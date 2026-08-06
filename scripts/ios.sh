@@ -70,6 +70,35 @@ if [ -z "${APPLE_DEVELOPMENT_TEAM:-}" ]; then
     echo "      Simulator builds work; device builds will fail at code signing." >&2
 fi
 
+# NOTE on the build number: `tauri ios build` rewrites CFBundleVersion in the
+# generated Info.plist from the Tauri config on every build, so editing that
+# file here would be overwritten. The value that actually reaches the bundle is
+# `bundle.iOS.bundleVersion` in src-tauri/tauri.conf.json — bump it there for a
+# re-upload of the same marketing version.
+
+# Export method. The tracked default is `app-store-connect`, which is what an
+# upload needs and what `scripts/ios_patch_project.sh` restores — but that IPA
+# is signed for distribution and will not install on a device. For a build you
+# intend to run on your own phone:
+#
+#   IOS_EXPORT_METHOD=development make ios-build
+#
+# Accepted by xcodebuild: app-store-connect | release-testing | development |
+# debugging. The patch script only overwrites the template's `debugging`, so a
+# deliberate choice here survives a later run of it.
+EXPORT_OPTIONS="$REPO_ROOT/src-tauri/gen/apple/ExportOptions.plist"
+if [ -n "${IOS_EXPORT_METHOD:-}" ] && [ -f "$EXPORT_OPTIONS" ]; then
+    case "$IOS_EXPORT_METHOD" in
+        app-store-connect|release-testing|development|debugging) ;;
+        *)
+            echo "ERROR: IOS_EXPORT_METHOD must be app-store-connect, release-testing, development or debugging." >&2
+            exit 2
+            ;;
+    esac
+    /usr/libexec/PlistBuddy -c "Set :method $IOS_EXPORT_METHOD" "$EXPORT_OPTIONS"
+    echo "export method set to $IOS_EXPORT_METHOD"
+fi
+
 # Drop the RVM gem environment for this process tree only — see note 2 above.
 run_tauri() {
     env -u GEM_HOME -u GEM_PATH -u MY_RUBY_HOME -u IRBRC \

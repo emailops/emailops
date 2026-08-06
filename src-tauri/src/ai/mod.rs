@@ -13,4 +13,5 @@ pub mod tracing;
 pub mod llama_cpp;
 
 pub mod model_catalog;
+pub mod model_fit;
 pub mod model_manager;

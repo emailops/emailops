@@ -36,6 +36,9 @@ targets:
       - path: Sources
       - path: Assets.xcassets
       - path: Externals
+        # Linked via LIBRARY_SEARCH_PATHS, never copied: libapp.a is 336 MB and a
+        # static archive inside the .app is a rejected upload.
+        buildPhase: none
       - path: emailops_iOS
       - path: assets
         buildPhase: resources
@@ -45,6 +48,15 @@ targets:
       path: emailops_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        # Background refresh. The identifier must be declared here or the system
+        # rejects the request; the handler is registered in
+        # Sources/emailops/EmailOpsBackgroundRefresh.m.
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.emailops.app.refresh
+        # TLS and the system keychain only — exempt from export compliance.
+        ITSAppUsesNonExemptEncryption: false
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
@@ -57,7 +69,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.6.5
-        CFBundleVersion: "0.6.5"
+        # Build number, not the marketing version: App Store Connect requires this
+        # to increase for every upload of one CFBundleShortVersionString. Override
+        # per build with IOS_BUILD_NUMBER (scripts/ios.sh).
+        CFBundleVersion: "1"
         # OAuth callback schemes. iOS only hands a URL to the app if its scheme
         # is declared here — declaring it in tauri.conf.json alone merely embeds
         # it in the binary, which is not what the OS consults when routing.
@@ -74,6 +89,11 @@ targets:
               - com.emailops.app
     entitlements:
       path: emailops_iOS/emailops_iOS.entitlements
+      properties:
+        # Raises the jetsam ceiling so a 3-4B Q4 model can actually be held.
+        # util/system.rs sizes the runtime from os_proc_available_memory(),
+        # which already reflects whether this entitlement applied.
+        com.apple.developer.kernel.increased-memory-limit: true
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -98,6 +118,8 @@ targets:
       # never sees cargo's link directives — so without this entry the build
       # dies with "Undefined symbols for architecture arm64: _vDSP_maxv, …".
       - sdk: Accelerate.framework
+      # BGTaskScheduler, for background refresh.
+      - sdk: BackgroundTasks.framework
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework

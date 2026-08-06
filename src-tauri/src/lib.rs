@@ -409,6 +409,20 @@ pub fn run() {
                 sync_locks.clone(),
                 connectivity.online_flag(),
             );
+
+            // Same ingredients the scheduler just took, published for the iOS
+            // background-refresh entry point — which is a C function invoked by
+            // the system and so has no way to be handed state. Installed on
+            // every platform (it is a cheap struct) so the wiring cannot rot
+            // behind a `cfg` that only one target compiles.
+            services::background_refresh::install(services::background_refresh::RefreshContext {
+                db: db.clone(),
+                app_data_dir: app_data_dir.clone(),
+                app: app.handle().clone(),
+                ai_background: ai_background.clone(),
+                sync_abort_flags: sync_abort_flags.clone(),
+                sync_locks: sync_locks.clone(),
+            });
             eprintln!(
                 "[startup] [{:.0}ms] sync scheduler started",
                 t.elapsed().as_secs_f64() * 1000.0
@@ -527,6 +541,7 @@ pub fn run() {
             commands::search::list_ollama_models,
             commands::search::get_ai_model,
             commands::search::set_ai_model,
+            commands::notifications::ensure_notification_permission,
             commands::calendar::get_calendar_events,
             commands::calendar::get_calendars,
             commands::calendar::set_calendar_visible,

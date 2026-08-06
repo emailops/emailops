@@ -338,6 +338,13 @@ export interface CatalogModel {
    * (via linkLocalModel) rather than a downloaded copy. Only meaningful
    * when isLocal is true. */
   isLinked: boolean;
+  /** How this entry stands on this device — see `ai::model_fit` on the Rust
+   * side. `tooLarge` only occurs where the memory limit is enforced by
+   * killing the process (iOS). */
+  fit: 'fits' | 'tight' | 'tooLarge' | 'noDiskSpace';
+  /** Whether a download should be offered. The backend refuses the download
+   * on the same decision, so this is presentation, not the guard. */
+  downloadable: boolean;
 }
 
 /** A GGUF file that is already downloaded locally. */

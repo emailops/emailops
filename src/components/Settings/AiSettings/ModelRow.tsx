@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import type { CatalogModel, ModelDownloadProgress } from '@/types';
 import { formatBytes, formatProgress } from './helpers';
 
@@ -22,8 +24,14 @@ export function ModelRow({
   onDelete,
 }: ModelRowProps) {
   const { t } = useTranslation(['common', 'settings']);
+  const { isStacked } = useResponsiveLayout();
   const isDownloading = downloadProgress !== null && downloadProgress.status === 'downloading';
   const isVerifying = downloadProgress?.status === 'verifying';
+  // Phones ask before starting a multi-gigabyte transfer. There is no way to
+  // detect cellular from the webview (WKWebView exposes no NetworkInformation,
+  // and NWPathMonitor would need a Swift shim), so the honest thing is to name
+  // the size and let the user decide whether they are on Wi-Fi.
+  const [confirmingDownload, setConfirmingDownload] = useState(false);
   const pct =
     downloadProgress && downloadProgress.totalBytes > 0
       ? Math.round((downloadProgress.downloadedBytes / downloadProgress.totalBytes) * 100)
@@ -87,16 +95,48 @@ export function ModelRow({
             >
               Cancel
             </button>
-          ) : (
+          ) : model.downloadable ? (
             <button
-              onClick={onDownload}
+              onClick={() => (isStacked ? setConfirmingDownload(true) : onDownload())}
               className="px-2 py-1 text-xs bg-primary-700 hover:bg-primary-600 text-white rounded transition-colors"
             >
               Download
             </button>
+          ) : (
+            <span className="px-2 py-1 text-xs text-gray-500">
+              {model.fit === 'noDiskSpace'
+                ? t('settings:ai.modelNoDiskSpace')
+                : t('settings:ai.modelTooLargeForDevice')}
+            </span>
           )}
         </div>
       </div>
+
+      {/* Size confirmation, phones only. */}
+      {confirmingDownload && (
+        <div className="mt-2 rounded border border-amber-800 bg-amber-900/20 p-2">
+          <p className="text-xs text-amber-300">
+            {t('settings:ai.downloadSizeWarning', { size: formatBytes(model.sizeBytes) })}
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmingDownload(false)}
+              className="px-2 py-1 text-xs text-gray-300 hover:bg-gray-700 rounded transition-colors"
+            >
+              {t('common:actions.cancel')}
+            </button>
+            <button
+              onClick={() => {
+                setConfirmingDownload(false);
+                onDownload();
+              }}
+              className="px-2 py-1 text-xs bg-primary-700 hover:bg-primary-600 text-white rounded transition-colors"
+            >
+              {t('settings:ai.downloadAnyway')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {(isDownloading || isVerifying) && (

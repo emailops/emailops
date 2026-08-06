@@ -122,6 +122,17 @@ pub fn is_rosetta_translated() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether [`total_ram_bytes`] is a ceiling the OS enforces by killing the
+/// process, rather than a soft figure it pages around.
+///
+/// True only on iOS, where jetsam terminates an app that exceeds its
+/// per-process allowance. Everywhere else "not enough RAM" means slow, so a
+/// decision that depends on this must degrade to a warning rather than a veto —
+/// see `ai::model_fit`.
+pub const fn memory_limit_is_hard() -> bool {
+    cfg!(target_os = "ios")
+}
+
 /// RAM tier for the AUTOMATIC context window (`chat.n_ctx` unset/0).
 ///
 /// Hard-capped at 32768 regardless of RAM — anything larger is opt-in via

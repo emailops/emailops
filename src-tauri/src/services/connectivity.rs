@@ -25,9 +25,14 @@ use tauri::Emitter;
 
 /// Endpoint to probe. Picked because it is globally anycasted, returns small
 /// responses, and is unaffected by individual provider outages (e.g. Gmail
-/// down does not imply we're offline). 1.1.1.1 also responds to plain HTTP so
-/// we don't pay a TLS handshake on every probe.
-const PROBE_URL: &str = "http://1.1.1.1/";
+/// down does not imply we're offline).
+///
+/// HTTPS, not plain HTTP. The earlier `http://` saved a handshake but made this
+/// the app's only cleartext request — which on iOS means an App Transport
+/// Security exception, and an exception is a permanent hole justified by a
+/// liveness check. The handshake cost is paid once: the probe reuses one
+/// keep-alive connection across the 15-second loop.
+const PROBE_URL: &str = "https://1.1.1.1/";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 

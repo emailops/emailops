@@ -128,7 +128,11 @@
     "test": "Test",
     "testing": "Testing…",
     "useThisModelTitle": "Use this model",
-    "deleteModelFileTitle": "Delete model file"
+    "deleteModelFileTitle": "Delete model file",
+    "modelTooLargeForDevice": "Too large for this device",
+    "modelNoDiskSpace": "Not enough storage",
+    "downloadSizeWarning": "This downloads {{size}}. Use Wi-Fi unless you have data to spare.",
+    "downloadAnyway": "Download"
   },
   "confirmDisable": {
     "title": "Disable AI features?",
@@ -431,6 +435,7 @@
     "accountToggleAria": "Toggle calendar integration for {{email}}",
     "notificationsLabel": "Meeting notifications",
     "notificationsDesc": "Get notified before an upcoming meeting, with a direct join link.",
+    "notificationsBlocked": "Your device is blocking notifications for EmailOps. Reminders still appear inside the app; to get them on your lock screen, allow notifications in system settings.",
     "leadTimeLabel": "Notification lead time",
     "leadTimeDesc": "How long before the meeting starts the notification fires.",
     "minutesOption": "{{n}} minutes",

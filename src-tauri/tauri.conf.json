@@ -36,7 +36,8 @@
       "resources/models/nomic-embed-text-v1.5-q4_k_m.gguf": "models/embed/nomic-embed-text-v1.5-q4_k_m.gguf"
     },
     "iOS": {
-      "minimumSystemVersion": "26.0"
+      "minimumSystemVersion": "26.0",
+      "bundleVersion": "1"
     },
     "macOS": {
       "minimumSystemVersion": "12.0",

@@ -11,6 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::model_catalog::{ModelKind, CATALOG};
+use crate::ai::model_fit::{model_fit, ModelFit};
 use crate::ai::model_manager::{self, LocalModel, ModelDownloadProgress};
 use crate::models::error::AppError;
 use crate::AppState;
@@ -39,6 +40,12 @@ pub struct CatalogModelResponse {
     /// (via `link_local_model`) rather than a downloaded copy. Only
     /// meaningful when `is_local` is true.
     pub is_linked: bool,
+    /// How this entry stands on this device: `fits` | `tight` | `tooLarge` |
+    /// `noDiskSpace`. See `ai::model_fit`.
+    pub fit: String,
+    /// Whether the UI should offer a download. False on a phone for entries
+    /// whose weights cannot fit under the per-process memory ceiling.
+    pub downloadable: bool,
 }
 
 #[tauri::command]
@@ -46,23 +53,42 @@ pub async fn list_catalog_models(state: State<'_, AppState>) -> Result<Vec<Catal
     let local = model_manager::list_local_models(&state.app_data_dir);
     let local_by_id: HashMap<&str, &model_manager::LocalModel> = local.iter().map(|m| (m.id.as_str(), m)).collect();
 
+    // Probed once for the whole list rather than per entry: both are syscalls,
+    // and a listing where two rows disagreed about the free disk would be worse
+    // than one that is a few kilobytes stale.
+    let available_memory = crate::util::system::total_ram_bytes();
+    let available_disk = crate::util::system::available_disk_bytes(&state.app_data_dir);
+    let hard_limit = crate::util::system::memory_limit_is_hard();
+
+    let fit_of = |m: &crate::ai::model_catalog::CatalogModel| {
+        model_fit(m.size_bytes, m.min_ram_gb, available_memory, available_disk, hard_limit)
+    };
+
     let models: Vec<CatalogModelResponse> = CATALOG
         .iter()
-        .map(|m| CatalogModelResponse {
-            id: m.id.to_string(),
-            display_name: m.display_name.to_string(),
-            kind: match m.kind {
-                ModelKind::Chat => "chat".to_string(),
-                ModelKind::Embedding => "embedding".to_string(),
-            },
-            size_bytes: m.size_bytes,
-            context_window: m.context_window,
-            license: m.license.to_string(),
-            min_ram_gb: m.min_ram_gb,
-            recommended: m.recommended,
-            supports_tools: m.supports_tools,
-            is_local: local_by_id.contains_key(m.id),
-            is_linked: local_by_id.get(m.id).map(|m| m.is_linked).unwrap_or(false),
+        .map(|m| {
+            let fit = fit_of(m);
+            let is_local = local_by_id.contains_key(m.id);
+            CatalogModelResponse {
+                id: m.id.to_string(),
+                display_name: m.display_name.to_string(),
+                kind: match m.kind {
+                    ModelKind::Chat => "chat".to_string(),
+                    ModelKind::Embedding => "embedding".to_string(),
+                },
+                size_bytes: m.size_bytes,
+                context_window: m.context_window,
+                license: m.license.to_string(),
+                min_ram_gb: m.min_ram_gb,
+                recommended: m.recommended,
+                supports_tools: m.supports_tools,
+                is_local,
+                is_linked: local_by_id.get(m.id).map(|m| m.is_linked).unwrap_or(false),
+                fit: fit.as_str().to_string(),
+                // An already-downloaded model stays actionable (delete/select)
+                // whatever the probes now say.
+                downloadable: fit.is_downloadable() || is_local,
+            }
         })
         .collect();
 
@@ -246,26 +272,35 @@ pub async fn start_model_download(
     let entry = crate::ai::model_catalog::find(&model_id)
         .ok_or_else(|| AppError::NotFound(format!("Model '{}' not found in catalog", model_id)))?;
 
-    // Check free disk space.
+    // Refuse a download this device cannot use, on the same decision the
+    // catalog listing renders from — the UI hides these entries, but a stale
+    // list or a direct call must not start a 3 GB transfer that ends in a
+    // jetsam kill or a full disk.
     let app_data_dir = state.app_data_dir.clone();
-    let required = entry.size_bytes + entry.size_bytes / 10; // +10% buffer
-    if let Some(avail) = crate::util::system::available_disk_bytes(&app_data_dir) {
-        if avail < required {
+    let available_disk = crate::util::system::available_disk_bytes(&app_data_dir);
+    match crate::ai::model_fit::model_fit(
+        entry.size_bytes,
+        entry.min_ram_gb,
+        crate::util::system::total_ram_bytes(),
+        available_disk,
+        crate::util::system::memory_limit_is_hard(),
+    ) {
+        ModelFit::NoDiskSpace => {
             return Err(AppError::AiError(format!(
-                "Not enough disk space: need {:.1} GB, available {:.1} GB",
-                required as f64 / 1e9,
-                avail as f64 / 1e9
+                "Not enough disk space: {} needs {:.1} GB plus room to spare, available {:.1} GB",
+                entry.display_name,
+                entry.size_bytes as f64 / 1e9,
+                available_disk.unwrap_or(0) as f64 / 1e9
             )));
         }
-    }
-
-    // Check RAM ceiling.
-    let ram_gb = crate::util::system::total_ram_gb();
-    if ram_gb > 0 && ram_gb < entry.min_ram_gb as u64 {
-        return Err(AppError::AiError(format!(
-            "This model requires {} GB RAM but your system has {} GB",
-            entry.min_ram_gb, ram_gb
-        )));
+        ModelFit::TooLarge => {
+            return Err(AppError::AiError(format!(
+                "{} needs about {:.1} GB of memory, more than this device allows a single app",
+                entry.display_name,
+                entry.size_bytes as f64 / 1e9
+            )));
+        }
+        ModelFit::Fits | ModelFit::Tight => {}
     }
 
     let model_id_clone = model_id.clone();

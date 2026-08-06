@@ -128,7 +128,11 @@
     "test": "Probar",
     "testing": "Probando…",
     "useThisModelTitle": "Usar este modelo",
-    "deleteModelFileTitle": "Eliminar el archivo del modelo"
+    "deleteModelFileTitle": "Eliminar el archivo del modelo",
+    "modelTooLargeForDevice": "Demasiado grande para este dispositivo",
+    "modelNoDiskSpace": "Almacenamiento insuficiente",
+    "downloadSizeWarning": "Esta descarga ocupa {{size}}. Usa Wi-Fi salvo que te sobren datos.",
+    "downloadAnyway": "Descargar"
   },
   "confirmDisable": {
     "title": "¿Desactivar las funciones de IA?",
@@ -431,6 +435,7 @@
     "accountToggleAria": "Activar o desactivar la integración de calendario de {{email}}",
     "notificationsLabel": "Notificaciones de reuniones",
     "notificationsDesc": "Recibe un aviso antes de cada reunión, con enlace directo para unirte.",
+    "notificationsBlocked": "Tu dispositivo está bloqueando las notificaciones de EmailOps. Los recordatorios siguen apareciendo dentro de la app; para verlos en la pantalla de bloqueo, permite las notificaciones en los ajustes del sistema.",
     "leadTimeLabel": "Antelación del aviso",
     "leadTimeDesc": "Cuánto tiempo antes del inicio de la reunión se envía el aviso.",
     "minutesOption": "{{n}} minutos",

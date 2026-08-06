@@ -31,6 +31,8 @@ export function CalendarSettings() {
   const setIntegrationEnabled = useCalendarIntegrationStore((s) => s.setEnabled);
   const capableAccounts = calendarCapableAccounts(accounts);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  /** The OS is refusing notifications — the toggle is on but nothing arrives. */
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
   const [leadMinutes, setLeadMinutes] = useState<number>(DEFAULT_LEAD_MINUTES);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,12 +159,31 @@ export function CalendarSettings() {
     const previous = notificationsEnabled;
     setNotificationsEnabled(next);
     setError(null);
+    setNotificationsBlocked(false);
     api.setPref('calendar_notifications_enabled', next ? 'true' : 'false').catch((e) => {
       // Revert the optimistic flip and surface the failure.
       setNotificationsEnabled(previous);
       setError(errorText(e));
       addLog('error', 'system', `Failed to save calendar notification pref: ${errorText(e)}`);
     });
+    if (!next) return;
+    // Ask the OS only now. iOS raises its prompt once and a denial is
+    // permanent, so it must land on a screen where the user has just said they
+    // want reminders — not at startup, where the ask has no context. A no-op
+    // on desktop, where the plugin always reports granted.
+    api
+      .ensureNotificationPermission()
+      .then((state) => {
+        setNotificationsBlocked(state === 'denied');
+        if (state === 'denied') {
+          addLog('info', 'system', 'Meeting reminders are enabled but the OS is blocking notifications');
+        }
+      })
+      .catch((e) => {
+        // Not fatal: the in-app reminder banner still fires. Only the OS
+        // notification is lost, so this is logged rather than raised.
+        addLog('error', 'system', `Notification permission check failed: ${errorText(e)}`);
+      });
   };
 
   const loadCalendarsFor = (accountId: string) => {
@@ -324,6 +345,9 @@ export function CalendarSettings() {
               />
             </button>
           </div>
+          {notificationsBlocked && (
+            <p className="mt-2 text-xs text-amber-400">{t('settings:calendar.notificationsBlocked')}</p>
+          )}
         </section>
 
         <section>

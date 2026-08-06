@@ -128,7 +128,11 @@
     "test": "Testen",
     "testing": "Wird getestet…",
     "useThisModelTitle": "Dieses Modell verwenden",
-    "deleteModelFileTitle": "Modelldatei löschen"
+    "deleteModelFileTitle": "Modelldatei löschen",
+    "modelTooLargeForDevice": "Zu groß für dieses Gerät",
+    "modelNoDiskSpace": "Nicht genug Speicher",
+    "downloadSizeWarning": "Dieser Download umfasst {{size}}. Nutze WLAN, sofern du kein Datenvolumen übrig hast.",
+    "downloadAnyway": "Herunterladen"
   },
   "confirmDisable": {
     "title": "KI-Funktionen deaktivieren?",
@@ -431,6 +435,7 @@
     "accountToggleAria": "Kalender-Integration für {{email}} umschalten",
     "notificationsLabel": "Meeting-Benachrichtigungen",
     "notificationsDesc": "Werde vor einem anstehenden Meeting benachrichtigt, mit direktem Teilnahme-Link.",
+    "notificationsBlocked": "Dein Gerät blockiert Benachrichtigungen für EmailOps. Erinnerungen erscheinen weiterhin in der App; für den Sperrbildschirm musst du Benachrichtigungen in den Systemeinstellungen erlauben.",
     "leadTimeLabel": "Vorlaufzeit der Benachrichtigung",
     "leadTimeDesc": "Wie lange vor Beginn des Meetings die Benachrichtigung erscheint.",
     "minutesOption": "{{n}} Minuten",
