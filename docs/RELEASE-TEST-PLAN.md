@@ -164,9 +164,9 @@ integration.
 ## macOS — no VM story exists yet (proposed, not implemented)
 
 Unlike Linux/Windows, this repo has **zero** existing tooling for a clean,
-throwaway macOS install test. `verify-mac`/`verify-mac-intel`
-(`Makefile:325-397`) check the *build artifact* (codesign, notarization
-stapling, Gatekeeper, architecture) but never install or launch it — release
+throwaway macOS install test. `verify-mac` checks the *build artifact*
+(codesign, notarization stapling, Gatekeeper, both universal slices present)
+but never installs or launches it — release
 validation for macOS today is "the developer's own already-provisioned dev
 Mac, run manually." There's no Azure-Mac-VM equivalent to lean on (Azure
 doesn't offer flexible ephemeral Apple-silicon VMs the way it offers T4 GPU

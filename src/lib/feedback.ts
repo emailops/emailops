@@ -21,6 +21,10 @@ export interface FeedbackTech {
   osVersion: string;
   /** CPU architecture, e.g. `aarch64`. May be empty if unavailable. */
   arch: string;
+  /** True when the process is Rosetta-translated. Reported because `arch` is a
+   *  compile-time constant: `x86_64` alone cannot tell a real Intel Mac (which
+   *  cannot run the embedded AI runtime) from a translated one. */
+  translated?: boolean;
   /** Active AI provider, e.g. `llamacpp`. */
   aiProvider: string;
   /** Active AI model, e.g. `qwen3.5-4b`. May be empty. */
@@ -60,7 +64,8 @@ export function friendlyOsName(platform: string): string {
 export function formatFeedbackTech(tech: FeedbackTech): FeedbackTechInfo {
   const name = friendlyOsName(tech.osPlatform);
   const withVersion = tech.osVersion ? `${name} ${tech.osVersion}` : name;
-  const os = tech.arch ? `${withVersion} (${tech.arch})` : withVersion;
+  const archLabel = tech.translated ? `${tech.arch}, Rosetta` : tech.arch;
+  const os = tech.arch ? `${withVersion} (${archLabel})` : withVersion;
   const aiProvider = tech.aiModel ? `${tech.aiProvider} / ${tech.aiModel}` : tech.aiProvider;
   return { version: tech.appVersion, os, aiProvider };
 }

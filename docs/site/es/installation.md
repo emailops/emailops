@@ -38,8 +38,8 @@ catálogo pide 32 GB. La cifra de cada modelo está en el
   CPU y a la RAM del sistema; reserva la cifra del modelo en RAM y cuenta con respuestas
   notablemente más lentas.
 
-Los Mac Intel son la excepción: esa compilación se distribuye sin el runtime de IA integrado —
-mira la [nota más abajo](#direct-download).
+Los Mac Intel son la excepción: el runtime de IA integrado necesita un chip Apple Silicon
+(M1 o posterior) y no puede ejecutarse en ellos — mira la [nota más abajo](#direct-download).
 
 ### Sin IA local
 
@@ -82,9 +82,11 @@ Actualiza después con `brew upgrade --cask emailops`.
 2. Abre el DMG y arrastra **EmailOps.app** a tu carpeta Aplicaciones.
 3. Ábrelo desde Aplicaciones.
 
-> **Mac con Intel:** usa la compilación `EmailOps-macos-intel.dmg`. No incluye el runtime de
-> IA integrado, así que si quieres funciones de IA en un Mac Intel, apunta EmailOps a
-> [Ollama u OpenRouter](../ai-features/#choosing-a-backend).
+> **Mac con Intel:** esta única descarga funciona en cualquier Mac — no hay una compilación
+> aparte para Intel. Las funciones de IA son la excepción: la IA integrada necesita un chip
+> Apple Silicon (M1 o posterior). En un Mac Intel permanece desactivada y EmailOps te explica
+> por qué. Todo lo demás funciona con normalidad. Para la IA, apunta EmailOps a
+> [OpenRouter](../ai-features/#choosing-a-backend).
 
 ## Windows
 

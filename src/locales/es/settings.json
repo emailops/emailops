@@ -76,6 +76,7 @@
     "backend": "Backend de IA",
     "providerEmbeddedLabel": "En la app",
     "providerEmbeddedDesc": "Modelos incluidos. Sin servidor, sin configuración.",
+    "providerEmbeddedUnavailable": "No disponible en este Mac — requiere Apple Silicon.",
     "providerOllamaLabel": "Ollama",
     "providerOllamaDesc": "Servidor Ollama local",
     "providerOpenRouterLabel": "OpenRouter",

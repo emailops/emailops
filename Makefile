@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-mac-intel verify-mac-intel dist-mac-intel build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -305,6 +305,26 @@ hooks:
 # auto-loads `.env.local` with different quoting rules than bash and silently
 # mangles passwords containing $, *, !, \, or backticks. See
 # `.env.signing.example` for the required variables.
+# `build-mac` is universal (arm64 + x86_64) on purpose: ONE macOS download that
+# launches on every Mac, so neither the website nor the user has to figure out
+# which chip they have.
+#
+# The catch to know about: cargo features are per-build, not per-slice, so the
+# x86_64 slice necessarily carries the `llamacpp` default feature WITH Metal
+# (llama-cpp-sys-2 disables Metal only for watchOS, not for Intel). An Intel Mac
+# has no Apple7-family GPU to run those kernels on, and every AI turn dies with
+# `Decode Error -3: unknown`. A build flag cannot express "this slice only", so
+# the exclusion is enforced at RUNTIME instead:
+# `ai::gpu_plan::embedded_runtime_supported` gates the capability probe, the
+# provider loader, model auto-select and both provider pickers.
+#
+# That runtime gate is load-bearing — it is the only thing standing between an
+# Intel Mac and a guaranteed inference failure. Do not weaken it on the
+# assumption that the bundle "shouldn't" reach Intel; this bundle is built to.
+#
+# The cost accepted here is ~100 MB of llama.cpp code and bundled embedding GGUF
+# that an Intel Mac downloads and can never use. That was judged cheaper than
+# maintaining two release pipelines and an arch-detecting download page.
 bootstrap-mac:
 	rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
@@ -329,7 +349,20 @@ verify-mac:
 	echo "── codesign ──"; codesign -dv --verbose=4 "$$APP" 2>&1 | sed 's/^/  /'; \
 	echo "── architectures ──"; file "$$APP/Contents/MacOS/"* 2>&1 | sed 's/^/  /'; \
 	echo "── spctl ──"; spctl -a -t exec -vv "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'
+	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'; \
+	echo "── universal-slice guard ──"; \
+	SLICES=$$(file "$$APP/Contents/MacOS/"* 2>/dev/null); \
+	MISSING=""; \
+	echo "$$SLICES" | grep -q "arm64"  || MISSING="$$MISSING arm64"; \
+	echo "$$SLICES" | grep -q "x86_64" || MISSING="$$MISSING x86_64"; \
+	if [ -n "$$MISSING" ]; then \
+		echo "  ❌ FAIL: this is not a universal bundle — missing:$$MISSING"; \
+		echo "  One macOS DMG has to launch on every Mac; a dropped slice silently strands"; \
+		echo "  that half of users on a download that will not open."; \
+		exit 1; \
+	else \
+		echo "  ✅ universal (arm64 + x86_64); embedded AI is gated off Intel at runtime"; \
+	fi
 
 # Copy the freshly built universal DMG to a stable, versionless name under
 # release/. Tauri always embeds the version in the bundle filename
@@ -343,69 +376,6 @@ dist-mac:
 	mkdir -p release; \
 	cp "$$DMG" release/EmailOps-macos.dmg; \
 	echo "Staged release/EmailOps-macos.dmg (from $$(basename "$$DMG"))"
-
-# Intel-only signed + notarized DMG. Same flow as `build-mac` but targets
-# `x86_64-apple-darwin` only — and ships WITHOUT the embedded llama.cpp AI
-# provider, because (a) Apple-Silicon-only `metal` acceleration means
-# CPU-only inference on Intel is too slow to be a real product experience,
-# and (b) the bundled embedding GGUF (~80 MB) would just bloat the .app
-# without ever being usable. Intel users wanting AI can still configure
-# Ollama or OpenRouter from Settings.
-#
-# Two knobs do the trimming:
-#   --no-default-features → drops the `llamacpp` feature so llama-cpp-2
-#                           isn't compiled into the binary at all.
-#   --config tauri.intel.conf.json → overlays bundle.resources to []
-#                           so the GGUF is excluded from the .app.
-# `fetch-bundled-models` is deliberately NOT a prerequisite — there's no
-# point downloading the GGUF for a build that won't bundle it. Apple
-# Silicon users should still get the universal build from `build-mac`.
-# Requires the x86_64-apple-darwin Rust target, which `bootstrap-mac`
-# already installs. `verify-mac-intel` asserts the GGUF is absent so a
-# config-merge regression is caught at verify time.
-build-mac-intel:
-	@if [ ! -f .env.signing ]; then \
-		echo "ERROR: .env.signing not found. Copy .env.signing.example to .env.signing and fill in your Apple signing secrets."; \
-		exit 1; \
-	fi
-	@set -a; . ./.env.signing; set +a; \
-	if [ -z "$$APPLE_SIGNING_IDENTITY" ]; then echo "ERROR: APPLE_SIGNING_IDENTITY not set in .env.signing"; exit 1; fi; \
-	if [ -z "$$APPLE_ID" ]; then echo "ERROR: APPLE_ID not set in .env.signing"; exit 1; fi; \
-	if [ -z "$$APPLE_PASSWORD" ]; then echo "ERROR: APPLE_PASSWORD not set in .env.signing (must be an app-specific password)"; exit 1; fi; \
-	if [ -z "$$APPLE_TEAM_ID" ]; then echo "ERROR: APPLE_TEAM_ID not set in .env.signing"; exit 1; fi; \
-	if [ -z "$$APPLE_CERTIFICATE" ]; then echo "ERROR: APPLE_CERTIFICATE not set in .env.signing"; exit 1; fi; \
-	if [ -z "$$APPLE_CERTIFICATE_PASSWORD" ]; then echo "ERROR: APPLE_CERTIFICATE_PASSWORD not set in .env.signing"; exit 1; fi; \
-	npm run tauri -- build --target x86_64-apple-darwin --config src-tauri/tauri.intel.conf.json -- --no-default-features
-
-verify-mac-intel:
-	@APP=$$(ls -d src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app 2>/dev/null | head -1); \
-	if [ -z "$$APP" ]; then echo "ERROR: no .app found. Run 'make build-mac-intel' first."; exit 1; fi; \
-	echo "Verifying $$APP"; \
-	echo "── codesign ──"; codesign -dv --verbose=4 "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── architectures ──"; file "$$APP/Contents/MacOS/"* 2>&1 | sed 's/^/  /'; \
-	echo "── spctl ──"; spctl -a -t exec -vv "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── no-bundled-llm guard ──"; \
-	LEAKED=$$(find "$$APP" -name "*.gguf" 2>/dev/null); \
-	if [ -n "$$LEAKED" ]; then \
-		echo "  ❌ FAIL: GGUF files leaked into the Intel bundle:"; echo "$$LEAKED" | sed 's/^/    /'; \
-		echo "  This means tauri.intel.conf.json's bundle.resources override did NOT clear the base config's GGUF entries."; \
-		echo "  Re-check the --config flag and Tauri's config-merge behaviour."; \
-		exit 1; \
-	else \
-		echo "  ✅ no .gguf files in the bundle (Intel build is AI-disabled by policy)"; \
-	fi
-
-# Copy the freshly built Intel DMG to a stable, versionless name under release/.
-# Upload release/EmailOps-macos-intel.dmg to the GitHub Release so it is reachable at
-#   https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos-intel.dmg
-# Run after `make build-mac-intel && make verify-mac-intel`.
-dist-mac-intel:
-	@DMG=$$(ls -t src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg 2>/dev/null | head -1); \
-	if [ -z "$$DMG" ]; then echo "ERROR: no Intel .dmg found. Run 'make build-mac-intel' first."; exit 1; fi; \
-	mkdir -p release; \
-	cp "$$DMG" release/EmailOps-macos-intel.dmg; \
-	echo "Staged release/EmailOps-macos-intel.dmg (from $$(basename "$$DMG"))"
 
 # ── Linux release: .deb + .AppImage ──────────────────────────────────────────
 #

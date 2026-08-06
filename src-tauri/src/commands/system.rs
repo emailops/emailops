@@ -141,6 +141,14 @@ pub async fn get_available_update(state: State<'_, AppState>) -> Result<Option<U
     ))
 }
 
+/// Whether the running process is Rosetta-translated, for the feedback form's
+/// technical-info line. See [`crate::util::system::is_rosetta_translated`] —
+/// without it, `x86_64` in a bug report cannot be told apart from an Intel Mac.
+#[tauri::command]
+pub async fn is_rosetta_translated() -> Result<bool, AppError> {
+    Ok(crate::util::system::is_rosetta_translated())
+}
+
 #[tauri::command]
 pub async fn detect_ai_capability() -> Result<AiCapability, AppError> {
     Ok(ai_capability_from(

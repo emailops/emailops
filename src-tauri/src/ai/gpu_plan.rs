@@ -57,6 +57,31 @@ pub fn classify_device(backend: &str, raw: RawDeviceType) -> DeviceKind {
     }
 }
 
+/// Can the embedded llama.cpp runtime actually execute on this platform?
+///
+/// Separate from "was it compiled in": the macOS bundle is universal, and
+/// `llama-cpp-sys-2` disables Metal only for watchOS, so the x86_64 slice
+/// carries a Metal-backed runtime that an Intel Mac cannot run — ggml's kernels
+/// require an Apple7-family GPU, and without one the first prefill returns
+/// `GGML_STATUS_FAILED`, surfacing as the opaque `Decode Error -3: unknown` on
+/// every turn.
+///
+/// Cargo features are per-build, not per-slice, so no build flag can express
+/// "exclude this from the Intel slice only". Shipping one universal DMG is a
+/// deliberate choice (one download, no arch detection anywhere), which makes
+/// this predicate the ONLY thing keeping an Intel Mac away from a guaranteed
+/// inference failure. Treat it as load-bearing.
+///
+/// Falling back to CPU is deliberately not offered: it is too slow to be a real
+/// product experience, which is the same reason `build-mac-intel` compiles the
+/// runtime out entirely (see the Makefile rationale).
+///
+/// Lives here, beside [`plan_offload`], so it is testable in
+/// `--no-default-features` builds where no real GPU exists.
+pub fn embedded_runtime_supported(os: &str, arch: &str) -> bool {
+    !(os == "macos" && arch != "aarch64")
+}
+
 /// A backend device, reduced to the fields the decision needs.
 #[derive(Debug, Clone)]
 pub struct GpuDevice {
@@ -263,6 +288,34 @@ mod tests {
             resolve_backends_dir(Some(Path::new("/app/backends")), None, present(&["/app/backends"])),
             Some(PathBuf::from("/app/backends"))
         );
+    }
+
+    // ── embedded_runtime_supported ───────────────────────────────────────────
+
+    #[test]
+    fn the_embedded_runtime_is_unsupported_on_intel_macs() {
+        // ggml's Metal kernels need an Apple7-family GPU. An Intel Mac has
+        // none, so the first prefill returns GGML_STATUS_FAILED and the user
+        // sees "Decode Error -3: unknown" on every turn. `build-mac-intel`
+        // compiles the runtime out, but the universal bundle still ships it in
+        // the x86_64 slice — llama-cpp-sys-2 disables Metal only for watchOS —
+        // so this has to be refused at runtime too, not just at build time.
+        assert!(!embedded_runtime_supported("macos", "x86_64"));
+    }
+
+    #[test]
+    fn the_embedded_runtime_is_supported_on_apple_silicon() {
+        assert!(embedded_runtime_supported("macos", "aarch64"));
+    }
+
+    #[test]
+    fn x86_64_is_still_supported_off_macos() {
+        // The Metal constraint is macOS-specific: Linux and Windows x86_64 have
+        // a working CPU path, plus optional Vulkan/CUDA.
+        for os in ["linux", "windows"] {
+            assert!(embedded_runtime_supported(os, "x86_64"), "{os}");
+            assert!(embedded_runtime_supported(os, "aarch64"), "{os} arm");
+        }
     }
 
     // ── plan_offload / classify_device ───────────────────────────────────────

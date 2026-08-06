@@ -69,9 +69,6 @@ lockstep) plus the lockfile:
   to refresh the lock. Keeping the lockfile synced matters — CI runs `npm ci` /
   `cargo` and will fail on drift.
 
-`src-tauri/tauri.intel.conf.json` only overrides `bundle.resources`; it inherits
-the version, so do not edit it.
-
 ## Phase 3 — CHANGELOG.md
 
 EmailOps follows Keep a Changelog + SemVer. In `CHANGELOG.md`:
@@ -412,11 +409,9 @@ invariants: `homebrew/README.md`.
    make cask TAG=vX.Y.Z
    ```
 
-   This rewrites `homebrew/Casks/emailops.rb`. If the script warns that
-   `EmailOps-macos-intel.dmg` is missing it emits an arm64-only cask — that is
-   the expected outcome of the standard flow above (which only uploads the
-   universal + CLI DMGs). Only chase the Intel warning if the user wants
-   Intel Homebrew support for this release (`make build-mac-intel` etc.).
+   This rewrites `homebrew/Casks/emailops.rb`. macOS ships one universal DMG,
+   so the cask is single-artifact — no `arch` stanza, no `depends_on arch:`.
+   It fails outright if `EmailOps-macos.dmg` is missing from the release.
 
 3. **Lint it:** `brew style homebrew/Casks/emailops.rb` must report **exactly
    one** offense — `Homebrew/OSDependsOn` on the `depends_on macos:

@@ -14,10 +14,13 @@ e-mail ne quitte jamais votre machine.
 
 - **Dans l'app (local)** — un runtime llama.cpp intégré. Rien à installer, pas de démon, pas
   de trafic réseau. C'est le choix par défaut. Il utilise automatiquement votre GPU quand il y
-  en a un — Metal sur Apple Silicon, Vulkan sous Windows et Linux — et le CPU sinon.
+  en a un — Metal sur Apple Silicon, Vulkan sous Windows et Linux — et le CPU sinon. Sur Mac,
+  il exige une puce Apple Silicon (M1 ou plus récente) ; sur un Mac Intel il reste
+  indisponible.
 - **Ollama (local)** — un serveur Ollama que vous faites déjà tourner sur
-  `http://localhost:11434`. Utile si vous entretenez une bibliothèque de modèles partagée, ou
-  sur les Mac Intel où le runtime intégré est absent.
+  `http://localhost:11434`. Utile si vous entretenez une bibliothèque de modèles partagée. À
+  noter : sur un Mac Intel, Ollama ne bénéficie pas non plus d'accélération GPU, il sera donc
+  lent.
 - **OpenRouter (distant)** — une API cloud payante. Nécessite une clé d'API, gère un plafond
   budgétaire mensuel et envoie le contenu de vos e-mails à un tiers — elle reste donc
   désactivée tant que vous ne l'activez pas.

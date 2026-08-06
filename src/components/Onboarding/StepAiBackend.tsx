@@ -21,6 +21,10 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   const { t } = useTranslation(['auth']);
   const addLog = useLogStore((s) => s.addLog);
   const [backend, setBackend] = useState<Backend>('llamacpp');
+  // See AiSettings: false on builds without llama.cpp and on Intel Macs, whose
+  // GPU cannot run the Metal kernels. Null until probed — the card stays
+  // enabled meanwhile rather than flickering disabled.
+  const [embeddedAvailable, setEmbeddedAvailable] = useState<boolean | null>(null);
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [downloads, setDownloads] = useState<Record<string, ModelDownloadProgress>>({});
   const [chatModelId, setChatModelId] = useState<string>('');
@@ -43,9 +47,26 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
 
   useEffect(() => {
     void (async () => {
+      // Probe first: the embedded default below is only right where the runtime
+      // can actually run. On an Intel Mac it cannot, and pre-selecting it walks
+      // the user into downloading a multi-GB model that fails on first use.
+      let embeddedOk: boolean | null = null;
+      try {
+        embeddedOk = (await api.detectAiCapability()).embeddedAiAvailable;
+        setEmbeddedAvailable(embeddedOk);
+        if (embeddedOk === false) setBackend('openrouter');
+      } catch {
+        // Probe failed — leave the card enabled and let the backend guard speak.
+      }
       try {
         const cfg = await api.getAiConfig();
-        if (cfg.provider === 'llamacpp' || cfg.provider === 'ollama' || cfg.provider === 'openrouter') {
+        // A stored `llamacpp` choice must not resurrect the unusable option:
+        // this is exactly the state an already-affected install is in.
+        if (
+          (cfg.provider === 'llamacpp' && embeddedOk !== false) ||
+          cfg.provider === 'ollama' ||
+          cfg.provider === 'openrouter'
+        ) {
           setBackend(cfg.provider);
         }
         if (cfg.provider === 'openrouter') {
@@ -259,6 +280,8 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
           title={t('auth:onboarding.aiBackend.embeddedTitle')}
           subtitle={t('auth:onboarding.aiBackend.embeddedSubtitle')}
           detail={t('auth:onboarding.aiBackend.embeddedDetail')}
+          disabled={embeddedAvailable === false}
+          disabledReason={t('auth:onboarding.aiBackend.embeddedUnavailable')}
         />
         <BackendCard
           selected={backend === 'ollama'}
@@ -458,24 +481,35 @@ function BackendCard({
   title,
   subtitle,
   detail,
+  disabled,
+  disabledReason,
 }: {
   selected: boolean;
   onSelect: () => void;
   title: string;
   subtitle: string;
   detail: string;
+  /** Inert + greyed out; see ProviderTab for why the embedded runtime needs this. */
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={disabled ? undefined : onSelect}
+      disabled={disabled}
+      title={disabled ? disabledReason : undefined}
       className={`text-left p-3 rounded-lg border-2 transition-colors ${
-        selected ? 'border-primary-500 bg-primary-900/15' : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
+        disabled
+          ? 'border-gray-800 bg-[#212123] cursor-not-allowed opacity-60'
+          : selected
+            ? 'border-primary-500 bg-primary-900/15'
+            : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
       }`}
     >
-      <div className="text-sm font-semibold text-gray-100">{title}</div>
-      <div className={`text-xs mt-0.5 ${selected ? 'text-primary-300' : 'text-gray-500'}`}>{subtitle}</div>
-      <div className="text-xs text-gray-500 mt-1">{detail}</div>
+      <div className={`text-sm font-semibold ${disabled ? 'text-gray-500' : 'text-gray-100'}`}>{title}</div>
+      <div className={`text-xs mt-0.5 ${selected && !disabled ? 'text-primary-300' : 'text-gray-500'}`}>{subtitle}</div>
+      <div className="text-xs text-gray-500 mt-1">{disabled ? (disabledReason ?? detail) : detail}</div>
     </button>
   );
 }

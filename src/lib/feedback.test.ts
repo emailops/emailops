@@ -59,6 +59,21 @@ describe('formatFeedbackTech', () => {
   it('passes the app version straight through', () => {
     expect(formatFeedbackTech(baseTech).version).toBe('0.6.0');
   });
+
+  it('flags a Rosetta-translated process so x86_64 is not read as an Intel Mac', () => {
+    // `arch` is compile-time, so an x86_64 build reports x86_64 on a real Intel
+    // Mac and on Apple Silicon under Rosetta alike — and only the former cannot
+    // run the embedded AI runtime. A report has to say which one it was.
+    expect(formatFeedbackTech({ ...baseTech, arch: 'x86_64', translated: true }).os).toBe(
+      'macOS 14.5.0 (x86_64, Rosetta)',
+    );
+  });
+
+  it('leaves the arch untouched when the process is native', () => {
+    expect(formatFeedbackTech({ ...baseTech, arch: 'x86_64', translated: false }).os).toBe('macOS 14.5.0 (x86_64)');
+    // Absent (older callers / a failed probe) must read the same as native.
+    expect(formatFeedbackTech({ ...baseTech, arch: 'x86_64' }).os).toBe('macOS 14.5.0 (x86_64)');
+  });
 });
 
 describe('buildFeedbackEmail', () => {

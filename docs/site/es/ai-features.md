@@ -14,10 +14,11 @@ ningún correo sale nunca de tu máquina.
 
 - **En la app (local)** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
   tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
-  Apple Silicon, Vulkan en Windows y Linux — y la CPU cuando no.
+  Apple Silicon, Vulkan en Windows y Linux — y la CPU cuando no. En Mac requiere Apple Silicon
+  (M1 o posterior); en un Mac Intel permanece no disponible.
 - **Ollama (local)** — un servidor Ollama que ya tengas en `http://localhost:11434`. Útil si
-  mantienes una biblioteca de modelos compartida, o en Mac Intel, donde falta el runtime
-  integrado.
+  mantienes una biblioteca de modelos compartida. Ten en cuenta que en un Mac Intel tampoco
+  obtiene aceleración por GPU, así que será lento.
 - **OpenRouter (remoto)** — una API de pago en la nube. Requiere una clave de API, admite un
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
   desactivado salvo que lo actives.

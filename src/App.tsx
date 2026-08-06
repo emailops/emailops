@@ -578,6 +578,7 @@ function AppInner() {
           osPlatform: diag.osPlatform,
           osVersion: diag.osVersion,
           arch: diag.arch,
+          translated: diag.translated,
           aiProvider: ai.provider,
           aiModel: ai.model,
         });

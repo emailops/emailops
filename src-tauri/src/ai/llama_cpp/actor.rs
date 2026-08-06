@@ -571,7 +571,7 @@ fn generate_with_cache(
                 .map_err(|e| format!("Batch add error during prefill: {}", e))?;
         }
         ctx.decode(&mut batch)
-            .map_err(|e| format!("Prefill decode failed: {}", e))?;
+            .map_err(|e| super::runtime::decode_failure("Prefill decode failed", e))?;
         batch.clear();
     }
 
@@ -611,7 +611,7 @@ fn generate_with_cache(
                     .map_err(|e| format!("Batch add error during tail prefill: {}", e))?;
             }
             ctx.decode(&mut batch)
-                .map_err(|e| format!("Tail prefill decode failed: {}", e))?;
+                .map_err(|e| super::runtime::decode_failure("Tail prefill decode failed", e))?;
             batch.clear();
         }
     }
@@ -654,7 +654,7 @@ fn generate_with_cache(
             .add(token, (n_prompt + i) as i32, &[1], true)
             .map_err(|e| format!("Batch add error during generation: {}", e))?;
         ctx.decode(&mut batch)
-            .map_err(|e| format!("Decode failed during generation: {}", e))?;
+            .map_err(|e| super::runtime::decode_failure("Decode failed during generation", e))?;
         batch.clear();
         // Sampled tokens land only in seq 1 — `cached` stays prompt-only.
     }

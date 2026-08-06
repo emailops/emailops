@@ -18,6 +18,23 @@ use crate::models::{AiConfig, AiLogEvent, AiUsageSummary};
 const EMBEDDED_AI_UNAVAILABLE: &str = "This build of EmailOps does not include the embedded AI runtime. \
      Choose Ollama or OpenRouter in Settings → AI, or install a build with embedded AI.";
 
+/// Shown when the runtime *is* compiled in but the machine cannot execute it —
+/// the universal bundle's x86_64 slice running on an Intel Mac.
+#[cfg(feature = "llamacpp")]
+const EMBEDDED_AI_UNSUPPORTED_HOST: &str = "The embedded AI runtime requires an Apple Silicon Mac (M1 or newer). \
+     Choose OpenRouter in Settings → AI to use the AI features on this Mac.";
+
+/// Refuse the embedded runtime on hosts that cannot run it, before any model is
+/// loaded. Without this the failure surfaces several seconds later as an opaque
+/// `Decode Error -3: unknown` from the first prefill, on every single turn.
+#[cfg(feature = "llamacpp")]
+fn ensure_embedded_runtime_supported() -> Result<()> {
+    if crate::ai::gpu_plan::embedded_runtime_supported(std::env::consts::OS, std::env::consts::ARCH) {
+        return Ok(());
+    }
+    Err(AppError::AiError(EMBEDDED_AI_UNSUPPORTED_HOST.to_string()))
+}
+
 const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
 const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
@@ -225,6 +242,7 @@ impl AiService {
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
+                ensure_embedded_runtime_supported()?;
                 let embedding_model = db
                     .get_preference("ai_embedding_model")
                     .ok()
@@ -289,6 +307,7 @@ impl AiService {
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
+                ensure_embedded_runtime_supported()?;
                 let (chat_path, embed_path) = llamacpp_model_paths(db, &config.model, &config.embedding_model);
                 let runtime =
                     get_or_create_llamacpp_runtime(chat_path, embed_path, keep_alive_secs, load_n_ctx_override(db));

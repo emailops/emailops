@@ -41,8 +41,8 @@ voreingestellte **Qwen 3.5 4B** braucht rund 8 GB; das größte Modell im Katalo
   CPU und System-RAM zurück; rechnen Sie den Modellwert im RAM ein und mit spürbar längeren
   Antwortzeiten.
 
-Intel-Macs sind die Ausnahme: Dieser Build wird ganz ohne eingebettete KI-Laufzeit
-ausgeliefert — siehe den [Hinweis unten](#direct-download).
+Intel-Macs sind die Ausnahme: Die eingebettete KI-Laufzeit benötigt einen Apple-Silicon-Chip
+(M1 oder neuer) und läuft dort gar nicht — siehe den [Hinweis unten](#direct-download).
 
 ### Ohne lokale KI
 
@@ -85,9 +85,11 @@ Später aktualisieren mit `brew upgrade --cask emailops`.
 2. Öffnen Sie das DMG und ziehen Sie **EmailOps.app** in Ihren Programme-Ordner.
 3. Starten Sie es aus dem Programme-Ordner.
 
-> **Intel-Macs:** Verwenden Sie den Build `EmailOps-macos-intel.dmg`. Er enthält die
-> eingebettete KI-Laufzeit nicht — wenn Sie KI-Funktionen auf einem Intel-Mac wollen, richten
-> Sie EmailOps auf [Ollama oder OpenRouter](../ai-features/#choosing-a-backend) aus.
+> **Intel-Macs:** Dieser eine Download funktioniert auf jedem Mac — es gibt keinen separaten
+> Intel-Build. Die Ausnahme sind die KI-Funktionen: Die eingebaute KI benötigt einen
+> Apple-Silicon-Chip (M1 oder neuer). Auf einem Intel-Mac bleibt sie deaktiviert, und EmailOps
+> erklärt Ihnen warum. Alles andere funktioniert normal. Für KI richten Sie EmailOps auf
+> [OpenRouter](../ai-features/#choosing-a-backend) aus.
 
 ## Windows
 

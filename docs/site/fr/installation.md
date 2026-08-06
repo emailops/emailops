@@ -41,8 +41,8 @@ catalogue en réclame 32. Le chiffre de chaque modèle figure dans le
   L'application se rabat sur le CPU et la RAM système ; prévoyez le chiffre du modèle en RAM
   et attendez-vous à des réponses nettement plus lentes.
 
-Les Mac Intel font exception : cette version est livrée sans le moteur d'IA intégré — voir la
-[note ci-dessous](#direct-download).
+Les Mac Intel font exception : le moteur d'IA intégré nécessite une puce Apple Silicon
+(M1 ou plus récente) et ne peut pas y fonctionner — voir la [note ci-dessous](#direct-download).
 
 ### Sans IA locale
 
@@ -85,9 +85,11 @@ Mettez à jour ensuite avec `brew upgrade --cask emailops`.
 2. Ouvrez le DMG et glissez **EmailOps.app** dans votre dossier Applications.
 3. Lancez-le depuis Applications.
 
-> **Mac Intel :** utilisez la version `EmailOps-macos-intel.dmg`. Elle n'inclut pas le moteur
-> d'IA intégré ; pour des fonctions d'IA sur un Mac Intel, pointez EmailOps vers
-> [Ollama ou OpenRouter](../ai-features/#choosing-a-backend).
+> **Mac Intel :** ce téléchargement unique fonctionne sur tous les Mac — il n'y a pas de
+> version Intel distincte. Les fonctions d'IA font exception : l'IA intégrée nécessite une puce
+> Apple Silicon (M1 ou plus récente). Sur un Mac Intel elle reste désactivée et EmailOps vous
+> explique pourquoi. Tout le reste fonctionne normalement. Pour l'IA, pointez EmailOps vers
+> [OpenRouter](../ai-features/#choosing-a-backend).
 
 ## Windows
 

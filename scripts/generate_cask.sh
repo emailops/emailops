@@ -8,10 +8,11 @@
 #   scripts/generate_cask.sh            # latest release
 #   scripts/generate_cask.sh v0.6.2     # specific tag
 #
-# Emits a per-arch cask (arm → EmailOps-macos.dmg, intel →
-# EmailOps-macos-intel.dmg). If the Intel DMG is missing from the release
-# the cask degrades to arm64-only (`depends_on arch: :arm64`) with a
-# warning — upload release/EmailOps-macos-intel.dmg and re-run to fix.
+# Emits a single-artifact cask: macOS ships ONE universal DMG
+# (EmailOps-macos.dmg) that launches on both Apple Silicon and Intel, so the
+# cask needs no `arch` stanza and no `depends_on arch:`. Embedded AI is
+# refused on Intel at runtime rather than by shipping a second build — see
+# the `bootstrap-mac` comment in the Makefile.
 #
 # The `depends_on macos: ">= :monterey"` string form is deliberate: older
 # Homebrew treats the bare-symbol form (`macos: :monterey`) as an EXACT
@@ -59,13 +60,12 @@ def sha(name):
     return digest.split(':', 1)[1] if digest.startswith('sha256:') else ''
 
 print(f\"TAG_NAME='{release['tag_name']}'\")
-print(f\"ARM_SHA='{sha('EmailOps-macos.dmg')}'\")
-print(f\"INTEL_SHA='{sha('EmailOps-macos-intel.dmg')}'\")
+print(f\"DMG_SHA='{sha('EmailOps-macos.dmg')}'\")
 ")"
 
 VERSION="${TAG_NAME#v}"
 
-if [ -z "$ARM_SHA" ]; then
+if [ -z "$DMG_SHA" ]; then
   echo "ERROR: EmailOps-macos.dmg not found on release $TAG_NAME (or GitHub has not computed its digest yet)." >&2
   echo "       Upload release/EmailOps-macos.dmg to the release, wait a minute, and re-run." >&2
   exit 1
@@ -73,46 +73,10 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-if [ -n "$INTEL_SHA" ]; then
-  cat > "$OUT" <<EOF
-cask "emailops" do
-  arch intel: "-intel"
-
-  version "$VERSION"
-  sha256 arm:   "$ARM_SHA",
-         intel: "$INTEL_SHA"
-
-  url "https://github.com/emailops/emailops/releases/download/v#{version}/EmailOps-macos#{arch}.dmg"
-  name "EmailOps"
-  desc "Privacy-first, AI-native email client"
-  homepage "https://github.com/emailops/emailops"
-
-  livecheck do
-    url :url
-    strategy :github_latest
-  end
-
-  depends_on macos: ">= :monterey"
-
-  app "EmailOps.app"
-
-  zap trash: [
-    "~/Library/Application Support/com.emailops.app",
-    "~/Library/Caches/com.emailops.app",
-    "~/Library/HTTPStorages/com.emailops.app",
-    "~/Library/Preferences/com.emailops.app.plist",
-    "~/Library/Saved Application State/com.emailops.app.savedState",
-    "~/Library/WebKit/com.emailops.app",
-  ]
-end
-EOF
-else
-  echo "WARNING: EmailOps-macos-intel.dmg not found on release $TAG_NAME — generating an arm64-only cask." >&2
-  echo "         Upload release/EmailOps-macos-intel.dmg to the release and re-run to add Intel support." >&2
-  cat > "$OUT" <<EOF
+cat > "$OUT" <<EOF
 cask "emailops" do
   version "$VERSION"
-  sha256 "$ARM_SHA"
+  sha256 "$DMG_SHA"
 
   url "https://github.com/emailops/emailops/releases/download/v#{version}/EmailOps-macos.dmg"
   name "EmailOps"
@@ -124,7 +88,6 @@ cask "emailops" do
     strategy :github_latest
   end
 
-  depends_on arch: :arm64
   depends_on macos: ">= :monterey"
 
   app "EmailOps.app"
@@ -139,6 +102,5 @@ cask "emailops" do
   ]
 end
 EOF
-fi
 
 echo "Wrote $OUT (version $VERSION, tag $TAG_NAME)"

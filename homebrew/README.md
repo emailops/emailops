@@ -11,10 +11,11 @@ regenerate it instead.
 - The cask downloads the signed + notarized DMGs from the GitHub release
   assets at tag-scoped URLs
   (`https://github.com/emailops/emailops/releases/download/v<version>/…`).
-- Apple Silicon gets the universal DMG (`EmailOps-macos.dmg`, embedded
-  llama.cpp + bundled embedding model). Intel gets the trimmed
-  `EmailOps-macos-intel.dmg` (no embedded AI, by policy — see the
-  `build-mac-intel` notes in the Makefile).
+- macOS ships ONE universal DMG (`EmailOps-macos.dmg`) that launches on both
+  Apple Silicon and Intel, so the cask carries no `arch` stanza and no
+  `depends_on arch:`. Embedded AI is refused on Intel at runtime
+  (`ai::gpu_plan::embedded_runtime_supported`) rather than by shipping a
+  second, trimmed build — see the `bootstrap-mac` comment in the Makefile.
 - `sha256` values come from the digests GitHub computes for each release
   asset, read via the public API — the generator downloads nothing.
 - `livecheck` follows the latest GitHub release, so `brew livecheck emailops`
@@ -35,12 +36,9 @@ brew install --cask emailops/tap/emailops
 
 ## Per-release flow
 
-1. Build and stage the artifacts as usual:
-   `make build-mac && make verify-mac && make dist-mac`, and
-   `make build-mac-intel && make verify-mac-intel && make dist-mac-intel`.
-2. Upload `release/EmailOps-macos.dmg` **and**
-   `release/EmailOps-macos-intel.dmg` to the GitHub release for the tag.
-   Without the Intel asset the generated cask degrades to arm64-only.
+1. Build and stage the artifact as usual:
+   `make build-mac && make verify-mac && make dist-mac`.
+2. Upload `release/EmailOps-macos.dmg` to the GitHub release for the tag.
 3. Regenerate the cask: `make cask` (or `make cask TAG=vX.Y.Z`).
 4. Copy `homebrew/Casks/emailops.rb` to `../homebrew-tap/Casks/emailops.rb`,
    commit (`emailops X.Y.Z`), push.

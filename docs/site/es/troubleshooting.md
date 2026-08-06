@@ -18,7 +18,9 @@ ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-En un **Mac Intel**, el runtime integrado no viene en la compilación. Usa Ollama u OpenRouter.
+En un **Mac Intel** la IA integrada no puede ejecutarse: necesita un chip Apple Silicon (M1 o
+posterior), así que EmailOps la mantiene desactivada. Usa OpenRouter en su lugar. Ollama se
+instala, pero en Intel tampoco obtiene aceleración por GPU, así que resultará demasiado lento.
 
 ## El chat va lento
 

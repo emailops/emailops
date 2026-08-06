@@ -15,10 +15,11 @@ keine E-Mail jemals Ihre Maschine.
 - **In der App (lokal)** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren, kein
   Daemon, kein Netzwerkverkehr. Das ist der Standard. Sie nutzt automatisch Ihre GPU, wenn
   eine vorhanden ist — Metal auf Apple Silicon, Vulkan unter Windows und Linux — und sonst die
-  CPU.
+  CPU. Auf dem Mac wird Apple Silicon (M1 oder neuer) vorausgesetzt; auf einem Intel-Mac bleibt
+  sie nicht verfügbar.
 - **Ollama (lokal)** — ein Ollama-Server, den Sie bereits unter `http://localhost:11434`
-  betreiben. Praktisch, wenn Sie eine gemeinsame Modellbibliothek pflegen, oder auf
-  Intel-Macs, wo die eingebettete Laufzeit fehlt.
+  betreiben. Praktisch, wenn Sie eine gemeinsame Modellbibliothek pflegen. Beachten Sie: Auf
+  einem Intel-Mac erhält auch Ollama keine GPU-Beschleunigung und ist entsprechend langsam.
 - **OpenRouter (entfernt)** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
   bleibt sie aus, bis Sie sie aktivieren.

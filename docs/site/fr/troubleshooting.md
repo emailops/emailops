@@ -18,8 +18,10 @@ ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-Sur un **Mac Intel**, le moteur intégré n'est pas inclus dans la version. Utilisez Ollama ou
-OpenRouter.
+Sur un **Mac Intel**, l'IA intégrée ne peut pas fonctionner : elle nécessite une puce Apple
+Silicon (M1 ou plus récente), donc EmailOps la laisse désactivée. Utilisez OpenRouter à la
+place. Ollama s'installe, mais il ne bénéficie d'aucune accélération GPU sur Intel non plus :
+attendez-vous à ce qu'il soit trop lent pour être agréable.
 
 ## Le chat est lent
 
