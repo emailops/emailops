@@ -128,4 +128,16 @@ if [ "$SUBCOMMAND" = "init" ]; then
         bash "$REPO_ROOT/scripts/ios_patch_project.sh"
 fi
 
+# Every other subcommand patches FIRST, then builds.
+#
+# Running this only on `init` meant the generated Xcode project drifted from
+# `src-tauri/ios/` for as long as nobody re-ran init: a new native source file
+# (a bridge, a shim) landed in the repo, the build succeeded, and the app simply
+# shipped without it — the post-generate assertions that exist to catch exactly
+# that never ran either. The script is idempotent by construction (it compares
+# before copying and asserts the result afterwards), so paying an `xcodegen
+# generate` on each build is cheap next to a silently incomplete bundle.
+env -u GEM_HOME -u GEM_PATH -u MY_RUBY_HOME -u IRBRC \
+    bash "$REPO_ROOT/scripts/ios_patch_project.sh"
+
 run_tauri "$@"

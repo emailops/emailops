@@ -69,6 +69,8 @@ FOUNDATION_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsFoundationModels.swift"
 FOUNDATION_DEST="$APPLE_DIR/Sources/emailops/EmailOpsFoundationModels.swift"
 AIBRIDGE_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsAiBridge.m"
 AIBRIDGE_DEST="$APPLE_DIR/Sources/emailops/EmailOpsAiBridge.m"
+LOGBRIDGE_SRC="$REPO_ROOT/src-tauri/ios/EmailOpsLogBridge.m"
+LOGBRIDGE_DEST="$APPLE_DIR/Sources/emailops/EmailOpsLogBridge.m"
 BGREFRESH_DEST="$APPLE_DIR/Sources/emailops/EmailOpsBackgroundRefresh.m"
 
 if [ ! -f "$PROJECT_YML" ]; then
@@ -195,6 +197,15 @@ if ! cmp -s "$AIBRIDGE_SRC" "$AIBRIDGE_DEST"; then
     note "copied EmailOpsAiBridge.m into the generated project"
 fi
 
+if [ ! -f "$LOGBRIDGE_SRC" ]; then
+    echo "ERROR: $LOGBRIDGE_SRC not found — the log bridge is tracked outside gen/apple." >&2
+    exit 1
+fi
+if ! cmp -s "$LOGBRIDGE_SRC" "$LOGBRIDGE_DEST"; then
+    cp "$LOGBRIDGE_SRC" "$LOGBRIDGE_DEST"
+    note "copied EmailOpsLogBridge.m into the generated project"
+fi
+
 # ── app icons ────────────────────────────────────────────────────────────────
 
 bash "$REPO_ROOT/scripts/ios_icons.sh"
@@ -233,6 +244,7 @@ cmp -s "$PRIVACY_SRC" "$PRIVACY_DEST" || fail "PrivacyInfo.xcprivacy did not lan
 cmp -s "$BGREFRESH_SRC" "$BGREFRESH_DEST" || fail "EmailOpsBackgroundRefresh.m did not land in the generated project."
 cmp -s "$FOUNDATION_SRC" "$FOUNDATION_DEST" || fail "EmailOpsFoundationModels.swift did not land in the generated project."
 cmp -s "$AIBRIDGE_SRC" "$AIBRIDGE_DEST" || fail "EmailOpsAiBridge.m did not land — Rust would never receive the probe."
+cmp -s "$LOGBRIDGE_SRC" "$LOGBRIDGE_DEST" || fail "EmailOpsLogBridge.m did not land — device logs would be invisible."
 grep -q 'SWIFT_VERSION' "$PROJECT_YML" || fail "SWIFT_VERSION is missing — the Swift shim would not compile."
 grep -q 'FoundationModels.framework' "$PROJECT_YML" || fail "FoundationModels.framework is missing — the availability probe would not link."
 icon="$APPLE_DIR/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"

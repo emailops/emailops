@@ -21,6 +21,11 @@ pub mod i18n;
 pub mod junk;
 pub mod keychain;
 pub mod lenses;
+// Tees `app-log` events to the iOS system log, because the output panel that
+// shows them on desktop has no phone equivalent. Compiled everywhere (it is
+// plain Rust, and its sink is inert until an app registers one) so its tests
+// run on the host instead of only where they cannot be observed.
+pub mod ios_log;
 pub mod logger;
 pub mod memory;
 pub mod password;

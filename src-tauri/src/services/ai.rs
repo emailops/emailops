@@ -222,6 +222,38 @@ fn format_ollama_keep_alive(secs: u32) -> String {
     }
 }
 
+/// What a launch should do about the AI provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupPrewarm {
+    /// Load the model. Cheap next to the prefix seed (measured 584ms vs 18.6s
+    /// on an iPhone 16 Pro) and it is what makes a later seed fast.
+    pub warm_model: bool,
+    /// Seed the invariant chat prompt prefix into the provider's KV cache.
+    pub seed_prefix: bool,
+}
+
+/// Decide what to warm at startup.
+///
+/// `defer_prefix_to_chat_open` is set on platforms where the seed competes with
+/// something the user is more likely to want. On a phone the seed prefills
+/// ~4,600 tokens on a CPU that is simultaneously downloading the initial
+/// mailbox — 19 seconds of contention imposed on every launch, including the
+/// launches where chat is never opened. Deferring is safe because both chat
+/// surfaces call `prewarm_chat` when they mount, so opening chat still warms
+/// the prefix; the cost simply lands on the person who wants chat.
+pub fn plan_startup_prewarm(onboarded: bool, ai_enabled: bool, defer_prefix_to_chat_open: bool) -> StartupPrewarm {
+    if !onboarded || !ai_enabled {
+        return StartupPrewarm {
+            warm_model: false,
+            seed_prefix: false,
+        };
+    }
+    StartupPrewarm {
+        warm_model: true,
+        seed_prefix: !defer_prefix_to_chat_open,
+    }
+}
+
 impl AiService {
     fn env_openrouter_api_key() -> Option<String> {
         std::env::var("OPENROUTER_API_KEY")
@@ -452,7 +484,7 @@ impl AiService {
     /// called once at app startup so the first chat turn doesn't pay the full
     /// cold-load cost. Never returns an error — failures are logged but don't
     /// block the caller.
-    pub async fn warmup_from_db(db: &Database) {
+    pub async fn warmup_from_db(db: &Database, seed_prefix: bool) {
         fn log(level: &str, message: &str) {
             crate::services::logger::log(level, "ai", message);
         }
@@ -481,6 +513,13 @@ impl AiService {
         // cache). Best-effort account pick: the first enabled account — the
         // chat panel re-fires the prewarm with the actually-selected account
         // when it opens, which also covers multi-account setups.
+        //
+        // Skipped where the caller decided the seed should wait for chat to be
+        // opened — see `plan_startup_prewarm`.
+        if !seed_prefix {
+            log("debug", "chat prefix prewarm deferred until chat is opened");
+            return;
+        }
         let account_id = db
             .list_accounts()
             .ok()
@@ -1049,5 +1088,79 @@ mod url_validation_tests {
     fn rejects_malformed_input() {
         assert!(validate_ai_base_url("not a url").is_err());
         assert!(validate_ai_base_url("http://").is_err());
+    }
+}
+
+#[cfg(test)]
+mod startup_prewarm_tests {
+    use super::*;
+
+    #[test]
+    fn a_desktop_launch_warms_the_model_and_seeds_the_prefix() {
+        assert_eq!(
+            plan_startup_prewarm(true, true, false),
+            StartupPrewarm {
+                warm_model: true,
+                seed_prefix: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_phone_launch_warms_the_model_but_defers_the_prefix() {
+        // Measured on an iPhone 16 Pro: loading the model costs 584ms, seeding
+        // the 4,630-token prefix costs 18,569ms — and it runs while the initial
+        // sync is downloading mail, which is what the user actually opened the
+        // app for. Opening chat re-fires the prewarm (ChatView does it on
+        // mount), so nothing is lost; the cost just moves to someone who wants
+        // chat rather than everyone who launches.
+        assert_eq!(
+            plan_startup_prewarm(true, true, true),
+            StartupPrewarm {
+                warm_model: true,
+                seed_prefix: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_first_launch_does_nothing_at_all() {
+        // Before onboarding we must not load a multi-GB model for a user who
+        // has not yet chosen whether they want AI.
+        assert_eq!(
+            plan_startup_prewarm(false, true, false),
+            StartupPrewarm {
+                warm_model: false,
+                seed_prefix: false,
+            }
+        );
+    }
+
+    #[test]
+    fn the_master_ai_switch_still_wins_everywhere() {
+        for defer in [false, true] {
+            assert_eq!(
+                plan_startup_prewarm(true, false, defer),
+                StartupPrewarm {
+                    warm_model: false,
+                    seed_prefix: false,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn the_prefix_is_never_seeded_without_the_model_being_warm() {
+        // Seeding a prefix into a provider that has not loaded is either a
+        // no-op or a second cold load; neither is what the caller intends.
+        for (onboarded, ai, defer) in [
+            (true, true, false),
+            (true, true, true),
+            (false, true, false),
+            (true, false, false),
+        ] {
+            let plan = plan_startup_prewarm(onboarded, ai, defer);
+            assert!(!plan.seed_prefix || plan.warm_model);
+        }
     }
 }

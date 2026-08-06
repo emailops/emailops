@@ -162,7 +162,20 @@ pub fn run() {
             // Until this runs, the global is the NoopLogger and emissions are
             // silently dropped — that's fine for the few µs of bootstrap before
             // this line.
-            services::logger::install(Arc::new(services::logger::TauriLogger::new(app.handle().clone())));
+            let app_logger: Arc<dyn services::logger::Logger> =
+                Arc::new(services::logger::TauriLogger::new(app.handle().clone()));
+            // iOS has no output panel to render `app-log` into, so the same
+            // events also go to the system log — otherwise everything a
+            // background loop reports on a device is unobservable.
+            #[cfg(target_os = "ios")]
+            let app_logger: Arc<dyn services::logger::Logger> =
+                Arc::new(services::ios_log::SystemLogTee::wrap(app_logger));
+            services::logger::install(app_logger);
+            // First line through the seam. On a device this is the proof that
+            // the logger reaches the system log at all; without it, an empty
+            // console is ambiguous between "nothing was logged" and "logging
+            // does not work here".
+            services::logger::log("info", "system", "logger installed");
 
             // Install the production event sink so chat streaming, phases,
             // sources, and progress events reach the frontend. Sibling of the
@@ -409,6 +422,17 @@ pub fn run() {
                 sync_locks.clone(),
                 connectivity.online_flag(),
             );
+            // How many watchers actually came up. "My mail stopped arriving" is
+            // otherwise indistinguishable from "no watcher was ever started for
+            // that account", and the second one leaves no trace anywhere else.
+            services::logger::log(
+                "info",
+                "sync",
+                format!(
+                    "sync scheduler started with {} background task(s)",
+                    scheduler.task_count()
+                ),
+            );
 
             // Same ingredients the scheduler just took, published for the iOS
             // background-refresh entry point — which is a C function invoked by
@@ -456,10 +480,15 @@ pub fn run() {
             // which is acceptable.
             let onboarded = db.get_preference("onboarding_completed").ok().flatten().as_deref() == Some("true");
             let ai_enabled = db.is_ai_enabled().unwrap_or(true);
-            if onboarded && ai_enabled {
+            // On iOS the prefix seed prefills ~4,600 tokens on the same CPU that
+            // is downloading the initial mailbox — 19s of contention on every
+            // launch, chat opened or not. Opening chat re-fires the prewarm, so
+            // deferring moves the cost to whoever wants it.
+            let plan = services::ai::plan_startup_prewarm(onboarded, ai_enabled, cfg!(target_os = "ios"));
+            if plan.warm_model {
                 let db_for_warmup = db.clone();
                 tauri::async_runtime::spawn(async move {
-                    services::ai::AiService::warmup_from_db(&db_for_warmup).await;
+                    services::ai::AiService::warmup_from_db(&db_for_warmup, plan.seed_prefix).await;
                 });
             } else {
                 eprintln!("[startup] AI warmup skipped (onboarded={onboarded}, ai_enabled={ai_enabled})");
