@@ -53,12 +53,24 @@ fi
 # Absent it, only simulator builds work: the simulator does not check
 # provisioning, a device build fails at signing with "No profiles for
 # 'com.emailops.app' were found".
-if [ -z "${APPLE_DEVELOPMENT_TEAM:-}" ] && [ -f "$REPO_ROOT/.env.signing" ]; then
+# `.env.signing` is gitignored, so a git worktree never has its own copy. Fall
+# back to the primary worktree's file rather than making the developer duplicate
+# a secrets file into every worktree (and risk one going stale).
+SIGNING_ENV="$REPO_ROOT/.env.signing"
+if [ ! -f "$SIGNING_ENV" ]; then
+    PRIMARY_ROOT="$(dirname "$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || echo .)")"
+    if [ -f "$PRIMARY_ROOT/.env.signing" ]; then
+        SIGNING_ENV="$PRIMARY_ROOT/.env.signing"
+        echo "using signing config from the primary worktree"
+    fi
+fi
+
+if [ -z "${APPLE_DEVELOPMENT_TEAM:-}" ] && [ -f "$SIGNING_ENV" ]; then
     # `set -a` exports everything the file defines; scoped to a subshell-free
     # block and turned straight back off so nothing else leaks out.
     set -a
     # shellcheck disable=SC1091
-    . "$REPO_ROOT/.env.signing"
+    . "$SIGNING_ENV"
     set +a
     if [ -n "${APPLE_TEAM_ID:-}" ]; then
         export APPLE_DEVELOPMENT_TEAM="$APPLE_TEAM_ID"

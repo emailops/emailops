@@ -26,8 +26,12 @@ fn main() {
 
     for key in OAUTH_ENV_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
-        if let Some(value) = resolve_build_env(key) {
-            println!("cargo:rustc-env={key}={value}");
+        match resolve_build_env(key) {
+            Some(value) => println!("cargo:rustc-env={key}={value}"),
+            // Warn at build time, where it is one line to fix, instead of
+            // letting it surface as a failed sign-in on a device an hour later.
+            // Not an error: a headless or CI build legitimately has no secrets.
+            None => println!("cargo:warning={key} is not set — sign-in with that provider will fail at runtime"),
         }
     }
 
@@ -112,11 +116,38 @@ fn resolve_build_env(key: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
         .or_else(|| load_env_file("../.env.local", key))
         .or_else(|| load_env_file("../.env", key))
+        .or_else(|| primary_worktree_root().and_then(|root| load_env_file(root.join(".env.local"), key)))
+        .or_else(|| primary_worktree_root().and_then(|root| load_env_file(root.join(".env"), key)))
 }
 
-fn load_env_file(path: &str, key: &str) -> Option<String> {
-    let path = PathBuf::from(path);
-    let contents = fs::read_to_string(path).ok()?;
+/// Root of the primary worktree, when this build is running inside a linked
+/// worktree — otherwise `None`.
+///
+/// `.env.local` holds the OAuth client ids and is gitignored, so a `git
+/// worktree` never has its own copy. Without this fallback every build from a
+/// worktree compiles with no Gmail client id and fails at runtime with
+/// "missing Gmail OAuth client ID — set EMAILOPS_GMAIL_CLIENT_ID", which looks
+/// like a configuration mistake rather than a missing file one directory up.
+///
+/// A worktree's `.git` is a *file* containing `gitdir: <primary>/.git/worktrees/<name>`,
+/// so the primary root is that path with the trailing `/worktrees/<name>` and
+/// `/.git` removed. Parsed directly rather than shelling out to `git`: build
+/// scripts run on every compile and this needs no subprocess.
+fn primary_worktree_root() -> Option<PathBuf> {
+    let contents = fs::read_to_string("../.git").ok()?;
+    let gitdir = contents.strip_prefix("gitdir:")?.trim();
+    let path = PathBuf::from(gitdir);
+    // <primary>/.git/worktrees/<name> -> <primary>
+    let worktrees = path.parent()?;
+    let dot_git = worktrees.parent()?;
+    if dot_git.file_name()? != ".git" {
+        return None;
+    }
+    dot_git.parent().map(PathBuf::from)
+}
+
+fn load_env_file(path: impl Into<PathBuf>, key: &str) -> Option<String> {
+    let contents = fs::read_to_string(path.into()).ok()?;
 
     for line in contents.lines() {
         let trimmed = line.trim();
