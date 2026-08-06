@@ -115,6 +115,18 @@ pub struct EvalCase {
     #[serde(default)]
     pub ambient_account: Option<String>,
 
+    /// Thread to seed the conversation with, named by the subject of any email
+    /// in it. Prefer this over `thread_id` in the PUBLIC cases: the demo DB is
+    /// regenerated with `uuid.uuid4()` thread ids (`generate_demo_db.py`), so a
+    /// pinned id is only valid for the one build of the DB it was copied from —
+    /// the whole smoke tier failed with "thread … not found" the first time the
+    /// demo DB was rebuilt in a fresh worktree. Subjects are authored content
+    /// and survive regeneration.
+    ///
+    /// Mutually exclusive with `thread_id`.
+    #[serde(default)]
+    pub thread_subject: Option<String>,
+
     /// Expected router mode. Absence skips the route check.
     #[serde(default)]
     pub expected_route: Option<RouteMode>,
@@ -208,6 +220,36 @@ pub fn load_cases(dir: &Path) -> EvalResult<Vec<EvalCase>> {
     Ok(out)
 }
 
+/// How a case names the thread its conversation is bound to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreadBinding {
+    /// Start an empty chat — the RAG/tools pipeline, not the thread-bound path.
+    None,
+    /// A provider thread id, used verbatim.
+    Id(String),
+    /// The subject of an email in the thread; resolved against the DB at run
+    /// time because the id is not stable across demo-DB rebuilds.
+    Subject(String),
+}
+
+/// Decide how to bind a case to a thread, before touching the database.
+///
+/// Blank strings count as absent: YAML round-trips `""` easily, and a lookup
+/// for the empty subject would match nothing and read as a broken thread
+/// rather than a broken case.
+pub fn plan_thread_binding(thread_id: Option<&str>, thread_subject: Option<&str>) -> Result<ThreadBinding, String> {
+    let id = thread_id.map(str::trim).filter(|s| !s.is_empty());
+    let subject = thread_subject.map(str::trim).filter(|s| !s.is_empty());
+    match (id, subject) {
+        (Some(_), Some(_)) => Err("a case sets both `thread_id` and `thread_subject`; use one — \
+             `thread_subject` for public cases, `thread_id` only where the id is stable"
+            .to_string()),
+        (Some(id), None) => Ok(ThreadBinding::Id(id.to_string())),
+        (None, Some(subject)) => Ok(ThreadBinding::Subject(subject.to_string())),
+        (None, None) => Ok(ThreadBinding::None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +323,52 @@ mod tests {
 "#,
         );
         assert!(result.is_err(), "expected parse failure for garbage as_of value");
+    }
+}
+
+#[cfg(test)]
+mod thread_binding_tests {
+    use super::*;
+
+    #[test]
+    fn a_case_with_neither_starts_an_empty_chat() {
+        assert_eq!(plan_thread_binding(None, None), Ok(ThreadBinding::None));
+    }
+
+    #[test]
+    fn an_explicit_id_is_used_as_given() {
+        // Private cases run against a real mailbox where the id IS stable and
+        // the subject is personal data we do not want in a case file.
+        assert_eq!(
+            plan_thread_binding(Some("thread_abc"), None),
+            Ok(ThreadBinding::Id("thread_abc".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_subject_is_resolved_at_run_time() {
+        // The demo generator mints thread ids with uuid4, so a public case that
+        // pins one breaks the moment the demo DB is rebuilt — which is what
+        // happened: the whole smoke tier failed with "thread … not found".
+        assert_eq!(
+            plan_thread_binding(None, Some("Quarterly report")),
+            Ok(ThreadBinding::Subject("Quarterly report".to_string()))
+        );
+    }
+
+    #[test]
+    fn setting_both_is_rejected_rather_than_silently_preferring_one() {
+        // Two answers to one question: whichever we picked, the other would
+        // look honoured in the file and be ignored at run time.
+        assert!(plan_thread_binding(Some("thread_abc"), Some("Quarterly report")).is_err());
+    }
+
+    #[test]
+    fn a_blank_value_is_treated_as_absent() {
+        // YAML round-trips an empty string easily; it must not become a lookup
+        // for the empty subject, which would match nothing and read as a bug
+        // in the thread rather than in the case.
+        assert_eq!(plan_thread_binding(Some("  "), None), Ok(ThreadBinding::None));
+        assert_eq!(plan_thread_binding(None, Some("")), Ok(ThreadBinding::None));
     }
 }

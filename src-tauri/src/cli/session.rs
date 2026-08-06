@@ -295,6 +295,7 @@ mod tests {
             conversation: None,
             fresh: false,
             prewarm: false,
+            thread: None,
         })));
         assert!(startup_timing_enabled(Some(&Command::Search {
             query: "q".into(),
@@ -312,6 +313,7 @@ mod tests {
             conversation: None,
             fresh: false,
             prewarm: false,
+            thread: None,
         })));
         assert!(!startup_timing_enabled(Some(&Command::Doctor)));
         // Bare invocation (REPL) → command is None → startup stays silent.

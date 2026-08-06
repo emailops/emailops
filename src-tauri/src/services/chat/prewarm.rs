@@ -49,6 +49,10 @@ pub async fn prewarm_chat(
         &user_email,
         &system_template,
         &tools_section,
+        // Prewarm carries no sources, so the budget cannot change the bytes it
+        // produces — but it must match what a real turn will send, or the KV
+        // prefix it warms would not be the one the turn reuses.
+        super::context_budget::FULL_BUDGET,
     )
     .into_iter()
     .map(|(role, content)| AiMessage {
@@ -108,6 +112,7 @@ mod tests {
             "user@example.com",
             &system_template,
             &tools_section,
+            crate::services::chat::context_budget::FULL_BUDGET,
         )
         .into_iter()
         .map(|(role, content)| AiMessage {

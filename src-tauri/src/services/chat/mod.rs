@@ -16,6 +16,7 @@
 // `chat/tools/*` submodules and external callers reference them at
 // `crate::services::chat::<name>`.
 
+pub mod context_budget;
 pub mod tools;
 
 mod conversations;
@@ -32,11 +33,12 @@ pub use conversations::{
 };
 pub use prewarm::prewarm_chat;
 pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, DEFAULT_RAG_CATEGORIES};
-// `smart_body_slice` / `MAX_SOURCE_BODY_CHARS` are consumed by the eval harness
-// (`crate::services::chat::…`), which only compiles under the `eval` feature, so
-// the re-export reads as unused on a default `--no-default-features` build.
+// `smart_body_slice` is consumed by the eval harness (`crate::services::chat::…`),
+// which only compiles under the `eval` feature, so the re-export reads as unused
+// on a default `--no-default-features` build.
+pub use context_budget::{plan_retrieval_budget, RetrievalBudget, FULL_BUDGET};
 #[allow(unused_imports)]
-pub(crate) use retrieval::{smart_body_slice, MAX_SOURCE_BODY_CHARS};
+pub(crate) use retrieval::smart_body_slice;
 pub use turn::{build_prompt, run_chat_turn};
 // Tool-call salvage parsers — used as the secondary/tertiary fallback by the
 // embedded llama.cpp tool-call parsing chain (`ai/llama_cpp/runtime.rs`) after

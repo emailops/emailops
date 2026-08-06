@@ -266,7 +266,7 @@ async fn run_variant(
         .map(|s| {
             let raw_body = db.get_email_body(&s.email_id).unwrap_or_default();
             let plain = crate::util::html::strip_html_for_fts(&raw_body);
-            let snippet = chat::smart_body_slice(&plain, &variant.prompt, chat::MAX_SOURCE_BODY_CHARS);
+            let snippet = chat::smart_body_slice(&plain, &variant.prompt, chat::FULL_BUDGET.source_body_chars);
             SourceSummary {
                 citation_number: s.citation_number,
                 email_id: s.email_id.clone(),

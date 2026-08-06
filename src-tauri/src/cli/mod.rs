@@ -760,12 +760,14 @@ mod tests {
                 conversation,
                 fresh,
                 prewarm,
+                thread,
             }) => {
                 assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
                 assert!(conversation.is_none());
                 assert!(!fresh);
                 assert!(!prewarm);
+                assert!(thread.is_none());
             }
             other => panic!("expected Chat, got {other:?}"),
         }

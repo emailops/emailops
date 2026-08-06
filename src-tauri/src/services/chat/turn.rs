@@ -19,10 +19,10 @@ use crate::models::{
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
 
+use super::context_budget::{plan_retrieval_budget, RetrievalBudget};
 use super::conversations::{derive_title, title_is_default};
 use super::retrieval::{
     mark_relevant_region, retrieve_context_with_trace, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
-    MAX_SOURCE_BODY_CHARS, TOP_K_SOURCES,
 };
 use super::routing::classify_route;
 use super::tools;
@@ -123,6 +123,31 @@ fn tool_result_count_hint(tool_name: &str, result: &str) -> String {
     }
 }
 
+/// The context window a local chat model will actually open, or 0 when the
+/// backend is remote and never reports one.
+///
+/// Mirrors what the llama.cpp actor does at load time: the user's explicit
+/// `chat.n_ctx` if set, otherwise the RAM-derived automatic tier. Kept here
+/// rather than reaching into the runtime because `chat::context_budget` needs
+/// the answer *before* a turn starts, and a remote backend has no runtime to
+/// ask. `#[cfg]`-free: `load_n_ctx_override` is llamacpp-only, so the
+/// preference is read directly.
+fn local_chat_window(db: &Database, provider: crate::ai::provider::ProviderType) -> u32 {
+    if provider != crate::ai::provider::ProviderType::LlamaCpp {
+        return 0;
+    }
+    let override_ctx = db
+        .get_preference("chat.n_ctx")
+        .ok()
+        .flatten()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    match override_ctx {
+        0 => crate::util::system::auto_n_ctx_tier(crate::util::system::total_ram_bytes()),
+        explicit => explicit,
+    }
+}
+
 /// Assemble `(role, content)` messages to send to the chat backend.
 ///
 /// Layout:
@@ -150,6 +175,7 @@ pub fn build_prompt(
     user_email: &str,
     system_template: &str,
     tools_section: &str,
+    budget: RetrievalBudget,
 ) -> Vec<(String, String)> {
     let today = now_utc().format("%Y-%m-%d").to_string();
     let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
@@ -199,7 +225,7 @@ before answering any factual question about the user's mailbox.)\n",
         tail.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
-            let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
+            let sliced = smart_body_slice_indexed(&body_text, user_question, budget.source_body_chars);
             let marked = mark_relevant_region(&sliced);
             tail.push_str(&format!(
                 "[{}] From: {} <{}>  Subject: {}  Date: {}\n    {}\n\n",
@@ -955,6 +981,20 @@ pub(crate) fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> 
 
     let is_valid_ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
 
+    // Delimited form first (LFM2.5 and friends):
+    //
+    //     <|tool_call_start|>[search_emails(limit=25, order='newest')]<|tool_call_end|>
+    //
+    // The delimiter is the authority here, not the tool registry: it never
+    // appears in real prose, and `runtime::extract_tool_calls` calls this with
+    // an empty registry — requiring a known name would have made the whole
+    // branch dead exactly where the bug was reported. Same reasoning as the
+    // `tool_call:` prefix branch below.
+    let delimited = parse_delimited_call_block(text);
+    if !delimited.is_empty() {
+        return delimited;
+    }
+
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed_start = line.trim_start();
@@ -1019,6 +1059,88 @@ pub(crate) fn parse_python_call_tool_calls(text: &str, known_tools: &[&str]) -> 
                 arguments: serde_json::Value::Object(args),
             },
         });
+    }
+    out
+}
+
+/// Extract calls from `<|tool_call_start|>[ … ]<|tool_call_end|>` blocks.
+///
+/// The body is a Python-style *list* of calls, so it is split at top level
+/// respecting both quotes and paren depth — `search_emails(query='a, b')` is
+/// one call, not two. The surrounding brackets are optional: some emissions
+/// carry a single bare call with no list wrapper.
+fn parse_delimited_call_block(text: &str) -> Vec<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    const OPEN: &str = "<|tool_call_start|>";
+    const CLOSE: &str = "<|tool_call_end|>";
+
+    let is_valid_ident = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel_open) = text[cursor..].find(OPEN) {
+        let body_start = cursor + rel_open + OPEN.len();
+        // An unterminated block runs to the end of the text: a truncated
+        // stream should still dispatch what it managed to emit.
+        let (body_end, next) = match text[body_start..].find(CLOSE) {
+            Some(rel) => (body_start + rel, body_start + rel + CLOSE.len()),
+            None => (text.len(), text.len()),
+        };
+        cursor = next;
+
+        let body = text[body_start..body_end].trim();
+        let body = body.strip_prefix('[').unwrap_or(body);
+        let body = body.strip_suffix(']').unwrap_or(body);
+
+        for call in split_top_level_calls(body) {
+            let call = call.trim();
+            let Some(paren_open) = call.find('(') else { continue };
+            let Some(paren_close) = call.rfind(')').filter(|i| *i > paren_open) else {
+                continue;
+            };
+            let name = call[..paren_open].trim();
+            if !is_valid_ident(name) {
+                continue;
+            }
+            out.push(AiToolCall {
+                function: AiToolCallFunction {
+                    name: name.to_string(),
+                    arguments: serde_json::Value::Object(parse_python_call_kwargs(&call[paren_open + 1..paren_close])),
+                },
+            });
+        }
+    }
+    out
+}
+
+/// Split a list of calls at top-level commas, respecting quotes AND paren
+/// depth. `split_top_level_commas` only tracks quotes, so it would cut
+/// `f(a=1, b=2)` in half.
+fn split_top_level_calls(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut start = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        match quote {
+            Some(q) if b == q => quote = None,
+            Some(_) => {}
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    out.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
     }
     out
 }
@@ -2879,6 +3001,12 @@ pub async fn run_chat_turn(
     // runtime. Falls back to the preference when `model` is empty, and to Ollama
     // if the provider preference is missing or unrecognised.
     let provider = AiService::load_provider_with_model(&db, Some(&model))?;
+    // How much retrieved mail this model can be shown. Local backends open a
+    // window sized to the machine (8k on a phone); a remote backend reports
+    // nothing and gets the full budget, because an unknown window is far more
+    // likely to be a hosted model with a large one. See `chat::context_budget`.
+    let effective_n_ctx = local_chat_window(&db, provider.provider_type());
+    let retrieval_budget = plan_retrieval_budget(effective_n_ctx);
     // Resolved once per turn rather than per retrieval: on a backend that
     // cannot embed this constructs the local embedder, and doing that inside
     // the retrieval leg would pay the model load on the clock the vector
@@ -3075,7 +3203,7 @@ pub async fn run_chat_turn(
                 &account_id,
                 &user_question,
                 &categories,
-                TOP_K_SOURCES,
+                retrieval_budget.max_sources,
             )
             .await
             {
@@ -3156,6 +3284,7 @@ pub async fn run_chat_turn(
         &user_email,
         &system_template,
         &tools_section,
+        retrieval_budget,
     );
 
     // Inject the memory header into the final user message — but only when
@@ -3758,6 +3887,7 @@ pub async fn run_chat_turn(
 
 #[cfg(test)]
 mod tests {
+    use super::super::context_budget::FULL_BUDGET;
     use super::*;
     use crate::models::Email;
 
@@ -4889,7 +5019,7 @@ mod tests {
             make_scored(1, "Q1 plan", "we will ship by march"),
             make_scored(2, "Invoice", "please pay by friday"),
         ];
-        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "", FULL_BUDGET);
         assert_eq!(msgs[0].0, "system");
         // The per-turn sources block must NOT live in the system message —
         // it would invalidate the cross-turn KV prefix every turn.
@@ -4926,6 +5056,7 @@ mod tests {
             "",
             tpl(),
             "TOOLS",
+            FULL_BUDGET,
         );
         let history = vec![
             make_message("user", "when do we ship?"),
@@ -4939,8 +5070,9 @@ mod tests {
             "",
             tpl(),
             "TOOLS",
+            FULL_BUDGET,
         );
-        let turn3_no_sources = build_prompt(&[], &history, "anything else?", "en", "", tpl(), "TOOLS");
+        let turn3_no_sources = build_prompt(&[], &history, "anything else?", "en", "", tpl(), "TOOLS", FULL_BUDGET);
         assert_eq!(turn1[0], turn2[0], "system message changed between turns");
         assert_eq!(
             turn1[0], turn3_no_sources[0],
@@ -4965,7 +5097,7 @@ mod tests {
         past_assistant.prompt_content = Some("SHOULD NOT BE USED".to_string());
         let history = vec![past_user.clone(), past_assistant];
 
-        let msgs = build_prompt(&[], &history, "and the invoice?", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &history, "and the invoice?", "en", "", tpl(), "", FULL_BUDGET);
         let replayed_user = &msgs[1];
         assert_eq!(replayed_user.0, "user");
         assert_eq!(
@@ -5035,15 +5167,15 @@ mod tests {
             make_message("user", "plain question"),
             make_message("assistant", "answer"),
         ];
-        let msgs = build_prompt(&[], &history, "next?", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &history, "next?", "en", "", tpl(), "", FULL_BUDGET);
         assert_eq!(msgs[1], ("user".to_string(), "plain question".to_string()));
     }
 
     #[test]
     fn prompt_trims_body_length() {
-        let long_body = "x".repeat(MAX_SOURCE_BODY_CHARS * 4);
+        let long_body = "x".repeat(FULL_BUDGET.source_body_chars * 4);
         let sources = vec![make_scored(1, "long", &long_body)];
-        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "", FULL_BUDGET);
         let last = &msgs.last().unwrap().1;
         // Source body should be truncated (ellipsis marker present).
         assert!(last.contains("…"));
@@ -5060,7 +5192,7 @@ mod tests {
     #[test]
     fn prompt_strips_html_from_bodies() {
         let sources = vec![make_scored(1, "html email", "<p>hello <b>world</b></p>")];
-        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "");
+        let msgs = build_prompt(&sources, &[], "?", "en", "", tpl(), "", FULL_BUDGET);
         let last = &msgs.last().unwrap().1;
         assert!(last.contains("hello"));
         assert!(last.contains("world"));
@@ -5075,7 +5207,7 @@ mod tests {
             let role = if i % 2 == 0 { "user" } else { "assistant" };
             history.push(make_message(role, &format!("turn-{}", i)));
         }
-        let msgs = build_prompt(&[], &history, "new question", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &history, "new question", "en", "", tpl(), "", FULL_BUDGET);
         // system + 6 history turns + user question = 8
         assert_eq!(msgs.len(), 8);
         // The oldest included turn should be turn-4 (indices 4..10 = 6 turns).
@@ -5091,13 +5223,13 @@ mod tests {
             make_message("user", "hi"),
             make_message("assistant", "hello"),
         ];
-        let msgs = build_prompt(&[], &history, "next", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &history, "next", "en", "", tpl(), "", FULL_BUDGET);
         assert!(msgs.iter().all(|(_, c)| c != "do not surface me"));
     }
 
     #[test]
     fn prompt_empty_sources_advises_model_in_final_user_message() {
-        let msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "", FULL_BUDGET);
         // When no sources were pre-retrieved, the prompt must push the model
         // toward calling search_emails rather than refusing or guessing —
         // but from the per-turn user message, never the (stable) system one.
@@ -5111,7 +5243,7 @@ mod tests {
 
     #[test]
     fn memory_header_prepends_to_final_user_message_not_system() {
-        let mut msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "");
+        let mut msgs = build_prompt(&[], &[], "anything?", "en", "", tpl(), "", FULL_BUDGET);
         prepend_to_final_user_message(&mut msgs, "<memory>user likes tables</memory>");
         assert!(
             !msgs[0].1.contains("<memory>"),
@@ -5128,7 +5260,7 @@ mod tests {
         // to the model and tell it to map first-person sender/recipient
         // references onto search_emails' from/to filters — otherwise the model
         // cannot resolve "emails I sent" into a filter at all.
-        let msgs = build_prompt(&[], &[], "emails I sent", "en", "me@acme.com", tpl(), "");
+        let msgs = build_prompt(&[], &[], "emails I sent", "en", "me@acme.com", tpl(), "", FULL_BUDGET);
         let sys = &msgs[0].1;
         assert!(
             sys.contains("me@acme.com"),
@@ -5147,7 +5279,7 @@ mod tests {
     #[test]
     fn prompt_omits_identity_line_without_account_email() {
         // No account on the turn → no leaked placeholder, no dangling sentence.
-        let msgs = build_prompt(&[], &[], "hello", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &[], "hello", "en", "", tpl(), "", FULL_BUDGET);
         let sys = &msgs[0].1;
         assert!(!sys.contains("{{user_identity}}"), "placeholder leaked: {sys}");
         assert!(
@@ -5164,7 +5296,16 @@ mod tests {
             make_scored(1, "Kickoff", "reunión el martes 3 de marzo"),
             make_scored(2, "Proposal", "monthly fee drop to $1.5k"),
         ];
-        let msgs = build_prompt(&sources, &[], "¿cuándo fue el kickoff?", "es", "", tpl(), "");
+        let msgs = build_prompt(
+            &sources,
+            &[],
+            "¿cuándo fue el kickoff?",
+            "es",
+            "",
+            tpl(),
+            "",
+            FULL_BUDGET,
+        );
         let sys = &msgs[0].1;
         assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
         assert!(sys.contains("Example 1"), "missing few-shot examples");
@@ -5181,7 +5322,7 @@ mod tests {
         // The dynamic `Tools:` section is now rendered from the registry —
         // build it the same way `run_chat_turn` does and feed it in.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "hola", "es", "", tpl(), &tools_section);
+        let msgs = build_prompt(&[], &[], "hola", "es", "", tpl(), &tools_section, FULL_BUDGET);
         let sys = &msgs[0].1;
         // App identity so the model never claims it lacks mailbox access.
         assert!(sys.contains("EmailOps"));
@@ -5206,7 +5347,7 @@ mod tests {
         // Drafts default to ON; confirm the LLM sees `generate_email_draft`
         // so it actually calls the tool instead of inventing a draft inline.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "draft a reply", "en", "", tpl(), &tools_section);
+        let msgs = build_prompt(&[], &[], "draft a reply", "en", "", tpl(), &tools_section, FULL_BUDGET);
         let sys = &msgs[0].1;
         assert!(
             sys.contains("generate_email_draft"),
@@ -5440,7 +5581,16 @@ mod tests {
         // Lenses default OFF — confirm the section omits them entirely so a
         // user who never enabled the feature doesn't get tool calls for it.
         let tools_section = default_registry().render_system_prompt_section(&db);
-        let msgs = build_prompt(&[], &[], "show me invoices lens", "en", "", tpl(), &tools_section);
+        let msgs = build_prompt(
+            &[],
+            &[],
+            "show me invoices lens",
+            "en",
+            "",
+            tpl(),
+            &tools_section,
+            FULL_BUDGET,
+        );
         let sys = &msgs[0].1;
         assert!(!sys.contains("get_lens_data"), "lens tool leaked when feature off");
         assert!(!sys.contains("list_lenses"), "lens tool leaked when feature off");
@@ -5552,7 +5702,7 @@ Preséntalos en una tabla markdown …";
         let pinned_secs = pinned.and_utc().timestamp();
         let clock = crate::services::clock::install_for_testing(pinned_secs);
 
-        let msgs = build_prompt(&[], &[], "q", "en", "", tpl(), "");
+        let msgs = build_prompt(&[], &[], "q", "en", "", tpl(), "", FULL_BUDGET);
         let system = &msgs[0].1;
         assert!(
             system.contains("2024-01-15"),
@@ -5975,6 +6125,50 @@ Preséntalos en una tabla markdown …";
         let calls = parse_python_call_tool_calls(text, &[]);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.arguments["email_id"], "abc-123");
+    }
+
+    #[test]
+    fn lfm_delimited_call_is_parsed_without_a_tool_registry() {
+        // Regression, observed on a device with lfm2.5-2.6b-q4_k_m: this exact
+        // string was rendered into the user's chat bubble because no parser in
+        // the chain recognised it. `runtime::extract_tool_calls` passes an
+        // empty registry, so the delimiter itself has to be the authority —
+        // which is safe: `<|tool_call_start|>` never occurs in real prose.
+        let text = "<|tool_call_start|>[search_emails(limit=25, order='newest')]<|tool_call_end|>";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1, "expected one call, got {calls:?}");
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[0].function.arguments["limit"], serde_json::json!(25));
+        assert_eq!(calls[0].function.arguments["order"], serde_json::json!("newest"));
+    }
+
+    #[test]
+    fn lfm_block_can_carry_several_calls() {
+        let text = "<|tool_call_start|>[search_emails(limit=5), get_email_body(email_id=\"abc\")]<|tool_call_end|>";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 2, "got {calls:?}");
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[1].function.name, "get_email_body");
+    }
+
+    #[test]
+    fn a_comma_inside_an_lfm_argument_does_not_split_the_call() {
+        // Splitting the call list must respect quotes and paren depth, or a
+        // query containing a comma silently becomes two bogus calls.
+        let text = "<|tool_call_start|>[search_emails(query='facturas, recibos', limit=3)]<|tool_call_end|>";
+        let calls = parse_python_call_tool_calls(text, &[]);
+        assert_eq!(calls.len(), 1, "got {calls:?}");
+        assert_eq!(
+            calls[0].function.arguments["query"],
+            serde_json::json!("facturas, recibos")
+        );
+        assert_eq!(calls[0].function.arguments["limit"], serde_json::json!(3));
+    }
+
+    #[test]
+    fn prose_mentioning_the_lfm_marker_without_a_call_yields_nothing() {
+        let text = "The model wraps calls in <|tool_call_start|> and <|tool_call_end|> markers.";
+        assert!(parse_python_call_tool_calls(text, &[]).is_empty());
     }
 
     #[test]

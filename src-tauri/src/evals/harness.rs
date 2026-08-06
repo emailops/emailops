@@ -19,9 +19,10 @@ use chrono::NaiveDate;
 use crate::db::Database;
 use crate::evals::case_loader::{AsOf, EvalCase};
 use crate::evals::{EvalError, EvalResult};
+use crate::models::error::AppError;
 use crate::models::{ChatConversation, ChatMessage, ChatTrace};
 use crate::services::chat;
-use crate::services::chat::{smart_body_slice, MAX_SOURCE_BODY_CHARS};
+use crate::services::chat::{smart_body_slice, FULL_BUDGET};
 use crate::services::clock::{Clock, FixedClock, SystemClock};
 use crate::util::html::strip_html_for_fts;
 
@@ -186,7 +187,23 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     //    thread (role='system' message) so `run_chat_turn` takes the
     //    thread-bound short-circuit; everything else starts as an empty chat
     //    whose title defaults to "New chat" so the auto-title logic triggers.
-    let conv: ChatConversation = match case.thread_id.as_deref() {
+    let binding =
+        crate::evals::case_loader::plan_thread_binding(case.thread_id.as_deref(), case.thread_subject.as_deref())
+            .map_err(|e| AppError::InvalidInput(format!("case '{}': {e}", case.id)))?;
+    let thread_id: Option<String> = match binding {
+        crate::evals::case_loader::ThreadBinding::None => None,
+        crate::evals::case_loader::ThreadBinding::Id(id) => Some(id),
+        crate::evals::case_loader::ThreadBinding::Subject(subject) => {
+            Some(db.find_thread_id_by_subject(account_id, &subject)?.ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "case '{}': no thread with subject '{subject}' in account '{account_id}' — \
+                     the case names a thread the DB does not contain",
+                    case.id
+                ))
+            })?)
+        }
+    };
+    let conv: ChatConversation = match thread_id.as_deref() {
         Some(thread_id) => crate::services::chat::create_conversation_with_thread(&db, account_id, thread_id)?,
         None => db.create_chat_conversation(account_id, "New chat")?,
     };
@@ -255,7 +272,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
             // each source. Mirrors the logic in services::chat::build_prompt.
             let raw_body = db.get_email_body(&s.email_id).unwrap_or_default();
             let plain = strip_html_for_fts(&raw_body);
-            let snippet = smart_body_slice(&plain, &case.question, MAX_SOURCE_BODY_CHARS);
+            let snippet = smart_body_slice(&plain, &case.question, FULL_BUDGET.source_body_chars);
             SourceSummary {
                 citation_number: s.citation_number,
                 email_id: s.email_id.clone(),

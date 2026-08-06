@@ -22,9 +22,8 @@ use super::truncate_chars;
 
 // ── Tuning constants ────────────────────────────────────────────────────────
 
-/// Number of source emails to feed to the LLM per turn.
-pub(super) const TOP_K_SOURCES: usize = 8;
-/// Upstream candidate pool passed into the LLM reranker. Must be ≥ TOP_K_SOURCES.
+/// Upstream candidate pool passed into the LLM reranker. Must be ≥ the largest
+/// `RetrievalBudget::max_sources` any tier asks for (see `context_budget`).
 /// Set to ~2x top-k so the reranker has meaningful latitude to promote items
 /// RRF+recency mis-ranked — without blowing the reranker's context budget.
 const RERANK_POOL: usize = 16;
@@ -136,12 +135,6 @@ const RECENCY_HALF_LIFE_SECS: f64 = 60.0 * 86_400.0;
 /// cold extension load or degraded DB can still stall it. 5s keeps chat
 /// responsive in those cases.
 const VEC_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
-/// Max characters of each source body we feed the model (post HTML-strip).
-/// Larger than a tight abstract: the model needs enough room to find specific
-/// technical details buried mid-thread (e.g. env-var explanations, quoted
-/// snippets). 4k chars × k=8 sources ≈ 32k chars ≈ ~8k tokens, comfortably
-/// inside Ollama's default context window.
-pub(crate) const MAX_SOURCE_BODY_CHARS: usize = 4000;
 /// Characters to keep before the first query-term match when slicing a long
 /// body around a hit. Gives the model context leading into the answer.
 const SNIPPET_LEAD_CHARS: usize = 400;

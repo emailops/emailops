@@ -20,6 +20,9 @@
 const TOOL_OPENERS: &[&str] = &[
     "<tool_call>",
     "<|tool_call>",
+    // LFM2.5. Note this is NOT covered by `<|tool_call>` above: that marker
+    // ends in `>` and so does not prefix `<|tool_call_start|>`.
+    "<|tool_call_start|>",
     "<|python_tag|>",
     "<function",
     "[TOOL_CALLS]",
@@ -28,9 +31,15 @@ const TOOL_OPENERS: &[&str] = &[
 ];
 
 /// Once the normalised leading text reaches this length without matching a tool
-/// opener, it cannot be one of the known markers (longest is `<|python_tag|>`,
-/// 14 chars) — so it is prose and we flush.
-const MAX_GATE_CHARS: usize = 16;
+/// opener, it cannot be one of the known markers — so it is prose and we flush.
+///
+/// Must stay above the longest marker in [`TOOL_OPENERS`], currently
+/// `<|tool_call_start|>` at 19 chars. When this was 16 the gate gave up before
+/// that marker could ever complete, and LFM2.5's tool calls streamed to the
+/// user verbatim. Raising it costs a few more buffered characters before the
+/// first prose token appears; a marker longer than this silently stops being
+/// detectable, which is why `longest_opener_fits_the_gate` pins the invariant.
+const MAX_GATE_CHARS: usize = 24;
 
 /// Unambiguous tool-call *tag* markers. Unlike the bare-JSON openers in
 /// [`TOOL_OPENERS`], these never appear in legitimate prose, so we also watch
@@ -41,6 +50,7 @@ const MAX_GATE_CHARS: usize = 16;
 const TOOL_TAG_MARKERS: &[&str] = &[
     "<tool_call>",
     "<|tool_call>",
+    "<|tool_call_start|>",
     "<|python_tag|>",
     "[TOOL_CALLS]",
     "<function",
@@ -234,6 +244,58 @@ fn could_become_opener(normalized: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exact stream observed from `lfm2.5-2.6b-q4_k_m` on a device, which
+    /// reached the user's chat bubble verbatim instead of dispatching a search.
+    const LFM_TOOL_CALL: &str = "<|tool_call_start|>[search_emails(limit=25, order='newest')]<|tool_call_end|>";
+
+    #[test]
+    fn longest_opener_fits_the_gate() {
+        // The gate can only match a marker it has room to buffer. Adding a
+        // longer opener without raising MAX_GATE_CHARS would make it
+        // undetectable, and the symptom is syntax in the user's chat bubble.
+        let longest = TOOL_OPENERS.iter().map(|m| m.chars().count()).max().unwrap_or(0);
+        assert!(
+            longest <= MAX_GATE_CHARS,
+            "longest opener is {longest} chars but the gate gives up at {MAX_GATE_CHARS}"
+        );
+    }
+
+    #[test]
+    fn lfm_tool_call_syntax_never_reaches_the_user() {
+        // Regression: `<|tool_call>` was in TOOL_OPENERS but does not prefix
+        // `<|tool_call_start|>`, and MAX_GATE_CHARS (16) was shorter than the
+        // 19-char marker, so the gate flushed as prose before it could match.
+        let mut gate = StreamGate::new();
+        let mut shown = String::new();
+        for chunk in LFM_TOOL_CALL.split_inclusive(' ') {
+            shown.push_str(&gate.push(chunk));
+        }
+        shown.push_str(&gate.finish());
+        assert!(shown.is_empty(), "tool syntax leaked to the user: {shown:?}");
+        assert!(gate.is_suppressed());
+    }
+
+    #[test]
+    fn lfm_tool_call_is_suppressed_when_it_arrives_one_char_at_a_time() {
+        // The marker is 19 chars; a token-by-token stream must still be caught
+        // before the gate gives up and decides it is prose.
+        let mut gate = StreamGate::new();
+        let mut shown = String::new();
+        for ch in LFM_TOOL_CALL.chars() {
+            shown.push_str(&gate.push(&ch.to_string()));
+        }
+        shown.push_str(&gate.finish());
+        assert!(shown.is_empty(), "tool syntax leaked to the user: {shown:?}");
+    }
+
+    #[test]
+    fn prose_that_merely_mentions_the_marker_still_streams() {
+        // The guard must not swallow an answer that talks about the syntax.
+        let mut gate = StreamGate::new();
+        let shown = gate.push("The model emits <|tool_call_start|> around its calls.");
+        assert!(shown.starts_with("The model emits"), "prose was suppressed: {shown:?}");
+    }
 
     /// Drive the gate through a sequence of chunks and collect everything it
     /// forwarded, including the final flush.

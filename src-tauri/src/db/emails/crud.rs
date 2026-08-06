@@ -363,6 +363,32 @@ impl Database {
         Ok(result)
     }
 
+    /// The thread containing an email whose subject is `subject`, ignoring any
+    /// `Re:` / `Fwd:` prefixes a reply added.
+    ///
+    /// Exists for the eval harness: public cases name a thread by subject
+    /// because `generate_demo_db.py` mints thread ids with `uuid.uuid4()`, so a
+    /// pinned id is valid only for the one build of the demo DB it came from.
+    /// Newest match wins, so a subject reused across threads resolves to the
+    /// most recent one rather than an arbitrary row.
+    pub fn find_thread_id_by_subject(&self, account_id: &str, subject: &str) -> Result<Option<String>> {
+        let conn = self.reader();
+        let trimmed = subject.trim();
+        match conn.query_row(
+            "SELECT thread_id FROM emails
+             WHERE account_id = ?1 AND is_deleted = 0
+               AND (subject = ?2 OR subject LIKE 'Re: ' || ?2 OR subject LIKE 'Fwd: ' || ?2)
+             ORDER BY timestamp DESC
+             LIMIT 1",
+            params![account_id, trimmed],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(thread_id) => Ok(Some(thread_id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn get_thread(&self, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(&format!(
@@ -1353,5 +1379,104 @@ mod tests {
             db.email_exists("e1").unwrap(),
             "email_exists must return true for deleted emails to prevent re-downloading"
         );
+    }
+
+    #[test]
+    fn a_thread_can_be_found_by_the_subject_of_any_email_in_it() {
+        // Public eval cases name a thread by subject because the demo DB mints
+        // thread ids randomly on every rebuild.
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "thread-a",
+            "A Sender",
+            "sender@example.test",
+            "How do I add an account?",
+            "body",
+            100,
+        );
+
+        let found = db
+            .find_thread_id_by_subject("acc1", "How do I add an account?")
+            .unwrap();
+        assert_eq!(found.as_deref(), Some("thread-a"));
+    }
+
+    #[test]
+    fn a_reply_resolves_to_the_same_thread_as_its_parent() {
+        // Replies carry "Re: <subject>"; asking for the original subject must
+        // still land on the thread rather than missing it.
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "thread-a",
+            "A",
+            "a@example.test",
+            "Quarterly report",
+            "body",
+            100,
+        );
+        insert_search_email(
+            &db,
+            "e2",
+            "acc1",
+            "thread-a",
+            "B",
+            "b@example.test",
+            "Re: Quarterly report",
+            "body",
+            200,
+        );
+
+        assert_eq!(
+            db.find_thread_id_by_subject("acc1", "Quarterly report")
+                .unwrap()
+                .as_deref(),
+            Some("thread-a")
+        );
+    }
+
+    #[test]
+    fn a_subject_that_matches_nothing_returns_none() {
+        // The caller turns this into "no thread named X" — a case-file error —
+        // rather than a confusing failure deeper in the chat pipeline.
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "thread-a",
+            "A",
+            "a@example.test",
+            "Quarterly report",
+            "body",
+            100,
+        );
+
+        assert_eq!(db.find_thread_id_by_subject("acc1", "Nothing like this").unwrap(), None);
+    }
+
+    #[test]
+    fn another_accounts_thread_is_not_returned() {
+        // Cases are account-scoped; matching across accounts would bind the
+        // conversation to a thread the case's account cannot even read.
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc2",
+            "thread-b",
+            "A",
+            "a@example.test",
+            "Quarterly report",
+            "body",
+            100,
+        );
+
+        assert_eq!(db.find_thread_id_by_subject("acc1", "Quarterly report").unwrap(), None);
     }
 }

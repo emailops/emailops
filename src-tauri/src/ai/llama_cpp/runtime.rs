@@ -1507,6 +1507,24 @@ mod tests {
     }
 
     #[test]
+    fn lfm_tool_call_dispatches_and_never_becomes_prose() {
+        // End-to-end through the real fallback chain, not just the unit that
+        // parses it: `extract_tool_calls` must both find the call AND zero the
+        // content. The reported bug was the content surviving -- the user read
+        // the tool syntax in their chat bubble.
+        let raw = "<|tool_call_start|>[search_emails(limit=25, order='newest')]<|tool_call_end|>";
+        let msg = extract_tool_calls(raw);
+        let calls = msg.tool_calls.expect("expected a dispatched tool call");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert!(
+            msg.content.is_empty(),
+            "tool syntax leaked into the assistant message: {:?}",
+            msg.content
+        );
+    }
+
+    #[test]
     fn debug_log_filter_drops_info_keeps_warn_error() {
         use llama_cpp_sys_2::{GGML_LOG_LEVEL_DEBUG, GGML_LOG_LEVEL_ERROR, GGML_LOG_LEVEL_INFO, GGML_LOG_LEVEL_WARN};
         // Chatty backend-init lines (Metal device probe, KV sizing) are INFO/DEBUG.

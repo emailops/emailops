@@ -12,13 +12,15 @@
 # text anchor cannot distinguish "translated the email" from "wrote a draft
 # that happens to contain those words".
 #
-# Thread `thread_4369f40221bd` is the demo DB's "How do I add a new email
-# account in EmailOps?" enquiry from a synthetic sender.
+# The thread is named by SUBJECT, not by id: `generate_demo_db.py` mints thread
+# ids with `uuid.uuid4()`, so an id pinned here is valid only for the one build
+# of the demo DB it was copied from. Rebuilding the demo DB in a fresh worktree
+# failed the entire smoke tier with "thread thread_4369f40221bd not found".
 
 - id: demo_thread_translate_answers_inline
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
+  thread_subject: "How do I add a new email account in EmailOps?"
   category: thread_bound
   tier: smoke
   expected_tools_not_called: ["generate_email_draft"]
@@ -39,7 +41,7 @@
 - id: demo_thread_explicit_draft_still_works
   question: "escribe una respuesta a este correo"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
+  thread_subject: "How do I add a new email account in EmailOps?"
   category: thread_bound
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
