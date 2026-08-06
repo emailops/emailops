@@ -31,11 +31,15 @@ pub struct AiCapability {
     /// model in the catalog AND this build actually contains the embedded
     /// runtime. This is what onboarding should branch on.
     pub local_ai_capable: bool,
-    /// Whether this binary was compiled with the embedded llama.cpp runtime.
+    /// Whether the embedded llama.cpp runtime is compiled into this binary
+    /// **and** can actually execute on this machine.
     ///
-    /// Builds without it (`--no-default-features` — the Intel-mac bundle, CI
-    /// packaging artifacts) cannot run local AI at any RAM size, and offering
-    /// the option produces confusing Ollama connection errors instead.
+    /// Two ways to be false. The build may omit it (`--no-default-features` —
+    /// CI packaging artifacts), in which case offering the option produces
+    /// confusing Ollama connection errors instead. Or the host may be unable to
+    /// run it: on an Intel Mac the Metal backend is compiled in but has no
+    /// Apple7-family GPU to run on, so every decode fails. Either way the UI
+    /// must not offer embedded AI — which is why this is one flag, not two.
     pub embedded_ai_available: bool,
     /// Physical RAM in whole GiB, or 0 when the probe failed.
     pub total_ram_gb: u64,
@@ -82,10 +86,16 @@ pub fn ai_capability_from(
     let address_space_ok = matches!(arch, "aarch64" | "x86_64" | "riscv64" | "loongarch64");
     let enough_ram = total_ram_gb + 1 >= min_chat_ram_gb;
 
+    // Compiled in is not the same as runnable: the universal macOS bundle ships
+    // a Metal-backed runtime in its x86_64 slice that an Intel Mac cannot
+    // execute. `embedded_runtime_supported` owns that rule so this probe and
+    // the provider loader in `services::ai` cannot drift apart.
+    let runtime_runs_here = embedded_ai_available && crate::ai::gpu_plan::embedded_runtime_supported(os, arch);
+
     AiCapability {
         apple_silicon: os == "macos" && arch == "aarch64",
-        local_ai_capable: embedded_ai_available && address_space_ok && enough_ram,
-        embedded_ai_available,
+        local_ai_capable: runtime_runs_here && address_space_ok && enough_ram,
+        embedded_ai_available: runtime_runs_here,
         total_ram_gb,
         min_ram_gb_for_local_ai: min_chat_ram_gb,
         os: os.to_string(),
@@ -214,7 +224,8 @@ mod tests {
         // Mac. (os, arch, ram_gb, expected_capable, label)
         let cases: &[(&str, &str, u64, bool, &str)] = &[
             ("macos", "aarch64", 16, true, "Apple Silicon with headroom"),
-            ("macos", "x86_64", 16, true, "Intel Mac with headroom"),
+            // Not a RAM decision — see `an_intel_mac_can_never_run_the_embedded_runtime`.
+            ("macos", "x86_64", 16, false, "Intel Mac, however much RAM"),
             ("linux", "x86_64", 64, true, "Linux workstation"),
             ("windows", "x86_64", 32, true, "Windows desktop"),
             ("linux", "aarch64", 16, true, "ARM Linux"),
@@ -298,6 +309,38 @@ mod tests {
     }
 
     #[test]
+    fn an_intel_mac_can_never_run_the_embedded_runtime() {
+        // The bug this guards: the macOS bundle is universal, so its x86_64
+        // slice carries llama.cpp *with* Metal — `llama-cpp-sys-2` only
+        // disables Metal for watchOS, not for Intel. On an Intel Mac the GPU is
+        // not an Apple7 family device, so the very first prefill fails with an
+        // opaque `Decode Error -3` (GGML_STATUS_FAILED) on every single turn.
+        // RAM is irrelevant, and the CPU fallback is too slow to ship, so the
+        // honest answer is "not available here".
+        for ram in [8, 16, 64, 256] {
+            let cap = ai_capability_from("macos", "x86_64", ram, 8, true);
+            assert!(!cap.local_ai_capable, "{ram} GB does not make Metal work on Intel");
+            assert!(
+                !cap.embedded_ai_available,
+                "{ram} GB: the runtime is compiled in but unusable — the UI must not offer it"
+            );
+        }
+
+        // The same binary on the Apple Silicon slice is unaffected.
+        let cap = ai_capability_from("macos", "aarch64", 16, 8, true);
+        assert!(cap.local_ai_capable);
+        assert!(cap.embedded_ai_available);
+
+        // And x86_64 is still fine everywhere Metal is not involved.
+        for os in ["linux", "windows"] {
+            assert!(
+                ai_capability_from(os, "x86_64", 16, 8, true).local_ai_capable,
+                "{os} x86_64 has a working CPU/Vulkan/CUDA path"
+            );
+        }
+    }
+
+    #[test]
     fn apple_silicon_still_reported_for_metal_specific_copy() {
         assert!(ai_capability_from("macos", "aarch64", 16, 8, true).apple_silicon);
         assert!(!ai_capability_from("macos", "x86_64", 16, 8, true).apple_silicon);
@@ -335,10 +378,13 @@ mod tests {
         assert_eq!(cap.os, std::env::consts::OS);
         assert_eq!(cap.arch, std::env::consts::ARCH);
         assert_eq!(cap.min_ram_gb_for_local_ai, min_chat_model_ram_gb());
+        // Availability is "compiled in AND runnable here", so an Intel-mac host
+        // reports false even from a build that does carry the runtime.
+        let metal_ok = std::env::consts::OS != "macos" || std::env::consts::ARCH == "aarch64";
         assert_eq!(
             cap.embedded_ai_available,
-            cfg!(feature = "llamacpp"),
-            "availability must reflect how this binary was actually built"
+            cfg!(feature = "llamacpp") && metal_ok,
+            "availability must reflect how this binary was built AND where it is running"
         );
     }
 }
