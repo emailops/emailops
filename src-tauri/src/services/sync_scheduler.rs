@@ -324,6 +324,64 @@ fn make_sync_fn(
 
 // ── Gmail polling ─────────────────────────────────────────────────────────────
 
+/// Why a poll tick did not sync. Both are *silent* failure modes from the
+/// user's point of view — nothing appears in the mailbox and no error is
+/// raised — so each one is announced once when it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkipReason {
+    /// The connectivity probe last reported no internet.
+    Offline,
+    /// `sync_state` still reads "syncing". Either a sync really is in flight,
+    /// or a previous one died without clearing the row — the latter freezes
+    /// polling until the app restarts (see the recovery pass in `start`).
+    AlreadySyncing,
+}
+
+impl SkipReason {
+    fn describe(self) -> &'static str {
+        match self {
+            SkipReason::Offline => "offline (connectivity probe failed) — auto-sync paused",
+            SkipReason::AlreadySyncing => "a sync is still marked in progress — auto-sync paused",
+        }
+    }
+}
+
+/// What one poll tick should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PollTick {
+    Sync,
+    Skip {
+        reason: SkipReason,
+        /// Log this skip. False while the same reason repeats, so a 60 s loop
+        /// stuck for an hour writes one line, not sixty.
+        announce: bool,
+    },
+}
+
+/// Pure planner for a single poll tick.
+///
+/// `announced` is the reason already reported for the current skip streak, or
+/// `None` if the last tick synced.
+///
+/// Extracted from the loop because both skip branches used to `continue`
+/// silently: an iOS device that stopped syncing produced no mail, no error and
+/// no log line, which left nothing to diagnose from.
+pub(crate) fn plan_poll_tick(online: bool, already_syncing: bool, announced: Option<SkipReason>) -> PollTick {
+    // Offline is checked first: it is the reason the user can act on, and a
+    // stale "syncing" row while offline is a consequence rather than a cause.
+    let reason = if !online {
+        SkipReason::Offline
+    } else if already_syncing {
+        SkipReason::AlreadySyncing
+    } else {
+        return PollTick::Sync;
+    };
+    PollTick::Skip {
+        reason,
+        announce: announced != Some(reason),
+    }
+}
+
 /// Poll Gmail every `interval`. Skips a tick if a sync is already in progress
 /// or if the connectivity monitor reports we're offline.
 pub(crate) async fn gmail_poll_loop(
@@ -337,26 +395,34 @@ pub(crate) async fn gmail_poll_loop(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ticker.tick().await; // discard the immediate first tick — sync on demand at startup
 
+    // Reason reported for the current skip streak, so the loop logs a stall
+    // once instead of once a minute.
+    let mut announced: Option<SkipReason> = None;
+
     loop {
         ticker.tick().await;
-
-        // Offline: the network call would just fail with a transport error
-        // that the user can't act on, so skip silently. The probe runs every
-        // 15 s and will resume polling automatically on the next reconnect.
-        if !online_flag.load(Ordering::Relaxed) {
-            continue;
-        }
 
         let already_syncing = db
             .get_sync_status(&account_id)
             .map(|s| s.status == "syncing")
             .unwrap_or(false);
 
-        if already_syncing {
-            continue;
+        match plan_poll_tick(online_flag.load(Ordering::Relaxed), already_syncing, announced) {
+            PollTick::Skip { reason, announce } => {
+                if announce {
+                    crate::services::logger::log(
+                        "debug",
+                        "sync",
+                        format!("auto-sync skipped for {account_id}: {}", reason.describe()),
+                    );
+                }
+                announced = Some(reason);
+            }
+            PollTick::Sync => {
+                announced = None;
+                sync_fn().await;
+            }
         }
-
-        sync_fn().await;
     }
 }
 
@@ -1044,6 +1110,80 @@ mod tests {
         let planned = plan_calendar_enabled_accounts(&accounts, &|id| id == "g-on" || id == "i");
         let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, vec!["g-on"], "only opted-in OAuth accounts get calendar work");
+    }
+
+    // ── plan_poll_tick ────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_healthy_tick_syncs() {
+        assert_eq!(plan_poll_tick(true, false, None), PollTick::Sync);
+    }
+
+    #[test]
+    fn being_offline_skips_the_tick() {
+        assert_eq!(
+            plan_poll_tick(false, false, None),
+            PollTick::Skip {
+                reason: SkipReason::Offline,
+                announce: true,
+            }
+        );
+    }
+
+    #[test]
+    fn an_in_flight_sync_skips_the_tick() {
+        assert_eq!(
+            plan_poll_tick(true, true, None),
+            PollTick::Skip {
+                reason: SkipReason::AlreadySyncing,
+                announce: true,
+            }
+        );
+    }
+
+    #[test]
+    fn offline_outranks_already_syncing() {
+        // Both true: report the one the user can act on. A stale "syncing" row
+        // while offline is a consequence, not the cause.
+        assert_eq!(
+            plan_poll_tick(false, true, None),
+            PollTick::Skip {
+                reason: SkipReason::Offline,
+                announce: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_repeated_skip_is_not_announced_again() {
+        // The whole point of the reason field: a 60 s loop must not write the
+        // same line to the output panel every minute.
+        assert_eq!(
+            plan_poll_tick(false, false, Some(SkipReason::Offline)),
+            PollTick::Skip {
+                reason: SkipReason::Offline,
+                announce: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_changed_skip_reason_is_announced() {
+        // Offline → stuck-syncing is a different diagnosis and must be visible.
+        assert_eq!(
+            plan_poll_tick(true, true, Some(SkipReason::Offline)),
+            PollTick::Skip {
+                reason: SkipReason::AlreadySyncing,
+                announce: true,
+            }
+        );
+    }
+
+    #[test]
+    fn recovering_clears_the_announced_reason() {
+        // After a skip streak, a successful tick must reset state so the *next*
+        // skip is announced rather than swallowed as a repeat.
+        assert_eq!(plan_poll_tick(true, false, Some(SkipReason::Offline)), PollTick::Sync);
     }
 
     // ── gmail_poll_loop ───────────────────────────────────────────────────────

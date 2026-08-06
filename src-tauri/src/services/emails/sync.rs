@@ -14,7 +14,7 @@ use crate::models::FolderRole;
 use crate::models::{Account, Email};
 use crate::services::accounts;
 use crate::sync::folder_plan::{plan_folders, FolderPlan, ListedFolder, WellKnownFolder};
-use crate::sync::provider::{EmailProvider, ExtraMailbox};
+use crate::sync::provider::{EmailProvider, ExtraMailbox, MessageRef};
 
 use super::events::{emit_account_log, emit_progress};
 use super::provider::build_provider_for_account;
@@ -254,7 +254,9 @@ pub async fn sync_account_with_provider(
     const MAX_INCREMENTAL_EMAILS_PER_SYNC: u32 = 500;
     const PAGE_SIZE: u32 = 100;
 
-    let mut all_message_refs = Vec::new();
+    // Kept apart until the queue is ordered — see `order_download_queue`.
+    let mut backfill_refs: Vec<MessageRef> = Vec::new();
+    let mut incremental_refs: Vec<MessageRef> = Vec::new();
     let mut backfill_ref_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Backfill pass ─────────────────────────────────────────────────────────
@@ -273,7 +275,7 @@ pub async fn sync_account_with_provider(
             for r in &message_refs {
                 backfill_ref_ids.insert(r.id.clone());
             }
-            all_message_refs.extend(message_refs);
+            backfill_refs.extend(message_refs);
             if next_page.is_none() {
                 break;
             }
@@ -294,8 +296,7 @@ pub async fn sync_account_with_provider(
     if incremental_after_timestamp.is_some() {
         let mut next_page_token: Option<String> = None;
         loop {
-            let remaining = MAX_INCREMENTAL_EMAILS_PER_SYNC
-                .saturating_sub(all_message_refs.len().saturating_sub(backfill_ref_ids.len()) as u32);
+            let remaining = MAX_INCREMENTAL_EMAILS_PER_SYNC.saturating_sub(incremental_refs.len() as u32);
             if remaining == 0 {
                 break;
             }
@@ -309,16 +310,17 @@ pub async fn sync_account_with_provider(
                     label_filter_for_list.as_deref(),
                 )
                 .await?;
-            all_message_refs.extend(message_refs);
-            let has_more = next_page.is_some()
-                && all_message_refs.len().saturating_sub(backfill_ref_ids.len())
-                    < MAX_INCREMENTAL_EMAILS_PER_SYNC as usize;
+            incremental_refs.extend(message_refs);
+            let has_more = next_page.is_some() && incremental_refs.len() < MAX_INCREMENTAL_EMAILS_PER_SYNC as usize;
             if has_more {
                 emit_account_log(
                     "debug",
                     "sync",
                     &account.email,
-                    &format!("Found {} message IDs so far, fetching more...", all_message_refs.len()),
+                    &format!(
+                        "Found {} message IDs so far, fetching more...",
+                        incremental_refs.len() + backfill_refs.len()
+                    ),
                 );
             }
             if !has_more {
@@ -327,6 +329,8 @@ pub async fn sync_account_with_provider(
             next_page_token = next_page;
         }
     }
+
+    let all_message_refs = order_download_queue(incremental_refs, backfill_refs);
 
     // Still filter by ID in case of overlap at the timestamp boundary.
     let all_ids: Vec<String> = all_message_refs.iter().map(|r| r.id.clone()).collect();
@@ -1973,6 +1977,30 @@ pub(super) fn resolve_sync_anchors(db: &Database, account: &Account, account_id:
 /// `account.sync_from_timestamp.or(provider_default_zero)`. We treat both
 /// the explicit user choice and the provider default the same way: any
 /// value asks us to make sure that range is covered in full on first sync.
+/// The order the two passes' messages are downloaded in: new mail first,
+/// history after, each pass keeping its own order and no id fetched twice.
+///
+/// Both passes used to be concatenated backfill-first, which is invisible on a
+/// desktop whose history was filled in months ago and fatal on a fresh phone:
+/// one sync queued 1310 messages of a year-old window and appended today's
+/// mail behind them. Every cycle rebuilt that queue the same way, so the mail
+/// the user opened the app to read was permanently last in line — and iOS
+/// suspends the app long before a queue that size drains over a phone
+/// connection.
+///
+/// History still arrives in full; it just yields to what the user is waiting
+/// for.
+pub(super) fn order_download_queue(incremental: Vec<MessageRef>, backfill: Vec<MessageRef>) -> Vec<MessageRef> {
+    let mut seen = std::collections::HashSet::new();
+    incremental
+        .into_iter()
+        .chain(backfill)
+        // The passes meet at the timestamp boundary and can both return the
+        // same message; downloading it twice costs a request per sync.
+        .filter(|r| seen.insert(r.id.clone()))
+        .collect()
+}
+
 pub(super) fn plan_sync_passes(
     effective_sync_from: Option<i64>,
     latest_timestamp: Option<i64>,
@@ -2612,5 +2640,65 @@ mod gmail_label_filter_tests {
     #[test]
     fn no_categories_selected_keeps_listing_sent_only() {
         assert_eq!(gmail_label_filter(&[]), Some("in:sent".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod download_queue_tests {
+    use super::*;
+
+    fn refs(ids: &[&str]) -> Vec<MessageRef> {
+        ids.iter()
+            .map(|id| MessageRef {
+                id: (*id).to_string(),
+                thread_id: format!("t-{id}"),
+            })
+            .collect()
+    }
+
+    fn ids(refs: &[MessageRef]) -> Vec<&str> {
+        refs.iter().map(|r| r.id.as_str()).collect()
+    }
+
+    #[test]
+    fn new_mail_is_downloaded_before_history() {
+        // The reported bug: on a fresh phone install with a year of history,
+        // one sync queued 1310 backfill messages and appended today's mail
+        // after them. Every cycle re-ran the backfill first, so the mail the
+        // user actually opened the app to read sat behind a queue that takes
+        // minutes — and on iOS the app is suspended long before it drains.
+        let queue = order_download_queue(refs(&["new-1", "new-2"]), refs(&["old-1", "old-2"]));
+        assert_eq!(ids(&queue), vec!["new-1", "new-2", "old-1", "old-2"]);
+    }
+
+    #[test]
+    fn history_is_still_queued_in_full() {
+        // Reordering must not drop backfill work — the history still has to
+        // arrive, just not ahead of new mail.
+        let queue = order_download_queue(refs(&["new-1"]), refs(&["old-1", "old-2", "old-3"]));
+        assert_eq!(queue.len(), 4);
+    }
+
+    #[test]
+    fn a_message_in_both_passes_is_downloaded_once() {
+        // The two passes meet at the timestamp boundary and can return the
+        // same id. Downloading it twice wastes a request per sync on a phone.
+        let queue = order_download_queue(refs(&["both", "new-1"]), refs(&["both", "old-1"]));
+        assert_eq!(ids(&queue), vec!["both", "new-1", "old-1"]);
+    }
+
+    #[test]
+    fn each_pass_keeps_its_own_order() {
+        // Providers return newest-first within a page; preserving that means
+        // the newest mail of each pass lands first.
+        let queue = order_download_queue(refs(&["n1", "n2", "n3"]), refs(&["o1", "o2"]));
+        assert_eq!(ids(&queue), vec!["n1", "n2", "n3", "o1", "o2"]);
+    }
+
+    #[test]
+    fn either_pass_may_be_empty() {
+        assert_eq!(ids(&order_download_queue(vec![], refs(&["o1"]))), vec!["o1"]);
+        assert_eq!(ids(&order_download_queue(refs(&["n1"]), vec![])), vec!["n1"]);
+        assert!(order_download_queue(vec![], vec![]).is_empty());
     }
 }
