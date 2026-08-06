@@ -76,6 +76,7 @@
     "backend": "KI-Backend",
     "providerEmbeddedLabel": "In der App",
     "providerEmbeddedDesc": "Mitgelieferte Modelle. Kein Server, keine Einrichtung.",
+    "providerEmbeddedUnavailable": "Auf diesem Mac nicht verfügbar — erfordert Apple Silicon.",
     "providerOllamaLabel": "Ollama",
     "providerOllamaDesc": "Lokaler Ollama-Server",
     "providerOpenRouterLabel": "OpenRouter",

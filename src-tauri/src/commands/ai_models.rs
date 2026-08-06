@@ -158,7 +158,12 @@ fn finish_model_op(
                 .as_deref()
                 .map(|s| s.is_empty() || !local_embed_ids.contains(s))
                 .unwrap_or(true);
-            let no_provider = provider_saved.is_none();
+            // Only auto-select the embedded provider where it can actually run.
+            // On an Intel Mac the universal bundle carries a Metal runtime with
+            // no Apple7 GPU to execute it, so defaulting to it would hand the
+            // user a provider that fails every turn with `Decode Error -3`.
+            let no_provider = provider_saved.is_none()
+                && crate::ai::gpu_plan::embedded_runtime_supported(std::env::consts::OS, std::env::consts::ARCH);
             // Helper: persist a preference and surface failures in the
             // output panel. CLAUDE.md mandates we never swallow DB errors
             // silently; auto-select would otherwise look like it succeeded

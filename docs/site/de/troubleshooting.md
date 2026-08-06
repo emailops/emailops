@@ -18,8 +18,10 @@ ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-Auf einem **Intel-Mac** ist die eingebettete Laufzeit nicht im Build enthalten. Verwenden Sie
-Ollama oder OpenRouter.
+Auf einem **Intel-Mac** kann die eingebaute KI grundsätzlich nicht laufen — sie benötigt einen
+Apple-Silicon-Chip (M1 oder neuer), daher lässt EmailOps sie deaktiviert. Verwenden Sie
+stattdessen OpenRouter. Ollama lässt sich zwar installieren, erhält auf Intel aber ebenfalls
+keine GPU-Beschleunigung und ist damit zu langsam, um Freude zu machen.
 
 ## Der Chat ist langsam
 

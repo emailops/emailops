@@ -62,6 +62,32 @@ pub fn total_ram_gb() -> u64 {
     total_ram_bytes().map_or(0, |b| b / (1024 * 1024 * 1024))
 }
 
+/// Is this process running under Rosetta translation?
+///
+/// `std::env::consts::ARCH` is a compile-time constant, so an x86_64 build
+/// reports `x86_64` whether it is on a real Intel Mac or being translated on
+/// Apple Silicon. Bug reports carrying that string are therefore ambiguous
+/// exactly where it matters most — an Intel Mac cannot run the Metal AI
+/// runtime, an Apple Silicon one can. `sysctl.proc_translated` disambiguates.
+///
+/// Shells out rather than calling `sysctlbyname` because `libc` was removed
+/// from this crate on purpose (see Cargo.toml); this runs once, only when the
+/// user opens the feedback form, so the process spawn is not a hot path.
+/// Anything other than a clean `1` is reported as "not translated" — a probe
+/// failure must not masquerade as a positive result.
+pub fn is_rosetta_translated() -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    std::process::Command::new("sysctl")
+        .args(["-n", "sysctl.proc_translated"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "1")
+        .unwrap_or(false)
+}
+
 /// RAM tier for the AUTOMATIC context window (`chat.n_ctx` unset/0).
 ///
 /// Hard-capped at 32768 regardless of RAM — anything larger is opt-in via

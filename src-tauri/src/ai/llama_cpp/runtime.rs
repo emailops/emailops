@@ -106,15 +106,84 @@ unsafe extern "C" fn debug_filtered_log(
     // SAFETY: llama.cpp guarantees `text` is a NUL-terminated C string for the
     // duration of the call.
     let msg = unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy();
+    record_breadcrumb(&msg);
     eprint!("{msg}");
 }
 
-/// C log callback that drops every line — release builds and `LLAMA_SILENT=1`.
-unsafe extern "C" fn void_log(
-    _level: llama_cpp_sys_2::ggml_log_level,
-    _text: *const std::os::raw::c_char,
+/// The most recent llama.cpp / ggml WARN+ERROR lines.
+///
+/// `llama_decode` reports failure as a bare integer — `-3` is
+/// `GGML_STATUS_FAILED`, which `llama-cpp-2` stringifies as "unknown" because it
+/// only names `1` and `-1`. The line that says *why* (Metal command-buffer
+/// error, OOM, NaN) goes to the log callback instead, which release builds used
+/// to discard entirely. Keeping the last few lines lets a decode failure quote
+/// its own cause, so a bug report arrives diagnosable instead of opaque.
+static LOG_BREADCRUMBS: std::sync::Mutex<std::collections::VecDeque<String>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// How many lines to retain. A failing ubatch typically emits 1-3; the rest is
+/// headroom for a backend that is chattier on the way down.
+const MAX_BREADCRUMBS: usize = 8;
+
+/// Pure ring insert: trim, drop blanks, evict oldest-first at capacity. Split
+/// out from the global so it is testable without racing other tests on a
+/// process-wide static.
+fn push_breadcrumb(ring: &mut std::collections::VecDeque<String>, msg: &str) {
+    let msg = msg.trim();
+    if msg.is_empty() {
+        return;
+    }
+    if ring.len() == MAX_BREADCRUMBS {
+        ring.pop_front();
+    }
+    ring.push_back(msg.to_string());
+}
+
+fn record_breadcrumb(msg: &str) {
+    // A poisoned breadcrumb ring must never take down inference — recover the
+    // inner buffer rather than propagating a panic from another thread.
+    let mut ring = LOG_BREADCRUMBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    push_breadcrumb(&mut ring, msg);
+}
+
+fn drain_breadcrumbs() -> Vec<String> {
+    let mut ring = LOG_BREADCRUMBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ring.drain(..).collect()
+}
+
+/// Pure formatter: attach whatever the backend said to an otherwise opaque
+/// decode error. Kept separate from the FFI plumbing so it is directly testable.
+fn format_decode_failure(label: &str, err: &str, crumbs: &[String]) -> String {
+    if crumbs.is_empty() {
+        return format!("{label}: {err}");
+    }
+    format!("{label}: {err} (llama.cpp: {})", crumbs.join(" | "))
+}
+
+/// Build the user-facing message for a failed `llama_decode`, quoting the
+/// backend's own WARN/ERROR output when it produced any.
+pub(crate) fn decode_failure(label: &str, err: impl std::fmt::Display) -> String {
+    format_decode_failure(label, &err.to_string(), &drain_breadcrumbs())
+}
+
+/// C log callback for release builds and `LLAMA_SILENT=1`: prints nothing, but
+/// still records WARN/ERROR so a later decode failure can quote them.
+unsafe extern "C" fn capturing_silent_log(
+    level: llama_cpp_sys_2::ggml_log_level,
+    text: *const std::os::raw::c_char,
     _user_data: *mut std::os::raw::c_void,
 ) {
+    if !debug_log_level_enabled(level) || text.is_null() {
+        return;
+    }
+    // SAFETY: llama.cpp guarantees `text` is a NUL-terminated C string for the
+    // duration of the call.
+    let msg = unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy();
+    record_breadcrumb(&msg);
 }
 
 /// Install the global llama.cpp / ggml log handler.
@@ -125,11 +194,19 @@ unsafe extern "C" fn void_log(
 /// registered afterwards (e.g. `LlamaBackend::void_logs`) never sees those
 /// lines and they leak to stderr. Setting the C callback up front filters them.
 ///
-/// - Release / `LLAMA_SILENT=1`: drop everything (`void_log`).
-/// - Debug: keep WARN/ERROR decode breadcrumbs, drop the INFO/DEBUG init noise.
+/// - Release / `LLAMA_SILENT=1`: print nothing, but retain WARN/ERROR in the
+///   breadcrumb ring so a decode failure can quote its own cause.
+/// - Debug: same, plus the WARN/ERROR lines go to stderr.
+///
+/// Neither mode discards WARN/ERROR outright any more: doing so is what made
+/// `Decode Error -3: unknown` undiagnosable from a release bug report.
 fn install_log_callback() {
     let silent = cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1");
-    let cb: llama_cpp_sys_2::ggml_log_callback = Some(if silent { void_log } else { debug_filtered_log });
+    let cb: llama_cpp_sys_2::ggml_log_callback = Some(if silent {
+        capturing_silent_log
+    } else {
+        debug_filtered_log
+    });
     // SAFETY: registering a global C log callback with a static fn and a null
     // user_data pointer. `llama_log_set` also sets ggml's callback, but we set
     // both explicitly (ggml last) so the Metal backend's logs are covered
@@ -1036,7 +1113,7 @@ impl LlamaCppRuntime {
             // For encoder-mode (embedding) models, use `encode` not `decode`.
             // `decode` also works for causal models with embeddings=true.
             ctx.decode(&mut batch)
-                .map_err(|e| format!("Embedding decode failed: {}", e))?;
+                .map_err(|e| decode_failure("Embedding decode failed", e))?;
 
             // `embeddings_seq_ith(0)` returns the mean-pooled embedding for
             // sequence 0, which is exactly what nomic-embed and e5 expect.
@@ -1353,6 +1430,72 @@ mod tests {
         // Decode-failure breadcrumbs ride in on WARN/ERROR — keep them in debug.
         assert!(debug_log_level_enabled(GGML_LOG_LEVEL_WARN));
         assert!(debug_log_level_enabled(GGML_LOG_LEVEL_ERROR));
+    }
+
+    #[test]
+    fn a_decode_failure_quotes_the_backend_line_that_explains_it() {
+        // The whole point: `-3` is GGML_STATUS_FAILED, which llama-cpp-2 renders
+        // as "unknown" because it only names 1 and -1. The cause arrives on the
+        // log callback instead, so the message has to carry it.
+        let crumbs = vec!["ggml_metal_graph_compute: command buffer 0 failed with status 5".to_string()];
+        let got = format_decode_failure("Prefill decode failed", "Decode Error -3: unknown", &crumbs);
+        assert!(got.contains("Decode Error -3: unknown"), "{got}");
+        assert!(got.contains("command buffer 0 failed"), "{got}");
+    }
+
+    #[test]
+    fn a_decode_failure_without_breadcrumbs_reads_exactly_as_before() {
+        // No backend output is the common case for ordinary errors; the message
+        // must not grow an empty parenthetical.
+        assert_eq!(
+            format_decode_failure("Prefill decode failed", "Decode Error 1: NoKvCacheSlot", &[]),
+            "Prefill decode failed: Decode Error 1: NoKvCacheSlot"
+        );
+    }
+
+    #[test]
+    fn every_retained_breadcrumb_reaches_the_message() {
+        let crumbs = vec!["first".to_string(), "second".to_string()];
+        let got = format_decode_failure("Decode failed", "boom", &crumbs);
+        assert!(got.contains("first") && got.contains("second"), "{got}");
+    }
+
+    #[test]
+    fn the_breadcrumb_ring_evicts_oldest_first() {
+        // A backend that logs its way down must not push the line naming the
+        // actual failure out of the buffer.
+        let mut ring = std::collections::VecDeque::new();
+        for i in 0..(MAX_BREADCRUMBS + 3) {
+            push_breadcrumb(&mut ring, &format!("line {i}"));
+        }
+        assert_eq!(ring.len(), MAX_BREADCRUMBS);
+        assert_eq!(
+            ring.back().map(String::as_str),
+            Some(format!("line {}", MAX_BREADCRUMBS + 2)).as_deref()
+        );
+        assert_eq!(ring.front().map(String::as_str), Some("line 3"));
+    }
+
+    #[test]
+    fn blank_backend_lines_are_not_retained() {
+        // llama.cpp emits bare newlines as separators; they would otherwise
+        // fill the ring and evict the real breadcrumbs.
+        let mut ring = std::collections::VecDeque::new();
+        push_breadcrumb(&mut ring, "\n");
+        push_breadcrumb(&mut ring, "   ");
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn breadcrumbs_are_stored_without_their_trailing_newline() {
+        // Lines arrive newline-terminated; joined verbatim they would break the
+        // single-line error message apart.
+        let mut ring = std::collections::VecDeque::new();
+        push_breadcrumb(&mut ring, "ggml_metal: command buffer failed\n");
+        assert_eq!(
+            ring.front().map(String::as_str),
+            Some("ggml_metal: command buffer failed")
+        );
     }
 
     #[test]

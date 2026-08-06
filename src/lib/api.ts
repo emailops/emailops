@@ -785,12 +785,20 @@ export interface AppDiagnostics {
   osPlatform: string;
   osVersion: string;
   arch: string;
+  /** True when running Rosetta-translated on Apple Silicon. */
+  translated: boolean;
 }
 
 /**
  * Gather app version (from the bundle) and OS platform/version/arch (from the
  * `os` plugin). The `os` plugin functions read values injected at startup, so
  * they are synchronous; only `getVersion()` is async.
+ *
+ * `arch` is the *compile-time* architecture of the running binary, so on macOS
+ * `x86_64` alone cannot distinguish a real Intel Mac from a translated process
+ * on Apple Silicon — a distinction that decides whether the embedded AI runtime
+ * can work at all. `translated` resolves it; a failed probe reports false
+ * rather than blocking the feedback form.
  */
 export async function getAppDiagnostics(): Promise<AppDiagnostics> {
   return {
@@ -798,6 +806,7 @@ export async function getAppDiagnostics(): Promise<AppDiagnostics> {
     osPlatform: osPlatform(),
     osVersion: osVersion(),
     arch: osArch(),
+    translated: await invoke<boolean>('is_rosetta_translated').catch(() => false),
   };
 }
 

@@ -14,9 +14,11 @@ your machine.
 
 - **In-app (local)** — an embedded llama.cpp runtime. Nothing to install, no daemon, no
   network traffic. This is the default. It uses your GPU automatically where there is one —
-  Metal on Apple Silicon, Vulkan on Windows and Linux — and the CPU where there is not.
+  Metal on Apple Silicon, Vulkan on Windows and Linux — and the CPU where there is not. On a
+  Mac it requires Apple Silicon (M1 or newer); on an Intel Mac it stays unavailable.
 - **Ollama (local)** — an Ollama server you already run at `http://localhost:11434`. Useful
-  if you keep a shared model library, or on Intel Macs where the embedded runtime is absent.
+  if you keep a shared model library. Note that on an Intel Mac it gets no GPU acceleration
+  either, so it will be slow.
 - **OpenRouter (remote)** — a paid cloud API. Requires an API key, supports a monthly budget
   cap, and sends email content to a third party — so it stays off unless you enable it.
 

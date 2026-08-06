@@ -18,8 +18,9 @@ ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-On an **Intel Mac**, the embedded runtime is not included in the build. Use Ollama or
-OpenRouter instead.
+On an **Intel Mac** the in-app AI cannot run at all — it needs an Apple Silicon chip (M1 or
+newer), so EmailOps keeps it switched off. Use OpenRouter instead. Ollama will install, but it
+gets no GPU acceleration on Intel either, so expect it to be too slow to be pleasant.
 
 ## Chat is slow
 

@@ -39,8 +39,8 @@ figure is in the [model catalog](../ai-features/#the-model-catalog).
   CPU and system RAM; budget the model's figure in RAM and expect answers to take noticeably
   longer.
 
-Intel Macs are the exception: that build ships without the embedded AI runtime altogether —
-see the [note below](#direct-download).
+Intel Macs are the exception: the embedded AI runtime needs an Apple Silicon chip (M1 or
+newer) and cannot run on them at all — see the [note below](#direct-download).
 
 ### Without local AI
 
@@ -82,9 +82,11 @@ Upgrade later with `brew upgrade --cask emailops`.
 2. Open the DMG and drag **EmailOps.app** into your Applications folder.
 3. Launch it from Applications.
 
-> **Intel Macs:** use the `EmailOps-macos-intel.dmg` build. It does not include the embedded
-> AI runtime, so if you want AI features on an Intel Mac, point EmailOps at
-> [Ollama or OpenRouter](../ai-features/#choosing-a-backend) instead.
+> **Intel Macs:** this one download works on every Mac — there is no separate Intel build.
+> The AI features are the exception: the in-app AI needs an Apple Silicon chip (M1 or newer),
+> so on an Intel Mac it stays switched off and EmailOps tells you why. Everything else works
+> normally. For AI, point EmailOps at
+> [OpenRouter](../ai-features/#choosing-a-backend) instead.
 
 ## Windows
 

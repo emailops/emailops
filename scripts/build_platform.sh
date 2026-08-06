@@ -5,10 +5,10 @@
 #   scripts/build_platform.sh windows
 #   CARGO_FEATURES=cuda scripts/build_platform.sh linux
 #
-# Mirrors the `build-mac-intel` pattern: a per-platform overlay merged over
-# src-tauri/tauri.conf.json via --config. The base config keeps macOS-only
-# bundle targets (app, dmg) so the signed/notarized mac release path is
-# byte-for-byte unaffected by this script's existence.
+# Uses a per-platform overlay merged over src-tauri/tauri.conf.json via
+# --config. The base config keeps macOS-only bundle targets (app, dmg) so the
+# signed/notarized mac release path is byte-for-byte unaffected by this
+# script's existence.
 #
 # No code signing. Linux packages are conventionally unsigned, and Windows
 # signing needs an EV/OV certificate the project does not currently hold —
@@ -63,8 +63,8 @@ TARGET_DIR="${CARGO_TARGET_DIR:-src-tauri/target}"
 # bundle.resources.
 bash scripts/fetch_bundled_models.sh
 
-# Cargo args are forwarded after the second `--`, exactly as build-mac-intel
-# forwards `--no-default-features`.
+# Cargo args are forwarded after the second `--` (this is how
+# `--no-default-features` reaches cargo rather than the tauri CLI).
 CARGO_ARGS=()
 if [ "$NO_DEFAULT_FEATURES" = "1" ]; then
   echo "[build-$PLATFORM] building WITHOUT embedded llama.cpp"

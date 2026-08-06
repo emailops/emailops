@@ -45,6 +45,19 @@ vi.mock('@/lib/api', () => ({
       thinkingEnabled: false,
     }),
   ),
+  // Probed on mount to decide whether the embedded provider tab is selectable
+  // (false on Intel Macs, whose GPU cannot run the Metal kernels).
+  detectAiCapability: vi.fn(() =>
+    Promise.resolve({
+      appleSilicon: true,
+      localAiCapable: true,
+      embeddedAiAvailable: true,
+      totalRamGb: 32,
+      minRamGbForLocalAi: 8,
+      os: 'macos',
+      arch: 'aarch64',
+    }),
+  ),
   listCatalogModels: vi.fn(() => Promise.resolve([])),
   listOllamaModels: vi.fn(() => Promise.resolve([])),
   getPref: vi.fn(() => Promise.resolve(null)),

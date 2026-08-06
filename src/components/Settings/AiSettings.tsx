@@ -98,6 +98,12 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   // when the user never touched the field and no explicit pref existed, so
   // saving unrelated settings can't pin the machine's auto choice.
   const nCtxLoadedRef = useRef<{ explicit: boolean; value: number }>({ explicit: false, value: 8192 });
+  // Whether the embedded runtime can actually run on this machine. False both
+  // for builds compiled without llama.cpp and for Intel Macs, whose GPU cannot
+  // execute the Metal kernels — selecting it there failed every turn with an
+  // opaque `Decode Error -3`. Null until the probe returns; the tab stays
+  // enabled meanwhile so a slow probe can't hide a working option.
+  const [embeddedAvailable, setEmbeddedAvailable] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -115,6 +121,12 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: load on mount only
   useEffect(() => {
     void loadAll();
+    // A failed probe must not disable a provider that may well work — leave the
+    // tab enabled and let the backend's own guard report the real problem.
+    api
+      .detectAiCapability()
+      .then((cap) => setEmbeddedAvailable(cap.embeddedAiAvailable))
+      .catch(() => setEmbeddedAvailable(null));
     // Subscribe to download progress events
     const unlistenDownload = listen<ModelDownloadProgress>('model-download-progress', (event) => {
       const progress = event.payload;
@@ -543,6 +555,8 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
                     active={config.provider === 'llamacpp'}
                     label={t('settings:ai.providerEmbeddedLabel')}
                     description={t('settings:ai.providerEmbeddedDesc')}
+                    disabled={embeddedAvailable === false}
+                    disabledReason={t('settings:ai.providerEmbeddedUnavailable')}
                     onClick={() => handleProviderChange('llamacpp')}
                   />
                   <ProviderTab

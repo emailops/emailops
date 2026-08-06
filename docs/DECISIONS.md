@@ -578,3 +578,45 @@ the room); making list scope part of the context (narrowing RAG by the visible
 filter/search is a genuinely different retrieval mode, not just a new entry point —
 larger change, deferred); including selected body text as a quotable chip (needs new
 postMessage plumbing through the sandboxed `EmailHtmlFrame` bridge; deferred).
+
+## 2026-08-06 — One universal macOS build; embedded AI refused on Intel at runtime
+
+**Decision:** macOS ships exactly ONE artifact: a universal
+(`universal-apple-darwin`) DMG that launches on every Mac. The separate,
+`--no-default-features` Intel bundle (`build-mac-intel`, `verify-mac-intel`,
+`dist-mac-intel`, `tauri.intel.conf.json`) is retired, and the Homebrew cask
+becomes single-artifact. The embedded llama.cpp provider is refused on macOS
+x86_64 at **runtime** — `ai::gpu_plan::embedded_runtime_supported` gates the
+capability probe, the provider loader, model auto-select, and both provider
+pickers. Intel Macs get the whole app minus embedded AI, with OpenRouter as the
+realistic alternative; no CPU fallback is offered.
+**Context:** A user on an Intel Mac reported every AI turn failing with
+`Prefill decode failed: Decode Error -3: unknown`. `-3` is `GGML_STATUS_FAILED`
+from `process_ubatch` — ggml's Metal kernels need an Apple7-family GPU, which an
+Intel Mac does not have. Cargo features apply per build, not per slice, so the
+universal bundle's x86_64 slice unavoidably carries a Metal-backed runtime it
+cannot execute (`llama-cpp-sys-2` disables Metal only for watchOS). The two-DMG
+split was supposed to prevent exactly this, and silently failed to: the Intel
+exclusion only ever applied to the bundle Intel users mostly did not download.
+The app then actively led them in — `ai_capability_from` treated x86_64 as
+capable and the Settings provider tabs were ungated. Enforcing the rule in code
+rather than in the build makes it hold no matter which artifact a user installs,
+which in turn makes the second artifact pointless. Its remaining benefit was
+~100 MB of download; its cost was a doubled release pipeline plus a download
+page that has to guess the visitor's chip — and `navigator.platform` reports
+`MacIntel` on Apple Silicon too, so that guess is unreliable in exactly the
+browsers (Safari, Firefox) that lack UA-Client-Hints. **The runtime gate is
+therefore load-bearing, not defence in depth** — it is the only thing between an
+Intel Mac and a guaranteed inference failure.
+**Rejected:** A single-arch arm64 `build-mac` (closes the hole at build time,
+but a wrong download hands an Intel user a DMG that will not open at all, and it
+still needs arch detection on the site). Keeping the Intel DMG as a smaller
+optional download (the ~100 MB saving does not pay for a second signed,
+notarized, verified pipeline once correctness no longer depends on it). Falling
+back to `n_gpu_layers = 0` on Intel so embedded AI "works" — CPU-only inference
+is too slow to be a real product experience; it would trade one bad experience
+for another. Retrying on CPU after a fatal decode error — same objection, plus it
+would mask genuine GPU faults on Apple Silicon. Leaving release builds to discard
+ggml's WARN/ERROR lines: they are now retained in a ring buffer and quoted in the
+decode error, because the line naming the real cause was being thrown away
+precisely when it mattered.
