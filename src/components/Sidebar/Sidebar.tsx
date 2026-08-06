@@ -9,6 +9,7 @@ import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
 import { folderLabel } from '@/lib/folderDisplay';
 import { formatShortcut } from '@/lib/platform';
+import { type SidebarEntry, type SidebarSectionId, sidebarSections } from '@/lib/sidebarSections';
 import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -36,6 +37,65 @@ function CollapseChevron({ open }: { open: boolean }) {
       />
     </svg>
   );
+}
+
+/** i18n key labelling each navigation entry. Spelled out rather than built as
+ *  `sidebar:${entry}` so `t()` keeps type-checking every one against the
+ *  locale bundle. */
+const ENTRY_LABEL_KEYS = {
+  inbox: 'sidebar:inbox',
+  chat: 'sidebar:chat',
+  attachments: 'sidebar:attachments',
+  drafts: 'sidebar:drafts',
+  sent: 'sidebar:sent',
+  calendar: 'sidebar:calendar',
+  spam: 'sidebar:spam',
+  deleted: 'sidebar:deleted',
+  contacts: 'sidebar:contacts',
+  dashboard: 'sidebar:dashboard',
+  tasks: 'sidebar:tasks',
+  memory: 'sidebar:memory',
+  lenses: 'sidebar:lenses',
+} as const satisfies Record<SidebarEntry, string>;
+
+/** The single-path outline glyph each entry renders, as the `d` attribute of a
+ *  24×24 viewBox path. */
+const ENTRY_ICON_PATHS = {
+  inbox:
+    'M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4',
+  chat: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+  attachments:
+    'M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13',
+  drafts:
+    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  sent: 'M12 19l9 2-9-18-9 18 9-2zm0 0v-8',
+  calendar: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+  spam: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
+  deleted:
+    'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V4a1 1 0 011-1h6a1 1 0 011 1v3',
+  contacts:
+    'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z',
+  dashboard: 'M9 17v-6h13M9 17H4a1 1 0 01-1-1V4a1 1 0 011-1h16a1 1 0 011 1v6M9 17v4m4-4v4m-8 0h16',
+  tasks:
+    'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+  memory:
+    'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  lenses: 'M3 10h18M3 6h18M3 14h18M3 18h18',
+} as const satisfies Record<SidebarEntry, string>;
+
+function EntryIcon({ entry }: { entry: SidebarEntry }) {
+  return (
+    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={ENTRY_ICON_PATHS[entry]} />
+    </svg>
+  );
+}
+
+/** Shared look of every navigation row, highlighted when it is the current view. */
+function navRowClass(isActive: boolean, extra = ''): string {
+  return `w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+    isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+  } ${extra}`;
 }
 
 export type ViewMode =
@@ -150,9 +210,13 @@ export function Sidebar({
 
   const { t } = useTranslation(['common', 'sidebar', 'chat']);
   const [accountsOpen, setAccountsOpen] = useState(true);
-  const [viewsOpen, setViewsOpen] = useState(true);
-  const [aiFeaturesOpen, setAiFeaturesOpen] = useState(true);
-  const [otherViewsOpen, setOtherViewsOpen] = useState(false);
+  // One flag per section id rather than a boolean per section: membership is
+  // data now (see `sidebarSections`), so the collapse state follows the data.
+  const [openSections, setOpenSections] = useState<Record<SidebarSectionId, boolean>>({
+    views: true,
+    otherViews: false,
+  });
+  const toggleSection = (id: SidebarSectionId) => setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
   const [foldersOpen, setFoldersOpen] = useState(true);
   const [lensesListOpen, setLensesListOpen] = useState(true);
 
@@ -272,8 +336,134 @@ export function Sidebar({
     setDragOverTarget((current) => (current === targetKey ? null : current));
   };
 
+  const sections = sidebarSections({ aiEnabled, tasksEnabled, memoriesEnabled, lensesEnabled, calendarEnabled });
+
+  /** One navigation row. Four entries carry extra affordances (drop target,
+   *  panel toggle, badge, sub-list); the rest are the plain shared row. */
+  const renderEntry = (entry: SidebarEntry) => {
+    switch (entry) {
+      case 'inbox':
+        return (
+          <li key={entry}>
+            <button
+              onClick={() => onSetViewMode('inbox')}
+              onDragOver={handleEmailDragOver('inbox')}
+              onDragLeave={clearDragOver('inbox')}
+              onDrop={handleEmailDrop(t('sidebar:inbox'), 'inbox')}
+              className={navRowClass(
+                viewMode === 'inbox',
+                dragOverTarget === 'inbox' ? 'ring-1 ring-blue-400 bg-gray-800' : '',
+              )}
+            >
+              <EntryIcon entry={entry} />
+              {t(ENTRY_LABEL_KEYS[entry])}
+            </button>
+          </li>
+        );
+      case 'chat':
+        return (
+          <li key={entry}>
+            {/* Navigates to the full-page chat view. The docked panel is a
+                separate surface with its own close button and is reopened from
+                the header's new-chat icon, so this entry does not toggle it. */}
+            <button
+              onClick={onOpenChatView}
+              aria-pressed={viewMode === 'chat'}
+              title={t('chat:panel.expand')}
+              className={navRowClass(viewMode === 'chat')}
+            >
+              <EntryIcon entry={entry} />
+              {t(ENTRY_LABEL_KEYS[entry])}
+            </button>
+          </li>
+        );
+      case 'tasks':
+        return (
+          <li key={entry}>
+            <button onClick={() => onSetViewMode('tasks')} className={navRowClass(viewMode === 'tasks')}>
+              <EntryIcon entry={entry} />
+              <span className="flex-1">{t(ENTRY_LABEL_KEYS[entry])}</span>
+              {tasksBadge > 0 && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                    counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-600 text-gray-100'
+                  }`}
+                >
+                  {tasksBadge}
+                </span>
+              )}
+            </button>
+          </li>
+        );
+      case 'lenses':
+        return (
+          <li key={entry}>
+            <div
+              className={`group flex items-center rounded-lg text-sm transition-colors ${
+                viewMode === 'lenses' && !activeLensId ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+              }`}
+            >
+              <button
+                onClick={() => onSetViewMode('lenses')}
+                className="flex-1 flex items-center gap-2 px-3 py-2 text-left min-w-0"
+              >
+                <EntryIcon entry={entry} />
+                <span className="flex-1">{t(ENTRY_LABEL_KEYS[entry])}</span>
+                {lenses.length > 0 && <span className="text-xs text-gray-500">{lenses.length}</span>}
+              </button>
+              {lenses.length > 0 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLensesListOpen((v) => !v);
+                  }}
+                  className="px-2 py-2 text-gray-400 hover:text-gray-200 flex-shrink-0"
+                  title={lensesListOpen ? t('sidebar:collapseLenses') : t('sidebar:expandLenses')}
+                >
+                  <CollapseChevron open={lensesListOpen} />
+                </button>
+              )}
+            </div>
+            {lensesListOpen && lenses.length > 0 && (
+              <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-700 pl-2">
+                {lenses.map((l) => {
+                  const isActive = viewMode === 'lenses' && activeLensId === l.id;
+                  return (
+                    <li key={l.id}>
+                      <button
+                        onClick={() => onSelectLens(l.id)}
+                        className={`w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
+                          isActive ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                        }`}
+                        title={l.name}
+                      >
+                        {l.name}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        );
+      default:
+        return (
+          <li key={entry}>
+            <button onClick={() => onSetViewMode(entry)} className={navRowClass(viewMode === entry)}>
+              <EntryIcon entry={entry} />
+              {t(ENTRY_LABEL_KEYS[entry])}
+            </button>
+          </li>
+        );
+    }
+  };
+
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col">
+    // Full width inside the phone drawer, fixed column from `md` up. The drawer
+    // is `w-[85%] max-w-xs` (320px), so a fixed 16rem aside left a ~64px dead
+    // strip down its right edge — invisible as a gap because the drawer shares
+    // the sidebar's background, but every row stopped short of the tap area.
+    <aside className="w-full md:w-64 bg-gray-900 text-white flex flex-col">
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
           <div>
@@ -447,202 +637,21 @@ export function Sidebar({
             ))}
         </section>
 
-        {/* Views */}
-        <section>
-          <button
-            onClick={() => setViewsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
-          >
-            <CollapseChevron open={viewsOpen} />
-            {t('sidebar:views')}
-          </button>
-          {viewsOpen && (
-            <ul className="space-y-1">
-              <li>
-                <button
-                  onClick={() => onSetViewMode('inbox')}
-                  onDragOver={handleEmailDragOver('inbox')}
-                  onDragLeave={clearDragOver('inbox')}
-                  onDrop={handleEmailDrop(t('sidebar:inbox'), 'inbox')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'inbox' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  } ${dragOverTarget === 'inbox' ? 'ring-1 ring-blue-400 bg-gray-800' : ''}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-                    />
-                  </svg>
-                  {t('sidebar:inbox')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('attachments')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'attachments' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                    />
-                  </svg>
-                  {t('sidebar:attachments')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('drafts')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'drafts' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                    />
-                  </svg>
-                  {t('sidebar:drafts')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('sent')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'sent' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                    />
-                  </svg>
-                  {t('sidebar:sent')}
-                </button>
-              </li>
-              {calendarEnabled && (
-                <li>
-                  <button
-                    onClick={() => onSetViewMode('calendar')}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'calendar' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                      />
-                    </svg>
-                    {t('sidebar:calendar')}
-                  </button>
-                </li>
-              )}
-            </ul>
-          )}
-        </section>
-
-        {/* Other Views */}
-        <section>
-          <button
-            onClick={() => setOtherViewsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
-          >
-            <CollapseChevron open={otherViewsOpen} />
-            {t('sidebar:otherViews')}
-          </button>
-          {otherViewsOpen && (
-            <ul className="space-y-1">
-              <li>
-                <button
-                  onClick={() => onSetViewMode('spam')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'spam' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                    />
-                  </svg>
-                  {t('sidebar:spam')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('deleted')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'deleted' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M8 7V4a1 1 0 011-1h6a1 1 0 011 1v3"
-                    />
-                  </svg>
-                  {t('sidebar:deleted')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('contacts')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'contacts' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                  </svg>
-                  {t('sidebar:contacts')}
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => onSetViewMode('dashboard')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'dashboard' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 17v-6h13M9 17H4a1 1 0 01-1-1V4a1 1 0 011-1h16a1 1 0 011 1v6M9 17v4m4-4v4m-8 0h16"
-                    />
-                  </svg>
-                  {t('sidebar:dashboard')}
-                </button>
-              </li>
-            </ul>
-          )}
-        </section>
+        {/* Views / Other Views — membership is data (`sidebarSections`), so the
+            AI-backed entries live alongside the mail ones instead of behind a
+            third header. */}
+        {sections.map((section) => (
+          <section key={section.id}>
+            <button
+              onClick={() => toggleSection(section.id)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
+            >
+              <CollapseChevron open={openSections[section.id]} />
+              {t(section.titleKey)}
+            </button>
+            {openSections[section.id] && <ul className="space-y-1">{section.entries.map(renderEntry)}</ul>}
+          </section>
+        ))}
 
         {/* Custom IMAP folders — account-specific, hidden in the unified view.
             IMAP accounts always get the section (with the "+" affordance) so
@@ -788,157 +797,6 @@ export function Sidebar({
             )}
           </section>
         )}
-
-        {/* AI Features */}
-        <section>
-          <button
-            onClick={() => setAiFeaturesOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
-          >
-            <CollapseChevron open={aiFeaturesOpen} />
-            {t('sidebar:aiFeatures')}
-          </button>
-          {aiFeaturesOpen && (
-            <ul className="space-y-1 mb-2">
-              {aiEnabled && (
-                <li>
-                  {/* Navigates to the full-page chat view. The docked panel is
-                      a separate surface with its own close button and is
-                      reopened from the header's new-chat icon, so this entry
-                      does not toggle it. */}
-                  <button
-                    onClick={onOpenChatView}
-                    aria-pressed={viewMode === 'chat'}
-                    title={t('chat:panel.expand')}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                      />
-                    </svg>
-                    {t('sidebar:chat')}
-                  </button>
-                </li>
-              )}
-              {aiEnabled && tasksEnabled && (
-                <li>
-                  <button
-                    onClick={() => onSetViewMode('tasks')}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'tasks' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                      />
-                    </svg>
-                    <span className="flex-1">{t('sidebar:tasks')}</span>
-                    {tasksBadge > 0 && (
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-600 text-gray-100'
-                        }`}
-                      >
-                        {tasksBadge}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              )}
-              {aiEnabled && memoriesEnabled && (
-                <li>
-                  <button
-                    onClick={() => onSetViewMode('memory')}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'memory' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    {t('sidebar:memory')}
-                  </button>
-                </li>
-              )}
-              {aiEnabled && lensesEnabled && (
-                <li>
-                  <div
-                    className={`group flex items-center rounded-lg text-sm transition-colors ${
-                      viewMode === 'lenses' && !activeLensId
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <button
-                      onClick={() => onSetViewMode('lenses')}
-                      className="flex-1 flex items-center gap-2 px-3 py-2 text-left min-w-0"
-                    >
-                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M3 10h18M3 6h18M3 14h18M3 18h18"
-                        />
-                      </svg>
-                      <span className="flex-1">{t('sidebar:lenses')}</span>
-                      {lenses.length > 0 && <span className="text-xs text-gray-500">{lenses.length}</span>}
-                    </button>
-                    {lenses.length > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLensesListOpen((v) => !v);
-                        }}
-                        className="px-2 py-2 text-gray-400 hover:text-gray-200 flex-shrink-0"
-                        title={lensesListOpen ? t('sidebar:collapseLenses') : t('sidebar:expandLenses')}
-                      >
-                        <CollapseChevron open={lensesListOpen} />
-                      </button>
-                    )}
-                  </div>
-                  {lensesListOpen && lenses.length > 0 && (
-                    <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-700 pl-2">
-                      {lenses.map((l) => {
-                        const isActive = viewMode === 'lenses' && activeLensId === l.id;
-                        return (
-                          <li key={l.id}>
-                            <button
-                              onClick={() => onSelectLens(l.id)}
-                              className={`w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
-                                isActive
-                                  ? 'bg-primary-600 text-white'
-                                  : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                              }`}
-                              title={l.name}
-                            >
-                              {l.name}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </li>
-              )}
-            </ul>
-          )}
-        </section>
 
         <SmartFilters
           filters={smartFilters}

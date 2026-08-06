@@ -684,6 +684,38 @@ ggml's WARN/ERROR lines: they are now retained in a ring buffer and quoted in th
 decode error, because the line naming the real cause was being thrown away
 precisely when it mattered.
 
+## 2026-08-06 — Navigation groups by destination, not by whether AI powers it
+
+**Decision:** The sidebar has two sections, **Views** and **Other Views**. There is no
+"AI Features" section: Chat sits in Views directly below Inbox, and Tasks, Memory and
+Lenses join Dashboard under Other Views. Section membership is a pure function
+(`src/lib/sidebarSections.ts`), table-tested over the feature flags, and the component
+renders whatever it returns. This applies to desktop as well as phones.
+**Context:** A third collapsible header cost a whole row of a phone's drawer and pushed
+navigation below the fold. It also split the list by *implementation* — a user looking
+for Chat has no reason to know it is model-backed, and Dashboard sat under "AI Features"
+while reporting plain account statistics. The master AI switch still hides every
+AI-backed entry wholesale, and each experimental feature keeps its own flag on top.
+**Rejected:** Keeping "AI Features" and only reordering within it — leaves the phone
+row cost and the taxonomy problem. Hiding the section on phones only — the same
+argument applies on desktop, and two divergent navigation trees is a maintenance tax.
+## 2026-08-06 — Back is an edge swipe on phones, and the toolbar button goes
+
+**Decision:** On the stacked layout a rightward drag starting within 40px of the left
+edge returns from a thread to the list; a leftward drag dismisses the open drawer.
+Leftward is otherwise reserved. The email view's back button is gone on phones, with a
+"Back to inbox" item kept in the thread overflow menu; desktop keeps its button
+unchanged. Recognition and the navigation decision are pure functions
+(`src/lib/swipeGesture.ts`), so thresholds are table-tested without a DOM.
+**Context:** The header could not hold reply, AI, search, open-in-tab, delete and back
+at phone width. Back is the one action the platform already provides a gesture for.
+**Rejected:** Swipe-left as back (fights the iOS pop gesture and the direction the
+screen moves). Accepting a swipe anywhere on screen (steals horizontal drags from the
+calendar day strip, the settings tab rail and wide tables inside emails). Removing the
+back affordance entirely — email HTML renders in a null-origin iframe whose touch
+events never reach the app, so a swipe starting over message content cannot be seen and
+the menu item is the only reliable escape from such a thread.
+
 ## 2026-08-14 — Chat is scoped to one account, coupled to the mail list except in unified view
 
 **Decision:** A chat conversation always answers from exactly one concrete account,

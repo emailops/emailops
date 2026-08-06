@@ -342,7 +342,13 @@ export function ReplyCompose({
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div
+      // A drag inside the compose is text selection or a scroll of the editor,
+      // never navigation — leaving the thread here would discard the draft.
+      // See `hooks/useSwipeNavigation.ts`.
+      data-no-swipe
+      className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4"
+    >
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>

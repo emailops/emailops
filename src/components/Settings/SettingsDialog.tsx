@@ -143,6 +143,9 @@ export function SettingsDialog({
     // phone, so without it the tab strip sits under the status bar and the
     // panel's last control under the home indicator.
     <div
+      // Swipes inside a modal must not navigate the screen underneath it —
+      // see `hooks/useSwipeNavigation.ts`.
+      data-no-swipe
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:pt-0 md:pb-0"
       onClick={handleOverlayClick}
     >

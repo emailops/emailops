@@ -106,6 +106,10 @@ export function EmailView({
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all'>('reply');
   const [replyBody, setReplyBody] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  /** Stacked-only overflow menu holding search / open-in-tab / delete / back. */
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  /** Wrapper around the inline reply, which lives in the thread's scroll flow. */
+  const replyRef = useRef<HTMLDivElement>(null);
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) can match incoming events without re-binding
@@ -153,6 +157,20 @@ export function EmailView({
     };
   }, [addLog]);
 
+  // Opening the reply used to be self-evident — it was pinned under the header.
+  // Now that it scrolls with the thread it has to bring itself on screen, and
+  // only on the transition to open: re-running on every render would fight the
+  // user scrolling back up to re-read the message they are answering.
+  useEffect(() => {
+    if (!isReplyOpen) return;
+    // One frame later, so the compose has been laid out and, on iOS, the
+    // keyboard has begun shrinking the visual viewport.
+    const frame = requestAnimationFrame(() => {
+      replyRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isReplyOpen]);
+
   const handleOpenAttachment = useCallback(
     (meta: EmailAttachmentMeta) => {
       if (meta.mimeType.startsWith('image/')) {
@@ -165,7 +183,12 @@ export function EmailView({
   );
 
   const latestEmailId = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1].id : '';
-  const emailTags = useTagStore((s) => s.tagsByEmail[latestEmailId] || EMPTY_TAGS);
+  const storedTags = useTagStore((s) => s.tagsByEmail[latestEmailId] || EMPTY_TAGS);
+  // The company tag is deliberately absent from the header, the same way
+  // `EmailRow` dropped it from the list: it restates what the sender line
+  // already says and it competes with the subject for the scarcest space on a
+  // phone. The tag itself is untouched — it still drives the sidebar filter.
+  const emailTags = useMemo(() => storedTags.filter((tag) => tag.tagType !== 'company'), [storedTags]);
   const latestEmailForEffect = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1] : null;
   const isThread = threadEmails.length > 1;
 
@@ -189,6 +212,26 @@ export function EmailView({
   const handleSearchMatches = useCallback((emailId: string, count: number) => {
     setOccurrenceCounts((prev) => (prev[emailId] === count ? prev : { ...prev, [emailId]: count }));
   }, []);
+
+  /** Delete every message in the thread, then leave the view. Shared by the
+   *  toolbar button and the stacked overflow menu. */
+  const handleDeleteThread = useCallback(async () => {
+    if (threadEmails.length === 0) return;
+    const subject = threadEmails[threadEmails.length - 1].subject;
+    setIsDeleting(true);
+    addLog('info', 'sync', `Deleting thread "${subject.slice(0, 50)}"...`);
+    try {
+      for (const email of threadEmails) {
+        await deleteEmailFromStore(email.id);
+      }
+      addLog('success', 'sync', 'Thread deleted');
+      onClose();
+    } catch (err) {
+      addLog('error', 'sync', `Delete failed: ${err}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [threadEmails, deleteEmailFromStore, addLog, onClose]);
 
   const openThreadSearch = useCallback(() => {
     setThreadSearchOpen(true);
@@ -263,6 +306,7 @@ export function EmailView({
     setThreadSearchQuery('');
     setThreadMatchIdx(0);
     setOccurrenceCounts({});
+    setIsMenuOpen(false);
   }, [latestEmailId]);
 
   // Chat-generated reply draft: once the matching thread is loaded, open
@@ -433,141 +477,187 @@ export function EmailView({
                 AI
               </button>
             )}
-            <button
-              onClick={() => (threadSearchOpen ? closeThreadSearch() : openThreadSearch())}
-              className={`p-1.5 rounded transition-colors ${
-                threadSearchOpen
-                  ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-              }`}
-              title={t('inbox:emailView.searchInThread', { shortcut: formatShortcut(api.currentPlatform(), 'F') })}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
-            </button>
-            {onOpenInTab && (
-              <button
-                onClick={onOpenInTab}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                title={t('inbox:emailView.openInNewTab')}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  />
-                </svg>
-              </button>
-            )}
-            <button
-              onClick={async () => {
-                if (!latestEmail) return;
-                setIsDeleting(true);
-                addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
-                try {
-                  for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.id);
-                  }
-                  addLog('success', 'sync', 'Thread deleted');
-                  onClose();
-                } catch (err) {
-                  addLog('error', 'sync', `Delete failed: ${err}`);
-                } finally {
-                  setIsDeleting(false);
-                }
-              }}
-              disabled={isDeleting}
-              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-              title={t('inbox:emailView.deleteThread')}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
-            </button>
-            {fullWidth ? (
-              <button
-                onClick={onClose}
-                className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                title={t('inbox:emailView.back')}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-                Back
-              </button>
+            {/* Stacked: search, open-in-tab and delete collapse behind a 3-dot
+                menu. They are secondary to replying, and five inline controls
+                beside the subject wrapped the header onto a second row.
+                The back button is gone here: an edge swipe goes back
+                (`useSwipeNavigation`), and this menu keeps a tappable fallback
+                for a thread whose body swallows the gesture. */}
+            {isStacked ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsMenuOpen((open) => !open)}
+                  aria-label={t('inbox:emailView.moreOptions')}
+                  aria-expanded={isMenuOpen}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
+                  </svg>
+                </button>
+                {isMenuOpen && (
+                  <>
+                    {/* Tap-anywhere-else to dismiss. Below the panel, above the thread. */}
+                    <button
+                      type="button"
+                      aria-label={t('inbox:emailView.close')}
+                      onClick={() => setIsMenuOpen(false)}
+                      className="fixed inset-0 z-40 cursor-default"
+                    />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          onClose();
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        {t('inbox:emailView.back')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          if (threadSearchOpen) closeThreadSearch();
+                          else openThreadSearch();
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                          />
+                        </svg>
+                        {t('inbox:emailView.searchInThreadLabel')}
+                      </button>
+                      {onOpenInTab && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            onOpenInTab();
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                            />
+                          </svg>
+                          {t('inbox:emailView.openInNewTab')}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          void handleDeleteThread();
+                        }}
+                        disabled={isDeleting}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 active:bg-red-50 disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                        {t('inbox:emailView.deleteThread')}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
-              <button
-                onClick={onClose}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                title={t('inbox:emailView.close')}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <>
+                <button
+                  onClick={() => (threadSearchOpen ? closeThreadSearch() : openThreadSearch())}
+                  className={`p-1.5 rounded transition-colors ${
+                    threadSearchOpen
+                      ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                  }`}
+                  title={t('inbox:emailView.searchInThread', { shortcut: formatShortcut(api.currentPlatform(), 'F') })}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                </button>
+                {onOpenInTab && (
+                  <button
+                    onClick={onOpenInTab}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    title={t('inbox:emailView.openInNewTab')}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                )}
+                <button
+                  onClick={() => void handleDeleteThread()}
+                  disabled={isDeleting}
+                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                  title={t('inbox:emailView.deleteThread')}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                </button>
+                {fullWidth ? (
+                  <button
+                    onClick={onClose}
+                    className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                    title={t('inbox:emailView.back')}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back
+                  </button>
+                ) : (
+                  <button
+                    onClick={onClose}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    title={t('inbox:emailView.close')}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
-        {isReplyOpen && (
-          <ReplyCompose
-            email={latestEmail}
-            threadEmails={threadEmails}
-            accounts={accounts}
-            defaultAccountId={activeAccountId || latestEmail.accountId}
-            mode={replyMode}
-            initialBody={replyBody}
-            isLoadingDraft={isGeneratingDraft}
-            draftSources={draftSources}
-            onCancel={() => {
-              setIsReplyOpen(false);
-              setReplyBody('');
-              setDraftSources([]);
-              setIsGeneratingDraft(false);
-              draftRequestIdRef.current = null;
-            }}
-            onSend={async ({
-              fromAccountId,
-              toEmails,
-              ccEmails,
-              body: replyText,
-              bodyHtml,
-              inlineImages,
-              attachments,
-            }) => {
-              addLog('info', 'sync', `Sending reply to ${toEmails.join(', ')}...`);
-              await api.sendReply(
-                latestEmail.id,
-                replyText,
-                fromAccountId,
-                toEmails,
-                ccEmails,
-                bodyHtml,
-                inlineImages,
-                attachments,
-              );
-              // The backend inserted the optimistic Sent row before the send
-              // command returned (and already enqueued the follow-up account
-              // sync) — refetching the thread shows the reply instantly.
-              await refreshThread(latestEmail.accountId, latestEmail.threadId);
-              bumpSentRefresh();
-              addLog('success', 'sync', `Reply sent to ${toEmails.join(', ')}`);
-              setIsReplyOpen(false);
-            }}
-          />
-        )}
       </header>
 
       <div className="relative flex-1 flex flex-col overflow-hidden">
@@ -701,6 +791,59 @@ export function EmailView({
               />
             );
           })}
+          {/* The reply composes *inside* the thread scroller rather than pinned
+              under the header: pinning it hid the whole conversation the moment
+              the user hit Reply, on a phone especially. Wrapped in a ref so
+              opening it still brings it on screen. */}
+          <div ref={replyRef} className="px-4 pb-4">
+            {isReplyOpen && (
+              <ReplyCompose
+                email={latestEmail}
+                threadEmails={threadEmails}
+                accounts={accounts}
+                defaultAccountId={activeAccountId || latestEmail.accountId}
+                mode={replyMode}
+                initialBody={replyBody}
+                isLoadingDraft={isGeneratingDraft}
+                draftSources={draftSources}
+                onCancel={() => {
+                  setIsReplyOpen(false);
+                  setReplyBody('');
+                  setDraftSources([]);
+                  setIsGeneratingDraft(false);
+                  draftRequestIdRef.current = null;
+                }}
+                onSend={async ({
+                  fromAccountId,
+                  toEmails,
+                  ccEmails,
+                  body: replyText,
+                  bodyHtml,
+                  inlineImages,
+                  attachments,
+                }) => {
+                  addLog('info', 'sync', `Sending reply to ${toEmails.join(', ')}...`);
+                  await api.sendReply(
+                    latestEmail.id,
+                    replyText,
+                    fromAccountId,
+                    toEmails,
+                    ccEmails,
+                    bodyHtml,
+                    inlineImages,
+                    attachments,
+                  );
+                  // The backend inserted the optimistic Sent row before the send
+                  // command returned (and already enqueued the follow-up account
+                  // sync) — refetching the thread shows the reply instantly.
+                  await refreshThread(latestEmail.accountId, latestEmail.threadId);
+                  bumpSentRefresh();
+                  addLog('success', 'sync', `Reply sent to ${toEmails.join(', ')}`);
+                  setIsReplyOpen(false);
+                }}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>

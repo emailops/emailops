@@ -45,6 +45,7 @@ import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
+import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
 import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -1234,6 +1235,25 @@ function AppInner() {
     }
   };
 
+  // Swipe navigation, phone only. "Back" means the same thing the thread's
+  // former back button did: drop the open message (and any tab showing it) and
+  // return to the list. Views that are their own destination — calendar,
+  // dashboard, a bare list — have nothing to go back to, so the gesture is
+  // inert there rather than guessing.
+  useSwipeNavigation({
+    enabled: isStacked,
+    isSidebarOpen,
+    // A compose tab is excluded: "back" there would throw away what the user
+    // is typing, which is not what a stray flick should be able to do.
+    canGoBack:
+      isEmailListView(viewMode) && activeTab?.type !== 'compose' && (activeTab !== null || selectedEmail !== null),
+    onBack: () => {
+      if (activeTab) closeTab(activeTab.id);
+      void selectEmail(null);
+    },
+    onCloseSidebar: () => setIsSidebarOpen(false),
+  });
+
   // Title for the stacked top bar: "<view> — <mailbox>". Folder views have no
   // locale key (the name is the user's own), so they fall back to the server
   // path's last segment.
@@ -1324,25 +1344,6 @@ function AppInner() {
             accounts={accounts}
             activeAccount={activeAccount}
             isUnifiedActive={isUnified}
-            isChatPanelOpen={isChatPanelOpen}
-            onToggleChatPanel={() => {
-              // From the full-page chat view, "Chat" means "go back to the mail
-              // content with chat docked" — otherwise the toggle would appear to
-              // do nothing, since the panel is suppressed while that view is up.
-              // Stacked: "Chat" keeps its pre-dock meaning — open the
-              // full-page view — since there is no room to dock a panel.
-              if (isStacked) {
-                setViewMode('chat');
-                setIsSidebarOpen(false);
-                return;
-              }
-              if (viewMode === 'chat') {
-                setViewMode('inbox');
-                setIsChatPanelOpen(true);
-                return;
-              }
-              setIsChatPanelOpen((open) => !open);
-            }}
             onSelectAccount={(id) => {
               setViewMode('inbox');
               clearSearchQuery();
@@ -1363,7 +1364,12 @@ function AppInner() {
             onOpenAppSettings={() => setSettingsTab('appearance')}
             isSyncing={isSyncing}
             viewMode={viewMode}
-            onOpenChatView={() => setViewMode('chat')}
+            onOpenChatView={() => {
+              setViewMode('chat');
+              // Dismiss the drawer so the chat view is visible; on desktop
+              // this is a no-op because the drawer is never open.
+              setIsSidebarOpen(false);
+            }}
             onSetViewMode={(mode) => {
               const plan = planViewChange(mode, effectiveInboxLayout);
               if (plan.resetInboxFilters) {
