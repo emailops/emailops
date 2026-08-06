@@ -19,7 +19,8 @@ export type SidebarEntry =
   | 'dashboard'
   | 'tasks'
   | 'memory'
-  | 'lenses';
+  | 'lenses'
+  | 'logs';
 
 export type SidebarSectionId = 'views' | 'otherViews';
 
@@ -39,6 +40,9 @@ export interface SidebarFeatureFlags {
   lensesEnabled: boolean;
   /** True when at least one account has calendar integration enabled. */
   calendarEnabled: boolean;
+  /** Phone-sized layout. Decides entries that exist only because a desktop
+   *  affordance has no room here — see `logs`. */
+  stacked: boolean;
 }
 
 /**
@@ -66,6 +70,13 @@ export function sidebarSections(flags: SidebarFeatureFlags): SidebarSection[] {
   if (flags.aiEnabled && flags.tasksEnabled) otherViews.push('tasks');
   if (flags.aiEnabled && flags.memoriesEnabled) otherViews.push('memory');
   if (flags.aiEnabled && flags.lensesEnabled) otherViews.push('lenses');
+  // The output panel is docked at the bottom of the desktop window and has no
+  // phone equivalent, so on a phone it becomes a view of its own. Last, because
+  // it is a diagnostic rather than somewhere you go to read mail — and NOT
+  // gated on the AI switch, since it also carries sync, account and system
+  // messages, which is exactly what someone who just turned AI off is trying
+  // to read.
+  if (flags.stacked) otherViews.push('logs');
 
   return [
     { id: 'views', titleKey: 'sidebar:views', entries: views },

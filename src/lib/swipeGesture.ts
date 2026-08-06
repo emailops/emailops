@@ -91,3 +91,37 @@ export function swipeNavAction(direction: SwipeDirection | null, ctx: SwipeNavCo
   if (direction === 'right' && ctx.canGoBack && ctx.startX <= EDGE_START_MAX_PX) return 'goBack';
   return 'none';
 }
+
+/** Where a back gesture should land, given what is currently on screen. */
+export type BackTarget =
+  /** A message is open: close it and return to the list it came from. */
+  | 'closeThread'
+  /** Leave this view for whichever one the user came from. */
+  | 'previousView'
+  /** Already at the root. */
+  | 'none';
+
+export interface BackContext {
+  viewMode: string;
+  /** A message (not a compose tab) is open in an email list view. */
+  isThreadOpen: boolean;
+}
+
+/**
+ * Unwind one level of navigation.
+ *
+ * "Back" means the view the user came from, not a view-internal pane. Chat is
+ * deliberately NOT special: swiping back out of a conversation returns to
+ * wherever chat was opened from, rather than to the conversation list. The
+ * history is reachable from inside chat; the gesture is for leaving.
+ *
+ * An open message is the one exception, because it genuinely sits on top of the
+ * list it was opened from — closing it is a step, not a departure.
+ *
+ * The root view returns `none`: the gesture is inert there rather than
+ * inventing a destination.
+ */
+export function planBackTarget(ctx: BackContext): BackTarget {
+  if (ctx.isThreadOpen) return 'closeThread';
+  return ctx.viewMode === 'inbox' ? 'none' : 'previousView';
+}

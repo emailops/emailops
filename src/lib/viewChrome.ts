@@ -19,7 +19,8 @@ export type ViewTitleKey =
   | 'sidebar:tasks'
   | 'sidebar:memory'
   | 'sidebar:lenses'
-  | 'sidebar:dashboard';
+  | 'sidebar:dashboard'
+  | 'sidebar:logs';
 
 /** Reuses the sidebar's own labels so the title bar and the navigation entry
  *  that led there always read the same. */
@@ -37,6 +38,7 @@ const VIEW_TITLE_KEYS: Record<string, ViewTitleKey> = Object.assign(Object.creat
   memory: 'sidebar:memory',
   lenses: 'sidebar:lenses',
   dashboard: 'sidebar:dashboard',
+  logs: 'sidebar:logs',
   // Null-prototype: a plain literal would resolve 'constructor'/'toString' to
   // inherited members and render them as titles.
 });

@@ -56,6 +56,7 @@ const ENTRY_LABEL_KEYS = {
   tasks: 'sidebar:tasks',
   memory: 'sidebar:memory',
   lenses: 'sidebar:lenses',
+  logs: 'sidebar:logs',
 } as const satisfies Record<SidebarEntry, string>;
 
 /** The single-path outline glyph each entry renders, as the `d` attribute of a
@@ -81,6 +82,9 @@ const ENTRY_ICON_PATHS = {
   memory:
     'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   lenses: 'M3 10h18M3 6h18M3 14h18M3 18h18',
+  // A terminal window: the panel is a log console, and the glyph should read as
+  // one at a glance rather than as another list.
+  logs: 'M8 9l3 3-3 3m5 0h3M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z',
 } as const satisfies Record<SidebarEntry, string>;
 
 function EntryIcon({ entry }: { entry: SidebarEntry }) {
@@ -112,6 +116,7 @@ export type ViewMode =
   | 'memory'
   | 'lenses'
   | 'dashboard'
+  | 'logs'
   | `folder:${string}`;
 
 interface SidebarProps {
@@ -336,7 +341,14 @@ export function Sidebar({
     setDragOverTarget((current) => (current === targetKey ? null : current));
   };
 
-  const sections = sidebarSections({ aiEnabled, tasksEnabled, memoriesEnabled, lensesEnabled, calendarEnabled });
+  const sections = sidebarSections({
+    aiEnabled,
+    tasksEnabled,
+    memoriesEnabled,
+    lensesEnabled,
+    calendarEnabled,
+    stacked: isStacked,
+  });
 
   /** One navigation row. Four entries carry extra affordances (drop target,
    *  panel toggle, badge, sub-list); the rest are the plain shared row. */

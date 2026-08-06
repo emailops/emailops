@@ -27,6 +27,7 @@ import { Inbox } from '@/components/Inbox/Inbox';
 import { LensesView } from '@/components/Lenses/LensesView';
 import { LockScreen } from '@/components/LockScreen';
 import { LogPanel } from '@/components/LogPanel/LogPanel';
+import { LogView } from '@/components/LogPanel/LogView';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { OnboardingWizard } from '@/components/Onboarding/OnboardingWizard';
@@ -56,6 +57,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { planBackTarget } from '@/lib/swipeGesture';
 import { viewTitleKey } from '@/lib/viewChrome';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
@@ -147,6 +149,23 @@ function AppInner() {
   // until we know, otherwise the empty inbox flashes behind the wizard.
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('inbox');
+  // Where a back gesture returns to. One level, not a stack: "back" undoes the
+  // navigation you just made, and a deep history would make the same gesture
+  // mean something different depending on how you arrived. Falls back to the
+  // inbox, which is the root.
+  //
+  // Recorded by observing `viewMode` rather than by routing every navigation
+  // through one setter: `setViewMode` is called from ~20 places (sidebar, tool
+  // effects, feature-disabled guards, deep links), and a helper that each of
+  // them had to remember to use would be stale the first time one didn't.
+  const previousViewMode = useRef<ViewMode>('inbox');
+  const currentViewMode = useRef<ViewMode>(viewMode);
+  useEffect(() => {
+    if (currentViewMode.current !== viewMode) {
+      previousViewMode.current = currentViewMode.current;
+      currentViewMode.current = viewMode;
+    }
+  }, [viewMode]);
   const [inboxLayout, setInboxLayout] = usePersistedPref<InboxLayout>('inbox_layout', 'split', {
     parse: (raw) => (raw === 'split' || raw === 'full-width' ? raw : null),
     serialize: (v) => v,
@@ -1235,21 +1254,38 @@ function AppInner() {
     }
   };
 
-  // Swipe navigation, phone only. "Back" means the same thing the thread's
-  // former back button did: drop the open message (and any tab showing it) and
-  // return to the list. Views that are their own destination — calendar,
-  // dashboard, a bare list — have nothing to go back to, so the gesture is
-  // inert there rather than guessing.
+  // Swipe navigation, phone only. One handler for the whole navigation stack:
+  // two window listeners racing to interpret the same swipe is the only
+  // alternative, and it loses.
+  //
+  // "Back" unwinds one level (see `planBackTarget` for the rule):
+  //   1. an open message -> the list it came from
+  //   2. any other view  -> the view the user came from
+  // The inbox is the root and has nowhere to go, so the gesture is inert there
+  // rather than guessing. Chat is deliberately not special-cased: swiping out
+  // of a conversation leaves chat, it does not stop at the conversation list.
+  // A compose tab is excluded: "back" there would throw away what the user is
+  // typing, which is not what a stray flick should be able to do.
+  const isThreadOpen =
+    isEmailListView(viewMode) && activeTab?.type !== 'compose' && (activeTab !== null || selectedEmail !== null);
   useSwipeNavigation({
     enabled: isStacked,
     isSidebarOpen,
-    // A compose tab is excluded: "back" there would throw away what the user
-    // is typing, which is not what a stray flick should be able to do.
-    canGoBack:
-      isEmailListView(viewMode) && activeTab?.type !== 'compose' && (activeTab !== null || selectedEmail !== null),
+    canGoBack: planBackTarget({ viewMode, isThreadOpen }) !== 'none',
     onBack: () => {
-      if (activeTab) closeTab(activeTab.id);
-      void selectEmail(null);
+      switch (planBackTarget({ viewMode, isThreadOpen })) {
+        case 'closeThread':
+          if (activeTab) closeTab(activeTab.id);
+          void selectEmail(null);
+          break;
+        case 'previousView':
+          // Guard the degenerate case: if nothing was recorded (first view of
+          // the session was not the inbox), fall back to the root.
+          setViewMode(previousViewMode.current === viewMode ? 'inbox' : previousViewMode.current);
+          break;
+        case 'none':
+          break;
+      }
     },
     onCloseSidebar: () => setIsSidebarOpen(false),
   });
@@ -1480,6 +1516,10 @@ function AppInner() {
             </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView />
+          ) : viewMode === 'logs' ? (
+            // Phone only — the sidebar offers this entry only when stacked,
+            // because the desktop window docks the same content at the bottom.
+            <LogView />
           ) : viewMode === 'dashboard' ? (
             <Dashboard accounts={accounts} onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)} />
           ) : viewMode === 'calendar' ? (

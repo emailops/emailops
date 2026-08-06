@@ -71,6 +71,14 @@ interface ChatStore {
   selectedCategories: EmailCategory[];
   /** True once the store has loaded the persisted preference at least once. */
   categoriesLoaded: boolean;
+  /** Stacked layout only: which of the two chat panes is showing.
+   *
+   *  Lives in the store rather than in `ChatView` because the back gesture is
+   *  handled once, at the app root, over the whole navigation stack. Two
+   *  window listeners racing to interpret the same swipe is the alternative,
+   *  and it loses. Desktop ignores this — both panes are always visible. */
+  chatShowsList: boolean;
+  setChatShowsList: (shows: boolean) => void;
 
   fetchConversations: (accountId: string) => Promise<void>;
   /**
@@ -133,6 +141,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   error: null,
   selectedCategories: [...DEFAULT_CATEGORIES],
   categoriesLoaded: false,
+  chatShowsList: false,
+  setChatShowsList: (shows) => set({ chatShowsList: shows }),
 
   loadCategoriesPref: async () => {
     try {

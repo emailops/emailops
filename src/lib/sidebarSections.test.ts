@@ -8,6 +8,7 @@ const ALL_ON: SidebarFeatureFlags = {
   memoriesEnabled: true,
   lensesEnabled: true,
   calendarEnabled: true,
+  stacked: false,
 };
 
 const entriesOf = (flags: SidebarFeatureFlags, id: string) =>
@@ -94,8 +95,35 @@ describe('sidebarSections', () => {
       memoriesEnabled: false,
       lensesEnabled: false,
       calendarEnabled: false,
+      stacked: false,
     };
     expect(entriesOf(allOff, 'views')).toEqual(['inbox', 'attachments', 'drafts', 'sent']);
     expect(entriesOf(allOff, 'otherViews')).toEqual(['spam', 'deleted', 'contacts', 'dashboard']);
+  });
+
+  describe('the log view', () => {
+    it('is offered on a phone, where there is no docked log panel', () => {
+      // The dock is desktop-only (`!isStacked` in App.tsx), so without this the
+      // output panel — the only place backend progress and errors surface — is
+      // unreachable on the platform hardest to debug by other means.
+      expect(entriesOf({ ...ALL_ON, stacked: true }, 'otherViews')).toContain('logs');
+    });
+
+    it('is not duplicated on desktop, where the dock already shows it', () => {
+      expect(entriesOf({ ...ALL_ON, stacked: false }, 'otherViews')).not.toContain('logs');
+    });
+
+    it('does not depend on the AI switch', () => {
+      // Logs cover sync, accounts and system too. Hiding them with AI would
+      // remove the diagnostic exactly when a user has turned AI off to isolate
+      // a problem.
+      const aiOff = { ...ALL_ON, stacked: true, aiEnabled: false };
+      expect(entriesOf(aiOff, 'otherViews')).toContain('logs');
+    });
+
+    it('sits last, after the views a user navigates to on purpose', () => {
+      const other = entriesOf({ ...ALL_ON, stacked: true }, 'otherViews');
+      expect(other[other.length - 1]).toBe('logs');
+    });
   });
 });

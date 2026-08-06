@@ -1,71 +1,11 @@
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
-import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
-import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
+import { ALL_SOURCES, type LogSource, useLogStore } from '@/stores/logStore';
 import type { CatalogModel } from '@/types';
-
-/** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
-const LOG_TIME_OPTIONS: Intl.DateTimeFormatOptions = {
-  hour12: false,
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-};
-
-const ALL_SOURCES: LogSource[] = [
-  'sync',
-  'ai',
-  'search',
-  'account',
-  'system',
-  'embeddings',
-  'attachments',
-  'chat',
-  'memory',
-  'tasks',
-  'lens',
-];
-
-function LevelIcon({ level }: { level: LogLevel }) {
-  const { t } = useTranslation(['dashboard']);
-  switch (level) {
-    case 'error':
-      return <span className="text-red-400 text-xs font-bold">{t('dashboard:log.levels.error')}</span>;
-    case 'warn':
-      return <span className="text-yellow-400 text-xs font-bold">{t('dashboard:log.levels.warn')}</span>;
-    case 'success':
-      return <span className="text-green-400 text-xs font-bold">{t('dashboard:log.levels.success')}</span>;
-    case 'debug':
-      return <span className="text-gray-500 text-xs font-bold">{t('dashboard:log.levels.debug')}</span>;
-    default:
-      return <span className="text-blue-400 text-xs font-bold">{t('dashboard:log.levels.info')}</span>;
-  }
-}
-
-function SourceBadge({ source }: { source: LogSource }) {
-  const colors: Record<LogSource, string> = {
-    sync: 'bg-indigo-900/50 text-indigo-300',
-    ai: 'bg-purple-900/50 text-purple-300',
-    search: 'bg-cyan-900/50 text-cyan-300',
-    account: 'bg-amber-900/50 text-amber-300',
-    system: 'bg-gray-700/50 text-gray-300',
-    embeddings: 'bg-emerald-900/50 text-emerald-300',
-    attachments: 'bg-orange-900/50 text-orange-300',
-    chat: 'bg-sky-900/50 text-sky-300',
-    memory: 'bg-pink-900/50 text-pink-300',
-    tasks: 'bg-rose-900/50 text-rose-300',
-    lens: 'bg-violet-900/50 text-violet-300',
-  };
-
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${colors[source]}`}>
-      {source}
-    </span>
-  );
-}
+import { LogEntryList } from './LogEntryList';
 
 type Provider = 'llamacpp' | 'ollama' | 'openrouter';
 
@@ -175,31 +115,10 @@ function ModelSelector() {
 
 export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }) {
   const { t } = useTranslation(['dashboard']);
-  const fmt = useFormatters();
   const { entries, isOpen, toggle, clear } = useLogStore();
   const [sourceFilter, setSourceFilter] = useState<LogSource | 'all'>('all');
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const wasAtBottomRef = useRef(true);
 
   const visibleEntries = sourceFilter === 'all' ? entries : entries.filter((e) => e.source === sourceFilter);
-
-  // Track if user is at bottom before new entries arrive
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const handleScroll = () => {
-      wasAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-    };
-    el.addEventListener('scroll', handleScroll);
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, [isOpen]);
-
-  // Auto-scroll to bottom when new entries arrive (only if already at bottom)
-  useEffect(() => {
-    if (wasAtBottomRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [visibleEntries.length]);
 
   return (
     <div className="flex flex-col border-t border-gray-700 bg-[#1e1e1e] text-gray-300 text-xs font-mono">
@@ -293,36 +212,15 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
 
       {/* Log content */}
       {isOpen && (
-        <div ref={scrollRef} className="overflow-y-auto h-44 px-1 py-1">
-          {visibleEntries.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-600">
-              {entries.length === 0 ? 'No log entries yet' : `No entries for module "${sourceFilter}"`}
-            </div>
-          ) : (
-            visibleEntries.map((entry) => (
-              <div key={entry.id} className="flex items-start gap-2 px-2 py-0.5 hover:bg-white/[0.03] leading-5">
-                <span className="text-gray-400 shrink-0">{fmt.time(entry.timestamp / 1000, LOG_TIME_OPTIONS)}</span>
-                <span className="shrink-0 w-7 text-center">
-                  <LevelIcon level={entry.level} />
-                </span>
-                <span className="shrink-0">
-                  <SourceBadge source={entry.source} />
-                </span>
-                <span
-                  className={
-                    entry.level === 'error'
-                      ? 'text-red-300'
-                      : entry.level === 'warn'
-                        ? 'text-yellow-200'
-                        : 'text-gray-300'
-                  }
-                >
-                  {entry.message}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+        <LogEntryList
+          entries={visibleEntries}
+          emptyLabel={
+            entries.length === 0
+              ? t('dashboard:log.empty')
+              : t('dashboard:log.emptyForModule', { module: sourceFilter })
+          }
+          className="h-44"
+        />
       )}
     </div>
   );

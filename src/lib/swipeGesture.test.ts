@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type BackContext,
   contentMayClaimDrag,
   EDGE_START_MAX_PX,
+  planBackTarget,
   recognizeSwipe,
   type SwipeSample,
   swipeNavAction,
@@ -110,5 +112,37 @@ describe('swipeNavAction', () => {
   it('does nothing when no swipe was recognized', () => {
     expect(swipeNavAction(null, ctx())).toBe('none');
     expect(swipeNavAction(null, ctx({ isSidebarOpen: true }))).toBe('none');
+  });
+});
+
+describe('planBackTarget', () => {
+  const ctx = (over: Partial<BackContext> = {}): BackContext => ({
+    viewMode: 'inbox',
+    isThreadOpen: false,
+    ...over,
+  });
+
+  it('leaves chat for the view it was opened from, not the conversation list', () => {
+    // Chat is not special: the gesture is for leaving a view. The conversation
+    // history is reachable from inside chat, so spending "back" on it would
+    // trap the user one level deeper than they expect.
+    expect(planBackTarget(ctx({ viewMode: 'chat' }))).toBe('previousView');
+  });
+
+  it('closes an open message before leaving its view', () => {
+    // The exception: a message genuinely sits on top of the list it came from,
+    // so closing it is a step rather than a departure.
+    expect(planBackTarget(ctx({ viewMode: 'inbox', isThreadOpen: true }))).toBe('closeThread');
+    expect(planBackTarget(ctx({ viewMode: 'sent', isThreadOpen: true }))).toBe('closeThread');
+  });
+
+  it('leaves any other screen for the previous one', () => {
+    for (const viewMode of ['calendar', 'contacts', 'dashboard', 'tasks', 'memory', 'lenses', 'folder:Clients']) {
+      expect(planBackTarget(ctx({ viewMode }))).toBe('previousView');
+    }
+  });
+
+  it('does nothing at the root', () => {
+    expect(planBackTarget(ctx())).toBe('none');
   });
 });

@@ -55,6 +55,10 @@
       "success": "OK",
       "debug": "DBG",
       "info": "INF"
-    }
+    },
+    "copy": "Copier",
+    "copied": "Copié",
+    "empty": "Aucune entrée pour le moment",
+    "emptyForModule": "Aucune entrée pour le module \"{{module}}\""
   }
 }

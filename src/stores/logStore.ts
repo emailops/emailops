@@ -14,6 +14,23 @@ export type LogSource =
   | 'tasks'
   | 'lens';
 
+/** Every source a log entry can carry, in the order the filter lists them.
+ *  Lives with the type it enumerates so a new source cannot be added to
+ *  `LogSource` while the filter silently keeps hiding it. */
+export const ALL_SOURCES: LogSource[] = [
+  'sync',
+  'ai',
+  'search',
+  'account',
+  'system',
+  'embeddings',
+  'attachments',
+  'chat',
+  'memory',
+  'tasks',
+  'lens',
+];
+
 export interface LogEntry {
   id: number;
   timestamp: number;

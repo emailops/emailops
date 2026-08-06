@@ -117,7 +117,9 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
   // showing is view-local navigation, not app state the backend or desktop
   // cares about.
   const { isStacked } = useResponsiveLayout();
-  const [mobileShowList, setMobileShowList] = useState(false);
+  // Store-held so the app-root back gesture can drive it — see `chatShowsList`.
+  const mobileShowList = useChatStore((s) => s.chatShowsList);
+  const setMobileShowList = useChatStore((s) => s.setChatShowsList);
 
   // Opening Chat on a phone starts a blank conversation instead of resuming
   // the last one. The store outlives this component, so without it tapping
@@ -171,17 +173,25 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
 
       {showPane && (
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {/* History, phone only. The full-width "Conversations" row that used
+              to sit here was removed: it read as a back button and cost a whole
+              row of a phone screen. The back gesture deliberately leaves chat
+              entirely rather than stopping here, so without this icon the
+              conversation list would be unreachable on a phone. */}
           {isStacked && (
-            <button
-              type="button"
-              onClick={() => setMobileShowList(true)}
-              className="flex h-11 items-center gap-2 border-b border-gray-200 px-3 text-sm text-gray-600 active:bg-gray-100"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              {t('chat:conversations.title')}
-            </button>
+            <div className="flex justify-end px-1 pt-1">
+              <button
+                type="button"
+                onClick={() => setMobileShowList(true)}
+                title={t('chat:conversations.title')}
+                aria-label={t('chat:conversations.title')}
+                className="flex h-9 w-9 items-center justify-center rounded-md text-gray-500 active:bg-gray-100"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M3 5h14M3 10h14M3 15h9" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           )}
           {/* Not gated on unified mode: chat answers from ONE account whatever
             the mail view is doing, so which account that is matters just as
