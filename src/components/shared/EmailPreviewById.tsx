@@ -83,7 +83,7 @@ export function EmailPreviewById({
   if (!emailId) {
     const msg = hasSelection && missingSourceMessage ? missingSourceMessage : emptyMessage;
     return (
-      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 px-8 text-center">
+      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 px-8 text-center dark:text-gray-400 dark:bg-surface-raised">
         {msg}
       </div>
     );
@@ -91,7 +91,7 @@ export function EmailPreviewById({
 
   if (isLoading) {
     return (
-      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50">
+      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 dark:text-gray-400 dark:bg-surface-raised">
         {t('inbox:loadingEmail')}
       </div>
     );
@@ -99,7 +99,7 @@ export function EmailPreviewById({
 
   if (loadError || !email) {
     return (
-      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 px-8 text-center">
+      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 px-8 text-center dark:text-gray-400 dark:bg-surface-raised">
         {loadError ?? 'Email no longer available.'}
       </div>
     );
@@ -107,10 +107,12 @@ export function EmailPreviewById({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-        <h2 className="text-base font-semibold text-gray-900 truncate">{email.subject || '(no subject)'}</h2>
-        <div className="text-xs text-gray-500 mt-1">
-          <span className="font-medium text-gray-700">{email.sender}</span>
+      <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
+        <h2 className="text-base font-semibold text-gray-900 truncate dark:text-gray-100">
+          {email.subject || '(no subject)'}
+        </h2>
+        <div className="text-xs text-gray-500 mt-1 dark:text-gray-400">
+          <span className="font-medium text-gray-700 dark:text-gray-300">{email.sender}</span>
           <span> &lt;{email.senderEmail}&gt;</span>
           <span> · {format(new Date(email.timestamp * 1000), 'MMM d, yyyy · h:mm a')}</span>
         </div>

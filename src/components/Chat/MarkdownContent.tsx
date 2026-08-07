@@ -59,7 +59,7 @@ function AttachmentChip({ label, onOpen }: { label: string; onOpen: () => void }
     <button
       type="button"
       onClick={onOpen}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-primary-50 border border-primary-200 text-primary-700 text-xs font-medium hover:bg-primary-100 transition-colors align-baseline"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-primary-50 border border-primary-200 text-primary-700 text-xs font-medium hover:bg-primary-100 transition-colors align-baseline dark:bg-primary-900/20 dark:border-primary-800 dark:text-primary-300 dark:hover:bg-primary-900/30"
       title={`Open ${label}`}
     >
       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -194,7 +194,7 @@ export function MarkdownContent({
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary-600 underline hover:text-primary-800"
+              className="text-primary-600 underline hover:text-primary-800 dark:text-primary-400 dark:hover:text-primary-300"
             >
               {children}
             </a>
@@ -209,16 +209,20 @@ export function MarkdownContent({
           );
         },
         thead({ children }) {
-          return <thead className="bg-gray-200">{children}</thead>;
+          return <thead className="bg-gray-200 dark:bg-gray-700">{children}</thead>;
         },
         th({ children }) {
-          return <th className="border border-gray-300 px-2 py-1 font-semibold text-left">{children}</th>;
+          return (
+            <th className="border border-gray-300 px-2 py-1 font-semibold text-left dark:border-gray-600">
+              {children}
+            </th>
+          );
         },
         td({ children }) {
-          return <td className="border border-gray-300 px-2 py-1">{children}</td>;
+          return <td className="border border-gray-300 px-2 py-1 dark:border-gray-600">{children}</td>;
         },
         tr({ children }) {
-          return <tr className="even:bg-gray-50">{children}</tr>;
+          return <tr className="even:bg-gray-50 dark:even:bg-surface-raised">{children}</tr>;
         },
         // Code blocks
         code({ className, children, ...props }) {
@@ -231,7 +235,10 @@ export function MarkdownContent({
             );
           }
           return (
-            <code className="px-1 py-0.5 rounded bg-gray-200 text-gray-800 text-[11px] font-mono" {...props}>
+            <code
+              className="px-1 py-0.5 rounded bg-gray-200 text-gray-800 text-[11px] font-mono dark:bg-gray-700 dark:text-gray-200"
+              {...props}
+            >
               {children}
             </code>
           );
@@ -269,7 +276,9 @@ export function MarkdownContent({
         // Blockquote
         blockquote({ children }) {
           return (
-            <blockquote className="border-l-2 border-gray-300 pl-3 my-1 text-gray-600 italic">{children}</blockquote>
+            <blockquote className="border-l-2 border-gray-300 pl-3 my-1 text-gray-600 italic dark:border-gray-600 dark:text-gray-400">
+              {children}
+            </blockquote>
           );
         },
       }}

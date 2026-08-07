@@ -68,7 +68,9 @@ export function ChatInput({
   };
 
   return (
-    <div className={`border-t border-gray-200 bg-white ${compact ? 'px-3 py-3' : 'px-6 py-4'}`}>
+    <div
+      className={`border-t border-gray-200 bg-white dark:border-gray-700 dark:bg-surface ${compact ? 'px-3 py-3' : 'px-6 py-4'}`}
+    >
       {contextSlot}
       <div className={`flex items-end ${compact ? 'gap-2' : 'gap-3'}`}>
         <textarea
@@ -79,7 +81,7 @@ export function ChatInput({
           rows={compact ? 1 : 2}
           placeholder={placeholder ?? 'Ask about your emails… (Enter to send, Shift+Enter for newline)'}
           disabled={disabled}
-          className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 disabled:bg-gray-50"
+          className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 disabled:bg-gray-50 dark:border-gray-600 dark:disabled:bg-surface-raised"
         />
         <button
           type="button"

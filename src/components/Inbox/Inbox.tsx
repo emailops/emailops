@@ -68,7 +68,7 @@ const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'primary',
     label: 'Primary',
-    activeColor: 'text-blue-600 border-blue-600',
+    activeColor: 'text-blue-600 border-blue-600 dark:text-blue-400',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
         <path
@@ -96,7 +96,7 @@ const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'updates',
     label: 'Updates',
-    activeColor: 'text-amber-600 border-amber-600',
+    activeColor: 'text-amber-600 border-amber-600 dark:text-amber-400',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
         <path
@@ -110,7 +110,7 @@ const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'forums',
     label: 'Forums',
-    activeColor: 'text-purple-600 border-purple-600',
+    activeColor: 'text-purple-600 border-purple-600 dark:text-purple-400',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
         <path
@@ -124,7 +124,7 @@ const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'promotions',
     label: 'Promotions',
-    activeColor: 'text-emerald-600 border-emerald-600',
+    activeColor: 'text-emerald-600 border-emerald-600 dark:text-emerald-400',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
         <path
@@ -386,10 +386,12 @@ export function Inbox({
   // Show loading only on initial load when we have no emails
   if (isLoading && emails.length === 0) {
     return (
-      <div className={`${widthClass} border-r border-gray-200 bg-white flex items-center justify-center`}>
+      <div
+        className={`${widthClass} border-r border-gray-200 bg-white flex items-center justify-center dark:border-gray-700 dark:bg-surface`}
+      >
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
-          <p className="mt-2 text-sm text-gray-500">{t('inbox:loadingEmails')}</p>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('inbox:loadingEmails')}</p>
         </div>
       </div>
     );
@@ -412,8 +414,12 @@ export function Inbox({
 
   const showTabs = shouldShowCategoryTabs(showCategoryFilter, visibleCategories.length);
   return (
-    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
-      <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
+    <div
+      className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col dark:border-gray-700 dark:from-surface dark:to-surface-raised/30`}
+    >
+      <div
+        className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-surface`}
+      >
         {/* Phones put the search field on its own full-width row above the
             title, the way Gmail does; `md` and up keeps the original single
             row of [title | search | actions]. */}
@@ -422,7 +428,7 @@ export function Inbox({
               view there, and repeating it costs a row of a phone screen. */}
           {!isStacked && (
             <div className="flex items-center gap-1.5 flex-shrink-0 max-w-full md:max-w-[45%] min-w-0">
-              <h2 className="text-lg font-semibold text-gray-900 truncate">
+              <h2 className="text-lg font-semibold text-gray-900 truncate dark:text-gray-100">
                 {accountName ? `Inbox — ${accountName}` : 'Inbox'}
               </h2>
               {isSyncing && (
@@ -458,13 +464,13 @@ export function Inbox({
               {hasMore && !isLoadingMore && !isStacked && (
                 <button
                   onClick={onLoadMore}
-                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors dark:text-primary-400 dark:hover:text-primary-300 dark:hover:bg-primary-900/20 dark:border-primary-800"
                 >
                   {t('inbox:loadMore')}
                 </button>
               )}
               {isLoadingMore && (
-                <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
                   {t('common:state.loading')}
                 </div>
@@ -478,7 +484,7 @@ export function Inbox({
                   onClick={onNewChat}
                   title={t('chat:panel.newChat')}
                   aria-label={t('chat:panel.newChat')}
-                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -494,7 +500,7 @@ export function Inbox({
                 <button
                   onClick={onCollapse}
                   title={t('inbox:collapse')}
-                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                 >
                   <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
                     <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
@@ -519,7 +525,7 @@ export function Inbox({
               <CategoryTab
                 isActive={activeTabKey === 'all'}
                 onClick={() => handleTabClick('all')}
-                activeColor="text-primary-600 border-primary-600"
+                activeColor="text-primary-600 border-primary-600 dark:text-primary-400"
                 label={t('inbox:allCategories')}
                 icon={
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -542,10 +548,10 @@ export function Inbox({
         )}
       </div>
       {flaggedCount > 0 && !searchQuery && !activeFilter && (
-        <label className="flex items-center gap-2 px-4 py-1.5 text-xs text-gray-500 border-b border-gray-100 cursor-pointer select-none">
+        <label className="flex items-center gap-2 px-4 py-1.5 text-xs text-gray-500 border-b border-gray-100 cursor-pointer select-none dark:text-gray-400 dark:border-gray-800">
           <input
             type="checkbox"
-            className="rounded border-gray-300"
+            className="rounded border-gray-300 dark:border-gray-600"
             checked={junkFlaggedAction === 'hide'}
             onChange={(e) => void setJunkFlaggedAction(e.target.checked ? 'hide' : 'dim')}
           />
@@ -592,10 +598,18 @@ function CategoryTab({ isActive, onClick, activeColor, label, icon }: CategoryTa
       aria-selected={isActive}
       onClick={onClick}
       className={`group relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
-        isActive ? `${activeColor} bg-white` : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
+        isActive
+          ? `${activeColor} bg-white`
+          : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-surface-raised'
       }`}
     >
-      <span className={isActive ? '' : 'text-gray-400 group-hover:text-gray-600'}>{icon}</span>
+      <span
+        className={
+          isActive ? '' : 'text-gray-400 group-hover:text-gray-600 dark:text-gray-500 dark:group-hover:text-gray-400'
+        }
+      >
+        {icon}
+      </span>
       <span>{label}</span>
     </button>
   );

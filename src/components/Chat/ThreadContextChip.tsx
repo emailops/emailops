@@ -30,8 +30,8 @@ export function ThreadContextChip({ context, active, onToggle }: ThreadContextCh
         aria-pressed={active}
         className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-xs transition-colors ${
           active
-            ? 'border-primary-200 bg-primary-50 text-primary-800 hover:border-primary-300'
-            : 'border-gray-200 bg-gray-50 text-gray-400 hover:border-gray-300 hover:text-gray-600'
+            ? 'border-primary-200 bg-primary-50 text-primary-800 hover:border-primary-300 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-300'
+            : 'border-gray-200 bg-gray-50 text-gray-400 hover:border-gray-300 hover:text-gray-600 dark:border-gray-700 dark:bg-surface-raised dark:text-gray-500 dark:hover:border-gray-600 dark:hover:text-gray-400'
         }`}
       >
         <svg

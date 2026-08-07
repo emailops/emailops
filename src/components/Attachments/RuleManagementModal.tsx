@@ -251,11 +251,16 @@ export function RuleManagementModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col dark:bg-surface">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">{t('attachments:rules.modalTitle')}</h2>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            {t('attachments:rules.modalTitle')}
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
+          >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -268,13 +273,13 @@ export function RuleManagementModal({
               visible when creating or editing without forcing the user to
               scroll past the existing rules). */}
           {showForm ? (
-            <div className="border border-primary-200 rounded-lg p-4 bg-primary-50/30 space-y-3">
-              <h3 className="text-sm font-medium text-gray-900">
+            <div className="border border-primary-200 rounded-lg p-4 bg-primary-50/30 space-y-3 dark:border-primary-800 dark:bg-primary-900/20">
+              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
                 {editingRuleId ? t('attachments:rules.editTitle') : t('attachments:rules.newTitle')}
               </h3>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1 dark:text-gray-300">
                   {t('attachments:rules.ruleName')}
                 </label>
                 <input
@@ -282,12 +287,12 @@ export function RuleManagementModal({
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder={t('attachments:rules.namePlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:border-gray-600"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1 dark:text-gray-300">
                   {t('attachments:rules.senderPattern')}
                 </label>
                 <input
@@ -295,13 +300,15 @@ export function RuleManagementModal({
                   value={form.senderEmailPattern}
                   onChange={(e) => setForm({ ...form, senderEmailPattern: e.target.value })}
                   placeholder={t('attachments:rules.senderPlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:border-gray-600"
                 />
-                <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.senderPatternHelp')}</p>
+                <p className="text-xs text-gray-400 mt-0.5 dark:text-gray-500">
+                  {t('attachments:rules.senderPatternHelp')}
+                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1 dark:text-gray-300">
                   {t('attachments:rules.subjectPattern')}
                 </label>
                 <input
@@ -309,13 +316,15 @@ export function RuleManagementModal({
                   value={form.subjectPattern}
                   onChange={(e) => setForm({ ...form, subjectPattern: e.target.value })}
                   placeholder={t('attachments:rules.subjectPlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:border-gray-600"
                 />
-                <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.subjectPatternHelp')}</p>
+                <p className="text-xs text-gray-400 mt-0.5 dark:text-gray-500">
+                  {t('attachments:rules.subjectPatternHelp')}
+                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1 dark:text-gray-300">
                   {t('attachments:rules.filenamePattern')}
                 </label>
                 <input
@@ -323,36 +332,38 @@ export function RuleManagementModal({
                   value={form.filenamePattern}
                   onChange={(e) => setForm({ ...form, filenamePattern: e.target.value })}
                   placeholder={t('attachments:rules.filenamePlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:border-gray-600"
                 />
-                <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.filenameHelp')}</p>
+                <p className="text-xs text-gray-400 mt-0.5 dark:text-gray-500">{t('attachments:rules.filenameHelp')}</p>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">{t('attachments:rules.tags')}</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1 dark:text-gray-300">
+                  {t('attachments:rules.tags')}
+                </label>
                 <input
                   type="text"
                   value={form.tags}
                   onChange={(e) => setForm({ ...form, tags: e.target.value })}
                   placeholder={t('attachments:rules.tagsPlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:border-gray-600"
                 />
-                <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.tagsHelp')}</p>
+                <p className="text-xs text-gray-400 mt-0.5 dark:text-gray-500">{t('attachments:rules.tagsHelp')}</p>
               </div>
 
               {!editingRuleId && (
-                <label className="flex items-center gap-2 text-xs text-gray-700 select-none cursor-pointer">
+                <label className="flex items-center gap-2 text-xs text-gray-700 select-none cursor-pointer dark:text-gray-300">
                   <input
                     type="checkbox"
                     checked={form.applyToExisting}
                     onChange={(e) => setForm({ ...form, applyToExisting: e.target.checked })}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:text-primary-400"
                   />
                   {t('attachments:rules.applyToExistingLabel')}
                 </label>
               )}
 
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
 
               <div className="flex items-center gap-2 pt-1">
                 <button
@@ -368,7 +379,7 @@ export function RuleManagementModal({
                 </button>
                 <button
                   onClick={resetForm}
-                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-surface-hover"
                 >
                   {t('common:actions.cancel')}
                 </button>
@@ -382,7 +393,7 @@ export function RuleManagementModal({
                 setForm(EMPTY_FORM);
                 setError(null);
               }}
-              className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 transition-colors flex items-center justify-center gap-2"
+              className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 transition-colors flex items-center justify-center gap-2 dark:border-gray-600 dark:text-gray-400 dark:hover:text-gray-300"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -393,7 +404,7 @@ export function RuleManagementModal({
 
           {/* Surface errors raised outside the form (e.g. delete failures) so
               they're visible even when the form isn't open. */}
-          {!showForm && error && <p className="text-xs text-red-600 px-1">{error}</p>}
+          {!showForm && error && <p className="text-xs text-red-600 px-1 dark:text-red-400">{error}</p>}
 
           {/* Existing rules */}
           {rules.length > 0 && (
@@ -401,20 +412,22 @@ export function RuleManagementModal({
               {rules.map((rule) => (
                 <div
                   key={rule.id}
-                  className={`border rounded-lg p-4 ${rule.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}
+                  className={`border rounded-lg p-4 ${rule.enabled ? 'border-gray-200 dark:border-gray-700' : 'border-gray-100 opacity-60 dark:border-gray-800'}`}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900">{rule.name}</span>
+                      <span className="font-medium text-gray-900 dark:text-gray-100">{rule.name}</span>
                       {!rule.enabled && (
-                        <span className="text-xs text-gray-400">{t('attachments:rules.disabled')}</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {t('attachments:rules.disabled')}
+                        </span>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleApplyRetroactively(rule)}
                         disabled={applyingRuleId === rule.id}
-                        className="p-1.5 text-gray-400 hover:text-primary-600 rounded hover:bg-gray-100 disabled:opacity-50"
+                        className="p-1.5 text-gray-400 hover:text-primary-600 rounded hover:bg-gray-100 disabled:opacity-50 dark:text-gray-500 dark:hover:text-primary-400 dark:hover:bg-surface-hover"
                         title={t('attachments:rules.applyToExisting')}
                       >
                         {applyingRuleId === rule.id ? (
@@ -432,7 +445,7 @@ export function RuleManagementModal({
                       </button>
                       <button
                         onClick={() => handleToggleEnabled(rule)}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                         title={rule.enabled ? t('attachments:rules.disable') : t('attachments:rules.enable')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -455,7 +468,7 @@ export function RuleManagementModal({
                       </button>
                       <button
                         onClick={() => startEditing(rule)}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                         title={t('common:actions.edit')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -470,7 +483,7 @@ export function RuleManagementModal({
                       <button
                         onClick={() => requestDelete(rule.id)}
                         disabled={pendingDeleteId === rule.id}
-                        className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-gray-100 disabled:opacity-40"
+                        className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-gray-100 disabled:opacity-40 dark:text-gray-500 dark:hover:text-red-400 dark:hover:bg-surface-hover"
                         title={t('common:actions.delete')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -485,7 +498,7 @@ export function RuleManagementModal({
                     </div>
                   </div>
                   {pendingDeleteId === rule.id && (
-                    <div className="mb-2 p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-800">
+                    <div className="mb-2 p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
                       <p className="font-medium mb-1">{t('attachments:rules.deleteConfirm')}</p>
                       <p className="mb-2">
                         {pendingDeleteCount === null
@@ -509,30 +522,36 @@ export function RuleManagementModal({
                         <button
                           onClick={cancelDelete}
                           disabled={isDeleting}
-                          className="px-3 py-1 text-xs font-medium text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded disabled:opacity-50"
+                          className="px-3 py-1 text-xs font-medium text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded disabled:opacity-50 dark:text-gray-300 dark:bg-surface dark:hover:bg-surface-hover dark:border-gray-600"
                         >
                           {t('common:actions.cancel')}
                         </button>
                       </div>
                     </div>
                   )}
-                  <div className="text-xs text-gray-500 space-y-0.5">
+                  <div className="text-xs text-gray-500 space-y-0.5 dark:text-gray-400">
                     {rule.senderEmailPattern && (
                       <div>
                         {t('attachments:rules.rowSender')}{' '}
-                        <code className="bg-gray-100 px-1 py-0.5 rounded">{rule.senderEmailPattern}</code>
+                        <code className="bg-gray-100 px-1 py-0.5 rounded dark:bg-surface-hover">
+                          {rule.senderEmailPattern}
+                        </code>
                       </div>
                     )}
                     {rule.subjectPattern && (
                       <div>
                         {t('attachments:rules.rowSubject')}{' '}
-                        <code className="bg-gray-100 px-1 py-0.5 rounded">{rule.subjectPattern}</code>
+                        <code className="bg-gray-100 px-1 py-0.5 rounded dark:bg-surface-hover">
+                          {rule.subjectPattern}
+                        </code>
                       </div>
                     )}
                     {rule.filenamePattern && (
                       <div>
                         {t('attachments:rules.rowFilename')}{' '}
-                        <code className="bg-gray-100 px-1 py-0.5 rounded">{rule.filenamePattern}</code>
+                        <code className="bg-gray-100 px-1 py-0.5 rounded dark:bg-surface-hover">
+                          {rule.filenamePattern}
+                        </code>
                       </div>
                     )}
                     {rule.tags.length > 0 && (
@@ -541,7 +560,7 @@ export function RuleManagementModal({
                         {rule.tags.map((tag) => (
                           <span
                             key={tag}
-                            className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700"
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                           >
                             {tag}
                           </span>
@@ -556,8 +575,8 @@ export function RuleManagementModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-          <p className="text-xs text-gray-400">{t('attachments:rules.footerHelp')}</p>
+        <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl dark:border-gray-700 dark:bg-surface-raised">
+          <p className="text-xs text-gray-400 dark:text-gray-500">{t('attachments:rules.footerHelp')}</p>
         </div>
       </div>
     </div>

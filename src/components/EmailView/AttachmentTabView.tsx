@@ -11,14 +11,14 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
   const { t } = useTranslation(['attachments', 'common']);
   const iframeSandbox = getAttachmentIframeSandbox(tab.mimeType);
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 bg-gray-50">
+    <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-surface">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 bg-gray-50 dark:border-gray-700 dark:bg-surface-raised">
         <AttachmentIcon mimeType={tab.mimeType} />
-        <span className="text-sm font-medium text-gray-700 truncate flex-1">{tab.filename}</span>
+        <span className="text-sm font-medium text-gray-700 truncate flex-1 dark:text-gray-300">{tab.filename}</span>
         {!tab.isLoading && tab.dataUrl && (
           <button
             onClick={() => void saveToDownloads(tab.filename, dataUrlToBase64(tab.dataUrl))}
-            className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors flex-shrink-0"
+            className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors flex-shrink-0 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-gray-700"
             title={t('attachments:viewer.download')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,7 +33,7 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
         )}
         <button
           onClick={onClose}
-          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors flex-shrink-0"
+          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors flex-shrink-0 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-gray-700"
           title={t('common:actions.close')}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,15 +47,15 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto" />
-              <p className="mt-2 text-sm text-gray-500">Loading {tab.filename}…</p>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading {tab.filename}…</p>
             </div>
           </div>
         ) : !tab.dataUrl ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-gray-500">{t('attachments:viewer.loadFailed')}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{t('attachments:viewer.loadFailed')}</p>
           </div>
         ) : tab.mimeType === 'text/plain' || tab.mimeType === 'text/markdown' ? (
-          <pre className="w-full h-full overflow-auto p-6 text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
+          <pre className="w-full h-full overflow-auto p-6 text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed dark:text-gray-300">
             {decodeBase64Utf8(tab.dataUrl)}
           </pre>
         ) : tab.mimeType === 'text/html' ? (
@@ -111,7 +111,12 @@ function AttachmentIcon({ mimeType }: { mimeType: string }) {
     );
   }
   return (
-    <svg className="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg
+      className="w-4 h-4 flex-shrink-0 text-gray-400 dark:text-gray-500"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
       <path
         strokeLinecap="round"
         strokeLinejoin="round"

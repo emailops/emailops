@@ -64,9 +64,9 @@ export function ConversationList({
       // Full width on a phone, fixed column from `md` up. When the stacked chat
       // layout shows this list it is the *only* pane, so a fixed 16rem column
       // left a dead blank strip across the rest of the screen.
-      className="w-full md:w-64 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col"
+      className="w-full md:w-64 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col dark:border-gray-700 dark:bg-surface-raised"
     >
-      <div className="p-3 border-b border-gray-200">
+      <div className="p-3 border-b border-gray-200 dark:border-gray-700">
         <button
           onClick={onCreate}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
@@ -80,9 +80,9 @@ export function ConversationList({
 
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <p className="p-4 text-xs text-gray-500">{t('common:state.loading')}</p>
+          <p className="p-4 text-xs text-gray-500 dark:text-gray-400">{t('common:state.loading')}</p>
         ) : conversations.length === 0 ? (
-          <p className="p-4 text-xs text-gray-500">{t('chat:conversations.empty')}</p>
+          <p className="p-4 text-xs text-gray-500 dark:text-gray-400">{t('chat:conversations.empty')}</p>
         ) : (
           <ul className="py-2">
             {conversations.map((c) => {
@@ -92,7 +92,9 @@ export function ConversationList({
                 <li key={c.id} className="px-2">
                   <div
                     className={`group flex items-center gap-1 rounded-lg text-sm transition-colors ${
-                      isActive ? 'bg-primary-100 text-primary-900' : 'text-gray-700 hover:bg-gray-200'
+                      isActive
+                        ? 'bg-primary-100 text-primary-900 dark:bg-primary-900/30 dark:text-primary-200'
+                        : 'text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700'
                     }`}
                   >
                     {isEditing ? (
@@ -109,7 +111,7 @@ export function ConversationList({
                             setDraftTitle('');
                           }
                         }}
-                        className="flex-1 px-2 py-1.5 bg-white border border-primary-400 rounded text-sm focus:outline-none"
+                        className="flex-1 px-2 py-1.5 bg-white border border-primary-400 rounded text-sm focus:outline-none dark:bg-surface"
                       />
                     ) : (
                       <button
@@ -130,7 +132,7 @@ export function ConversationList({
                         className={`mr-1 p-1 rounded transition-colors flex-shrink-0 ${
                           pendingDeleteId === c.id
                             ? 'text-white bg-red-600 hover:bg-red-700'
-                            : 'text-gray-400 hover:text-red-600 hover:bg-white'
+                            : 'text-gray-400 hover:text-red-600 hover:bg-white dark:text-gray-500 dark:hover:text-red-400 dark:hover:bg-surface'
                         }`}
                         title={pendingDeleteId === c.id ? 'Click again to confirm' : 'Delete conversation'}
                       >

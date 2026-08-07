@@ -126,20 +126,20 @@ export function MemoryView({ accountId }: MemoryViewProps) {
 
   if (!accountId) {
     return (
-      <div className="flex flex-col flex-1 items-center justify-center text-sm text-gray-500 bg-white">
+      <div className="flex flex-col flex-1 items-center justify-center text-sm text-gray-500 bg-white dark:text-gray-400 dark:bg-surface">
         {t('memory:view.selectAccount')}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-white">
+    <div className="flex flex-1 overflow-hidden bg-white dark:bg-surface">
       {/* Left: fact list */}
-      <div className="flex flex-col w-[560px] flex-shrink-0 border-r border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 flex items-center justify-between">
+      <div className="flex flex-col w-[560px] flex-shrink-0 border-r border-gray-200 overflow-hidden dark:border-gray-700">
+        <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 flex items-center justify-between dark:border-gray-700">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">{t('memory:title')}</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('memory:title')}</h1>
+            <p className="text-xs text-gray-500 mt-0.5 dark:text-gray-400">
               {t('memory:view.totalCount', { count: factCounts.total })}
               {factCounts.promoted > 0 && t('memory:view.consolidatedSuffix', { count: factCounts.promoted })}
               {factCounts.candidate > 0 && t('memory:view.candidateSuffix', { count: factCounts.candidate })}
@@ -151,30 +151,34 @@ export function MemoryView({ accountId }: MemoryViewProps) {
               void refreshFacts();
               void refreshFactCounts();
             }}
-            className="text-xs text-gray-500 hover:text-gray-700"
+            className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
           >
             {t('common:actions.refresh')}
           </button>
         </div>
 
-        {error && <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700">{error}</div>}
+        {error && (
+          <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+            {error}
+          </div>
+        )}
 
         {memCfg && <EligibilityBanner cfg={memCfg} />}
 
-        <div className="px-6 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0">
+        <div className="px-6 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 dark:border-gray-700">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('memory:filters.search')}
-            className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600"
           />
           <StatusToggle value={factStatusFilter} onChange={(v) => void setFactStatusFilter(v)} />
         </div>
 
         {companyChips.length > 0 && (
-          <div className="px-6 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap flex-shrink-0">
-            <span className="text-xs text-gray-500 mr-1">{t('memory:view.companyLabel')}</span>
+          <div className="px-6 py-2 border-b border-gray-100 flex items-center gap-2 flex-wrap flex-shrink-0 dark:border-gray-800">
+            <span className="text-xs text-gray-500 mr-1 dark:text-gray-400">{t('memory:view.companyLabel')}</span>
             <CompanyChip
               label={t('memory:filters.allChip')}
               count={facts.length}
@@ -195,9 +199,9 @@ export function MemoryView({ accountId }: MemoryViewProps) {
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
           {isLoadingFacts ? (
-            <div className="text-sm text-gray-500">{t('memory:view.loadingFacts')}</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">{t('memory:view.loadingFacts')}</div>
           ) : filtered.length === 0 ? (
-            <div className="text-sm text-gray-500 italic">
+            <div className="text-sm text-gray-500 italic dark:text-gray-400">
               {facts.length === 0 ? t('memory:view.noFactsYet') : t('memory:view.noMatches')}
             </div>
           ) : (

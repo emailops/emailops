@@ -43,6 +43,23 @@ interface VirtualEmailListProps {
  * drive its own auto-load-more / scroll heuristics — this component reads the
  * same ref to wire up the virtualizer and infinite-scroll trigger.
  */
+/** Opaque background + clipping protects against visual overlap: if a row's
+ *  content ever grows past its measured height (e.g. during the frame
+ *  ResizeObserver hasn't caught up), the alpha background on unread rows below
+ *  would otherwise expose the overflow as "double text". Clipping prevents that
+ *  bleed and keeps rows visually independent of each other.
+ *
+ *  The colour lives here as a CLASS, never as an inline style: an inline
+ *  `backgroundColor` outranks every `dark:` variant, which left the entire
+ *  message list white under light text in dark mode. */
+export const ROW_WRAPPER_CLASS = 'absolute top-0 left-0 w-full overflow-hidden bg-white dark:bg-surface';
+
+/** The part of the row wrapper's style that genuinely has to be inline: it is
+ *  computed per row by the virtualiser. */
+export function rowWrapperStyle(offset: number): React.CSSProperties {
+  return { transform: `translateY(${offset}px)`, position: 'absolute' };
+}
+
 export function VirtualEmailList({
   emails,
   selectedEmailId,
@@ -218,21 +235,8 @@ export function VirtualEmailList({
               key={virtualRow.key}
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
-              // Opaque background + clipping protects against visual overlap:
-              // if a row's content ever grows past its measured height (e.g.
-              // during the frame ResizeObserver hasn't caught up), the alpha
-              // background on unread rows below would otherwise expose the
-              // overflow as "double text". Clipping prevents that bleed and
-              // keeps rows visually independent of each other.
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                backgroundColor: 'white',
-                overflow: 'hidden',
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
+              className={ROW_WRAPPER_CLASS}
+              style={rowWrapperStyle(virtualRow.start)}
             >
               <EmailRow
                 email={email}

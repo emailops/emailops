@@ -111,7 +111,7 @@ export function TranslateComposeControl({
   const hasBody = htmlToPlainText(bodyHtml).trim().length > 0;
   const buttonDisabled = disabled || isTranslating || !hasBody;
   const buttonClass =
-    'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-300 dark:bg-primary-900/20 dark:border-primary-800 dark:hover:bg-primary-900/30';
 
   return (
     <div className="flex items-center gap-2 min-w-0">
@@ -144,7 +144,7 @@ export function TranslateComposeControl({
             onChange={(e) => setTarget(e.target.value)}
             maxLength={MAX_TARGET_CHARS}
             placeholder={t('compose:translate.placeholder')}
-            className="w-44 text-sm border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white focus:border-primary-500 outline-none"
+            className="w-44 text-sm border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white focus:border-primary-500 outline-none dark:border-gray-600 dark:bg-surface"
             onKeyDown={(e) => {
               if (e.key === 'Escape') setShowInput(false);
             }}
@@ -163,13 +163,13 @@ export function TranslateComposeControl({
         <button
           type="button"
           onClick={undo}
-          className="text-xs font-medium text-gray-500 hover:text-gray-700 whitespace-nowrap"
+          className="text-xs font-medium text-gray-500 hover:text-gray-700 whitespace-nowrap dark:text-gray-400 dark:hover:text-gray-300"
         >
           {t('compose:translate.undo')}
         </button>
       )}
       {error && (
-        <span className="text-xs text-red-600 truncate" title={error}>
+        <span className="text-xs text-red-600 truncate dark:text-red-400" title={error}>
           {t('compose:translate.failed', { error })}
         </span>
       )}

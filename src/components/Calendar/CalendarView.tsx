@@ -365,9 +365,9 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   // (rendered in the empty state too, where it is the only way back without a
   // trip to Settings).
   const enableCalendarOverlay = disabledCurrentAccount && (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-sm">
-      <div className="flex flex-col items-center gap-3 max-w-sm rounded-lg border border-gray-200 bg-white px-6 py-5 shadow-lg text-center">
-        <p className="text-sm text-gray-800 break-words">
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-sm dark:bg-surface/60">
+      <div className="flex flex-col items-center gap-3 max-w-sm rounded-lg border border-gray-200 bg-white px-6 py-5 shadow-lg text-center dark:border-gray-700 dark:bg-surface">
+        <p className="text-sm text-gray-800 break-words dark:text-gray-200">
           {t('calendar:integrationDisabled', { email: disabledCurrentAccount.email })}
         </p>
         <button
@@ -384,7 +384,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   // Error banner — pinned at the top of the view, above all scrollable content
   // (z-30 keeps it readable above the frosted overlay, e.g. when enabling fails).
   const errorBanner = error && (
-    <div className="relative z-30 flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800">
+    <div className="relative z-30 flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
       <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
         <path
           fillRule="evenodd"
@@ -400,7 +400,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           setError(null);
         }}
         title={t('common:actions.dismiss')}
-        className="flex-shrink-0 p-0.5 text-red-600 hover:text-red-800 rounded"
+        className="flex-shrink-0 p-0.5 text-red-600 hover:text-red-800 rounded dark:text-red-400 dark:hover:text-red-300"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -413,7 +413,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   // Declared once and placed either inline (desktop) or inside the overflow
   // menu (stacked), so the two layouts can never drift apart in behaviour.
   const viewModeToggle = (
-    <div className="flex rounded-md border border-gray-300 overflow-hidden">
+    <div className="flex rounded-md border border-gray-300 overflow-hidden dark:border-gray-600">
       {(['month', 'week', 'day'] as const).map((mode) => (
         <button
           key={mode}
@@ -422,7 +422,9 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
             setIsMenuOpen(false);
           }}
           className={`flex-1 px-3 py-1.5 text-sm transition-colors ${
-            viewMode === mode ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-50'
+            viewMode === mode
+              ? 'bg-primary-600 text-white'
+              : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-surface-raised'
           }`}
         >
           {t(`calendar:viewModes.${mode}` as const)}
@@ -438,7 +440,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         if (selectedAccountId) void runSync(selectedAccountId);
       }}
       disabled={isSyncing || !selectedAccountId}
-      className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+      className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised"
     >
       {t('common:actions.refresh')}
     </button>
@@ -477,8 +479,8 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           aria-pressed={calendar.isVisible}
           className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
             calendar.isVisible
-              ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
-              : 'border-gray-200 text-gray-400 hover:bg-gray-50'
+              ? 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised'
+              : 'border-gray-200 text-gray-400 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-500 dark:hover:bg-surface-raised'
           }`}
         >
           <span
@@ -496,9 +498,9 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
 
   if (calendarAccounts.length === 0) {
     return (
-      <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
+      <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white dark:bg-surface">
         {errorBanner}
-        <div className="flex flex-col flex-1 items-center justify-center text-sm text-gray-500">
+        <div className="flex flex-col flex-1 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
           {t('calendar:noAccount')}
         </div>
         {enableCalendarOverlay}
@@ -507,10 +509,10 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
   }
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
+    <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white dark:bg-surface">
       {/* Re-auth banner — friendly, actionable, no raw provider payload. */}
       {needsReauth && (
-        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 flex items-center gap-3 text-sm text-amber-900">
+        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 flex items-center gap-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
           <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
@@ -529,7 +531,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           <button
             onClick={() => setNeedsReauth(false)}
             title={t('common:actions.dismiss')}
-            className="flex-shrink-0 p-0.5 text-amber-700 hover:text-amber-900 rounded"
+            className="flex-shrink-0 p-0.5 text-amber-700 hover:text-amber-900 rounded dark:text-amber-300 dark:hover:text-amber-200"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -543,7 +545,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           When stacked, everything but date navigation moves behind the
           overflow menu — five inline controls wrapped onto three rows at phone
           width and pushed the grid itself off the first screen. */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 flex-wrap dark:border-gray-700">
         {isStacked && (
           <div className="relative flex-shrink-0">
             <button
@@ -551,7 +553,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
               onClick={() => setIsMenuOpen((open) => !open)}
               aria-label={t('calendar:moreOptions')}
               aria-expanded={isMenuOpen}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-gray-600 active:bg-gray-100"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 text-gray-600 active:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:active:bg-surface-hover"
             >
               <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M3 6h14M3 10h14M3 14h14" strokeLinecap="round" />
@@ -566,7 +568,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
                   onClick={() => setIsMenuOpen(false)}
                   className="fixed inset-0 z-40 cursor-default"
                 />
-                <div className="absolute left-0 top-full z-50 mt-1 w-64 space-y-3 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                <div className="absolute left-0 top-full z-50 mt-1 w-64 space-y-3 rounded-lg border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-surface">
                   {viewModeToggle}
                   <div className="flex items-center gap-2">{refreshButton}</div>
                   {accountSelect}
@@ -578,7 +580,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         )}
         <button
           onClick={goToday}
-          className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised"
         >
           {t('calendar:today')}
         </button>
@@ -586,7 +588,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           <button
             onClick={() => navigate(-1)}
             title={t('calendar:previous')}
-            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-surface-hover"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -595,16 +597,16 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           <button
             onClick={() => navigate(1)}
             title={t('calendar:next')}
-            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+            className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-surface-hover"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
         </div>
-        <h2 className="text-base font-semibold text-gray-900 min-w-0 truncate">{rangeLabel}</h2>
+        <h2 className="text-base font-semibold text-gray-900 min-w-0 truncate dark:text-gray-100">{rangeLabel}</h2>
         {(isSyncing || isLoading) && (
-          <span className="flex items-center gap-1.5 text-xs text-gray-400">
+          <span className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
             <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
@@ -625,7 +627,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
       {/* Calendar legend. Hidden when stacked: it is a whole row of chips above
           the grid, and the same toggles live in the overflow menu. */}
       {!isStacked && calendarToggles && (
-        <div className="px-4 py-1.5 border-b border-gray-200 flex-shrink-0">{calendarToggles}</div>
+        <div className="px-4 py-1.5 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">{calendarToggles}</div>
       )}
 
       {/* Grid */}

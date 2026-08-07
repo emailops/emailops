@@ -16,13 +16,15 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
   const c = detail.contact;
   const displayName = c.name && c.name !== c.email ? c.name : c.email;
   return (
-    <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">{t('contacts:detail.title')}</span>
+    <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex flex-col overflow-hidden dark:border-gray-700 dark:bg-surface">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
+        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide dark:text-gray-400">
+          {t('contacts:detail.title')}
+        </span>
         <button
           type="button"
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+          className="text-gray-400 hover:text-gray-600 text-lg leading-none dark:text-gray-500 dark:hover:text-gray-400"
           aria-label={t('contacts:detail.closeAria')}
         >
           ×
@@ -30,21 +32,23 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
       </div>
 
       <div className="overflow-y-auto flex-1">
-        <div className="px-5 py-5 border-b border-gray-200">
+        <div className="px-5 py-5 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-start gap-4">
             <ContactAvatar contact={c} size={12} />
             <div className="flex-1 min-w-0">
-              <div className="text-base font-semibold text-gray-900 truncate">{displayName}</div>
-              <div className="text-sm text-gray-500 truncate">{c.email}</div>
+              <div className="text-base font-semibold text-gray-900 truncate dark:text-gray-100">{displayName}</div>
+              <div className="text-sm text-gray-500 truncate dark:text-gray-400">{c.email}</div>
               <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <CompanyBadge company={c.company} />
                 {c.kind === 'automated' && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 uppercase tracking-wide">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 uppercase tracking-wide dark:bg-surface-hover dark:text-gray-400">
                     {t('contacts:detail.automated')}
                   </span>
                 )}
                 {c.domain && (
-                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500">@{c.domain}</span>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 dark:bg-surface-raised dark:text-gray-400">
+                    @{c.domain}
+                  </span>
                 )}
               </div>
             </div>
@@ -52,12 +56,12 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
 
           {detail.aliases.length > 0 && (
             <div className="mt-4">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1 dark:text-gray-400">
                 {t('contacts:detail.otherAddresses')}
               </div>
               <ul className="space-y-1">
                 {detail.aliases.map((a) => (
-                  <li key={a} className="text-sm text-gray-700 truncate">
+                  <li key={a} className="text-sm text-gray-700 truncate dark:text-gray-300">
                     {a}
                   </li>
                 ))}
@@ -66,15 +70,15 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
           )}
         </div>
 
-        <div className="px-5 py-4 border-b border-gray-200 grid grid-cols-2 gap-3 text-sm">
+        <div className="px-5 py-4 border-b border-gray-200 grid grid-cols-2 gap-3 text-sm dark:border-gray-700">
           <Stat label={t('contacts:detail.received')} value={fmt.number(c.receivedCount ?? 0)} />
           <Stat label={t('contacts:detail.sent')} value={fmt.number(c.sentCount ?? 0)} />
           <Stat label={t('contacts:detail.total')} value={fmt.number(c.emailCount ?? 0)} />
           <Stat label={t('contacts:detail.lastContact')} value={fmt.relativeTime(c.lastTimestamp)} />
         </div>
 
-        <div className="px-5 py-4 border-b border-gray-200">
-          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 dark:text-gray-400">
             {t('contacts:detail.relationship')}
           </div>
           <ScoreBar score={c.relationshipScore ?? 0} />
@@ -91,7 +95,7 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
           <button
             type="button"
             onClick={() => onViewEmailsFrom(c.email)}
-            className="w-full px-3 py-2 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md transition-colors"
+            className="w-full px-3 py-2 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md transition-colors dark:bg-surface-hover dark:hover:bg-gray-700 dark:text-gray-200"
           >
             {t('contacts:detail.viewAllEmails')}
           </button>
@@ -104,21 +108,28 @@ export function ContactDetailPanel({ detail, onClose, onComposeTo, onViewEmailsF
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="text-sm text-gray-900 font-medium tabular-nums">{value}</div>
+      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="text-sm text-gray-900 font-medium tabular-nums dark:text-gray-100">{value}</div>
     </div>
   );
 }
 
 function ScoreBar({ score }: { score: number }) {
   const pct = Math.max(0, Math.min(100, score));
-  const tone = pct >= 70 ? 'bg-emerald-500' : pct >= 40 ? 'bg-blue-500' : pct >= 20 ? 'bg-amber-500' : 'bg-gray-300';
+  const tone =
+    pct >= 70
+      ? 'bg-emerald-500'
+      : pct >= 40
+        ? 'bg-blue-500'
+        : pct >= 20
+          ? 'bg-amber-500'
+          : 'bg-gray-300 dark:bg-gray-600';
   return (
     <div className="flex items-center gap-2">
-      <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden dark:bg-surface-hover">
         <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-gray-500 tabular-nums w-7 text-right">{Math.round(pct)}</span>
+      <span className="text-xs text-gray-500 tabular-nums w-7 text-right dark:text-gray-400">{Math.round(pct)}</span>
     </div>
   );
 }

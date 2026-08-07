@@ -264,9 +264,9 @@ export function ReplyCompose({
     setInput: (v: string) => void,
   ) => (
     <div className="flex items-start gap-2 mb-2">
-      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0">{label}</span>
+      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0 dark:text-gray-400">{label}</span>
       <div
-        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100"
+        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:border-gray-600 dark:bg-surface"
         onClick={() => document.getElementById(`${field}-input`)?.focus()}
       >
         {recipients.map((r) => {
@@ -275,7 +275,9 @@ export function ReplyCompose({
             <span
               key={r}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                isUnusual ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-gray-100 text-gray-700'
+                isUnusual
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/30 dark:text-amber-300'
+                  : 'bg-gray-100 text-gray-700 dark:bg-surface-hover dark:text-gray-300'
               }`}
               title={isUnusual ? 'Different domain than other recipients' : r}
             >
@@ -310,13 +312,13 @@ export function ReplyCompose({
             placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
           />
           {activeField === field && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto dark:bg-surface dark:border-gray-700">
               {suggestions.map((s, i) => (
                 <button
                   key={s.email}
                   type="button"
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${
-                    i === selectedIdx ? 'bg-primary-50' : ''
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 dark:hover:bg-surface-raised ${
+                    i === selectedIdx ? 'bg-primary-50 dark:bg-primary-900/20' : ''
                   }`}
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -324,11 +326,11 @@ export function ReplyCompose({
                   }}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-gray-900">{s.email}</div>
-                    {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
+                    <div className="truncate text-gray-900 dark:text-gray-100">{s.email}</div>
+                    {s.name && <div className="truncate text-xs text-gray-500 dark:text-gray-400">{s.name}</div>}
                   </div>
                   {s.domainMatch && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0">
+                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0 dark:bg-green-900/30 dark:text-green-300">
                       {t('compose:sameDomain')}
                     </span>
                   )}
@@ -347,11 +349,11 @@ export function ReplyCompose({
       // never navigation — leaving the thread here would discard the draft.
       // See `hooks/useSwipeNavigation.ts`.
       data-no-swipe
-      className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4"
+      className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-surface-raised"
     >
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>
+        <span className="text-sm text-gray-500 w-8 flex-shrink-0 dark:text-gray-400">{t('compose:from')}</span>
         <div className="flex-1">
           <Select
             value={fromAccountId}
@@ -372,7 +374,7 @@ export function ReplyCompose({
         <button
           type="button"
           onClick={() => setShowCc(true)}
-          className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-10"
+          className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-10 dark:hover:text-primary-400"
         >
           + Cc
         </button>
@@ -381,7 +383,7 @@ export function ReplyCompose({
 
       {/* Unusual recipient warning */}
       {unusualRecipients.length > 0 && (
-        <div className="mb-3 ml-10 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+        <div className="mb-3 ml-10 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 dark:bg-amber-900/20 dark:border-amber-800">
           <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
             <path
               fillRule="evenodd"
@@ -389,7 +391,7 @@ export function ReplyCompose({
               clipRule="evenodd"
             />
           </svg>
-          <div className="text-xs text-amber-700">
+          <div className="text-xs text-amber-700 dark:text-amber-300">
             <strong>{t('compose:unusualRecipients')}</strong> {unusualRecipients.join(', ')} — different domain than the
             other recipients. Double-check before sending.
           </div>
@@ -407,7 +409,7 @@ export function ReplyCompose({
         />
         {isLoadingDraft && (
           <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4">
-            <div className="flex items-center gap-2 rounded-full bg-white/90 border border-gray-200 px-3 py-1.5 text-xs text-gray-600 shadow-sm">
+            <div className="flex items-center gap-2 rounded-full bg-white/90 border border-gray-200 px-3 py-1.5 text-xs text-gray-600 shadow-sm dark:bg-surface/90 dark:border-gray-700 dark:text-gray-400">
               <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-primary-600" />
               <span>{t('compose:aiDraft.generatingLong')}</span>
             </div>
@@ -421,13 +423,13 @@ export function ReplyCompose({
           {attachments.map((att, i) => (
             <div
               key={att.filename}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700 dark:bg-surface-hover dark:border-gray-700 dark:text-gray-300"
             >
               <span className="max-w-[180px] truncate">{att.filename}</span>
               <button
                 type="button"
                 onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                className="ml-0.5 text-gray-400 hover:text-red-500"
+                className="ml-0.5 text-gray-400 hover:text-red-500 dark:text-gray-500"
               >
                 ×
               </button>
@@ -442,7 +444,7 @@ export function ReplyCompose({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isSending}
-          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
           title={t('compose:attachFiles')}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -474,7 +476,7 @@ export function ReplyCompose({
           type="button"
           onClick={onCancel}
           disabled={isSending}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:bg-surface dark:border-gray-600 dark:hover:bg-surface-hover"
         >
           Cancel
         </button>
@@ -489,7 +491,7 @@ export function ReplyCompose({
       </div>
 
       {sendError && (
-        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
           {sendError}
         </div>
       )}
@@ -504,8 +506,8 @@ export function ReplyCompose({
 
 function DraftSourcesPanel({ sources }: { sources: DraftSource[] }) {
   return (
-    <div className="mt-4 pt-3 border-t border-gray-200">
-      <div className="text-xs font-medium text-gray-500 mb-2">
+    <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
+      <div className="text-xs font-medium text-gray-500 mb-2 dark:text-gray-400">
         Similar past threads used for context ({sources.length})
       </div>
       <div className="flex flex-col gap-1.5">
@@ -522,34 +524,36 @@ function DraftSourceCard({ source }: { source: DraftSource }) {
   const [open, setOpen] = useState(false);
   const dateStr = format(new Date(source.timestamp * 1000), 'PP');
   return (
-    <div className="rounded border border-gray-200 bg-white">
+    <div className="rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-surface">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 dark:hover:bg-surface-raised"
       >
         <svg
-          className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform dark:text-gray-500 ${open ? 'rotate-90' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="flex-1 min-w-0 truncate font-medium text-gray-800">{source.subject || '(No subject)'}</span>
+        <span className="flex-1 min-w-0 truncate font-medium text-gray-800 dark:text-gray-200">
+          {source.subject || '(No subject)'}
+        </span>
         {source.sentByUser && (
-          <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 border border-primary-100">
+          <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 border border-primary-100 dark:bg-primary-900/20 dark:text-primary-300 dark:border-primary-900/40">
             {t('compose:yourReply')}
           </span>
         )}
-        <span className="flex-shrink-0 text-gray-400">{dateStr}</span>
+        <span className="flex-shrink-0 text-gray-400 dark:text-gray-500">{dateStr}</span>
       </button>
       {open && (
-        <div className="px-3 pb-3 pt-1 text-xs text-gray-600 border-t border-gray-100">
-          <div className="text-gray-500 mb-1">
+        <div className="px-3 pb-3 pt-1 text-xs text-gray-600 border-t border-gray-100 dark:text-gray-400 dark:border-gray-800">
+          <div className="text-gray-500 mb-1 dark:text-gray-400">
             {source.sender} &lt;{source.senderEmail}&gt;
           </div>
-          <div className="whitespace-pre-wrap break-words text-gray-700">{source.snippet}</div>
+          <div className="whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">{source.snippet}</div>
         </div>
       )}
     </div>

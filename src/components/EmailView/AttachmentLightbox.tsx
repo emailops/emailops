@@ -59,7 +59,7 @@ export function AttachmentLightbox({ meta, onClose }: AttachmentLightboxProps) {
         </button>
 
         {error ? (
-          <div className="text-white text-center p-8 bg-white/10 rounded-xl">
+          <div className="text-white text-center p-8 bg-white/10 rounded-xl dark:bg-surface/10">
             <svg className="w-10 h-10 mx-auto mb-3 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"

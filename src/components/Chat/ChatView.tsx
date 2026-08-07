@@ -136,7 +136,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
 
   if (!accountId) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white text-gray-500 text-sm">
+      <div className="flex-1 flex items-center justify-center bg-white text-gray-500 text-sm dark:bg-surface dark:text-gray-400">
         {t('chat:noAccount')}
       </div>
     );
@@ -152,7 +152,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
   const showPane = !isStacked || !mobileShowList;
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-white">
+    <div className="flex flex-1 overflow-hidden bg-white dark:bg-surface">
       {showList && (
         <ConversationList
           conversations={conversations}
@@ -185,7 +185,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
                 onClick={() => setMobileShowList(true)}
                 title={t('chat:conversations.title')}
                 aria-label={t('chat:conversations.title')}
-                className="flex h-9 w-9 items-center justify-center rounded-md text-gray-500 active:bg-gray-100"
+                className="flex h-9 w-9 items-center justify-center rounded-md text-gray-500 active:bg-gray-100 dark:text-gray-400 dark:active:bg-surface-hover"
               >
                 <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
                   <path d="M3 5h14M3 10h14M3 15h9" strokeLinecap="round" />
@@ -202,10 +202,10 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
             <>
               <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">
                 <div>
-                  <h2 className="text-lg font-medium text-gray-900 mb-1">{t('chat:intro.title')}</h2>
-                  <p className="text-sm text-gray-500 max-w-md">{t('chat:intro.body')}</p>
+                  <h2 className="text-lg font-medium text-gray-900 mb-1 dark:text-gray-100">{t('chat:intro.title')}</h2>
+                  <p className="text-sm text-gray-500 max-w-md dark:text-gray-400">{t('chat:intro.body')}</p>
                 </div>
-                <div className="text-xs text-gray-500 max-w-md">
+                <div className="text-xs text-gray-500 max-w-md dark:text-gray-400">
                   {t('chat:intro.retrievalRestricted', {
                     categories: selectedCategories.length > 0 ? selectedCategories.join(', ') : 'primary',
                   })}
@@ -227,7 +227,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
                         }
                       }}
                       disabled={isSending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50 dark:border-gray-700 dark:bg-surface dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-primary-900/20"
                     >
                       <span>{s.icon}</span>
                       <span>{t(`chat:shortcuts.${s.id}.label` as const)}</span>
@@ -247,7 +247,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
             <>
               <div className="flex-1 flex flex-col overflow-hidden">
                 {isLoadingMessages ? (
-                  <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
+                  <div className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
                     {t('common:state.loading')}
                   </div>
                 ) : (
@@ -260,7 +260,9 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
                   />
                 )}
                 {error && (
-                  <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>
+                  <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200 dark:text-red-400 dark:bg-red-900/20 dark:border-red-800">
+                    {error}
+                  </div>
                 )}
               </div>
               <ChatInput

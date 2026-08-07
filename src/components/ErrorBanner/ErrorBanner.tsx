@@ -20,7 +20,7 @@ export function ErrorBanner({ message, accountEmail, onDismiss, onReauthenticate
     message.toLowerCase().includes('auth');
 
   return (
-    <div className="bg-red-50 border-l-4 border-red-500 p-4">
+    <div className="bg-red-50 border-l-4 border-red-500 p-4 dark:bg-red-900/20">
       <div className="flex items-start">
         <div className="flex-shrink-0">
           <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -32,14 +32,14 @@ export function ErrorBanner({ message, accountEmail, onDismiss, onReauthenticate
           </svg>
         </div>
         <div className="ml-3 flex-1">
-          <p className="text-sm text-red-700">
+          <p className="text-sm text-red-700 dark:text-red-300">
             {accountEmail && <span className="font-semibold">{accountEmail}: </span>}
             {message}
           </p>
           {isAuthError && onReauthenticate && (
             <button
               onClick={onReauthenticate}
-              className="mt-2 text-sm font-medium text-red-700 hover:text-red-800 underline"
+              className="mt-2 text-sm font-medium text-red-700 hover:text-red-800 underline dark:text-red-300 dark:hover:text-red-300"
             >
               {t('common:actions.signInAgain')}
             </button>

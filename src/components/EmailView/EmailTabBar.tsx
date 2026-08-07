@@ -23,15 +23,15 @@ export function EmailTabBar({
 }: EmailTabBarProps) {
   const { t } = useTranslation(['inbox']);
   return (
-    <div className="flex items-center overflow-x-auto border-b border-gray-200 bg-gray-50 flex-shrink-0 min-h-0">
+    <div className="flex items-center overflow-x-auto border-b border-gray-200 bg-gray-50 flex-shrink-0 min-h-0 dark:border-gray-700 dark:bg-surface-raised">
       {/* Main tab — always first, no close button, content replaced by inbox clicks */}
       {mainEmail && (
         <button
           onClick={onSelectMainTab}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-r border-gray-200 flex-shrink-0 max-w-48 transition-colors ${
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-r border-gray-200 flex-shrink-0 max-w-48 transition-colors dark:border-gray-700 ${
             isMainTabActive
-              ? 'bg-white text-gray-900 border-b-2 border-b-primary-600 -mb-px'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+              ? 'bg-white text-gray-900 border-b-2 border-b-primary-600 -mb-px dark:bg-surface dark:text-gray-100'
+              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-surface-hover dark:hover:text-gray-300'
           }`}
         >
           <span className="truncate">{mainEmail.subject || '(no subject)'}</span>
@@ -57,10 +57,10 @@ export function EmailTabBar({
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') onSelectTab(tab.id);
             }}
-            className={`group flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-r border-gray-200 flex-shrink-0 max-w-48 transition-colors cursor-pointer ${
+            className={`group flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-r border-gray-200 flex-shrink-0 max-w-48 transition-colors cursor-pointer dark:border-gray-700 ${
               isActive
-                ? 'bg-white text-gray-900 border-b-2 border-b-primary-600 -mb-px'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                ? 'bg-white text-gray-900 border-b-2 border-b-primary-600 -mb-px dark:bg-surface dark:text-gray-100'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-surface-hover dark:hover:text-gray-300'
             }`}
           >
             {tab.type === 'attachment' && <TabAttachmentIcon mimeType={tab.mimeType} />}
@@ -73,7 +73,7 @@ export function EmailTabBar({
                 e.stopPropagation();
                 onCloseTab(tab.id);
               }}
-              className="flex-shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="flex-shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-400"
             >
               <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M2 2l8 8M10 2l-8 8" />
@@ -119,7 +119,12 @@ function TabAttachmentIcon({ mimeType }: { mimeType: string }) {
     );
   }
   return (
-    <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg
+      className="w-3 h-3 flex-shrink-0 text-gray-400 dark:text-gray-500"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
       <path
         strokeLinecap="round"
         strokeLinejoin="round"

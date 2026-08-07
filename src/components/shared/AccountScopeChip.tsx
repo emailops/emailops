@@ -16,9 +16,9 @@ interface AccountScopeChipProps {
  *  in the unified inbox rows. */
 export function AccountScopeChip({ accountId, email, hint }: AccountScopeChipProps) {
   return (
-    <div className="flex items-center justify-center px-4 py-2 border-b border-gray-100 bg-gray-50/70">
+    <div className="flex items-center justify-center px-4 py-2 border-b border-gray-100 bg-gray-50/70 dark:border-gray-800 dark:bg-surface-raised/70">
       <span
-        className="inline-flex items-center gap-2 max-w-full px-4 py-1 rounded-full border border-gray-200 bg-white text-sm text-gray-700 shadow-sm"
+        className="inline-flex items-center gap-2 max-w-full px-4 py-1 rounded-full border border-gray-200 bg-white text-sm text-gray-700 shadow-sm dark:border-gray-700 dark:bg-surface dark:text-gray-300"
         title={hint}
       >
         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${accountColorClass(accountId)}`} aria-hidden="true" />

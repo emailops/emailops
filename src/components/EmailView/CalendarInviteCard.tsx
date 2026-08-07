@@ -116,9 +116,14 @@ export function CalendarInviteCard({ email }: { email: Email }) {
   const isCancelled = invite.method === 'CANCEL';
 
   return (
-    <div className="mb-4 border border-gray-200 rounded-lg bg-white shadow-sm p-4 flex items-start gap-3">
-      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
-        <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div className="mb-4 border border-gray-200 rounded-lg bg-white shadow-sm p-4 flex items-start gap-3 dark:border-gray-700 dark:bg-surface">
+      <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center dark:bg-primary-900/20">
+        <svg
+          className="w-5 h-5 text-primary-600 dark:text-primary-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -129,22 +134,22 @@ export function CalendarInviteCard({ email }: { email: Email }) {
       </div>
 
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-sm text-gray-600">{dateLine}</p>
-        <h4 className="text-base font-semibold text-gray-900 break-words">
+        <p className="text-sm text-gray-600 dark:text-gray-400">{dateLine}</p>
+        <h4 className="text-base font-semibold text-gray-900 break-words dark:text-gray-100">
           {invite.summary || t('calendar:invite.noTitle')}
         </h4>
-        {recurrenceLine && <p className="text-sm text-gray-600 break-words">{recurrenceLine}</p>}
+        {recurrenceLine && <p className="text-sm text-gray-600 break-words dark:text-gray-400">{recurrenceLine}</p>}
         {invite.organizer && (
-          <p className="text-sm text-gray-500 break-all">
+          <p className="text-sm text-gray-500 break-all dark:text-gray-400">
             {t('calendar:invite.organizer', { organizer: invite.organizer })}
           </p>
         )}
-        {invite.location && <p className="text-sm text-gray-500 break-words">{invite.location}</p>}
+        {invite.location && <p className="text-sm text-gray-500 break-words dark:text-gray-400">{invite.location}</p>}
 
         {isCancelled ? (
-          <p className="pt-1 text-sm text-gray-500 italic">{t('calendar:invite.cancelled')}</p>
+          <p className="pt-1 text-sm text-gray-500 italic dark:text-gray-400">{t('calendar:invite.cancelled')}</p>
         ) : rsvpDone ? (
-          <p className="pt-1 text-sm text-gray-700">
+          <p className="pt-1 text-sm text-gray-700 dark:text-gray-300">
             {t(`calendar:invite.confirmed.${rsvpDone}` as const)}{' '}
             <button
               type="button"
@@ -152,14 +157,14 @@ export function CalendarInviteCard({ email }: { email: Email }) {
                 setRsvpDone(null);
                 setRsvpNote(null);
               }}
-              className="text-primary-600 hover:text-primary-700 hover:underline"
+              className="text-primary-600 hover:text-primary-700 hover:underline dark:text-primary-400 dark:hover:text-primary-300"
             >
               {t('calendar:invite.change')}
             </button>
           </p>
         ) : (
           <div className="pt-1.5 flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-gray-700 mr-1">{t('calendar:invite.going')}</span>
+            <span className="text-sm text-gray-700 mr-1 dark:text-gray-300">{t('calendar:invite.going')}</span>
             <RsvpButton
               label={t('calendar:invite.yes')}
               variant="filled"
@@ -187,7 +192,11 @@ export function CalendarInviteCard({ email }: { email: Email }) {
         {rsvpNote && (
           <p
             className={`pt-1 text-xs break-words ${
-              rsvpNote.kind === 'error' ? 'text-red-700' : rsvpNote.kind === 'auth' ? 'text-amber-700' : 'text-gray-500'
+              rsvpNote.kind === 'error'
+                ? 'text-red-700 dark:text-red-300'
+                : rsvpNote.kind === 'auth'
+                  ? 'text-amber-700 dark:text-amber-300'
+                  : 'text-gray-500 dark:text-gray-400'
             }`}
           >
             {rsvpNote.message}
@@ -214,7 +223,7 @@ function RsvpButton({
   const base =
     variant === 'filled'
       ? 'bg-primary-600 text-white hover:bg-primary-700'
-      : 'border border-gray-300 text-gray-700 hover:bg-gray-50';
+      : 'border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised';
   return (
     <button
       type="button"

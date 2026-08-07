@@ -16,12 +16,12 @@ function SourceRow({
   const [showChunk, setShowChunk] = useState(false);
   const hasExcerpt = !!source.bodyExcerpt && source.bodyExcerpt.length > 0;
   return (
-    <li className="text-xs text-gray-600 py-1 px-1 rounded hover:bg-gray-50">
+    <li className="text-xs text-gray-600 py-1 px-1 rounded hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-surface-raised">
       <div className="flex items-start gap-2">
         <CitationPill source={source} accountId={accountId} onOpenEmail={onOpenEmail} />
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate">{source.subject || '(no subject)'}</div>
-          <div className="text-gray-400 truncate">
+          <div className="text-gray-400 truncate dark:text-gray-500">
             {source.sender || source.senderEmail}
             {source.timestamp
               ? ` · ${fmt.date(source.timestamp, { month: 'short', day: 'numeric', year: 'numeric' })}`
@@ -31,7 +31,7 @@ function SourceRow({
             <button
               type="button"
               onClick={() => setShowChunk((v) => !v)}
-              className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700"
+              className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
             >
               <svg
                 className={`w-3 h-3 transition-transform ${showChunk ? 'rotate-90' : ''}`}
@@ -47,7 +47,7 @@ function SourceRow({
         </div>
       </div>
       {hasExcerpt && showChunk && (
-        <pre className="mt-1 ml-6 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-700 whitespace-pre-wrap break-words">
+        <pre className="mt-1 ml-6 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-700 whitespace-pre-wrap break-words dark:bg-surface-raised dark:border-gray-700 dark:text-gray-300">
           {source.bodyExcerpt}
         </pre>
       )}
@@ -69,11 +69,11 @@ export function SourcesList({
   if (sources.length === 0) return null;
 
   return (
-    <div className="mt-2 pt-2 border-t border-gray-200">
+    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
       <button
         type="button"
         onClick={() => setIsOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors dark:text-gray-400 dark:hover:text-gray-300"
       >
         <svg
           className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`}

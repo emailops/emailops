@@ -126,10 +126,10 @@ export function EventDetailDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white border border-gray-200 rounded-lg w-full max-w-md max-h-[80vh] shadow-xl flex flex-col overflow-hidden mx-4">
+      <div className="bg-white border border-gray-200 rounded-lg w-full max-w-md max-h-[80vh] shadow-xl flex flex-col overflow-hidden mx-4 dark:bg-surface dark:border-gray-700">
         {/* Delete-error banner — pinned at the very top, above all scrollable content. */}
         {deleteError && (
-          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800">
+          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
             <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path
                 fillRule="evenodd"
@@ -144,14 +144,14 @@ export function EventDetailDialog({
         )}
 
         {/* Header — title + close, always visible (never scrolls away). */}
-        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100 flex-shrink-0">
+        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100 flex-shrink-0 dark:border-gray-800">
           <div className="min-w-0">
-            <h3 className="text-base font-semibold text-gray-900 break-words">
+            <h3 className="text-base font-semibold text-gray-900 break-words dark:text-gray-100">
               {event.title || t('common:labels.noSubject')}
             </h3>
-            <p className="text-sm text-gray-600 mt-0.5">{timeRange}</p>
+            <p className="text-sm text-gray-600 mt-0.5 dark:text-gray-400">{timeRange}</p>
             {event.status === 'tentative' && (
-              <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+              <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800">
                 {t('calendar:detail.tentative')}
               </span>
             )}
@@ -159,7 +159,7 @@ export function EventDetailDialog({
           <button
             onClick={onClose}
             title={t('common:actions.close')}
-            className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -169,7 +169,7 @@ export function EventDetailDialog({
 
         {/* Prominent Join action — pinned above the scrollable details. */}
         {(joinUrl || htmlLinkUrl) && (
-          <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100 flex-shrink-0 dark:border-gray-800">
             {joinUrl && (
               <button
                 onClick={() => openLink(joinUrl)}
@@ -181,7 +181,7 @@ export function EventDetailDialog({
             {htmlLinkUrl && (
               <button
                 onClick={() => openLink(htmlLinkUrl)}
-                className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+                className="text-sm text-primary-600 hover:text-primary-700 hover:underline dark:text-primary-400 dark:hover:text-primary-300"
               >
                 {t('calendar:detail.openInProvider')}
               </button>
@@ -192,12 +192,12 @@ export function EventDetailDialog({
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
           {event.location && (
             <DetailRow label={t('calendar:detail.location')}>
-              <span className="text-gray-800 break-words">{event.location}</span>
+              <span className="text-gray-800 break-words dark:text-gray-200">{event.location}</span>
             </DetailRow>
           )}
           {event.organizer && (
             <DetailRow label={t('calendar:detail.organizer')}>
-              <span className="text-gray-800 break-all">{event.organizer}</span>
+              <span className="text-gray-800 break-all dark:text-gray-200">{event.organizer}</span>
             </DetailRow>
           )}
           {attendeeList.length > 0 && (
@@ -206,7 +206,7 @@ export function EventDetailDialog({
                 {attendeeList.map((attendee) => {
                   const status = attendeeStatusMeta(attendee.response);
                   return (
-                    <li key={attendee.email} className="flex items-center gap-1.5 text-gray-800">
+                    <li key={attendee.email} className="flex items-center gap-1.5 text-gray-800 dark:text-gray-200">
                       {status !== 'organizer' && (
                         <AttendeeStatusIcon status={status} label={t(`calendar:detail.attendeeStatus.${status}`)} />
                       )}
@@ -214,7 +214,7 @@ export function EventDetailDialog({
                       {status === 'organizer' && (
                         <span
                           title={t('calendar:detail.attendeeStatus.organizer')}
-                          className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200 select-none"
+                          className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200 select-none dark:bg-surface-hover dark:text-gray-400 dark:border-gray-700"
                         >
                           {t('calendar:detail.attendeeStatus.organizer')}
                         </span>
@@ -227,7 +227,7 @@ export function EventDetailDialog({
           )}
           {description && (
             <DetailRow label={t('calendar:detail.description')}>
-              <p className="text-gray-800 whitespace-pre-wrap break-words">
+              <p className="text-gray-800 whitespace-pre-wrap break-words dark:text-gray-200">
                 {linkifySegments(description).map((segment, index) => {
                   // Index keys are safe: the segment list is derived, static per render.
                   const key = `${index}-${segment.value.slice(0, 16)}`;
@@ -239,7 +239,7 @@ export function EventDetailDialog({
                         <button
                           key={key}
                           onClick={() => openLink(safeUrl)}
-                          className="text-primary-600 hover:text-primary-700 hover:underline break-all text-left"
+                          className="text-primary-600 hover:text-primary-700 hover:underline break-all text-left dark:text-primary-400 dark:hover:text-primary-300"
                         >
                           {segment.value}
                         </button>
@@ -254,12 +254,12 @@ export function EventDetailDialog({
         </div>
 
         {/* Footer — delete action with inline confirm (never a browser confirm). */}
-        <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3">
+        <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3 dark:border-gray-800">
           {!confirmingDelete ? (
             <div className="flex justify-end">
               <button
                 onClick={() => setConfirmingDelete(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -274,22 +274,26 @@ export function EventDetailDialog({
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm font-medium text-gray-900">{t('calendar:detail.deleteConfirmTitle')}</p>
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                {t('calendar:detail.deleteConfirmTitle')}
+              </p>
               {isRecurringInstance && (
                 <div className="space-y-1.5" role="radiogroup" aria-label={t('calendar:detail.deleteConfirmTitle')}>
                   {(['instance', 'following', 'all'] as const).map((scope) => (
-                    <label key={scope} className="flex items-center gap-2 text-sm text-gray-700">
+                    <label key={scope} className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                       <input
                         type="radio"
                         name="event-delete-scope"
                         value={scope}
                         checked={deleteScope === scope}
                         onChange={() => setDeleteScope(scope)}
-                        className="border-gray-300 text-primary-600 focus:ring-primary-500"
+                        className="border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:text-primary-400"
                       />
                       {t(`calendar:detail.deleteScope.${scope}` as const)}
                       {scope === 'all' && (
-                        <span className="text-xs text-gray-400">{t('calendar:detail.deleteScope.allHint')}</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {t('calendar:detail.deleteScope.allHint')}
+                        </span>
                       )}
                     </label>
                   ))}
@@ -297,12 +301,12 @@ export function EventDetailDialog({
               )}
               {hasOtherAttendees && (
                 <>
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                     <input
                       type="checkbox"
                       checked={notifyAttendees}
                       onChange={(e) => setNotifyAttendees(e.target.checked)}
-                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:text-primary-400"
                     />
                     {t('calendar:detail.notifyAttendees')}
                   </label>
@@ -310,7 +314,7 @@ export function EventDetailDialog({
                     <div>
                       <label
                         htmlFor="event-cancel-message"
-                        className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+                        className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400"
                       >
                         {t('calendar:detail.cancellationMessage')}
                       </label>
@@ -320,12 +324,14 @@ export function EventDetailDialog({
                         value={cancelMessage}
                         onChange={(e) => setCancelMessage(e.target.value)}
                         placeholder={t('calendar:detail.cancellationMessagePlaceholder')}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y dark:border-gray-600 dark:text-gray-100"
                       />
                     </div>
                   )}
                   {notifyAttendees && provider === 'gmail' && (
-                    <p className="text-xs text-gray-500">{t('calendar:detail.googleCancellationHint')}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('calendar:detail.googleCancellationHint')}
+                    </p>
                   )}
                 </>
               )}
@@ -333,7 +339,7 @@ export function EventDetailDialog({
                 <button
                   onClick={() => setConfirmingDelete(false)}
                   disabled={isDeleting}
-                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
                   {t('common:actions.cancel')}
                 </button>
@@ -366,7 +372,7 @@ function AttendeeStatusIcon({ status, label }: { status: Exclude<AttendeeStatusK
     case 'accepted':
       return (
         <span title={label} aria-label={label} role="img">
-          <svg className={`${common} text-green-600`} viewBox="0 0 20 20" fill="currentColor">
+          <svg className={`${common} text-green-600 dark:text-green-400`} viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
               d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
@@ -378,7 +384,7 @@ function AttendeeStatusIcon({ status, label }: { status: Exclude<AttendeeStatusK
     case 'declined':
       return (
         <span title={label} aria-label={label} role="img">
-          <svg className={`${common} text-red-600`} viewBox="0 0 20 20" fill="currentColor">
+          <svg className={`${common} text-red-600 dark:text-red-400`} viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
               d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
@@ -402,7 +408,7 @@ function AttendeeStatusIcon({ status, label }: { status: Exclude<AttendeeStatusK
     default:
       return (
         <span title={label} aria-label={label} role="img">
-          <svg className={`${common} text-gray-400`} viewBox="0 0 20 20" fill="none">
+          <svg className={`${common} text-gray-400 dark:text-gray-500`} viewBox="0 0 20 20" fill="none">
             <circle cx="10" cy="10" r="6" stroke="currentColor" strokeWidth="2" />
           </svg>
         </span>
@@ -413,7 +419,9 @@ function AttendeeStatusIcon({ status, label }: { status: Exclude<AttendeeStatusK
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400">
+        {label}
+      </div>
       {children}
     </div>
   );

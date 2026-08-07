@@ -88,11 +88,11 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
   const getAccountEmail = (accountId: string) => accounts.find((a) => a.id === accountId)?.email ?? accountId;
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-white">
-      <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">{t('compose:drafts.title')}</h1>
+    <div className="flex flex-col flex-1 overflow-hidden bg-white dark:bg-surface">
+      <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 flex items-center justify-between dark:border-gray-700">
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('compose:drafts.title')}</h1>
         {drafts.length > 0 && (
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             {drafts.length} draft{drafts.length !== 1 ? 's' : ''}
           </span>
         )}
@@ -103,7 +103,7 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
         </div>
       ) : !accountId ? (
-        <div className="flex items-center justify-center flex-1 text-sm text-gray-500">
+        <div className="flex items-center justify-center flex-1 text-sm text-gray-500 dark:text-gray-400">
           {t('compose:drafts.selectAccount')}
         </div>
       ) : drafts.length === 0 ? (
@@ -116,13 +116,16 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
               d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
             />
           </svg>
-          <p className="text-sm text-gray-500">{t('compose:drafts.emptyLong')}</p>
-          <p className="text-xs text-gray-400 mt-1">{t('compose:drafts.emptyHint')}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('compose:drafts.emptyLong')}</p>
+          <p className="text-xs text-gray-400 mt-1 dark:text-gray-500">{t('compose:drafts.emptyHint')}</p>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+        <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
           {drafts.map((draft) => (
-            <div key={draft.id} className="px-6 py-4 hover:bg-gray-50 transition-colors flex items-start gap-4">
+            <div
+              key={draft.id}
+              className="px-6 py-4 hover:bg-gray-50 transition-colors flex items-start gap-4 dark:hover:bg-surface-raised"
+            >
               <div
                 role="button"
                 tabIndex={0}
@@ -137,22 +140,30 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
                 title={t('compose:drafts.continueEditing')}
               >
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="text-sm font-medium text-gray-900 truncate">{draft.subject || '(no subject)'}</span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
+                  <span className="text-sm font-medium text-gray-900 truncate dark:text-gray-100">
+                    {draft.subject || '(no subject)'}
+                  </span>
+                  <span className="text-xs text-gray-400 flex-shrink-0 dark:text-gray-500">
                     {format(new Date(draft.updatedAt * 1000), 'MMM d, yyyy')}
                   </span>
                 </div>
                 {draft.toAddresses.length > 0 && (
-                  <div className="text-xs text-gray-500 mb-1">To: {draft.toAddresses.join(', ')}</div>
+                  <div className="text-xs text-gray-500 mb-1 dark:text-gray-400">
+                    To: {draft.toAddresses.join(', ')}
+                  </div>
                 )}
-                <div className="text-sm text-gray-400 truncate">{draft.body.slice(0, 120) || '(empty)'}</div>
-                <div className="text-xs text-gray-400 mt-1">From: {getAccountEmail(draft.accountId)}</div>
+                <div className="text-sm text-gray-400 truncate dark:text-gray-500">
+                  {draft.body.slice(0, 120) || '(empty)'}
+                </div>
+                <div className="text-xs text-gray-400 mt-1 dark:text-gray-500">
+                  From: {getAccountEmail(draft.accountId)}
+                </div>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => onOpenComposeTab(draft)}
-                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors dark:text-primary-400 dark:hover:text-primary-300 dark:hover:bg-primary-900/20"
                   title={t('compose:drafts.continueEditing')}
                 >
                   Edit
@@ -161,7 +172,7 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
                   type="button"
                   onClick={() => handleDelete(draft)}
                   disabled={deletingId === draft.id}
-                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 dark:text-gray-500 dark:hover:bg-red-900/20"
                   title={t('compose:drafts.delete')}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

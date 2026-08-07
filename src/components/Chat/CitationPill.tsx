@@ -39,7 +39,7 @@ export function CitationPill({ source, accountId, onOpenEmail }: CitationPillPro
       type="button"
       onClick={handleClick}
       disabled={isOpening}
-      className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 mx-0.5 text-[11px] font-semibold text-primary-700 bg-primary-100 hover:bg-primary-200 rounded-full transition-colors align-middle disabled:opacity-60"
+      className="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 mx-0.5 text-[11px] font-semibold text-primary-700 bg-primary-100 hover:bg-primary-200 rounded-full transition-colors align-middle disabled:opacity-60 dark:text-primary-300 dark:bg-primary-900/30"
       title={`Open source email ${source.citationNumber}`}
     >
       {source.citationNumber}

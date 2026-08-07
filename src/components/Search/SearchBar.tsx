@@ -40,6 +40,22 @@ interface SearchBarProps {
   onClose: () => void;
 }
 
+/** Search operators, shown in the tips panel. Query syntax, so they are never
+ *  translated — held here rather than inline so they are values, not JSX text
+ *  needing an `i18n-ignore` on every line. */
+const SEARCH_OPERATORS = [
+  { operator: 'from:', hintKey: 'inbox:searchTips.senderHint' },
+  { operator: 'to:', hintKey: 'inbox:searchTips.recipientHint' },
+  { operator: 'subject:', hintKey: 'inbox:searchTips.subjectHint' },
+  { operator: 'is:unread', hintKey: 'inbox:searchTips.unreadHint' },
+  { operator: 'after:', hintKey: 'inbox:searchTips.afterHint' },
+  { operator: 'before:', hintKey: 'inbox:searchTips.beforeHint' },
+  { operator: 'tag:', hintKey: 'inbox:searchTips.tagHint' },
+] as const;
+
+/** Literal relative-date values the query parser accepts. */
+const RELATIVE_DATE_VALUES = ['today', 'this week', 'this month'] as const;
+
 export function SearchBar({
   accountId,
   onSelectEmail,
@@ -340,11 +356,16 @@ export function SearchBar({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/50">
-      <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden dark:bg-surface">
         {/* Search Input */}
         <form onSubmit={handleSubmit} className="relative">
-          <div className="flex items-center px-4 border-b border-gray-200">
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex items-center px-4 border-b border-gray-200 dark:border-gray-700">
+            <svg
+              className="w-5 h-5 text-gray-400 dark:text-gray-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -368,7 +389,11 @@ export function SearchBar({
               className="flex-1 px-4 py-4 text-lg outline-none"
             />
             {isSearching && <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-600"></div>}
-            <button type="button" onClick={onClose} className="ml-2 p-2 text-gray-400 hover:text-gray-600 rounded-lg">
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-2 p-2 text-gray-400 hover:text-gray-600 rounded-lg dark:text-gray-500 dark:hover:text-gray-400"
+            >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -378,7 +403,7 @@ export function SearchBar({
 
         {/* Autocomplete dropdown for from:/to: */}
         {autocomplete && autocomplete.suggestions.length > 0 && (
-          <div className="border-b border-gray-200 bg-white max-h-64 overflow-y-auto">
+          <div className="border-b border-gray-200 bg-white max-h-64 overflow-y-auto dark:border-gray-700 dark:bg-surface">
             {autocomplete.suggestions.map((s, idx) => (
               <button
                 key={s.email}
@@ -389,11 +414,13 @@ export function SearchBar({
                 }}
                 onMouseEnter={() => setAutocomplete((prev) => (prev ? { ...prev, selectedIndex: idx } : null))}
                 className={`w-full text-left px-4 py-2 flex items-center gap-3 ${
-                  idx === autocomplete.selectedIndex ? 'bg-primary-50' : 'hover:bg-gray-50'
+                  idx === autocomplete.selectedIndex
+                    ? 'bg-primary-50 dark:bg-primary-900/20'
+                    : 'hover:bg-gray-50 dark:hover:bg-surface-raised'
                 }`}
               >
                 <svg
-                  className="w-4 h-4 text-gray-400 flex-shrink-0"
+                  className="w-4 h-4 text-gray-400 flex-shrink-0 dark:text-gray-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -406,16 +433,18 @@ export function SearchBar({
                   />
                 </svg>
                 <div className="flex-1 min-w-0">
-                  {s.name && s.name !== s.email && <div className="text-sm text-gray-900 truncate">{s.name}</div>}
+                  {s.name && s.name !== s.email && (
+                    <div className="text-sm text-gray-900 truncate dark:text-gray-100">{s.name}</div>
+                  )}
                   <div
-                    className={`${s.name && s.name !== s.email ? 'text-xs text-gray-500' : 'text-sm text-gray-900'} truncate`}
+                    className={`${s.name && s.name !== s.email ? 'text-xs text-gray-500 dark:text-gray-400' : 'text-sm text-gray-900 dark:text-gray-100'} truncate`}
                   >
                     {s.email}
                   </div>
                 </div>
               </button>
             ))}
-            <div className="px-4 py-1.5 text-[10px] text-gray-400 border-t border-gray-100 bg-gray-50">
+            <div className="px-4 py-1.5 text-[10px] text-gray-400 border-t border-gray-100 bg-gray-50 dark:text-gray-500 dark:border-gray-800 dark:bg-surface-raised">
               {t('inbox:searchBox.autocompleteHint')}
             </div>
           </div>
@@ -423,42 +452,27 @@ export function SearchBar({
 
         {/* Search Tips */}
         {!query && (
-          <div className="p-4 bg-gray-50 border-b border-gray-200">
-            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">{t('inbox:searchTips.title')}</h4>
-            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+          <div className="p-4 bg-gray-50 border-b border-gray-200 dark:bg-surface-raised dark:border-gray-700">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2 dark:text-gray-400">
+              {t('inbox:searchTips.title')}
+            </h4>
+            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-400">
+              {SEARCH_OPERATORS.map(({ operator, hintKey }) => (
+                <div key={operator}>
+                  {/* Rendered from a constant rather than written inline: these
+                      are query syntax, not prose, and as JSX text they needed a
+                      per-line `i18n-ignore` that silently stopped suppressing
+                      anything the moment the line reflowed. */}
+                  <code className="text-primary-600 dark:text-primary-400">{operator}</code> {t(hintKey)}
+                </div>
+              ))}
               <div>
-                <code className="text-primary-600">from:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.senderHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">to:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.recipientHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">subject:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.subjectHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">is:unread</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.unreadHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">after:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.afterHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">before:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.beforeHint')}
-              </div>
-              <div>
-                <code className="text-primary-600">tag:</code> {/* // i18n-ignore: literal query syntax */}{' '}
-                {t('inbox:searchTips.tagHint')}
-              </div>
-              <div>
-                {/* // i18n-ignore (next line): today / this week / this month are literal query values */}
-                <code className="text-primary-600">today</code> {/* // i18n-ignore */} /{' '}
-                <code className="text-primary-600">this week</code> {/* // i18n-ignore */} /{' '}
-                <code className="text-primary-600">this month</code> {/* // i18n-ignore */}
+                {RELATIVE_DATE_VALUES.map((value, index) => (
+                  <span key={value}>
+                    {index > 0 ? ' / ' : ''}
+                    <code className="text-primary-600 dark:text-primary-400">{value}</code>
+                  </span>
+                ))}
               </div>
             </div>
             {/* Semantic / RAG search panel intentionally omitted: it is
@@ -474,12 +488,12 @@ export function SearchBar({
         {/* Results */}
         <div className="max-h-96 overflow-y-auto">
           {searchError && (
-            <div className="p-4 border-b border-red-100 bg-red-50 text-sm text-red-700">
+            <div className="p-4 border-b border-red-100 bg-red-50 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
               Search failed: {searchError}
             </div>
           )}
           {results && results.emails.length === 0 && (
-            <div className="p-8 text-center text-gray-500">No emails found for "{query}"</div>
+            <div className="p-8 text-center text-gray-500 dark:text-gray-400">No emails found for "{query}"</div>
           )}
           {results && results.emails.length > 0 && (
             <ul>
@@ -487,25 +501,31 @@ export function SearchBar({
                 <li key={emailWithScore.id}>
                   <button
                     onClick={() => handleResultClick(emailWithScore)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100 dark:hover:bg-surface-raised dark:border-gray-800"
                   >
                     <div className="flex items-center justify-between">
-                      <span className={`font-medium ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}>
+                      <span
+                        className={`font-medium ${emailWithScore.isRead ? 'text-gray-700 dark:text-gray-300' : 'text-gray-900 dark:text-gray-100'}`}
+                      >
                         {emailWithScore.sender}
                       </span>
                       <div className="flex items-center gap-2">
                         {emailWithScore.relevanceScore !== null && (
                           <RelevanceIndicator score={emailWithScore.relevanceScore} />
                         )}
-                        <span className="text-xs text-gray-400">{formatDate(emailWithScore.timestamp, locale)}</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {formatDate(emailWithScore.timestamp, locale)}
+                        </span>
                       </div>
                     </div>
-                    <div className={`text-sm ${emailWithScore.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
+                    <div
+                      className={`text-sm ${emailWithScore.isRead ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}`}
+                    >
                       {emailWithScore.subject || '(No subject)'}
                     </div>
-                    <div className="text-sm text-gray-400 truncate">{emailWithScore.snippet}</div>
+                    <div className="text-sm text-gray-400 truncate dark:text-gray-500">{emailWithScore.snippet}</div>
                     {emailWithScore.matchReason && (
-                      <div className="mt-1 text-xs text-primary-600 flex items-center gap-1">
+                      <div className="mt-1 text-xs text-primary-600 flex items-center gap-1 dark:text-primary-400">
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
                             strokeLinecap="round"
@@ -526,7 +546,7 @@ export function SearchBar({
 
         {/* Footer */}
         {results && (
-          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500">
+          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500 dark:bg-surface-raised dark:border-gray-700 dark:text-gray-400">
             <span>
               {results.emails.length > 0
                 ? `Found ${results.emails.length} result${results.emails.length !== 1 ? 's' : ''}`
@@ -556,8 +576,8 @@ function ParsedQueryDisplay({ query }: { query: ParsedSearchQuery }) {
   if (filters.length === 0) return null;
 
   return (
-    <div className="px-4 py-2 bg-blue-50 border-b border-blue-100">
-      <div className="flex items-center gap-2 text-xs text-blue-700">
+    <div className="px-4 py-2 bg-blue-50 border-b border-blue-100 dark:bg-blue-900/20 dark:border-blue-900/40">
+      <div className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300">
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
           <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
         </svg>
@@ -576,7 +596,7 @@ function SearchMethodBadge({ method }: { method: SearchMethod }) {
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
         </svg>
       ),
-      className: 'bg-green-100 text-green-700',
+      className: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
     },
     ai_parsed: {
       label: 'AI Parsed',
@@ -585,7 +605,7 @@ function SearchMethodBadge({ method }: { method: SearchMethod }) {
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
         </svg>
       ),
-      className: 'bg-purple-100 text-purple-700',
+      className: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
     },
     pattern_parsed: {
       label: 'Filter Search',
@@ -599,7 +619,7 @@ function SearchMethodBadge({ method }: { method: SearchMethod }) {
           />
         </svg>
       ),
-      className: 'bg-blue-100 text-blue-700',
+      className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
     },
     keyword_search: {
       label: 'Keyword Search',
@@ -613,7 +633,7 @@ function SearchMethodBadge({ method }: { method: SearchMethod }) {
           />
         </svg>
       ),
-      className: 'bg-gray-100 text-gray-600',
+      className: 'bg-gray-100 text-gray-600 dark:bg-surface-hover dark:text-gray-400',
     },
   };
 
@@ -632,13 +652,13 @@ function RelevanceIndicator({ score }: { score: number }) {
   const percentage = Math.round(score * 100);
 
   // Color based on score
-  let colorClass = 'bg-gray-200 text-gray-600';
+  let colorClass = 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400';
   if (score >= 0.8) {
-    colorClass = 'bg-green-100 text-green-700';
+    colorClass = 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
   } else if (score >= 0.65) {
-    colorClass = 'bg-blue-100 text-blue-700';
+    colorClass = 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
   } else if (score >= 0.55) {
-    colorClass = 'bg-yellow-100 text-yellow-700';
+    colorClass = 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300';
   }
 
   return (

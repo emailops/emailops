@@ -61,13 +61,15 @@ export function AttachmentToolbar({
   };
 
   return (
-    <div className="border-b border-gray-200 bg-white px-4 py-3">
+    <div className="border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-surface">
       <div className="flex items-center justify-between gap-4">
         {/* Left: title + actions */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          <h2 className="text-lg font-semibold text-gray-900">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             {t('attachments:toolbar.title')}
-            {totalCount > 0 && <span className="ml-1.5 text-sm font-normal text-gray-400">({totalCount})</span>}
+            {totalCount > 0 && (
+              <span className="ml-1.5 text-sm font-normal text-gray-400 dark:text-gray-500">({totalCount})</span>
+            )}
           </h2>
 
           {/* Select all checkbox */}
@@ -77,9 +79,9 @@ export function AttachmentToolbar({
                 type="checkbox"
                 checked={allChecked}
                 onChange={onToggleCheckAll}
-                className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:text-primary-400"
               />
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
                 {checkedCount > 0
                   ? t('attachments:toolbar.selectedCount', { count: checkedCount })
                   : t('attachments:toolbar.selectAll')}
@@ -112,7 +114,7 @@ export function AttachmentToolbar({
         {/* Right: manage rules */}
         <button
           onClick={onOpenRules}
-          className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
+          className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0 dark:text-primary-400 dark:hover:text-primary-300 dark:hover:bg-primary-900/20"
         >
           {t('attachments:toolbar.manageRules')}
         </button>
@@ -124,7 +126,9 @@ export function AttachmentToolbar({
           <button
             onClick={() => onSetSelectedTag(null)}
             className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-              selectedTag === null ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              selectedTag === null
+                ? 'bg-primary-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-surface-hover dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
           >
             {t('attachments:toolbar.allTags')}
@@ -134,7 +138,9 @@ export function AttachmentToolbar({
               key={tag}
               onClick={() => onSetSelectedTag(tag === selectedTag ? null : tag)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                selectedTag === tag ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                selectedTag === tag
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-surface-hover dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
             >
               {tag}

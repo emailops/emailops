@@ -13,9 +13,9 @@ import type { MemoryConfig } from '@/types';
 export function EligibilityBanner({ cfg }: { cfg: MemoryConfig }) {
   const { t } = useTranslation(['memory']);
   return (
-    <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-900">
+    <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-900 dark:bg-blue-900/20 dark:border-blue-900/40 dark:text-blue-200">
       <div className="font-semibold mb-0.5">{t('memory:eligibility.title')}</div>
-      <ul className="space-y-0.5 text-blue-800">
+      <ul className="space-y-0.5 text-blue-800 dark:text-blue-300">
         <li>
           {t('memory:eligibility.categories')}{' '}
           {cfg.categories.length > 0 ? (
@@ -37,7 +37,7 @@ export function EligibilityBanner({ cfg }: { cfg: MemoryConfig }) {
           </li>
         )}
       </ul>
-      <div className="text-[11px] text-blue-700 mt-1">{t('memory:eligibility.changeHint')}</div>
+      <div className="text-[11px] text-blue-700 mt-1 dark:text-blue-300">{t('memory:eligibility.changeHint')}</div>
     </div>
   );
 }

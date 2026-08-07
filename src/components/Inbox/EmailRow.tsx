@@ -195,7 +195,7 @@ export function EmailRow({
           setMenuView('main');
           setMenuOpen(!menuOpen);
         }}
-        className="p-1 text-gray-300 hover:text-gray-500 rounded hover:bg-gray-100 transition-colors"
+        className="p-1 text-gray-300 hover:text-gray-500 rounded hover:bg-gray-100 transition-colors dark:hover:text-gray-400 dark:hover:bg-surface-hover"
         title={t('inbox:emailRow.moreActions')}
       >
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -207,7 +207,7 @@ export function EmailRow({
         createPortal(
           <div
             ref={menuDropdownRef}
-            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
+            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto dark:bg-surface dark:border-gray-700"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
             {menuView === 'move' ? (
@@ -217,14 +217,14 @@ export function EmailRow({
                     e.stopPropagation();
                     setMenuView('main');
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-400 dark:hover:bg-surface-raised"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                   {t('inbox:emailRow.moveToFolder')}
                 </button>
-                <div className="border-t border-gray-100 my-1" />
+                <div className="border-t border-gray-100 my-1 dark:border-gray-800" />
                 {moveTargets.map((target) => (
                   <button
                     key={target.mailbox}
@@ -238,10 +238,10 @@ export function EmailRow({
                       }
                     }}
                     title={target.label}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                   >
                     <svg
-                      className="w-4 h-4 text-gray-400 shrink-0"
+                      className="w-4 h-4 text-gray-400 shrink-0 dark:text-gray-500"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -275,9 +275,14 @@ export function EmailRow({
                       onChatAboutThread(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                   >
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg
+                      className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -295,9 +300,14 @@ export function EmailRow({
                       onOpenInTab(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                   >
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg
+                      className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -308,16 +318,23 @@ export function EmailRow({
                     {t('inbox:emailRow.openInNewTab')}
                   </button>
                 )}
-                {(onChatAboutThread || onOpenInTab) && <div className="border-t border-gray-100 my-1" />}
+                {(onChatAboutThread || onOpenInTab) && (
+                  <div className="border-t border-gray-100 my-1 dark:border-gray-800" />
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     onAddSenderFilter?.(email.senderEmail);
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -326,7 +343,9 @@ export function EmailRow({
                     />
                   </svg>
                   {t('inbox:emailRow.addSenderFilter')}
-                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px]">{email.senderEmail}</span>
+                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px] dark:text-gray-500">
+                    {email.senderEmail}
+                  </span>
                 </button>
                 <button
                   onClick={(e) => {
@@ -334,7 +353,7 @@ export function EmailRow({
                     onBlockSender?.(email.senderEmail);
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 dark:text-red-400 dark:hover:bg-red-900/20"
                 >
                   <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -357,9 +376,14 @@ export function EmailRow({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -379,9 +403,14 @@ export function EmailRow({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -402,9 +431,14 @@ export function EmailRow({
                     }
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -413,7 +447,7 @@ export function EmailRow({
                     />
                   </svg>
                   {t('inbox:emailRow.copyEmailId')}
-                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px]">
+                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px] dark:text-gray-500">
                     {email.id.slice(0, 12)}...
                   </span>
                 </button>
@@ -430,9 +464,14 @@ export function EmailRow({
                       setCopyMessage('Download failed');
                     }
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                 >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -448,9 +487,14 @@ export function EmailRow({
                       e.stopPropagation();
                       setMenuView('move');
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 dark:text-gray-300 dark:hover:bg-surface-raised"
                   >
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg
+                      className="w-4 h-4 text-gray-400 dark:text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -460,7 +504,7 @@ export function EmailRow({
                     </svg>
                     {t('inbox:emailRow.moveToFolder')}
                     <svg
-                      className="w-3 h-3 ml-auto text-gray-400"
+                      className="w-3 h-3 ml-auto text-gray-400 dark:text-gray-500"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -469,7 +513,7 @@ export function EmailRow({
                     </svg>
                   </button>
                 )}
-                <div className="border-t border-gray-100 my-1" />
+                <div className="border-t border-gray-100 my-1 dark:border-gray-800" />
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
@@ -489,7 +533,7 @@ export function EmailRow({
                     }
                   }}
                   disabled={isDeleting}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
+                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-900/20"
                 >
                   <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -524,9 +568,11 @@ export function EmailRow({
       <div
         role="button"
         tabIndex={0}
-        className={`group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-          isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
+        className={`group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:border-gray-800 ${
+          isSelected
+            ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)] dark:bg-primary-900/20'
+            : 'hover:bg-gray-50 dark:hover:bg-surface-raised'
+        } ${!email.isRead && !isSelected ? 'bg-blue-50/40 dark:bg-blue-900/20' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
         onClick={onClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -558,7 +604,7 @@ export function EmailRow({
           <Avatar name={email.sender} email={email.senderEmail} size="sm" />
           <span
             className={`text-sm truncate flex-1 min-w-0 md:flex-none md:w-44 md:flex-shrink-0 ${
-              email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
+              email.isRead ? 'text-gray-700 dark:text-gray-300' : 'font-semibold text-gray-900 dark:text-gray-100'
             }`}
             title={email.sender}
           >
@@ -569,7 +615,7 @@ export function EmailRow({
           <div className="order-last md:order-none basis-full md:basis-auto pl-[3.375rem] md:pl-0 flex-1 min-w-0 flex flex-col md:flex-row md:items-baseline gap-0 md:gap-2 text-sm">
             <span
               className={`truncate flex-shrink-0 max-w-full md:max-w-[50%] ${
-                email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'
+                email.isRead ? 'text-gray-800 dark:text-gray-200' : 'font-semibold text-gray-900 dark:text-gray-100'
               }`}
               title={email.subject || '(No subject)'}
             >
@@ -589,10 +635,12 @@ export function EmailRow({
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
             {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
           </div>
-          <span className="text-xs text-gray-500 flex-shrink-0 w-24 text-right tabular-nums">{receivedTime}</span>
+          <span className="text-xs text-gray-500 flex-shrink-0 w-24 text-right tabular-nums dark:text-gray-400">
+            {receivedTime}
+          </span>
           {kebabMenu}
         </div>
-        {copyMessage && <div className="mt-1 text-xs text-gray-500">{copyMessage}</div>}
+        {copyMessage && <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{copyMessage}</div>}
       </div>
     );
   }
@@ -601,9 +649,11 @@ export function EmailRow({
     <div
       role="button"
       tabIndex={0}
-      className={`group relative hover:z-10 w-full text-left px-4 py-3 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-        isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-      } ${!email.isRead && !isSelected ? 'bg-blue-50/50' : ''}`}
+      className={`group relative hover:z-10 w-full text-left px-4 py-3 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:border-gray-800 ${
+        isSelected
+          ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)] dark:bg-primary-900/20'
+          : 'hover:bg-gray-50 dark:hover:bg-surface-raised'
+      } ${!email.isRead && !isSelected ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}
       onClick={onClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -625,20 +675,24 @@ export function EmailRow({
         <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`text-sm truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>
+            <span
+              className={`text-sm truncate ${email.isRead ? 'text-gray-700 dark:text-gray-300' : 'font-semibold text-gray-900 dark:text-gray-100'}`}
+            >
               {email.sender}
             </span>
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
-            <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
+            <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums dark:text-gray-400">
+              {receivedTime}
+            </span>
             {kebabMenu}
           </div>
           <h3
-            className={`text-sm mt-0.5 truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}
+            className={`text-sm mt-0.5 truncate ${email.isRead ? 'text-gray-700 dark:text-gray-300' : 'font-semibold text-gray-900 dark:text-gray-100'}`}
             title={email.subject || '(No subject)'}
           >
             {email.subject || '(No subject)'}
           </h3>
-          <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{email.snippet}</p>
+          <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed dark:text-gray-400">{email.snippet}</p>
           {/* Tag/triage row is always rendered with a *fixed* height (not min-h)
               and nowrap chips, so async tag loading (loadTags in Inbox.tsx) or a
               multi-chip email cannot change the row's measured height and desync
@@ -650,7 +704,7 @@ export function EmailRow({
           </div>
         </div>
       </div>
-      {copyMessage && <div className="mt-2 text-xs text-gray-500 pl-12">{copyMessage}</div>}
+      {copyMessage && <div className="mt-2 text-xs text-gray-500 pl-12 dark:text-gray-400">{copyMessage}</div>}
     </div>
   );
 }
@@ -695,11 +749,11 @@ function Avatar({ name, email, size, unread }: AvatarProps) {
 
 function CategoryBadge({ category }: { category: EmailCategory }) {
   const config: Record<EmailCategory, { label: string; color: string }> = {
-    primary: { label: 'Primary', color: 'bg-blue-100 text-blue-700' },
+    primary: { label: 'Primary', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
     social: { label: 'Social', color: 'bg-pink-100 text-pink-700' },
-    updates: { label: 'Updates', color: 'bg-yellow-100 text-yellow-700' },
-    forums: { label: 'Forums', color: 'bg-purple-100 text-purple-700' },
-    promotions: { label: 'Promo', color: 'bg-green-100 text-green-700' },
+    updates: { label: 'Updates', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' },
+    forums: { label: 'Forums', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+    promotions: { label: 'Promo', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
   };
 
   const { label, color } = config[category] || config.primary;
@@ -709,9 +763,12 @@ function CategoryBadge({ category }: { category: EmailCategory }) {
 
 function TriageBadge({ status }: { status: Email['triageStatus'] }) {
   const config = {
-    action_needed: { label: 'Action Needed', color: 'bg-red-100 text-red-800' },
-    fyi: { label: 'FYI', color: 'bg-yellow-100 text-yellow-800' },
-    low_priority: { label: 'Low Priority', color: 'bg-gray-100 text-gray-600' },
+    action_needed: { label: 'Action Needed', color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
+    fyi: { label: 'FYI', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' },
+    low_priority: {
+      label: 'Low Priority',
+      color: 'bg-gray-100 text-gray-600 dark:bg-surface-hover dark:text-gray-400',
+    },
   };
 
   if (!status) return null;

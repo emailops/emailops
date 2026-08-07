@@ -25,21 +25,21 @@ function ThreadContextCard({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
   const charCount = content.length;
   return (
-    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50">
+    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-surface-raised">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 rounded-lg dark:text-gray-300 dark:hover:bg-surface-hover"
       >
         <svg
-          className={`w-3.5 h-3.5 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          className={`w-3.5 h-3.5 text-gray-400 transition-transform dark:text-gray-500 ${expanded ? 'rotate-90' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -48,10 +48,10 @@ function ThreadContextCard({ content }: { content: string }) {
           />
         </svg>
         <span className="font-medium">{t('chat:threadContext.label')}</span>
-        <span className="ml-auto text-xs text-gray-400">{fmt.number(charCount)} chars</span>
+        <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{fmt.number(charCount)} chars</span>
       </button>
       {expanded && (
-        <div className="px-3 pb-3 text-xs text-gray-600 whitespace-pre-wrap font-mono max-h-96 overflow-y-auto">
+        <div className="px-3 pb-3 text-xs text-gray-600 whitespace-pre-wrap font-mono max-h-96 overflow-y-auto dark:text-gray-400">
           {content}
         </div>
       )}
@@ -86,7 +86,7 @@ export function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm dark:text-gray-500">
         {t('chat:emptyState.askToStart')}
       </div>
     );
@@ -98,7 +98,9 @@ export function MessageList({
         <ThreadContextCard key={m.id} content={m.content} />
       ))}
       {conversationMessages.length === 0 && systemMessages.length > 0 && (
-        <div className="text-center text-sm text-gray-400 py-4">{t('chat:emptyState.askThreadToStart')}</div>
+        <div className="text-center text-sm text-gray-400 py-4 dark:text-gray-500">
+          {t('chat:emptyState.askThreadToStart')}
+        </div>
       )}
       {conversationMessages.map((m) => (
         <MessageBubble

@@ -85,8 +85,8 @@ export function EmailAttachments({
   };
 
   return (
-    <div className="mt-4 border-t border-gray-100 pt-3">
-      <div className="text-xs font-medium text-gray-500 mb-2">Attachments ({metas.length})</div>
+    <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
+      <div className="text-xs font-medium text-gray-500 mb-2 dark:text-gray-400">Attachments ({metas.length})</div>
       <div className="flex flex-wrap gap-2">
         {metas.map((meta) => {
           const isLoading = downloading.has(meta.id);
@@ -96,7 +96,7 @@ export function EmailAttachments({
           return (
             <div
               key={meta.id}
-              className="flex items-center bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors text-sm"
+              className="flex items-center bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors text-sm dark:bg-surface-raised dark:border-gray-700 dark:hover:bg-surface-hover"
             >
               <button
                 type="button"
@@ -106,7 +106,11 @@ export function EmailAttachments({
                 title={`${meta.filename} (${formatFileSize(meta.fileSize)}) — ${actionLabel}`}
               >
                 {isLoading ? (
-                  <svg className="w-4 h-4 text-gray-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                  <svg
+                    className="w-4 h-4 text-gray-400 animate-spin flex-shrink-0 dark:text-gray-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                   </svg>
@@ -141,7 +145,7 @@ export function EmailAttachments({
                   </svg>
                 ) : (
                   <svg
-                    className="w-4 h-4 text-gray-400 flex-shrink-0"
+                    className="w-4 h-4 text-gray-400 flex-shrink-0 dark:text-gray-500"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -155,14 +159,16 @@ export function EmailAttachments({
                   </svg>
                 )}
                 <span className="truncate max-w-[200px]">{meta.filename}</span>
-                <span className="text-xs text-gray-400 flex-shrink-0">{formatFileSize(meta.fileSize)}</span>
+                <span className="text-xs text-gray-400 flex-shrink-0 dark:text-gray-500">
+                  {formatFileSize(meta.fileSize)}
+                </span>
               </button>
               {isViewable && (
                 <button
                   type="button"
                   onClick={() => handleDownload(meta)}
                   disabled={isLoading}
-                  className="p-1.5 mr-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors disabled:opacity-60 flex-shrink-0"
+                  className="p-1.5 mr-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors disabled:opacity-60 flex-shrink-0 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-gray-700"
                   title={t('inbox:emailView.downloadAttachment')}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

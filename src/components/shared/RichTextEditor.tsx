@@ -135,11 +135,13 @@ export function RichTextEditor({
   }, [editor, disabled]);
 
   if (!editor) {
-    return <div className="w-full rounded-lg border border-gray-300 bg-white min-h-[120px] animate-pulse" />;
+    return (
+      <div className="w-full rounded-lg border border-gray-300 bg-white min-h-[120px] animate-pulse dark:border-gray-600 dark:bg-surface" />
+    );
   }
 
   return (
-    <div className="rounded-lg border border-gray-300 bg-white focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100">
+    <div className="rounded-lg border border-gray-300 bg-white focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:border-gray-600 dark:bg-surface">
       <Toolbar editor={editor} disabled={disabled} />
       <EditorContent editor={editor} />
     </div>
@@ -198,8 +200,8 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
       disabled={disabled || !enabled}
       className={`px-2 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         active
-          ? 'bg-primary-100 text-primary-700 border-primary-200'
-          : 'bg-white text-gray-700 border-transparent hover:bg-gray-100'
+          ? 'bg-primary-100 text-primary-700 border-primary-200 dark:bg-primary-900/30 dark:text-primary-300 dark:border-primary-800'
+          : 'bg-white text-gray-700 border-transparent hover:bg-gray-100 dark:bg-surface dark:text-gray-300 dark:hover:bg-surface-hover'
       }`}
     >
       {label}
@@ -207,7 +209,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
   );
 
   return (
-    <div className="relative flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 bg-gray-50 rounded-t-lg">
+    <div className="relative flex flex-wrap items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 bg-gray-50 rounded-t-lg dark:border-gray-700 dark:bg-surface-raised">
       {btn('B', `Bold (${formatShortcut(platform, 'B')})`, editor.isActive('bold'), () =>
         editor.chain().focus().toggleBold().run(),
       )}
@@ -218,7 +220,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         editor.chain().focus().toggleUnderline().run(),
       )}
       {btn('S', 'Strikethrough', editor.isActive('strike'), () => editor.chain().focus().toggleStrike().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
+      <span className="w-px h-4 bg-gray-300 mx-1 dark:bg-gray-600" />
       {btn('• List', 'Bullet list', editor.isActive('bulletList'), () =>
         editor.chain().focus().toggleBulletList().run(),
       )}
@@ -226,11 +228,11 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         editor.chain().focus().toggleOrderedList().run(),
       )}
       {btn('❝', 'Quote', editor.isActive('blockquote'), () => editor.chain().focus().toggleBlockquote().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
+      <span className="w-px h-4 bg-gray-300 mx-1 dark:bg-gray-600" />
       {btn('Link', 'Insert link', editor.isActive('link') || linkPopoverOpen, openLinkPopover)}
 
       {linkPopoverOpen && (
-        <div className="absolute top-full left-2 z-20 mt-1 flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+        <div className="absolute top-full left-2 z-20 mt-1 flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg dark:border-gray-700 dark:bg-surface">
           <input
             type="url"
             ref={linkInputRef}
@@ -246,7 +248,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
               }
             }}
             placeholder="https://example.com" // i18n-ignore: example URL the user replaces with their own link
-            className="w-64 rounded border border-gray-300 px-2 py-1 text-xs outline-none focus:border-primary-500"
+            className="w-64 rounded border border-gray-300 px-2 py-1 text-xs outline-none focus:border-primary-500 dark:border-gray-600"
           />
           <button
             type="button"
@@ -262,7 +264,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
                 editor.chain().focus().extendMarkRange('link').unsetLink().run();
                 setLinkPopoverOpen(false);
               }}
-              className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+              className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-hover"
             >
               Remove
             </button>
@@ -270,7 +272,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
           <button
             type="button"
             onClick={() => setLinkPopoverOpen(false)}
-            className="rounded px-1.5 py-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            className="rounded px-1.5 py-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-surface-hover dark:hover:text-gray-300"
             title={t('common:actions.close')}
           >
             ×

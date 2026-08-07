@@ -114,14 +114,14 @@ export function ChatPanel({
   };
 
   const header = (
-    <div className="flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5">
+    <div className="flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-surface">
       <ChatAccountPicker accountId={accountId} onChange={onAccountChange} compact />
       <select
         value={activeConversationId ?? ''}
         onChange={(e) => void selectConversation(e.target.value || null)}
         title={t('chat:panel.conversationPicker')}
         aria-label={t('chat:panel.conversationPicker')}
-        className="min-w-0 flex-1 truncate rounded border-none bg-transparent px-1 py-0.5 text-xs font-medium text-gray-700 hover:bg-gray-100 focus:outline-none"
+        className="min-w-0 flex-1 truncate rounded border-none bg-transparent px-1 py-0.5 text-xs font-medium text-gray-700 hover:bg-gray-100 focus:outline-none dark:text-gray-300 dark:hover:bg-surface-hover"
       >
         <option value="">{t('chat:conversations.newChat')}</option>
         {conversations.map((c) => (
@@ -135,7 +135,7 @@ export function ChatPanel({
         onClick={() => void (accountId && createConversation(accountId))}
         title={t('chat:newConversation')}
         aria-label={t('chat:newConversation')}
-        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-surface-hover dark:hover:text-gray-400"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
           <path d="M8 3v10M3 8h10" strokeLinecap="round" />
@@ -146,7 +146,7 @@ export function ChatPanel({
         onClick={onExpand}
         title={t('chat:panel.expand')}
         aria-label={t('chat:panel.expand')}
-        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-surface-hover dark:hover:text-gray-400"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
           <path d="M6 2H2v4M10 14h4v-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -158,7 +158,7 @@ export function ChatPanel({
         onClick={onClose}
         title={t('chat:panel.close')}
         aria-label={t('chat:panel.close')}
-        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-surface-hover dark:hover:text-gray-400"
       >
         <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
           <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
@@ -169,9 +169,9 @@ export function ChatPanel({
 
   if (!accountId) {
     return (
-      <div className="flex h-full flex-col bg-white">
+      <div className="flex h-full flex-col bg-white dark:bg-surface">
         {header}
-        <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500">
+        <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500 dark:text-gray-400">
           {t('chat:noAccount')}
         </div>
       </div>
@@ -181,16 +181,16 @@ export function ChatPanel({
   const showEmpty = !activeConversationId || (!isLoadingMessages && messages.length === 0);
 
   return (
-    <div className="flex h-full flex-col bg-white">
+    <div className="flex h-full flex-col bg-white dark:bg-surface">
       {header}
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {showEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500">
+          <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500 dark:text-gray-400">
             {t('chat:panel.emptyHint')}
           </div>
         ) : isLoadingMessages ? (
-          <div className="flex flex-1 items-center justify-center text-xs text-gray-500">
+          <div className="flex flex-1 items-center justify-center text-xs text-gray-500 dark:text-gray-400">
             {t('common:state.loading')}
           </div>
         ) : (
@@ -202,7 +202,11 @@ export function ChatPanel({
             onOpenEmail={onNavigateToInbox}
           />
         )}
-        {error && <div className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}
+        {error && (
+          <div className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+            {error}
+          </div>
+        )}
       </div>
 
       <ChatInput

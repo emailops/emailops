@@ -189,24 +189,26 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
 
   if (!accountId) {
     return (
-      <div className="flex items-center justify-center flex-1 text-sm text-gray-500 bg-white">
+      <div className="flex items-center justify-center flex-1 text-sm text-gray-500 bg-white dark:text-gray-400 dark:bg-surface">
         {t('contacts:view.selectAccount')}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-white">
+    <div className="flex flex-1 overflow-hidden bg-white dark:bg-surface">
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header / toolbar */}
-        <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 space-y-3">
+        <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 space-y-3 dark:border-gray-700">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold text-gray-900">{t('contacts:title')}</h1>
-            <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-sm">
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('contacts:title')}</h1>
+            <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-sm dark:border-gray-700">
               <button
                 type="button"
                 className={`px-3 py-1.5 ${
-                  viewMode === 'list' ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-600 hover:bg-gray-50'
+                  viewMode === 'list'
+                    ? 'bg-gray-100 text-gray-900 font-medium dark:bg-surface-hover dark:text-gray-100'
+                    : 'text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-surface-raised'
                 }`}
                 onClick={() => setViewMode('list')}
               >
@@ -214,8 +216,10 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
               </button>
               <button
                 type="button"
-                className={`px-3 py-1.5 border-l border-gray-200 ${
-                  viewMode === 'company' ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-600 hover:bg-gray-50'
+                className={`px-3 py-1.5 border-l border-gray-200 dark:border-gray-700 ${
+                  viewMode === 'company'
+                    ? 'bg-gray-100 text-gray-900 font-medium dark:bg-surface-hover dark:text-gray-100'
+                    : 'text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-surface-raised'
                 }`}
                 onClick={() => setViewMode('company')}
               >
@@ -232,7 +236,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t('contacts:view.searchPlaceholder')}
-                  className="flex-1 max-w-md px-3 py-2 text-sm border border-gray-300 rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none"
+                  className="flex-1 max-w-md px-3 py-2 text-sm border border-gray-300 rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none dark:border-gray-600"
                 />
                 <Select
                   value={sort}
@@ -266,8 +270,8 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                     onClick={() => setKindFilter(chip.value)}
                     className={`px-3 py-1 text-xs rounded-full border transition-colors ${
                       kindFilter === chip.value
-                        ? 'bg-primary-50 border-primary-300 text-primary-700'
-                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        ? 'bg-primary-50 border-primary-300 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
+                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50 dark:bg-surface dark:border-gray-700 dark:text-gray-400 dark:hover:bg-surface-raised'
                     }`}
                   >
                     {t(`contacts:kind.${chip.labelKey}` as const)}
@@ -277,7 +281,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                   <button
                     type="button"
                     onClick={() => setCompanyFilter(null)}
-                    className="px-3 py-1 text-xs rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 ml-2"
+                    className="px-3 py-1 text-xs rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 ml-2 dark:bg-surface-hover dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     {t('contacts:view.companyChip', { name: companyFilter })}
                   </button>
@@ -289,7 +293,11 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {error && <div className="px-6 py-3 text-sm text-rose-600 bg-rose-50 border-b border-rose-100">{error}</div>}
+          {error && (
+            <div className="px-6 py-3 text-sm text-rose-600 bg-rose-50 border-b border-rose-100 dark:text-rose-400 dark:bg-rose-900/20 dark:border-rose-900/40">
+              {error}
+            </div>
+          )}
 
           {isLoading && items.length === 0 && companyGroups === null ? (
             <SkeletonRows />
@@ -304,14 +312,14 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
               }}
             />
           ) : items.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-sm text-gray-500">
+            <div className="flex items-center justify-center h-full text-sm text-gray-500 dark:text-gray-400">
               {debouncedSearch || kindFilter !== 'all' || companyFilter
                 ? t('contacts:view.noMatch')
                 : t('contacts:view.noContactsYet')}
             </div>
           ) : (
             <>
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
                 {items.map((c) => (
                   <ContactRow
                     key={c.email}
@@ -321,7 +329,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                   />
                 ))}
               </div>
-              <div className="px-6 py-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-100">
+              <div className="px-6 py-4 flex items-center justify-between text-xs text-gray-500 border-t border-gray-100 dark:text-gray-400 dark:border-gray-800">
                 <span>
                   {t(
                     (page?.total ?? items.length) === 1
@@ -338,7 +346,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                     type="button"
                     onClick={loadMore}
                     disabled={isLoadingMore}
-                    className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                    className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:hover:bg-surface-raised"
                   >
                     {isLoadingMore ? t('contacts:view.loading') : t('contacts:view.loadMore')}
                   </button>
@@ -351,7 +359,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
 
       {selectedAddress &&
         (isLoadingDetail && !detail ? (
-          <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center">
+          <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center dark:border-gray-700 dark:bg-surface">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600" />
           </div>
         ) : detail ? (
@@ -362,7 +370,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
             onViewEmailsFrom={onViewEmailsFrom}
           />
         ) : (
-          <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center text-sm text-gray-500 p-6 text-center">
+          <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white flex items-center justify-center text-sm text-gray-500 p-6 text-center dark:border-gray-700 dark:bg-surface dark:text-gray-400">
             {t('contacts:view.couldNotLoad')}
           </div>
         ))}

@@ -25,10 +25,10 @@ interface StatusGroupProps {
 export function StatusGroup({ title, hint, total, kindMap, selectedFactId, onSelectFact }: StatusGroupProps) {
   return (
     <section className="space-y-4">
-      <div className="flex items-baseline gap-2 pb-1 border-b border-gray-200">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-gray-900">{title}</h2>
-        <span className="text-xs text-gray-500">({total})</span>
-        <span className="text-xs text-gray-400">· {hint}</span>
+      <div className="flex items-baseline gap-2 pb-1 border-b border-gray-200 dark:border-gray-700">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-gray-900 dark:text-gray-100">{title}</h2>
+        <span className="text-xs text-gray-500 dark:text-gray-400">({total})</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500">· {hint}</span>
       </div>
       {SECTION_ORDER.map(({ kind, title: kindTitle, hint: kindHint }) => {
         const list = kindMap[kind];
@@ -72,10 +72,10 @@ function FactSection({ title, hint, facts, selectedFactId, onSelectFact }: FactS
   return (
     <section>
       <div className="flex items-baseline gap-2 mb-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-700">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300">
           {title} ({facts.length})
         </h2>
-        <span className="text-xs text-gray-400">{hint}</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{hint}</span>
       </div>
       <ul className="space-y-2">
         {facts.map((fact) => (

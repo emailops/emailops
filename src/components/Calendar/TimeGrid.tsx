@@ -124,15 +124,17 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Day headers, multi-day band, all-day row */}
-      <div className="border-b border-gray-200 flex-shrink-0">
+      <div className="border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
         {/* Day labels */}
         <div className="flex">
-          <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+          <div className="w-14 flex-shrink-0 border-r border-gray-100 dark:border-gray-800" />
           {perDay.map(({ day }) => (
-            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 py-1">
+            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 py-1 dark:border-gray-800">
               <div
                 className={`text-xs text-center font-semibold ${
-                  day.getTime() === todayMs ? 'text-primary-600' : 'text-gray-600'
+                  day.getTime() === todayMs
+                    ? 'text-primary-600 dark:text-primary-400'
+                    : 'text-gray-600 dark:text-gray-400'
                 }`}
               >
                 {dayLabelFmt.format(day)}
@@ -145,7 +147,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
             covers, with a chevron where it runs past the visible range. */}
         {spans.length > 0 && (
           <div className="flex">
-            <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+            <div className="w-14 flex-shrink-0 border-r border-gray-100 dark:border-gray-800" />
             <div className="flex-1 min-w-0 relative" style={{ height: laneCount * SPAN_LANE_PX }}>
               {spans.map(({ event, startIndex, endIndex, continuesBefore, continuesAfter, lane }) => (
                 <button
@@ -174,9 +176,9 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
 
         {/* Single-day all-day events, per column */}
         <div className="flex">
-          <div className="w-14 flex-shrink-0 border-r border-gray-100" />
+          <div className="w-14 flex-shrink-0 border-r border-gray-100 dark:border-gray-800" />
           {perDay.map(({ day, allDay }) => (
-            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 pb-1">
+            <div key={day.getTime()} className="flex-1 min-w-0 border-r border-gray-100 px-1 pb-1 dark:border-gray-800">
               <div className="space-y-0.5">
                 {allDay.map((event) => (
                   <button
@@ -199,11 +201,11 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="flex" style={{ height: 24 * HOUR_PX }}>
           {/* Hour gutter */}
-          <div className="w-14 flex-shrink-0 border-r border-gray-100 relative">
+          <div className="w-14 flex-shrink-0 border-r border-gray-100 relative dark:border-gray-800">
             {hourLabels.map((label, h) => (
               <div
                 key={label}
-                className="absolute right-1 text-[10px] text-gray-400 -translate-y-1/2"
+                className="absolute right-1 text-[10px] text-gray-400 -translate-y-1/2 dark:text-gray-500"
                 style={{ top: h * HOUR_PX }}
               >
                 {h > 0 && label}
@@ -217,7 +219,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
             return (
               <div
                 key={day.getTime()}
-                className="flex-1 min-w-0 border-r border-gray-100 relative"
+                className="flex-1 min-w-0 border-r border-gray-100 relative dark:border-gray-800"
                 onDoubleClick={(e) => {
                   // Event blocks own their double-clicks; empty column space
                   // (including the right gutter next to blocks) creates.
@@ -231,7 +233,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                 {hourLabels.map((label, h) => (
                   <div
                     key={label}
-                    className="absolute inset-x-0 border-t border-gray-100"
+                    className="absolute inset-x-0 border-t border-gray-100 dark:border-gray-800"
                     style={{ top: h * HOUR_PX }}
                   />
                 ))}
@@ -254,7 +256,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                       onClick={() => onSelectEvent(event)}
                       onDoubleClick={(e) => e.stopPropagation()}
                       title={`${event.title} · ${time(event.startTime)} – ${time(event.endTime)}`}
-                      className="absolute text-left rounded px-1.5 py-0.5 text-[11px] leading-tight overflow-hidden border text-gray-900 transition-opacity hover:opacity-80 flex flex-col items-stretch justify-start"
+                      className="absolute text-left rounded px-1.5 py-0.5 text-[11px] leading-tight overflow-hidden border text-gray-900 transition-opacity hover:opacity-80 flex flex-col items-stretch justify-start dark:text-gray-100"
                       style={{
                         top,
                         height,

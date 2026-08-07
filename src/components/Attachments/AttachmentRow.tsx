@@ -14,14 +14,14 @@ interface AttachmentRowProps {
 const RULE_COLORS = [
   'text-violet-600',
   'text-teal-600',
-  'text-rose-600',
-  'text-amber-600',
+  'text-rose-600 dark:text-rose-400',
+  'text-amber-600 dark:text-amber-400',
   'text-cyan-600',
   'text-fuchsia-600',
   'text-lime-600',
-  'text-sky-600',
-  'text-orange-600',
-  'text-emerald-600',
+  'text-sky-600 dark:text-sky-400',
+  'text-orange-600 dark:text-orange-400',
+  'text-emerald-600 dark:text-emerald-400',
 ];
 
 export function ruleColor(ruleId: string): string {
@@ -57,8 +57,10 @@ export function AttachmentRow({
   return (
     <div
       onClick={onClick}
-      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b border-gray-100 transition-colors ${
-        isSelected ? 'bg-primary-50 border-l-2 border-l-primary-500' : 'hover:bg-gray-50'
+      className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b border-gray-100 transition-colors dark:border-gray-800 ${
+        isSelected
+          ? 'bg-primary-50 border-l-2 border-l-primary-500 dark:bg-primary-900/20'
+          : 'hover:bg-gray-50 dark:hover:bg-surface-raised'
       }`}
     >
       <input
@@ -69,7 +71,7 @@ export function AttachmentRow({
           onToggleChecked();
         }}
         onClick={(e) => e.stopPropagation()}
-        className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 flex-shrink-0"
+        className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 flex-shrink-0 dark:border-gray-600 dark:text-primary-400"
       />
       <div className="flex-1 min-w-0">
         {/* Line 1: RULE NAME / filename   Date */}
@@ -77,21 +79,25 @@ export function AttachmentRow({
           <div className="flex items-baseline gap-1 min-w-0">
             {ruleName && (
               <>
-                <span className={`text-xs font-semibold flex-shrink-0 ${color ?? 'text-primary-600'}`}>{ruleName}</span>
+                <span
+                  className={`text-xs font-semibold flex-shrink-0 ${color ?? 'text-primary-600 dark:text-primary-400'}`}
+                >
+                  {ruleName}
+                </span>
                 <span className="text-gray-300 text-xs flex-shrink-0">/</span>
               </>
             )}
-            <span className="text-sm text-gray-900 truncate">{attachment.filename}</span>
+            <span className="text-sm text-gray-900 truncate dark:text-gray-100">{attachment.filename}</span>
           </div>
-          <span className="text-[11px] text-gray-400 flex-shrink-0">{formattedDate}</span>
+          <span className="text-[11px] text-gray-400 flex-shrink-0 dark:text-gray-500">{formattedDate}</span>
         </div>
         {/* Line 2: file size  tags */}
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-[11px] text-gray-400">{formatFileSize(attachment.fileSize)}</span>
+          <span className="text-[11px] text-gray-400 dark:text-gray-500">{formatFileSize(attachment.fileSize)}</span>
           {attachment.tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-gray-100 text-gray-500"
+              className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-surface-hover dark:text-gray-400"
             >
               {tag}
             </span>

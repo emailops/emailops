@@ -233,10 +233,10 @@ export function NewEventDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white border border-gray-200 rounded-lg w-full max-w-md max-h-[85vh] shadow-xl flex flex-col overflow-hidden mx-4">
+      <div className="bg-white border border-gray-200 rounded-lg w-full max-w-md max-h-[85vh] shadow-xl flex flex-col overflow-hidden mx-4 dark:bg-surface dark:border-gray-700">
         {/* Error banner — pinned at the very top of the dialog, never below the fields. */}
         {error && (
-          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800">
+          <div className="flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
             <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path
                 fillRule="evenodd"
@@ -248,12 +248,12 @@ export function NewEventDialog({
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100 flex-shrink-0">
-          <h3 className="text-base font-semibold text-gray-900">{t('calendar:create.title')}</h3>
+        <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100 flex-shrink-0 dark:border-gray-800">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('calendar:create.title')}</h3>
           <button
             onClick={onClose}
             title={t('common:actions.close')}
-            className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -271,7 +271,7 @@ export function NewEventDialog({
           <div>
             <label
               htmlFor="new-event-title"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400"
             >
               {t('calendar:create.eventTitle')}
             </label>
@@ -284,14 +284,14 @@ export function NewEventDialog({
               // biome-ignore lint/a11y/noAutofocus: dialog opens explicitly for typing a title
               autoFocus
               required
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:text-gray-100"
             />
           </div>
 
           <div>
             <label
               htmlFor="new-event-date"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400"
             >
               {t('calendar:create.date')}
             </label>
@@ -300,13 +300,13 @@ export function NewEventDialog({
               type="date"
               value={toDateInputValue(day)}
               onChange={(e) => handleDateChange(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:text-gray-100 dark:bg-surface"
             />
           </div>
 
           <div className="flex gap-3">
             <div className="flex-1 min-w-0">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400">
                 {t('calendar:create.startTime')}
               </label>
               <Select
@@ -319,7 +319,7 @@ export function NewEventDialog({
               />
             </div>
             <div className="flex-1 min-w-0">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400">
                 {t('calendar:create.endTime')}
               </label>
               <Select
@@ -334,7 +334,7 @@ export function NewEventDialog({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400">
               {t('calendar:create.recurrence.label')}
             </label>
             <Select
@@ -353,13 +353,13 @@ export function NewEventDialog({
           <div>
             <label
               htmlFor="new-event-invitees"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400"
             >
               {t('calendar:create.invitees')}
             </label>
             <div
-              className={`flex flex-wrap gap-1 items-center border rounded-md px-2 py-1.5 bg-white min-h-[38px] focus-within:ring-1 focus-within:ring-primary-500 ${
-                inviteeInvalid ? 'border-red-400' : 'border-gray-300'
+              className={`flex flex-wrap gap-1 items-center border rounded-md px-2 py-1.5 bg-white min-h-[38px] focus-within:ring-1 focus-within:ring-primary-500 dark:bg-surface ${
+                inviteeInvalid ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'
               } ${inviteeShaking ? 'animate-shake' : ''}`}
               onAnimationEnd={() => setInviteeShaking(false)}
               onClick={() => document.getElementById('new-event-invitees')?.focus()}
@@ -367,7 +367,7 @@ export function NewEventDialog({
               {invitees.map((email) => (
                 <span
                   key={email}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-surface-hover dark:text-gray-300"
                 >
                   {email}
                   <button
@@ -396,26 +396,26 @@ export function NewEventDialog({
                   onKeyDown={handleInviteeKeyDown}
                   title={inviteeInvalid ? t('calendar:create.invalidEmail') : undefined}
                   className={`w-full text-sm outline-none bg-transparent py-0.5 ${
-                    inviteeInvalid ? 'text-red-700' : 'text-gray-900'
+                    inviteeInvalid ? 'text-red-700 dark:text-red-300' : 'text-gray-900 dark:text-gray-100'
                   }`}
                   placeholder={invitees.length === 0 ? t('calendar:create.inviteesPlaceholder') : ''}
                 />
                 {inviteeFocused && suggestions.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+                  <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto dark:bg-surface dark:border-gray-700">
                     {suggestions.map((s, i) => (
                       <button
                         key={s.email}
                         type="button"
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          i === selectedIdx ? 'bg-primary-50' : ''
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-surface-raised ${
+                          i === selectedIdx ? 'bg-primary-50 dark:bg-primary-900/20' : ''
                         }`}
                         onMouseDown={(e) => {
                           e.preventDefault();
                           addInvitee(s.email);
                         }}
                       >
-                        <div className="truncate text-gray-900">{s.email}</div>
-                        {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
+                        <div className="truncate text-gray-900 dark:text-gray-100">{s.email}</div>
+                        {s.name && <div className="truncate text-xs text-gray-500 dark:text-gray-400">{s.name}</div>}
                       </button>
                     ))}
                   </div>
@@ -427,7 +427,7 @@ export function NewEventDialog({
           <div>
             <label
               htmlFor="new-event-description"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 dark:text-gray-400"
             >
               {t('calendar:create.description')}
             </label>
@@ -437,13 +437,17 @@ export function NewEventDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('calendar:create.descriptionPlaceholder')}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y dark:border-gray-600 dark:text-gray-100"
             />
           </div>
 
           {isGmail && (
-            <p className="flex items-start gap-2 text-xs text-gray-500">
-              <svg className="w-4 h-4 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+            <p className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <svg
+                className="w-4 h-4 flex-shrink-0 text-gray-400 dark:text-gray-500"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
                 <path
                   fillRule="evenodd"
                   d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
@@ -459,7 +463,7 @@ export function NewEventDialog({
               type="button"
               onClick={onClose}
               disabled={isSaving}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-surface-raised"
             >
               {t('common:actions.cancel')}
             </button>

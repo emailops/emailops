@@ -66,7 +66,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
 
   if (!attachment) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
+      <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-surface-raised">
         <div className="text-center">
           <svg className="w-16 h-16 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -76,7 +76,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
               d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
             />
           </svg>
-          <p className="text-sm text-gray-500">{t('attachments:viewer.selectAttachment')}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('attachments:viewer.selectAttachment')}</p>
         </div>
       </div>
     );
@@ -93,13 +93,13 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
     attachment.filename.toLowerCase().endsWith('.htm');
 
   return (
-    <div className="flex-1 flex flex-col bg-white overflow-hidden">
+    <div className="flex-1 flex flex-col bg-white overflow-hidden dark:bg-surface">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-200">
+      <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <div className="min-w-0">
-            <h3 className="text-lg font-semibold text-gray-900 truncate">{attachment.filename}</h3>
-            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+            <h3 className="text-lg font-semibold text-gray-900 truncate dark:text-gray-100">{attachment.filename}</h3>
+            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
               <span>{formatFileSize(attachment.fileSize)}</span>
               <span>{attachment.mimeType}</span>
               <span>{t('attachments:viewer.fromSender', { email: attachment.senderEmail })}</span>
@@ -110,7 +110,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
                 {attachment.tags.map((tag) => (
                   <span
                     key={tag}
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700"
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                   >
                     {tag}
                   </span>
@@ -122,7 +122,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
             {onViewEmail && (
               <button
                 onClick={() => onViewEmail(attachment.emailId)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors dark:text-gray-300 dark:bg-surface-hover dark:hover:bg-gray-700"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -137,7 +137,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
             )}
             <button
               onClick={handleOpenExternally}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors dark:text-gray-300 dark:bg-surface-hover dark:hover:bg-gray-700"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -166,10 +166,10 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
         ) : isPdf ? (
           <object data={dataUrl} type="application/pdf" className="w-full h-full">
             <div className="flex flex-col items-center justify-center h-full">
-              <p className="text-sm text-gray-500 mb-3">{t('attachments:viewer.pdfUnsupported')}</p>
+              <p className="text-sm text-gray-500 mb-3 dark:text-gray-400">{t('attachments:viewer.pdfUnsupported')}</p>
               <button
                 onClick={handleOpenExternally}
-                className="px-4 py-2 text-sm font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors dark:text-primary-400 dark:hover:text-primary-300 dark:hover:bg-primary-900/20"
               >
                 {t('attachments:viewer.openInDefaultApp')}
               </button>
@@ -196,10 +196,12 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
                 d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
               />
             </svg>
-            <p className="text-sm text-gray-500 mb-3">{t('attachments:viewer.previewUnavailable')}</p>
+            <p className="text-sm text-gray-500 mb-3 dark:text-gray-400">
+              {t('attachments:viewer.previewUnavailable')}
+            </p>
             <button
               onClick={handleOpenExternally}
-              className="px-4 py-2 text-sm font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors dark:text-primary-400 dark:hover:text-primary-300 dark:hover:bg-primary-900/20"
             >
               {t('attachments:viewer.openInDefaultApp')}
             </button>

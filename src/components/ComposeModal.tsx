@@ -369,9 +369,9 @@ export function ComposeModal({
     setInput: (v: string) => void,
   ) => (
     <div className="flex items-start gap-2 mb-2">
-      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0">{label}</span>
+      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0 dark:text-gray-400">{label}</span>
       <div
-        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100"
+        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:border-gray-600 dark:bg-surface"
         onClick={() => document.getElementById(`compose-${field}-input`)?.focus()}
       >
         {recipients.map((r) => {
@@ -380,7 +380,9 @@ export function ComposeModal({
             <span
               key={r}
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                isUnusual ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-gray-100 text-gray-700'
+                isUnusual
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/30 dark:text-amber-300'
+                  : 'bg-gray-100 text-gray-700 dark:bg-surface-hover dark:text-gray-300'
               }`}
               title={isUnusual ? 'Different domain than other recipients' : r}
             >
@@ -415,13 +417,13 @@ export function ComposeModal({
             placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
           />
           {activeField === field && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto dark:bg-surface dark:border-gray-700">
               {suggestions.map((s, i) => (
                 <button
                   key={s.email}
                   type="button"
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${
-                    i === selectedIdx ? 'bg-primary-50' : ''
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 dark:hover:bg-surface-raised ${
+                    i === selectedIdx ? 'bg-primary-50 dark:bg-primary-900/20' : ''
                   }`}
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -429,11 +431,11 @@ export function ComposeModal({
                   }}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-gray-900">{s.email}</div>
-                    {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
+                    <div className="truncate text-gray-900 dark:text-gray-100">{s.email}</div>
+                    {s.name && <div className="truncate text-xs text-gray-500 dark:text-gray-400">{s.name}</div>}
                   </div>
                   {s.domainMatch && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0">
+                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0 dark:bg-green-900/30 dark:text-green-300">
                       {t('compose:sameDomain')}
                     </span>
                   )}
@@ -451,8 +453,8 @@ export function ComposeModal({
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
       <div className={surface.panel}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('compose:newEmail')}</h2>
           <div className="flex items-center gap-1">
             {/* "Open in tab" is meaningless once the window already fills the
                 screen, and the tab layout has no back affordance on a phone. */}
@@ -461,7 +463,7 @@ export function ComposeModal({
                 type="button"
                 onClick={() => onMaximize({ accountId: fromAccountId, toAddresses: toRecipients, subject, bodyHtml })}
                 disabled={isSending}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
+                className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                 title={t('compose:openInTab')}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -478,7 +480,7 @@ export function ComposeModal({
               type="button"
               onClick={onClose}
               disabled={isSending}
-              className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
+              className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -491,7 +493,7 @@ export function ComposeModal({
         <div className="p-5 flex-1 overflow-y-auto">
           {/* From */}
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:from')}</span>
+            <span className="text-sm text-gray-500 w-14 flex-shrink-0 dark:text-gray-400">{t('compose:from')}</span>
             <div className="flex-1">
               <Select
                 value={fromAccountId}
@@ -512,7 +514,7 @@ export function ComposeModal({
             <button
               type="button"
               onClick={() => setShowCc(true)}
-              className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
+              className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16 dark:hover:text-primary-400"
             >
               + Cc
             </button>
@@ -521,7 +523,7 @@ export function ComposeModal({
 
           {/* Unusual recipient warning */}
           {unusualRecipients.length > 0 && (
-            <div className="mb-3 ml-16 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+            <div className="mb-3 ml-16 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 dark:bg-amber-900/20 dark:border-amber-800">
               <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                 <path
                   fillRule="evenodd"
@@ -529,7 +531,7 @@ export function ComposeModal({
                   clipRule="evenodd"
                 />
               </svg>
-              <div className="text-xs text-amber-700">
+              <div className="text-xs text-amber-700 dark:text-amber-300">
                 <strong>{t('compose:unusualRecipients')}</strong> {unusualRecipients.join(', ')} — different domain than
                 the other recipients. Double-check before sending.
               </div>
@@ -538,12 +540,12 @@ export function ComposeModal({
 
           {/* Subject */}
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:subject')}</span>
+            <span className="text-sm text-gray-500 w-14 flex-shrink-0 dark:text-gray-400">{t('compose:subject')}</span>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none"
+              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none dark:border-gray-600 dark:bg-surface"
               placeholder={t('compose:subjectPlaceholderLong')}
             />
           </div>
@@ -560,12 +562,12 @@ export function ComposeModal({
           {isLoadingAttachments && (
             <div className="mt-3">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
                   Reading {loadingFiles.length} file{loadingFiles.length > 1 ? 's' : ''}…
                 </span>
-                <span className="text-xs text-gray-400">{loadProgress}%</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">{loadProgress}%</span>
               </div>
-              <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden dark:bg-gray-700">
                 <div
                   className="h-full bg-primary-500 rounded-full transition-all duration-100"
                   style={{ width: `${loadProgress}%` }}
@@ -573,7 +575,7 @@ export function ComposeModal({
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {loadingFiles.map((f) => (
-                  <span key={f.name} className="text-xs text-gray-400 truncate max-w-[200px]">
+                  <span key={f.name} className="text-xs text-gray-400 truncate max-w-[200px] dark:text-gray-500">
                     {f.name}
                   </span>
                 ))}
@@ -587,10 +589,10 @@ export function ComposeModal({
               {attachments.map((att, i) => (
                 <div
                   key={att.filename}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700 dark:bg-surface-hover dark:border-gray-700 dark:text-gray-300"
                 >
                   <svg
-                    className="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
+                    className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 dark:text-gray-500"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -606,7 +608,7 @@ export function ComposeModal({
                   <button
                     type="button"
                     onClick={() => removeAttachment(i)}
-                    className="ml-0.5 text-gray-400 hover:text-red-500"
+                    className="ml-0.5 text-gray-400 hover:text-red-500 dark:text-gray-500"
                   >
                     ×
                   </button>
@@ -627,7 +629,7 @@ export function ComposeModal({
 
         {/* Send error */}
         {sendError && (
-          <div className="mx-5 mb-0 mt-0 px-3 py-2 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
+          <div className="mx-5 mb-0 mt-0 px-3 py-2 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
             <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"
@@ -641,7 +643,7 @@ export function ComposeModal({
 
         {/* Sent confirmation */}
         {sent && (
-          <div className="mx-5 mb-0 px-3 py-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-xs text-green-700">
+          <div className="mx-5 mb-0 px-3 py-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-xs text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300">
             <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"
@@ -656,12 +658,12 @@ export function ComposeModal({
         {/* Footer. Wraps below `md`: attach + AI draft + translate alone are
             wider than a phone, and unwrapped they drew Cancel straight on top
             of the translate control. */}
-        <div className="px-5 py-4 border-t border-gray-200 flex flex-wrap items-center gap-2">
+        <div className="px-5 py-4 border-t border-gray-200 flex flex-wrap items-center gap-2 dark:border-gray-700">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isSending || sent}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
             title={t('compose:attachFiles')}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -705,7 +707,7 @@ export function ComposeModal({
               type="button"
               onClick={onClose}
               disabled={isSending || sent}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:bg-surface dark:border-gray-600 dark:hover:bg-surface-hover"
             >
               Cancel
             </button>

@@ -12,10 +12,10 @@ interface ErrorBoundaryState {
 function ErrorFallback() {
   const { t } = useTranslation(['modal']);
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white border border-red-200 rounded-xl shadow-sm p-6 text-center">
-        <h1 className="text-lg font-semibold text-gray-900">{t('modal:errorBoundary.title')}</h1>
-        <p className="mt-2 text-sm text-gray-600">{t('modal:errorBoundary.body')}</p>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 dark:bg-surface-raised">
+      <div className="max-w-md w-full bg-white border border-red-200 rounded-xl shadow-sm p-6 text-center dark:bg-surface dark:border-red-800">
+        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('modal:errorBoundary.title')}</h1>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{t('modal:errorBoundary.body')}</p>
       </div>
     </div>
   );

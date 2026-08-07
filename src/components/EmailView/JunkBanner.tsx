@@ -44,12 +44,12 @@ const STYLES: Record<JunkKind, { wrap: string; button: string }> = {
   // Phishing is the strongest claim the app makes about anything, so it gets
   // the only red banner in the reading pane.
   phishing: {
-    wrap: 'bg-red-50 border-red-300 text-red-900',
-    button: 'text-red-900',
+    wrap: 'bg-red-50 border-red-300 text-red-900 dark:bg-red-900/20 dark:text-red-200',
+    button: 'text-red-900 dark:text-red-200',
   },
   spam: {
-    wrap: 'bg-orange-50 border-orange-200 text-orange-900',
-    button: 'text-orange-900',
+    wrap: 'bg-orange-50 border-orange-200 text-orange-900 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-200',
+    button: 'text-orange-900 dark:text-orange-200',
   },
   graymail: {
     wrap: 'bg-slate-50 border-slate-200 text-slate-700',

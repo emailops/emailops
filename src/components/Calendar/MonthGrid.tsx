@@ -69,11 +69,11 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="grid grid-cols-7 border-b border-gray-200 flex-shrink-0">
+      <div className="grid grid-cols-7 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
         {weekdayLabels.map((label) => (
           <div
             key={label}
-            className="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center"
+            className="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center dark:text-gray-400"
           >
             {label}
           </div>
@@ -92,8 +92,8 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
               return (
                 <div
                   key={cell.date.getTime()}
-                  className={`flex-1 min-w-0 border-b border-r border-gray-100 p-1 min-h-0 overflow-hidden flex flex-col ${
-                    cell.inMonth ? 'bg-white' : 'bg-gray-50'
+                  className={`flex-1 min-w-0 border-b border-r border-gray-100 p-1 min-h-0 overflow-hidden flex flex-col dark:border-gray-800 ${
+                    cell.inMonth ? 'bg-white dark:bg-surface' : 'bg-gray-50 dark:bg-surface-raised'
                   }`}
                   onDoubleClick={(e) => {
                     // Chips and "+N more" own their clicks — only empty cell space creates.
@@ -110,8 +110,8 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
                         isToday
                           ? 'bg-primary-600 text-white font-semibold'
                           : cell.inMonth
-                            ? 'text-gray-700'
-                            : 'text-gray-400'
+                            ? 'text-gray-700 dark:text-gray-300'
+                            : 'text-gray-400 dark:text-gray-500'
                       }`}
                     >
                       {cell.date.getDate()}
@@ -124,7 +124,7 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
                         onClick={() => onSelectEvent(event)}
                         title={event.title}
                         className={`w-full text-left px-1.5 py-0.5 rounded text-[11px] leading-tight truncate transition-opacity hover:opacity-80 ${
-                          event.isAllDay ? '' : 'border text-gray-900'
+                          event.isAllDay ? '' : 'border text-gray-900 dark:text-gray-100'
                         }`}
                         style={
                           event.isAllDay
@@ -139,7 +139,7 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
                     {overflow > 0 && (
                       <button
                         onClick={() => onOpenDay(cell.date)}
-                        className="w-full text-left px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                        className="w-full text-left px-1.5 py-0.5 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-surface-hover"
                       >
                         {t('calendar:moreEvents', { n: overflow })}
                       </button>

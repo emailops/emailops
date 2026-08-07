@@ -87,21 +87,28 @@ export function ThreadEmailItem({
     return (
       <div
         ref={itemRef}
-        className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
+        className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors dark:border-gray-800 dark:hover:bg-surface-raised"
         onClick={onToggle}
       >
         <div className="px-6 py-3 flex items-center gap-3">
-          <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-            <span className="text-sm font-medium text-gray-600">{email.sender.charAt(0).toUpperCase()}</span>
+          <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center dark:bg-gray-700">
+            <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+              {email.sender.charAt(0).toUpperCase()}
+            </span>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm text-gray-900 truncate">{email.sender}</span>
-              <span className="text-xs text-gray-400">{shortDate}</span>
+              <span className="font-medium text-sm text-gray-900 truncate dark:text-gray-100">{email.sender}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{shortDate}</span>
             </div>
-            <p className="text-sm text-gray-500 truncate">{email.snippet || '(No preview)'}</p>
+            <p className="text-sm text-gray-500 truncate dark:text-gray-400">{email.snippet || '(No preview)'}</p>
           </div>
-          <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            className="w-5 h-5 text-gray-400 flex-shrink-0 dark:text-gray-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </div>
@@ -110,31 +117,38 @@ export function ThreadEmailItem({
   }
 
   return (
-    <div ref={itemRef} className={`border-b border-gray-200 ${isLast ? '' : 'bg-gray-50/50'}`}>
+    <div
+      ref={itemRef}
+      className={`border-b border-gray-200 dark:border-gray-700 ${isLast ? '' : 'bg-gray-50/50 dark:bg-surface-raised/50'}`}
+    >
       <div
-        className={`px-6 py-4 ${!isLast ? 'cursor-pointer hover:bg-gray-100/50' : ''}`}
+        className={`px-6 py-4 ${!isLast ? 'cursor-pointer hover:bg-gray-100/50 dark:hover:bg-surface-hover/50' : ''}`}
         onClick={!isLast ? onToggle : undefined}
       >
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-              <span className="text-sm font-medium text-primary-700">{email.sender.charAt(0).toUpperCase()}</span>
+            <div className="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center dark:bg-primary-900/30">
+              <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+                {email.sender.charAt(0).toUpperCase()}
+              </span>
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-900">{email.sender}</span>
-                <span className="text-gray-400 text-sm">&lt;{email.senderEmail}&gt;</span>
+                <span className="font-medium text-gray-900 dark:text-gray-100">{email.sender}</span>
+                <span className="text-gray-400 text-sm dark:text-gray-500">&lt;{email.senderEmail}&gt;</span>
               </div>
-              <div className="text-xs text-gray-500 mt-0.5">{formattedDate}</div>
+              <div className="text-xs text-gray-500 mt-0.5 dark:text-gray-400">{formattedDate}</div>
               {email.recipients.length > 0 && (
-                <div className="text-xs text-gray-400 mt-1">To: {email.recipients.join(', ')}</div>
+                <div className="text-xs text-gray-400 mt-1 dark:text-gray-500">To: {email.recipients.join(', ')}</div>
               )}
-              {email.cc.length > 0 && <div className="text-xs text-gray-400 mt-0.5">Cc: {email.cc.join(', ')}</div>}
+              {email.cc.length > 0 && (
+                <div className="text-xs text-gray-400 mt-0.5 dark:text-gray-500">Cc: {email.cc.join(', ')}</div>
+              )}
             </div>
           </div>
           {!isLast && (
             <svg
-              className="w-5 h-5 text-gray-400 flex-shrink-0 mt-1"
+              className="w-5 h-5 text-gray-400 flex-shrink-0 mt-1 dark:text-gray-500"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -148,8 +162,8 @@ export function ThreadEmailItem({
       <div className="px-6 pb-6">
         <CalendarInviteCard email={email} />
         {body === null ? (
-          <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300" />
+          <div className="flex items-center gap-2 py-4 text-sm text-gray-400 dark:text-gray-500">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 dark:border-gray-600" />
             {t('common:state.loading')}
           </div>
         ) : (

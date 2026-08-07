@@ -47,7 +47,7 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-white truncate">{data.account.name}</div>
-          <div className="text-xs text-gray-400 truncate">{data.account.email}</div>
+          <div className="text-xs text-gray-400 truncate dark:text-gray-500">{data.account.email}</div>
         </div>
         <div className="flex items-start gap-2 shrink-0">
           <div className="flex flex-col items-end gap-1">
@@ -60,7 +60,7 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
                   ? 'bg-blue-900 text-blue-200'
                   : syncStatus === 'error'
                     ? 'bg-red-900 text-red-200'
-                    : 'bg-gray-800 text-gray-400'
+                    : 'bg-gray-800 text-gray-400 dark:text-gray-500'
               }`}
               title={data.sync.error ?? undefined}
             >
@@ -72,7 +72,7 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
             onClick={onOpenSettings}
             title={t('dashboard:accounts.openSettings')}
             aria-label={t('dashboard:accounts.openSettings')}
-            className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+            className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors dark:text-gray-500"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -90,15 +90,15 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
       {/* Sync stats */}
       <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-200">
         <div>
-          <div className="text-gray-400">{t('dashboard:accounts.syncedSince')}</div>
+          <div className="text-gray-400 dark:text-gray-500">{t('dashboard:accounts.syncedSince')}</div>
           <div>{fmt.date(data.syncedSince)}</div>
         </div>
         <div>
-          <div className="text-gray-400">{t('dashboard:accounts.lastSync')}</div>
+          <div className="text-gray-400 dark:text-gray-500">{t('dashboard:accounts.lastSync')}</div>
           <div>{fmt.dateTime(data.sync.lastSyncAt)}</div>
         </div>
         <div className="col-span-2">
-          <div className="text-gray-400">{t('dashboard:accounts.localServer')}</div>
+          <div className="text-gray-400 dark:text-gray-500">{t('dashboard:accounts.localServer')}</div>
           <div className="flex items-center gap-2">
             <span>
               {fmt.number(data.syncedCount)} / {data.serverTotal != null ? fmt.number(data.serverTotal) : '—'}
@@ -120,7 +120,7 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
           {err && <div className="text-red-400 mt-1">{err}</div>}
         </div>
         <div className="col-span-2">
-          <div className="text-gray-400">{t('dashboard:accounts.sent')}</div>
+          <div className="text-gray-400 dark:text-gray-500">{t('dashboard:accounts.sent')}</div>
           <div>{fmt.number(data.sentCount)}</div>
         </div>
       </div>
@@ -128,7 +128,7 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
       {/* Categories */}
       {data.categoryCounts.length > 0 && (
         <div className="text-xs font-mono">
-          <div className="text-gray-400 mb-1">{t('dashboard:accounts.categories')}</div>
+          <div className="text-gray-400 mb-1 dark:text-gray-500">{t('dashboard:accounts.categories')}</div>
           <ul className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-200">
             {data.categoryCounts.map((c) => (
               <li key={c.category} className="flex justify-between">
@@ -181,12 +181,12 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
       {data.junkPhishingCount + data.junkSpamCount + data.junkGraymailCount > 0 && (
         <div className="flex flex-wrap gap-2 pt-2 text-xs">
           {data.junkPhishingCount > 0 && (
-            <span className="rounded-full bg-red-100 text-red-800 px-2 py-0.5">
+            <span className="rounded-full bg-red-100 text-red-800 px-2 py-0.5 dark:bg-red-900/30 dark:text-red-300">
               {t('dashboard:accounts.junkPhishing', { count: data.junkPhishingCount })}
             </span>
           )}
           {data.junkSpamCount > 0 && (
-            <span className="rounded-full bg-orange-100 text-orange-800 px-2 py-0.5">
+            <span className="rounded-full bg-orange-100 text-orange-800 px-2 py-0.5 dark:bg-orange-900/30 dark:text-orange-300">
               {t('dashboard:accounts.junkSpam', { count: data.junkSpamCount })}
             </span>
           )}

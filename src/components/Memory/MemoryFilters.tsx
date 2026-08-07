@@ -14,14 +14,16 @@ export function StatusToggle({ value, onChange }: StatusToggleProps) {
     { key: 'retired', label: 'Retired' },
   ];
   return (
-    <div className="flex rounded-md border border-gray-300 overflow-hidden">
+    <div className="flex rounded-md border border-gray-300 overflow-hidden dark:border-gray-600">
       {options.map((opt) => (
         <button
           key={opt.key}
           type="button"
           onClick={() => onChange(opt.key)}
           className={`px-2.5 py-1 text-xs transition-colors ${
-            value === opt.key ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+            value === opt.key
+              ? 'bg-primary-600 text-white'
+              : 'text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-surface-raised'
           }`}
         >
           {opt.label}
@@ -45,11 +47,13 @@ export function CompanyChip({ label, count, active, onClick }: CompanyChipProps)
       type="button"
       onClick={onClick}
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors ${
-        active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+        active
+          ? 'bg-primary-600 text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-surface-hover dark:text-gray-300 dark:hover:bg-gray-700'
       }`}
     >
       <span className="font-medium">{label}</span>
-      <span className={active ? 'text-primary-100' : 'text-gray-500'}>{count}</span>
+      <span className={active ? 'text-primary-100' : 'text-gray-500 dark:text-gray-400'}>{count}</span>
     </button>
   );
 }

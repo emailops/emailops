@@ -168,10 +168,10 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
       >
         <div
           ref={searchContainerRef}
-          className="flex items-center bg-gray-100 hover:bg-gray-200 focus-within:bg-white focus-within:ring-1 focus-within:ring-primary-400 rounded-lg px-2 py-1.5 gap-1.5 transition-colors"
+          className="flex items-center bg-gray-100 hover:bg-gray-200 focus-within:bg-white focus-within:ring-1 focus-within:ring-primary-400 rounded-lg px-2 py-1.5 gap-1.5 transition-colors dark:bg-surface-hover dark:hover:bg-gray-700 dark:focus-within:bg-surface"
         >
           <svg
-            className="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
+            className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 dark:text-gray-500"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -189,7 +189,7 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder={t('inbox:searchBox.inlinePlaceholder', { operators: 'from:, to:, subject:' })}
-            className="flex-1 bg-transparent text-sm outline-none min-w-0 placeholder-gray-400"
+            className="flex-1 bg-transparent text-sm outline-none min-w-0 placeholder-gray-400 dark:placeholder-gray-500"
           />
           {localQuery && (
             <button
@@ -199,7 +199,7 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
                 setAutocomplete(null);
                 onClear();
               }}
-              className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+              className="text-gray-400 hover:text-gray-600 flex-shrink-0 dark:text-gray-500 dark:hover:text-gray-400"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -213,7 +213,7 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
         autocomplete.suggestions.length > 0 &&
         createPortal(
           <div
-            className="fixed z-[200] bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden"
+            className="fixed z-[200] bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden dark:bg-surface dark:border-gray-700"
             style={{ top: autocomplete.pos.top, left: autocomplete.pos.left, width: autocomplete.pos.width }}
           >
             {autocomplete.suggestions.map((s, idx) => (
@@ -226,11 +226,13 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
                 }}
                 onMouseEnter={() => setAutocomplete((prev) => (prev ? { ...prev, selectedIndex: idx } : null))}
                 className={`w-full text-left px-3 py-2 flex items-center gap-2 text-sm ${
-                  idx === autocomplete.selectedIndex ? 'bg-primary-50' : 'hover:bg-gray-50'
+                  idx === autocomplete.selectedIndex
+                    ? 'bg-primary-50 dark:bg-primary-900/20'
+                    : 'hover:bg-gray-50 dark:hover:bg-surface-raised'
                 }`}
               >
                 <svg
-                  className="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
+                  className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 dark:text-gray-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -243,16 +245,18 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
                   />
                 </svg>
                 <div className="flex-1 min-w-0">
-                  {s.name && s.name !== s.email && <div className="font-medium text-gray-900 truncate">{s.name}</div>}
+                  {s.name && s.name !== s.email && (
+                    <div className="font-medium text-gray-900 truncate dark:text-gray-100">{s.name}</div>
+                  )}
                   <div
-                    className={`${s.name && s.name !== s.email ? 'text-xs text-gray-500' : 'text-gray-900'} truncate`}
+                    className={`${s.name && s.name !== s.email ? 'text-xs text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'} truncate`}
                   >
                     {s.email}
                   </div>
                 </div>
               </button>
             ))}
-            <div className="px-3 py-1 text-[10px] text-gray-400 border-t border-gray-100 bg-gray-50">
+            <div className="px-3 py-1 text-[10px] text-gray-400 border-t border-gray-100 bg-gray-50 dark:text-gray-500 dark:border-gray-800 dark:bg-surface-raised">
               ↑↓ navigate · ↵ / Tab select · Esc dismiss
             </div>
           </div>,

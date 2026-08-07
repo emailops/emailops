@@ -14,31 +14,31 @@ interface TagChipsProps {
 
 const TAG_COLORS: Record<string, Record<string, string>> = {
   priority: {
-    urgent: 'bg-red-100 text-red-800',
-    normal: 'bg-green-100 text-green-800',
-    low: 'bg-gray-100 text-gray-500',
+    urgent: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+    normal: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+    low: 'bg-gray-100 text-gray-500 dark:bg-surface-hover dark:text-gray-400',
   },
   intent: {
-    request: 'bg-blue-100 text-blue-800',
-    approval: 'bg-purple-100 text-purple-800',
+    request: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    approval: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
     scheduling: 'bg-cyan-100 text-cyan-800',
     delivery: 'bg-teal-100 text-teal-800',
-    question: 'bg-indigo-100 text-indigo-800',
+    question: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
     introduction: 'bg-pink-100 text-pink-800',
-    feedback: 'bg-amber-100 text-amber-800',
+    feedback: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
     notification: 'bg-slate-100 text-slate-700',
-    complaint: 'bg-red-100 text-red-700',
-    promotion: 'bg-orange-100 text-orange-700',
-    conversation: 'bg-sky-100 text-sky-800',
+    complaint: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+    promotion: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+    conversation: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
   },
   topic: {
-    _default: 'bg-amber-50 text-amber-700',
+    _default: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300',
   },
   // Severity-ordered on purpose: an impersonation attempt and an unwanted
   // newsletter must not look alike at a glance.
   junk: {
-    phishing: 'bg-red-100 text-red-800',
-    spam: 'bg-orange-100 text-orange-800',
+    phishing: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+    spam: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
     graymail: 'bg-slate-100 text-slate-600',
     _default: 'bg-slate-100 text-slate-600',
   },
@@ -46,8 +46,10 @@ const TAG_COLORS: Record<string, Record<string, string>> = {
 
 function getChipColor(tagType: string, tagValue: string): string {
   const typeColors = TAG_COLORS[tagType];
-  if (!typeColors) return 'bg-gray-100 text-gray-600';
-  return typeColors[tagValue] || typeColors._default || 'bg-gray-100 text-gray-600';
+  if (!typeColors) return 'bg-gray-100 text-gray-600 dark:bg-surface-hover dark:text-gray-400';
+  return (
+    typeColors[tagValue] || typeColors._default || 'bg-gray-100 text-gray-600 dark:bg-surface-hover dark:text-gray-400'
+  );
 }
 
 export function TagChips({ tags, compact = false, nowrap = false }: TagChipsProps) {

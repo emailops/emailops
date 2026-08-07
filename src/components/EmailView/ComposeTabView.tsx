@@ -316,15 +316,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     setInput: (v: string) => void,
   ) => (
     <div className="flex items-start gap-2 mb-2">
-      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0">{label}</span>
+      <span className="text-sm text-gray-500 mt-1.5 w-8 flex-shrink-0 dark:text-gray-400">{label}</span>
       <div
-        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100"
+        className="flex-1 flex flex-wrap gap-1 items-center border border-gray-300 rounded-lg px-2 py-1.5 bg-white min-h-[36px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 dark:border-gray-600 dark:bg-surface"
         onClick={() => document.getElementById(`compose-tab-${tab.id}-${field}-input`)?.focus()}
       >
         {recipients.map((r) => (
           <span
             key={r}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-surface-hover dark:text-gray-300"
           >
             {r}
             <button
@@ -356,23 +356,23 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
           />
           {activeField === field && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto dark:bg-surface dark:border-gray-700">
               {suggestions.map((s, i) => (
                 <button
                   key={s.email}
                   type="button"
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${i === selectedIdx ? 'bg-primary-50' : ''}`}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 dark:hover:bg-surface-raised ${i === selectedIdx ? 'bg-primary-50 dark:bg-primary-900/20' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     addRecipient(field, s.email);
                   }}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-gray-900">{s.email}</div>
-                    {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
+                    <div className="truncate text-gray-900 dark:text-gray-100">{s.email}</div>
+                    {s.name && <div className="truncate text-xs text-gray-500 dark:text-gray-400">{s.name}</div>}
                   </div>
                   {s.domainMatch && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0">
+                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded flex-shrink-0 dark:bg-green-900/30 dark:text-green-300">
                       {t('compose:sameDomain')}
                     </span>
                   )}
@@ -386,14 +386,14 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden">
+    <div className="flex-1 bg-white flex flex-col overflow-hidden dark:bg-surface">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
-        <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('compose:newEmail')}</h2>
         <button
           type="button"
           onClick={onClose}
-          className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors"
+          className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -405,7 +405,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       <div className="flex-1 overflow-y-auto p-5">
         {/* From */}
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:from')}</span>
+          <span className="text-sm text-gray-500 w-14 flex-shrink-0 dark:text-gray-400">{t('compose:from')}</span>
           <div className="flex-1">
             <Select
               value={fromAccountId}
@@ -424,7 +424,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           <button
             type="button"
             onClick={() => setShowCc(true)}
-            className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
+            className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16 dark:hover:text-primary-400"
           >
             + Cc
           </button>
@@ -432,12 +432,12 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
 
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:subject')}</span>
+          <span className="text-sm text-gray-500 w-14 flex-shrink-0 dark:text-gray-400">{t('compose:subject')}</span>
           <input
             type="text"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none"
+            className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none dark:border-gray-600 dark:bg-surface"
             placeholder={t('compose:subjectPlaceholderLong')}
           />
         </div>
@@ -454,7 +454,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             {draftAttachments.map((att, i) => (
               <div
                 key={att.filePath}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-primary-50 border border-primary-200 rounded-lg text-xs text-primary-700"
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-primary-50 border border-primary-200 rounded-lg text-xs text-primary-700 dark:bg-primary-900/20 dark:border-primary-800 dark:text-primary-300"
                 title={att.filePath}
               >
                 <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -478,13 +478,13 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             {attachments.map((att, i) => (
               <div
                 key={att.filename}
-                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700 dark:bg-surface-hover dark:border-gray-700 dark:text-gray-300"
               >
                 <span className="max-w-[180px] truncate">{att.filename}</span>
                 <button
                   type="button"
                   onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                  className="ml-0.5 text-gray-400 hover:text-red-500"
+                  className="ml-0.5 text-gray-400 hover:text-red-500 dark:text-gray-500"
                 >
                   ×
                 </button>
@@ -494,24 +494,24 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         )}
 
         {sendError && (
-          <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
             {sendError}
           </div>
         )}
         {sent && (
-          <div className="mt-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+          <div className="mt-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300">
             {t('compose:sentConfirm')}
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2 flex-shrink-0">
+      <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2 flex-shrink-0 dark:border-gray-700">
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isSending || sent || hasDraftAttachments}
-          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
           title={hasDraftAttachments ? t('compose:attachFromDraftHint') : t('compose:attachFiles')}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -563,7 +563,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           type="button"
           onClick={onClose}
           disabled={isSending || sent}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:bg-surface dark:border-gray-600 dark:hover:bg-surface-hover"
         >
           Discard
         </button>

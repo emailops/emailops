@@ -25,8 +25,8 @@ interface MessageBubbleProps {
 function ProcessingStatus({ phase }: { phase: ChatPhase }) {
   const { t } = useTranslation(['chat']);
   return (
-    <span className="inline-flex items-center gap-2 text-gray-500">
-      <svg className="w-3.5 h-3.5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
+    <span className="inline-flex items-center gap-2 text-gray-500 dark:text-gray-400">
+      <svg className="w-3.5 h-3.5 animate-spin text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
       </svg>
@@ -83,16 +83,16 @@ function splitThinking(content: string): {
 function ThinkingSection({ text, streaming }: { text: string; streaming: boolean }) {
   return (
     <details
-      className="mb-2 rounded-lg border border-gray-200 bg-gray-50/70 text-xs"
+      className="mb-2 rounded-lg border border-gray-200 bg-gray-50/70 text-xs dark:border-gray-700 dark:bg-surface-raised/70"
       // `key` forces a re-mount when the streaming flag flips so the `open`
       // attribute is re-applied (browsers ignore changes to `open` on existing
       // <details> elements that the user has interacted with — re-mount is the
       // simplest way to keep the default state honest).
       open={streaming || undefined}
     >
-      <summary className="cursor-pointer select-none px-2.5 py-1.5 text-gray-600 font-medium flex items-center gap-1.5 hover:text-gray-800">
+      <summary className="cursor-pointer select-none px-2.5 py-1.5 text-gray-600 font-medium flex items-center gap-1.5 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200">
         <svg
-          className={`w-3.5 h-3.5 text-gray-400 ${streaming ? 'animate-pulse' : ''}`}
+          className={`w-3.5 h-3.5 text-gray-400 dark:text-gray-500 ${streaming ? 'animate-pulse' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -106,7 +106,7 @@ function ThinkingSection({ text, streaming }: { text: string; streaming: boolean
         </svg>
         <span>{streaming ? 'Thinking…' : 'Reasoning'}</span>
       </summary>
-      <pre className="px-2.5 pb-2 pt-1 whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-gray-600">
+      <pre className="px-2.5 pb-2 pt-1 whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
         {text}
       </pre>
     </details>
@@ -157,7 +157,9 @@ export function MessageBubble({ message, isStreaming, phase, accountId, onOpenEm
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} my-2`}>
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed break-words ${
-          isUser ? 'bg-primary-600 text-white whitespace-pre-wrap' : 'bg-gray-100 text-gray-900 border border-gray-200'
+          isUser
+            ? 'bg-primary-600 text-white whitespace-pre-wrap'
+            : 'bg-gray-100 text-gray-900 border border-gray-200 dark:bg-surface-hover dark:text-gray-100 dark:border-gray-700'
         }`}
       >
         {isUser ? (
@@ -168,7 +170,7 @@ export function MessageBubble({ message, isStreaming, phase, accountId, onOpenEm
               (phase ? (
                 <ProcessingStatus phase={phase} />
               ) : (
-                <span className="inline-flex items-center gap-1 text-gray-500">
+                <span className="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400">
                   <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
                   <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
                   <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />

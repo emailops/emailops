@@ -52,7 +52,7 @@ export function EmailRefPill({ emailId, accountId, label, onOpenEmail }: EmailRe
       type="button"
       onClick={handleClick}
       disabled={isOpening}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-primary-50 border border-primary-200 text-primary-700 text-xs font-medium hover:bg-primary-100 transition-colors align-baseline disabled:opacity-60"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-primary-50 border border-primary-200 text-primary-700 text-xs font-medium hover:bg-primary-100 transition-colors align-baseline disabled:opacity-60 dark:bg-primary-900/20 dark:border-primary-800 dark:text-primary-300 dark:hover:bg-primary-900/30"
       title={`Open email: ${displayLabel}`}
     >
       <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

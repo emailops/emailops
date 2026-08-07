@@ -80,7 +80,7 @@ export function ChatPanelDock({
   };
 
   return (
-    <div className="flex flex-shrink-0 overflow-hidden border-l border-gray-200" style={{ width }}>
+    <div className="flex flex-shrink-0 overflow-hidden border-l border-gray-200 dark:border-gray-700" style={{ width }}>
       {/* A focusable separator carrying aria-valuenow is the ARIA-correct
           splitter; there is no native element for it. */}
       <div

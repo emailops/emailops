@@ -336,9 +336,14 @@ export function EmailView({
 
   if (threadEmails.length === 0 && !isLoading) {
     return (
-      <div className="flex-1 bg-white flex items-center justify-center">
+      <div className="flex-1 bg-white flex items-center justify-center dark:bg-surface">
         <div className="text-center p-8">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg
+            className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -346,8 +351,8 @@ export function EmailView({
               d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
             />
           </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">{t('inbox:noEmailSelected')}</h3>
-          <p className="mt-1 text-sm text-gray-500">{t('inbox:selectEmailHint')}</p>
+          <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">{t('inbox:noEmailSelected')}</h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t('inbox:selectEmailHint')}</p>
         </div>
       </div>
     );
@@ -355,10 +360,10 @@ export function EmailView({
 
   if (isLoading) {
     return (
-      <div className="flex-1 bg-white flex items-center justify-center">
+      <div className="flex-1 bg-white flex items-center justify-center dark:bg-surface">
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
-          <p className="mt-2 text-sm text-gray-500">{t('inbox:loadingThread')}</p>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('inbox:loadingThread')}</p>
         </div>
       </div>
     );
@@ -379,18 +384,22 @@ export function EmailView({
   };
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden">
+    <div className="flex-1 bg-white flex flex-col overflow-hidden dark:bg-surface">
       {lightboxMeta && <AttachmentLightbox meta={lightboxMeta} onClose={() => setLightboxMeta(null)} />}
-      <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
+      <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0 dark:border-gray-700">
         {/* Row 1: subject + inline tags on the left, window controls on the right */}
         <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-900 truncate">{latestEmail.subject || '(No subject)'}</h1>
+          <h1 className="text-lg font-semibold text-gray-900 truncate dark:text-gray-100">
+            {latestEmail.subject || '(No subject)'}
+          </h1>
           {emailTags.length > 0 && (
             <div className="flex-shrink-0">
               <TagChips tags={emailTags} />
             </div>
           )}
-          {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
+          {isThread && (
+            <span className="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500">{threadEmails.length} msgs</span>
+          )}
           <div className="ml-auto flex items-center gap-1 flex-shrink-0">
             {/* Plain Reply is dropped when stacked. Two near-identical buttons
                 and the AI draft crowded a phone-width header into a wrap, and
@@ -421,7 +430,7 @@ export function EmailView({
               aria-label={t('inbox:emailView.replyAll')}
               className={
                 isStacked
-                  ? 'p-1.5 rounded text-primary-600 hover:bg-primary-50 transition-colors'
+                  ? 'p-1.5 rounded text-primary-600 hover:bg-primary-50 transition-colors dark:text-primary-400 dark:hover:bg-primary-900/20'
                   : 'px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors'
               }
             >
@@ -490,7 +499,7 @@ export function EmailView({
                   onClick={() => setIsMenuOpen((open) => !open)}
                   aria-label={t('inbox:emailView.moreOptions')}
                   aria-expanded={isMenuOpen}
-                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                 >
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
@@ -505,14 +514,14 @@ export function EmailView({
                       onClick={() => setIsMenuOpen(false)}
                       className="fixed inset-0 z-40 cursor-default"
                     />
-                    <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                    <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-surface">
                       <button
                         type="button"
                         onClick={() => {
                           setIsMenuOpen(false);
                           onClose();
                         }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100 dark:text-gray-300 dark:active:bg-surface-hover"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -526,7 +535,7 @@ export function EmailView({
                           if (threadSearchOpen) closeThreadSearch();
                           else openThreadSearch();
                         }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100 dark:text-gray-300 dark:active:bg-surface-hover"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
@@ -545,7 +554,7 @@ export function EmailView({
                             setIsMenuOpen(false);
                             onOpenInTab();
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 active:bg-gray-100 dark:text-gray-300 dark:active:bg-surface-hover"
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path
@@ -565,7 +574,7 @@ export function EmailView({
                           void handleDeleteThread();
                         }}
                         disabled={isDeleting}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 active:bg-red-50 disabled:opacity-50"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 active:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:active:bg-red-900/20"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
@@ -587,8 +596,8 @@ export function EmailView({
                   onClick={() => (threadSearchOpen ? closeThreadSearch() : openThreadSearch())}
                   className={`p-1.5 rounded transition-colors ${
                     threadSearchOpen
-                      ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
-                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      ? 'text-primary-600 bg-primary-50 hover:bg-primary-100 dark:text-primary-400 dark:bg-primary-900/20 dark:hover:bg-primary-900/30'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover'
                   }`}
                   title={t('inbox:emailView.searchInThread', { shortcut: formatShortcut(api.currentPlatform(), 'F') })}
                 >
@@ -604,7 +613,7 @@ export function EmailView({
                 {onOpenInTab && (
                   <button
                     onClick={onOpenInTab}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                     title={t('inbox:emailView.openInNewTab')}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -620,7 +629,7 @@ export function EmailView({
                 <button
                   onClick={() => void handleDeleteThread()}
                   disabled={isDeleting}
-                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50 dark:text-gray-500 dark:hover:bg-red-900/20"
                   title={t('inbox:emailView.deleteThread')}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -635,7 +644,7 @@ export function EmailView({
                 {fullWidth ? (
                   <button
                     onClick={onClose}
-                    className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                    className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-surface-hover"
                     title={t('inbox:emailView.back')}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -646,7 +655,7 @@ export function EmailView({
                 ) : (
                   <button
                     onClick={onClose}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
                     title={t('inbox:emailView.close')}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -662,8 +671,13 @@ export function EmailView({
 
       <div className="relative flex-1 flex flex-col overflow-hidden">
         {threadSearchOpen && (
-          <div className="absolute top-2 right-4 z-20 flex items-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-lg">
-            <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="absolute top-2 right-4 z-20 flex items-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded-lg shadow-lg dark:bg-surface dark:border-gray-700">
+            <svg
+              className="w-4 h-4 text-gray-400 flex-shrink-0 dark:text-gray-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -690,10 +704,10 @@ export function EmailView({
                 }
               }}
               placeholder={t('inbox:emailView.searchInThreadPlaceholder')}
-              className="w-48 bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none"
+              className="w-48 bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none dark:text-gray-100 dark:placeholder-gray-500"
             />
             {threadSearchActive && (
-              <span className="text-xs text-gray-400 flex-shrink-0 tabular-nums pr-1">
+              <span className="text-xs text-gray-400 flex-shrink-0 tabular-nums pr-1 dark:text-gray-500">
                 {occurrenceSlots.length > 0
                   ? t('inbox:emailView.searchMatchCount', {
                       current: Math.min(threadMatchIdx, occurrenceSlots.length - 1) + 1,
@@ -702,11 +716,11 @@ export function EmailView({
                   : t('inbox:emailView.searchNoMatches')}
               </span>
             )}
-            <div className="w-px h-4 bg-gray-200" />
+            <div className="w-px h-4 bg-gray-200 dark:bg-gray-700" />
             <button
               onClick={() => setThreadMatchIdx((idx) => stepMatchIndex(idx, -1, occurrenceSlots.length))}
               disabled={occurrenceSlots.length === 0}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
               title={t('inbox:emailView.searchPrevMatch')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -716,7 +730,7 @@ export function EmailView({
             <button
               onClick={() => setThreadMatchIdx((idx) => stepMatchIndex(idx, 1, occurrenceSlots.length))}
               disabled={occurrenceSlots.length === 0}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors disabled:opacity-40 disabled:hover:bg-transparent dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
               title={t('inbox:emailView.searchNextMatch')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -725,7 +739,7 @@ export function EmailView({
             </button>
             <button
               onClick={closeThreadSearch}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-hover"
               title={t('inbox:emailView.close')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -742,7 +756,7 @@ export function EmailView({
                   key="collapsed"
                   type="button"
                   onClick={() => setThreadExpanded(true)}
-                  className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left"
+                  className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left dark:text-primary-400 dark:hover:bg-primary-900/20 dark:border-gray-800"
                 >
                   Show {item.count} more message{item.count !== 1 ? 's' : ''}
                 </button>

@@ -41,7 +41,7 @@ const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
 const VARIANT_CLASSES = {
   dark: {
     trigger: 'bg-[#333] text-gray-300 border border-gray-600 focus:border-primary-500',
-    placeholder: 'text-gray-500',
+    placeholder: 'text-gray-500 dark:text-gray-400',
     popup: 'bg-[#333] border border-gray-600',
     optionHover: 'hover:bg-[#444]',
     optionText: 'text-gray-300',
@@ -49,12 +49,12 @@ const VARIANT_CLASSES = {
   },
   light: {
     trigger:
-      'bg-white text-gray-900 border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100',
-    placeholder: 'text-gray-400',
-    popup: 'bg-white border border-gray-200',
-    optionHover: 'hover:bg-gray-50',
-    optionText: 'text-gray-700',
-    optionSelectedText: 'text-primary-600',
+      'bg-white text-gray-900 border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100 dark:bg-surface dark:text-gray-100 dark:border-gray-600',
+    placeholder: 'text-gray-400 dark:text-gray-500',
+    popup: 'bg-white border border-gray-200 dark:bg-surface dark:border-gray-700',
+    optionHover: 'hover:bg-gray-50 dark:hover:bg-surface-raised',
+    optionText: 'text-gray-700 dark:text-gray-300',
+    optionSelectedText: 'text-primary-600 dark:text-primary-400',
   },
 } as const;
 
@@ -162,7 +162,12 @@ export function Select<T extends string>({
         className={`flex items-center justify-between gap-1.5 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
       >
         <span className={selected ? '' : colors.placeholder}>{selected ? selected.label : (placeholder ?? '')}</span>
-        <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <svg
+          className="w-3 h-3 text-gray-400 shrink-0 dark:text-gray-500"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden="true"
+        >
           <path
             fillRule="evenodd"
             d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.24 4.38a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"

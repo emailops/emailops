@@ -18,7 +18,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1200);
         });
       }}
-      className="text-[11px] uppercase tracking-wide text-gray-600 hover:text-gray-900"
+      className="text-[11px] uppercase tracking-wide text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
     >
       {copied ? t('chat:reasoning.trace.copied') : t('chat:reasoning.trace.copy')}
     </button>
@@ -29,11 +29,11 @@ function ToolCallRow({ call }: { call: ToolCallTrace }) {
   const { t } = useTranslation(['chat']);
   const [open, setOpen] = useState(false);
   return (
-    <li className="text-[13px] text-gray-700 py-1">
+    <li className="text-[13px] text-gray-700 py-1 dark:text-gray-300">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 hover:text-gray-900 w-full text-left"
+        className="flex items-center gap-1 hover:text-gray-900 w-full text-left dark:hover:text-gray-100"
       >
         <svg
           className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
@@ -43,24 +43,24 @@ function ToolCallRow({ call }: { call: ToolCallTrace }) {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="font-mono text-gray-900">
-          <span className="text-gray-500">{t('chat:reasoning.trace.tool')}</span> {call.name}
+        <span className="font-mono text-gray-900 dark:text-gray-100">
+          <span className="text-gray-500 dark:text-gray-400">{t('chat:reasoning.trace.tool')}</span> {call.name}
         </span>
-        <span className="text-gray-600 tabular-nums">
+        <span className="text-gray-600 tabular-nums dark:text-gray-400">
           · {formatLatency(call.elapsedMs)} · {t('chat:reasoning.trace.chars', { n: call.resultChars })}
         </span>
       </button>
       {open && (
         <div className="mt-1 ml-4 space-y-1">
           <div>
-            <div className="text-gray-600">{t('chat:reasoning.trace.arguments')}</div>
-            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all">
+            <div className="text-gray-600 dark:text-gray-400">{t('chat:reasoning.trace.arguments')}</div>
+            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all dark:bg-surface-raised dark:border-gray-700 dark:text-gray-200">
               {JSON.stringify(call.arguments, null, 2)}
             </pre>
           </div>
           <div>
-            <div className="text-gray-600">{t('chat:reasoning.trace.resultPreview')}</div>
-            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all">
+            <div className="text-gray-600 dark:text-gray-400">{t('chat:reasoning.trace.resultPreview')}</div>
+            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all dark:bg-surface-raised dark:border-gray-700 dark:text-gray-200">
               {call.resultPreview}
             </pre>
           </div>
@@ -91,17 +91,17 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
   // Map CacheAction.kind → an icon + a tone color shown next to the plan name.
   // Mirrors the visualizer's badges so the two surfaces share a vocabulary.
   const actionStyle: Record<string, { icon: string; tone: string }> = {
-    extend: { icon: '🪴', tone: 'text-emerald-700' },
-    'anchor-hit': { icon: '🌳', tone: 'text-sky-700' },
-    wiped: { icon: '🔥', tone: 'text-red-600' },
-    'cold-fresh': { icon: '🌱', tone: 'text-gray-600' },
+    extend: { icon: '🪴', tone: 'text-emerald-700 dark:text-emerald-300' },
+    'anchor-hit': { icon: '🌳', tone: 'text-sky-700 dark:text-sky-300' },
+    wiped: { icon: '🔥', tone: 'text-red-600 dark:text-red-400' },
+    'cold-fresh': { icon: '🌱', tone: 'text-gray-600 dark:text-gray-400' },
   };
   return (
-    <li className="text-[13px] text-gray-700 py-1">
+    <li className="text-[13px] text-gray-700 py-1 dark:text-gray-300">
       <button
         type="button"
         onClick={() => hasIO && setOpen((v) => !v)}
-        className={`flex items-baseline gap-1 w-full text-left flex-wrap ${hasIO ? 'hover:text-gray-900' : 'cursor-default'}`}
+        className={`flex items-baseline gap-1 w-full text-left flex-wrap ${hasIO ? 'hover:text-gray-900 dark:hover:text-gray-100' : 'cursor-default'}`}
       >
         {hasIO ? (
           <svg
@@ -115,15 +115,17 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
         ) : (
           <span className="inline-block w-3" />
         )}
-        <span className="text-gray-900 min-w-[140px]">{label}</span>
-        <span className="text-gray-700 tabular-nums">{formatLatency(call.latencyMs)}</span>
+        <span className="text-gray-900 min-w-[140px] dark:text-gray-100">{label}</span>
+        <span className="text-gray-700 tabular-nums dark:text-gray-300">{formatLatency(call.latencyMs)}</span>
         {call.prefillMs != null && (
-          <span className="text-gray-600 tabular-nums">
+          <span className="text-gray-600 tabular-nums dark:text-gray-400">
             · {t('chat:reasoning.trace.prefill', { latency: formatLatency(call.prefillMs) })}
           </span>
         )}
         {kv && (
-          <span className={`tabular-nums ${kv.cached > 0 ? 'text-emerald-700' : 'text-gray-500'}`}>
+          <span
+            className={`tabular-nums ${kv.cached > 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'}`}
+          >
             ·{' '}
             {kv.cached > 0
               ? t('chat:reasoning.trace.kvCacheHit', { cached: kv.cached, total: kv.total, pct: kv.pct })
@@ -131,27 +133,34 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
           </span>
         )}
         {action && (
-          <span className={`tabular-nums ${actionStyle[action.kind]?.tone ?? 'text-gray-600'}`} title={action.detail}>
+          <span
+            className={`tabular-nums ${actionStyle[action.kind]?.tone ?? 'text-gray-600 dark:text-gray-400'}`}
+            title={action.detail}
+          >
             · {actionStyle[action.kind]?.icon ?? ''} {action.detail}
           </span>
         )}
         {requested > 0 && (
-          <span className="text-gray-700">· {t('chat:reasoning.trace.toolCallsRequested', { n: requested })}</span>
+          <span className="text-gray-700 dark:text-gray-300">
+            · {t('chat:reasoning.trace.toolCallsRequested', { n: requested })}
+          </span>
         )}
-        {call.failed && <span className="text-red-600 italic">{t('chat:reasoning.trace.failed')}</span>}
-        {!hasIO && <span className="text-gray-500 italic">{t('chat:reasoning.trace.devOnly')}</span>}
+        {call.failed && (
+          <span className="text-red-600 italic dark:text-red-400">{t('chat:reasoning.trace.failed')}</span>
+        )}
+        {!hasIO && <span className="text-gray-500 italic dark:text-gray-400">{t('chat:reasoning.trace.devOnly')}</span>}
       </button>
       {open && hasIO && (
         <div className="mt-1 ml-4 space-y-1.5">
           {call.input && (
             <div>
               <div className="flex items-baseline gap-2">
-                <div className="text-gray-600 uppercase tracking-wide text-[11px]">
+                <div className="text-gray-600 uppercase tracking-wide text-[11px] dark:text-gray-400">
                   {t('chat:reasoning.trace.input')} · {t('chat:reasoning.trace.chars', { n: call.input.length })}
                 </div>
                 <CopyButton text={call.input} />
               </div>
-              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto dark:bg-surface-raised dark:border-gray-700 dark:text-gray-200">
                 {call.input}
               </pre>
             </div>
@@ -159,12 +168,12 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
           {call.output && (
             <div>
               <div className="flex items-baseline gap-2">
-                <div className="text-gray-600 uppercase tracking-wide text-[11px]">
+                <div className="text-gray-600 uppercase tracking-wide text-[11px] dark:text-gray-400">
                   {t('chat:reasoning.trace.output')} · {t('chat:reasoning.trace.chars', { n: call.output.length })}
                 </div>
                 <CopyButton text={call.output} />
               </div>
-              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto dark:bg-surface-raised dark:border-gray-700 dark:text-gray-200">
                 {call.output}
               </pre>
             </div>
@@ -222,26 +231,28 @@ function RetrievalDetail({ trace }: { trace: ChatTrace }) {
 
   return (
     <div>
-      <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
+      <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5 dark:text-gray-400">
         {t('chat:reasoning.trace.retrievalDetail')}
       </div>
       <ul className="space-y-0.5">
         {steps.map((s) => (
           <li key={s.key} className="flex items-baseline gap-2">
             <span className="inline-block w-1 h-1 rounded-full bg-gray-400 mt-1" />
-            <span className="text-gray-800 min-w-[120px]">{s.label}</span>
-            {s.ms != null && <span className="text-gray-700 tabular-nums">{formatLatency(s.ms)}</span>}
-            {s.detail && <span className="text-gray-600">· {s.detail}</span>}
-            {s.note && <span className="text-amber-700 italic">· {s.note}</span>}
+            <span className="text-gray-800 min-w-[120px] dark:text-gray-200">{s.label}</span>
+            {s.ms != null && (
+              <span className="text-gray-700 tabular-nums dark:text-gray-300">{formatLatency(s.ms)}</span>
+            )}
+            {s.detail && <span className="text-gray-600 dark:text-gray-400">· {s.detail}</span>}
+            {s.note && <span className="text-amber-700 italic dark:text-amber-300">· {s.note}</span>}
           </li>
         ))}
       </ul>
-      <div className="text-gray-700 mt-0.5 ml-3">
+      <div className="text-gray-700 mt-0.5 ml-3 dark:text-gray-300">
         {t('chat:reasoning.trace.fused', { n: r.fusedTopK })}
         {dedup}
       </div>
       {r.categories && r.categories.length > 0 && (
-        <div className="text-gray-700 mt-0.5 ml-3">
+        <div className="text-gray-700 mt-0.5 ml-3 dark:text-gray-300">
           {t('chat:reasoning.trace.categories')}: {r.categories.join(', ')}
         </div>
       )}
@@ -259,11 +270,11 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
   const flow = buildFlow(trace);
 
   return (
-    <div className="mt-2 pt-2 border-t border-gray-200">
+    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
       <button
         type="button"
         onClick={() => setIsOpen((v) => !v)}
-        className="flex items-center gap-1 text-[13px] text-gray-600 hover:text-gray-900 transition-colors"
+        className="flex items-center gap-1 text-[13px] text-gray-600 hover:text-gray-900 transition-colors dark:text-gray-400 dark:hover:text-gray-100"
       >
         <svg
           className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`}
@@ -274,29 +285,29 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         {isOpen ? t('chat:reasoning.hide') : t('chat:reasoning.show')}
-        <span className="text-gray-500">
+        <span className="text-gray-500 dark:text-gray-400">
           · {routeMode(trace.route.mode)} · {formatLatency(trace.totalElapsedMs)}
         </span>
       </button>
 
       {isOpen && (
-        <div className="mt-2 space-y-3 text-[13px] text-gray-800">
+        <div className="mt-2 space-y-3 text-[13px] text-gray-800 dark:text-gray-200">
           {/* Route — mode, classifier, reason, matched keywords */}
           <div>
-            <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
+            <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5 dark:text-gray-400">
               {t('chat:reasoning.trace.route')}
             </div>
             <div>
-              <span className="font-medium text-gray-900">{routeMode(trace.route.mode)}</span>
-              <span className="text-gray-600"> · {trace.route.classifier}</span>
+              <span className="font-medium text-gray-900 dark:text-gray-100">{routeMode(trace.route.mode)}</span>
+              <span className="text-gray-600 dark:text-gray-400"> · {trace.route.classifier}</span>
             </div>
-            {trace.route.reason && <div className="text-gray-700">{trace.route.reason}</div>}
+            {trace.route.reason && <div className="text-gray-700 dark:text-gray-300">{trace.route.reason}</div>}
             {trace.route.matchedKeywords.length > 0 && (
               <div className="mt-0.5 flex flex-wrap gap-1">
                 {trace.route.matchedKeywords.map((kw) => (
                   <span
                     key={kw}
-                    className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-800"
+                    className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-800 dark:bg-surface-hover dark:border-gray-700 dark:text-gray-200"
                   >
                     {kw}
                   </span>
@@ -316,7 +327,7 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
               header carries the turn's total latency in place of the old bar. */}
           {flow.length > 0 && (
             <div>
-              <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
+              <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5 dark:text-gray-400">
                 {t('chat:reasoning.trace.workflow')} · {formatLatency(trace.totalElapsedMs)}
               </div>
               <ul className="space-y-0.5">
@@ -332,8 +343,9 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
           )}
 
           {/* Model */}
-          <div className="text-gray-600 text-xs">
-            {t('chat:reasoning.trace.model')} <span className="font-mono text-gray-800">{trace.model}</span>
+          <div className="text-gray-600 text-xs dark:text-gray-400">
+            {t('chat:reasoning.trace.model')}{' '}
+            <span className="font-mono text-gray-800 dark:text-gray-200">{trace.model}</span>
           </div>
         </div>
       )}
@@ -353,10 +365,10 @@ export function StatsFooter({ message }: { message: ChatMessage }) {
   if (parts.length === 0) return null;
 
   return (
-    <div className="mt-2 pt-1.5 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+    <div className="mt-2 pt-1.5 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-1.5 flex-wrap dark:border-gray-700 dark:text-gray-400">
       {parts.map((p, i) => (
         <Fragment key={p}>
-          {i > 0 && <span className="text-gray-400">·</span>}
+          {i > 0 && <span className="text-gray-400 dark:text-gray-500">·</span>}
           <span>{p}</span>
         </Fragment>
       ))}

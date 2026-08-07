@@ -95,7 +95,7 @@ export function DraftRefPill({ draftId, accountId, label, onOpenEmail }: DraftRe
       type="button"
       onClick={handleClick}
       disabled={isOpening}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium hover:bg-amber-100 transition-colors align-baseline disabled:opacity-60"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium hover:bg-amber-100 transition-colors align-baseline disabled:opacity-60 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/30"
       title={`Re-open draft: ${displayLabel}`}
     >
       <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -74,7 +74,7 @@ export function MeetingReminderBanner() {
       {joinUrl && (
         <button
           onClick={handleJoin}
-          className="flex-shrink-0 px-3 py-1 rounded bg-white text-primary-700 text-sm font-semibold hover:bg-primary-50 transition-colors"
+          className="flex-shrink-0 px-3 py-1 rounded bg-white text-primary-700 text-sm font-semibold hover:bg-primary-50 transition-colors dark:bg-surface dark:text-primary-300 dark:hover:bg-primary-900/20"
         >
           {t('calendar:reminder.join')}
         </button>
