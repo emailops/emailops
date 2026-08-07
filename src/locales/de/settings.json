@@ -29,7 +29,7 @@
   "appearance": {
     "language": "Anzeigesprache",
     "languageHelp": "Wähle die Sprache für Menüs, Schaltflächen und sonstige Oberflächentexte. KI-Antworten haben eine eigene Einstellung im Tab \"KI\".",
-    "theme": "Erscheinungsbild",
+    "theme": "Design",
     "density": "Dichte",
     "layout": "Posteingangs-Layout",
     "layoutSplit": "Geteilt (Liste + Leseansicht)",
@@ -37,7 +37,11 @@
     "layoutSplitLabel": "Geteilte Ansicht",
     "layoutSplitDesc": "E-Mail-Liste links, E-Mail-Inhalt rechts",
     "layoutFullWidthLabel": "Liste in voller Breite",
-    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen"
+    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen",
+    "themeHelp": "Der Systemdarstellung folgen oder selbst wählen.",
+    "themeSystem": "System",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel"
   },
   "dialog": {
     "closeTitle": "Einstellungen schließen",

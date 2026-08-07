@@ -47,6 +47,7 @@ import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
+import { useTheme } from '@/hooks/useTheme';
 import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -143,6 +144,9 @@ function App() {
 
 function AppInner() {
   const { t } = useTranslation(['common', 'modal', 'sidebar']);
+  // Once, at the root: `useTheme` owns the `dark` class on <html>, and two
+  // callers would fight over it.
+  useTheme();
   const { enabled: aiEnabled, refresh: refreshAi } = useAiStore();
   // Onboarding: shown when the `onboarding_completed` preference is missing.
   // `null` = still loading the preference; we render nothing AI-conditional
@@ -1306,7 +1310,7 @@ function AppInner() {
     // `h-full` rather than `h-screen`: #root is already sized to 100dvh and
     // carries the safe-area padding, and `h-screen` (100vh) would overflow it
     // by the height of the iOS home indicator.
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full bg-gray-50 dark:bg-surface-raised">
       {onboardingCompleted === false && (
         <OnboardingWizard
           currentLayout={inboxLayout}
@@ -1326,12 +1330,12 @@ function AppInner() {
       {isStacked && (
         // Stacked mode has no permanent sidebar column, so navigation needs an
         // entry point. Rendered outside the drawer so it stays reachable.
-        <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-2 py-1">
+        <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-2 py-1 dark:border-gray-700 dark:bg-surface">
           <button
             type="button"
             onClick={openSidebar}
             aria-label={t('sidebar:openMenu')}
-            className="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 active:bg-gray-100"
+            className="flex h-11 w-11 items-center justify-center rounded-md text-gray-600 active:bg-gray-100 dark:text-gray-400 dark:active:bg-surface-hover"
           >
             <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}>
               <path d="M3 5h14M3 10h14M3 15h14" strokeLinecap="round" />
@@ -1343,7 +1347,7 @@ function AppInner() {
               button so the title is centered on the bar, not on the space
               left over beside it. */}
           <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
-            <h1 className="truncate text-sm font-semibold text-gray-900">{mobileHeaderTitle}</h1>
+            <h1 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{mobileHeaderTitle}</h1>
             {isSyncing && (
               <div className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-b-2 border-primary-600" />
             )}
@@ -1600,7 +1604,7 @@ function AppInner() {
                   <button
                     onClick={() => setIsInboxCollapsed(false)}
                     title={t('modal:inbox.expand')}
-                    className="w-8 flex-shrink-0 border-r border-gray-200 bg-white flex items-start justify-center pt-4 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+                    className="w-8 flex-shrink-0 border-r border-gray-200 bg-white flex items-start justify-center pt-4 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors dark:border-gray-700 dark:bg-surface dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-surface-raised"
                   >
                     <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
                       <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />

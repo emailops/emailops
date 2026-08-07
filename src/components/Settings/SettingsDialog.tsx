@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
+import { useTheme } from '@/hooks/useTheme';
 import { useUiLanguage } from '@/i18n';
+import type { ThemePreference } from '@/lib/theme';
 import { useAiStore } from '@/stores/aiStore';
 import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
@@ -316,9 +318,39 @@ function AppearancePanel({
   const { t } = useTranslation(['common', 'settings']);
   const { isStacked } = useResponsiveLayout();
   const { language, setLanguage, isLoading: isLanguageLoading } = useUiLanguage();
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme();
+
+  // `as const` so the i18n keys keep their literal types — `t()` is typed
+  // against the locale files and rejects a widened `string`.
+  const THEME_CHOICES = [
+    { value: 'system', labelKey: 'settings:appearance.themeSystem' },
+    { value: 'light', labelKey: 'settings:appearance.themeLight' },
+    { value: 'dark', labelKey: 'settings:appearance.themeDark' },
+  ] as const satisfies readonly { value: ThemePreference; labelKey: string }[];
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+      <section>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.theme')}</h3>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:appearance.themeHelp')}</p>
+        <div className="flex gap-2">
+          {THEME_CHOICES.map((choice) => (
+            <button
+              key={choice.value}
+              type="button"
+              onClick={() => setThemePreference(choice.value)}
+              aria-pressed={themePreference === choice.value}
+              className={`px-3 py-1.5 text-sm rounded border transition-colors ${
+                themePreference === choice.value
+                  ? 'border-primary-600 bg-primary-900/30 text-primary-300'
+                  : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              {t(choice.labelKey)}
+            </button>
+          ))}
+        </div>
+      </section>
       <section>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.language')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('settings:appearance.languageHelp')}</p>

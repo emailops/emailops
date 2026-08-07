@@ -37,7 +37,11 @@
     "layoutSplitLabel": "Split view",
     "layoutSplitDesc": "Email list on the left, email content on the right",
     "layoutFullWidthLabel": "Full-width list",
-    "layoutFullWidthDesc": "Email list takes full width; open email to read it"
+    "layoutFullWidthDesc": "Email list takes full width; open email to read it",
+    "themeHelp": "Match your system appearance, or pick one.",
+    "themeSystem": "System",
+    "themeLight": "Light",
+    "themeDark": "Dark"
   },
   "dialog": {
     "closeTitle": "Close settings",

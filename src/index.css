@@ -21,6 +21,32 @@
   font-weight: 400;
   color: #213547;
   background-color: #ffffff;
+}
+
+/* The root background shows through wherever the app's own surfaces do not
+   reach: behind the overscroll gutter, during the first paint before React
+   mounts, and around a window resized faster than layout settles. Leaving it
+   white produced a white flash on every launch in dark mode. `.dark` is set on
+   <html> by `useTheme`; the media query covers the pre-mount frames, before any
+   class exists. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e5e7eb;
+    background-color: #1e1e1e;
+  }
+}
+
+:root.dark {
+  color: #e5e7eb;
+  background-color: #1e1e1e;
+}
+
+/* Explicit, and higher specificity than the media query above, so choosing
+   Light on a system set to dark does not leave a dark root behind a light app.
+   `useTheme` sets exactly one of these classes once React mounts. */
+:root.light {
+  color: #213547;
+  background-color: #ffffff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

@@ -1,9 +1,22 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // Class-based, not media-based: the app offers Light / Dark / System, so the
+  // decision is made in `lib/theme.ts` and published as one class on <html>.
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
+        // Dark-mode surfaces. These are the values the app's existing dark
+        // chrome (sidebar, settings, output panel) was already hand-written
+        // with, named so a new `dark:` variant lands on the same greys instead
+        // of inventing a third.
+        surface: {
+          DEFAULT: '#1e1e1e',
+          raised: '#252526',
+          hover: '#2a2a2b',
+          sunken: '#181818',
+        },
         primary: {
           50: '#f0f9ff',
           100: '#e0f2fe',

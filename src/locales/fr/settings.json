@@ -37,7 +37,11 @@
     "layoutSplitLabel": "Vue divisée",
     "layoutSplitDesc": "Liste des courriels à gauche, contenu du courriel à droite",
     "layoutFullWidthLabel": "Liste en pleine largeur",
-    "layoutFullWidthDesc": "La liste occupe toute la largeur ; ouvrez un courriel pour le lire"
+    "layoutFullWidthDesc": "La liste occupe toute la largeur ; ouvrez un courriel pour le lire",
+    "themeHelp": "Suivre l'apparence du système ou en choisir une.",
+    "themeSystem": "Système",
+    "themeLight": "Clair",
+    "themeDark": "Sombre"
   },
   "dialog": {
     "closeTitle": "Fermer les paramètres",

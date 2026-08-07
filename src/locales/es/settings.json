@@ -37,7 +37,11 @@
     "layoutSplitLabel": "Vista dividida",
     "layoutSplitDesc": "Lista de correos a la izquierda, contenido del correo a la derecha",
     "layoutFullWidthLabel": "Lista a pantalla completa",
-    "layoutFullWidthDesc": "La lista ocupa todo el ancho; abre un correo para leerlo"
+    "layoutFullWidthDesc": "La lista ocupa todo el ancho; abre un correo para leerlo",
+    "themeHelp": "Sigue la apariencia del sistema o elige una.",
+    "themeSystem": "Sistema",
+    "themeLight": "Claro",
+    "themeDark": "Oscuro"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",
