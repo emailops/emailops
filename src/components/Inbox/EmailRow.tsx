@@ -623,7 +623,10 @@ export function EmailRow({
             </span>
             {/* The separating dash only makes sense while subject and snippet
                 share a line; stacked, it reads as a stray bullet. */}
-            <span className="text-gray-500 truncate md:before:content-['—'] md:before:mr-1" title={email.snippet}>
+            <span
+              className="text-gray-500 truncate md:before:content-['—'] md:before:mr-1 dark:text-gray-400"
+              title={email.snippet}
+            >
               {email.snippet}
             </span>
           </div>

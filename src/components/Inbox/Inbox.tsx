@@ -599,7 +599,7 @@ function CategoryTab({ isActive, onClick, activeColor, label, icon }: CategoryTa
       onClick={onClick}
       className={`group relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
         isActive
-          ? `${activeColor} bg-white`
+          ? `${activeColor} bg-white dark:bg-surface`
           : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-surface-raised'
       }`}
     >
