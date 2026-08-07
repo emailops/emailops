@@ -104,7 +104,9 @@
     "searchMatchCount": "{{current}} sur {{total}}",
     "searchNoMatches": "Aucune correspondance",
     "searchPrevMatch": "Correspondance précédente",
-    "searchNextMatch": "Correspondance suivante"
+    "searchNextMatch": "Correspondance suivante",
+    "useLightBody": "Afficher les couleurs d'origine",
+    "useDarkBody": "Assombrir cet e-mail"
   },
   "compose": {
     "open": "Nouveau message",

@@ -104,7 +104,9 @@
     "searchMatchCount": "{{current}} of {{total}}",
     "searchNoMatches": "No matches",
     "searchPrevMatch": "Previous match",
-    "searchNextMatch": "Next match"
+    "searchNextMatch": "Next match",
+    "useLightBody": "Show original colours",
+    "useDarkBody": "Darken this email"
   },
   "compose": {
     "open": "Compose",

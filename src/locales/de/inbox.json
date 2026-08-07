@@ -104,7 +104,9 @@
     "searchMatchCount": "{{current}} von {{total}}",
     "searchNoMatches": "Keine Treffer",
     "searchPrevMatch": "Vorheriger Treffer",
-    "searchNextMatch": "Nächster Treffer"
+    "searchNextMatch": "Nächster Treffer",
+    "useLightBody": "Originalfarben anzeigen",
+    "useDarkBody": "Diese E-Mail abdunkeln"
   },
   "compose": {
     "open": "Verfassen",

@@ -104,7 +104,9 @@
     "searchMatchCount": "{{current}} de {{total}}",
     "searchNoMatches": "Sin coincidencias",
     "searchPrevMatch": "Coincidencia anterior",
-    "searchNextMatch": "Siguiente coincidencia"
+    "searchNextMatch": "Siguiente coincidencia",
+    "useLightBody": "Ver colores originales",
+    "useDarkBody": "Oscurecer este correo"
   },
   "compose": {
     "open": "Redactar",

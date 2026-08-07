@@ -20,9 +20,20 @@ import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
+import {
+  declaresOwnColors,
+  type EmailBodyTheme,
+  type EmailThemeOverride,
+  emailThemeCss,
+  planEmailBodyTheme,
+} from '@/lib/emailTheme';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
+import { useThemeStore } from '@/stores/themeStore';
 
 export interface EmailHtmlFrameProps {
+  /** Force this one message light or dark, overriding the app theme. Null
+   *  follows the app. Inversion is lossy, so the reader needs a way out. */
+  themeOverride?: EmailThemeOverride;
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
   html: string;
   /** Optional substring to highlight in the rendered body. Case-insensitive. */
@@ -206,7 +217,11 @@ export const BRIDGE_SCRIPT = String.raw`
 // Baseline styles inside the frame. Tailwind doesn't apply here — these
 // reproduce the look the previous div-based renderer had via utility classes.
 export const FRAME_BASE_CSS = `
-  html, body { margin: 0; padding: 0; background: transparent; }
+  /* Opaque white in BOTH app themes — see EmailHtmlFrame.theme.test.ts. The
+     email carries the sender's CSS, and most mail sets a dark text colour
+     without setting a background, so anything but a light card renders the
+     message invisible under dark mode. */
+  html, body { margin: 0; padding: 0; background: #ffffff; }
   body {
     /* flow-root establishes a block formatting context so the first/last child's
        vertical margins stay *inside* the body instead of collapsing through it.
@@ -234,11 +249,15 @@ export const FRAME_BASE_CSS = `
   pre { white-space: pre-wrap; word-break: break-word; }
 `;
 
-function buildSrcDoc(sanitizedHtml: string): string {
+function buildSrcDoc(sanitizedHtml: string, bodyTheme: EmailBodyTheme): string {
+  // The theme stylesheet comes AFTER the base one so it wins on equal
+  // specificity, and after nothing else — the email's own <style> lives in the
+  // body and still overrides both, which is the point: its palette is
+  // deliberate, and `dark-inverted` transforms it rather than fighting it.
   return `<!doctype html><html><head>
 <meta charset="utf-8">
 <base target="_top">
-<style>${FRAME_BASE_CSS}</style>
+<style>${FRAME_BASE_CSS}${emailThemeCss(bodyTheme)}</style>
 <script>${BRIDGE_SCRIPT}</script>
 </head><body>${sanitizedHtml}</body></html>`;
 }
@@ -250,13 +269,19 @@ export function EmailHtmlFrame({
   onMatchesReported,
   className,
   onMailtoLink,
+  themeOverride = null,
 }: EmailHtmlFrameProps) {
   const { t } = useTranslation(['common', 'inbox']);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
 
-  const srcDoc = useMemo(() => buildSrcDoc(html), [html]);
+  const appTheme = useThemeStore((s) => s.theme);
+  const bodyTheme = useMemo(
+    () => planEmailBodyTheme({ appTheme, override: themeOverride, declaresColors: declaresOwnColors(html) }),
+    [appTheme, themeOverride, html],
+  );
+  const srcDoc = useMemo(() => buildSrcDoc(html, bodyTheme), [html, bodyTheme]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -362,14 +387,16 @@ export function EmailHtmlFrame({
       />
       {confirmUrl && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-gray-900">{t('inbox:emailView.openLinkTitle')}</h3>
-            <p className="mt-2 text-sm text-gray-600 break-all">{confirmUrl}</p>
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4 dark:bg-surface">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              {t('inbox:emailView.openLinkTitle')}
+            </h3>
+            <p className="mt-2 text-sm text-gray-600 break-all dark:text-gray-400">{confirmUrl}</p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setConfirmUrl(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors dark:text-gray-300 dark:bg-surface-hover dark:hover:bg-gray-700"
               >
                 {t('common:actions.cancel')}
               </button>

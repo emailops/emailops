@@ -4,9 +4,11 @@ import { EmailHtmlFrame } from '@/components/shared/EmailHtmlFrame';
 import * as api from '@/lib/api';
 import { plainTextToHtml } from '@/lib/composeHtml';
 import { type ParsedMailto, sanitizeEmailHtmlFull } from '@/lib/emailFormatting';
+import type { EmailThemeOverride } from '@/lib/emailTheme';
 import { errorText } from '@/lib/errors';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
+import { useThemeStore } from '@/stores/themeStore';
 
 export function EmailBody({
   html,
@@ -43,6 +45,20 @@ export function EmailBody({
   // "no banner, no images" state for trusted senders.
   const [allowRemoteContent, setAllowRemoteContent] = useState<boolean | null>(null);
   const [showImages, setShowImages] = useState(false);
+  // Per message, and deliberately not persisted: it is an escape hatch for the
+  // one email inversion got wrong, not a setting. Resets when another message
+  // is opened.
+  const [themeOverride, setThemeOverride] = useState<EmailThemeOverride>(null);
+  const appTheme = useThemeStore((s) => s.theme);
+  // Reset the override when a different message is rendered, by adjusting
+  // state during render rather than in an effect: the effect form used `html`
+  // purely as a key without reading it, which is what the exhaustive-deps rule
+  // was objecting to, and this avoids the extra render an effect would cause.
+  const [renderedHtml, setRenderedHtml] = useState(html);
+  if (renderedHtml !== html) {
+    setRenderedHtml(html);
+    setThemeOverride(null);
+  }
   const [isTrusted, setIsTrusted] = useState<boolean | null>(null);
 
   // Load the remote-content preference once when the email body mounts.
@@ -118,7 +134,7 @@ export function EmailBody({
   return (
     <>
       {bannerVisible && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 flex-shrink-0">
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 flex-shrink-0 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300">
           <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
@@ -148,17 +164,34 @@ export function EmailBody({
         </div>
       )}
       {ready ? (
-        <EmailHtmlFrame
-          html={sanitizedHtml}
-          highlightQuery={highlightQuery}
-          activeMatchIndex={activeMatchIndex}
-          onMatchesReported={onMatchesReported}
-          className="email-body"
-          onMailtoLink={handleMailtoLink}
-        />
+        <>
+          {/* Inversion is lossy — some senders' mail will come out wrong, and
+              the reader needs one tap back to the original. Only offered while
+              the body is actually being darkened. */}
+          {(themeOverride ?? appTheme) === 'dark' && (
+            <div className="flex justify-end px-4 pt-2">
+              <button
+                type="button"
+                onClick={() => setThemeOverride(themeOverride === 'light' ? null : 'light')}
+                className="text-xs underline hover:no-underline text-gray-500 dark:text-gray-400"
+              >
+                {themeOverride === 'light' ? t('inbox:emailView.useDarkBody') : t('inbox:emailView.useLightBody')}
+              </button>
+            </div>
+          )}
+          <EmailHtmlFrame
+            html={sanitizedHtml}
+            highlightQuery={highlightQuery}
+            activeMatchIndex={activeMatchIndex}
+            onMatchesReported={onMatchesReported}
+            className="email-body"
+            onMailtoLink={handleMailtoLink}
+            themeOverride={themeOverride}
+          />
+        </>
       ) : (
-        <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400">
-          <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-gray-300" />
+        <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400 dark:text-gray-500">
+          <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-gray-300 dark:border-gray-600" />
           {t('inbox:loadingEmail')}
         </div>
       )}
