@@ -105,7 +105,7 @@ sys-locale = "0.3"
 fd-lock = "4"
 # Physical RAM probe. Default features pull in disk/network/component/user
 # collectors we never touch, so only `system` is enabled.
-sysinfo = { version = "0.38", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # Free-space probe (`statvfs` on Unix, `GetDiskFreeSpaceExW` on Windows).
 fs4 = { version = "1.1", default-features = false, features = ["sync"] }
 # Eval harness deps (used by examples/chat_eval.rs)
