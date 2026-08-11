@@ -861,6 +861,32 @@ with an unreadable-credential error every time the screen was off. Keeping
 `use_native_store` and filing an upstream issue — correct to file, but the app
 cannot ship on the sample store while waiting.
 
+
+## 2026-08-11 — Tapping an image in a message opens a full-screen zoomable viewer
+
+**Decision:** A tap on an `<img>` in the message body opens `ImageLightbox`, a
+full-screen viewer with pinch/wheel zoom, drag-to-pan and double-tap-to-toggle.
+Three rules decide what a tap means. A **link wins**: an image inside an `<a>`
+with an `href` still follows the link, because that is what a newsletter's hero
+image means and what every other mail client does. **Size gates the viewer**:
+both axes must measure at least 32px, so tracking pixels and the 1px rules and
+spacers that pad a newsletter are ignored. And the `src` is **re-validated in
+the parent** (`getSafeImageSrc`: raster `data:` types and http(s) only) even
+though the frame just displayed it.
+**Context:** The body renders in a null-origin sandboxed iframe, so a tap is
+only observable from inside — the bridge script reports it and the app owns the
+viewer. That makes the `src` a value crossing `postMessage` out of a document
+built from sender-controlled HTML into the app's own document, hence the second
+validation. The frame already had pinch-zoom for the *page*; zooming the whole
+message to read one screenshot is what made a per-image viewer worth having,
+and it is the harder gesture on a phone.
+**Rejected:** Zooming the image in place inside the frame — no room on a phone,
+and the auto-height ratchet the frame already fights (v0.5.0) gets worse when a
+child can grow the body. SVG in the viewer — it is a script-bearing document,
+and the viewer draws outside the sandbox. Opening a linked image in the viewer
+with a separate affordance for the link — two targets on one image, on the
+platform with the least room for them.
+
 ## 2026-08-14 — Chat is scoped to one account, coupled to the mail list except in unified view
 
 **Decision:** A chat conversation always answers from exactly one concrete account,

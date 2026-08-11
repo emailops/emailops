@@ -85,7 +85,8 @@
     "size": "Größe",
     "noSubject": "(kein Betreff)",
     "unknownSender": "Unbekannter Absender",
-    "you": "Du"
+    "you": "Du",
+    "imageViewer": "Bildbetrachter"
   },
   "unifiedScope": {
     "hint": "In der Alle-Konten-Ansicht zeigt dieser Bereich nur {{email}}"

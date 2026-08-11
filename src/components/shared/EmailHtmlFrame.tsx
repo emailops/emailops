@@ -19,7 +19,7 @@
 import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
+import { getSafeExternalUrl, getSafeImageSrc, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
 import {
   declaresOwnColors,
   type EmailBodyTheme,
@@ -29,6 +29,7 @@ import {
 } from '@/lib/emailTheme';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
 import { useThemeStore } from '@/stores/themeStore';
+import { ImageLightbox } from './ImageLightbox';
 
 export interface EmailHtmlFrameProps {
   /** Force this one message light or dark, overriding the app theme. Null
@@ -123,11 +124,30 @@ export const BRIDGE_SCRIPT = String.raw`
     document.addEventListener('click', function(e){
       var t = e.target;
       var a = t && t.closest ? t.closest('a') : null;
-      if (!a) return;
-      var href = a.getAttribute('href');
-      if (!href) return;
-      e.preventDefault();
-      send({ type: 'link', href: href });
+      var href = a ? a.getAttribute('href') : null;
+      // A link wins over the image viewer: newsletters wrap their hero image in
+      // the offer link, and tapping it means "go to the offer" in every other
+      // mail client. An anchor with no destination is not a link, so an image
+      // inside one still opens.
+      if (href){
+        e.preventDefault();
+        send({ type: 'link', href: href });
+        return;
+      }
+      var img = t && t.closest ? t.closest('img') : null;
+      if (!img) return;
+      var src = img.currentSrc || img.getAttribute('src') || '';
+      if (!src) return;
+      // naturalWidth is 0 until the image decodes (and forever if it failed),
+      // so fall back to the size it is laid out at. Both axes must clear the
+      // bar: tracking pixels are 1x1, and the rules and spacers that pad a
+      // newsletter are full-width and a pixel tall. Neither is worth a
+      // full-screen viewer.
+      var box = img.getBoundingClientRect ? img.getBoundingClientRect() : null;
+      var w = img.naturalWidth || img.width || (box ? box.width : 0);
+      var h = img.naturalHeight || img.height || (box ? box.height : 0);
+      if (w < 32 || h < 32) return;
+      send({ type: 'image', src: src, alt: img.getAttribute('alt') || '' });
     }, true);
     window.addEventListener('message', function(ev){
       var data = ev.data || {};
@@ -275,6 +295,7 @@ export function EmailHtmlFrame({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
+  const [viewedImage, setViewedImage] = useState<{ src: string; alt: string } | null>(null);
 
   const appTheme = useThemeStore((s) => s.theme);
   const bodyTheme = useMemo(
@@ -290,6 +311,8 @@ export function EmailHtmlFrame({
         type?: string;
         height?: number;
         href?: string;
+        src?: string;
+        alt?: string;
         count?: number;
         activeTop?: number | null;
       } | null;
@@ -334,6 +357,14 @@ export function EmailHtmlFrame({
         const safe = getSafeExternalUrl(href);
         if (!safe) return;
         setConfirmUrl(safe);
+      } else if (data.type === 'image' && typeof data.src === 'string') {
+        // The frame already displayed this image, so showing it again fetches
+        // nothing new — but the src crossed a postMessage boundary out of a
+        // document built from sender-controlled HTML, and the viewer renders in
+        // the app document rather than the sandbox. Validate it anyway.
+        const safe = getSafeImageSrc(data.src);
+        if (!safe) return;
+        setViewedImage({ src: safe, alt: typeof data.alt === 'string' ? data.alt : '' });
       }
     }
     window.addEventListener('message', onMessage);
@@ -385,6 +416,9 @@ export function EmailHtmlFrame({
         className={className}
         style={{ width: '100%', height, border: 'none', display: 'block' }}
       />
+      {viewedImage && (
+        <ImageLightbox src={viewedImage.src} alt={viewedImage.alt} onClose={() => setViewedImage(null)} />
+      )}
       {confirmUrl && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4 dark:bg-surface">

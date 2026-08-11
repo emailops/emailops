@@ -220,6 +220,31 @@ export function getSafeExternalUrl(value: string): string | null {
   }
 }
 
+/** Raster image types the full-screen viewer will render. SVG is excluded on
+ *  purpose: it is a script-bearing document, and the viewer draws into the app
+ *  document rather than the sandboxed frame the message lives in. */
+const VIEWABLE_IMAGE_TYPES = /^image\/(png|jpeg|jpg|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)\b/i;
+
+/**
+ * Validate an image `src` arriving from the body iframe before the app renders
+ * it full-screen.
+ *
+ * The frame is null-origin and already displayed this image, so nothing new is
+ * fetched by honouring it — but the value crosses a `postMessage` boundary from
+ * a document built out of sender-controlled HTML, and lands in the *app*
+ * document. Treat it as untrusted input and allow only what a picture can be:
+ * the `data:` URIs sync rewrites `cid:` parts into, and the http(s) URLs the
+ * user's remote-content choice already allowed the frame to load.
+ */
+export function getSafeImageSrc(value: string): string | null {
+  const src = value.trim();
+  if (!src) return null;
+  if (src.toLowerCase().startsWith('data:')) {
+    return VIEWABLE_IMAGE_TYPES.test(src.slice('data:'.length)) ? src : null;
+  }
+  return getSafeExternalUrl(src);
+}
+
 export interface ParsedMailto {
   to: string[];
   subject: string;

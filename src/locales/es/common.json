@@ -85,7 +85,8 @@
     "size": "Tamaño",
     "noSubject": "(sin asunto)",
     "unknownSender": "Remitente desconocido",
-    "you": "Tú"
+    "you": "Tú",
+    "imageViewer": "Visor de imágenes"
   },
   "unifiedScope": {
     "hint": "En la vista de todas las cuentas, esta sección solo muestra {{email}}"

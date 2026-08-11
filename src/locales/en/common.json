@@ -85,7 +85,8 @@
     "size": "Size",
     "noSubject": "(no subject)",
     "unknownSender": "Unknown sender",
-    "you": "You"
+    "you": "You",
+    "imageViewer": "Image viewer"
   },
   "unifiedScope": {
     "hint": "In All accounts view, this section shows {{email}} only"

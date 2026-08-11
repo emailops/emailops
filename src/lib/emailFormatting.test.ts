@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getSafeExternalUrl,
+  getSafeImageSrc,
   parseMailtoUrl,
   sanitizeCssValue,
   sanitizeEmailHtml,
@@ -375,5 +376,45 @@ describe('parseMailtoUrl', () => {
 
   it('survives malformed percent-encoding without throwing', () => {
     expect(parseMailtoUrl('mailto:user@example.com?subject=%E0%A4%A')?.to).toEqual(['user@example.com']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSafeImageSrc — what the body iframe may hand the full-screen viewer
+// ---------------------------------------------------------------------------
+
+describe('getSafeImageSrc', () => {
+  it('accepts the data: images inline attachments are rewritten into', () => {
+    const src = 'data:image/png;base64,iVBORw0KGgo=';
+    expect(getSafeImageSrc(src)).toBe(src);
+  });
+
+  it('accepts remote images the body already chose to load', () => {
+    expect(getSafeImageSrc('https://cdn.example.com/hero.jpg')).toBe('https://cdn.example.com/hero.jpg');
+    expect(getSafeImageSrc('http://cdn.example.com/hero.jpg')).toBe('http://cdn.example.com/hero.jpg');
+  });
+
+  // The viewer renders into the *app* document, outside the sandbox that holds
+  // the message — so a src arriving over postMessage is untrusted input even
+  // though the frame just finished displaying it.
+  it('rejects schemes that are not images', () => {
+    expect(getSafeImageSrc('javascript:alert(1)')).toBeNull();
+    expect(getSafeImageSrc('file:///etc/passwd')).toBeNull();
+    expect(getSafeImageSrc('blob:null/1234')).toBeNull();
+    expect(getSafeImageSrc('about:srcdoc')).toBeNull();
+  });
+
+  // `data:` is only safe while it stays a picture. SVG carries script, and
+  // text/html is inert inside an <img> but marks a src worth refusing outright.
+  it('rejects data: URIs that are not raster images', () => {
+    expect(getSafeImageSrc('data:image/svg+xml,<svg onload=alert(1)>')).toBeNull();
+    expect(getSafeImageSrc('data:text/html,<script>alert(1)</script>')).toBeNull();
+    expect(getSafeImageSrc('data:,hello')).toBeNull();
+  });
+
+  it('rejects empty and malformed values', () => {
+    expect(getSafeImageSrc('')).toBeNull();
+    expect(getSafeImageSrc('   ')).toBeNull();
+    expect(getSafeImageSrc('not a url')).toBeNull();
   });
 });
