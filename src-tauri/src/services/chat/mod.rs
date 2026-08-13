@@ -133,6 +133,57 @@ pub(crate) fn count_invalid_citations(answer: &str, max_valid: usize) -> i32 {
 /// at nothing, so strip them rather than render them. Trims any whitespace
 /// left adjacent (e.g. " [3]." → ".") so the answer reads naturally.
 pub(crate) fn strip_invalid_citations(answer: &str, max_valid: usize) -> String {
+    // A line that *begins* with an out-of-range marker is a footnote
+    // definition, not prose that happens to be cited — "[1] list_calendar_events".
+    // Removing only its marker strands the body as a bare line, which is how an
+    // internal tool name ended up appended to an otherwise correct answer. The
+    // definition of a citation that points at nothing is noise in full, so drop
+    // the whole line before the marker pass runs.
+    let mut dropped_footnote = false;
+    let filtered: Vec<&str> = answer
+        .lines()
+        .filter(|line| {
+            let is_footnote = is_invalid_footnote_line(line, max_valid);
+            dropped_footnote |= is_footnote;
+            !is_footnote
+        })
+        .collect();
+    if dropped_footnote {
+        let rejoined = filtered.join("\n");
+        // Only trim when a line was actually removed, so answers that
+        // legitimately end in whitespace are untouched on the common path.
+        return strip_invalid_citation_markers(&rejoined, max_valid)
+            .trim_end()
+            .to_string();
+    }
+    strip_invalid_citation_markers(answer, max_valid)
+}
+
+/// Whether `line` is a footnote definition whose citation number is out of
+/// range — i.e. it starts (ignoring indentation) with `[n]` where n is 0 or
+/// greater than `max_valid`. `[n](…)` is excluded: that is a Markdown link
+/// label, not a footnote (see [`strip_invalid_citation_markers`]).
+fn is_invalid_footnote_line(line: &str, max_valid: usize) -> bool {
+    let t = line.trim_start();
+    let Some(rest) = t.strip_prefix('[') else {
+        return false;
+    };
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        return false;
+    }
+    let after = &rest[digits.len()..];
+    let Some(after) = after.strip_prefix(']') else {
+        return false;
+    };
+    if after.starts_with('(') {
+        return false;
+    }
+    let n = digits.parse::<usize>().unwrap_or(0);
+    n == 0 || n > max_valid
+}
+
+fn strip_invalid_citation_markers(answer: &str, max_valid: usize) -> String {
     // Build a Vec<u8> by copying bytes — '[' and ']' are single-byte ASCII so
     // we can scan/skip byte-wise without splitting multibyte UTF-8 sequences.
     let bytes = answer.as_bytes();
@@ -516,6 +567,40 @@ mod tests {
         // numbered link label is preserved.
         let ans = "See [the renewal](email://demo_x) [9].";
         assert_eq!(strip_invalid_citations(ans, 0), "See [the renewal](email://demo_x).");
+    }
+
+    #[test]
+    fn strip_invalid_citations_drops_orphaned_footnote_lines() {
+        // Regression: on a tool-results turn (max_valid = 0) the model answers
+        // with an inline marker AND a footnote line defining it. Stripping only
+        // the markers left the definition's body stranded as a bare line — the
+        // user saw the internal tool name appended to an otherwise correct
+        // answer:
+        //   "…de 07:00 a 09:30.\n\n list_calendar_events"
+        // A footnote defining a citation that points at nothing is noise in
+        // full, so the whole line goes, not just its marker.
+        let ans = "La siguiente reunión es:\n\n- Evento a las 07:00 [1].\n\n[1] list_calendar_events";
+        assert_eq!(
+            strip_invalid_citations(ans, 0),
+            "La siguiente reunión es:\n\n- Evento a las 07:00."
+        );
+    }
+
+    #[test]
+    fn strip_invalid_citations_keeps_footnote_lines_for_valid_citations() {
+        // The mirror case: a footnote whose marker IS in range refers to a real
+        // source, so both marker and definition must survive untouched.
+        let ans = "Ver el contrato [1].\n\n[1] Contrato de servicios";
+        assert_eq!(strip_invalid_citations(ans, 3), ans);
+    }
+
+    #[test]
+    fn strip_invalid_citations_line_start_rule_does_not_eat_prose() {
+        // Only a marker at the START of a line is a footnote definition. An
+        // invalid marker mid-sentence must still strip just the marker and
+        // leave the surrounding prose intact.
+        let ans = "El pago [9] se confirmó ayer.";
+        assert_eq!(strip_invalid_citations(ans, 0), "El pago se confirmó ayer.");
     }
 
     #[test]
