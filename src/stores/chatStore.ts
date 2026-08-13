@@ -70,7 +70,7 @@ interface ChatStore {
    * shows (chat panel only) — the backend grounds the answer in it for this
    * turn instead of running retrieval. Omitted by the full-page chat view.
    */
-  sendMessage: (content: string, contextThreadId?: string | null) => Promise<void>;
+  sendMessage: (content: string, contextThreadId?: string | null, contextAccountId?: string | null) => Promise<void>;
   /** Load persisted categories preference from the DB (called once on mount). */
   loadCategoriesPref: () => Promise<void>;
   /** Update the current selection + persist it so the next session reuses it. */
@@ -204,7 +204,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  sendMessage: async (content, contextThreadId) => {
+  sendMessage: async (content, contextThreadId, contextAccountId) => {
     const trimmed = content.trim();
     if (!trimmed) return;
     const conversationId = get().activeConversationId;
@@ -225,6 +225,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         trimmed,
         get().selectedCategories,
         contextThreadId,
+        contextAccountId,
       );
       // Only mutate if we're still on the same conversation.
       if (get().activeConversationId !== conversationId) return;

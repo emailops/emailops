@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { prewarmChat } from '@/lib/api';
-import { type ChatContext, chatContextKey, isConversationThreadBound } from '@/lib/chatContext';
+import { type ChatContext, chatContextKey, chatTurnContext, isConversationThreadBound } from '@/lib/chatContext';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
@@ -86,7 +86,11 @@ export function ChatPanel({ accountId, context, onClose, onExpand, onNavigateToI
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
     // Only pass the thread when the chip is armed — a dismissed chip must
     // behave exactly like having nothing open (normal retrieval).
-    await sendMessage(content, contextActive ? offeredContext.threadId : null);
+    // The thread's OWN account travels with it — in unified mode it differs
+    // from the chat's account, and grounding looked the thread up under the
+    // chat's account and found nothing.
+    const turnContext = chatTurnContext(offeredContext, contextActive);
+    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null);
   };
 
   const header = (

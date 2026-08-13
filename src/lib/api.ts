@@ -1238,12 +1238,21 @@ export async function sendChatMessage(
    * this turn only — it is never persisted onto the conversation.
    */
   contextThreadId?: string | null,
+  /**
+   * Account that owns `contextThreadId`. Sent separately because it need not be
+   * the account the chat runs on — in unified ("All accounts") mode the panel
+   * runs on the first enabled account while the open thread can belong to any
+   * of them, and looking it up under the wrong account silently drops the
+   * context.
+   */
+  contextAccountId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
     content,
     categories,
     contextThreadId: contextThreadId ?? null,
+    contextAccountId: contextAccountId ?? null,
   });
 }
 

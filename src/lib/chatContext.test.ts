@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveChatContext, isConversationThreadBound } from '@/lib/chatContext';
+import { chatTurnContext, deriveChatContext, isConversationThreadBound } from '@/lib/chatContext';
 import type { ChatMessage, Email } from '@/types';
 
 // The planner reads only threadId / accountId / subject off an Email. Building
@@ -107,5 +107,30 @@ describe('isConversationThreadBound', () => {
     // binding precedence over ambient view context, so the panel must not
     // claim the open thread is being used.
     expect(isConversationThreadBound([msg('system'), msg('user')])).toBe(true);
+  });
+});
+
+describe('chatTurnContext', () => {
+  const context = { threadId: 'thread-7', accountId: 'acct-owning-thread-7', subject: 'Budget review' };
+
+  it('sends the thread together with the account that owns it', () => {
+    // Regression: only the threadId used to be sent. In unified mode the chat
+    // runs on the first enabled account, so the backend looked the thread up
+    // under an account that does not own it, found nothing, and silently fell
+    // back to retrieval — the user asked about the open email and was told the
+    // model did not know which email they meant.
+    expect(chatTurnContext(context, true)).toEqual({
+      threadId: 'thread-7',
+      accountId: 'acct-owning-thread-7',
+    });
+  });
+
+  it('sends nothing when the chip was dismissed', () => {
+    // A dismissed chip must behave exactly like having nothing open.
+    expect(chatTurnContext(context, false)).toBeNull();
+  });
+
+  it('sends nothing when no context is offered', () => {
+    expect(chatTurnContext(null, true)).toBeNull();
   });
 });

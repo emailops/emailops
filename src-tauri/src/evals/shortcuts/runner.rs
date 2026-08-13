@@ -239,6 +239,7 @@ async fn run_variant(
         history,
         categories,
         None,
+        None,
     )
     .await?;
 

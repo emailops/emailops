@@ -574,6 +574,30 @@ async fn run_chat(
         .map(|s| s.to_string())
         .collect();
 
+    // `--thread` is documented as grounding "exactly as the app's chat panel"
+    // does, and the panel sends the thread together with the account that owns
+    // it — the two need not match the account the chat itself runs on (unified
+    // mode picks the first enabled one). Mirror that here by finding the owner,
+    // so `--thread X --account Y` grounds correctly instead of silently
+    // dropping the context. `None` (thread not found under any account) leaves
+    // the existing behaviour: fall back to the turn's own account.
+    let ambient_account: Option<String> = match thread.as_deref() {
+        Some(thread_id) => session
+            .db
+            .list_accounts()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|a| {
+                session
+                    .db
+                    .get_thread(&a.id, thread_id)
+                    .map(|emails| !emails.is_empty())
+                    .unwrap_or(false)
+            })
+            .map(|a| a.id),
+        None => None,
+    };
+
     // Mirror the app's idle-time prompt-prefix prewarm before the first turn
     // so turn-1 prefill numbers match the in-app first-turn experience.
     // Best-effort: a prewarm failure just means a normal cold prefill.
@@ -623,6 +647,7 @@ async fn run_chat(
             history,
             categories.clone(),
             thread.clone(),
+            ambient_account.clone(),
         )
         .await?;
 

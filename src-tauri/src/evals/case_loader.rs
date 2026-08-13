@@ -98,6 +98,23 @@ pub struct EvalCase {
     #[serde(default)]
     pub thread_id: Option<String>,
 
+    /// Thread the "main view" has open, passed as *ambient* context for this
+    /// turn — the chat panel's removable context chip, not a seeded
+    /// conversation. Distinct from `thread_id`: that one binds the whole
+    /// conversation up front (`ChatTurnMode::ConversationThread`), while this
+    /// exercises `ChatTurnMode::AmbientThread`, which resolves per turn and is
+    /// never persisted.
+    #[serde(default)]
+    pub ambient_thread_id: Option<String>,
+
+    /// Account owning `ambient_thread_id`. Set it when the thread belongs to a
+    /// *different* account than `account` — that is the interesting case, since
+    /// the panel runs on the first enabled account in unified ("All accounts")
+    /// mode while the user can be reading any account's thread. Leaving this
+    /// unset makes the turn fall back to its own account.
+    #[serde(default)]
+    pub ambient_account: Option<String>,
+
     /// Expected router mode. Absence skips the route check.
     #[serde(default)]
     pub expected_route: Option<RouteMode>,

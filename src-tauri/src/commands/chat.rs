@@ -168,6 +168,12 @@ pub async fn send_chat_message(
     // instead of running retrieval. `None` when nothing is open, or when the
     // user dismissed the context chip.
     context_thread_id: Option<String>,
+    // Account that owns `context_thread_id`. Sent separately because it need
+    // not be the account this chat runs on: in unified ("All accounts") mode
+    // the panel runs on the first enabled account while the user can be
+    // reading a thread from any of them. Looking the thread up under the chat's
+    // account found nothing and silently dropped the context.
+    context_account_id: Option<String>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -246,6 +252,7 @@ pub async fn send_chat_message(
 
     let categories_for_task = categories.clone();
     let ambient_thread_for_task = context_thread_id.clone();
+    let ambient_account_for_task = context_account_id.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
     state
         .ai_queue
@@ -262,6 +269,7 @@ pub async fn send_chat_message(
                 history,
                 categories_for_task,
                 ambient_thread_for_task,
+                ambient_account_for_task,
             )
             .await
             {

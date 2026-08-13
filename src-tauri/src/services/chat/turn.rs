@@ -2071,8 +2071,20 @@ pub(super) enum ChatTurnMode {
     /// `create_conversation_with_thread`) — every turn is bound to it.
     ConversationThread,
     /// The user is looking at this thread in the main view right now; ground
-    /// only THIS turn in it. Carries the thread id to hydrate.
-    AmbientThread(String),
+    /// only THIS turn in it.
+    AmbientThread {
+        /// Thread to hydrate.
+        thread_id: String,
+        /// Account that owns `thread_id`, when the caller knows it.
+        ///
+        /// Required because the chat surface's account is not necessarily the
+        /// thread's: in unified ("All accounts") mode the panel runs on the
+        /// first enabled account while the user reads a thread belonging to
+        /// any of them. Looking the thread up under the wrong account finds
+        /// nothing and silently drops the context. `None` means "use the
+        /// turn's own account", which is correct for single-account callers.
+        account_id: Option<String>,
+    },
     /// No context — the normal route/retrieval/tool-loop pipeline.
     Rag,
 }
@@ -2084,12 +2096,24 @@ pub(super) enum ChatTurnMode {
 /// A conversation-level binding always wins: a chat explicitly created *about*
 /// thread A must not silently re-point at thread B because the user scrolled
 /// somewhere else while it was open.
-pub(super) fn plan_turn_mode(system_message_count: usize, ambient_thread_id: Option<&str>) -> ChatTurnMode {
+pub(super) fn plan_turn_mode(
+    system_message_count: usize,
+    ambient_thread_id: Option<&str>,
+    ambient_account_id: Option<&str>,
+) -> ChatTurnMode {
     if system_message_count > 0 {
         return ChatTurnMode::ConversationThread;
     }
     match ambient_thread_id.map(str::trim) {
-        Some(id) if !id.is_empty() => ChatTurnMode::AmbientThread(id.to_string()),
+        Some(id) if !id.is_empty() => ChatTurnMode::AmbientThread {
+            thread_id: id.to_string(),
+            // Blank is treated as absent, same as the thread id: an empty
+            // string would become a lookup that matches no account.
+            account_id: ambient_account_id
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string),
+        },
         _ => ChatTurnMode::Rag,
     }
 }
@@ -2842,6 +2866,10 @@ pub async fn run_chat_turn(
     history: Vec<ChatMessage>,
     categories: Vec<String>,
     ambient_thread_id: Option<String>,
+    // Account owning `ambient_thread_id`, when the caller knows it. See
+    // `ChatTurnMode::AmbientThread` for why this cannot be assumed to equal
+    // `account_id`.
+    ambient_account_id: Option<String>,
 ) -> Result<()> {
     let turn_start = std::time::Instant::now();
 
@@ -2860,26 +2888,46 @@ pub async fn run_chat_turn(
     //      main view as ambient context for this turn only.
     // `plan_turn_mode` owns the precedence between them.
     let system_messages = db.get_chat_system_messages(&conversation_id).unwrap_or_default();
-    let thread_context: Option<Vec<ChatMessage>> =
-        match plan_turn_mode(system_messages.len(), ambient_thread_id.as_deref()) {
-            ChatTurnMode::ConversationThread => Some(system_messages),
-            ChatTurnMode::AmbientThread(thread_id) => {
-                // Build the context fresh for this turn. A failure here (thread
-                // deleted mid-session, unreadable rows) must not kill the turn —
-                // fall back to normal retrieval so the user still gets an answer.
-                match super::conversations::build_thread_context(&db, &account_id, &thread_id) {
-                    Ok((context, _subject)) => Some(vec![ChatMessage::ephemeral_system(&conversation_id, &context)]),
-                    Err(e) => {
-                        emit_log(
-                            "warn",
-                            &format!("ambient thread context unavailable ({e}) — falling back to retrieval"),
-                        );
-                        None
-                    }
+    let thread_context: Option<Vec<ChatMessage>> = match plan_turn_mode(
+        system_messages.len(),
+        ambient_thread_id.as_deref(),
+        ambient_account_id.as_deref(),
+    ) {
+        ChatTurnMode::ConversationThread => Some(system_messages),
+        ChatTurnMode::AmbientThread {
+            thread_id,
+            account_id: ambient_account,
+        } => {
+            // Look the thread up under ITS OWN account when the caller
+            // supplied one. In unified mode the turn's `account_id` is
+            // just the first enabled account and usually does not own the
+            // open thread, which found nothing and dropped the context.
+            let lookup_account = ambient_account.as_deref().unwrap_or(&account_id);
+            // Build the context fresh for this turn. A failure here (thread
+            // deleted mid-session, unreadable rows) must not kill the turn —
+            // fall back to normal retrieval so the user still gets an answer.
+            match super::conversations::build_thread_context(&db, lookup_account, &thread_id) {
+                Ok((context, _subject)) => Some(vec![ChatMessage::ephemeral_system(&conversation_id, &context)]),
+                Err(e) => {
+                    // Surface this, don't just log it. The answer that
+                    // follows is ungrounded but sounds confident ("which
+                    // email do you mean?"), so a silent downgrade reads as
+                    // the model being broken rather than the context being
+                    // dropped.
+                    emit_log(
+                        "error",
+                        "The open email couldn't be used as context for this answer — answering from search instead.",
+                    );
+                    emit_log(
+                        "warn",
+                        &format!("ambient thread context unavailable ({e}) — falling back to retrieval"),
+                    );
+                    None
                 }
             }
-            ChatTurnMode::Rag => None,
-        };
+        }
+        ChatTurnMode::Rag => None,
+    };
 
     if let Some(system_messages) = thread_context {
         return run_thread_bound_turn(
@@ -5295,14 +5343,14 @@ mod tests {
 
     #[test]
     fn turn_mode_is_rag_without_any_context() {
-        assert_eq!(plan_turn_mode(0, None), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, None, None), ChatTurnMode::Rag);
     }
 
     #[test]
     fn turn_mode_is_conversation_bound_when_seeded_with_thread() {
         // "Chat about this thread" seeds a role='system' message at creation;
         // that binding owns the whole conversation.
-        assert_eq!(plan_turn_mode(1, None), ChatTurnMode::ConversationThread);
+        assert_eq!(plan_turn_mode(1, None, None), ChatTurnMode::ConversationThread);
     }
 
     #[test]
@@ -5310,8 +5358,56 @@ mod tests {
         // Right-hand chat panel: the thread the user is looking at grounds
         // this turn only.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42")),
-            ChatTurnMode::AmbientThread("t-42".to_string())
+            plan_turn_mode(0, Some("t-42"), None),
+            ChatTurnMode::AmbientThread {
+                thread_id: "t-42".to_string(),
+                account_id: None
+            }
+        );
+    }
+
+    #[test]
+    fn ambient_thread_carries_its_own_account() {
+        // Regression: in unified ("All accounts") mode the panel is handed the
+        // *first enabled* account, which usually does not own the thread the
+        // user is reading. `get_thread(account, thread)` then returns nothing,
+        // `build_thread_context` errors NotFound, and the turn silently falls
+        // back to retrieval — the user asks "resume el correo" with an email
+        // open and is told the model doesn't know which email they mean.
+        // The thread's own account must ride along with the thread id.
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), Some("acct-owning-t-42")),
+            ChatTurnMode::AmbientThread {
+                thread_id: "t-42".to_string(),
+                account_id: Some("acct-owning-t-42".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn ambient_thread_without_account_falls_back_to_the_turn_account() {
+        // Single-account installs (and any older caller) send no account; the
+        // turn's own account is correct there, so `None` must stay valid
+        // rather than disabling the grounding.
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), None),
+            ChatTurnMode::AmbientThread {
+                thread_id: "t-42".to_string(),
+                account_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn blank_ambient_account_id_is_ignored() {
+        // Same defensive treatment the thread id already gets: an empty string
+        // must not become an account lookup that matches nothing.
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), Some("   ")),
+            ChatTurnMode::AmbientThread {
+                thread_id: "t-42".to_string(),
+                account_id: None,
+            }
         );
     }
 
@@ -5319,7 +5415,7 @@ mod tests {
     fn conversation_binding_wins_over_ambient_thread() {
         // A conversation explicitly created about thread A must not silently
         // re-point at thread B just because the user scrolled to it.
-        assert_eq!(plan_turn_mode(1, Some("t-99")), ChatTurnMode::ConversationThread);
+        assert_eq!(plan_turn_mode(1, Some("t-99"), None), ChatTurnMode::ConversationThread);
     }
 
     #[test]
@@ -5327,8 +5423,8 @@ mod tests {
         // Defensive: an empty string from the frontend must not be treated as
         // a real thread and send the turn down the grounded path with no
         // context at all.
-        assert_eq!(plan_turn_mode(0, Some("")), ChatTurnMode::Rag);
-        assert_eq!(plan_turn_mode(0, Some("   ")), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, Some(""), None), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, Some("   "), None), ChatTurnMode::Rag);
     }
 
     #[test]

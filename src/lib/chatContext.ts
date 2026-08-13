@@ -57,6 +57,28 @@ export function deriveChatContext({ viewMode, activeTab, selectedEmail }: ChatCo
   return null;
 }
 
+/** What a turn sends as ambient grounding, or `null` for plain retrieval. */
+export interface ChatTurnContext {
+  threadId: string;
+  accountId: string;
+}
+
+/**
+ * Pure planner: what the panel sends with a turn, given the offered context and
+ * whether its chip is armed.
+ *
+ * The `accountId` half is the point. It is the *thread's* account, which is not
+ * necessarily the account the chat runs on — in unified ("All accounts") mode
+ * the panel runs on the first enabled account while the open thread can belong
+ * to any of them. Sending only the thread id made the backend look it up under
+ * the chat's account, find nothing, and silently answer from retrieval instead
+ * ("resume el correo" → "which email do you mean?" with the email open).
+ */
+export function chatTurnContext(context: ChatContext | null, active: boolean): ChatTurnContext | null {
+  if (!active || !context) return null;
+  return { threadId: context.threadId, accountId: context.accountId };
+}
+
 /**
  * Whether this conversation was seeded with a thread at creation ("Chat about
  * this thread"), which the backend's `plan_turn_mode` gives precedence over

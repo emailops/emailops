@@ -158,6 +158,25 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         .map(|s| s.to_string())
         .collect();
 
+    // Cases name accounts the way humans do; the grounding lookup keys on the
+    // account *id*. `account:` already accepts either form (see
+    // `runner.rs`'s per-case override), so `ambient_account:` must too —
+    // passing an email straight through silently finds no thread and the turn
+    // falls back to retrieval, i.e. it reproduces the very bug the case exists
+    // to catch and looks like a product regression.
+    fn resolve_ambient_account(db: &Database, hint: Option<&str>) -> Option<String> {
+        let hint = hint.map(str::trim).filter(|h| !h.is_empty())?;
+        let resolved = db.list_accounts().ok().and_then(|accounts| {
+            accounts
+                .into_iter()
+                .find(|a| a.id.eq_ignore_ascii_case(hint) || a.email.eq_ignore_ascii_case(hint))
+                .map(|a| a.id)
+        });
+        // Unresolved: hand the raw hint through so the case fails on its own
+        // assertions rather than the harness silently dropping the context.
+        Some(resolved.unwrap_or_else(|| hint.to_string()))
+    }
+
     // 0. Pin "today" if the case opted in via `as_of:`. The guard restores
     //    `SystemClock` on drop, so a panic or early-return inside the chat
     //    turn cannot leave the global registry pointing at a stale clock.
@@ -200,9 +219,13 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         model.to_string(),
         history,
         categories,
-        // Eval cases drive the retrieval pipeline; there is no open view to
-        // ground a turn in.
-        None,
+        // Ambient view context. Normally absent — a case drives the retrieval
+        // pipeline and there is no open view — but a case may set
+        // `ambient_thread_id` to reproduce the chat panel's context chip,
+        // including the cross-account shape where the thread belongs to an
+        // account other than the one the chat runs on.
+        case.ambient_thread_id.clone(),
+        resolve_ambient_account(&db, case.ambient_account.as_deref()),
     )
     .await?;
 
