@@ -1,0 +1,56 @@
+# Calendar questions must reach the tool loop.
+#
+# `RagFirst` is strictly sources-only — it exposes no tool definitions at all
+# (see `turn.rs`, "RagFirst is strictly sources-only"). So a calendar question
+# routed to RAG can only be answered from retrieved email chunks, and
+# `list_calendar_events` is unreachable. The model then correctly refuses
+# ("no puedo acceder a los resultados de ninguna tool"), which reads to the
+# user as the calendar integration being broken.
+#
+# `TOOLS_FIRST_KEYWORDS` in `services/chat/routing.rs` had no calendar or
+# meeting vocabulary in either language, so calendar questions only reached the
+# tool loop by accident — when the phrasing happened to carry an unrelated
+# keyword ("¿qué tengo hoy?", "reuniones de marzo"). "cuál es la siguiente
+# reunión en mi calendario" carries none, and could never work.
+#
+# The routing decision itself is locked deterministically by the unit tests in
+# `routing.rs` (`heuristic_routes_calendar_questions_to_tools`). What these
+# cases add is the step after it: that a model handed the full tool menu
+# actually picks the calendar tool for a calendar question, rather than falling
+# back to `search_emails`.
+#
+# NOTE: the synthetic demo DB has no `calendar_events` rows — the generator
+# creates emails *about* calendars, not calendar entries. That is fine here:
+# an empty calendar is a valid result, and the assertion is on which tool the
+# model reaches for, not on the events returned. Do not add an
+# `expected_answer_contains` anchor naming a specific event; it would depend on
+# data the demo DB does not have.
+
+- id: calendar_next_meeting_es
+  question: "cual es la siguiente reunión en mi calendario?"
+  account: "ulises@emailopslabs.dev"
+  category: routing
+  tier: smoke
+  expected_tools_called: ["list_calendar_events"]
+  # The pre-fix reply explained it could not call the tool and named it inline.
+  # A leaked internal tool name in user-facing prose is a recurring failure in
+  # this codebase (see thread_bound.yaml, which guards the same shape for
+  # `generate_email_draft`), so assert it never surfaces.
+  expected_answer_not_contains:
+    - "list_calendar_events"
+    - "no puedo acceder"
+  metrics:
+    - answer_relevancy
+
+# English counterpart: the keyword list is bilingual, and a regression that
+# only restored one language would otherwise pass.
+- id: calendar_next_meeting_en
+  question: "what is my next meeting?"
+  account: "ulises@emailopslabs.dev"
+  category: routing
+  tier: smoke
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_not_contains:
+    - "list_calendar_events"
+  metrics:
+    - answer_relevancy

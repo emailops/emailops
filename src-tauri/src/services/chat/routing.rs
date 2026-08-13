@@ -125,6 +125,33 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "último trimestre",
     "ultimo trimestre",
     "trimestre pasado",
+    // Calendar / meetings (EN + ES). These MUST route tools-first: the
+    // RagFirst path exposes no tool definitions at all (see turn.rs, "RagFirst
+    // is strictly sources-only"), so `list_calendar_events` is unreachable
+    // there and the model can only answer from retrieved email chunks — it
+    // correctly refuses, which reads to the user as the calendar being broken.
+    // Before these entries a calendar question only reached the tool loop by
+    // accident, when it happened to carry an unrelated keyword ("¿qué tengo
+    // hoy?", "reuniones de marzo").
+    //
+    // `calendar` is deliberately listed once: it is a substring of the Spanish
+    // `calendario`, so it covers both languages. `reunion` (unaccented) covers
+    // the plural `reuniones`; the accented `reunión` needs its own entry
+    // because the accent breaks the substring match.
+    //
+    // Note the singular `event` is intentionally NOT here — it is a substring
+    // of `eventually`/`eventual`, which would drag ordinary questions onto the
+    // tool path. `events` (EN) and `evento` (ES, safe: `eventualmente` does not
+    // contain it) cover the intent without that false positive.
+    "meeting",
+    "calendar",
+    "agenda",
+    "appointment",
+    "schedule",
+    "events",
+    "reunión",
+    "reunion",
+    "evento",
     // Month names — Spanish. The risk of false positives ("hola Mayo") is
     // low and the cost of routing to ToolsFirst when RAG would have worked
     // is also low (the model still has tools to find the email). We omit
@@ -409,6 +436,47 @@ mod tests {
         assert_eq!(mode, RouteMode::ToolsFirst);
         let (mode, _) = heuristic_route("invoices in december").unwrap();
         assert_eq!(mode, RouteMode::ToolsFirst);
+    }
+
+    #[test]
+    fn heuristic_routes_calendar_questions_to_tools() {
+        // Calendar questions must reach the tool loop: RagFirst exposes no tool
+        // definitions at all (see turn.rs "RagFirst is strictly sources-only"),
+        // so `list_calendar_events` is unreachable on that path and the model
+        // can only answer from email chunks. Without a calendar keyword the
+        // heuristic sent every one of these to RagFirst.
+        for q in [
+            // ES — the reported failure, plus accent/plural variants.
+            "cual es la siguiente reunión en mi calendario?",
+            "cuales son mis proximas reuniones",
+            "que tengo en el calendario",
+            "mi agenda de la proxima semana",
+            "hay algun evento importante",
+            // EN
+            "what is my next meeting",
+            "show my calendar",
+            "do i have any appointments",
+            "what is scheduled for me",
+        ] {
+            let res = heuristic_route(q);
+            assert!(res.is_some(), "expected ToolsFirst for: {}", q);
+            assert_eq!(res.unwrap().0, RouteMode::ToolsFirst, "query: {}", q);
+        }
+    }
+
+    #[test]
+    fn calendar_keywords_do_not_swallow_unrelated_words() {
+        // Substring matching is the mechanism, so a keyword that is a prefix of
+        // a common unrelated word would silently drag ordinary questions onto
+        // the tool path. "event" is deliberately absent for this reason — it is
+        // a substring of "eventually"/"eventualmente".
+        for q in [
+            "eventually we should discuss the proposal",
+            "eventualmente hablamos del contrato",
+            "necesito solicitar el presupuesto",
+        ] {
+            assert!(heuristic_route(q).is_none(), "unexpected ToolsFirst for: {}", q);
+        }
     }
 
     // ── History-aware follow-up routing ─────────────────────────────────
