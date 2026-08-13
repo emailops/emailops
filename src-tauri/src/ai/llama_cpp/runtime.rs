@@ -488,6 +488,65 @@ impl LlamaCppRuntime {
         });
     }
 
+    /// Release every loaded model and wait for the inference thread to unwind.
+    ///
+    /// Call this before the process exits. ggml registers each Metal buffer in
+    /// a residency set, and at `exit()` the C++ static destructor for its
+    /// device list asserts the set is empty
+    /// (`ggml_metal_rsets_free`: `GGML_ASSERT([rsets->data count] == 0)`,
+    /// commented upstream with "most likely you haven't deallocated all Metal
+    /// resources before exiting"). A still-loaded model therefore turns a
+    /// normal quit into `SIGABRT` — a crash report on every quit for anyone
+    /// using the embedded provider.
+    ///
+    /// Mirrors the idle-eviction path in [`Self::spawn_eviction_task`], but
+    /// additionally waits for the actor thread — dropping the handle only
+    /// *asks* it to stop, and it is the thread that owns the context.
+    ///
+    /// These are `tokio::sync::Mutex`es, so `lock()` is a future and
+    /// `blocking_lock()` panics when a runtime is active. Shutdown must never
+    /// panic, so it retries `try_lock` until `timeout` instead: a lock held by
+    /// an in-flight request frees up as soon as that request finishes.
+    ///
+    /// Returns `true` if everything was released within `timeout`.
+    pub fn shutdown(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        let remaining = || deadline.saturating_duration_since(std::time::Instant::now());
+
+        // Take the handle out first and keep a waiter, because the thread only
+        // observes the closed channel once every clone has been dropped.
+        let waiter = loop {
+            if let Ok(mut guard) = self.chat_actor.try_lock() {
+                let waiter = guard.as_ref().map(super::actor::InferenceActorHandle::exit_waiter);
+                *guard = None; // drops this clone → closes the channel
+                break waiter;
+            }
+            if remaining().is_zero() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+
+        for slot in [&self.chat_model, &self.embed_model] {
+            loop {
+                if let Ok(mut guard) = slot.try_lock() {
+                    *guard = None;
+                    break;
+                }
+                if remaining().is_zero() {
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        match waiter {
+            Some(waiter) => waiter.wait_for_exit(remaining()),
+            // No actor was ever spawned, so no context exists to release.
+            None => true,
+        }
+    }
+
     /// Returns `true` when a chat model file is configured and present on disk.
     pub fn is_ready(&self) -> bool {
         self.chat_model_path.as_ref().is_some_and(|p| p.exists())
@@ -1412,6 +1471,32 @@ fn render_gemma4_chat_template(messages: &[AiMessage], add_generation_prompt: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // `shutdown` runs on the quit path, where a panic or a hang is worse than
+    // the crash it prevents. The interesting case — a loaded model releasing
+    // its Metal buffers — needs a real GGUF and a GPU, so it is verified
+    // empirically instead (run a chat via emailops-cli and assert no
+    // SIGABRT / crash report on exit). What is unit-testable is that the
+    // no-model and repeat paths stay fast and total.
+    // `LlamaCppRuntime::new` spawns the idle-eviction task, so these need a
+    // reactor even though `shutdown` itself is synchronous.
+    #[tokio::test]
+    async fn shutdown_succeeds_immediately_when_nothing_was_loaded() {
+        let runtime = LlamaCppRuntime::new(None, None);
+        let started = std::time::Instant::now();
+        assert!(runtime.shutdown(std::time::Duration::from_secs(5)));
+        // No actor was ever spawned, so it must not spend the timeout waiting.
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_idempotent() {
+        // The app calls it from RunEvent::Exit and the CLI from run(); a
+        // second call must not block or panic on already-cleared slots.
+        let runtime = LlamaCppRuntime::new(None, None);
+        assert!(runtime.shutdown(std::time::Duration::from_secs(5)));
+        assert!(runtime.shutdown(std::time::Duration::from_secs(5)));
+    }
 
     fn msg(role: &str, content: &str) -> AiMessage {
         AiMessage {

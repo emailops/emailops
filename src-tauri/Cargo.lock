@@ -1709,6 +1709,7 @@ dependencies = [
  "keyring",
  "keyring-core",
  "lettre",
+ "libc",
  "llama-cpp-2",
  "llama-cpp-sys-2",
  "mailparse",

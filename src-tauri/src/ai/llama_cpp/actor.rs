@@ -49,7 +49,7 @@
 
 use std::num::NonZeroU32;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // `Special` and `token_to_str` are deprecated in llama-cpp-2 — the new
 // `token_to_piece` API is more flexible but not yet migrated here.
@@ -150,6 +150,17 @@ struct GenRequest {
 #[derive(Clone)]
 pub(crate) struct InferenceActorHandle {
     tx: Sender<GenRequest>,
+    /// Join handle for the inference thread, shared across clones.
+    ///
+    /// Dropping the handles closes the channel but returns immediately — the
+    /// thread may still be mid-decode, and it is the thread that owns the
+    /// `LlamaContext` and therefore the Metal buffers. On shutdown we must
+    /// actually WAIT for it: ggml asserts at process exit that every Metal
+    /// residency-set entry has been released
+    /// (`ggml_metal_rsets_free`: `GGML_ASSERT([rsets->data count] == 0)`),
+    /// and aborts the process if the context outlived us. See
+    /// [`InferenceActorHandle::wait_for_exit`].
+    thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl InferenceActorHandle {
@@ -159,11 +170,26 @@ impl InferenceActorHandle {
     /// effective window via [`effective_n_ctx`] once the model is known.
     pub(crate) fn spawn(model: Arc<LlamaModel>, n_ctx_override: u32) -> std::result::Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel::<GenRequest>();
-        std::thread::Builder::new()
+        let join = std::thread::Builder::new()
             .name("llama-inference".into())
             .spawn(move || actor_loop(&model, &rx, n_ctx_override))
             .map_err(|e| format!("Failed to spawn inference thread: {}", e))?;
-        Ok(Self { tx })
+        Ok(Self {
+            tx,
+            thread: Arc::new(Mutex::new(Some(join))),
+        })
+    }
+
+    /// A waiter for this actor's thread that outlives the handle itself.
+    ///
+    /// Shutdown has to drop every `InferenceActorHandle` clone first (that is
+    /// what closes the channel and lets the loop return), but it still needs to
+    /// join the thread afterwards. Cloning the shared join handle out first
+    /// keeps that possible.
+    pub(crate) fn exit_waiter(&self) -> ActorExitWaiter {
+        ActorExitWaiter {
+            thread: Arc::clone(&self.thread),
+        }
     }
 
     /// Run one generation pass on the actor thread. `cache_prompt: false`
@@ -195,6 +221,52 @@ impl InferenceActorHandle {
         reply_rx
             .await
             .map_err(|_| "Inference thread dropped the request".to_string())?
+    }
+}
+
+/// Waits for an inference thread to finish releasing its `LlamaContext`.
+///
+/// Held separately from [`InferenceActorHandle`] so shutdown can drop every
+/// handle (closing the channel) and *then* wait for the thread to unwind.
+pub(crate) struct ActorExitWaiter {
+    thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+}
+
+impl ActorExitWaiter {
+    /// Block until the inference thread exits, or `timeout` elapses.
+    ///
+    /// Returns `true` if the thread is confirmed gone — i.e. its
+    /// `LlamaContext`, and with it every Metal buffer, has been dropped.
+    ///
+    /// The timeout matters: a request already in flight keeps decoding until
+    /// it finishes, and a long generation can run for many seconds. We would
+    /// rather exit with the assert-avoidance backstop than hang the quit, so
+    /// callers treat `false` as "give up waiting", not as an error.
+    pub(crate) fn wait_for_exit(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            {
+                let Ok(mut guard) = self.thread.lock() else {
+                    // Poisoned means a previous panic — nothing left to join.
+                    return false;
+                };
+                match guard.as_ref() {
+                    // Already joined by an earlier shutdown call.
+                    None => return true,
+                    Some(handle) if handle.is_finished() => {
+                        if let Some(handle) = guard.take() {
+                            let _ = handle.join();
+                        }
+                        return true;
+                    }
+                    Some(_) => {}
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 

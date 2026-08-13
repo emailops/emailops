@@ -397,9 +397,37 @@ pub enum Command {
     },
 }
 
-/// Process entry point. Builds a current-thread tokio runtime (mirrors the eval
-/// harnesses), parses args, bootstraps the session, and dispatches.
+/// Process entry point.
+///
+/// Wraps [`run_code`] so the embedded AI runtime is released before the
+/// process leaves. Without this the CLI aborts on exit exactly like the app
+/// did: ggml's device-list destructor asserts every Metal buffer has been
+/// released and calls `abort()` otherwise, so a `chat` command would print a
+/// correct answer and *then* die with `SIGABRT` — visible as a crash report
+/// and a nonzero status on an otherwise successful run.
 pub fn run() -> ExitCode {
+    let code = run_code();
+
+    crate::services::ai::shutdown_local_ai();
+
+    #[cfg(target_os = "macos")]
+    {
+        // Backstop, same reasoning as the desktop app's `on_exit`: the
+        // embedding runtime (and any future vendored at-exit hook) can abort
+        // in a static destructor no matter how cleanly we shut down. Nothing
+        // of ours is registered via `atexit`, and SQLite is in WAL mode.
+        // SAFETY: `_exit` terminates the process; nothing runs after it.
+        unsafe { libc::_exit(i32::from(code)) };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    ExitCode::from(code)
+}
+
+/// Builds a current-thread tokio runtime (mirrors the eval harnesses), parses
+/// args, bootstraps the session, and dispatches. Returns the raw process exit
+/// code so [`run`] can hand it to `_exit`.
+fn run_code() -> u8 {
     // Load .env from the same locations the eval harnesses use so local model
     // / provider config is picked up when running from the repo.
     for p in [".env.local", ".env", "../.env.local", "../.env"] {
@@ -415,7 +443,7 @@ pub fn run() -> ExitCode {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("[emailops-cli] failed to start runtime: {e}");
-            return ExitCode::FAILURE;
+            return 1;
         }
     };
 
@@ -423,10 +451,10 @@ pub fn run() -> ExitCode {
     // failure envelope (JSON mode → stdout, pretty → stderr) plus a process exit
     // code grouped by remediation. Success returns 0.
     match rt.block_on(run_async(cli, mode)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             output::emit_error(&e, mode);
-            ExitCode::from(output::exit_code(&e))
+            output::exit_code(&e)
         }
     }
 }

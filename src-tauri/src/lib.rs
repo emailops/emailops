@@ -667,8 +667,48 @@ pub fn run() {
             commands::lenses::reextract_lens_row,
             commands::lenses::preview_lens_extraction,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| {
+            // Built + run with a callback (rather than plain `Builder::run`)
+            // purely to reach `RunEvent::Exit`. On macOS `-[NSApplication
+            // terminate:]` calls `exit()` itself, so the event loop never
+            // returns and any cleanup written after `run(...)` is dead code —
+            // this callback is the last point we control.
+            if matches!(event, tauri::RunEvent::Exit) {
+                on_exit();
+            }
+        });
+}
+
+/// Last-chance cleanup, run from `RunEvent::Exit`.
+///
+/// Releases the embedded AI runtime, then leaves the process without running
+/// C++ static destructors.
+///
+/// Both halves matter. ggml registers every Metal buffer in a residency set
+/// and its device-list destructor asserts the set is empty at `exit()`
+/// (`ggml_metal_rsets_free`), aborting the process otherwise — which is why a
+/// plain quit produced a `SIGABRT` crash report for anyone using the embedded
+/// provider. `shutdown_local_ai` removes the cause by dropping the model and
+/// waiting for the inference thread; `_exit` is the backstop, because the
+/// bundled *embedding* runtime and any future vendored at-exit hook can abort
+/// the same way and a crash on quit is never worth the destructors we skip.
+///
+/// Skipping them is safe here: SQLite is in WAL mode (a WAL left behind is
+/// recovered on next open, and the backup thread writes to a temp file that is
+/// only renamed on success), and no other shutdown work is registered via
+/// `atexit`.
+#[cfg(feature = "desktop")]
+fn on_exit() {
+    services::ai::shutdown_local_ai();
+
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: `_exit` is async-signal-safe and simply terminates the
+        // process. Nothing may run after it, which is the point.
+        unsafe { libc::_exit(0) };
+    }
 }
 
 // ── Fatal startup errors ──────────────────────────────────────────────────────

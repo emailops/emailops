@@ -67,6 +67,45 @@ struct CachedLlamaCppRuntime {
 static LLAMACPP_RUNTIME_CACHE: std::sync::OnceLock<std::sync::Mutex<Option<CachedLlamaCppRuntime>>> =
     std::sync::OnceLock::new();
 
+/// Release the embedded AI runtime before the process exits.
+///
+/// ggml asserts at `exit()` that every Metal buffer has been released, and
+/// aborts the process otherwise — so quitting with a model still loaded turns
+/// a clean quit into `SIGABRT`. Call this from every process that can load the
+/// embedded provider (the Tauri app on `RunEvent::Exit`, and `emailops-cli`
+/// before returning from `main`).
+///
+/// Safe to call when no model was ever loaded, when the `llamacpp` feature is
+/// off (it compiles to a no-op), and more than once.
+pub fn shutdown_local_ai() {
+    #[cfg(feature = "llamacpp")]
+    {
+        // Bounded: an in-flight generation keeps decoding until it finishes,
+        // and we would rather fall through to the caller's backstop than hang
+        // the user's quit behind a long completion.
+        const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+        let Some(cache) = LLAMACPP_RUNTIME_CACHE.get() else {
+            return; // never initialised — nothing was ever loaded
+        };
+        let runtime = {
+            let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Take the entry so a late `get_or_create` cannot hand the
+            // half-torn-down runtime to a new caller during shutdown.
+            guard.take().map(|cached| cached.runtime)
+        };
+        if let Some(runtime) = runtime {
+            if !runtime.shutdown(SHUTDOWN_TIMEOUT) {
+                crate::services::logger::log(
+                    "debug",
+                    "ai",
+                    "llamacpp: inference thread still busy at shutdown; exiting without waiting".to_string(),
+                );
+            }
+        }
+    }
+}
+
 #[cfg(feature = "llamacpp")]
 fn get_or_create_llamacpp_runtime(
     chat_path: Option<std::path::PathBuf>,
