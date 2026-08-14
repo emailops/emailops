@@ -15,7 +15,7 @@ vi.mock('@/hooks/useResponsiveLayout', () => ({
   useResponsiveLayout: vi.fn(() => ({ isStacked: false, isMobile: false })),
 }));
 vi.mock('@/lib/api', () => ({ prewarmChat: vi.fn(() => Promise.resolve()) }));
-vi.mock('@/components/shared/AccountScopeChip', () => ({ AccountScopeChip: () => null }));
+vi.mock('./ChatAccountPicker', () => ({ ChatAccountPicker: () => null }));
 vi.mock('./ChatInput', () => ({ ChatInput: () => null }));
 vi.mock('./ConversationList', () => ({ ConversationList: () => null }));
 vi.mock('./MessageList', () => ({ MessageList: () => null }));
@@ -28,7 +28,7 @@ vi.mock('@/stores/logStore', () => ({
 }));
 
 const selectConversation = vi.fn(() => Promise.resolve());
-const fetchConversations = vi.fn(() => Promise.resolve());
+const selectAccount = vi.fn(() => Promise.resolve());
 
 vi.mock('@/stores/chatStore', () => ({
   useChatStore: () => ({
@@ -41,7 +41,7 @@ vi.mock('@/stores/chatStore', () => ({
     isLoadingConversations: false,
     isLoadingMessages: false,
     error: null,
-    fetchConversations,
+    selectAccount,
     createConversation: vi.fn(),
     selectConversation,
     renameConversation: vi.fn(),
@@ -74,7 +74,7 @@ afterEach(() => {
 async function mount(isStacked: boolean, accountId: string | null = 'a1') {
   vi.mocked(useResponsiveLayout).mockReturnValue({ isStacked, isMobile: isStacked });
   await act(async () => {
-    root.render(<ChatView accountId={accountId} onNavigateToInbox={() => {}} />);
+    root.render(<ChatView accountId={accountId} onAccountChange={() => {}} onNavigateToInbox={() => {}} />);
   });
 }
 
@@ -94,11 +94,11 @@ describe('ChatView entry', () => {
   });
 
   it('still loads the conversation list on a phone', async () => {
-    // Clearing the selection must not also skip the fetch — the history screen
-    // would come up empty.
+    // Clearing the selection must not also skip the account swap — the history
+    // screen would come up empty.
     await mount(true);
 
-    expect(fetchConversations).toHaveBeenCalledWith('a1');
+    expect(selectAccount).toHaveBeenCalledWith('a1');
   });
 
   it('does nothing without an account', async () => {
