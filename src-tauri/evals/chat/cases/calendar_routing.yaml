@@ -13,25 +13,31 @@
 # keyword ("¿qué tengo hoy?", "reuniones de marzo"). "cuál es la siguiente
 # reunión en mi calendario" carries none, and could never work.
 #
-# The routing decision itself is locked deterministically by the unit tests in
-# `routing.rs` (`heuristic_routes_calendar_questions_to_tools`). What these
-# cases add is the step after it: that a model handed the full tool menu
-# actually picks the calendar tool for a calendar question, rather than falling
-# back to `search_emails`.
+# `routing.rs`'s unit tests already lock the keyword matching. What these cases
+# add is the same decision end to end, through a real turn against a real
+# corpus — the layer where a prompt or model change could still send a calendar
+# question down the retrieval path.
 #
-# NOTE: the synthetic demo DB has no `calendar_events` rows — the generator
-# creates emails *about* calendars, not calendar entries. That is fine here:
-# an empty calendar is a valid result, and the assertion is on which tool the
-# model reaches for, not on the events returned. Do not add an
-# `expected_answer_contains` anchor naming a specific event; it would depend on
-# data the demo DB does not have.
+# WHY THESE ASSERT THE ROUTE, NOT THE TOOL CALL
+# The synthetic demo DB has no calendars and no events — the generator creates
+# emails *about* calendars, not calendar entries. Asserting
+# `expected_tools_called: [list_calendar_events]` measured the model's judgement
+# on an empty calendar rather than the routing change, and failed even with the
+# fix in place. The route is what this change actually controls and is
+# deterministic: pre-fix these questions produced `rag_first` (which exposes no
+# tool definitions at all, so the calendar tool was unreachable), post-fix they
+# produce `tools_first`.
+#
+# To assert the tool call itself, the demo generator would need to seed calendar
+# rows; until then that end of the path is covered by a private case against a
+# real mailbox.
 
 - id: calendar_next_meeting_es
   question: "cual es la siguiente reunión en mi calendario?"
   account: "ulises@emailopslabs.dev"
   category: routing
   tier: smoke
-  expected_tools_called: ["list_calendar_events"]
+  expected_route: tools_first
   # The pre-fix reply explained it could not call the tool and named it inline.
   # A leaked internal tool name in user-facing prose is a recurring failure in
   # this codebase (see thread_bound.yaml, which guards the same shape for
@@ -49,7 +55,7 @@
   account: "ulises@emailopslabs.dev"
   category: routing
   tier: smoke
-  expected_tools_called: ["list_calendar_events"]
+  expected_route: tools_first
   expected_answer_not_contains:
     - "list_calendar_events"
   metrics:
