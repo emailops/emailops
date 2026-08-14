@@ -270,3 +270,112 @@ describe('selectAccount', () => {
     expect(useChatStore.getState().activeConversationId).toBe('c-a1');
   });
 });
+
+describe('a turn that is still generating when you navigate away', () => {
+  function msg(id: string, conversationId: string, role: 'user' | 'assistant', content = ''): ChatMessage {
+    return {
+      id,
+      conversationId,
+      role,
+      content,
+      model: null,
+      tokenCount: null,
+      latencyMs: null,
+      createdAt: 0,
+      sources: [],
+      referencedEmailIds: [],
+      referencedDraftIds: [],
+    };
+  }
+  const convA = { id: 'c-a1', accountId: 'acct-a', title: 'A', createdAt: 0, updatedAt: 0 };
+  const convB = { id: 'c-b1', accountId: 'acct-b', title: 'B', createdAt: 0, updatedAt: 0 };
+
+  beforeEach(() => {
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      streamingMessageId: null,
+      streamingPhase: null,
+      isSending: false,
+      lastConversationByAccount: {},
+      currentAccountId: null,
+      backgroundTurns: {},
+    });
+  });
+
+  it('keeps streaming the answer and shows it on return', async () => {
+    // Start a turn on account A.
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA]);
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: msg('u-1', 'c-a1', 'user', 'hola'),
+      assistantMessage: msg('a-1', 'c-a1', 'assistant'),
+    });
+    await useChatStore.getState().sendMessage('hola');
+    expect(useChatStore.getState().streamingMessageId).toBe('a-1');
+
+    // Switch to account B before the answer arrives.
+    vi.mocked(api.listChatConversations).mockResolvedValue([convB]);
+    await useChatStore.getState().selectAccount('acct-b');
+
+    // The backend keeps going: tokens (and a phase) arrive for A while B is on
+    // screen. They used to be dropped on the floor.
+    useChatStore.getState().handlePhase(phaseEvent({ messageId: 'a-1', conversationId: 'c-a1' }));
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'a-1', conversationId: 'c-a1', token: 'Hola ' }));
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'a-1', conversationId: 'c-a1', token: 'mundo' }));
+
+    // Back to A. The DB row is still empty — the backend only persists the
+    // content when the turn ends — so the UI must fall back to what streamed.
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA]);
+    vi.mocked(api.getChatMessages).mockResolvedValue([
+      msg('u-1', 'c-a1', 'user', 'hola'),
+      msg('a-1', 'c-a1', 'assistant'),
+    ]);
+    await useChatStore.getState().selectAccount('acct-a');
+
+    const s = useChatStore.getState();
+    expect(s.messages.find((m) => m.id === 'a-1')?.content).toBe('Hola mundo');
+    // And it must still read as in-flight, not as a finished empty answer.
+    expect(s.streamingMessageId).toBe('a-1');
+    expect(s.streamingPhase).not.toBeNull();
+  });
+
+  it('stops reporting progress once the background turn finished', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA]);
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: msg('u-1', 'c-a1', 'user', 'hola'),
+      assistantMessage: msg('a-1', 'c-a1', 'assistant'),
+    });
+    await useChatStore.getState().sendMessage('hola');
+
+    vi.mocked(api.listChatConversations).mockResolvedValue([convB]);
+    await useChatStore.getState().selectAccount('acct-b');
+
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'a-1', conversationId: 'c-a1', token: 'Listo' }));
+    useChatStore.getState().handleStreamToken(streamEvent({ messageId: 'a-1', conversationId: 'c-a1', done: true }));
+
+    // Finished while away: the DB now has the answer, so returning shows it
+    // with no lingering "generating" state.
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA]);
+    vi.mocked(api.getChatMessages).mockResolvedValue([msg('a-1', 'c-a1', 'assistant', 'Listo')]);
+    await useChatStore.getState().selectAccount('acct-a');
+
+    const s = useChatStore.getState();
+    expect(s.messages.find((m) => m.id === 'a-1')?.content).toBe('Listo');
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.streamingPhase).toBeNull();
+  });
+});

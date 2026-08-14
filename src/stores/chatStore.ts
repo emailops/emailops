@@ -41,6 +41,17 @@ function parseCategoriesPref(raw: string | null | undefined): EmailCategory[] {
 interface ChatStore {
   conversations: ChatConversation[];
   activeConversationId: string | null;
+  /**
+   * Turns still streaming in a conversation that is not on screen.
+   *
+   * The backend keeps generating after you navigate away, but its tokens used
+   * to be dropped by the active-conversation guard, and the answer is only
+   * persisted when the turn ends. Returning mid-flight therefore showed an
+   * empty bubble with no progress — and looked fixed on the next visit purely
+   * because the turn had finished by then. Buffering here lets the answer and
+   * its status be restored on return.
+   */
+  backgroundTurns: Record<string, { messageId: string; content: string; phase: ChatPhase | null; done: boolean }>;
   /** Last conversation open per account, this session only. See `selectAccount`. */
   lastConversationByAccount: Record<string, string>;
   /** Account chat is currently answering from. */
@@ -112,6 +123,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   // Deliberately NOT persisted — "since startup" is the contract.
   lastConversationByAccount: {},
   currentAccountId: null,
+  backgroundTurns: {},
   messages: [],
   streamingMessageId: null,
   streamingPhase: null,
@@ -219,7 +231,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const messages = await api.getChatMessages(id);
       // If the user switched conversations again before this resolved, ignore.
       if (get().activeConversationId !== id) return;
-      set({ messages, isLoadingMessages: false });
+
+      // Splice back a turn that kept running while this conversation was off
+      // screen. The DB copy is authoritative once the turn ends, but stays
+      // empty until then — so fall back to what streamed, and re-show the
+      // in-flight status so it doesn't read as a finished empty answer.
+      const pending = get().backgroundTurns[id];
+      if (!pending) {
+        set({ messages, isLoadingMessages: false });
+        return;
+      }
+      set((s) => {
+        const remaining = { ...s.backgroundTurns };
+        delete remaining[id];
+        return {
+          messages: messages.map((m) =>
+            m.id === pending.messageId && !m.content ? { ...m, content: pending.content } : m,
+          ),
+          isLoadingMessages: false,
+          backgroundTurns: remaining,
+          streamingMessageId: pending.done ? null : pending.messageId,
+          streamingPhase: pending.done ? null : pending.phase,
+        };
+      });
     } catch (e) {
       if (get().activeConversationId !== id) return;
       set({ isLoadingMessages: false, error: errorText(e) });
@@ -283,7 +317,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   handleStreamToken: (evt) => {
     const { activeConversationId } = get();
-    if (evt.conversationId !== activeConversationId) return;
+    if (evt.conversationId !== activeConversationId) {
+      // Not on screen — accumulate so returning to it shows the answer and
+      // whether it is still running, rather than an empty bubble.
+      set((s) => {
+        const prev = s.backgroundTurns[evt.conversationId];
+        const base = evt.replace ? '' : (prev?.content ?? '');
+        return {
+          backgroundTurns: {
+            ...s.backgroundTurns,
+            [evt.conversationId]: {
+              messageId: evt.messageId,
+              content: evt.error ?? base + evt.token,
+              phase: prev?.phase ?? null,
+              done: evt.done ?? false,
+            },
+          },
+        };
+      });
+      return;
+    }
 
     set((s) => {
       const idx = s.messages.findIndex((m) => m.id === evt.messageId);
@@ -315,7 +368,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   handlePhase: (evt) => {
     const { activeConversationId, streamingMessageId } = get();
-    if (evt.conversationId !== activeConversationId) return;
+    if (evt.conversationId !== activeConversationId) {
+      // Keep the status for a turn running off screen (see `backgroundTurns`).
+      set((s) => {
+        const prev = s.backgroundTurns[evt.conversationId];
+        return {
+          backgroundTurns: {
+            ...s.backgroundTurns,
+            [evt.conversationId]: {
+              messageId: prev?.messageId ?? evt.messageId,
+              content: prev?.content ?? '',
+              phase: evt.phase,
+              done: prev?.done ?? false,
+            },
+          },
+        };
+      });
+      return;
+    }
     // Scope to the active conversation's in-flight turn so a late event from a
     // previous turn can't flip the status back. The streaming id is only known
     // once sendMessage's command returns, so a turn that reaches its first
