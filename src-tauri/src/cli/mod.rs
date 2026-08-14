@@ -408,20 +408,7 @@ pub enum Command {
 pub fn run() -> ExitCode {
     let code = run_code();
 
-    crate::services::ai::shutdown_local_ai();
-
-    #[cfg(target_os = "macos")]
-    {
-        // Backstop, same reasoning as the desktop app's `on_exit`: the
-        // embedding runtime (and any future vendored at-exit hook) can abort
-        // in a static destructor no matter how cleanly we shut down. Nothing
-        // of ours is registered via `atexit`, and SQLite is in WAL mode.
-        // SAFETY: `_exit` terminates the process; nothing runs after it.
-        unsafe { libc::_exit(i32::from(code)) };
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    ExitCode::from(code)
+    crate::services::ai::shutdown_and_exit(i32::from(code))
 }
 
 /// Builds a current-thread tokio runtime (mirrors the eval harnesses), parses

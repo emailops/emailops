@@ -701,14 +701,7 @@ pub fn run() {
 /// `atexit`.
 #[cfg(feature = "desktop")]
 fn on_exit() {
-    services::ai::shutdown_local_ai();
-
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: `_exit` is async-signal-safe and simply terminates the
-        // process. Nothing may run after it, which is the point.
-        unsafe { libc::_exit(0) };
-    }
+    services::ai::shutdown_and_exit(0)
 }
 
 // ── Fatal startup errors ──────────────────────────────────────────────────────

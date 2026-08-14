@@ -128,5 +128,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("[embed] done.");
-    Ok(())
+    // Leave through the shared exit path: this tool loads the embedded
+    // provider, and returning normally runs ggml's static destructors, which
+    // abort the process. The work above had already completed, so `make
+    // demo-embed` reported a failure for a run that fully succeeded.
+    emailops_lib::services::ai::shutdown_and_exit(0)
 }

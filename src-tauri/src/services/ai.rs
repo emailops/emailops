@@ -106,6 +106,32 @@ pub fn shutdown_local_ai() {
     }
 }
 
+/// Release the embedded AI runtime, then leave the process without running C++
+/// static destructors.
+///
+/// The single exit path for every binary that can load the embedded provider —
+/// the desktop app, `emailops-cli`, and the `examples/*` tools. Skipping the
+/// destructors is the backstop: [`shutdown_local_ai`] removes the usual cause,
+/// but the bundled embedding runtime and any future vendored at-exit hook can
+/// abort the same way, and a crash on exit is never worth the destructors we
+/// skip. Safe here — SQLite is in WAL mode and nothing of ours registers an
+/// `atexit` handler.
+///
+/// macOS-only in effect: the abort comes from ggml's Metal residency-set
+/// assert, which has no equivalent in the Vulkan/CPU builds, so other platforms
+/// exit normally.
+pub fn shutdown_and_exit(code: i32) -> ! {
+    shutdown_local_ai();
+
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: `_exit` terminates the process; nothing runs after it.
+        unsafe { libc::_exit(code) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    std::process::exit(code)
+}
+
 #[cfg(feature = "llamacpp")]
 fn get_or_create_llamacpp_runtime(
     chat_path: Option<std::path::PathBuf>,
