@@ -519,6 +519,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
             ariaLabel={t('calendar:selectAccount')}
             placeholder={t('calendar:selectAccount')}
             align="right"
+            variant="light"
           />
         </div>
       </div>

@@ -242,6 +242,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                     label: t('contacts:view.sortPrefix', { label: t(`contacts:sort.${o.labelKey}` as const) }),
                   }))}
                   ariaLabel="Sort contacts"
+                  variant="light"
                 />
                 {distinctCompanies.length > 0 && (
                   <Select
@@ -252,6 +253,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                       ...distinctCompanies.map((c) => ({ value: c, label: c })),
                     ]}
                     ariaLabel="Filter by company"
+                    variant="light"
                   />
                 )}
               </div>
