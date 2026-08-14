@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
@@ -33,10 +32,6 @@ interface ChatViewProps {
 export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: ChatViewProps) {
   const { t } = useTranslation(['chat', 'common']);
   // Chat conversations are hard-scoped to one account. In unified
-  // ("All accounts") mode the parent passes the first enabled account —
-  // surface that scope so users know retrieval doesn't span all accounts.
-  const isUnified = useAccountStore((s) => isUnifiedMode(s.activeAccountId));
-  const scopedAccountEmail = useAccountStore((s) => s.accounts.find((a) => a.id === accountId)?.email);
   const {
     conversations,
     activeConversationId,
@@ -47,7 +42,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
     isLoadingConversations,
     isLoadingMessages,
     error,
-    fetchConversations,
+    selectAccount,
     createConversation,
     selectConversation,
     renameConversation,
@@ -78,19 +73,17 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
   // App.tsx already resets the entire chat store on account switch, so this
   // effect just needs to (re)load the conversation list for the current
   // account.
-  const lastAccountIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!accountId) return;
-    void fetchConversations(accountId);
-    if (lastAccountIdRef.current !== null && lastAccountIdRef.current !== accountId) {
-      void selectConversation(null);
-    }
-    lastAccountIdRef.current = accountId;
+    // `selectAccount` owns the conversation swap: it remembers where we were
+    // and restores the conversation last open for this account this session,
+    // falling back to a fresh chat.
+    void selectAccount(accountId);
     // Seed the local model's prompt-prefix cache for this account so the
     // first turn skips most of its prefill (also re-seeds after the 30-min
     // idle eviction). Fire-and-forget: a failure just means a cold prefill.
     prewarmChat(accountId).catch(() => {});
-  }, [accountId, fetchConversations, selectConversation]);
+  }, [accountId, selectAccount]);
 
   const handleCreate = async () => {
     if (!accountId) return;
@@ -146,9 +139,11 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
         {/* Unified ("All accounts") mode: conversations are hard-scoped to one
             account — surface that scope persistently, in intro AND while a
             conversation is open. The tooltip carries the full explanation. */}
-        {isUnified && accountId && scopedAccountEmail && (
-          <ChatAccountPicker accountId={accountId} onChange={onAccountChange} />
-        )}
+        {/* Not gated on unified mode: chat answers from ONE account whatever
+            the mail view is doing, so which account that is matters just as
+            much when the sidebar is on a single account. The picker hides
+            itself when there is only one to choose from. */}
+        <ChatAccountPicker accountId={accountId} onChange={onAccountChange} />
         {showIntro ? (
           <>
             <div className="flex-1 flex flex-col items-center justify-center text-center px-6 gap-5">

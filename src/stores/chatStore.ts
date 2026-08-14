@@ -41,6 +41,10 @@ function parseCategoriesPref(raw: string | null | undefined): EmailCategory[] {
 interface ChatStore {
   conversations: ChatConversation[];
   activeConversationId: string | null;
+  /** Last conversation open per account, this session only. See `selectAccount`. */
+  lastConversationByAccount: Record<string, string>;
+  /** Account chat is currently answering from. */
+  currentAccountId: string | null;
   messages: ChatMessage[];
   /** id of the assistant message currently receiving tokens, if any */
   streamingMessageId: string | null;
@@ -58,6 +62,21 @@ interface ChatStore {
   categoriesLoaded: boolean;
 
   fetchConversations: (accountId: string) => Promise<void>;
+  /**
+   * Point chat at `accountId`, restoring the conversation last open for it.
+   *
+   * Chat answers from one account at a time, so switching accounts has to
+   * switch conversations too — a conversation belongs to the account it was
+   * created under. Dropping straight to a new chat each time made switching
+   * back and forth lose the thread you were on, so the last conversation used
+   * for an account this session is remembered and restored.
+   *
+   * "This session" is literal: the memory lives in the store, not the DB, so a
+   * restart starts clean rather than reopening something from days ago. An
+   * account never visited since startup (or whose remembered conversation has
+   * since been deleted) opens a fresh chat.
+   */
+  selectAccount: (accountId: string) => Promise<void>;
   createConversation: (accountId: string, title?: string) => Promise<string>;
   /** Create a chat seeded with the cleaned content of an email thread. */
   createConversationFromThread: (accountId: string, threadId: string) => Promise<string>;
@@ -90,6 +109,9 @@ interface ChatStore {
 export const useChatStore = create<ChatStore>((set, get) => ({
   conversations: [],
   activeConversationId: null,
+  // Deliberately NOT persisted — "since startup" is the contract.
+  lastConversationByAccount: {},
+  currentAccountId: null,
   messages: [],
   streamingMessageId: null,
   streamingPhase: null,
@@ -131,6 +153,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } catch (e) {
       set({ isLoadingConversations: false, error: errorText(e) });
     }
+  },
+
+  selectAccount: async (accountId) => {
+    const { currentAccountId, activeConversationId, lastConversationByAccount } = get();
+    if (currentAccountId === accountId) return;
+
+    // Remember where we were, so switching back returns to it.
+    const remembered = { ...lastConversationByAccount };
+    if (currentAccountId && activeConversationId) {
+      remembered[currentAccountId] = activeConversationId;
+    }
+    set({ currentAccountId: accountId, lastConversationByAccount: remembered });
+
+    await get().fetchConversations(accountId);
+
+    // Only restore a conversation that still exists — it may have been deleted
+    // since, and selecting a dead id would surface as an error on load.
+    const previous = remembered[accountId];
+    const stillThere = previous && get().conversations.some((c) => c.id === previous);
+    await get().selectConversation(stillThere ? previous : null);
   },
 
   createConversation: async (accountId, title) => {

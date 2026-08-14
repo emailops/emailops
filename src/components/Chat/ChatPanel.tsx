@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { prewarmChat } from '@/lib/api';
 import { type ChatContext, chatContextKey, chatTurnContext, isConversationThreadBound } from '@/lib/chatContext';
@@ -46,7 +46,7 @@ export function ChatPanel({
     isSending,
     isLoadingMessages,
     error,
-    fetchConversations,
+    selectAccount,
     createConversation,
     selectConversation,
     sendMessage,
@@ -72,16 +72,14 @@ export function ChatPanel({
   // Mirror ChatView's account plumbing: (re)load the conversation list and seed
   // the local model's prompt-prefix cache. Both surfaces share one store, so
   // whichever mounts first does the work and the other reuses it.
-  const lastAccountIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!accountId) return;
-    void fetchConversations(accountId);
-    if (lastAccountIdRef.current !== null && lastAccountIdRef.current !== accountId) {
-      void selectConversation(null);
-    }
-    lastAccountIdRef.current = accountId;
+    // `selectAccount` owns the conversation swap: it remembers where we were
+    // and restores the conversation last open for this account this session,
+    // falling back to a fresh chat.
+    void selectAccount(accountId);
     prewarmChat(accountId).catch(() => {});
-  }, [accountId, fetchConversations, selectConversation]);
+  }, [accountId, selectAccount]);
 
   const handleSend = async (content: string) => {
     if (!activeConversationId) {

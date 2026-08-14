@@ -199,3 +199,74 @@ describe('chatStore sendMessage preserves an early phase', () => {
     expect(useChatStore.getState().streamingPhase).toBeNull();
   });
 });
+
+describe('selectAccount', () => {
+  function conversation(id: string, title = 'Chat') {
+    return { id, accountId: 'ignored', title, createdAt: 0, updatedAt: 0 };
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      lastConversationByAccount: {},
+      currentAccountId: null,
+    });
+  });
+
+  it('opens a fresh chat for an account not used this session', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-1')]);
+
+    await useChatStore.getState().selectAccount('acct-a');
+
+    // Not c-1: an account we have never switched to starts a new conversation
+    // rather than resuming whatever happens to be most recent in its history.
+    expect(useChatStore.getState().activeConversationId).toBeNull();
+  });
+
+  it('restores the conversation last open for that account this session', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-a1')]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-b1')]);
+    await useChatStore.getState().selectAccount('acct-b');
+    expect(useChatStore.getState().activeConversationId).toBeNull();
+
+    // Back to A: the conversation we were on must come back, not a new chat.
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-a1')]);
+    await useChatStore.getState().selectAccount('acct-a');
+    expect(useChatStore.getState().activeConversationId).toBe('c-a1');
+  });
+
+  it('falls back to a fresh chat when the remembered conversation is gone', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-a1')]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+
+    vi.mocked(api.listChatConversations).mockResolvedValue([]);
+    await useChatStore.getState().selectAccount('acct-b');
+
+    // A's conversation was deleted meanwhile — selecting a dead id would fail
+    // to load, so it must degrade to a new chat.
+    vi.mocked(api.listChatConversations).mockResolvedValue([]);
+    await useChatStore.getState().selectAccount('acct-a');
+    expect(useChatStore.getState().activeConversationId).toBeNull();
+  });
+
+  it('is a no-op when the account has not changed', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-a1')]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+
+    vi.mocked(api.listChatConversations).mockClear();
+    await useChatStore.getState().selectAccount('acct-a');
+
+    // Re-running the effect for the same account must not reload or reset the
+    // open conversation.
+    expect(api.listChatConversations).not.toHaveBeenCalled();
+    expect(useChatStore.getState().activeConversationId).toBe('c-a1');
+  });
+});
