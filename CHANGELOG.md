@@ -7,7 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **Chat panel docked on the right** — a resizable chat alongside the inbox, in
+  addition to the full-page view. With an email open the panel offers that
+  thread as context via a removable chip, and answers from it instead of
+  searching. The context applies to one turn and is never saved onto the
+  conversation, so you can move between emails inside a single chat.
+- **Every calendar of an account, each in its own colour** — previously only the
+  primary calendar was fetched, so a calendar shared with you was invisible in
+  EmailOps while visible in Google/Outlook. All calendars now sync, tinted with
+  the colour the provider gives them, and each can be hidden or shown from the
+  legend above the grid or from Settings → Calendar.
+
+### Changed
+
+- **One macOS download for every Mac.** The separate Intel build is retired; the
+  universal download launches on both Apple Silicon and Intel.
+- **Embedded local AI is no longer offered on Intel Macs.** Its GPU kernels
+  require Apple Silicon, so on Intel it now says so up front and points at
+  Ollama or OpenRouter, instead of failing mid-answer with a decode error.
+
+### Fixed
+
+- **The app crashed on quit** for anyone using the embedded local AI. Quitting
+  produced a macOS crash report every time because the AI runtime was still
+  loaded as the process exited. It now shuts down cleanly. The standalone
+  `emailops-cli` was affected the same way.
+- **Asking about the open email searched the whole inbox instead.** With an
+  email open and its context chip showing, a question like "summarise this
+  email" could answer "you haven't said which email you mean" and then
+  summarise unrelated threads — whenever the open email belonged to a different
+  account than the one the chat was running on, which is the normal case in the
+  "All accounts" view. When context genuinely cannot be used, the app now says
+  so rather than silently answering from search.
+- **Calendar questions in chat could not reach your calendar.** "What's my next
+  meeting?" (or the Spanish equivalent) was answered from email instead, since
+  nothing routed calendar wording to the calendar. Phrasings that happened to
+  include a date word worked by accident; the rest did not.
+- **Internal tool names leaked into answers** — a reply could end with a stray
+  `list_calendar_events` line.
+- **"Generate with AI" disappeared when the compose window was maximised.**
+
+### Security
+
+- Updated `dompurify` (3.4.13), which sanitises email HTML — the advisory covers
+  an XSS via a subtree left executable after a hook is removed, the exact
+  pattern EmailOps uses.
+- Updated `js-yaml` (4.3.1) and `nanoid` (3.3.18), both denial-of-service
+  advisories in build-time tooling.
+- Updated `postcss`, `undici` and `brace-expansion` for known advisories.
 
 ## [0.6.5] — 2026-08-03
 
