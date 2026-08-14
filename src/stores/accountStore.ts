@@ -47,6 +47,39 @@ export function selectEffectiveAccountId(accounts: Account[], activeAccountId: s
  * (v0.6.4 regression: deleting an account blanked the whole app). Callers
  * should treat `null` as "unmount the dialog", not throw.
  */
+/** Outcome of retargeting chat's account — see `planChatAccountChange`. */
+export interface ChatAccountChange {
+  /** Account chat answers from. */
+  chatAccountId: string;
+  /** Account the mail list should switch to, or `null` to leave it alone. */
+  mailAccountId: string | null;
+}
+
+/**
+ * What changes when the user picks a different account for chat.
+ *
+ * Chat is scoped to one account, so retargeting it has to be visible in what
+ * the mail list shows — otherwise you can open an email from another account
+ * and hand it to a chat that cannot read it. The two are therefore kept in
+ * lockstep, with one deliberate exception: in "All accounts" the list is
+ * showing everything *on purpose*, and collapsing it to a single account just
+ * because a chat was retargeted would throw away the view the user chose. In
+ * that mode the list stays unified and cross-account emails simply are not
+ * offered as chat context (`offeredChatContext`).
+ *
+ * Pure so the coupling rule is testable without a store or a render.
+ */
+export function planChatAccountChange(nextAccountId: string, mailScopeId: string | null): ChatAccountChange {
+  // Only move a list that is currently showing ONE concrete account. Unified
+  // stays unified (above), and `null` — no selection yet, e.g. before accounts
+  // finish loading — is not a selection to drag along either.
+  const listShowsOneAccount = mailScopeId !== null && !isUnifiedMode(mailScopeId);
+  return {
+    chatAccountId: nextAccountId,
+    mailAccountId: listShowsOneAccount ? nextAccountId : null,
+  };
+}
+
 export function selectAccountById(accounts: Account[], id: string | null): Account | null {
   if (!id) return null;
   return accounts.find((a) => a.id === id) ?? null;

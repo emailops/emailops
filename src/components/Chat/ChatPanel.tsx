@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { prewarmChat } from '@/lib/api';
-import { type ChatContext, chatContextKey, chatTurnContext, isConversationThreadBound } from '@/lib/chatContext';
+import {
+  type ChatContext,
+  chatContextKey,
+  chatTurnContext,
+  isConversationThreadBound,
+  offeredChatContext,
+} from '@/lib/chatContext';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
@@ -62,7 +68,10 @@ export function ChatPanel({
   const contextKey = chatContextKey(context);
   // A conversation seeded via "Chat about this thread" already owns its
   // grounding — the backend ignores ambient context for it, so don't offer any.
-  const offeredContext = isConversationThreadBound(messages) ? null : context;
+  // Only a thread from the account chat is scoped to may be offered — in "All
+  // accounts" the list shows every account, and grounding a turn in a mailbox
+  // the following turns cannot search is incoherent.
+  const offeredContext = offeredChatContext(context, accountId, isConversationThreadBound(messages));
   const contextActive = offeredContext !== null && dismissedContextKey !== contextKey;
 
   useEffect(() => {

@@ -80,6 +80,31 @@ export function chatTurnContext(context: ChatContext | null, active: boolean): C
 }
 
 /**
+ * The thread to actually offer as context, or `null` for none.
+ *
+ * Three things can independently disagree in "All accounts" mode: what the
+ * mail list shows, which account chat answers from, and which account the open
+ * email belongs to. A thread from an account chat cannot read must not be
+ * offered — grounding one turn in it while every following turn searches a
+ * different mailbox is incoherent, and the user has no way to see why.
+ *
+ * So context is offered only when the open thread belongs to the account chat
+ * is scoped to. Switching chat to that account (via the picker) makes its
+ * emails offerable, which is the intended way to get there.
+ */
+export function offeredChatContext(
+  context: ChatContext | null,
+  chatAccountId: string | null,
+  conversationIsThreadBound: boolean,
+): ChatContext | null {
+  // A conversation seeded via "Chat about this thread" already owns its
+  // grounding; the backend ignores ambient context for it.
+  if (conversationIsThreadBound) return null;
+  if (!context || !chatAccountId) return null;
+  return context.accountId === chatAccountId ? context : null;
+}
+
+/**
  * Whether this conversation was seeded with a thread at creation ("Chat about
  * this thread"), which the backend's `plan_turn_mode` gives precedence over
  * ambient view context.

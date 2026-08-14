@@ -620,3 +620,31 @@ would mask genuine GPU faults on Apple Silicon. Leaving release builds to discar
 ggml's WARN/ERROR lines: they are now retained in a ring buffer and quoted in the
 decode error, because the line naming the real cause was being thrown away
 precisely when it mattered.
+
+## 2026-08-14 — Chat is scoped to one account, coupled to the mail list except in unified view
+
+**Decision:** A chat conversation always answers from exactly one concrete account,
+shown in a picker on both chat surfaces. Selecting a single account in the sidebar
+re-points chat at it. Retargeting chat moves the mail list to match — **except** when
+the list is showing "All accounts", where it stays unified. A thread is offered as
+chat context only when it belongs to the account chat is scoped to; in unified view,
+emails from other accounts are simply not offered.
+**Context:** Chat is structurally single-account — retrieval and all 12 account-scoped
+tools take one account id — while the mail list can show every account. The two
+selections could disagree silently: a question about mail living in another account
+answered "no matching emails found", indistinguishable from having none, and an email
+from account A could be handed as context to a chat answering from B. Making the scope
+visible and changeable turns a wrong answer into a correctable one. The unified
+exception exists because "All accounts" is a view the user deliberately chose;
+collapsing it to one account as a side effect of retargeting a chat would throw that
+away.
+**Rejected:** *Give chat `AccountScope::AllEnabled`* so unified chat searches every
+account — the DB layer already supports it (it backs the unified inbox), and this
+dissolves the mismatch entirely rather than managing it. Deferred, not dismissed: it
+means threading `AccountScope` through retrieval and 12 tools and deciding how
+citations and drafts behave across accounts. The coupling above is correct behaviour
+until that lands, and stays correct after. *Auto-switching chat to the open email's
+account* — keeps unified browsing but changes the answering account as the user clicks
+around, which is surprising and costs a conversation switch per click. *Offering the
+cross-account thread with a "switch account" prompt* — more machinery than declining
+to offer it, for a case the picker already solves.

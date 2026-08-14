@@ -7,6 +7,7 @@ import type { Account } from '@/types';
 import {
   ALL_ACCOUNTS_ID,
   isUnifiedMode,
+  planChatAccountChange,
   reduceSyncProgress,
   type SyncProgress,
   selectAccountById,
@@ -250,5 +251,34 @@ describe('syncAllAccounts', () => {
     expect(useAccountStore.getState().isSyncing).toBe(true);
     useAccountStore.getState().setSyncProgress(makeProgress('b', 'complete'));
     expect(useAccountStore.getState().isSyncing).toBe(false);
+  });
+});
+
+describe('planChatAccountChange', () => {
+  it('moves the mail list with chat when the list shows one account', () => {
+    // Lockstep: otherwise you can browse account A while chat answers from B,
+    // and hand it an email it cannot read.
+    expect(planChatAccountChange('acct-b', 'acct-a')).toEqual({
+      chatAccountId: 'acct-b',
+      mailAccountId: 'acct-b',
+    });
+  });
+
+  it('leaves the list unified when it is showing All accounts', () => {
+    // "All accounts" is a view the user deliberately chose; retargeting a chat
+    // must not collapse it. Cross-account emails are simply not offered as
+    // context while it is up — see offeredChatContext.
+    expect(planChatAccountChange('acct-b', ALL_ACCOUNTS_ID)).toEqual({
+      chatAccountId: 'acct-b',
+      mailAccountId: null,
+    });
+  });
+
+  it('treats a null selection as unified', () => {
+    // Before accounts load there is no concrete selection to drag along.
+    expect(planChatAccountChange('acct-b', null)).toEqual({
+      chatAccountId: 'acct-b',
+      mailAccountId: null,
+    });
   });
 });

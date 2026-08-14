@@ -54,7 +54,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
-import { selectAccountById, useAccountStore } from '@/stores/accountStore';
+import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -196,10 +196,10 @@ function AppInner() {
     parse: (raw) => (raw === 'true' ? true : raw === 'false' ? false : null),
     serialize: (v) => String(v),
   });
-  // Account the chat surfaces answer from. Chat is scoped to ONE account, and
-  // in unified ("All accounts") mode `effectiveAccountId` is merely the first
-  // enabled one — so let the user retarget it. `null` means "follow the mail
-  // view"; picking an account pins it until the mail view's account changes.
+  // Account the chat surfaces answer from. Chat is scoped to ONE account; in
+  // unified ("All accounts") mode `effectiveAccountId` is merely the first
+  // enabled one, so the user can retarget it independently of the list.
+  // `null` = not yet retargeted, fall back to the mail view's account.
   const [chatAccountOverride, setChatAccountOverride] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
@@ -1116,15 +1116,29 @@ function AppInner() {
   // click, from anywhere in the app. Open the panel even if creating the
   // conversation fails — the panel's own empty state is a better place to see
   // the error than a silently ignored click.
-  // Following the mail view is the default; an explicit pick only survives
-  // until the user navigates to a different account.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset is keyed on
-  // the mail account changing, not on the override's own value.
+  // Selecting ONE account in the sidebar re-points chat at it, so browsing an
+  // account and chatting about it stay in step. Switching the list to "All
+  // accounts" deliberately does NOT: chat cannot answer from every account, so
+  // it keeps the concrete one it had (shown in its picker).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the mail
+  // selection changing, not on the override's own value.
   useEffect(() => {
-    setChatAccountOverride(null);
-  }, [effectiveAccountId]);
+    if (!isUnifiedMode(activeAccountId)) setChatAccountOverride(activeAccountId);
+  }, [activeAccountId]);
 
   const chatAccountId = chatAccountOverride ?? effectiveAccountId;
+
+  // The other direction: retargeting chat drags the list along, EXCEPT in
+  // unified mode where the list stays as the user left it (see
+  // `planChatAccountChange`).
+  const handleChatAccountChange = useCallback(
+    (nextAccountId: string) => {
+      const plan = planChatAccountChange(nextAccountId, activeAccountId);
+      setChatAccountOverride(plan.chatAccountId);
+      if (plan.mailAccountId) setActiveAccount(plan.mailAccountId);
+    },
+    [activeAccountId, setActiveAccount],
+  );
 
   const handleNewChat = useCallback(async () => {
     if (viewMode === 'chat') setViewMode('inbox');
@@ -1320,7 +1334,7 @@ function AppInner() {
             // renders its own scope chip (chat-specific hint).
             <ChatView
               accountId={chatAccountId}
-              onAccountChange={setChatAccountOverride}
+              onAccountChange={handleChatAccountChange}
               onNavigateToInbox={() => setViewMode('inbox')}
             />
           ) : viewMode === 'tasks' && tasksEnabled ? (
@@ -1529,7 +1543,7 @@ function AppInner() {
         {aiEnabled && isChatPanelOpen && viewMode !== 'chat' && (
           <ChatPanelDock
             accountId={chatAccountId}
-            onAccountChange={setChatAccountOverride}
+            onAccountChange={handleChatAccountChange}
             context={chatPanelContext}
             onClose={() => setIsChatPanelOpen(false)}
             onExpand={() => {
