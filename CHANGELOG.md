@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thread as context via a removable chip, and answers from it instead of
   searching. The context applies to one turn and is never saved onto the
   conversation, so you can move between emails inside a single chat.
+- **Chat shows which account it is answering from, and lets you change it.**
+  Chat searches one account at a time. A picker in both the docked panel and the
+  full-page view names that account and switches it. Each account keeps its own
+  conversation for as long as the app is open, so moving between them returns
+  you to where you were instead of a blank chat.
 - **Every calendar of an account, each in its own colour** — previously only the
   primary calendar was fetched, so a calendar shared with you was invisible in
   EmailOps while visible in Google/Outlook. All calendars now sync, tinted with
@@ -22,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The chat panel is docked open by default.** Closing it still sticks.
+- **"Chat" in the sidebar opens the full-page chat view** instead of toggling
+  the docked panel. The panel has its own close button, and the new-chat icon
+  beside the inbox reopens it.
+- **Choosing an account keeps mail and chat in step.** Selecting a single
+  account in the sidebar points chat at it, and changing chat's account moves
+  the mail list to match — except in "All accounts", which stays as you left it.
 - **One macOS download for every Mac.** The separate Intel build is retired; the
   universal download launches on both Apple Silicon and Intel.
 - **Embedded local AI is no longer offered on Intel Macs.** Its GPU kernels
@@ -41,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   account than the one the chat was running on, which is the normal case in the
   "All accounts" view. When context genuinely cannot be used, the app now says
   so rather than silently answering from search.
+- **An answer still being written is no longer lost** if you switch account or
+  conversation while it generates. Coming back showed an empty reply with no
+  sign anything was still running, and only a second visit revealed the answer.
+  The reply and its progress now come back with you.
+- **Asking about an email from another account now says so.** In "All accounts"
+  you can be reading an email from one account while chat answers from another.
+  Chat now names the account that email belongs to and offers to switch, rather
+  than quietly answering from the wrong mailbox.
 - **Calendar questions in chat could not reach your calendar.** "What's my next
   meeting?" (or the Spanish equivalent) was answered from email instead, since
   nothing routed calendar wording to the calendar. Phrasings that happened to
