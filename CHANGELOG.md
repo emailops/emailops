@@ -68,6 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Internal tool names leaked into answers** — a reply could end with a stray
   `list_calendar_events` line.
 - **"Generate with AI" disappeared when the compose window was maximised.**
+- **A blank gap above the inbox rows after closing an email.** Going back from
+  an email left the list looking empty, with a few rows stranded at the bottom
+  edge, until you scrolled. An earlier fix restored the scroll position but not
+  the list's own idea of where it was, and hiding the list also made every
+  visible row measure as zero-height. Both are now handled, so the list comes
+  back exactly as you left it.
+- **A background sync no longer throws away the pages you had loaded.** Scrolled
+  a long way down, a sync could snap the list back to the first 50 messages
+  underneath you.
 
 ### Security
 

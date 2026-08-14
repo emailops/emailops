@@ -1,7 +1,13 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { INITIAL_SCROLL_RESTORE, planScrollRestore, type ScrollRestoreState } from '@/lib/scrollRestore';
+import { measuredRowHeight } from '@/lib/rowMeasure';
+import {
+  INITIAL_SCROLL_RESTORE,
+  planOffsetResync,
+  planScrollRestore,
+  type ScrollRestoreState,
+} from '@/lib/scrollRestore';
 import type { Email } from '@/types';
 import type { RulePrefill } from './EmailRow';
 import { EmailRow } from './EmailRow';
@@ -65,6 +71,17 @@ export function VirtualEmailList({
     // Key by email ID so the measurement cache survives list updates
     getItemKey: (index) => emails[index].id,
     overscan: 5,
+    // A row inside a `display: none` subtree reports a zero-height box, and the
+    // library would cache that as the row's size — see src/lib/rowMeasure.ts.
+    measureElement: (element, entry, instance) => {
+      const box = entry?.borderBoxSize?.[0];
+      const index = instance.indexFromElement(element);
+      return measuredRowHeight({
+        measured: box ? Math.round(box.blockSize) : element.getBoundingClientRect().height,
+        cached: instance.itemSizeCache.get(instance.options.getItemKey(index)),
+        estimate: instance.options.estimateSize(index),
+      });
+    },
   });
 
   // Survive the `display: none` hide that full-width layout applies while an
@@ -74,16 +91,41 @@ export function VirtualEmailList({
   // scroll event, and the virtualizer only learns its offset from scroll events
   // — so on the way back it kept rendering the window for the pre-hide offset
   // while the container sat at 0, leaving a blank band above the rows until the
-  // user scrolled. Writing the saved scrollTop back on re-show both returns the
-  // user to where they were and fires the scroll event that resyncs the
-  // virtualizer.
+  // user scrolled. Writing the saved scrollTop back on re-show returns the user
+  // to where they were, and usually resyncs the virtualizer for free through the
+  // scroll event it fires — `resyncVirtualizer` below covers the cases where it
+  // fires none.
   //
   // Visibility is read from layout (`clientHeight === 0`) rather than a prop,
   // because what matters is what the browser actually did to scrollTop.
   const restoreRef = useRef<ScrollRestoreState>(INITIAL_SCROLL_RESTORE);
+
+  // Put the virtualizer back in step with the container whenever the two have
+  // drifted apart. Restoring scrollTop is not enough on its own: the write only
+  // resyncs the virtualizer through the scroll event it happens to fire, and it
+  // fires none when the container is already at that value or when the browser
+  // clamps the write against content that is momentarily shorter.
+  const resyncVirtualizer = useCallback(
+    (el: HTMLDivElement) => {
+      const shouldResync = planOffsetResync({
+        hidden: el.clientHeight === 0,
+        scrollTop: el.scrollTop,
+        virtualOffset: virtualizer.scrollOffset ?? 0,
+      });
+      if (!shouldResync) return;
+      // A scroll event is the only channel virtual-core reads the container
+      // through. Writing scrollTop or calling scrollToOffset cannot stand in for
+      // it: both are no-ops once the DOM already holds the value, which is
+      // exactly the situation that strands the offset.
+      el.dispatchEvent(new Event('scroll'));
+    },
+    [virtualizer],
+  );
+
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
+    let rafId: number | null = null;
 
     const observe = () => {
       const plan = planScrollRestore(restoreRef.current, {
@@ -93,6 +135,16 @@ export function VirtualEmailList({
       restoreRef.current = plan.state;
       if (plan.restoreTo !== null) {
         el.scrollTop = plan.restoreTo;
+      }
+      resyncVirtualizer(el);
+      // ...and again once the frame has settled: rows re-measure on the way back
+      // from hidden, so both the spacer height that bounds the restore write and
+      // the virtualizer's own offset are still moving at this point.
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          resyncVirtualizer(el);
+        });
       }
     };
 
@@ -104,10 +156,11 @@ export function VirtualEmailList({
     el.addEventListener('scroll', observe, { passive: true });
 
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
       el.removeEventListener('scroll', observe);
     };
-  }, [scrollContainerRef]);
+  }, [scrollContainerRef, resyncVirtualizer]);
 
   // Scroll focused email into view using the virtualizer (avoids inline ref callbacks)
   useEffect(() => {

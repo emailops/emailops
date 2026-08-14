@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INITIAL_SCROLL_RESTORE, planScrollRestore } from './scrollRestore';
+import { INITIAL_SCROLL_RESTORE, planOffsetResync, planScrollRestore } from './scrollRestore';
 
 // Regression cover for the inbox "blank band at the top after Back" bug.
 //
@@ -83,5 +83,36 @@ describe('planScrollRestore', () => {
 
   it('starts with nothing saved and visible', () => {
     expect(INITIAL_SCROLL_RESTORE).toEqual({ saved: 0, hidden: false });
+  });
+});
+
+// Restoring scrollTop only resyncs the virtualizer as a side effect of the
+// scroll event the write happens to fire. When no event fires — the value was
+// already there, or the browser clamped the write against content that is
+// momentarily too short — nothing corrects the offset, and the list renders the
+// window for a position the container is not at.
+describe('planOffsetResync', () => {
+  const visible = { hidden: false };
+
+  it('resyncs when the virtualizer is ahead of the container', () => {
+    expect(planOffsetResync({ ...visible, scrollTop: 0, virtualOffset: 640 })).toBe(true);
+  });
+
+  it('resyncs when the virtualizer is behind the container', () => {
+    expect(planOffsetResync({ ...visible, scrollTop: 640, virtualOffset: 0 })).toBe(true);
+  });
+
+  it('leaves an agreeing pair alone', () => {
+    expect(planOffsetResync({ ...visible, scrollTop: 640, virtualOffset: 640 })).toBe(false);
+  });
+
+  it('ignores sub-pixel drift from fractional row heights', () => {
+    expect(planOffsetResync({ ...visible, scrollTop: 640.4, virtualOffset: 640 })).toBe(false);
+  });
+
+  // While hidden the container's scrollTop is whatever the browser zeroed it to,
+  // so a disagreement there says nothing.
+  it('does nothing while the container is hidden', () => {
+    expect(planOffsetResync({ hidden: true, scrollTop: 0, virtualOffset: 640 })).toBe(false);
   });
 });

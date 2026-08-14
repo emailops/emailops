@@ -6,6 +6,8 @@ import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
 const PAGE_SIZE = 50;
+/** Ceiling for a background refetch that keeps the loaded pages (see refetchLimit). */
+const MAX_REFETCH = 500;
 
 /**
  * Pure helper: should the inbox try to load another page after this fetch?
@@ -45,6 +47,23 @@ export function computeHasMoreAfterPage(
   if (pageLength < pageSize) return false;
   if (totalCount > 0) return newTotal < totalCount;
   return true;
+}
+
+/**
+ * Pure helper: how many rows a refetch has to ask for.
+ *
+ * Every refetch starts at offset 0 and *replaces* the list, so requesting a
+ * single page silently undoes the user's paging. That is invisible on a normal
+ * refetch (the list is being swapped anyway) but wrong for the background ones —
+ * a sync batch, the refresh after a send, an account being enabled — which are
+ * supposed to be transparent: a user five pages down would drop back to 50 rows
+ * mid-read, with the container scrolled past the end of the shortened list.
+ *
+ * Capped, because a very deep list would otherwise turn every sync batch into a
+ * progressively larger query.
+ */
+export function refetchLimit(loadedCount: number, pageSize: number = PAGE_SIZE, cap: number = MAX_REFETCH): number {
+  return Math.max(pageSize, Math.min(loadedCount, cap));
 }
 
 /**
@@ -407,6 +426,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({ error: null, currentFetchId: fetchId, navigationMode: false, focusEmailId: null });
     }
 
+    // A background refresh is meant to be transparent, so it has to come back
+    // with everything the user had already paged in — see refetchLimit.
+    const limit = silent ? refetchLimit(get().emails.length) : PAGE_SIZE;
+
     try {
       let emails: Email[];
       let totalCount: number;
@@ -429,7 +452,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           senderEmail,
           tagType,
           tagValue,
-          PAGE_SIZE,
+          limit,
           0,
           attachmentExt,
         );
@@ -437,7 +460,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         totalCount = result.totalCount;
       } else {
         [emails, totalCount] = await Promise.all([
-          api.getEmails(accountId, PAGE_SIZE, 0, mailbox),
+          api.getEmails(accountId, limit, 0, mailbox),
           // Same mailbox as the list — counting the inbox while listing Sent
           // made hasMore compare two different sets.
           api.getEmailCount(accountId, mailbox),

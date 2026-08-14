@@ -68,3 +68,39 @@ export function planScrollRestore(
   // including a scroll back to the top.
   return { state: { saved: next.scrollTop, hidden: false }, restoreTo: null };
 }
+
+export interface OffsetResyncInput {
+  /** Container is hidden — its scrollTop means nothing, leave the offset alone. */
+  hidden: boolean;
+  /** What the container is actually at. */
+  scrollTop: number;
+  /** What the virtualizer believes it is at. */
+  virtualOffset: number;
+}
+
+/**
+ * Whether the virtualizer has to be forced to re-read the container.
+ *
+ * Restoring scrollTop is not enough on its own. The write only resyncs the
+ * virtualizer as a side effect of the scroll event it fires, and there are two
+ * ordinary cases where no event fires at all: the value written is the one the
+ * container already had, or the content is momentarily too short and the browser
+ * clamps the write straight back. The virtualizer is then stranded on an offset
+ * nothing will ever correct — it renders the window for a position the user is
+ * not at, which is the blank band above the rows.
+ *
+ * Sub-pixel differences are normal (fractional row heights, rounding), so only a
+ * whole pixel of drift counts.
+ *
+ * There is deliberately no "a scroll is in flight" exemption. A scroll in
+ * flight — a drag, momentum, an animated scrollToIndex — is precisely the state
+ * in which the browser is already feeding the virtualizer the container's real
+ * position several times a second, so the two agree and this returns false on
+ * its own. Guarding on the library's `isScrolling` flag instead would suppress
+ * the resync for the 150ms it stays latched after the last scroll event, which
+ * covers the list shrinking underneath a scroll that just happened.
+ */
+export function planOffsetResync({ hidden, scrollTop, virtualOffset }: OffsetResyncInput): boolean {
+  if (hidden) return false;
+  return Math.abs(scrollTop - virtualOffset) >= 1;
+}

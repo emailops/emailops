@@ -10,6 +10,7 @@ import {
   computeHasMore,
   computeHasMoreAfterPage,
   mergeThreadRefresh,
+  refetchLimit,
   removeEmailFromSlices,
   useEmailStore,
 } from './emailStore';
@@ -258,5 +259,28 @@ describe('pendingChatDraft slot', () => {
     useEmailStore.getState().setPendingChatDraft({ emailId: 'e1', body: 'hello' });
     useEmailStore.getState().reset();
     expect(useEmailStore.getState().pendingChatDraft).toBeNull();
+  });
+});
+
+// A background refresh must not undo the user's paging. Every refetch starts at
+// offset 0, so asking for a single page throws away every page the user had
+// loaded — the list snaps back to 50 rows underneath whatever they were reading.
+describe('refetchLimit', () => {
+  const CAP = 500;
+
+  it('asks for a full page when nothing is loaded yet', () => {
+    expect(refetchLimit(0, PAGE_SIZE, CAP)).toBe(PAGE_SIZE);
+  });
+
+  it('never asks for less than a page', () => {
+    expect(refetchLimit(12, PAGE_SIZE, CAP)).toBe(PAGE_SIZE);
+  });
+
+  it('asks for as many rows as the user had loaded', () => {
+    expect(refetchLimit(250, PAGE_SIZE, CAP)).toBe(250);
+  });
+
+  it('stops at the cap so a very deep list does not re-query everything', () => {
+    expect(refetchLimit(4000, PAGE_SIZE, CAP)).toBe(CAP);
   });
 });
