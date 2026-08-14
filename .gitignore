@@ -112,3 +112,15 @@ src-tauri/resources/backends-root/
 # Sanitised cassettes under cassettes/<provider>/ ARE committed as the
 # integration-test corpus.
 src-tauri/tests/fixtures/cassettes/raw/
+
+# iOS build output. `feature/ios-support` carries its own
+# `src-tauri/gen/apple/.gitignore` with these same rules, but that file does
+# not exist on main — where the whole gen/apple tree is unversioned — so an
+# iOS build leaves ~750 MB showing as untracked here. Mirrored at the root so
+# `git status` stays readable on main; redundant (harmlessly) once the iOS
+# branch merges. Deliberately NOT ignoring gen/apple wholesale: the Xcode
+# project, entitlements and Assets.xcassets next to these ARE tracked there.
+src-tauri/gen/apple/build/
+src-tauri/gen/apple/Externals/
+src-tauri/gen/apple/assets/
+src-tauri/gen/apple/xcuserdata/
