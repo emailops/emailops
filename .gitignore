@@ -93,8 +93,9 @@ private-evals/*
 private-scripts/
 
 # Repo-local app data used by Makefile dev/demo workflows.
-.emailops-data/
-.emailops-data-fresh/
+# Wildcard so ad-hoc data dirs (e.g. EMAILOPS_DEV_FRESH_DIR overrides) can never
+# be staged — every one of these holds a real mailbox once an account is added.
+.emailops-data*/
 .emailops-demo-data/
 .emailops-demo-data-es/
 
