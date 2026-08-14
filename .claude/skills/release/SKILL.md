@@ -211,9 +211,47 @@ each change first, since this is user-facing/marketing content:
 2. **`ROADMAP.md`.** Check for entries describing work this release just
    completed (compare against the new CHANGELOG section) — flag any that now
    read as still-pending when they're done.
-3. **`docs/*.md`.** Scan for platform-specific claims that may be stale given
-   what changed (e.g. a doc that only describes a macOS-only install flow,
-   when this release adds a Linux/Windows equivalent). Flag, don't rewrite.
+3. **`docs/site/<lang>/*.md` — two separate checks, both required.**
+
+   a. **Stale platform claims.** Scan for statements that no longer hold given
+      what changed (e.g. a doc describing a macOS-only install flow when this
+      release adds a Linux/Windows equivalent, or a "separate Intel build"
+      that has been retired).
+
+   b. **Feature coverage — the check that is easy to skip.** Walk the
+      `### Added` and `### Changed` entries of the new CHANGELOG section one
+      by one and confirm each is actually *described* somewhere in the docs.
+      Absence of a stale sentence is not coverage: a doc can be perfectly
+      accurate about the old feature set and still never mention what this
+      release added. Grep the docs for a distinctive phrase from each entry;
+      if nothing comes back, that feature is undocumented — say so explicitly
+      rather than reporting "docs look fine". (v0.6.6 shipped a docked chat
+      panel and multi-calendar sync; both were absent from the docs while
+      every existing sentence was still correct, and the release went out
+      before anyone noticed.)
+
+   **These docs have exactly one source: this repo.** The website repo does
+   **not** track them — `content/*/docs/` is in its `.gitignore`, and its
+   `scripts/sync-docs.sh` `rm -rf`s each destination and re-copies from
+   `docs/site/<lang>/` before every Hugo build. Never hand-copy docs into
+   the website repo and never edit them there: the next build wipes it, and
+   the change is invisible to that repo's git the whole time. There is no
+   second push and no mirror to keep in sync.
+
+   **The site pulls docs at the newest `v*` tag, not from `main`.**
+   `sync-docs.sh` resolves its ref as `DOCS_REF` → newest `v*` tag →
+   `main`, and `amplify.yml` sets no `DOCS_REF`. So a doc fix committed
+   *after* the tag is cut does not reach getemailops.com until the next
+   release tag exists. **This is why the whole phase runs before Phase 6** —
+   a doc gap found after tagging cannot be published without either cutting
+   another release or someone setting `DOCS_REF` in the Amplify
+   environment. Treat "docs are behind" as a tag-blocking finding, not a
+   follow-up.
+
+   Every edit must cover **all four locales** (en, es, de, fr) — a section
+   added only to English leaves the other three describing an older
+   product. Flag findings first; do not rewrite prose unsolicited (see the
+   intro to this phase).
 4. **`docs/DECISIONS.md`.** Ask the developer whether anything in this release
    constitutes a durable decision worth logging there (that file is
    append-only and durable-decisions-only by convention — not every release
