@@ -627,8 +627,9 @@ precisely when it mattered.
 shown in a picker on both chat surfaces. Selecting a single account in the sidebar
 re-points chat at it. Retargeting chat moves the mail list to match — **except** when
 the list is showing "All accounts", where it stays unified. A thread is offered as
-chat context only when it belongs to the account chat is scoped to; in unified view,
-emails from other accounts are simply not offered.
+chat context only when it belongs to the account chat is scoped to. In unified view an
+email from another account is not grounded on, but is not ignored either: the panel
+names the account it belongs to and offers a one-click switch.
 **Context:** Chat is structurally single-account — retrieval and all 12 account-scoped
 tools take one account id — while the mail list can show every account. The two
 selections could disagree silently: a question about mail living in another account
@@ -645,6 +646,7 @@ means threading `AccountScope` through retrieval and 12 tools and deciding how
 citations and drafts behave across accounts. The coupling above is correct behaviour
 until that lands, and stays correct after. *Auto-switching chat to the open email's
 account* — keeps unified browsing but changes the answering account as the user clicks
-around, which is surprising and costs a conversation switch per click. *Offering the
-cross-account thread with a "switch account" prompt* — more machinery than declining
-to offer it, for a case the picker already solves.
+around, which is surprising and costs a conversation switch per click. *Silently declining the cross-account thread* — the first
+attempt. It removed the incoherent grounding but recreated the original confusion in a
+quieter form: asking about the email plainly on screen still produced an answer from a
+different mailbox, now with nothing at all to explain why.

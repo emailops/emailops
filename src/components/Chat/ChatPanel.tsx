@@ -6,7 +6,7 @@ import {
   chatContextKey,
   chatTurnContext,
   isConversationThreadBound,
-  offeredChatContext,
+  planChatContextOffer,
 } from '@/lib/chatContext';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
@@ -14,6 +14,7 @@ import { useLogStore } from '@/stores/logStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
+import { OtherAccountContextNotice } from './OtherAccountContextNotice';
 import { ThreadContextChip } from './ThreadContextChip';
 
 interface ChatPanelProps {
@@ -68,10 +69,12 @@ export function ChatPanel({
   const contextKey = chatContextKey(context);
   // A conversation seeded via "Chat about this thread" already owns its
   // grounding — the backend ignores ambient context for it, so don't offer any.
-  // Only a thread from the account chat is scoped to may be offered — in "All
-  // accounts" the list shows every account, and grounding a turn in a mailbox
-  // the following turns cannot search is incoherent.
-  const offeredContext = offeredChatContext(context, accountId, isConversationThreadBound(messages));
+  // Only a thread from the account chat is scoped to may be grounded on — in
+  // "All accounts" the list shows every account, and grounding a turn in a
+  // mailbox the following turns cannot search is incoherent. A thread from
+  // another account is surfaced as such rather than dropped silently.
+  const contextOffer = planChatContextOffer(context, accountId, isConversationThreadBound(messages));
+  const offeredContext = contextOffer.kind === 'offered' ? contextOffer.context : null;
   const contextActive = offeredContext !== null && dismissedContextKey !== contextKey;
 
   useEffect(() => {
@@ -208,12 +211,14 @@ export function ChatPanel({
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={
-          offeredContext ? (
+          contextOffer.kind === 'offered' ? (
             <ThreadContextChip
-              context={offeredContext}
+              context={contextOffer.context}
               active={contextActive}
               onToggle={(next) => setDismissedContextKey(next ? null : contextKey)}
             />
+          ) : contextOffer.kind === 'otherAccount' ? (
+            <OtherAccountContextNotice context={contextOffer.context} onSwitchAccount={onAccountChange} />
           ) : undefined
         }
       />

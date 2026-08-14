@@ -79,29 +79,40 @@ export function chatTurnContext(context: ChatContext | null, active: boolean): C
   return { threadId: context.threadId, accountId: context.accountId };
 }
 
+/** What the panel should do about the thread the main view has open. */
+export type ChatContextOffer =
+  /** Nothing to show — no thread open, or the conversation owns its grounding. */
+  | { kind: 'none' }
+  /** Usable now: the thread belongs to the account chat answers from. */
+  | { kind: 'offered'; context: ChatContext }
+  /** Open, but owned by a different account than chat is scoped to. */
+  | { kind: 'otherAccount'; context: ChatContext };
+
 /**
- * The thread to actually offer as context, or `null` for none.
+ * Decide how the open thread relates to the chat's account.
  *
  * Three things can independently disagree in "All accounts" mode: what the
  * mail list shows, which account chat answers from, and which account the open
  * email belongs to. A thread from an account chat cannot read must not be
- * offered — grounding one turn in it while every following turn searches a
- * different mailbox is incoherent, and the user has no way to see why.
+ * grounded on — one turn from a mailbox every following turn cannot search is
+ * incoherent.
  *
- * So context is offered only when the open thread belongs to the account chat
- * is scoped to. Switching chat to that account (via the picker) makes its
- * emails offerable, which is the intended way to get there.
+ * But dropping it *silently* is its own trap: asking about the email plainly on
+ * screen then gets an answer from a different mailbox, with nothing saying why.
+ * So the mismatch is a state of its own, and the panel says which account the
+ * email is in and offers to switch.
  */
-export function offeredChatContext(
+export function planChatContextOffer(
   context: ChatContext | null,
   chatAccountId: string | null,
   conversationIsThreadBound: boolean,
-): ChatContext | null {
+): ChatContextOffer {
   // A conversation seeded via "Chat about this thread" already owns its
-  // grounding; the backend ignores ambient context for it.
-  if (conversationIsThreadBound) return null;
-  if (!context || !chatAccountId) return null;
-  return context.accountId === chatAccountId ? context : null;
+  // grounding; the backend ignores ambient context for it, so neither offering
+  // nor warning would describe the next answer truthfully.
+  if (conversationIsThreadBound) return { kind: 'none' };
+  if (!context || !chatAccountId) return { kind: 'none' };
+  return context.accountId === chatAccountId ? { kind: 'offered', context } : { kind: 'otherAccount', context };
 }
 
 /**

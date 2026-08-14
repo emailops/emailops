@@ -162,7 +162,12 @@
       "remove": "Ne pas utiliser ce fil comme contexte",
       "restore": "Utiliser le fil ouvert comme contexte",
       "noSubject": "(sans objet)",
-      "hint": "Les réponses s'appuient uniquement sur ce fil. Retirez-le pour chercher dans toute votre boîte."
+      "hint": "Les réponses s'appuient uniquement sur ce fil. Retirez-le pour chercher dans toute votre boîte.",
+      "otherAccount": {
+        "label": "Cet e-mail est dans {{email}}",
+        "hint": "La discussion répond depuis un autre compte et ne peut donc pas lire cet e-mail. Changez de compte pour poser des questions dessus.",
+        "action": "Changer"
+      }
     },
     "newChat": "Nouveau chat"
   },

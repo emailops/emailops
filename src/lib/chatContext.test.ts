@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatTurnContext, deriveChatContext, isConversationThreadBound, offeredChatContext } from '@/lib/chatContext';
+import { chatTurnContext, deriveChatContext, isConversationThreadBound, planChatContextOffer } from '@/lib/chatContext';
 import type { ChatMessage, Email } from '@/types';
 
 // The planner reads only threadId / accountId / subject off an Email. Building
@@ -135,28 +135,31 @@ describe('chatTurnContext', () => {
   });
 });
 
-describe('offeredChatContext', () => {
+describe('planChatContextOffer', () => {
   const context = { threadId: 'thread-7', accountId: 'acct-a', subject: 'Budget review' };
 
   it('offers a thread from the account chat is scoped to', () => {
-    expect(offeredChatContext(context, 'acct-a', false)).toEqual(context);
+    expect(planChatContextOffer(context, 'acct-a', false)).toEqual({ kind: 'offered', context });
   });
 
-  it('does not offer a thread from another account', () => {
+  it('flags a thread from another account instead of silently ignoring it', () => {
     // Reachable in "All accounts": the list shows every account while chat
-    // answers from one. Grounding a turn in a mailbox the following turns
-    // cannot search is incoherent, so the chip stays away entirely.
-    expect(offeredChatContext(context, 'acct-b', false)).toBeNull();
+    // answers from one. Dropping it silently means asking about the open email
+    // gets an answer from a different mailbox with no explanation — the exact
+    // confusion this whole feature exists to remove. Surface it so the panel
+    // can say so and offer the switch.
+    expect(planChatContextOffer(context, 'acct-b', false)).toEqual({ kind: 'otherAccount', context });
   });
 
   it('offers nothing for a conversation already bound to a thread', () => {
     // "Chat about this thread" owns its grounding; the backend ignores ambient
-    // context for it, so offering some would misdescribe the next answer.
-    expect(offeredChatContext(context, 'acct-a', true)).toBeNull();
+    // context for it, so neither offering nor warning would be truthful.
+    expect(planChatContextOffer(context, 'acct-a', true)).toEqual({ kind: 'none' });
+    expect(planChatContextOffer(context, 'acct-b', true)).toEqual({ kind: 'none' });
   });
 
   it('offers nothing when there is no open thread or no chat account', () => {
-    expect(offeredChatContext(null, 'acct-a', false)).toBeNull();
-    expect(offeredChatContext(context, null, false)).toBeNull();
+    expect(planChatContextOffer(null, 'acct-a', false)).toEqual({ kind: 'none' });
+    expect(planChatContextOffer(context, null, false)).toEqual({ kind: 'none' });
   });
 });

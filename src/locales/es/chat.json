@@ -162,7 +162,12 @@
       "remove": "No usar este hilo como contexto",
       "restore": "Usar el hilo abierto como contexto",
       "noSubject": "(sin asunto)",
-      "hint": "Las respuestas se basan solo en este hilo. Quítalo para buscar en toda tu bandeja."
+      "hint": "Las respuestas se basan solo en este hilo. Quítalo para buscar en toda tu bandeja.",
+      "otherAccount": {
+        "label": "Este correo está en {{email}}",
+        "hint": "El chat responde desde otra cuenta, así que no puede leer este correo. Cambia de cuenta para preguntar por él.",
+        "action": "Cambiar"
+      }
     },
     "newChat": "Chat nuevo"
   },

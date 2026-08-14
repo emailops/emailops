@@ -162,7 +162,12 @@
       "remove": "Diesen Thread nicht als Kontext verwenden",
       "restore": "Geöffneten Thread als Kontext verwenden",
       "noSubject": "(kein Betreff)",
-      "hint": "Antworten stützen sich nur auf diesen Thread. Entferne ihn, um den gesamten Posteingang zu durchsuchen."
+      "hint": "Antworten stützen sich nur auf diesen Thread. Entferne ihn, um den gesamten Posteingang zu durchsuchen.",
+      "otherAccount": {
+        "label": "Diese E-Mail liegt in {{email}}",
+        "hint": "Der Chat antwortet aus einem anderen Konto und kann diese E-Mail nicht lesen. Wechsle das Konto, um danach zu fragen.",
+        "action": "Wechseln"
+      }
     },
     "newChat": "Neuer Chat"
   },

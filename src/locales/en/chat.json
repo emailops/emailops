@@ -162,7 +162,12 @@
       "remove": "Don't use this thread as context",
       "restore": "Use the open thread as context",
       "noSubject": "(no subject)",
-      "hint": "Answers are grounded in this thread only. Remove it to search your whole inbox."
+      "hint": "Answers are grounded in this thread only. Remove it to search your whole inbox.",
+      "otherAccount": {
+        "label": "This email is in {{email}}",
+        "hint": "Chat is answering from a different account, so it can't read this email. Switch to ask about it.",
+        "action": "Switch"
+      }
     },
     "newChat": "New chat"
   },
