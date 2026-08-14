@@ -1,11 +1,8 @@
 cask "emailops" do
-  arch intel: "-intel"
+  version "0.6.6"
+  sha256 "4caede28b11387ddad23b8079a189dd13d0d0b38fcaab8116a7e2c5c153ba7f3"
 
-  version "0.6.5"
-  sha256 arm:   "3a905dd7d9684ef53b0039811ef30372524e5813145c5ac1ea8ec820b89f6a5f",
-         intel: "acf6bf39dc1e06742d6d3c577e011a544c47ae0cc8fac17d1131686c931547a3"
-
-  url "https://github.com/emailops/emailops/releases/download/v#{version}/EmailOps-macos#{arch}.dmg"
+  url "https://github.com/emailops/emailops/releases/download/v#{version}/EmailOps-macos.dmg"
   name "EmailOps"
   desc "Privacy-first, AI-native email client"
   homepage "https://github.com/emailops/emailops"
