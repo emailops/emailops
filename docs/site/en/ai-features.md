@@ -71,6 +71,17 @@ Ask questions in natural language — *"what did the lawyer say about the contra
 *"summarise this thread"*, *"who still owes me an answer?"* — and get an answer with the
 source emails cited. Answers stream in as they are generated.
 
+Chat lives in a resizable panel docked to the right of the inbox, so you can keep reading
+while you ask; there is also a full-page view for longer sessions. With an email open the
+panel offers that thread as context via a removable chip, and answers from the thread
+itself instead of searching. That context applies to a single question and is never saved
+onto the conversation, so you can move between emails inside one chat.
+
+Chat searches one account at a time, and a picker names which one — so an answer is never
+silently drawn from the wrong mailbox. Each account keeps its own conversation for as long
+as the app is open, so switching accounts returns you to where you left off rather than to
+a blank chat.
+
 Under the hood, chat combines retrieval (semantic search over your embedded mail) with
 tool calls (direct lookups against the database). The routing mode is configurable:
 

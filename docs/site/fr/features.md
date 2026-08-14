@@ -34,6 +34,12 @@ Webex et Zoom. La synchronisation du calendrier est active par défaut pour les 
 et Outlook et peut être désactivée compte par compte, tout comme le délai de notification,
 dans **Paramètres → Calendrier**.
 
+Tous les agendas d'un compte sont synchronisés, pas seulement le principal — un agenda
+qu'un collègue a partagé avec vous apparaît donc ici comme dans Google ou Outlook. Chacun
+prend la couleur que lui donne son fournisseur, et la légende au-dessus de la grille masque
+ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
+**Paramètres → Calendrier**.
+
 ## Vue des pièces jointes
 
 Un seul endroit qui liste toutes les pièces jointes de votre courrier — factures, contrats,

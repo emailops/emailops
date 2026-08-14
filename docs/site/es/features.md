@@ -33,6 +33,12 @@ Zoom. La sincronización de calendario está activada por defecto en las cuentas
 Outlook y puede desactivarse por cuenta, junto con la antelación del aviso, en
 **Ajustes → Calendario**.
 
+Se sincronizan todos los calendarios de una cuenta, no solo el principal — así que un
+calendario que un compañero haya compartido contigo aparece aquí igual que en Google o en
+Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sobre la
+cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
+**Ajustes → Calendario**.
+
 ## Vista de adjuntos
 
 Un único sitio con todos los adjuntos de tu correo — facturas, contratos, imágenes — con

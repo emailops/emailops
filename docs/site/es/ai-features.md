@@ -73,6 +73,18 @@ Pregunta en lenguaje natural — *"¿qué dijo el abogado sobre el contrato?"*, 
 hilo"*, *"¿quién me debe todavía una respuesta?"* — y obtén una respuesta con los correos de
 origen citados. Las respuestas llegan en streaming según se generan.
 
+El chat vive en un panel redimensionable acoplado a la derecha de la bandeja, así que puedes
+seguir leyendo mientras preguntas; también hay una vista a pantalla completa para sesiones
+más largas. Con un correo abierto, el panel ofrece ese hilo como contexto mediante un chip
+que puedes quitar, y responde desde el propio hilo en lugar de buscar. Ese contexto se aplica
+a una sola pregunta y nunca se guarda en la conversación, así que puedes moverte entre
+correos dentro de un mismo chat.
+
+El chat busca en una cuenta cada vez, y un selector indica cuál — de modo que una respuesta
+nunca sale en silencio del buzón equivocado. Cada cuenta mantiene su propia conversación
+mientras la aplicación siga abierta, así que cambiar de cuenta te devuelve donde lo dejaste
+y no a un chat en blanco.
+
 Por dentro, el chat combina recuperación (búsqueda semántica sobre tu correo indexado) con
 llamadas a herramientas (consultas directas a la base de datos). El modo de enrutado es
 configurable:

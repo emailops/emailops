@@ -33,6 +33,12 @@ und Zoom-Links. Die Kalendersynchronisierung ist für Gmail- und Outlook-Konten 
 aktiv und lässt sich je Konto abschalten — ebenso die Vorlaufzeit der Benachrichtigung — unter
 **Einstellungen → Kalender**.
 
+Synchronisiert werden alle Kalender eines Kontos, nicht nur der primäre — ein Kalender, den
+eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google oder Outlook.
+Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
+einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
+**Einstellungen → Kalender**.
+
 ## Anhänge-Ansicht
 
 Ein Ort mit allen Anhängen aus Ihrem Postfach — Rechnungen, Verträge, Bilder — mit Vorschau

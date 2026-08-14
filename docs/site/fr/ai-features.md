@@ -76,6 +76,19 @@ Posez vos questions en langage naturel — *« qu'a dit l'avocat à propos du co
 *« résume ce fil »*, *« qui me doit encore une réponse ? »* — et obtenez une réponse citant
 les e-mails sources. Les réponses arrivent en flux au fur et à mesure de leur génération.
 
+Le chat occupe un panneau redimensionnable ancré à droite de la boîte de réception : vous
+pouvez continuer à lire tout en posant vos questions, et une vue plein écran reste
+disponible pour les sessions plus longues. Lorsqu'un e-mail est ouvert, le panneau propose
+ce fil comme contexte via une puce que vous pouvez retirer, et répond à partir du fil
+lui-même au lieu de chercher. Ce contexte ne vaut que pour une question et n'est jamais
+enregistré dans la conversation : vous pouvez donc passer d'un e-mail à l'autre au sein d'un
+même chat.
+
+Le chat interroge un compte à la fois, et un sélecteur indique lequel — une réponse ne
+provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conserve sa propre
+conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
+en étiez, et non à un chat vide.
+
 Sous le capot, le chat combine la récupération (recherche sémantique sur vos e-mails indexés)
 et des appels d'outils (interrogations directes de la base). Le mode de routage est
 configurable :

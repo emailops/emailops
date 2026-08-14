@@ -31,6 +31,11 @@ reminders ahead of each event with a one-click **Join** button for Meet, Teams, 
 Zoom links. Calendar sync is on by default for Gmail and Outlook accounts and can be
 switched off per account, along with the notification lead time, in **Settings → Calendar**.
 
+Every calendar on an account is synced, not just the primary one — so a calendar a
+colleague shared with you shows up here the same way it does in Google or Outlook. Each
+one is tinted with the colour its provider gives it, and the legend above the grid hides
+or shows individual calendars; the same switches live in **Settings → Calendar**.
+
 ## Attachments view
 
 One place listing every attachment across your mail — invoices, contracts, images — with

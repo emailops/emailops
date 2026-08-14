@@ -74,6 +74,18 @@ Fragen Sie in natürlicher Sprache — *„Was hat der Anwalt zum Vertrag gesagt
 Thread zusammen“*, *„Wer schuldet mir noch eine Antwort?“* — und erhalten Sie eine Antwort mit
 Angabe der Quell-E-Mails. Die Antworten erscheinen im Stream, während sie erzeugt werden.
 
+Der Chat sitzt in einem größenveränderlichen Panel rechts neben dem Posteingang, sodass Sie
+beim Fragen weiterlesen können; für längere Sitzungen gibt es zusätzlich eine
+Vollbildansicht. Ist eine E-Mail geöffnet, bietet das Panel diesen Thread über einen
+entfernbaren Chip als Kontext an und antwortet aus dem Thread selbst, statt zu suchen.
+Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhaltung gespeichert — Sie
+können sich also innerhalb eines Chats zwischen E-Mails bewegen.
+
+Der Chat durchsucht immer ein Konto, und eine Auswahl benennt welches — so stammt eine
+Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigene
+Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also dorthin zurück,
+wo Sie aufgehört haben, und nicht zu einem leeren Chat.
+
 Unter der Haube kombiniert der Chat Retrieval (semantische Suche über Ihre indexierten
 E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus ist
 einstellbar:
