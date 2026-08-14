@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import type { Account } from '@/types';
+import { useLogStore } from './logStore';
 
 /**
  * Sentinel `activeAccountId` for the unified ("All accounts") view.
@@ -36,6 +37,50 @@ export function toQueryAccountId(id: string | null): string | null {
 export function selectEffectiveAccountId(accounts: Account[], activeAccountId: string | null): string | null {
   if (!isUnifiedMode(activeAccountId)) return activeAccountId;
   return accounts.find((a) => a.enabled)?.id ?? accounts[0]?.id ?? null;
+}
+
+/** Preference key holding the account the app should reopen on. */
+export const ACTIVE_ACCOUNT_PREF_KEY = 'active_account';
+
+/**
+ * Account to select on a cold start, given what the last session remembered.
+ *
+ * The remembered id is only a hint: accounts get deleted and disabled between
+ * launches, so anything that no longer resolves to a usable selection falls
+ * back to the previous behaviour (first account). A stale id must never be
+ * restored — it would reach the backend and fail as NotFound on every query.
+ *
+ * The unified sentinel is remembered like any account, but only restored while
+ * more than one account exists, since that is the only time the sidebar offers
+ * it.
+ */
+export function selectStartupAccountId(accounts: Account[], rememberedId: string | null): string | null {
+  if (accounts.length === 0) return null;
+  const fallback = accounts[0].id;
+  if (!rememberedId) return fallback;
+  if (isUnifiedMode(rememberedId)) return accounts.length > 1 ? ALL_ACCOUNTS_ID : fallback;
+  const remembered = accounts.find((a) => a.id === rememberedId);
+  if (!remembered) return fallback;
+  // A disabled account renders an empty inbox, which reads as a bug rather
+  // than as a restored choice — unless nothing else is enabled either, in
+  // which case honouring it is no worse than the fallback.
+  if (!remembered.enabled && accounts.some((a) => a.enabled)) return fallback;
+  return remembered.id;
+}
+
+/**
+ * Persist the account the app should reopen on.
+ *
+ * Fire-and-forget: remembering the choice is a convenience, so a failed write
+ * must not block the switch the user just made — but it is logged rather than
+ * swallowed. `null` (no accounts left) is not written: it would erase a good
+ * memory the moment the last account is deleted.
+ */
+function rememberActiveAccount(id: string | null): void {
+  if (!id) return;
+  api.setPref(ACTIVE_ACCOUNT_PREF_KEY, id).catch((e) => {
+    useLogStore.getState().addLog('error', 'account', `Failed to remember the selected account: ${errorText(e)}`);
+  });
 }
 
 /**
@@ -199,7 +244,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   setupPendingAccountId: null,
   pendingSyncAccountIds: new Set<string>(),
 
-  setActiveAccount: (id) => set({ activeAccountId: id, error: null, errorAccountId: null }),
+  setActiveAccount: (id) => {
+    set({ activeAccountId: id, error: null, errorAccountId: null });
+    rememberActiveAccount(id);
+  },
 
   markSetupPending: (accountId) => set({ setupPendingAccountId: accountId }),
   clearSetupPending: (accountId) =>
@@ -215,7 +263,15 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       const accounts = await api.listAccounts();
       set({ accounts, isLoading: false });
       if (accounts.length > 0 && !get().activeAccountId) {
-        set({ activeAccountId: accounts[0].id });
+        // Cold start only. `fetchAccounts` also re-runs after reorder / settings
+        // save / account add, and those must not re-read the pref — the guard
+        // above already skips them, and re-reading would fight the live
+        // selection.
+        const remembered = await api.getPref(ACTIVE_ACCOUNT_PREF_KEY).catch((e) => {
+          useLogStore.getState().addLog('error', 'account', `Failed to read the remembered account: ${errorText(e)}`);
+          return null;
+        });
+        set({ activeAccountId: selectStartupAccountId(accounts, remembered) });
       }
     } catch (error) {
       set({ error: errorText(error), errorAccountId: null, isLoading: false });
@@ -237,6 +293,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         setupPendingAccountId: options?.deferSetup ? account.id : state.setupPendingAccountId,
         isLoading: false,
       }));
+      rememberActiveAccount(account.id);
       return account;
     } catch (error) {
       set({ error: errorText(error), errorAccountId: null, isLoading: false });
@@ -250,6 +307,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       activeAccountId: account.id,
       setupPendingAccountId: options?.deferSetup ? account.id : state.setupPendingAccountId,
     }));
+    rememberActiveAccount(account.id);
   },
 
   removeAccount: async (accountId) => {

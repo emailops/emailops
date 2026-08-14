@@ -12,11 +12,14 @@ import {
   type SyncProgress,
   selectAccountById,
   selectEffectiveAccountId,
+  selectStartupAccountId,
   toQueryAccountId,
   useAccountStore,
 } from './accountStore';
 
 vi.mock('@/lib/api', () => ({
+  getPref: vi.fn(async () => null),
+  setPref: vi.fn(async () => {}),
   listAccounts: vi.fn(async () => []),
   removeAccount: vi.fn(async () => {}),
   syncAccount: vi.fn(async () => {}),
@@ -173,6 +176,52 @@ describe('reduceSyncProgress', () => {
   });
 });
 
+// ── which account the app opens on ───────────────────────────────────────────
+
+describe('selectStartupAccountId', () => {
+  const accounts = [makeAccount('a'), makeAccount('b')];
+
+  it('reopens the account the user last selected', () => {
+    expect(selectStartupAccountId(accounts, 'b')).toBe('b');
+  });
+
+  it('reopens the unified view when that is where the user left off', () => {
+    expect(selectStartupAccountId(accounts, ALL_ACCOUNTS_ID)).toBe(ALL_ACCOUNTS_ID);
+  });
+
+  it('falls back to the first account with nothing remembered', () => {
+    expect(selectStartupAccountId(accounts, null)).toBe('a');
+  });
+
+  it('falls back when the remembered account is gone', () => {
+    // Deleting the account that was last active must not strand the app on an
+    // id the backend will reject as NotFound.
+    expect(selectStartupAccountId(accounts, 'deleted')).toBe('a');
+  });
+
+  it('falls back when the remembered account was since disabled', () => {
+    // A disabled account shows no mail, so landing on it looks like a broken
+    // inbox rather than a remembered choice.
+    expect(selectStartupAccountId([makeAccount('a'), makeAccount('b', false)], 'b')).toBe('a');
+  });
+
+  it('falls back to unified when every account is disabled', () => {
+    // `selectEffectiveAccountId` still resolves the sentinel to a concrete
+    // account, so this degrades rather than leaving the app with no selection.
+    expect(selectStartupAccountId([makeAccount('a', false)], 'a')).toBe('a');
+  });
+
+  it('is null with no accounts at all', () => {
+    expect(selectStartupAccountId([], 'a')).toBeNull();
+  });
+
+  it('drops a remembered unified view once a single account is left', () => {
+    // The sidebar only offers "All accounts" with more than one, so restoring
+    // it here would select an entry that is not on screen.
+    expect(selectStartupAccountId([makeAccount('a')], ALL_ACCOUNTS_ID)).toBe('a');
+  });
+});
+
 // ── store actions vs. the sentinel ───────────────────────────────────────────
 
 describe('fetchAccounts', () => {
@@ -182,6 +231,28 @@ describe('fetchAccounts', () => {
     expect(useAccountStore.getState().activeAccountId).toBe('a');
   });
 
+  it('reopens the account remembered from the last session', async () => {
+    vi.mocked(api.listAccounts).mockResolvedValue([makeAccount('a'), makeAccount('b')]);
+    vi.mocked(api.getPref).mockResolvedValue('b');
+    await useAccountStore.getState().fetchAccounts();
+    expect(useAccountStore.getState().activeAccountId).toBe('b');
+  });
+
+  it('still selects the first account when the pref read fails', async () => {
+    // A preferences failure must not leave the app with no account selected.
+    vi.mocked(api.listAccounts).mockResolvedValue([makeAccount('a'), makeAccount('b')]);
+    vi.mocked(api.getPref).mockRejectedValue(new Error('db closed'));
+    await useAccountStore.getState().fetchAccounts();
+    expect(useAccountStore.getState().activeAccountId).toBe('a');
+  });
+
+  it('does not re-read the pref when an account is already active', async () => {
+    vi.mocked(api.listAccounts).mockResolvedValue([makeAccount('a'), makeAccount('b')]);
+    useAccountStore.setState({ activeAccountId: 'b' });
+    await useAccountStore.getState().fetchAccounts();
+    expect(api.getPref).not.toHaveBeenCalled();
+  });
+
   it('does NOT clobber the All-accounts sentinel (regression)', async () => {
     // fetchAccounts re-runs after reorder/settings-save/account-add; unified
     // mode must survive those refetches.
@@ -189,6 +260,25 @@ describe('fetchAccounts', () => {
     useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
     await useAccountStore.getState().fetchAccounts();
     expect(useAccountStore.getState().activeAccountId).toBe(ALL_ACCOUNTS_ID);
+  });
+});
+
+describe('setActiveAccount', () => {
+  it('remembers the choice so the next launch lands there', async () => {
+    useAccountStore.getState().setActiveAccount('b');
+    expect(api.setPref).toHaveBeenCalledWith('active_account', 'b');
+  });
+
+  it('remembers the unified view too', () => {
+    useAccountStore.getState().setActiveAccount(ALL_ACCOUNTS_ID);
+    expect(api.setPref).toHaveBeenCalledWith('active_account', ALL_ACCOUNTS_ID);
+  });
+
+  it('does not persist a cleared selection', () => {
+    // `null` means "no accounts exist" — writing it would erase a perfectly
+    // good memory the moment the last account is deleted.
+    useAccountStore.getState().setActiveAccount(null);
+    expect(api.setPref).not.toHaveBeenCalled();
   });
 });
 
