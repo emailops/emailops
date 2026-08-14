@@ -71,9 +71,9 @@ interface SidebarProps {
   isSyncing: boolean;
   viewMode: ViewMode;
   onSetViewMode: (mode: ViewMode) => void;
-  /** Whether the right-docked chat panel is currently showing. */
-  isChatPanelOpen: boolean;
-  onToggleChatPanel: () => void;
+
+  /** Open the full-page chat view. */
+  onOpenChatView: () => void;
   smartFilters: SmartFilter[];
   activeFilter: ActiveFilter | null;
   isLoadingFilters: boolean;
@@ -111,8 +111,7 @@ export function Sidebar({
   isSyncing,
   viewMode,
   onSetViewMode,
-  isChatPanelOpen,
-  onToggleChatPanel,
+  onOpenChatView,
   smartFilters,
   activeFilter,
   isLoadingFilters,
@@ -761,18 +760,16 @@ export function Sidebar({
             <ul className="space-y-1 mb-2">
               {aiEnabled && (
                 <li>
-                  {/* Toggles the right-docked panel rather than navigating —
-                      the full-page view is reached from the panel's expand
-                      button. Highlighted for either surface so the entry always
-                      reflects whether chat is on screen. */}
+                  {/* Navigates to the full-page chat view. The docked panel is
+                      a separate surface with its own close button and is
+                      reopened from the header's new-chat icon, so this entry
+                      does not toggle it. */}
                   <button
-                    onClick={onToggleChatPanel}
-                    aria-pressed={isChatPanelOpen || viewMode === 'chat'}
-                    title={isChatPanelOpen ? t('chat:panel.close') : t('chat:panel.open')}
+                    onClick={onOpenChatView}
+                    aria-pressed={viewMode === 'chat'}
+                    title={t('chat:panel.expand')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      isChatPanelOpen || viewMode === 'chat'
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

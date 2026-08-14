@@ -171,5 +171,9 @@
     "confirmDelete": "Confirm?",
     "newChat": "New chat"
   },
-  "unifiedScopeHint": "In All accounts view, chat searches {{email}} only"
+  "unifiedScopeHint": "In All accounts view, chat searches {{email}} only",
+  "accountPicker": {
+    "label": "Account this chat searches",
+    "hint": "Chat answers from one account at a time. Switching starts a new conversation."
+  }
 }

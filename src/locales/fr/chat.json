@@ -171,5 +171,9 @@
     "confirmDelete": "Confirmer ?",
     "newChat": "Nouvelle discussion"
   },
-  "unifiedScopeHint": "Dans la vue tous les comptes, le chat ne recherche que dans {{email}}"
+  "unifiedScopeHint": "Dans la vue tous les comptes, le chat ne recherche que dans {{email}}",
+  "accountPicker": {
+    "label": "Compte dans lequel cette discussion recherche",
+    "hint": "La discussion répond à partir d'un seul compte à la fois. En changer démarre une nouvelle conversation."
+  }
 }

@@ -171,5 +171,9 @@
     "confirmDelete": "Bestätigen?",
     "newChat": "Neuer Chat"
   },
-  "unifiedScopeHint": "In der Alle-Konten-Ansicht durchsucht der Chat nur {{email}}"
+  "unifiedScopeHint": "In der Alle-Konten-Ansicht durchsucht der Chat nur {{email}}",
+  "accountPicker": {
+    "label": "Konto, in dem dieser Chat sucht",
+    "hint": "Der Chat antwortet immer nur aus einem Konto. Ein Wechsel startet eine neue Unterhaltung."
+  }
 }

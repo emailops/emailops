@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AccountScopeChip } from '@/components/shared/AccountScopeChip';
 import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
+import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { ConversationList } from './ConversationList';
 import { MessageList } from './MessageList';
@@ -24,11 +24,13 @@ const SHORTCUTS = [
 
 interface ChatViewProps {
   accountId: string | null;
+  /** Retarget which account the chat searches. */
+  onAccountChange: (accountId: string) => void;
   /** Called when a citation opens an email — lets the parent switch to the inbox view. */
   onNavigateToInbox?: () => void;
 }
 
-export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
+export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: ChatViewProps) {
   const { t } = useTranslation(['chat', 'common']);
   // Chat conversations are hard-scoped to one account. In unified
   // ("All accounts") mode the parent passes the first enabled account —
@@ -145,11 +147,7 @@ export function ChatView({ accountId, onNavigateToInbox }: ChatViewProps) {
             account — surface that scope persistently, in intro AND while a
             conversation is open. The tooltip carries the full explanation. */}
         {isUnified && accountId && scopedAccountEmail && (
-          <AccountScopeChip
-            accountId={accountId}
-            email={scopedAccountEmail}
-            hint={t('chat:unifiedScopeHint', { email: scopedAccountEmail })}
-          />
+          <ChatAccountPicker accountId={accountId} onChange={onAccountChange} />
         )}
         {showIntro ? (
           <>

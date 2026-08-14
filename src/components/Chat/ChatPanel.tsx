@@ -5,12 +5,15 @@ import { type ChatContext, chatContextKey, chatTurnContext, isConversationThread
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
+import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
 import { ThreadContextChip } from './ThreadContextChip';
 
 interface ChatPanelProps {
   accountId: string | null;
+  /** Retarget which account the chat searches. */
+  onAccountChange: (accountId: string) => void;
   /** Thread the main view currently shows, or null. */
   context: ChatContext | null;
   onClose: () => void;
@@ -25,7 +28,14 @@ interface ChatPanelProps {
  * read `chatStore`), in a narrow column beside the mail content, with the open
  * thread offered as ambient context.
  */
-export function ChatPanel({ accountId, context, onClose, onExpand, onNavigateToInbox }: ChatPanelProps) {
+export function ChatPanel({
+  accountId,
+  onAccountChange,
+  context,
+  onClose,
+  onExpand,
+  onNavigateToInbox,
+}: ChatPanelProps) {
   const { t } = useTranslation(['chat', 'common']);
   const {
     conversations,
@@ -95,6 +105,7 @@ export function ChatPanel({ accountId, context, onClose, onExpand, onNavigateToI
 
   const header = (
     <div className="flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5">
+      <ChatAccountPicker accountId={accountId} onChange={onAccountChange} compact />
       <select
         value={activeConversationId ?? ''}
         onChange={(e) => void selectConversation(e.target.value || null)}

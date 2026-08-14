@@ -13,6 +13,8 @@ import { ChatPanel } from './ChatPanel';
 
 interface ChatPanelDockProps {
   accountId: string | null;
+  /** Retarget which account the chat searches. */
+  onAccountChange: (accountId: string) => void;
   context: ChatContext | null;
   onClose: () => void;
   onExpand: () => void;
@@ -27,7 +29,14 @@ const KEYBOARD_STEP = 16;
  * width: persisted to SQLite, drag-resizable from the left border, and
  * keyboard-resizable for anyone not using a pointer.
  */
-export function ChatPanelDock({ accountId, context, onClose, onExpand, onNavigateToInbox }: ChatPanelDockProps) {
+export function ChatPanelDock({
+  accountId,
+  onAccountChange,
+  context,
+  onClose,
+  onExpand,
+  onNavigateToInbox,
+}: ChatPanelDockProps) {
   const { t } = useTranslation('chat');
   const [width, setWidth] = usePersistedPref<number>('chat_panel_width', CHAT_PANEL_DEFAULT_WIDTH, {
     parse: parseChatPanelWidth,
@@ -88,6 +97,7 @@ export function ChatPanelDock({ accountId, context, onClose, onExpand, onNavigat
       />
       <div className="min-w-0 flex-1">
         <ChatPanel
+          onAccountChange={onAccountChange}
           accountId={accountId}
           context={context}
           onClose={onClose}
