@@ -5,9 +5,9 @@ intentionally absent — milestones land when they're ready. If something
 here matters to you, open an issue or a PR; community input shapes
 priority.
 
-> The current shipping version is **0.6.5** (see [CHANGELOG.md](CHANGELOG.md)).
+> The current shipping version is **0.6.6** (see [CHANGELOG.md](CHANGELOG.md)).
 
-## Next up (targeting 0.6.0)
+## Next up (targeting 0.7.0)
 
 - **Qwen 3.6 27B in the embedded catalog.** Add the unsloth `UD-Q4_K_XL`
   GGUF (~17.6 GB) as a chat option for Apple Silicon Macs with ≥24 GB RAM,
@@ -18,8 +18,10 @@ priority.
 
 ## On the radar (0.7.0+)
 
-- **Calendar integration** (Google Calendar + Microsoft Graph) so
-  EmailOps can surface "this email implies an event."
+- **Email-to-event.** The calendar itself has shipped (Google Calendar +
+  Microsoft Graph, every calendar of an account in its own colour); what
+  remains is surfacing "this email implies an event" and offering to
+  create it.
 - **Auto-send with approval workflows** for AI drafts (currently the
   user always reviews and clicks Send).
 - **Per-account model preferences** — pick a different embedded model
@@ -28,8 +30,8 @@ priority.
 - **Lens marketplace / sharing** — export a Lens definition (scope,
   rules, filters) and import it into another EmailOps install.
 - **Better attachment classification** beyond filename heuristics.
-- **Outlook / Microsoft 365 polish**. Sync parity with Gmail, calendar
-  integration deferred to a later release.
+- **Outlook / Microsoft 365 polish**. Sync parity with Gmail (the Graph
+  calendar has shipped).
 - **Tool-calling reliability on small local models.** Models in the
   ~4–9B class (Qwen 3.5 9B, Qwen 3.5 4B and similar) often emit tool
   calls as plain text or stop at a "Drafting the reply…" narration

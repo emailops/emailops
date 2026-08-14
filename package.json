@@ -1,6 +1,6 @@
 {
   "name": "emailops",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "Privacy-first, AI-native email client. All AI processing happens locally.",
   "author": "Gero DP",

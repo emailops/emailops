@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.6] — 2026-08-14
+
 ### Added
 
 - **Chat panel docked on the right** — a resizable chat alongside the inbox, in
