@@ -535,6 +535,7 @@ pub fn run() {
             commands::contacts::list_contacts_by_company,
             commands::drafts::list_drafts,
             commands::drafts::get_draft,
+            commands::drafts::refresh_drafts,
             commands::drafts::list_draft_attachments,
             commands::drafts::save_draft,
             commands::drafts::send_draft,

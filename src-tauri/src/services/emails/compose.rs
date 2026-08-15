@@ -297,6 +297,55 @@ pub async fn delete_draft(
 /// and prune local provider-linked drafts that no longer exist upstream.
 /// Returns the number of drafts pulled. Best-effort — the caller (sync) logs
 /// and continues on error.
+/// Minimum gap between two **on-demand** draft pulls for one account.
+///
+/// The sync's own pull is unaffected. This only bounds the UI triggers —
+/// opening the Drafts screen and opening a draft from it fire a second apart,
+/// and one listing call covers both.
+pub const DRAFT_REFRESH_COOLDOWN_SECS: i64 = 10;
+
+/// Pure: may an on-demand pull hit the provider now?
+///
+/// A clock that moved backwards counts as due — parking an account in a
+/// cooldown it can never leave would be worse than one extra listing call.
+pub fn draft_refresh_due(last_pull_at: Option<i64>, now: i64) -> bool {
+    match last_pull_at {
+        Some(last) if now >= last => now - last >= DRAFT_REFRESH_COOLDOWN_SECS,
+        _ => true,
+    }
+}
+
+/// When the last on-demand pull ran, per account. Process-local and
+/// intentionally not persisted: a restart may spend one extra listing call.
+static LAST_ON_DEMAND_PULL: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// On-demand draft pull for UI triggers (opening the Drafts screen, opening a
+/// draft), throttled per account by [`DRAFT_REFRESH_COOLDOWN_SECS`]. Returns
+/// the number of drafts whose content was read, or `0` when throttled.
+///
+/// `now` is passed in rather than read here so the throttle is testable without
+/// a global clock.
+pub async fn refresh_provider_drafts(
+    db: &Arc<Database>,
+    account_id: &str,
+    provider: &dyn EmailProvider,
+    now: i64,
+) -> Result<usize> {
+    {
+        let mut last = LAST_ON_DEMAND_PULL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !draft_refresh_due(last.get(account_id).copied(), now) {
+            return Ok(0);
+        }
+        // Stamp before the call, not after: two triggers racing must not both
+        // get through while the first is still in flight.
+        last.insert(account_id.to_string(), now);
+    }
+    pull_provider_drafts(db, account_id, provider).await
+}
+
 pub async fn pull_provider_drafts(db: &Arc<Database>, account_id: &str, provider: &dyn EmailProvider) -> Result<usize> {
     // Hand the provider what we already have so it can skip re-reading drafts
     // that have not changed upstream. At steady state this makes the pass one
@@ -535,6 +584,153 @@ mod tests {
         let drafts = db.list_drafts("a1").expect("list");
         assert_eq!(drafts.len(), 1, "a skipped draft must survive the prune pass");
         assert_eq!(drafts[0].subject, "Server draft");
+    }
+
+    #[test]
+    fn an_account_never_pulled_on_demand_is_due() {
+        assert!(draft_refresh_due(None, 1_000));
+    }
+
+    #[test]
+    fn a_pull_inside_the_cooldown_is_not_due() {
+        // Opening the Drafts screen and then a draft in it are two triggers a
+        // second apart; one listing call must cover both.
+        assert!(!draft_refresh_due(Some(1_000), 1_000));
+        assert!(!draft_refresh_due(Some(1_000), 1_000 + DRAFT_REFRESH_COOLDOWN_SECS - 1));
+    }
+
+    #[test]
+    fn a_pull_past_the_cooldown_is_due() {
+        assert!(draft_refresh_due(Some(1_000), 1_000 + DRAFT_REFRESH_COOLDOWN_SECS));
+    }
+
+    #[test]
+    fn a_clock_that_moved_backwards_is_due_rather_than_stuck() {
+        // A backwards jump (NTP correction, DST-adjacent clock fiddling) must
+        // not park the account in a cooldown it can never leave.
+        assert!(draft_refresh_due(Some(5_000), 1_000));
+    }
+
+    #[tokio::test]
+    async fn on_demand_refresh_pulls_once_then_waits_out_the_cooldown() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_account(&db, "cooldown-1", "gmail");
+        let provider = FakeEmailProvider::new("cooldown-1@example.com", "A One");
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-1".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "First".to_string(),
+            body: "hi".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_000),
+            provider_message_id: Some("msg-1".to_string()),
+        });
+
+        assert_eq!(
+            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_000)
+                .await
+                .expect("first"),
+            1
+        );
+
+        // Something new upstream, but we are still inside the cooldown.
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-2".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Second".to_string(),
+            body: "hi".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_100),
+            provider_message_id: Some("msg-2".to_string()),
+        });
+        assert_eq!(
+            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_001)
+                .await
+                .expect("throttled"),
+            0,
+            "a second trigger seconds later must not hit the provider"
+        );
+        assert_eq!(db.list_drafts("cooldown-1").expect("list").len(), 1);
+
+        assert_eq!(
+            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_000 + DRAFT_REFRESH_COOLDOWN_SECS)
+                .await
+                .expect("after cooldown"),
+            1,
+            "past the cooldown the provider is consulted again"
+        );
+        assert_eq!(db.list_drafts("cooldown-1").expect("list").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn on_demand_refresh_cooldowns_are_per_account() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_account(&db, "cooldown-a", "gmail");
+        seed_account(&db, "cooldown-b", "gmail");
+        let provider = FakeEmailProvider::new("a@example.com", "A");
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "srv-1".to_string(),
+            to_addresses: vec!["x@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Shared".to_string(),
+            body: "hi".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_000),
+            provider_message_id: Some("msg-1".to_string()),
+        });
+
+        refresh_provider_drafts(&db, "cooldown-a", &provider, 2_000)
+            .await
+            .expect("a");
+        assert_eq!(
+            refresh_provider_drafts(&db, "cooldown-b", &provider, 2_000)
+                .await
+                .expect("b"),
+            1,
+            "one account's refresh must not silence another's"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft_composed_here_then_edited_upstream_is_updated_in_place() {
+        // The reported shape: the draft was created in EmailOps and pushed to
+        // Gmail, so its local row has a provider_draft_id but no change token
+        // yet (the push never learns the message id). Editing it in Gmail must
+        // update that same row rather than leave the local copy stale.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+
+        let draft = compose_draft(&db, &account, input("a1", "Written here", "body one"), Some(&provider))
+            .await
+            .expect("compose");
+        let provider_draft_id = draft.provider_draft_id.clone().expect("pushed to provider");
+        assert!(
+            db.provider_draft_change_tokens("a1").expect("tokens").is_empty(),
+            "a pushed draft starts with no change token"
+        );
+
+        // Same draft id, edited upstream.
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: provider_draft_id.clone(),
+            to_addresses: vec!["dest@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Edited in Gmail".to_string(),
+            body: "body two".to_string(),
+            body_html: None,
+            updated_at: Some(1_700_000_500),
+            provider_message_id: Some("msg-2".to_string()),
+        });
+
+        assert_eq!(pull_provider_drafts(&db, "a1", &provider).await.expect("pull"), 1);
+
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1, "updated in place, not duplicated");
+        assert_eq!(drafts[0].id, draft.id, "same local row");
+        assert_eq!(drafts[0].subject, "Edited in Gmail");
+        assert_eq!(drafts[0].body, "body two");
     }
 
     #[tokio::test]

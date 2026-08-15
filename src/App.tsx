@@ -51,6 +51,7 @@ import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpd
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
+import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
@@ -1314,16 +1315,20 @@ function AppInner() {
               <DraftsView
                 accountId={effectiveAccountId}
                 accounts={accounts}
-                onOpenComposeTab={(draft) => {
+                syncProgress={syncProgress}
+                onOpenComposeTab={async (draft) => {
                   // Compose tabs render inside the inbox/mail pane, not the drafts
                   // view — switch back so the opened tab is actually visible.
                   setViewMode('inbox');
+                  // Open what the provider has: a draft edited in Gmail would
+                  // otherwise open with the row this list rendered.
+                  const fresh = await freshDraftToOpen(draft);
                   openComposeTab(
-                    draft.accountId,
-                    draft.toAddresses,
-                    draft.subject,
-                    draft.bodyHtml ?? plainTextToHtml(draft.body),
-                    { draftId: draft.id, ccAddresses: draft.ccAddresses, attachments: draft.attachments },
+                    fresh.accountId,
+                    fresh.toAddresses,
+                    fresh.subject,
+                    fresh.bodyHtml ?? plainTextToHtml(fresh.body),
+                    { draftId: fresh.id, ccAddresses: fresh.ccAddresses, attachments: fresh.attachments },
                   );
                 }}
               />

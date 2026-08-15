@@ -2,39 +2,75 @@ import { format } from 'date-fns';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import type { SyncProgress } from '@/stores/accountStore';
 import type { Account, Draft } from '@/types';
 
 interface DraftsViewProps {
   accountId: string | null;
   accounts: Account[];
+  /** Latest sync progress event; a completed sync may have pulled draft edits
+   * made in the provider's own client, which are already in the database. */
+  syncProgress: SyncProgress | null;
   onOpenComposeTab: (draft: Draft) => void;
 }
 
-export function DraftsView({ accountId, accounts, onOpenComposeTab }: DraftsViewProps) {
+export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab }: DraftsViewProps) {
   const { t } = useTranslation(['compose']);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const loadDrafts = useCallback(async () => {
-    if (!accountId) {
-      setDrafts([]);
-      return;
-    }
-    setIsLoading(true);
-    try {
-      const result = await api.listDrafts(accountId);
-      setDrafts(result);
-    } catch (err) {
-      console.error('Failed to load drafts:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [accountId]);
+  // `silent` skips the spinner so a background sync refresh doesn't flash the
+  // list — same reasoning as the mail list's silent refetch in App.tsx.
+  const loadDrafts = useCallback(
+    async (silent = false) => {
+      if (!accountId) {
+        setDrafts([]);
+        return;
+      }
+      if (!silent) setIsLoading(true);
+      try {
+        const result = await api.listDrafts(accountId);
+        setDrafts(result);
+      } catch (err) {
+        console.error('Failed to load drafts:', err);
+      } finally {
+        if (!silent) setIsLoading(false);
+      }
+    },
+    [accountId],
+  );
 
+  // Show what is already stored, then ask the provider for anything edited in
+  // its own client. Without the second step a draft changed in Gmail stays
+  // invisible until the next account sync, which can be minutes away.
   useEffect(() => {
-    void loadDrafts();
-  }, [loadDrafts]);
+    let cancelled = false;
+    void (async () => {
+      await loadDrafts();
+      if (!accountId || cancelled) return;
+      try {
+        const changed = await api.refreshDrafts(accountId);
+        if (changed > 0 && !cancelled) await loadDrafts(true);
+      } catch (err) {
+        // Never fatal: an unreachable provider just means the local list is
+        // what we have.
+        console.error('Draft refresh failed:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDrafts, accountId]);
+
+  // A sync's draft pull writes provider-side edits straight into SQLite. Without
+  // this the open list keeps rendering the snapshot it took on mount, so a draft
+  // edited in Gmail looked like it never reached EmailOps.
+  useEffect(() => {
+    if (syncProgress?.status !== 'complete') return;
+    if (accountId && syncProgress.accountId !== accountId) return;
+    void loadDrafts(true);
+  }, [syncProgress, accountId, loadDrafts]);
 
   const handleDelete = async (draft: Draft) => {
     if (!accountId) return;

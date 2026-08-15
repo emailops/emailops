@@ -1150,6 +1150,16 @@ export async function getDraft(draftId: string): Promise<Draft | null> {
   return invoke('get_draft', { draftId });
 }
 
+/**
+ * Pull the provider's Drafts folder on demand, so a draft edited in Gmail is
+ * visible without waiting for the next account sync. Resolves to the number of
+ * drafts re-read; throttled per account in the backend, and never rejects for
+ * an unreachable provider (it resolves 0).
+ */
+export async function refreshDrafts(accountId: string): Promise<number> {
+  return invoke('refresh_drafts', { accountId });
+}
+
 export async function listDraftAttachments(draftId: string): Promise<DraftAttachment[]> {
   return invoke('list_draft_attachments', { draftId });
 }
