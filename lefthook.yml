@@ -81,6 +81,10 @@ pre-push:
     #                           are pinned to 1.92. Bump the "0.38" constraint
     #                           in Cargo.toml (and this flag) once the pinned
     #                           rustc version catches up.
+    #   - reedline (--ignore):  same rustc pin — 0.50 requires 1.95. It only
+    #                           feeds the `cli` feature's REPL line editor, so
+    #                           staying on 0.49 costs the shipped app nothing.
+    #                           Lift with sysinfo when the toolchain moves.
     cargo-outdated:
       run: |
         if command -v cargo-outdated >/dev/null 2>&1; then
@@ -90,6 +94,7 @@ pre-push:
             --exclude rusqlite \
             --ignore reqwest \
             --ignore sysinfo \
+            --ignore reedline \
             --color always
         else
           echo "warning: cargo-outdated not installed — skipping outdated-deps check. Run 'brew install cargo-outdated' (or 'cargo install --locked cargo-outdated' on Linux)."
