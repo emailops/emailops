@@ -536,6 +536,30 @@ impl GmailClient {
         Ok(())
     }
 
+    /// Push a message's read/unread state by adding or removing Gmail's
+    /// `UNREAD` label (`users.messages.modify`, `gmail.modify` scope).
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        let payload = if read {
+            serde_json::json!({ "removeLabelIds": ["UNREAD"] })
+        } else {
+            serde_json::json!({ "addLabelIds": ["UNREAD"] })
+        };
+        let url = format!("{}/users/me/messages/{}/modify", self.base_url, message_id);
+        self.send_post_json_with_retry(&url, &payload, "set read state").await?;
+        Ok(())
+    }
+
+    /// Move a message to Gmail's Trash (`users.messages.trash`,
+    /// `gmail.modify` scope). Deliberately not `messages.delete`, which is
+    /// permanent and unrecoverable — the app's delete action is the reversible
+    /// one, so the message stays in the user's Trash for 30 days.
+    async fn trash_message(&self, message_id: &str) -> Result<()> {
+        let url = format!("{}/users/me/messages/{}/trash", self.base_url, message_id);
+        self.send_post_json_with_retry(&url, &serde_json::json!({}), "trash message")
+            .await?;
+        Ok(())
+    }
+
     async fn list_drafts(
         &self,
         known_change_tokens: &std::collections::HashMap<String, String>,
@@ -1503,6 +1527,14 @@ impl EmailProvider for GmailClient {
         self.delete_draft(provider_draft_id).await
     }
 
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        self.set_read_state(message_id, read).await
+    }
+
+    async fn trash_message(&self, message_id: &str) -> Result<()> {
+        self.trash_message(message_id).await
+    }
+
     async fn list_drafts(
         &self,
         known_change_tokens: &std::collections::HashMap<String, String>,
@@ -2342,6 +2374,70 @@ mod tests {
         assert!(meta.provider_message_id.is_none());
         assert!(meta.provider_thread_id.is_none());
         assert_eq!(meta.message_id_header.as_deref(), Some("<mid@local>"));
+    }
+
+    #[tokio::test]
+    async fn marking_read_removes_the_unread_label_at_gmail() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/m-1/modify"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-1"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client.set_read_state("m-1", true).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "one modify call");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["removeLabelIds"], serde_json::json!(["UNREAD"]));
+        assert!(body.get("addLabelIds").is_none(), "marking read must not add any label");
+    }
+
+    #[tokio::test]
+    async fn marking_unread_adds_the_unread_label_back() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/m-2/modify"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-2"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client.set_read_state("m-2", false).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["addLabelIds"], serde_json::json!(["UNREAD"]));
+        assert!(body.get("removeLabelIds").is_none());
+    }
+
+    #[tokio::test]
+    async fn trashing_posts_to_the_trash_endpoint() {
+        // `messages.trash` (not `messages.delete`): the message lands in the
+        // user's Gmail Trash and stays recoverable for 30 days, which is what
+        // the app's delete action means.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/m-3/trash"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-3"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client.trash_message("m-3").await.unwrap();
+
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     /// A `drafts.list` page whose entries carry MINIMAL message stubs.

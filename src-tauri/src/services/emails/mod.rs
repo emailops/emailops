@@ -3,6 +3,7 @@ mod drafts;
 mod events;
 mod folders;
 mod html_sanitizer;
+mod mailbox_state;
 mod optimistic;
 mod provider;
 mod reconcile;
@@ -23,6 +24,7 @@ pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, rename_folder};
 pub use html_sanitizer::sanitize_outgoing_html;
+pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
@@ -53,10 +55,6 @@ pub fn get_folders(db: &Arc<Database>, account_id: &str) -> Result<Vec<crate::mo
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
     db.get_thread(account_id, thread_id)
-}
-
-pub fn mark_as_read(db: &Arc<Database>, email_id: &str) -> Result<()> {
-    db.mark_as_read(email_id)
 }
 
 /// Fetch the full body of one email by id. Backs the chat `get_email_body`

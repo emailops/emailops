@@ -2403,8 +2403,8 @@ impl EmailProvider for FailingEmailProvider {
 
 // ── P1: email CRUD — mark as read / soft delete ────────────────────────────
 
-#[test]
-fn mark_as_read_flips_is_read_flag() {
+#[tokio::test]
+async fn mark_as_read_flips_is_read_flag() {
     let db = test_db();
     db.insert_account(&make_account("acc-r", "r@example.com")).unwrap();
     let email = make_email("e-unread", "acc-r", 1000);
@@ -2414,7 +2414,9 @@ fn mark_as_read_flips_is_read_flag() {
     let before = db.get_email_by_id("e-unread").unwrap().unwrap();
     assert!(!before.is_read, "email must start unread");
 
-    emailops_lib::services::emails::mark_as_read(&db, "e-unread").unwrap();
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-unread", None)
+        .await
+        .unwrap();
 
     let after = db.get_email_by_id("e-unread").unwrap().unwrap();
     assert!(after.is_read, "email must be read after mark_as_read");
@@ -2423,15 +2425,19 @@ fn mark_as_read_flips_is_read_flag() {
     assert_eq!(after.sender_email, before.sender_email);
 }
 
-#[test]
-fn mark_as_read_is_idempotent() {
+#[tokio::test]
+async fn mark_as_read_is_idempotent() {
     let db = test_db();
     db.insert_account(&make_account("acc-r2", "r2@example.com")).unwrap();
     db.insert_email(&make_email("e-r2", "acc-r2", 1000)).unwrap();
 
-    emailops_lib::services::emails::mark_as_read(&db, "e-r2").unwrap();
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-r2", None)
+        .await
+        .unwrap();
     // Second call must not error
-    emailops_lib::services::emails::mark_as_read(&db, "e-r2").unwrap();
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-r2", None)
+        .await
+        .unwrap();
     assert!(db.get_email_by_id("e-r2").unwrap().unwrap().is_read);
 }
 

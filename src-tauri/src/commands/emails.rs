@@ -168,17 +168,20 @@ pub async fn get_email_body(
 }
 
 #[tauri::command]
-pub async fn mark_as_read(state: State<'_, AppState>, email_id: String) -> Result<(), AppError> {
-    services::emails::mark_as_read(&state.db, &email_id)?;
+pub async fn mark_as_read(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+    services::emails::mark_as_read(&state.db, &email_id, Some(app)).await?;
     services::tasks::on_email_read(&state.db, &email_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_email(state: State<'_, AppState>, email_id: String) -> Result<(), AppError> {
-    // Log to memory BEFORE deletion so we can still resolve thread_id/account_id.
+pub async fn delete_email(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+    // Memory is logged only once the delete actually succeeded (including at
+    // the provider). `on_archived` reads the row by id, which a soft delete
+    // leaves in place, so running it afterwards still resolves thread/account.
+    services::emails::delete_email(&state.db, &email_id, Some(app)).await?;
     services::tasks::on_archived(&state.db, &email_id);
-    state.db.delete_email(&email_id)
+    Ok(())
 }
 
 #[tauri::command]

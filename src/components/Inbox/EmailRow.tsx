@@ -12,6 +12,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
+import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 
@@ -63,6 +64,7 @@ export function EmailRow({
   const receivedTime = formatReceptionTime(email.timestamp);
   const updateEmail = useEmailStore((s) => s.updateEmail);
   const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const addLog = useLogStore((s) => s.addLog);
   // Hide classification chips when the master AI switch is off — the tags
   // remain in the DB (so toggling AI back on is lossless), but the user has
   // explicitly opted out of seeing AI-derived metadata in the inbox.
@@ -464,7 +466,11 @@ export function EmailRow({
                       for (const t of thread) {
                         await deleteEmailFromStore(t.id);
                       }
-                    } catch {
+                    } catch (err) {
+                      // Deleting now also removes the message at the provider,
+                      // so this can fail (offline, expired credentials) with
+                      // nothing removed — say so instead of silently resetting.
+                      addLog('error', 'sync', `Delete failed: ${err}`);
                       setIsDeleting(false);
                     }
                   }}

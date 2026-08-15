@@ -650,3 +650,29 @@ around, which is surprising and costs a conversation switch per click. *Silently
 attempt. It removed the incoherent grounding but recreated the original confusion in a
 quieter form: asking about the email plainly on screen still produced an answer from a
 different mailbox, now with nothing at all to explain why.
+
+## 2026-08-15 — Read state and delete write back to Gmail; `gmail.modify` is used, not just held
+
+**Decision:** Marking a message read and deleting it now push to the account, not just
+the local DB: Gmail `users.messages.modify` (remove/add the `UNREAD` label) and
+`users.messages.trash`. Read state is local-first with a best-effort push, so mail can
+be read offline; delete is provider-first, so a message that could not be removed at
+the provider stays visible locally instead of diverging with nothing to retry it.
+Trash — never `messages.delete` — keeps the action reversible from Gmail's own UI.
+Gated on `provider_supports_mailbox_writes`, which is Gmail-only today; IMAP flags and
+Graph `isRead`/move are follow-up work and stay local until then.
+**Context:** Google rejected the restricted-scope verification on 2026-08-15 asking why
+`gmail.modify` was necessary "or why narrower permissions cannot be used". It was a
+fair question: the app read mail and wrote drafts and nothing else, so
+`gmail.readonly` + `gmail.compose` would have covered every call it actually made. The
+same gap was a live user-facing bug — archiving or reading a message in EmailOps left
+it unread and in the inbox everywhere else, which is not what an email client means by
+those actions. Implementing the writes fixes the product gap and makes the scope
+honestly demonstrable in the verification video, which must show the change landing in
+the user's Gmail account.
+**Rejected:** *Narrow the scopes to `gmail.readonly` + `gmail.compose`* — approvable
+and strictly least-privilege for the code as it stood, but it locks the app out of
+mailbox state permanently (a re-consent for every existing user to get it back later)
+and ships an email client that cannot archive. *Re-shoot the video and argue that
+`gmail.modify` is the standard email-client scope* — the reviewer had already asked
+the narrower question, and no video can demonstrate functionality that does not exist.
