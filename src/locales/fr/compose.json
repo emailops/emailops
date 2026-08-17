@@ -84,5 +84,14 @@
     "translating": "Traduction…",
     "undo": "Annuler la traduction",
     "failed": "Échec de la traduction : {{error}}"
+  },
+  "forwardTitle": "Transférer ce message à quelqu'un d'autre",
+  "forwarded": {
+    "header": "Message transféré",
+    "from": "De",
+    "date": "Date",
+    "subject": "Objet",
+    "to": "À",
+    "cc": "Cc"
   }
 }
