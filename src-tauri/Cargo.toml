@@ -43,9 +43,9 @@ tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
-# Pinned to 0.38 (not 0.40) because `refinery` 0.9.1 caps its rusqlite range
-# at <=0.38. Bump together once refinery widens that bound.
-rusqlite = { version = "0.38", features = ["bundled", "backup"] }
+# Pinned to 0.39 (not 0.40) because `refinery` 0.9.2 caps its rusqlite range
+# at <=0.39. Bump together once refinery widens that bound.
+rusqlite = { version = "0.39", features = ["bundled", "backup"] }
 refinery = { version = "0.9", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
