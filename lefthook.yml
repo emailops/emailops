@@ -77,14 +77,11 @@ pre-push:
     #                           Must --exclude (not --ignore) so cargo-outdated's
     #                           scratch resolver doesn't try to bump rusqlite to
     #                           0.40 and crash on the libsqlite3-sys links clash.
-    #   - sysinfo  (--ignore):  0.39 requires rustc 1.95; local/CI toolchains
-    #                           are pinned to 1.92. Bump the "0.38" constraint
-    #                           in Cargo.toml (and this flag) once the pinned
-    #                           rustc version catches up.
-    #   - reedline (--ignore):  same rustc pin — 0.50 requires 1.95. It only
-    #                           feeds the `cli` feature's REPL line editor, so
-    #                           staying on 0.49 costs the shipped app nothing.
-    #                           Lift with sysinfo when the toolchain moves.
+    #
+    # sysinfo (0.39) and reedline (0.51) were un-ignored once both were bumped:
+    # they need rustc 1.95, which CI already has (`dtolnay/rust-toolchain@stable`),
+    # so 1.95 is now the floor for building this crate — `rustup update` if a
+    # local `cargo check` refuses to resolve them.
     cargo-outdated:
       run: |
         if command -v cargo-outdated >/dev/null 2>&1; then
@@ -93,8 +90,6 @@ pre-push:
             --exit-code 1 \
             --exclude rusqlite \
             --ignore reqwest \
-            --ignore sysinfo \
-            --ignore reedline \
             --color always
         else
           echo "warning: cargo-outdated not installed — skipping outdated-deps check. Run 'brew install cargo-outdated' (or 'cargo install --locked cargo-outdated' on Linux)."
