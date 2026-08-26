@@ -1,0 +1,77 @@
+# Daily release metrics: how many times each release asset has been downloaded,
+# how many stars the repo has, and how both moved.
+#
+# GitHub reports `download_count` but keeps no history of it, and the app ships
+# no telemetry by design — so this workflow *is* the adoption record. It runs
+# once a day, appends a row to a CSV on the orphan `metrics` branch (never on
+# `main`, see scripts/metrics_history.sh) and mails the numbers.
+#
+# Setup — five repository secrets under Settings → Secrets and variables →
+# Actions. Until they exist the "Send the mail" step fails loudly and the rest
+# of the job still records the history:
+#   SMTP_URL   smtps://smtp.gmail.com:465 (or your provider's implicit-TLS URL)
+#   SMTP_USER  SMTP login
+#   SMTP_PASS  app password — never the account password
+#   MAIL_FROM  envelope sender, usually the same as SMTP_USER
+#   MAIL_TO    recipient
+# MAIL_TO and MAIL_FROM are secrets rather than literals here on purpose: no
+# real address belongs in a tracked file.
+#
+# `make metrics` runs the same collector locally without sending anything.
+
+name: Metrics
+
+on:
+  schedule:
+    # 07:47 UTC — off the hour, because every scheduled job in the world piles
+    # onto :00 and GitHub drops or delays runs when the queue is deep.
+    - cron: '47 7 * * *'
+  workflow_dispatch:
+
+# The job pushes the history commit to the `metrics` branch; nothing else.
+permissions:
+  contents: write
+
+concurrency:
+  group: metrics
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    name: Collect and mail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Pull the stored history
+        run: bash scripts/metrics_history.sh pull downloads.csv
+
+      - name: Collect today's numbers
+        env:
+          # Lifts the API rate limit from 60/hour per runner IP to 1000/hour.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: node scripts/repo_metrics.mjs --history downloads.csv --out-mail metrics-mail.txt
+
+      - name: Store the updated history
+        run: bash scripts/metrics_history.sh push downloads.csv
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+      # Last, so a mail-server outage still leaves the day's row recorded.
+      - name: Send the mail
+        env:
+          SMTP_URL: ${{ secrets.SMTP_URL }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: bash scripts/send_mail.sh metrics-mail.txt
