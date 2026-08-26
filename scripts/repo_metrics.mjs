@@ -5,19 +5,20 @@
 // only ever tells you today's number. Adoption is the one signal this project
 // has — there is no telemetry in the app, by design — so the history has to be
 // kept here. Each run appends one row (date, total downloads, stars) to a CSV
-// and mails the current numbers plus the deltas that CSV makes computable.
+// and posts the current numbers, plus the deltas that CSV makes computable, as
+// a comment on a long-lived issue — GitHub's own notification mail delivers it,
+// so there is no SMTP secret to configure anywhere.
 //
 // Everything above `main()` is pure: it takes releases, a star count, the
 // stored history and today's date, and returns numbers and strings. That is
 // what `scripts/repo_metrics.test.mjs` asserts on. `main()` is the thin shell
-// that talks to the API, the filesystem and (through `scripts/send_mail.sh`)
-// the SMTP server.
+// that talks to the API and the filesystem.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const REPO = process.env.METRICS_REPO ?? 'emailops/emailops';
 // Overridable so the collector can be pointed at a stub server to rehearse a
-// full run — fetch, history, mail file — without touching the real API.
+// full run — fetch, history, comment — without touching the real API.
 const API = process.env.METRICS_API ?? 'https://api.github.com';
 
 /** Assets whose name matches one of these belongs to that platform bucket. */
@@ -97,13 +98,13 @@ function baselineRow(history, today, daysBack) {
 
 const signed = (n) => (n >= 0 ? `+${n}` : `${n}`);
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+/** A literal `|` or newline inside a cell would break the markdown table. */
+function escapeCell(value) {
+  return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
 }
+
+/** Title of the long-lived issue the daily report is posted to. */
+export const ISSUE_TITLE = '📊 Métricas de descargas y estrellas';
 
 const PLATFORM_LABELS = { macos: 'macOS', windows: 'Windows', linux: 'Linux', cli: 'CLI', other: 'Otros' };
 
@@ -148,71 +149,96 @@ export function buildReport({ summary, stars, history, today }) {
   lines.push('', `https://github.com/${REPO}/releases`);
   const text = lines.join('\n');
 
-  const html = `<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#111">
-<h2 style="margin:0 0 4px">EmailOps · ${escapeHtml(today)}</h2>
-<p style="margin:0 0 16px;font-size:22px">
-<strong>${summary.total}</strong> descargas${downloadDelta === null ? '' : ` <span style="color:${downloadDelta > 0 ? '#137333' : '#666'}">${downloadDelta === 0 ? 'sin cambios' : signed(downloadDelta)}</span>`}
-&nbsp;·&nbsp; <strong>${stars}</strong> estrellas${starDelta ? ` <span style="color:#137333">${signed(starDelta)}</span>` : ''}
-${weekDelta === null ? '' : `<br><span style="font-size:13px;color:#666">7 días: ${signed(weekDelta)}</span>`}
-</p>
-<table cellpadding="6" style="border-collapse:collapse;font-size:13px">
-<tr><th align="left" style="border-bottom:1px solid #ddd">Plataforma</th><th align="right" style="border-bottom:1px solid #ddd">Descargas</th></tr>
-${platformRows.map(([k, v]) => `<tr><td>${escapeHtml(PLATFORM_LABELS[k])}</td><td align="right">${v}</td></tr>`).join('\n')}
-</table>
-<table cellpadding="6" style="border-collapse:collapse;font-size:13px;margin-top:16px">
-<tr><th align="left" style="border-bottom:1px solid #ddd">Release</th><th align="right" style="border-bottom:1px solid #ddd">Descargas</th></tr>
-${releaseRows.map((r) => `<tr><td>${escapeHtml(r.tag)}</td><td align="right">${r.downloads}</td></tr>`).join('\n')}
-</table>
-<table cellpadding="6" style="border-collapse:collapse;font-size:13px;margin-top:16px">
-<tr><th align="left" style="border-bottom:1px solid #ddd">Fecha</th><th align="right" style="border-bottom:1px solid #ddd">Descargas</th><th align="right" style="border-bottom:1px solid #ddd">Estrellas</th></tr>
-${recent.map((r) => `<tr><td>${escapeHtml(r.date)}</td><td align="right">${r.total}</td><td align="right">${r.stars}</td></tr>`).join('\n')}
-</table>
-<p style="margin-top:16px"><a href="https://github.com/${escapeHtml(REPO)}/releases">Releases en GitHub</a></p>
-</div>`;
+  const table = (header, rows) => [`| ${header[0]} | ${header[1]} |`, '|---|---:|', ...rows].join('\n');
+  const markdown = [
+    `**${summary.total} descargas**${downloadDelta === null ? '' : ` (${downloadDelta === 0 ? 'sin cambios' : signed(downloadDelta)})`} · **${stars} estrellas**${starDelta ? ` (${signed(starDelta)})` : ''}`,
+    '',
+    ...(weekDelta === null ? [] : [`Últimos 7 días: **${signed(weekDelta)}**`, '']),
+    table(
+      ['Plataforma', 'Descargas'],
+      platformRows.map(([k, v]) => `| ${PLATFORM_LABELS[k]} | ${v} |`),
+    ),
+    '',
+    '<details><summary>Por release</summary>',
+    '',
+    table(
+      ['Release', 'Descargas'],
+      releaseRows.map((r) => `| ${escapeCell(r.tag)} | ${r.downloads} |`),
+    ),
+    '',
+    '</details>',
+    '',
+    '<details><summary>Últimos días</summary>',
+    '',
+    [
+      '| Fecha | Descargas | Estrellas |',
+      '|---|---:|---:|',
+      ...recent.map((r) => `| ${r.date} | ${r.total} | ${r.stars} |`),
+    ].join('\n'),
+    '',
+    '</details>',
+    '',
+    // Invisible in the rendered issue and in the notification mail; lets a
+    // later run (or a human) read the day's numbers straight off the comment.
+    `<!-- emailops-metrics total=${summary.total} stars=${stars} -->`,
+  ].join('\n');
 
-  return { subject, text, html };
+  return { subject, text, markdown };
+}
+
+async function githubJson(path, { method = 'GET', body } = {}) {
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'emailops-metrics' };
+  // Reads are rate-limited to 60/hour per IP unauthenticated, which a shared
+  // Actions runner burns through, and writes need a token outright.
+  // GITHUB_TOKEN is injected by the workflow — no configured secret involved.
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (!res.ok) throw new Error(`GitHub ${method} ${path} → HTTP ${res.status} ${res.statusText}`);
+  return res.json();
 }
 
 /**
- * RFC 5322 message with both parts. Headers and bodies are base64-encoded
- * because the subject and body carry accents and `·` — a raw 8-bit subject
- * arrives as mojibake in most clients.
+ * The single long-lived issue the daily report is posted to. The `issues`
+ * endpoint also returns pull requests, which must never be matched.
  */
-export function buildMime({ subject, text, html, from, to, date }) {
-  const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
-  const wrap = (s) => (s.match(/.{1,76}/g) ?? []).join('\r\n');
-  const boundary = 'emailops-metrics-boundary';
-  return [
-    `From: ${from}`,
-    `To: ${to}`,
-    `Subject: =?UTF-8?B?${b64(subject)}?=`,
-    `Date: ${date}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    '',
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    wrap(b64(text)),
-    `--${boundary}`,
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    wrap(b64(html)),
-    `--${boundary}--`,
-    '',
-  ].join('\r\n');
+export function findMetricsIssue(issues, title) {
+  return issues.find((issue) => issue.title === title && !issue.pull_request) ?? null;
 }
 
-async function githubJson(path) {
-  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'emailops-metrics' };
-  // Unauthenticated calls are rate-limited to 60/hour per IP, which a shared
-  // Actions runner burns through. GITHUB_TOKEN is injected by the workflow.
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const res = await fetch(`${API}${path}`, { headers });
-  if (!res.ok) throw new Error(`GitHub ${path} → HTTP ${res.status} ${res.statusText}`);
-  return res.json();
+/**
+ * Post the day's report as a comment on that issue, opening it on first run.
+ * Delivery is GitHub's own notification mail: the repo owner watches the repo,
+ * so every comment on the thread reaches their inbox. That is the whole reason
+ * this is an issue comment and not an SMTP message — no secret to configure,
+ * nothing to rotate, and the thread doubles as a readable archive.
+ */
+async function postReport(markdown, title) {
+  const open = await githubJson(`/repos/${REPO}/issues?state=open&per_page=100`);
+  let issue = findMetricsIssue(open, title);
+  if (!issue) {
+    issue = await githubJson(`/repos/${REPO}/issues`, {
+      method: 'POST',
+      body: {
+        title,
+        body: [
+          'Informe diario de descargas y estrellas, publicado por',
+          '[`.github/workflows/metrics.yml`](../blob/main/.github/workflows/metrics.yml).',
+          '',
+          'Cada día aparece aquí un comentario nuevo — y con él, la notificación de',
+          'GitHub en el correo. Cierra este issue para dejar de recibirlo: el',
+          'workflow abrirá otro en la siguiente ejecución, así que deshabilítalo en',
+          'la pestaña Actions si lo que quieres es pararlo del todo.',
+        ].join('\n'),
+      },
+    });
+    console.log(`[metrics] opened issue #${issue.number}`);
+  }
+  const comment = await githubJson(`/repos/${REPO}/issues/${issue.number}/comments`, {
+    method: 'POST',
+    body: { body: markdown },
+  });
+  console.log(`[metrics] posted ${comment.html_url}`);
 }
 
 async function fetchAllReleases() {
@@ -232,8 +258,8 @@ function arg(argv, name, fallback) {
 async function main(argv) {
   const dryRun = argv.includes('--dry-run');
   const historyPath = arg(argv, '--history', 'downloads.csv');
-  const mailPath = arg(argv, '--out-mail', 'metrics-mail.txt');
   const today = arg(argv, '--today', new Date().toISOString().slice(0, 10));
+  const issueTitle = arg(argv, '--issue-title', ISSUE_TITLE);
 
   const [releases, repo] = await Promise.all([fetchAllReleases(), githubJson(`/repos/${REPO}`)]);
   const summary = summarize(releases);
@@ -260,16 +286,8 @@ async function main(argv) {
   }
 
   writeFileSync(historyPath, serializeHistory(history));
-  writeFileSync(
-    mailPath,
-    buildMime({
-      ...report,
-      from: process.env.MAIL_FROM ?? 'metrics@localhost',
-      to: process.env.MAIL_TO ?? 'metrics@localhost',
-      date: new Date().toUTCString(),
-    }),
-  );
-  // Consumed by the workflow to decide whether anything is worth committing.
+  await postReport(report.markdown, issueTitle);
+
   const previous = history.filter((r) => r.date < today).slice(-1)[0] ?? null;
   const changed = !previous || previous.total !== summary.total || previous.stars !== stars;
   console.log(`total=${summary.total} stars=${stars} changed=${changed}`);

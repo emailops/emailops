@@ -267,9 +267,9 @@ record-cassette:
 build:
 	npm run build
 
-# Release metrics: print today's download/star numbers and the mail body the
-# daily `metrics` workflow would send. Reads the API only — writes nothing,
-# sends nothing. Pass HISTORY=<csv> to compute deltas against a stored history.
+# Release metrics: print today's download/star numbers and the report the daily
+# `metrics` workflow would post. Reads the API only — writes nothing, posts
+# nothing. Pass HISTORY=<csv> to compute deltas against a stored history.
 metrics:
 	node scripts/repo_metrics.mjs --dry-run --history $(or $(HISTORY),/dev/null)
 

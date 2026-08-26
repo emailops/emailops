@@ -7,7 +7,15 @@
 // exercised by `make metrics` instead.
 
 import { describe, expect, it } from 'vitest';
-import { buildReport, classifyAsset, parseHistory, serializeHistory, summarize, upsertRow } from './repo_metrics.mjs';
+import {
+  buildReport,
+  classifyAsset,
+  findMetricsIssue,
+  parseHistory,
+  serializeHistory,
+  summarize,
+  upsertRow,
+} from './repo_metrics.mjs';
 
 /** Minimal release shape — only the fields the collector reads. */
 function release(tag, assets) {
@@ -176,14 +184,40 @@ describe('buildReport', () => {
     expect(text).toContain('v0.6.6');
   });
 
-  it('emits an HTML part that escapes what it interpolates', () => {
-    const { html } = buildReport({
-      summary: { ...summary, byRelease: [{ tag: '<script>', downloads: 1 }] },
-      stars: 12,
-      history,
-      today: '2026-08-26',
-    });
-    expect(html).toContain('&lt;script&gt;');
-    expect(html).not.toContain('<script>');
+  it('leads the markdown with the headline numbers, so they show in the mail preview', () => {
+    const { markdown } = buildReport({ summary, stars: 12, history, today: '2026-08-26' });
+    expect(markdown.split('\n')[0]).toBe('**127 descargas** (+3) · **12 estrellas** (+1)');
+  });
+
+  it('renders the platform split as a markdown table', () => {
+    const { markdown } = buildReport({ summary, stars: 12, history, today: '2026-08-26' });
+    expect(markdown).toContain('| macOS | 80 |');
+  });
+
+  // The marker lets a later run recognise its own comments, and is invisible
+  // in both the issue and the notification mail.
+  it('ends with a machine-readable marker carrying the totals', () => {
+    const { markdown } = buildReport({ summary, stars: 12, history, today: '2026-08-26' });
+    expect(markdown.trimEnd()).toMatch(/<!-- emailops-metrics total=127 stars=12 -->$/);
+  });
+});
+
+describe('findMetricsIssue', () => {
+  const title = '📊 Métricas de descargas y estrellas';
+
+  it('finds the open issue with the metrics title', () => {
+    const issues = [{ number: 3, title: 'Otro asunto' }, { number: 7, title }];
+    expect(findMetricsIssue(issues, title)?.number).toBe(7);
+  });
+
+  // The issues endpoint returns pull requests too; commenting on a PR instead
+  // of the metrics thread would be wrong and confusing.
+  it('never matches a pull request', () => {
+    const issues = [{ number: 9, title, pull_request: { url: 'https://…' } }];
+    expect(findMetricsIssue(issues, title)).toBeNull();
+  });
+
+  it('returns null when the issue does not exist yet', () => {
+    expect(findMetricsIssue([], title)).toBeNull();
   });
 });
