@@ -294,6 +294,7 @@ mod tests {
             trace: true,
             conversation: None,
             fresh: false,
+            thread: None,
             prewarm: false,
         })));
         assert!(startup_timing_enabled(Some(&Command::Search {
@@ -311,6 +312,7 @@ mod tests {
             trace: false,
             conversation: None,
             fresh: false,
+            thread: None,
             prewarm: false,
         })));
         assert!(!startup_timing_enabled(Some(&Command::Doctor)));

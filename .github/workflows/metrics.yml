@@ -1,0 +1,72 @@
+# Daily release metrics: how many times each release asset has been downloaded,
+# how many stars the repo has, and how both moved.
+#
+# GitHub reports `download_count` but keeps no history of it, and the app ships
+# no telemetry by design — so this workflow *is* the adoption record. It runs
+# once a day, appends a row to a CSV on the orphan `metrics` branch (never on
+# `main`, see scripts/metrics_history.sh) and posts the report as a comment on
+# a single long-lived issue.
+#
+# That comment is the delivery mechanism: GitHub mails you every comment on a
+# thread you are subscribed to, so the daily report lands in the same inbox as
+# the rest of your repo notifications. Nothing to configure — no SMTP server,
+# no app password, no secret. `GITHUB_TOKEN` is minted per run by Actions and
+# expires with it.
+#
+# If the mail does not arrive, it is a notification setting, not this workflow:
+# check github.com/settings/notifications (email enabled for "Participating,
+# @mentions and custom" or for watched repositories) and that you are watching
+# this repo. Commenting once on the issue subscribes you to it for good.
+#
+# `make metrics` runs the same collector locally: reads the API, prints the
+# report, writes nothing and posts nothing.
+
+name: Metrics
+
+on:
+  schedule:
+    # 07:47 UTC — off the hour, because every scheduled job in the world piles
+    # onto :00 and GitHub drops or delays runs when the queue is deep.
+    - cron: '47 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  # Push the history commit to the `metrics` branch.
+  contents: write
+  # Open the metrics issue once, then comment on it daily.
+  issues: write
+
+concurrency:
+  group: metrics
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    name: Collect and report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Pull the stored history
+        run: bash scripts/metrics_history.sh pull downloads.csv
+
+      - name: Collect today's numbers and post the report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/repo_metrics.mjs --history downloads.csv
+
+      # `always()` so a failed post (GitHub API blip) still records the day.
+      # A collector that failed before writing leaves the file exactly as it
+      # was pulled, and the push step then finds nothing to commit.
+      - name: Store the updated history
+        if: always()
+        run: bash scripts/metrics_history.sh push downloads.csv
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com

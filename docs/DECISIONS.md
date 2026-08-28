@@ -676,3 +676,28 @@ mailbox state permanently (a re-consent for every existing user to get it back l
 and ships an email client that cannot archive. *Re-shoot the video and argue that
 `gmail.modify` is the standard email-client scope* — the reviewer had already asked
 the narrower question, and no video can demonstrate functionality that does not exist.
+
+## 2026-08-26 — Adoption is tracked by a daily metrics job, not by telemetry
+
+**Decision:** A scheduled GitHub Actions workflow (`.github/workflows/metrics.yml`)
+records release download counts and star count once a day, appends them to
+`downloads.csv` on an orphan `metrics` branch, and posts the numbers plus the daily and
+7-day deltas as a comment on one long-lived issue. Delivery is GitHub's own
+notification mail, so the setup needs no configured secret at all. The app itself gains
+no telemetry of any kind.
+**Context:** There was no way to answer "how is adoption going?" without opening the
+releases page and adding up assets by hand, and the GitHub API reports only today's
+`download_count` — it keeps no history, so the history has to be kept on our side. The
+privacy-first architecture rules out measuring anything from inside the app, which
+leaves the distribution side as the only honest signal. `GITHUB_TOKEN` is minted per
+run and expires with it, so nothing has to be stored, rotated, or kept out of a tracked
+file — and no mailbox address appears anywhere in the repo.
+**Rejected:** *In-app telemetry* — contradicts the core promise, and the numbers would
+not be worth it. *SMTP from the workflow* (built first, then dropped) — it worked, but
+it cost five repository secrets including an app password to store and rotate, to
+deliver mail that GitHub already delivers for free. *Committing the CSV to `main`* — a
+bot commit a day would bury real work in the log, in blame, and in every release diff;
+an orphan branch shares no history with `main` and holds exactly one file. *A
+Claude Routine on a schedule* — the fired sessions get no MCP tools, and GitHub is
+reachable only through MCP in that environment, so the job could never read a single
+`download_count`.

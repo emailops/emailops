@@ -222,8 +222,8 @@ pub fn from_blob(blob: &[u8], n_pos: u32, n_neg: u32) -> Option<NaiveBayes> {
     }
     let mut pos = Vec::with_capacity(BUCKETS);
     let mut neg = Vec::with_capacity(BUCKETS);
-    for (i, chunk) in blob.chunks_exact(4).enumerate() {
-        let value = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (i, chunk) in blob.as_chunks::<4>().0.iter().enumerate() {
+        let value = u32::from_le_bytes(*chunk);
         if i < BUCKETS {
             pos.push(value);
         } else {
