@@ -11,9 +11,14 @@ import {
   buildReport,
   classifyAsset,
   findMetricsIssue,
+  mergeReferrerHistory,
+  mergeTrafficHistory,
   parseHistory,
+  parseTrafficHistory,
   serializeHistory,
+  serializeTrafficHistory,
   summarize,
+  trafficRows,
   upsertRow,
 } from './repo_metrics.mjs';
 
@@ -206,7 +211,10 @@ describe('findMetricsIssue', () => {
   const title = '📊 Métricas de descargas y estrellas';
 
   it('finds the open issue with the metrics title', () => {
-    const issues = [{ number: 3, title: 'Otro asunto' }, { number: 7, title }];
+    const issues = [
+      { number: 3, title: 'Otro asunto' },
+      { number: 7, title },
+    ];
     expect(findMetricsIssue(issues, title)?.number).toBe(7);
   });
 
@@ -219,5 +227,119 @@ describe('findMetricsIssue', () => {
 
   it('returns null when the issue does not exist yet', () => {
     expect(findMetricsIssue([], title)).toBeNull();
+  });
+});
+
+describe('traffic', () => {
+  // Shape of /traffic/views and /traffic/clones: a total, a unique count, and
+  // a per-day breakdown. Only the per-day rows are archived — the totals are
+  // a rolling 14-day sum and mean nothing once stitched into a history.
+  const views = {
+    count: 120,
+    uniques: 40,
+    views: [
+      { timestamp: '2026-09-03T00:00:00Z', count: 50, uniques: 18 },
+      { timestamp: '2026-09-04T00:00:00Z', count: 70, uniques: 22 },
+    ],
+  };
+  const clones = {
+    count: 9,
+    uniques: 5,
+    clones: [
+      { timestamp: '2026-09-03T00:00:00Z', count: 4, uniques: 2 },
+      { timestamp: '2026-09-04T00:00:00Z', count: 5, uniques: 3 },
+    ],
+  };
+
+  it('turns the API payloads into one row per day', () => {
+    expect(trafficRows(views, clones)).toEqual([
+      { date: '2026-09-03', views: 50, unique_views: 18, clones: 4, unique_clones: 2 },
+      { date: '2026-09-04', views: 70, unique_views: 22, clones: 5, unique_clones: 3 },
+    ]);
+  });
+
+  // GitHub reports views and clones on independent day lists: a day with
+  // traffic but no clone appears in one and not the other.
+  it('fills a day that only one of the two endpoints reports', () => {
+    const lonely = { count: 1, uniques: 1, clones: [{ timestamp: '2026-09-05T00:00:00Z', count: 1, uniques: 1 }] };
+    expect(trafficRows(views, lonely)).toEqual([
+      { date: '2026-09-03', views: 50, unique_views: 18, clones: 0, unique_clones: 0 },
+      { date: '2026-09-04', views: 70, unique_views: 22, clones: 0, unique_clones: 0 },
+      { date: '2026-09-05', views: 0, unique_views: 0, clones: 1, unique_clones: 1 },
+    ]);
+  });
+
+  it('round-trips a traffic history through CSV', () => {
+    const rows = trafficRows(views, clones);
+    expect(parseTrafficHistory(serializeTrafficHistory(rows))).toEqual(rows);
+  });
+
+  // The 14-day window is the whole reason this exists: a re-fetched day must
+  // correct the stored row, and days that scrolled out of the window must
+  // survive in the history.
+  it('merges a fresh window over the stored history, keeping older days', () => {
+    const stored = [
+      { date: '2026-08-01', views: 5, unique_views: 2, clones: 0, unique_clones: 0 },
+      { date: '2026-09-03', views: 1, unique_views: 1, clones: 0, unique_clones: 0 },
+    ];
+    expect(mergeTrafficHistory(stored, trafficRows(views, clones))).toEqual([
+      { date: '2026-08-01', views: 5, unique_views: 2, clones: 0, unique_clones: 0 },
+      { date: '2026-09-03', views: 50, unique_views: 18, clones: 4, unique_clones: 2 },
+      { date: '2026-09-04', views: 70, unique_views: 22, clones: 5, unique_clones: 3 },
+    ]);
+  });
+
+  it('appends dated referrer snapshots without losing earlier ones', () => {
+    const stored = [{ date: '2026-09-03', referrer: 'google.com', count: 4, uniques: 3 }];
+    const fresh = [
+      { referrer: 'news.ycombinator.com', count: 30, uniques: 25 },
+      { referrer: 'google.com', count: 6, uniques: 4 },
+    ];
+    expect(mergeReferrerHistory(stored, fresh, '2026-09-04')).toEqual([
+      { date: '2026-09-03', referrer: 'google.com', count: 4, uniques: 3 },
+      { date: '2026-09-04', referrer: 'news.ycombinator.com', count: 30, uniques: 25 },
+      { date: '2026-09-04', referrer: 'google.com', count: 6, uniques: 4 },
+    ]);
+  });
+
+  it('replaces a same-day referrer snapshot on a re-run', () => {
+    const stored = [{ date: '2026-09-04', referrer: 'google.com', count: 1, uniques: 1 }];
+    const fresh = [{ referrer: 'google.com', count: 6, uniques: 4 }];
+    expect(mergeReferrerHistory(stored, fresh, '2026-09-04')).toEqual([
+      { date: '2026-09-04', referrer: 'google.com', count: 6, uniques: 4 },
+    ]);
+  });
+});
+
+describe('buildReport with traffic', () => {
+  const summary = {
+    total: 200,
+    byPlatform: { macos: 104, windows: 58, linux: 35, cli: 3, other: 0 },
+    byRelease: [{ tag: 'v0.6.6', downloads: 60 }],
+  };
+  const history = [
+    { date: '2026-09-03', total: 188, stars: 12 },
+    { date: '2026-09-04', total: 200, stars: 12 },
+  ];
+  const traffic = {
+    today: { date: '2026-09-04', views: 70, unique_views: 22, clones: 5, unique_clones: 3 },
+    referrers: [
+      { referrer: 'news.ycombinator.com', count: 30, uniques: 25 },
+      { referrer: 'google.com', count: 6, uniques: 4 },
+    ],
+  };
+
+  it('reports visits and the top referrers when traffic is available', () => {
+    const { markdown } = buildReport({ summary, stars: 12, history, today: '2026-09-04', traffic });
+    expect(markdown).toContain('70');
+    expect(markdown).toContain('news.ycombinator.com');
+  });
+
+  // The traffic API needs push access and may answer 403. That must degrade to
+  // a report without a traffic section, never to a failed run.
+  it('omits the traffic section entirely when traffic is unavailable', () => {
+    const { markdown } = buildReport({ summary, stars: 12, history, today: '2026-09-04', traffic: null });
+    expect(markdown).not.toContain('Visitas');
+    expect(markdown).toContain('200 descargas');
   });
 });

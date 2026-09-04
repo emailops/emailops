@@ -701,3 +701,23 @@ an orphan branch shares no history with `main` and holds exactly one file. *A
 Claude Routine on a schedule* — the fired sessions get no MCP tools, and GitHub is
 reachable only through MCP in that environment, so the job could never read a single
 `download_count`.
+
+## 2026-09-04 — Repository traffic is archived daily, because GitHub forgets it
+
+**Decision:** The metrics workflow also snapshots `/traffic/views`, `/traffic/clones` and
+`/traffic/popular/referrers` every day, into `traffic.csv` and `referrers.csv` on the
+same orphan `metrics` branch, and puts today's visits and top referrers in the daily
+report. The traffic endpoints need push access that the run's `GITHUB_TOKEN` may not
+have; when they answer 403 the run logs why and reports downloads and stars as before.
+**Context:** Downloads went from 124 to 200 in ten days with no release in between, so
+the growth was new users rather than the update toast — and there was no way to tell
+which channel had sent them, because GitHub keeps traffic for only 14 days and then
+discards it. The referrer list is the one thing that names the channel, and it expires
+before a weekly review would ever catch it. Archiving it costs one API call a day.
+**Rejected:** *A personal access token* to guarantee the traffic endpoints answer — it
+reintroduces exactly the stored, rotatable secret that the issue-comment delivery was
+chosen to avoid; if `GITHUB_TOKEN` turns out not to be enough, the right answer is to
+drop the traffic half, not to add a secret. *Storing the 14-day totals* each payload
+carries — they are a rolling sum, meaningless once stitched into a history, so only the
+per-day breakdown is kept. *A separate workflow* — same schedule, same branch, same
+report; a second job would just double the moving parts.
