@@ -3,9 +3,15 @@
 #
 # GitHub reports `download_count` but keeps no history of it, and the app ships
 # no telemetry by design — so this workflow *is* the adoption record. It runs
-# once a day, appends a row to a CSV on the orphan `metrics` branch (never on
-# `main`, see scripts/metrics_history.sh) and posts the report as a comment on
-# a single long-lived issue.
+# once a day, appends a row to three CSVs on the orphan `metrics` branch (never
+# on `main`, see scripts/metrics_history.sh) and posts the report as a comment
+# on a single long-lived issue.
+#
+# It also archives repository traffic — views, clones and referrers. GitHub
+# keeps those for 14 days and then discards them, so without this the evidence
+# for any spike is gone by the time the spike is worth explaining. Those three
+# endpoints need push access and the run's token may not have it; when they
+# answer 403 the step logs why and the rest of the report still goes out.
 #
 # That comment is the delivery mechanism: GitHub mails you every comment on a
 # thread you are subscribed to, so the daily report lands in the same inbox as
@@ -31,10 +37,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Push the history commit to the `metrics` branch.
+  # Push the history commit to the `metrics` branch. Also the closest thing to
+  # the "push access" the traffic endpoints ask for — whether GITHUB_TOKEN is
+  # actually accepted there is what the first run will tell us.
   contents: write
   # Open the metrics issue once, then comment on it daily.
   issues: write
+  # Traffic lives under the repository's administration scope on some setups.
+  administration: read
 
 concurrency:
   group: metrics
@@ -52,19 +62,23 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Pull the stored history
-        run: bash scripts/metrics_history.sh pull downloads.csv
+        run: bash scripts/metrics_history.sh pull history
 
       - name: Collect today's numbers and post the report
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/repo_metrics.mjs --history downloads.csv
+        run: |
+          node scripts/repo_metrics.mjs \
+            --history history/downloads.csv \
+            --traffic-history history/traffic.csv \
+            --referrer-history history/referrers.csv
 
       # `always()` so a failed post (GitHub API blip) still records the day.
       # A collector that failed before writing leaves the file exactly as it
       # was pulled, and the push step then finds nothing to commit.
       - name: Store the updated history
         if: always()
-        run: bash scripts/metrics_history.sh push downloads.csv
+        run: bash scripts/metrics_history.sh push history
         env:
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com

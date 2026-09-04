@@ -4,10 +4,14 @@
 // GitHub exposes a per-asset `download_count` but no history for it: the API
 // only ever tells you today's number. Adoption is the one signal this project
 // has — there is no telemetry in the app, by design — so the history has to be
-// kept here. Each run appends one row (date, total downloads, stars) to a CSV
-// and posts the current numbers, plus the deltas that CSV makes computable, as
-// a comment on a long-lived issue — GitHub's own notification mail delivers it,
-// so there is no SMTP secret to configure anywhere.
+// kept here. Traffic has the same problem and worse: GitHub keeps views,
+// clones and referrers for 14 days and then discards them, so by the time a
+// spike is worth explaining the evidence is gone.
+//
+// Each run appends a row to three CSVs — downloads/stars, per-day traffic, and
+// a dated referrer snapshot — and posts the current numbers, plus the deltas
+// those CSVs make computable, as a comment on a long-lived issue. GitHub's own
+// notification mail delivers it, so there is no SMTP secret to configure.
 //
 // Everything above `main()` is pure: it takes releases, a star count, the
 // stored history and today's date, and returns numbers and strings. That is
@@ -61,21 +65,95 @@ export function summarize(releases) {
   return { total, byPlatform, byRelease };
 }
 
-const HEADER = 'date,total,stars';
-
-export function parseHistory(csv) {
-  return csv
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '' && line !== HEADER)
-    .map((line) => {
-      const [date, total, stars] = line.split(',');
-      return { date, total: Number(total), stars: Number(stars) };
-    });
+/**
+ * CSV codec for a fixed column list. Three histories share it — downloads,
+ * traffic and referrers — so the archive format is defined in exactly one
+ * place. `numeric` names the columns to coerce back to numbers on read.
+ */
+function csvCodec(columns, numeric) {
+  const header = columns.join(',');
+  return {
+    parse(text) {
+      return text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && line !== header)
+        .map((line) => {
+          const cells = line.split(',');
+          return Object.fromEntries(
+            columns.map((col, i) => [col, numeric.includes(col) ? Number(cells[i]) : cells[i]]),
+          );
+        });
+    },
+    serialize(rows) {
+      const body = rows.map((row) => columns.map((col) => row[col]).join(','));
+      return `${[header, ...body].join('\n')}\n`;
+    },
+  };
 }
 
-export function serializeHistory(rows) {
-  return `${[HEADER, ...rows.map((r) => `${r.date},${r.total},${r.stars}`)].join('\n')}\n`;
+const DOWNLOADS_CSV = csvCodec(['date', 'total', 'stars'], ['total', 'stars']);
+const TRAFFIC_CSV = csvCodec(
+  ['date', 'views', 'unique_views', 'clones', 'unique_clones'],
+  ['views', 'unique_views', 'clones', 'unique_clones'],
+);
+const REFERRERS_CSV = csvCodec(['date', 'referrer', 'count', 'uniques'], ['count', 'uniques']);
+
+export const parseHistory = (csv) => DOWNLOADS_CSV.parse(csv);
+export const serializeHistory = (rows) => DOWNLOADS_CSV.serialize(rows);
+export const parseTrafficHistory = (csv) => TRAFFIC_CSV.parse(csv);
+export const serializeTrafficHistory = (rows) => TRAFFIC_CSV.serialize(rows);
+export const parseReferrerHistory = (csv) => REFERRERS_CSV.parse(csv);
+export const serializeReferrerHistory = (rows) => REFERRERS_CSV.serialize(rows);
+
+/**
+ * Fold `/traffic/views` and `/traffic/clones` into one row per day. The two
+ * endpoints report independent day lists — a day with visits but no clone
+ * appears in one and not the other — so days are unioned, not zipped. Only the
+ * per-day breakdown is kept: the `count`/`uniques` at the top of each payload
+ * are a rolling 14-day sum and would be meaningless stitched into a history.
+ */
+export function trafficRows(views, clones) {
+  const byDate = new Map();
+  const row = (timestamp) => {
+    const date = timestamp.slice(0, 10);
+    if (!byDate.has(date)) {
+      byDate.set(date, { date, views: 0, unique_views: 0, clones: 0, unique_clones: 0 });
+    }
+    return byDate.get(date);
+  };
+  for (const day of views?.views ?? []) {
+    const target = row(day.timestamp);
+    target.views = day.count;
+    target.unique_views = day.uniques;
+  }
+  for (const day of clones?.clones ?? []) {
+    const target = row(day.timestamp);
+    target.clones = day.count;
+    target.unique_clones = day.uniques;
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Overlay the freshly fetched 14-day window on the stored history. Days inside
+ * the window are replaced (GitHub revises them as the day advances); days that
+ * have scrolled out of it survive — which is the entire point of archiving.
+ */
+export function mergeTrafficHistory(stored, fresh) {
+  const refreshed = new Set(fresh.map((r) => r.date));
+  return [...stored.filter((r) => !refreshed.has(r.date)), ...fresh].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Referrers come as a top-10 snapshot with no dates of their own, so each run
+ * stamps today's date on them. A re-run the same day replaces that snapshot.
+ */
+export function mergeReferrerHistory(stored, fresh, today) {
+  return [
+    ...stored.filter((r) => r.date !== today),
+    ...fresh.map((r) => ({ date: today, referrer: r.referrer, count: r.count, uniques: r.uniques })),
+  ];
 }
 
 /**
@@ -113,7 +191,7 @@ const PLATFORM_LABELS = { macos: 'macOS', windows: 'Windows', linux: 'Linux', cl
  * previous row is the day-over-day baseline. On the very first run there is no
  * previous row and every delta is omitted — a cold start is not a spike.
  */
-export function buildReport({ summary, stars, history, today }) {
+export function buildReport({ summary, stars, history, today, traffic = null }) {
   const previous = history.filter((r) => r.date < today).slice(-1)[0] ?? null;
   const week = previous ? baselineRow(history, today, 7) : null;
 
@@ -144,6 +222,14 @@ export function buildReport({ summary, stars, history, today }) {
   for (const [key, count] of platformRows) lines.push(`  ${PLATFORM_LABELS[key]}: ${count}`);
   lines.push('', 'Por release:');
   for (const rel of releaseRows) lines.push(`  ${rel.tag}: ${rel.downloads}`);
+  if (traffic?.today) {
+    const t = traffic.today;
+    lines.push('', `Visitas hoy: ${t.views} (${t.unique_views} únicas)  Clones: ${t.clones} (${t.unique_clones})`);
+    if (traffic.referrers?.length) {
+      lines.push('Referrers:');
+      for (const ref of traffic.referrers) lines.push(`  ${ref.referrer}: ${ref.count} (${ref.uniques} únicas)`);
+    }
+  }
   lines.push('', 'Últimos días:');
   for (const row of recent) lines.push(`  ${row.date}  ${row.total} descargas  ${row.stars} estrellas`);
   lines.push('', `https://github.com/${REPO}/releases`);
@@ -159,6 +245,21 @@ export function buildReport({ summary, stars, history, today }) {
       platformRows.map(([k, v]) => `| ${PLATFORM_LABELS[k]} | ${v} |`),
     ),
     '',
+    ...(traffic?.today
+      ? [
+          `Visitas hoy: **${traffic.today.views}** (${traffic.today.unique_views} únicas) · Clones: ${traffic.today.clones} (${traffic.today.unique_clones})`,
+          '',
+          ...(traffic.referrers?.length
+            ? [
+                table(
+                  ['Referrer', 'Visitas'],
+                  traffic.referrers.map((r) => `| ${escapeCell(r.referrer)} | ${r.count} (${r.uniques}) |`),
+                ),
+                '',
+              ]
+            : []),
+        ]
+      : []),
     '<details><summary>Por release</summary>',
     '',
     table(
@@ -241,6 +342,29 @@ async function postReport(markdown, title) {
   console.log(`[metrics] posted ${comment.html_url}`);
 }
 
+/**
+ * Views, clones and top referrers for the last 14 days — the window GitHub
+ * keeps and then discards, which is why they are archived here.
+ *
+ * These three endpoints need push access, and the token a run happens to carry
+ * may not have it. That must never sink the run: on any failure the collector
+ * reports what it does have and says why the rest is missing.
+ */
+async function fetchTraffic() {
+  try {
+    const [views, clones, referrers] = await Promise.all([
+      githubJson(`/repos/${REPO}/traffic/views`),
+      githubJson(`/repos/${REPO}/traffic/clones`),
+      githubJson(`/repos/${REPO}/traffic/popular/referrers`),
+    ]);
+    return { views, clones, referrers };
+  } catch (err) {
+    console.error(`[metrics] traffic unavailable, skipping it: ${err.message}`);
+    console.error('[metrics] these endpoints need push access — check the workflow token permissions');
+    return null;
+  }
+}
+
 async function fetchAllReleases() {
   const all = [];
   for (let page = 1; ; page += 1) {
@@ -258,25 +382,49 @@ function arg(argv, name, fallback) {
 async function main(argv) {
   const dryRun = argv.includes('--dry-run');
   const historyPath = arg(argv, '--history', 'downloads.csv');
+  const trafficPath = arg(argv, '--traffic-history', 'traffic.csv');
+  const referrerPath = arg(argv, '--referrer-history', 'referrers.csv');
   const today = arg(argv, '--today', new Date().toISOString().slice(0, 10));
   const issueTitle = arg(argv, '--issue-title', ISSUE_TITLE);
 
-  const [releases, repo] = await Promise.all([fetchAllReleases(), githubJson(`/repos/${REPO}`)]);
+  const [releases, repo, rawTraffic] = await Promise.all([
+    fetchAllReleases(),
+    githubJson(`/repos/${REPO}`),
+    fetchTraffic(),
+  ]);
   const summary = summarize(releases);
   const stars = repo.stargazers_count;
 
-  let stored = [];
-  try {
-    stored = parseHistory(readFileSync(historyPath, 'utf8'));
-  } catch (err) {
-    // A missing file is the expected first run; anything else (unreadable,
-    // corrupt) must surface rather than silently resetting the history.
-    if (err.code !== 'ENOENT') throw err;
-    console.error(`[metrics] no history at ${historyPath} — starting a new one`);
+  // A missing file is the expected first run; anything else (unreadable,
+  // corrupt) must surface rather than silently resetting the history.
+  const read = (path, parse) => {
+    try {
+      return parse(readFileSync(path, 'utf8'));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      console.error(`[metrics] no history at ${path} — starting a new one`);
+      return [];
+    }
+  };
+
+  const history = upsertRow(read(historyPath, parseHistory), { date: today, total: summary.total, stars });
+
+  let traffic = null;
+  let trafficHistory = null;
+  let referrerHistory = null;
+  if (rawTraffic) {
+    trafficHistory = mergeTrafficHistory(
+      read(trafficPath, parseTrafficHistory),
+      trafficRows(rawTraffic.views, rawTraffic.clones),
+    );
+    referrerHistory = mergeReferrerHistory(read(referrerPath, parseReferrerHistory), rawTraffic.referrers, today);
+    traffic = {
+      today: trafficHistory.find((r) => r.date === today) ?? null,
+      referrers: rawTraffic.referrers,
+    };
   }
 
-  const history = upsertRow(stored, { date: today, total: summary.total, stars });
-  const report = buildReport({ summary, stars, history, today });
+  const report = buildReport({ summary, stars, history, today, traffic });
 
   if (dryRun) {
     console.log(report.subject);
@@ -286,6 +434,8 @@ async function main(argv) {
   }
 
   writeFileSync(historyPath, serializeHistory(history));
+  if (trafficHistory) writeFileSync(trafficPath, serializeTrafficHistory(trafficHistory));
+  if (referrerHistory) writeFileSync(referrerPath, serializeReferrerHistory(referrerHistory));
   await postReport(report.markdown, issueTitle);
 
   const previous = history.filter((r) => r.date < today).slice(-1)[0] ?? null;
