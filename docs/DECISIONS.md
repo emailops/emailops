@@ -721,3 +721,26 @@ drop the traffic half, not to add a secret. *Storing the 14-day totals* each pay
 carries — they are a rolling sum, meaningless once stitched into a history, so only the
 per-day breakdown is kept. *A separate workflow* — same schedule, same branch, same
 report; a second job would just double the moving parts.
+
+## 2026-09-04 — Windows splits the secrets vault across chunked keychain entries
+
+**Decision:** On Windows the OS keychain backend is wrapped in a `ChunkedKeychain`
+that transparently splits any value over ~2 KB across extra credential entries and
+reassembles it on read. macOS and Linux keep storing the secrets vault as a single
+item. Secrets stay entirely inside the OS credential store on every platform.
+**Context:** `services::secrets_vault` deliberately consolidates every secret (OAuth
+tokens, IMAP credentials, API keys) into ONE keychain item, because macOS authorizes
+keychain access per item and N accounts meant N prompts at startup. Windows'
+Credential Manager caps a credential blob at `CRED_MAX_CREDENTIAL_BLOB_SIZE`
+(2560 bytes), measured after UTF-16 encoding — so barely 1280 ASCII characters. A
+single Microsoft OAuth refresh token can exceed that on its own, and the shared vault
+blob exceeds it as soon as a second account is added, which is why adding an
+Outlook account (and IMAP accounts added after one) failed outright on Windows with
+"Value of 'password encoded as UTF-16' is longer than the platform limit of 2560
+chars" (issue #54). Windows has no per-item prompt, so splitting costs nothing there.
+**Rejected:** *Splitting on every platform* — reintroduces the macOS prompt storm the
+single-item vault exists to remove. *Moving the vault blob to an encrypted file with
+only its key in the keychain* — breaks the "OAuth tokens live in the OS keychain, not
+in files" guarantee in `CLAUDE.md`, and puts the ciphertext somewhere a backup or sync
+tool can copy. *Storing only refresh tokens to shrink the blob* — Microsoft refresh
+tokens are themselves multi-kilobyte, so the limit is still breached by one account.
