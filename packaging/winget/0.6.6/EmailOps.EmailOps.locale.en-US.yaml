@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: EmailOps.EmailOps
+PackageVersion: 0.6.6
+PackageLocale: en-US
+Publisher: EmailOps
+PublisherUrl: https://github.com/emailops
+PublisherSupportUrl: https://github.com/emailops/emailops/issues
+PackageName: EmailOps
+PackageUrl: https://github.com/emailops/emailops
+License: Apache-2.0
+LicenseUrl: https://github.com/emailops/emailops/blob/main/LICENSE
+ShortDescription: Privacy-first email client whose AI runs on your machine
+Description: >-
+  EmailOps is a desktop email client for Gmail, Outlook and IMAP accounts whose
+  AI features run on device through an embedded llama.cpp runtime: chat over
+  your inbox, draft generation and classification never send message content to
+  a third-party model. Mail, attachments and the search index live in a local
+  SQLite database, OAuth tokens go in the OS credential store, and the app
+  ships no telemetry. Ollama and OpenRouter are opt-in alternatives.
+Moniker: emailops
+Tags:
+  - email
+  - email-client
+  - privacy
+  - local-ai
+  - llm
+  - offline
+ReleaseNotesUrl: https://github.com/emailops/emailops/releases/tag/v0.6.6
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

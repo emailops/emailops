@@ -52,6 +52,7 @@
     "bug": "Bug report",
     "idea": "Idea"
   },
+  "starOnGitHub": "Star us on GitHub",
   "accountActions": {
     "sync": "Sync now",
     "syncEmails": "Sync emails",

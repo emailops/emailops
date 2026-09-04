@@ -528,6 +528,12 @@ dist-cli-mac:
 cask:
 	bash scripts/generate_cask.sh $(TAG)
 
+# Regenerate the winget manifests from a published release (TAG=v0.6.6 for a
+# specific one, else latest). Submission to microsoft/winget-pkgs is manual and
+# Windows-only — see packaging/winget/README.md.
+winget:
+	bash scripts/generate_winget.sh $(TAG)
+
 # Junk detector gate (spam / phishing / graymail). Synthetic corpus, no model,
 # no DB — runs in seconds. Exits non-zero when the false-positive budget is
 # blown. A missed spam message is a warning; a false positive on real mail is a

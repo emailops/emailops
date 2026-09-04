@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: EmailOps.EmailOps
+PackageVersion: 0.6.6
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+ReleaseDate: 2026-08-14
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/emailops/emailops/releases/download/v0.6.6/EmailOps-windows-setup.exe
+    InstallerSha256: F257ECF942F7667A06D60EF951A4630CFFB97D4E137D2D5C4DFF6BF0DCC49F58
+ManifestType: installer
+ManifestVersion: 1.6.0

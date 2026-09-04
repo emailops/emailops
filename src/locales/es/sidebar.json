@@ -52,6 +52,7 @@
     "bug": "Informe de error",
     "idea": "Idea"
   },
+  "starOnGitHub": "Danos una estrella en GitHub",
   "accountActions": {
     "sync": "Sincronizar ahora",
     "syncEmails": "Sincronizar correos",

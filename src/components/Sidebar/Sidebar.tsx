@@ -18,6 +18,7 @@ import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
 import { SmartFilters } from './SmartFilters';
+import { StarOnGitHub } from './StarOnGitHub';
 import { VersionLabel } from './VersionLabel';
 
 function CollapseChevron({ open }: { open: boolean }) {
@@ -331,6 +332,9 @@ export function Sidebar({
 
         {/* Give Feedback */}
         <FeedbackMenu onSelect={onGiveFeedback} />
+
+        {/* Ask for the star — most installs never see the repository. */}
+        <StarOnGitHub />
       </div>
 
       <nav className="flex-1 p-4 space-y-6 overflow-y-auto">
