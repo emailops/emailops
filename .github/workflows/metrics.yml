@@ -40,11 +40,17 @@ permissions:
   # Push the history commit to the `metrics` branch. Also the closest thing to
   # the "push access" the traffic endpoints ask for — whether GITHUB_TOKEN is
   # actually accepted there is what the first run will tell us.
+  #
+  # There is no permission to add for traffic: `permissions:` accepts a fixed
+  # set of scopes (actions, checks, contents, deployments, discussions,
+  # id-token, issues, packages, pages, pull-requests, repository-projects,
+  # security-events, statuses) and `administration` is not among them — naming
+  # it makes the whole workflow unparseable, which is how this comment got
+  # written. Either `contents: write` is enough for the traffic endpoints or
+  # the traffic half has to go.
   contents: write
   # Open the metrics issue once, then comment on it daily.
   issues: write
-  # Traffic lives under the repository's administration scope on some setups.
-  administration: read
 
 concurrency:
   group: metrics
