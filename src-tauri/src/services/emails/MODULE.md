@@ -28,6 +28,9 @@ All business logic for email read/write operations that cross the provider bound
 ## Public surface
 
 - `sync_account(db, account_id, app_data_dir, app: Option<AppHandle>, ai_background, abort_flags, sync_locks) -> Result<()>` — `app=None` (CLI) routes progress through the events seam and skips AppHandle-bound follow-ups (AI tasks, attachments)
+- `sync_account_with_contention(..., contention)` — same, but `SyncContention::Wait` queues behind the in-flight sync (capped at 5 min) instead of skipping. For callers that have just invalidated the running sync's settings, where skipping would leave the account on the settings the user replaced
+- `request_sync_abort(abort_flags, account_id)` — ask the in-flight sync to stop at its next batch boundary (already-downloaded emails are kept). Consumed by the run that observes it, so a request raised while nothing is running cannot abort a later sync
+- `reset_extra_mailbox_backfill(db, account_id)` — drop the per-mailbox "swept back to the floor" markers and cursors. Called when the sync range widens; the forward watermarks are left alone
 - `generate_draft(db, email_id, account_id, app, ai_queue) -> Result<String>`
 - `send_reply(db, email_id, body, from_account_id, to, cc, app) -> Result<String>` (returns sending account id for a post-send sync)
 - `send_new_email(db, account_id, to, cc, subject, body, attachments, app) -> Result<String>` (returns sending account id for a post-send sync)

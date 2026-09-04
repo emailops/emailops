@@ -541,6 +541,23 @@ impl Database {
         Ok(())
     }
 
+    /// Remove every preference whose key starts with `prefix`, returning how
+    /// many rows were deleted. Used to clear a whole family of per-account
+    /// watermarks at once (the set of keys is open-ended — one per custom
+    /// folder — so enumerating them from the caller would go stale).
+    ///
+    /// `prefix` is matched literally: LIKE wildcards inside it are escaped so a
+    /// key containing `%` or `_` can never widen the delete.
+    pub fn delete_preferences_with_prefix(&self, prefix: &str) -> Result<usize> {
+        let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let conn = self.connection();
+        let deleted = conn.execute(
+            "DELETE FROM user_preferences WHERE key LIKE ?1 ESCAPE '\\'",
+            rusqlite::params![format!("{escaped}%")],
+        )?;
+        Ok(deleted)
+    }
+
     /// Create an in-memory database for unit tests.
     ///
     /// Runs the **same** refinery migrations as production (`migrations/V*.sql`),
@@ -917,6 +934,44 @@ mod schema_parity_tests {
                 "test DB missing trigger `{required}`. Triggers present: {triggers:?}"
             );
         }
+    }
+
+    #[test]
+    fn deleting_preferences_by_prefix_only_touches_that_family() {
+        let db = Database::new_for_testing().expect("create test db");
+        db.set_preference("extra_mailbox_backfill:acc-1:sent", "1").unwrap();
+        db.set_preference("extra_mailbox_backfill:acc-1:folder:Team", "1")
+            .unwrap();
+        db.set_preference("extra_mailbox_backfill:acc-2:sent", "1").unwrap();
+        db.set_preference("extra_mailbox_sync:acc-1:sent", "42").unwrap();
+
+        let deleted = db
+            .delete_preferences_with_prefix("extra_mailbox_backfill:acc-1:")
+            .expect("delete by prefix");
+
+        assert_eq!(deleted, 2, "both of acc-1's backfill markers");
+        assert_eq!(
+            db.get_preference("extra_mailbox_backfill:acc-2:sent").unwrap(),
+            Some("1".into())
+        );
+        assert_eq!(
+            db.get_preference("extra_mailbox_sync:acc-1:sent").unwrap(),
+            Some("42".into())
+        );
+    }
+
+    #[test]
+    fn prefix_delete_treats_like_wildcards_as_literal_characters() {
+        // A `_` in an unescaped LIKE pattern matches any character, which would
+        // let one account's reset wipe another's keys.
+        let db = Database::new_for_testing().expect("create test db");
+        db.set_preference("watermark_a:x", "keep").unwrap();
+        db.set_preference("watermarkXa:x", "keep").unwrap();
+
+        let deleted = db.delete_preferences_with_prefix("watermark_a:").expect("delete");
+
+        assert_eq!(deleted, 1);
+        assert_eq!(db.get_preference("watermarkXa:x").unwrap(), Some("keep".into()));
     }
 
     #[test]

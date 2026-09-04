@@ -19,6 +19,23 @@ use crate::sync::provider::{EmailProvider, ExtraMailbox};
 use super::events::{emit_account_log, emit_progress};
 use super::provider::build_provider_for_account;
 
+/// How long a [`SyncContention::Wait`] caller waits for the in-flight sync to
+/// release the account before giving up.
+const INFLIGHT_SYNC_WAIT: Duration = Duration::from_secs(300);
+
+/// What to do when another sync for the same account is already running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncContention {
+    /// Give up immediately. The default for scheduler ticks and manual
+    /// refreshes: a second pass over the same mailbox would find nothing the
+    /// in-flight one isn't already fetching.
+    Skip,
+    /// Wait for the in-flight run to finish, then sync. Used when the run in
+    /// flight is working to settings the user has just replaced, so its result
+    /// is stale by construction and a fresh pass is the whole point.
+    Wait,
+}
+
 /// Public entry point called by Tauri commands and the sync scheduler.
 /// Builds the OAuth provider (refreshing tokens if needed), acquires the
 /// per-account sync lock, then delegates to [`sync_account_with_provider`].
@@ -30,6 +47,32 @@ pub async fn sync_account(
     ai_background: crate::services::task_queue::TaskQueue,
     sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+) -> Result<()> {
+    sync_account_with_contention(
+        db,
+        account_id,
+        app_data_dir,
+        app,
+        ai_background,
+        sync_abort_flags,
+        sync_locks,
+        SyncContention::Skip,
+    )
+    .await
+}
+
+/// [`sync_account`] with an explicit answer to "what if a sync for this account
+/// is already running?". See [`SyncContention`].
+#[allow(clippy::too_many_arguments)] // one more knob than sync_account; splitting the seam would hide it
+pub async fn sync_account_with_contention(
+    db: &Arc<Database>,
+    account_id: &str,
+    app_data_dir: &Path,
+    app: Option<AppHandle>,
+    ai_background: crate::services::task_queue::TaskQueue,
+    sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    contention: SyncContention,
 ) -> Result<()> {
     // Acquire per-account lock atomically. If another sync is already running
     // for this account (scheduler tick racing with UI trigger, or double-click),
@@ -43,9 +86,9 @@ pub async fn sync_account(
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
     };
-    let _sync_guard = match account_lock.try_lock() {
-        Ok(g) => g,
-        Err(_) => {
+    let _sync_guard = match (account_lock.try_lock(), contention) {
+        (Ok(g), _) => g,
+        (Err(_), SyncContention::Skip) => {
             crate::services::logger::log(
                 "debug",
                 "sync",
@@ -53,7 +96,38 @@ pub async fn sync_account(
             );
             return Ok(());
         }
+        (Err(_), SyncContention::Wait) => {
+            crate::services::logger::log(
+                "debug",
+                "sync",
+                format!("sync already in progress for {account_id}, waiting for it to stop"),
+            );
+            // A `Wait` caller occupies the account's sync queue slot while it
+            // waits, so a wedged run must not hold it forever. The abort flag
+            // is checked every batch, making the normal wait seconds long — the
+            // cap only fires when the in-flight run is genuinely stuck.
+            match tokio::time::timeout(INFLIGHT_SYNC_WAIT, account_lock.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!(
+                            "gave up waiting for the in-progress sync of {account_id} to stop; \
+                             the new sync settings apply from the next sync"
+                        ),
+                    );
+                    return Ok(());
+                }
+            }
+        }
     };
+
+    // A pending abort request belongs to the run that has just ended, not to
+    // this one. Leaving it set would make this sync stop at its first batch —
+    // and, worse, leave the account permanently unsyncable if nothing ever
+    // observed the flag (nothing was running when it was raised).
+    clear_sync_abort_flag(&sync_abort_flags, account_id);
 
     db.upsert_sync_status(account_id, "syncing", None, None)?;
 
@@ -135,6 +209,42 @@ pub async fn sync_account(
     result
 }
 
+/// Ask an in-flight sync of `account_id` to stop at its next batch boundary.
+///
+/// The flag is cooperative: the download loop checks it between batches so the
+/// emails already fetched are persisted before the run returns.
+pub fn request_sync_abort(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>, account_id: &str) {
+    sync_abort_flags
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(account_id.to_string())
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .store(true, Ordering::Relaxed);
+}
+
+/// Drop any pending abort request for `account_id`.
+fn clear_sync_abort_flag(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>, account_id: &str) {
+    sync_abort_flags
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(account_id);
+}
+
+/// Whether the current run has been asked to stop. Consuming the request here
+/// keeps the "one abort, one stopped run" accounting in a single place.
+fn take_sync_abort(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>, account_id: &str) -> bool {
+    let requested = sync_abort_flags
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(account_id)
+        .map(|flag| flag.load(Ordering::Relaxed))
+        .unwrap_or(false);
+    if requested {
+        clear_sync_abort_flag(sync_abort_flags, account_id);
+    }
+    requested
+}
+
 /// Core sync logic with an already-built `EmailProvider`. Accepts
 /// `app: Option<AppHandle>` so integration tests can pass `None` and use a
 /// `FakeEmailProvider` without needing a live Tauri runtime.
@@ -203,24 +313,10 @@ pub async fn sync_account_with_provider(
     // (e.g. a reply the user just composed) push the incremental cursor
     // past unsynced received emails that arrived between syncs at an
     // earlier timestamp — Gmail's `after:T_sent` then filters them out.
-    let anchors = resolve_sync_anchors(db, account, account_id)?;
-    let latest_timestamp = anchors.latest_timestamp;
-    let plan = anchors.plan;
+    let plan = resolve_sync_plan(db, account, account_id)?;
     let backfill_after_timestamp = plan.backfill_after_timestamp;
     let backfill_before_timestamp = plan.backfill_before_timestamp;
-    // Incremental's anchor only matters when the planner says to run it.
-    // We still fall back to sync_from / 0 so a future planner change that
-    // re-enables incremental on a fresh DB has a sensible starting point.
-    let incremental_after_timestamp = if plan.run_incremental {
-        latest_timestamp
-            .or(account.sync_from_timestamp)
-            .or(match account.provider.as_str() {
-                "imap" | "outlook" | "gmail" => Some(0),
-                _ => None,
-            })
-    } else {
-        None
-    };
+    let incremental_after_timestamp = plan.incremental_after_timestamp;
 
     emit_progress(
         account_id,
@@ -434,18 +530,9 @@ pub async fn sync_account_with_provider(
             .unwrap_or_else(|| ts.to_string())
     };
     for chunk in new_message_refs.chunks(BATCH_SIZE) {
-        // Exit early if this account was deleted while sync was in progress.
-        if sync_abort_flags
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(account_id)
-            .map(|f| f.load(Ordering::Relaxed))
-            .unwrap_or(false)
-        {
-            sync_abort_flags
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(account_id);
+        // Exit early if this run has been retired mid-flight — the account was
+        // deleted, or its sync range changed and a replacement run is queued.
+        if take_sync_abort(&sync_abort_flags, account_id) {
             return Ok(());
         }
 
@@ -679,17 +766,7 @@ pub async fn sync_account_with_provider(
         );
 
         for chunk in retryable.chunks(BATCH_SIZE) {
-            if sync_abort_flags
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(account_id)
-                .map(|f| f.load(Ordering::Relaxed))
-                .unwrap_or(false)
-            {
-                sync_abort_flags
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(account_id);
+            if take_sync_abort(&sync_abort_flags, account_id) {
                 return Ok(());
             }
             let chunk_ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
@@ -1245,6 +1322,26 @@ fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> S
         account_id,
         target.mailbox_value()
     )
+}
+
+/// Forget how far the extra-mailbox backfill has walked for `account_id`.
+///
+/// The backfill records "swept back to the account floor" as a done marker plus
+/// a cursor, per mailbox. Both statements are only true relative to the floor
+/// they were written under, so widening the sync range has to drop them —
+/// otherwise Sent/Spam/Trash and every custom folder stay frozen at the
+/// narrower range no matter what the user picks afterwards (issue #50).
+///
+/// The forward (incremental) watermark is deliberately left alone: it tracks
+/// the newest message seen, which a wider floor does not invalidate.
+pub fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Result<()> {
+    for prefix in [
+        format!("extra_mailbox_backfill:{account_id}:"),
+        format!("extra_mailbox_backfill_cursor:{account_id}:"),
+    ] {
+        db.delete_preferences_with_prefix(&prefix)?;
+    }
+    Ok(())
 }
 
 /// All watermark preference keys of one custom folder (forward, backfill-done,
@@ -1883,6 +1980,8 @@ pub(super) struct SyncPlan {
     /// Whether to run the page-capped incremental pass (the
     /// `MAX_INCREMENTAL_EMAILS_PER_SYNC` loop).
     pub run_incremental: bool,
+    /// Lower bound for the incremental pass. `None` when the pass is skipped.
+    pub incremental_after_timestamp: Option<i64>,
 }
 
 /// Gmail's five inbox categories, in the order its own tabs use them.
@@ -1918,41 +2017,33 @@ pub(super) fn gmail_label_filter(selected: &[String]) -> Option<String> {
     Some(format!("(({}) OR in:sent)", inbox_clause))
 }
 
-/// Everything the sync passes need to anchor themselves, read from the DB in
-/// one place so the derivation is testable without a provider or the network.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SyncAnchors {
-    pub plan: SyncPlan,
-    /// Newest inbox email already stored — the incremental cursor.
-    pub latest_timestamp: Option<i64>,
-    /// The account's floor, with the provider default applied.
-    pub effective_sync_from: Option<i64>,
-}
-
-/// Read the anchors for `account` and run [`plan_sync_passes`] over them.
+/// Read the anchors for `account` from the DB and run [`plan_sync_passes`]
+/// over them. Split from the plan itself so the derivation stays testable
+/// without a provider or the network.
 ///
 /// Both watermarks are **inbox-scoped**. A locally stored Sent email must never
 /// move either end of the range: at the top it would push the incremental
 /// cursor past unsynced received mail, and at the bottom it would raise the
 /// backfill floor above genuinely older inbox messages.
-pub(super) fn resolve_sync_anchors(db: &Database, account: &Account, account_id: &str) -> Result<SyncAnchors> {
+pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &str) -> Result<SyncPlan> {
     let latest_timestamp = db.get_latest_email_timestamp_for_mailbox(account_id, "inbox")?;
     let oldest_timestamp = db.get_oldest_email_timestamp_for_mailbox(account_id, "inbox")?;
     let backfill_swept_from = db.get_account_backfill_swept_from(account_id)?;
-    let effective_sync_from = account.sync_from_timestamp.or(match account.provider.as_str() {
-        "imap" | "outlook" | "gmail" => Some(0),
-        _ => None,
-    });
-    let plan = plan_sync_passes(
+    let effective_sync_from = effective_sync_from(account);
+    Ok(plan_sync_passes(
         effective_sync_from,
         latest_timestamp,
         oldest_timestamp,
         backfill_swept_from,
-    );
-    Ok(SyncAnchors {
-        plan,
-        latest_timestamp,
-        effective_sync_from,
+    ))
+}
+
+/// The account's history floor with the provider default applied: every
+/// provider we ship treats "no explicit choice" as "all mail", i.e. epoch.
+fn effective_sync_from(account: &Account) -> Option<i64> {
+    account.sync_from_timestamp.or(match account.provider.as_str() {
+        "imap" | "outlook" | "gmail" => Some(0),
+        _ => None,
     })
 }
 
@@ -2000,10 +2091,25 @@ pub(super) fn plan_sync_passes(
     // email has landed (latest_timestamp.is_some()), incremental resumes
     // its normal job of pulling "what's new since last sync".
     let run_incremental = latest_timestamp.is_some();
+    // Both anchors are floors and the stricter one wins. Taking the watermark
+    // alone (as this used to) ignores a *narrowed* sync range: an account whose
+    // stored mail predates the new floor re-lists its whole history on every
+    // sync, so lowering "All mail" to "last 7 days" looked like a no-op even
+    // after an app restart (issue #50).
+    let incremental_after_timestamp = if run_incremental {
+        match (latest_timestamp, effective_sync_from) {
+            (Some(latest), Some(floor)) => Some(latest.max(floor)),
+            (latest, None) => latest,
+            (None, floor) => floor,
+        }
+    } else {
+        None
+    };
     SyncPlan {
         backfill_after_timestamp,
         backfill_before_timestamp,
         run_incremental,
+        incremental_after_timestamp,
     }
 }
 
@@ -2287,6 +2393,7 @@ mod plan_sync_passes_tests {
                 backfill_after_timestamp: Some(1_088_640_000),
                 backfill_before_timestamp: None,
                 run_incremental: false,
+                incremental_after_timestamp: None,
             }
         );
     }
@@ -2339,6 +2446,39 @@ mod plan_sync_passes_tests {
         let plan = plan_sync_passes(None, Some(2_000), Some(1_000), None);
         assert_eq!(plan.backfill_after_timestamp, None);
         assert!(plan.run_incremental);
+    }
+
+    #[test]
+    fn incremental_floor_never_falls_below_the_chosen_sync_range() {
+        // Regression for #50: the user narrowed an IMAP account from "All mail"
+        // to "last 7 days" after the initial sync had already stored mail from
+        // 2018. The incremental pass anchored on the inbox watermark alone, so
+        // every subsequent sync re-listed the whole mailbox from 2018 — the
+        // range change looked like it had been ignored, even across a restart.
+        let sync_from = 1_756_000_000; // "7 days ago"
+        let plan = plan_sync_passes(Some(sync_from), Some(1_500_000_000), Some(1_500_000_000), None);
+        assert!(plan.run_incremental);
+        assert_eq!(
+            plan.incremental_after_timestamp,
+            Some(sync_from),
+            "incremental must start at the user's floor, not at the older watermark"
+        );
+    }
+
+    #[test]
+    fn incremental_floor_stays_on_the_watermark_when_it_is_newer_than_the_range() {
+        // The common case: local mail is newer than the floor, so the watermark
+        // is the tighter (and correct) anchor — a floor-only anchor would
+        // re-list everything already stored on every sync.
+        let plan = plan_sync_passes(Some(1_000), Some(5_000), Some(2_000), None);
+        assert_eq!(plan.incremental_after_timestamp, Some(5_000));
+    }
+
+    #[test]
+    fn skipped_incremental_pass_has_no_anchor() {
+        let plan = plan_sync_passes(Some(1_000), None, None, None);
+        assert!(!plan.run_incremental);
+        assert_eq!(plan.incremental_after_timestamp, None);
     }
 
     #[test]
@@ -2444,15 +2584,15 @@ mod sync_anchor_tests {
         db.insert_email(&email_in("inbox", "received", 2_000))
             .expect("seed inbox");
 
-        let anchors = resolve_sync_anchors(&db, &account, &account.id).expect("anchors");
+        let plan = resolve_sync_plan(&db, &account, &account.id).expect("plan");
 
         assert_eq!(
-            anchors.plan.backfill_before_timestamp,
+            plan.backfill_before_timestamp,
             Some(2_000),
             "the backfill ceiling must come from the inbox, not from a newer-than-inbox Sent row"
         );
         assert_eq!(
-            anchors.plan.backfill_after_timestamp,
+            plan.backfill_after_timestamp,
             Some(0),
             "an 'All mail' account must still backfill from the beginning"
         );
