@@ -1,7 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
 use crate::models::{Account, AccountSettings};
@@ -29,13 +26,7 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, A
 #[tauri::command]
 pub async fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), AppError> {
     // Signal any in-progress sync for this account to abort at the next batch boundary.
-    {
-        let mut flags = state.sync_abort_flags.lock().unwrap_or_else(|e| e.into_inner());
-        flags
-            .entry(account_id.clone())
-            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-            .store(true, Ordering::Relaxed);
-    }
+    services::emails::request_sync_abort(&state.sync_abort_flags, &account_id);
     services::accounts::remove_account(&state.db, &account_id, &state.app_data_dir)
 }
 
@@ -155,13 +146,35 @@ pub async fn add_imap_account(
     services::accounts::add_imap_account(&state.db, credentials, display_name, sync_from_timestamp).await
 }
 
+/// Persist a new sync range and make it take effect *now*.
+///
+/// A range change that only lands in the DB is invisible for as long as the
+/// current sync runs — and an IMAP account only syncs on IDLE notifications, so
+/// "as long as" can mean "until new mail happens to arrive". The in-flight run
+/// is therefore asked to stop at its next batch boundary (already-downloaded
+/// emails are kept) and a replacement sync is queued behind it, which reads the
+/// new range when it starts.
 #[tauri::command]
 pub async fn update_account_sync_from(
+    app: AppHandle,
     state: State<'_, AppState>,
     account_id: String,
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account, AppError> {
-    services::accounts::update_account_sync_from(&state.db, &account_id, sync_from_timestamp)
+    let (account, change) = services::accounts::update_account_sync_from(&state.db, &account_id, sync_from_timestamp)?;
+
+    if change.changed {
+        services::emails::request_sync_abort(&state.sync_abort_flags, &account_id);
+        crate::commands::emails::enqueue_account_sync_with_contention(
+            &app,
+            &state,
+            account_id,
+            services::emails::SyncContention::Wait,
+        )
+        .await;
+    }
+
+    Ok(account)
 }
 
 #[tauri::command]

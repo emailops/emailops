@@ -45,12 +45,10 @@ pub(super) async fn build_provider_for_account(
         }
         "imap" => {
             let creds = accounts::get_imap_credentials(&account.id)?;
-            Ok(Box::new(ImapClient::new(
-                creds,
-                account.email.clone(),
-                account.name.clone(),
-                account.id.clone(),
-            )))
+            Ok(Box::new(
+                ImapClient::new(creds, account.email.clone(), account.name.clone(), account.id.clone())
+                    .with_sync_from(account.sync_from_timestamp),
+            ))
         }
         other => Err(AppError::SyncError(format!("Unsupported email provider: {other}"))),
     }
