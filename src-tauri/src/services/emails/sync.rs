@@ -266,6 +266,10 @@ pub async fn sync_account_with_provider(
 ) -> Result<()> {
     let account_id = &account.id;
 
+    // A widened sync range leaves a reset queued for the extra mailboxes. This
+    // is the first point at which applying it is safe — see the function docs.
+    apply_pending_extra_mailbox_backfill_reset(db, account_id);
+
     // Load account settings: Gmail category filter + attachment auto-download categories
     let (label_filter_for_list, skip_promotions, auto_download_attachment_categories) = {
         let key = format!("account_settings:{}", account_id);
@@ -349,107 +353,410 @@ pub async fn sync_account_with_provider(
 
     const MAX_INCREMENTAL_EMAILS_PER_SYNC: u32 = 500;
     const PAGE_SIZE: u32 = 100;
+    /// Backfill pages listed before pausing to download what they found.
+    ///
+    /// The listing used to run to completion before a single message was
+    /// downloaded. On a large mailbox that is hundreds of API calls and many
+    /// minutes with nothing written — and since the UI only refreshes when a
+    /// batch lands, the inbox sat empty behind a spinner the whole time. A
+    /// slice puts mail on screen within seconds, and the loop keeps slicing
+    /// until the window is exhausted, so a full history still completes in one
+    /// run rather than being spread over later syncs.
+    const BACKFILL_PAGES_PER_SLICE: u32 = 10;
 
-    let mut all_message_refs = Vec::new();
-    let mut backfill_ref_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut synced_count: u32 = 0;
+    let mut all_new_ids: Vec<String> = Vec::new();
+    let mut ai_followups_kicked = false;
 
-    // ── Backfill pass ─────────────────────────────────────────────────────────
-    if backfill_after_timestamp.is_some() {
-        let mut next_page_token: Option<String> = None;
-        loop {
-            let (message_refs, next_page) = email_provider
-                .list_messages(
-                    PAGE_SIZE,
-                    next_page_token.as_deref(),
-                    backfill_after_timestamp,
-                    backfill_before_timestamp,
-                    label_filter_for_list.as_deref(),
-                )
-                .await?;
-            for r in &message_refs {
-                backfill_ref_ids.insert(r.id.clone());
-            }
-            all_message_refs.extend(message_refs);
-            if next_page.is_none() {
-                break;
-            }
-            emit_account_log(
-                "debug",
-                "sync",
-                &account.email,
-                &format!(
-                    "Found {} backfill message IDs so far, fetching more...",
-                    backfill_ref_ids.len()
-                ),
-            );
-            next_page_token = next_page;
-        }
-    }
+    // Load attachment rules for this account (empty vec if none defined)
+    let attachment_rules = db.get_attachment_rules(account_id)?;
 
-    // ── Incremental pass ──────────────────────────────────────────────────────
-    if incremental_after_timestamp.is_some() {
-        let mut next_page_token: Option<String> = None;
-        loop {
-            let remaining = MAX_INCREMENTAL_EMAILS_PER_SYNC
-                .saturating_sub(all_message_refs.len().saturating_sub(backfill_ref_ids.len()) as u32);
-            if remaining == 0 {
-                break;
+    const BATCH_SIZE: usize = 20;
+    let batch_pause = inter_batch_delay(&account.provider);
+
+    let mut global_done: u32 = 0;
+    let mut first_batch = true;
+    // Built lazily on the first chunk and reused for the whole sync: the contact
+    // reference set and the trained models do not change mid-run, and rebuilding
+    // them per twenty-message chunk would be the dominant cost of scoring.
+    let mut junk_ctx: Option<crate::services::junk::signals::AccountContext> = None;
+    let mut window_oldest_ts: Option<i64> = None;
+    let mut window_newest_ts: Option<i64> = None;
+    let format_window_date = |ts: i64| -> String {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| ts.to_string())
+    };
+
+    // Enumeration state, carried across slices.
+    let mut backfill_page_token: Option<String> = None;
+    let mut backfill_exhausted = backfill_after_timestamp.is_none();
+    let mut incremental_done = incremental_after_timestamp.is_none();
+    // Whether any slice found backfill mail that was not already stored. Drives
+    // the "swept to the floor" watermark below: a run that ingested anything
+    // has by definition not finished sweeping.
+    let mut saw_new_backfill = false;
+    let mut total_new: u32 = 0;
+
+    loop {
+        let mut all_message_refs = Vec::new();
+        let mut backfill_ref_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // ── Backfill slice ────────────────────────────────────────────────────
+        if !backfill_exhausted {
+            for _ in 0..BACKFILL_PAGES_PER_SLICE {
+                let (message_refs, next_page) = email_provider
+                    .list_messages(
+                        PAGE_SIZE,
+                        backfill_page_token.as_deref(),
+                        backfill_after_timestamp,
+                        backfill_before_timestamp,
+                        label_filter_for_list.as_deref(),
+                    )
+                    .await?;
+                for r in &message_refs {
+                    backfill_ref_ids.insert(r.id.clone());
+                }
+                all_message_refs.extend(message_refs);
+                backfill_page_token = next_page;
+                if backfill_page_token.is_none() {
+                    backfill_exhausted = true;
+                    break;
+                }
             }
-            let page_size = PAGE_SIZE.min(remaining);
-            let (message_refs, next_page) = email_provider
-                .list_messages(
-                    page_size,
-                    next_page_token.as_deref(),
-                    incremental_after_timestamp,
-                    None,
-                    label_filter_for_list.as_deref(),
-                )
-                .await?;
-            all_message_refs.extend(message_refs);
-            let has_more = next_page.is_some()
-                && all_message_refs.len().saturating_sub(backfill_ref_ids.len())
-                    < MAX_INCREMENTAL_EMAILS_PER_SYNC as usize;
-            if has_more {
+            if !backfill_exhausted {
                 emit_account_log(
                     "debug",
                     "sync",
                     &account.email,
-                    &format!("Found {} message IDs so far, fetching more...", all_message_refs.len()),
+                    &format!(
+                        "Found {} backfill message IDs in this slice, downloading them before listing more...",
+                        backfill_ref_ids.len()
+                    ),
                 );
             }
-            if !has_more {
-                break;
+        } else if !incremental_done {
+            // ── Incremental pass ──────────────────────────────────────────────
+            // Runs once, after the backfill window is exhausted. Already bounded
+            // by MAX_INCREMENTAL_EMAILS_PER_SYNC, so it needs no slicing.
+            incremental_done = true;
+            if incremental_after_timestamp.is_some() {
+                let mut next_page_token: Option<String> = None;
+                loop {
+                    let remaining = MAX_INCREMENTAL_EMAILS_PER_SYNC
+                        .saturating_sub(all_message_refs.len().saturating_sub(backfill_ref_ids.len()) as u32);
+                    if remaining == 0 {
+                        break;
+                    }
+                    let page_size = PAGE_SIZE.min(remaining);
+                    let (message_refs, next_page) = email_provider
+                        .list_messages(
+                            page_size,
+                            next_page_token.as_deref(),
+                            incremental_after_timestamp,
+                            None,
+                            label_filter_for_list.as_deref(),
+                        )
+                        .await?;
+                    all_message_refs.extend(message_refs);
+                    let has_more = next_page.is_some()
+                        && all_message_refs.len().saturating_sub(backfill_ref_ids.len())
+                            < MAX_INCREMENTAL_EMAILS_PER_SYNC as usize;
+                    if has_more {
+                        emit_account_log(
+                            "debug",
+                            "sync",
+                            &account.email,
+                            &format!("Found {} message IDs so far, fetching more...", all_message_refs.len()),
+                        );
+                    }
+                    if !has_more {
+                        break;
+                    }
+                    next_page_token = next_page;
+                }
             }
-            next_page_token = next_page;
+        }
+
+        // Still filter by ID in case of overlap at the timestamp boundary.
+        let all_ids: Vec<String> = all_message_refs.iter().map(|r| r.id.clone()).collect();
+        let existing_ids = db.emails_exist_batch(&all_ids)?;
+        let new_message_refs: Vec<_> = all_message_refs
+            .into_iter()
+            .filter(|msg_ref| !existing_ids.contains(&msg_ref.id))
+            .collect();
+
+        if new_message_refs.iter().any(|r| backfill_ref_ids.contains(&r.id)) {
+            saw_new_backfill = true;
+        }
+
+        let new_count = new_message_refs.len() as u32;
+        total_new += new_count;
+
+        if new_count > 0 {
+            let log_every = if new_count < 50 {
+                new_count
+            } else {
+                (new_count / 10).clamp(1, 50)
+            };
+
+            emit_progress(
+                account_id,
+                "syncing",
+                0,
+                new_count,
+                &format!(
+                    "Downloading {} new email{}...",
+                    new_count,
+                    if new_count == 1 { "" } else { "s" }
+                ),
+            );
+            emit_account_log(
+                "info",
+                "sync",
+                &account.email,
+                &format!(
+                    "Downloading {} new email{}...",
+                    new_count,
+                    if new_count == 1 { "" } else { "s" }
+                ),
+            );
+
+            for chunk in new_message_refs.chunks(BATCH_SIZE) {
+                // Exit early if this run has been retired mid-flight — the account was
+                // deleted, or its sync range changed and a replacement run is queued.
+                if take_sync_abort(&sync_abort_flags, account_id) {
+                    return Ok(());
+                }
+
+                if !first_batch {
+                    sleep(batch_pause).await;
+                }
+                first_batch = false;
+
+                let ids: Vec<&str> = chunk.iter().map(|r| r.id.as_str()).collect();
+
+                let batch_results = email_provider.batch_get_messages(&ids).await?;
+
+                let mut chunk_emails: Vec<(Email, Vec<crate::sync::provider::AttachmentInfo>)> = Vec::new();
+
+                for (msg_ref, result) in chunk.iter().zip(batch_results) {
+                    global_done += 1;
+
+                    if let Ok(ref r) = result {
+                        let ts = r.0.timestamp;
+                        window_oldest_ts = Some(window_oldest_ts.map_or(ts, |o| o.min(ts)));
+                        window_newest_ts = Some(window_newest_ts.map_or(ts, |n| n.max(ts)));
+                    }
+
+                    emit_progress(
+                        account_id,
+                        "syncing",
+                        global_done,
+                        new_count,
+                        &format!("Downloading {} of {} new emails", global_done, new_count),
+                    );
+                    if global_done.is_multiple_of(log_every) || global_done == new_count {
+                        let range = match (window_oldest_ts.take(), window_newest_ts.take()) {
+                            (Some(oldest), Some(newest)) => {
+                                format!(
+                                    " (received {} → {})",
+                                    format_window_date(oldest),
+                                    format_window_date(newest),
+                                )
+                            }
+                            _ => String::new(),
+                        };
+                        emit_account_log(
+                            "debug",
+                            "sync",
+                            &account.email,
+                            &format!("Downloaded {} / {} emails{}", global_done, new_count, range),
+                        );
+                    }
+
+                    let (mut email, category, attachment_infos) = match result {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            emit_account_log(
+                                "error",
+                                "sync",
+                                &account.email,
+                                &format!("Failed to download email {}: {}", msg_ref.id, err_str),
+                            );
+                            if let Err(db_err) = db.add_failed_email(account_id, &msg_ref.id, &err_str) {
+                                emit_account_log(
+                                    "error",
+                                    "sync",
+                                    &account.email,
+                                    &format!("Could not record email failure: {}", db_err),
+                                );
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Skip promotions unless the account is configured to sync them
+                    if skip_promotions && category.is_promotions() {
+                        continue;
+                    }
+
+                    email.account_id = account_id.to_string();
+                    chunk_emails.push((email, attachment_infos));
+                }
+
+                // Phase 2: batch write — one write-lock acquisition for the whole chunk.
+                if !chunk_emails.is_empty() {
+                    let emails_only: Vec<Email> = chunk_emails.iter().map(|(e, _)| e.clone()).collect();
+                    db.insert_emails_batch(&emails_only)?;
+                    // Replace optimistic locally-stored sent copies now that the
+                    // provider's real rows are in (Gmail's main pass includes in:sent).
+                    super::reconcile::reconcile_pending_sent(db, account_id, &account.email, &emails_only);
+
+                    let metas: Vec<_> = chunk_emails
+                        .iter()
+                        .flat_map(|(email, infos)| {
+                            infos.iter().map(move |info| {
+                                (
+                                    email.id.clone(),
+                                    account_id.to_string(),
+                                    info.attachment_id.clone(),
+                                    info.filename.clone(),
+                                    info.mime_type.clone(),
+                                    info.size,
+                                    info.inline_data.clone(),
+                                )
+                            })
+                        })
+                        .collect();
+                    if !metas.is_empty() {
+                        let _ = db.insert_email_attachment_metas_batch(&metas);
+                    }
+
+                    let ids_to_remove: Vec<String> = chunk_emails.iter().map(|(e, _)| e.id.clone()).collect();
+                    let _ = db.remove_failed_emails_batch(account_id, &ids_to_remove);
+
+                    // Score BEFORE announcing the batch. Junk detection is fully
+                    // deterministic — no model, no network, a few indexed reads per
+                    // message — so unlike classification it has no reason to run later.
+                    // Doing it afterwards is what made a message appear in the inbox and
+                    // then visibly change into junk a moment later.
+                    //
+                    // The context (contact reference set, trained models) is built once
+                    // for the whole sync rather than once per twenty-message chunk.
+                    if crate::services::junk::is_enabled(db) {
+                        if junk_ctx.is_none() {
+                            match crate::services::junk::signals::AccountContext::load(db, account_id) {
+                                Ok(ctx) => junk_ctx = Some(ctx),
+                                Err(e) => emit_account_log(
+                                    "warn",
+                                    "sync",
+                                    &account.email,
+                                    &format!("Junk context unavailable, scoring deferred: {e}"),
+                                ),
+                            }
+                        }
+                        if let Some(ctx) = junk_ctx.as_ref() {
+                            if let Err(e) =
+                                crate::services::junk::score_ids_with_context(db, account_id, ctx, &ids_to_remove).await
+                            {
+                                // Never fail a sync over scoring: the post-sync pass
+                                // picks up anything missed.
+                                emit_account_log("warn", "sync", &account.email, &format!("Junk scoring failed: {e}"));
+                            }
+                        }
+                    }
+
+                    all_new_ids.extend(ids_to_remove);
+                    synced_count += chunk_emails.len() as u32;
+
+                    emit_progress(account_id, "batch", synced_count, new_count, "");
+
+                    if !ai_followups_kicked {
+                        if let Some(ref a) = app {
+                            ai_followups_kicked = true;
+                            enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "early").await;
+                        }
+                    }
+                }
+
+                // Phase 3: per-email async attachment processing (needs emails already in DB).
+                // Only runs when we have an AppHandle (skipped in test context where
+                // FakeEmailProvider returns no attachments anyway).
+                if let Some(ref a) = app {
+                    for (email, attachment_infos) in &chunk_emails {
+                        let should_auto_download = !attachment_infos.is_empty()
+                            && auto_download_attachment_categories.contains(&email.category);
+
+                        if should_auto_download {
+                            if let Err(e) = crate::services::attachments::auto_download_attachments(
+                                db,
+                                email_provider.as_ref(),
+                                email,
+                                attachment_infos,
+                                app_data_dir,
+                                a,
+                            )
+                            .await
+                            {
+                                emit_account_log(
+                                    "error",
+                                    "attachments",
+                                    &account.email,
+                                    &format!("Auto-download attachment error: {}", e),
+                                );
+                            }
+                        }
+
+                        if !attachment_infos.is_empty() && !attachment_rules.is_empty() {
+                            if let Err(e) = crate::services::attachments::process_attachments_for_email(
+                                db,
+                                email_provider.as_ref(),
+                                email,
+                                attachment_infos,
+                                &attachment_rules,
+                                app_data_dir,
+                                Some(a),
+                            )
+                            .await
+                            {
+                                emit_account_log(
+                                    "error",
+                                    "attachments",
+                                    &account.email,
+                                    &format!("Attachment rule processing error: {}", e),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if backfill_exhausted && incremental_done {
+            break;
         }
     }
 
-    // Still filter by ID in case of overlap at the timestamp boundary.
-    let all_ids: Vec<String> = all_message_refs.iter().map(|r| r.id.clone()).collect();
-    let existing_ids = db.emails_exist_batch(&all_ids)?;
-    let new_message_refs: Vec<_> = all_message_refs
-        .into_iter()
-        .filter(|msg_ref| !existing_ids.contains(&msg_ref.id))
-        .collect();
-
-    if backfill_after_timestamp.is_some() && backfill_before_timestamp.is_some() {
-        let has_new_backfill = new_message_refs.iter().any(|r| backfill_ref_ids.contains(&r.id));
-        if !has_new_backfill {
-            // Record progress in the dedicated watermark column — writing this
-            // into `sync_from_timestamp` used to destroy the user's "All mail".
-            if let Err(e) = db.set_account_backfill_swept_from(account_id, backfill_after_timestamp) {
-                emit_account_log(
-                    "warn",
-                    "sync",
-                    &account.email,
-                    &format!("Failed to advance backfill watermark: {}", e),
-                );
-            }
+    // "Swept back to the floor" is only true when the whole window was listed
+    // and held nothing new. Slicing cannot weaken that: any slice that ingested
+    // mail sets `saw_new_backfill`, so a partial run never latches — which is
+    // the failure two schema migrations have already had to repair.
+    if backfill_after_timestamp.is_some() && backfill_before_timestamp.is_some() && !saw_new_backfill {
+        // Record progress in the dedicated watermark column — writing this
+        // into `sync_from_timestamp` used to destroy the user's "All mail".
+        if let Err(e) = db.set_account_backfill_swept_from(account_id, backfill_after_timestamp) {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Failed to advance backfill watermark: {}", e),
+            );
         }
     }
 
-    let new_count = new_message_refs.len() as u32;
-
+    let new_count = total_new;
     if new_count == 0 {
         // Inbox has no new emails — but Sent / Spam / Trash still need
         // their dedicated pass so a stale inbox doesn't gate sent-mail
@@ -476,268 +783,6 @@ pub async fn sync_account_with_provider(
         }
 
         return Ok(());
-    }
-
-    emit_progress(
-        account_id,
-        "syncing",
-        0,
-        new_count,
-        &format!(
-            "Downloading {} new email{}...",
-            new_count,
-            if new_count == 1 { "" } else { "s" }
-        ),
-    );
-    emit_account_log(
-        "info",
-        "sync",
-        &account.email,
-        &format!(
-            "Downloading {} new email{}...",
-            new_count,
-            if new_count == 1 { "" } else { "s" }
-        ),
-    );
-
-    let mut synced_count: u32 = 0;
-    let mut all_new_ids: Vec<String> = Vec::new();
-    let mut ai_followups_kicked = false;
-
-    let log_every = if new_count < 50 {
-        new_count
-    } else {
-        (new_count / 10).clamp(1, 50)
-    };
-
-    // Load attachment rules for this account (empty vec if none defined)
-    let attachment_rules = db.get_attachment_rules(account_id)?;
-
-    const BATCH_SIZE: usize = 20;
-    const INTER_BATCH_DELAY_MS: u64 = 2_000;
-
-    let mut global_done: u32 = 0;
-    let mut first_batch = true;
-    // Built lazily on the first chunk and reused for the whole sync: the contact
-    // reference set and the trained models do not change mid-run, and rebuilding
-    // them per twenty-message chunk would be the dominant cost of scoring.
-    let mut junk_ctx: Option<crate::services::junk::signals::AccountContext> = None;
-    let mut window_oldest_ts: Option<i64> = None;
-    let mut window_newest_ts: Option<i64> = None;
-    let format_window_date = |ts: i64| -> String {
-        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
-            .map(|dt| dt.format("%Y-%m-%d").to_string())
-            .unwrap_or_else(|| ts.to_string())
-    };
-    for chunk in new_message_refs.chunks(BATCH_SIZE) {
-        // Exit early if this run has been retired mid-flight — the account was
-        // deleted, or its sync range changed and a replacement run is queued.
-        if take_sync_abort(&sync_abort_flags, account_id) {
-            return Ok(());
-        }
-
-        if !first_batch {
-            sleep(Duration::from_millis(INTER_BATCH_DELAY_MS)).await;
-        }
-        first_batch = false;
-
-        let ids: Vec<&str> = chunk.iter().map(|r| r.id.as_str()).collect();
-
-        let batch_results = email_provider.batch_get_messages(&ids).await?;
-
-        let mut chunk_emails: Vec<(Email, Vec<crate::sync::provider::AttachmentInfo>)> = Vec::new();
-
-        for (msg_ref, result) in chunk.iter().zip(batch_results) {
-            global_done += 1;
-
-            if let Ok(ref r) = result {
-                let ts = r.0.timestamp;
-                window_oldest_ts = Some(window_oldest_ts.map_or(ts, |o| o.min(ts)));
-                window_newest_ts = Some(window_newest_ts.map_or(ts, |n| n.max(ts)));
-            }
-
-            emit_progress(
-                account_id,
-                "syncing",
-                global_done,
-                new_count,
-                &format!("Downloading {} of {} new emails", global_done, new_count),
-            );
-            if global_done.is_multiple_of(log_every) || global_done == new_count {
-                let range = match (window_oldest_ts.take(), window_newest_ts.take()) {
-                    (Some(oldest), Some(newest)) => {
-                        format!(
-                            " (received {} → {})",
-                            format_window_date(oldest),
-                            format_window_date(newest),
-                        )
-                    }
-                    _ => String::new(),
-                };
-                emit_account_log(
-                    "debug",
-                    "sync",
-                    &account.email,
-                    &format!("Downloaded {} / {} emails{}", global_done, new_count, range),
-                );
-            }
-
-            let (mut email, category, attachment_infos) = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    let err_str = e.to_string();
-                    emit_account_log(
-                        "error",
-                        "sync",
-                        &account.email,
-                        &format!("Failed to download email {}: {}", msg_ref.id, err_str),
-                    );
-                    if let Err(db_err) = db.add_failed_email(account_id, &msg_ref.id, &err_str) {
-                        emit_account_log(
-                            "error",
-                            "sync",
-                            &account.email,
-                            &format!("Could not record email failure: {}", db_err),
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            // Skip promotions unless the account is configured to sync them
-            if skip_promotions && category.is_promotions() {
-                continue;
-            }
-
-            email.account_id = account_id.to_string();
-            chunk_emails.push((email, attachment_infos));
-        }
-
-        // Phase 2: batch write — one write-lock acquisition for the whole chunk.
-        if !chunk_emails.is_empty() {
-            let emails_only: Vec<Email> = chunk_emails.iter().map(|(e, _)| e.clone()).collect();
-            db.insert_emails_batch(&emails_only)?;
-            // Replace optimistic locally-stored sent copies now that the
-            // provider's real rows are in (Gmail's main pass includes in:sent).
-            super::reconcile::reconcile_pending_sent(db, account_id, &account.email, &emails_only);
-
-            let metas: Vec<_> = chunk_emails
-                .iter()
-                .flat_map(|(email, infos)| {
-                    infos.iter().map(move |info| {
-                        (
-                            email.id.clone(),
-                            account_id.to_string(),
-                            info.attachment_id.clone(),
-                            info.filename.clone(),
-                            info.mime_type.clone(),
-                            info.size,
-                            info.inline_data.clone(),
-                        )
-                    })
-                })
-                .collect();
-            if !metas.is_empty() {
-                let _ = db.insert_email_attachment_metas_batch(&metas);
-            }
-
-            let ids_to_remove: Vec<String> = chunk_emails.iter().map(|(e, _)| e.id.clone()).collect();
-            let _ = db.remove_failed_emails_batch(account_id, &ids_to_remove);
-
-            // Score BEFORE announcing the batch. Junk detection is fully
-            // deterministic — no model, no network, a few indexed reads per
-            // message — so unlike classification it has no reason to run later.
-            // Doing it afterwards is what made a message appear in the inbox and
-            // then visibly change into junk a moment later.
-            //
-            // The context (contact reference set, trained models) is built once
-            // for the whole sync rather than once per twenty-message chunk.
-            if crate::services::junk::is_enabled(db) {
-                if junk_ctx.is_none() {
-                    match crate::services::junk::signals::AccountContext::load(db, account_id) {
-                        Ok(ctx) => junk_ctx = Some(ctx),
-                        Err(e) => emit_account_log(
-                            "warn",
-                            "sync",
-                            &account.email,
-                            &format!("Junk context unavailable, scoring deferred: {e}"),
-                        ),
-                    }
-                }
-                if let Some(ctx) = junk_ctx.as_ref() {
-                    if let Err(e) =
-                        crate::services::junk::score_ids_with_context(db, account_id, ctx, &ids_to_remove).await
-                    {
-                        // Never fail a sync over scoring: the post-sync pass
-                        // picks up anything missed.
-                        emit_account_log("warn", "sync", &account.email, &format!("Junk scoring failed: {e}"));
-                    }
-                }
-            }
-
-            all_new_ids.extend(ids_to_remove);
-            synced_count += chunk_emails.len() as u32;
-
-            emit_progress(account_id, "batch", synced_count, new_count, "");
-
-            if !ai_followups_kicked {
-                if let Some(ref a) = app {
-                    ai_followups_kicked = true;
-                    enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "early").await;
-                }
-            }
-        }
-
-        // Phase 3: per-email async attachment processing (needs emails already in DB).
-        // Only runs when we have an AppHandle (skipped in test context where
-        // FakeEmailProvider returns no attachments anyway).
-        if let Some(ref a) = app {
-            for (email, attachment_infos) in &chunk_emails {
-                let should_auto_download =
-                    !attachment_infos.is_empty() && auto_download_attachment_categories.contains(&email.category);
-
-                if should_auto_download {
-                    if let Err(e) = crate::services::attachments::auto_download_attachments(
-                        db,
-                        email_provider.as_ref(),
-                        email,
-                        attachment_infos,
-                        app_data_dir,
-                        a,
-                    )
-                    .await
-                    {
-                        emit_account_log(
-                            "error",
-                            "attachments",
-                            &account.email,
-                            &format!("Auto-download attachment error: {}", e),
-                        );
-                    }
-                }
-
-                if !attachment_infos.is_empty() && !attachment_rules.is_empty() {
-                    if let Err(e) = crate::services::attachments::process_attachments_for_email(
-                        db,
-                        email_provider.as_ref(),
-                        email,
-                        attachment_infos,
-                        &attachment_rules,
-                        app_data_dir,
-                        Some(a),
-                    )
-                    .await
-                    {
-                        emit_account_log(
-                            "error",
-                            "attachments",
-                            &account.email,
-                            &format!("Attachment rule processing error: {}", e),
-                        );
-                    }
-                }
-            }
-        }
     }
 
     // ── Retry previously failed emails ───────────────────────────────────────────
@@ -1240,7 +1285,6 @@ const MAX_EXTRA_MAILBOX_EMAILS: u32 = 500;
 /// (the per-mailbox backfill watermark moves backward each pass).
 const MAX_BACKFILL_PAGES_PER_SYNC: u32 = 10;
 const EXTRA_MAILBOX_BATCH_SIZE: usize = 20;
-const EXTRA_MAILBOX_INTER_BATCH_DELAY_MS: u64 = 2_000;
 /// Hard cap on custom folders synced per account, so a pathological server
 /// (thousands of folders) can't explode sync time. Exceeding it logs a
 /// warning — never a silent cap.
@@ -1316,12 +1360,34 @@ fn extra_mailbox_backfill_key(account_id: &str, target: &SyncTarget) -> String {
     format!("extra_mailbox_backfill:{}:{}", account_id, target.mailbox_value())
 }
 
+/// Marks "the sync range widened; the extra-mailbox backfill owes a reset".
+/// Account-scoped rather than per-mailbox: the set of mailboxes is open-ended
+/// (one key per custom folder) and they all reopen together.
+fn extra_mailbox_backfill_reset_key(account_id: &str) -> String {
+    format!("extra_mailbox_backfill_reset_pending:{account_id}")
+}
+
 fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> String {
     format!(
         "extra_mailbox_backfill_cursor:{}:{}",
         account_id,
         target.mailbox_value()
     )
+}
+
+/// Whether a persisted backfill cursor is a position in a mailbox's history or
+/// wreckage to be thrown away.
+///
+/// The cursor records "walked back to here". Zero or negative is not a date: it
+/// is the trace of an undated message (Gmail reports `internalDate` "0" for the
+/// occasional spam) having dragged the walk to the epoch — after which the loop
+/// reads it as "older than the account floor" and latches the mailbox as fully
+/// swept, hiding everything older for good.
+///
+/// An absent or unparseable cursor is *not* corrupt: both already fall through
+/// to the "start from now()" default without latching anything.
+fn backfill_cursor_is_corrupt(raw: Option<&str>) -> bool {
+    matches!(raw.and_then(|s| s.parse::<i64>().ok()), Some(ts) if ts <= 0)
 }
 
 /// Forget how far the extra-mailbox backfill has walked for `account_id`.
@@ -1334,7 +1400,7 @@ fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> S
 ///
 /// The forward (incremental) watermark is deliberately left alone: it tracks
 /// the newest message seen, which a wider floor does not invalidate.
-pub fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Result<()> {
+fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Result<()> {
     for prefix in [
         format!("extra_mailbox_backfill:{account_id}:"),
         format!("extra_mailbox_backfill_cursor:{account_id}:"),
@@ -1342,6 +1408,63 @@ pub fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Res
         db.delete_preferences_with_prefix(&prefix)?;
     }
     Ok(())
+}
+
+/// Queue [`reset_extra_mailbox_backfill`] for `account_id`'s next sync.
+///
+/// Called when the user widens the sync range. The reset is *queued* rather
+/// than performed here because a sync may still be running to the old range:
+/// it holds an `Account` snapshot with the old floor, and its extra-mailbox
+/// phase never checks the abort flag, so it can write the "swept back to the
+/// floor" marker straight back over a reset done at this point — pinning
+/// Sent/Spam/Trash to the range the user has just abandoned.
+///
+/// Persisting the request also makes it survive a restart, so quitting between
+/// the settings change and the next sync no longer loses it.
+pub fn request_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &str) -> Result<()> {
+    db.set_preference(&extra_mailbox_backfill_reset_key(account_id), "1")
+}
+
+/// Apply a queued extra-mailbox reset, if there is one.
+///
+/// Runs at the start of every sync — the first moment the reset is safe, since
+/// the caller holds the per-account sync lock and the run whose settings were
+/// replaced has therefore fully exited.
+///
+/// Failures are logged and leave the request in place: the reset is idempotent,
+/// so retrying it on the next sync is strictly better than dropping it and
+/// leaving the mailboxes pinned.
+fn apply_pending_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &str) {
+    let key = extra_mailbox_backfill_reset_key(account_id);
+    match db.get_preference(&key) {
+        Ok(None) => return,
+        Ok(Some(_)) => {}
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!("failed to read the pending backfill reset for {account_id}: {e}"),
+            );
+            return;
+        }
+    }
+
+    if let Err(e) = reset_extra_mailbox_backfill(db, account_id) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to reopen the extra-mailbox backfill for {account_id}, will retry next sync: {e}"),
+        );
+        return;
+    }
+
+    if let Err(e) = db.delete_preference(&key) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to clear the pending backfill reset for {account_id}: {e}"),
+        );
+    }
 }
 
 /// All watermark preference keys of one custom folder (forward, backfill-done,
@@ -1410,6 +1533,7 @@ async fn ingest_mailbox_refs(
     db: &Arc<Database>,
     account_email: &str,
     account_id: &str,
+    provider: &str,
     mailbox_name: &str,
     email_provider: &dyn EmailProvider,
     refs: Vec<crate::sync::provider::MessageRef>,
@@ -1473,9 +1597,10 @@ async fn ingest_mailbox_refs(
     let mut inserted: u32 = 0;
     let mut first_batch = true;
 
+    let batch_pause = inter_batch_delay(provider);
     for chunk in new_refs.chunks(EXTRA_MAILBOX_BATCH_SIZE) {
         if !first_batch {
-            sleep(Duration::from_millis(EXTRA_MAILBOX_INTER_BATCH_DELAY_MS)).await;
+            sleep(batch_pause).await;
         }
         first_batch = false;
 
@@ -1502,7 +1627,12 @@ async fn ingest_mailbox_refs(
                     if email.timestamp > max_timestamp {
                         max_timestamp = email.timestamp;
                     }
-                    min_timestamp = Some(min_timestamp.map_or(email.timestamp, |m| m.min(email.timestamp)));
+                    // Undated messages (Gmail occasionally reports internalDate 0)
+                    // must not become the window's floor — see
+                    // `get_min_timestamp_for_ids`.
+                    if email.timestamp > 0 {
+                        min_timestamp = Some(min_timestamp.map_or(email.timestamp, |m| m.min(email.timestamp)));
+                    }
                     chunk_emails.push((email, attachment_infos));
                 }
                 Err(e) => {
@@ -1733,7 +1863,16 @@ async fn sync_extra_mailbox_incremental(
         return;
     }
 
-    let outcome = ingest_mailbox_refs(db, &account.email, account_id, mailbox_name, email_provider, refs).await;
+    let outcome = ingest_mailbox_refs(
+        db,
+        &account.email,
+        account_id,
+        &account.provider,
+        mailbox_name,
+        email_provider,
+        refs,
+    )
+    .await;
 
     if outcome.inserted > 0 {
         emit_account_log(
@@ -1804,6 +1943,25 @@ async fn sync_extra_mailbox_backfill(
     let done_key = extra_mailbox_backfill_key(account_id, target);
     let cursor_key = extra_mailbox_backfill_cursor_key(account_id, target);
 
+    // Self-heal installs that were latched by an undated message before the
+    // guards below existed. Runs before the done check, because a latched
+    // mailbox returns there without ever looking at its cursor. Idempotent: the
+    // repair drops both keys, so the walk restarts from now() and a healthy
+    // mailbox never enters this branch at all.
+    if backfill_cursor_is_corrupt(db.get_preference(&cursor_key).ok().flatten().as_deref()) {
+        let _ = db.delete_preference(&cursor_key);
+        let _ = db.delete_preference(&done_key);
+        emit_account_log(
+            "info",
+            "sync",
+            &account.email,
+            &format!(
+                "Reopening the {} backfill — its saved position was not a date",
+                target.mailbox_value()
+            ),
+        );
+    }
+
     if matches!(db.get_preference(&done_key).ok().flatten().as_deref(), Some("1")) {
         return;
     }
@@ -1861,7 +2019,16 @@ async fn sync_extra_mailbox_backfill(
         }
 
         let ref_ids: Vec<String> = refs.iter().map(|r| r.id.clone()).collect();
-        let outcome = ingest_mailbox_refs(db, &account.email, account_id, mailbox_name, email_provider, refs).await;
+        let outcome = ingest_mailbox_refs(
+            db,
+            &account.email,
+            account_id,
+            &account.provider,
+            mailbox_name,
+            email_provider,
+            refs,
+        )
+        .await;
         total_inserted += outcome.inserted;
 
         // Determine how far the window actually reached so we can advance
@@ -1982,6 +2149,73 @@ pub(super) struct SyncPlan {
     pub run_incremental: bool,
     /// Lower bound for the incremental pass. `None` when the pass is skipped.
     pub incremental_after_timestamp: Option<i64>,
+}
+
+#[cfg(test)]
+mod inter_batch_pacing_tests {
+    use super::*;
+
+    /// The pacing exists to avoid *provoking* throttling; the providers' own
+    /// backoff handles it once provoked. Gmail's published limit is 250 quota
+    /// units per user per second and `messages.get` costs 5, so a 20-message
+    /// batch is 100 units — a batch every 400 ms is the break-even point.
+    #[test]
+    fn gmail_pacing_keeps_a_backfill_inside_the_documented_quota() {
+        assert!(
+            inter_batch_delay("gmail") >= Duration::from_millis(400),
+            "20 messages = 100 quota units; faster than a batch per 400ms exceeds 250 units/s"
+        );
+    }
+
+    #[test]
+    fn every_known_provider_beats_the_old_flat_two_seconds() {
+        // The regression this branch exists to fix: 2s per 20 messages is ~17
+        // minutes of pure sleeping in a 10k-message backfill.
+        for provider in ["gmail", "outlook", "imap"] {
+            let delay = inter_batch_delay(provider);
+            assert!(
+                delay < Duration::from_secs(2),
+                "{provider} still paces like the old flat delay: {delay:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_provider_keeps_the_conservative_pacing() {
+        // A provider nobody has reasoned about gets the old safe value rather
+        // than inheriting a limit that was derived for someone else's API.
+        assert_eq!(inter_batch_delay("something-new"), Duration::from_secs(2));
+    }
+}
+
+/// Pause between message batches, per provider.
+///
+/// Throttling is already handled *reactively* by the providers themselves:
+/// Gmail and Outlook both retry 429s with exponential backoff and honour
+/// `Retry-After`, and Gmail gates the account when the hint outlasts its max
+/// backoff. This delay only exists to avoid provoking that during a large first
+/// sync, so it is derived from each provider's own limit instead of being one
+/// flat guess for everybody — which is what it used to be: a 2 s pause after
+/// every 20 messages, i.e. ~17 minutes of pure sleeping in a 10k-message
+/// backfill, on providers whose quota never needed it.
+///
+/// - **Gmail** — 250 quota units per user per second, `messages.get` costs 5,
+///   so a 20-message batch is 100 units. 500 ms holds a sustained backfill at
+///   ~200 units/s, inside the limit with headroom, and the batch endpoint plus
+///   its 429 retry absorbs the rest.
+/// - **Outlook** — `batch_get_messages` falls back to twenty sequential
+///   requests, which paces itself at network speed; Graph throttling is caught
+///   by the provider's own backoff.
+/// - **IMAP** — no request quota. Servers do throttle *logins*, and a chunk now
+///   costs one login rather than twenty, so a short pause is ample.
+/// - **Anything else** — keep the old conservative value; a provider nobody has
+///   reasoned about should not inherit a limit derived for someone else's API.
+fn inter_batch_delay(provider: &str) -> Duration {
+    match provider {
+        "gmail" => Duration::from_millis(500),
+        "outlook" | "imap" => Duration::from_millis(250),
+        _ => Duration::from_secs(2),
+    }
 }
 
 /// Gmail's five inbox categories, in the order its own tabs use them.
@@ -2244,6 +2478,119 @@ mod extra_mailbox_window_tests {
             stored_ids(&db),
             vec!["recent".to_string()],
             "backfill must stop at the account's sync date, not walk the whole mailbox"
+        );
+    }
+
+    #[test]
+    fn a_cursor_that_is_not_a_date_is_recognised_as_corrupt() {
+        // The cursor is a "walked back to here" timestamp. Zero or negative is
+        // not a position in a mailbox's history — it is the trace of an undated
+        // message having driven the walk to the epoch.
+        assert!(backfill_cursor_is_corrupt(Some("0")));
+        assert!(backfill_cursor_is_corrupt(Some("-1")));
+        // A real position, an absent cursor, and an unparseable one are all
+        // handled by the existing "start from now()" fallback.
+        assert!(!backfill_cursor_is_corrupt(Some("1788300000")));
+        assert!(!backfill_cursor_is_corrupt(None));
+        assert!(!backfill_cursor_is_corrupt(Some("not-a-number")));
+    }
+
+    #[tokio::test]
+    async fn a_mailbox_latched_by_a_corrupt_cursor_reopens_itself() {
+        // Repair path for installs that already hit this: an undated message
+        // moved the cursor to the epoch, the next pass read that as "older than
+        // the account floor" and marked the mailbox swept, and the done marker
+        // then survived every later sync. Nothing older was ever fetched again.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+        db.set_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target), "0")
+            .unwrap();
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("older", FLOOR + 10), EmailCategory::Primary, vec![]);
+
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+
+        assert_eq!(
+            stored_ids(&db),
+            vec!["older".to_string()],
+            "the reopened backfill must fetch what the latch was hiding"
+        );
+        assert_ne!(
+            db.get_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target))
+                .unwrap()
+                .as_deref(),
+            Some("0"),
+            "the corrupt cursor must not survive the repair"
+        );
+    }
+
+    #[test]
+    fn a_queued_reset_reopens_the_backfill_and_is_consumed() {
+        // Applied by the sync run, under the account lock, so the run being
+        // retired can no longer write its stale markers back (issue #50).
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(None);
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+        db.set_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target), "1700000000")
+            .unwrap();
+        db.set_preference(&extra_mailbox_forward_key(&account.id, &target), "1800000000")
+            .unwrap();
+
+        request_extra_mailbox_backfill_reset(&db, &account.id).expect("queue the reset");
+        apply_pending_extra_mailbox_backfill_reset(&db, &account.id);
+
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_key(&account.id, &target))
+                .unwrap(),
+            None,
+            "the done marker must be dropped so the backfill walks further back"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target))
+                .unwrap(),
+            None,
+            "the cursor is relative to the old floor and goes with it"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_forward_key(&account.id, &target))
+                .unwrap(),
+            Some("1800000000".to_string()),
+            "the forward watermark tracks the newest message and stays valid"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_reset_key(&account.id))
+                .unwrap(),
+            None,
+            "the request is consumed, so later syncs do not keep reopening"
+        );
+    }
+
+    #[test]
+    fn a_sync_with_no_queued_reset_leaves_the_markers_alone() {
+        // Every sync calls the apply step, so a no-op has to stay a no-op —
+        // otherwise each pass would re-walk mailboxes that are genuinely done.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+
+        apply_pending_extra_mailbox_backfill_reset(&db, &account.id);
+
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_key(&account.id, &target))
+                .unwrap(),
+            Some("1".to_string())
         );
     }
 

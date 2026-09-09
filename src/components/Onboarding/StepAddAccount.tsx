@@ -47,6 +47,11 @@ export function StepAddAccount({ onBack, onComplete }: { onBack: () => void; onC
     const id = newAccount?.id;
     setNewAccount(null);
     if (id) useAccountStore.getState().clearSetupPending(id);
+    // The inbox read this account's synced categories when the account was
+    // created — before this dialog existed for the user to choose them.
+    // Without this the chips stay on Primary alone for the whole session even
+    // though Promotions and Updates are syncing.
+    useAccountStore.getState().bumpAccountSettingsVersion();
     await refetch();
     if (id) {
       addLog('info', 'sync', 'Settings saved. Starting sync...');

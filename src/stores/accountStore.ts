@@ -158,6 +158,15 @@ interface AccountStore {
   /// = null before the user can choose a window. Cleared when the dialog
   /// closes (saved or dismissed).
   setupPendingAccountId: string | null;
+  /// Bumped whenever an account's settings are saved. The inbox's category
+  /// chips key their refetch off this, because the synced-category list is
+  /// read once when an account becomes active — which, during onboarding, is
+  /// before the user has chosen anything. It lives here rather than in App's
+  /// local state because the onboarding wizard renders its own copy of the
+  /// settings dialog: a counter only App could bump left onboarding's save
+  /// invisible, and the strip stuck on Primary for the whole session.
+  accountSettingsVersion: number;
+  bumpAccountSettingsVersion: () => void;
   /// Accounts a `syncAllAccounts` batch is still waiting on. See
   /// `reduceSyncProgress` — terminal progress events drain this set and
   /// `isSyncing` stays true until it empties.
@@ -200,6 +209,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   pendingSyncAccountIds: new Set<string>(),
 
   setActiveAccount: (id) => set({ activeAccountId: id, error: null, errorAccountId: null }),
+
+  accountSettingsVersion: 0,
+  bumpAccountSettingsVersion: () => set((state) => ({ accountSettingsVersion: state.accountSettingsVersion + 1 })),
 
   markSetupPending: (accountId) => set({ setupPendingAccountId: accountId }),
   clearSetupPending: (accountId) =>

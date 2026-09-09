@@ -585,6 +585,9 @@ pub struct FakeEmailProvider {
     move_result: std::sync::RwLock<Option<Option<MessageRef>>>,
     /// Mailbox-state writes performed, for test assertions.
     mailbox_ops: std::sync::RwLock<Vec<FakeMailboxOp>>,
+    /// Provider calls in the order they were made, so a test can assert on the
+    /// shape of a sync — e.g. that downloading starts before listing ends.
+    calls: std::sync::Arc<std::sync::RwLock<Vec<String>>>,
     /// When `Some`, every mailbox-state write fails with this message instead
     /// of being recorded — simulates an offline or refusing provider.
     mailbox_write_failure: std::sync::RwLock<Option<String>>,
@@ -643,11 +646,30 @@ impl FakeEmailProvider {
             folder_ops: std::sync::RwLock::new(Vec::new()),
             move_result: std::sync::RwLock::new(None),
             mailbox_ops: std::sync::RwLock::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
         }
     }
 
     /// Snapshot of the mailbox-state writes performed so far.
+    fn record_call(&self, name: &str) {
+        self.calls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(name.to_string());
+    }
+
+    /// Provider calls in order.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// A handle to the call log that outlives the provider being moved into a
+    /// sync (which takes `Box<dyn EmailProvider>` by value).
+    pub fn call_log(&self) -> std::sync::Arc<std::sync::RwLock<Vec<String>>> {
+        std::sync::Arc::clone(&self.calls)
+    }
+
     pub fn mailbox_ops(&self) -> Vec<FakeMailboxOp> {
         self.mailbox_ops.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
@@ -759,14 +781,23 @@ impl EmailProvider for FakeEmailProvider {
         Ok((self.profile_email.clone(), self.profile_name.clone()))
     }
 
+    /// Paginated, like every real provider: `page_token` is the offset into the
+    /// filtered set, and a token comes back whenever messages remain.
+    ///
+    /// The fake used to return the first `max_results` and no token, so nothing
+    /// that depends on paging could be tested — including the sync loop's
+    /// listing/downloading interleave, which is why a mailbox that took
+    /// hundreds of pages to enumerate showed nothing until it had finished.
     async fn list_messages(
         &self,
         max_results: u32,
-        _page_token: Option<&str>,
+        page_token: Option<&str>,
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
         _label_filter: Option<&str>,
     ) -> Result<(Vec<MessageRef>, Option<String>)> {
+        self.record_call("list_messages");
+        let offset: usize = page_token.and_then(|t| t.parse().ok()).unwrap_or(0);
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         let mut filtered: Vec<&FakeStoredMessage> = guard
             .iter()
@@ -779,15 +810,32 @@ impl EmailProvider for FakeEmailProvider {
             .filter(|m| before_timestamp.is_none_or(|t| m.email.timestamp < t))
             .collect();
         filtered.sort_by_key(|m| std::cmp::Reverse(m.email.timestamp));
-        filtered.truncate(max_results as usize);
-        let refs: Vec<MessageRef> = filtered
+        let total = filtered.len();
+        let page: Vec<&FakeStoredMessage> = filtered.into_iter().skip(offset).take(max_results as usize).collect();
+        let next_offset = offset + page.len();
+        let refs: Vec<MessageRef> = page
             .into_iter()
             .map(|m| MessageRef {
                 id: m.email.id.clone(),
                 thread_id: m.email.thread_id.clone(),
             })
             .collect();
-        Ok((refs, None))
+        let next_page = (next_offset < total && !refs.is_empty()).then(|| next_offset.to_string());
+        Ok((refs, next_page))
+    }
+
+    /// Overrides the sequential default purely to record the call, so a test
+    /// can assert on the order of listing versus downloading.
+    async fn batch_get_messages(
+        &self,
+        message_ids: &[&str],
+    ) -> Result<Vec<Result<(Email, EmailCategory, Vec<AttachmentInfo>)>>> {
+        self.record_call("batch_get_messages");
+        let mut results = Vec::with_capacity(message_ids.len());
+        for id in message_ids {
+            results.push(self.get_message(id).await);
+        }
+        Ok(results)
     }
 
     async fn list_mailbox_messages(

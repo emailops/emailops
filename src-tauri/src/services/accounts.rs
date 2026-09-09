@@ -268,11 +268,13 @@ pub fn plan_sync_from_change(previous: Option<i64>, next: Option<i64>) -> SyncFr
 /// Persist a new sync range for `account_id`, returning the updated account
 /// alongside what the change means for in-flight and future syncs.
 ///
-/// Widening the range also clears the extra-mailbox backfill markers: those
-/// record "this mailbox has been swept back to the floor", which stops being
-/// true the moment the floor moves down. Without the reset, going from
-/// "last 7 days" back to "All mail" left Sent/Spam/Trash and every custom
-/// folder permanently stuck at the narrower range.
+/// Widening the range also queues a reset of the extra-mailbox backfill
+/// markers: those record "this mailbox has been swept back to the floor",
+/// which stops being true the moment the floor moves down. Without the reset,
+/// going from "last 7 days" back to "All mail" left Sent/Spam/Trash and every
+/// custom folder permanently stuck at the narrower range. The reset is applied
+/// by the next sync rather than here, so the run being retired cannot write its
+/// stale markers back over it.
 pub fn update_account_sync_from(
     db: &Arc<Database>,
     account_id: &str,
@@ -287,7 +289,7 @@ pub fn update_account_sync_from(
     db.update_account_sync_from(account_id, sync_from_timestamp)?;
 
     if change.widened {
-        crate::services::emails::reset_extra_mailbox_backfill(db, account_id)?;
+        crate::services::emails::request_extra_mailbox_backfill_reset(db, account_id)?;
     }
 
     let account = db
@@ -863,41 +865,29 @@ mod tests {
     }
 
     #[test]
-    fn widening_the_range_reopens_the_extra_mailbox_backfill() {
+    fn widening_the_range_queues_the_extra_mailbox_backfill_reset() {
         // Regression for #50: Sent/Spam/Trash record "swept back to the floor".
         // Left in place, that marker pins those mailboxes to the narrow range
         // the user has just abandoned.
+        //
+        // The reset is queued, not applied here: a sync may still be running to
+        // the old range, and it would write its stale markers back over an
+        // immediate reset. The next sync applies it under the account lock.
         let db = Arc::new(Database::new_for_testing().expect("db"));
         db.insert_account(&imap_account("acc-w", "w@example.com"))
             .expect("seed account");
         db.update_account_sync_from("acc-w", Some(1_700_000_000))
             .expect("narrow first");
-        db.set_preference("extra_mailbox_backfill:acc-w:sent", "1")
-            .expect("mark swept");
-        db.set_preference("extra_mailbox_backfill_cursor:acc-w:sent", "1700000000")
-            .expect("cursor");
-        db.set_preference("extra_mailbox_sync:acc-w:sent", "1800000000")
-            .expect("forward watermark");
 
         let (account, change) = update_account_sync_from(&db, "acc-w", None).expect("widen");
 
         assert_eq!(account.sync_from_timestamp, None);
         assert!(change.changed && change.widened);
         assert_eq!(
-            db.get_preference("extra_mailbox_backfill:acc-w:sent").expect("read"),
-            None,
-            "the done marker must be dropped so the backfill walks further back"
-        );
-        assert_eq!(
-            db.get_preference("extra_mailbox_backfill_cursor:acc-w:sent")
+            db.get_preference("extra_mailbox_backfill_reset_pending:acc-w")
                 .expect("read"),
-            None,
-            "the cursor is relative to the old floor and must be dropped with it"
-        );
-        assert_eq!(
-            db.get_preference("extra_mailbox_sync:acc-w:sent").expect("read"),
-            Some("1800000000".to_string()),
-            "the forward watermark tracks the newest message and stays valid"
+            Some("1".to_string()),
+            "the next sync must be told to reopen the backfill"
         );
     }
 
@@ -917,6 +907,12 @@ mod tests {
         assert_eq!(
             db.get_preference("extra_mailbox_backfill:acc-n:sent").expect("read"),
             Some("1".to_string())
+        );
+        assert_eq!(
+            db.get_preference("extra_mailbox_backfill_reset_pending:acc-n")
+                .expect("read"),
+            None,
+            "nothing to reopen, so the next sync must not be asked to"
         );
     }
 

@@ -1,0 +1,57 @@
+{
+  "scenario": "batch_get_two_messages",
+  "provider": "outlook",
+  "sanitized": true,
+  "recordedAt": 1748000000,
+  "interactions": [
+    {
+      "request": {
+        "method": "POST",
+        "urlPath": "/$batch",
+        "queryParams": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "bodyJson": {
+          "responses": [
+            {
+              "id": "1",
+              "status": 200,
+              "body": {
+                "id": "AAMkAD-msg-002",
+                "conversationId": "AAQkAD-thread-001",
+                "subject": "Second message",
+                "bodyPreview": "second",
+                "body": { "contentType": "text", "content": "second body" },
+                "from": { "emailAddress": { "name": "Sender Two", "address": "two@example.com" } },
+                "toRecipients": [],
+                "ccRecipients": [],
+                "receivedDateTime": "2026-02-12T10:00:00Z",
+                "isRead": false,
+                "hasAttachments": false
+              }
+            },
+            {
+              "id": "0",
+              "status": 200,
+              "body": {
+                "id": "AAMkAD-msg-001",
+                "conversationId": "AAQkAD-thread-001",
+                "subject": "First message",
+                "bodyPreview": "first",
+                "body": { "contentType": "text", "content": "first body" },
+                "from": { "emailAddress": { "name": "Sender One", "address": "one@example.com" } },
+                "toRecipients": [],
+                "ccRecipients": [],
+                "receivedDateTime": "2026-02-12T09:00:00Z",
+                "isRead": true,
+                "hasAttachments": false
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

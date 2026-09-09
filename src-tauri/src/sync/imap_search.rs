@@ -125,6 +125,54 @@ pub(crate) fn uid_fetch_rfc822<T: Read + Write>(session: &mut imap::Session<T>, 
     )))
 }
 
+/// Fetch the bodies of `uids` in **one** `UID FETCH`, keyed by UID.
+///
+/// The sync loop pulls messages in chunks of twenty; fetching them one command
+/// at a time costs a round trip each, and (before this) a whole TCP + TLS
+/// handshake and LOGIN each, which is what made IMAP sync slow and what made
+/// servers with login throttling start refusing connections mid-sync.
+///
+/// A UID the server does not return is simply absent from the map rather than
+/// an error for the whole chunk: messages get deleted between SEARCH and FETCH,
+/// and one gap must not cost the other nineteen. Retries follow the same rule
+/// as [`uid_fetch_rfc822`] — an interleaved untagged response makes the crate
+/// reject an otherwise good reply, so the command is re-issued.
+pub(crate) fn uid_fetch_rfc822_batch<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uids: &[u32],
+) -> Result<std::collections::HashMap<u32, Vec<u8>>> {
+    if uids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let mut last_err: Option<imap::Error> = None;
+    for attempt in 1..=FETCH_RETRY_ATTEMPTS {
+        match session.uid_fetch(&set, "RFC822") {
+            Ok(messages) => {
+                let mut bodies = std::collections::HashMap::with_capacity(uids.len());
+                for fetch in messages.iter() {
+                    if let (Some(uid), Some(body)) = (fetch.uid, fetch.body()) {
+                        bodies.insert(uid, body.to_vec());
+                    }
+                }
+                return Ok(bodies);
+            }
+            Err(imap::Error::Parse(imap::error::ParseError::Unexpected(_))) if attempt < FETCH_RETRY_ATTEMPTS => {}
+            Err(e) => {
+                last_err = Some(e);
+                break;
+            }
+        }
+    }
+    Err(AppError::SyncError(format!(
+        "IMAP FETCH failed: {}",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
+    )))
+}
+
 /// Outcome of scanning the untagged portion of a `SEARCH` response.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct SearchResponse {
@@ -390,6 +438,71 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert_eq!(err, "Encountered unexpected parse response");
+    }
+
+    #[test]
+    fn batch_fetch_returns_every_body_from_a_single_command() {
+        // One round trip for the whole chunk: the point of the batch fetch.
+        let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
+                        * 2 FETCH (UID 92 RFC822 {5}\r\nworld)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91, 92]) {
+            Ok(bodies) => bodies,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+        assert_eq!(bodies.get(&91).map(Vec::as_slice), Some(&b"hello"[..]));
+        assert_eq!(bodies.get(&92).map(Vec::as_slice), Some(&b"world"[..]));
+    }
+
+    #[test]
+    fn batch_fetch_retries_past_an_interleaved_response() {
+        // Same leniency as the single-UID fetch: an unsolicited untagged line
+        // makes the crate reject the whole command, so we re-issue it.
+        let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
+                        * SEARCH 1 2\r\n\
+                        a2 OK Fetch completed.\r\n\
+                        * 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
+                        a3 OK Fetch completed.\r\n";
+        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91]) {
+            Ok(bodies) => bodies,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+        assert_eq!(bodies.get(&91).map(Vec::as_slice), Some(&b"hello"[..]));
+    }
+
+    #[test]
+    fn batch_fetch_omits_a_uid_the_server_did_not_return() {
+        // A message deleted between SEARCH and FETCH: the rest of the chunk
+        // must still land, with the gap reported per message by the caller.
+        let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91, 92]) {
+            Ok(bodies) => bodies,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+        assert_eq!(bodies.len(), 1);
+        assert!(!bodies.contains_key(&92));
+    }
+
+    #[test]
+    fn batch_fetch_of_nothing_issues_no_command() {
+        // `UID FETCH ` with an empty set is a protocol error — and the session
+        // here is scripted to answer nothing, so a command would hang or fail.
+        let bodies = match uid_fetch_rfc822_batch(&mut session_for(""), &[]) {
+            Ok(bodies) => bodies,
+            Err(e) => panic!("empty batch fetch failed: {e}"),
+        };
+        assert!(bodies.is_empty());
+    }
+
+    #[test]
+    fn batch_fetch_propagates_a_tagged_no_without_retrying() {
+        let response = "a2 NO [SERVERBUG] Internal error\r\n";
+        let err = match uid_fetch_rfc822_batch(&mut session_for(response), &[91]) {
+            Ok(bodies) => panic!("expected a failure, got {bodies:?}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP FETCH failed"), "got: {err}");
     }
 
     #[test]

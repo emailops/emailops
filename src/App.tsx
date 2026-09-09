@@ -48,6 +48,7 @@ import { i18n } from '@/i18n';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
+import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
@@ -102,8 +103,6 @@ const LOG_SOURCES: LogSource[] = [
   'chat',
   'lens',
 ];
-const DEFAULT_CATEGORIES: EmailCategory[] = ['primary', 'social', 'updates'];
-const VALID_CATEGORIES = new Set<EmailCategory>(['primary', 'social', 'updates', 'forums', 'promotions']);
 
 function viewModeToMailbox(mode: ViewMode): MailboxView {
   if (mode === 'sent' || mode === 'spam' || mode === 'deleted') return mode;
@@ -309,7 +308,7 @@ function AppInner() {
   // no active account. Inbox renders no chips while this is null, avoiding a
   // flash of the hard-coded default trio.
   const [availableCategories, setAvailableCategories] = useState<EmailCategory[] | null>(null);
-  const [accountSettingsVersion, setAccountSettingsVersion] = useState(0);
+  const accountSettingsVersion = useAccountStore((s) => s.accountSettingsVersion);
   // Stable key over the enabled non-IMAP accounts so the categories effect
   // (and unified-mode consumers) don't re-run on every accounts array identity
   // change from fetchAccounts.
@@ -1666,7 +1665,7 @@ function AppInner() {
             await fetchAccounts();
             // Trigger a refetch of the active account's synced categories so
             // the inbox filter chips reflect the new selection without a reload.
-            setAccountSettingsVersion((v) => v + 1);
+            useAccountStore.getState().bumpAccountSettingsVersion();
             if (id) {
               addLog('info', 'sync', 'Settings saved. Starting sync...');
               try {
