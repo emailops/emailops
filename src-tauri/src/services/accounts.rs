@@ -239,18 +239,61 @@ pub fn set_account_enabled(db: &Arc<Database>, account_id: &str, enabled: bool) 
     db.update_account_enabled(account_id, enabled)
 }
 
+/// What a write to an account's `sync_from_timestamp` actually asks the sync
+/// engine to do. See [`plan_sync_from_change`] for the derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncFromChange {
+    /// The stored range moved, so any in-flight sync is now working to a range
+    /// the user no longer wants and must be restarted.
+    pub changed: bool,
+    /// The new range reaches further back than the old one, so watermarks that
+    /// record "swept to the end of history" have to be re-opened.
+    pub widened: bool,
+}
+
+/// Pure decision: compare two `sync_from_timestamp` values as sync *floors*.
+///
+/// `None` ("All mail") and `Some(0)` describe the same floor for every provider
+/// we ship, so switching between them is not a change — restarting a sync for
+/// it would be pure churn.
+pub fn plan_sync_from_change(previous: Option<i64>, next: Option<i64>) -> SyncFromChange {
+    let previous_floor = previous.unwrap_or(0);
+    let next_floor = next.unwrap_or(0);
+    SyncFromChange {
+        changed: previous_floor != next_floor,
+        widened: next_floor < previous_floor,
+    }
+}
+
+/// Persist a new sync range for `account_id`, returning the updated account
+/// alongside what the change means for in-flight and future syncs.
+///
+/// Widening the range also clears the extra-mailbox backfill markers: those
+/// record "this mailbox has been swept back to the floor", which stops being
+/// true the moment the floor moves down. Without the reset, going from
+/// "last 7 days" back to "All mail" left Sent/Spam/Trash and every custom
+/// folder permanently stuck at the narrower range.
 pub fn update_account_sync_from(
     db: &Arc<Database>,
     account_id: &str,
     sync_from_timestamp: Option<i64>,
-) -> Result<Account> {
-    db.get_account(account_id)?
+) -> Result<(Account, SyncFromChange)> {
+    let previous = db
+        .get_account(account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
+
+    let change = plan_sync_from_change(previous.sync_from_timestamp, sync_from_timestamp);
 
     db.update_account_sync_from(account_id, sync_from_timestamp)?;
 
-    db.get_account(account_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Account {} not found after update", account_id)))
+    if change.widened {
+        crate::services::emails::reset_extra_mailbox_backfill(db, account_id)?;
+    }
+
+    let account = db
+        .get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found after update", account_id)))?;
+    Ok((account, change))
 }
 
 /// Register the database that backs dev-mode credential storage.
@@ -766,6 +809,115 @@ mod tests {
             smtp_host: "smtp.example.com".into(),
             smtp_port: 465,
         }
+    }
+
+    #[test]
+    fn switching_between_all_mail_spellings_is_not_a_change() {
+        // `None` and `Some(0)` are the same floor. Treating the swap as a change
+        // would abort a healthy sync and start another for no reason.
+        assert_eq!(
+            plan_sync_from_change(None, Some(0)),
+            SyncFromChange {
+                changed: false,
+                widened: false
+            }
+        );
+        assert_eq!(
+            plan_sync_from_change(Some(0), None),
+            SyncFromChange {
+                changed: false,
+                widened: false
+            }
+        );
+    }
+
+    #[test]
+    fn narrowing_the_range_is_a_change_but_not_a_widening() {
+        // "All mail" → "last 7 days": the in-flight sync is now fetching mail
+        // the user no longer wants, but nothing already swept is invalidated.
+        assert_eq!(
+            plan_sync_from_change(None, Some(1_700_000_000)),
+            SyncFromChange {
+                changed: true,
+                widened: false
+            }
+        );
+    }
+
+    #[test]
+    fn reaching_further_back_widens_the_range() {
+        assert_eq!(
+            plan_sync_from_change(Some(1_700_000_000), Some(1_500_000_000)),
+            SyncFromChange {
+                changed: true,
+                widened: true
+            }
+        );
+        assert_eq!(
+            plan_sync_from_change(Some(1_700_000_000), None),
+            SyncFromChange {
+                changed: true,
+                widened: true
+            }
+        );
+    }
+
+    #[test]
+    fn widening_the_range_reopens_the_extra_mailbox_backfill() {
+        // Regression for #50: Sent/Spam/Trash record "swept back to the floor".
+        // Left in place, that marker pins those mailboxes to the narrow range
+        // the user has just abandoned.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-w", "w@example.com"))
+            .expect("seed account");
+        db.update_account_sync_from("acc-w", Some(1_700_000_000))
+            .expect("narrow first");
+        db.set_preference("extra_mailbox_backfill:acc-w:sent", "1")
+            .expect("mark swept");
+        db.set_preference("extra_mailbox_backfill_cursor:acc-w:sent", "1700000000")
+            .expect("cursor");
+        db.set_preference("extra_mailbox_sync:acc-w:sent", "1800000000")
+            .expect("forward watermark");
+
+        let (account, change) = update_account_sync_from(&db, "acc-w", None).expect("widen");
+
+        assert_eq!(account.sync_from_timestamp, None);
+        assert!(change.changed && change.widened);
+        assert_eq!(
+            db.get_preference("extra_mailbox_backfill:acc-w:sent").expect("read"),
+            None,
+            "the done marker must be dropped so the backfill walks further back"
+        );
+        assert_eq!(
+            db.get_preference("extra_mailbox_backfill_cursor:acc-w:sent")
+                .expect("read"),
+            None,
+            "the cursor is relative to the old floor and must be dropped with it"
+        );
+        assert_eq!(
+            db.get_preference("extra_mailbox_sync:acc-w:sent").expect("read"),
+            Some("1800000000".to_string()),
+            "the forward watermark tracks the newest message and stays valid"
+        );
+    }
+
+    #[test]
+    fn narrowing_the_range_keeps_the_extra_mailbox_backfill_markers() {
+        // Narrowing needs no reset: the backfill loop already stops at the
+        // (now higher) floor on its own.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-n", "n@example.com"))
+            .expect("seed account");
+        db.set_preference("extra_mailbox_backfill:acc-n:sent", "1")
+            .expect("mark swept");
+
+        let (_, change) = update_account_sync_from(&db, "acc-n", Some(1_700_000_000)).expect("narrow");
+
+        assert!(change.changed && !change.widened);
+        assert_eq!(
+            db.get_preference("extra_mailbox_backfill:acc-n:sent").expect("read"),
+            Some("1".to_string())
+        );
     }
 
     fn imap_account(id: &str, email: &str) -> Account {

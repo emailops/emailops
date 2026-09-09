@@ -1640,6 +1640,134 @@ async fn sync_with_provider_stores_new_emails() {
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
+/// Regression for #50: an account narrowed to a recent window must stop
+/// re-listing its whole history on every sync.
+///
+/// The account already holds mail from 2018 (a first "All mail" sync that ran
+/// before the user changed their mind), so the inbox watermark sits far below
+/// the new floor. The incremental pass used to anchor on that watermark alone
+/// and kept pulling everything since 2018 — even across an app restart, which
+/// is exactly what the reporter saw.
+#[tokio::test]
+async fn narrowing_the_sync_range_stops_the_next_sync_re_listing_old_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-nr", "nr@example.com")).unwrap();
+
+    // Mail from the abandoned "All mail" sync.
+    db.insert_email(&make_email_with(
+        "old-stored",
+        "acc-nr",
+        1_500_000_000,
+        "a@x.com",
+        "inbox",
+    ))
+    .unwrap();
+
+    // The user picks a much more recent start date.
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-nr", Some(floor)).unwrap();
+    let account = db.get_account("acc-nr").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("nr@example.com", "Nr");
+    provider.add_message(
+        make_email_with("below-floor", "acc-nr", 1_600_000_000, "b@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    provider.add_message(
+        make_email_with("above-floor", "acc-nr", 1_800_000_000, "c@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let stored: Vec<String> = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-nr"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+
+    assert!(
+        stored.iter().any(|id| id == "above-floor"),
+        "mail inside the chosen range must still sync, got {stored:?}"
+    );
+    assert!(
+        !stored.iter().any(|id| id == "below-floor"),
+        "mail older than the chosen range must not be pulled again, got {stored:?}"
+    );
+}
+
+/// A sync that has been asked to stop must do so before downloading anything
+/// else, and must consume the request so the *next* sync runs normally. This is
+/// the mechanism the settings dialog leans on to retire a sync that is working
+/// to a range the user has just replaced.
+#[tokio::test]
+async fn an_abort_request_stops_the_sync_and_is_consumed() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-ab", "ab@example.com")).unwrap();
+    let account = db.get_account("acc-ab").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("ab@example.com", "Ab");
+    provider.add_message(
+        make_email_with("ab-1", "acc-ab", 1_000, "a@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::request_sync_abort(&abort_flags, "acc-ab");
+
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags.clone(),
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let stored = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-ab"),
+            50,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(stored.is_empty(), "an aborted sync must not keep downloading");
+    assert!(
+        !abort_flags.lock().unwrap().contains_key("acc-ab"),
+        "the request must be consumed so the replacement sync is not aborted too"
+    );
+}
+
 // ── Custom IMAP folder sync ────────────────────────────────────────────────
 
 fn listed_folder(name: &str, attrs: &[&str]) -> emailops_lib::sync::folder_plan::ListedFolder {
