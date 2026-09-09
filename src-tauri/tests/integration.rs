@@ -1768,6 +1768,173 @@ async fn an_abort_request_stops_the_sync_and_is_consumed() {
     );
 }
 
+/// Regression: widening the sync range while a sync is in flight must still
+/// reopen the extra-mailbox backfill.
+///
+/// The reset used to run in the settings command, before the in-flight sync was
+/// even asked to stop. That run keeps the `Account` snapshot it started with —
+/// the old, narrower floor — and its extra-mailbox phase never looks at the
+/// abort flag, so it could write the "swept back to the floor" marker straight
+/// back after the reset had dropped it. Sent/Spam/Trash then stayed pinned to
+/// the range the user had just abandoned (the tail of issue #50).
+#[tokio::test]
+async fn widening_the_range_reopens_the_backfill_even_when_the_retired_sync_rewrites_the_marker() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-wr", "wr@example.com")).unwrap();
+
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-wr", Some(floor)).unwrap();
+
+    // A completed sweep under the narrow floor: Sent is marked done, and its
+    // forward watermark sits at the floor so only the backfill can reach older
+    // mail.
+    let done_key = "extra_mailbox_backfill:acc-wr:sent";
+    db.set_preference(done_key, "1").unwrap();
+    db.set_preference("extra_mailbox_sync:acc-wr:sent", &floor.to_string())
+        .unwrap();
+
+    // The user switches back to "All mail".
+    emailops_lib::services::accounts::update_account_sync_from(&db, "acc-wr", None).expect("widen");
+
+    // The sync being retired persists its last batch and rewrites the marker
+    // from its stale snapshot before it notices the abort request.
+    db.set_preference(done_key, "1").unwrap();
+
+    let provider = FakeEmailProvider::new("wr@example.com", "Wr");
+    provider.add_message(
+        make_email_with("sent-old", "acc-wr", floor - 400_000, "wr@example.com", "sent"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let account = db.get_account("acc-wr").unwrap().unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("replacement sync");
+
+    let stored: Vec<String> = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-wr"),
+            50,
+            0,
+            None,
+            Some("sent"),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert!(
+        stored.iter().any(|id| id == "sent-old"),
+        "widening must let the backfill walk past the abandoned floor, got {stored:?}"
+    );
+}
+
+/// A sync that arrives while another one holds the account must give up — the
+/// default for scheduler ticks and manual refreshes.
+#[tokio::test]
+async fn a_second_sync_skips_while_the_account_is_busy() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-sk", "sk@example.com")).unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    let sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        Arc::new(Mutex::new(HashMap::from([("acc-sk".to_string(), lock.clone())])));
+    let _held = lock.lock().await;
+
+    // Raised before the call: a run that reaches the body clears it, so the
+    // flag surviving proves this call never got past the lock.
+    emailops_lib::services::emails::request_sync_abort(&abort_flags, "acc-sk");
+
+    emailops_lib::services::emails::sync_account_with_contention(
+        &db,
+        "acc-sk",
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags.clone(),
+        sync_locks,
+        emailops_lib::services::emails::SyncContention::Skip,
+    )
+    .await
+    .expect("a skipped sync is not an error");
+
+    assert!(
+        abort_flags.lock().unwrap().contains_key("acc-sk"),
+        "Skip must return before touching the account"
+    );
+}
+
+/// A sync whose settings the user has just replaced must *queue* behind the
+/// run it retired instead of skipping — skipping would leave the account on the
+/// settings the user replaced, which is the whole of issue #50.
+#[tokio::test]
+async fn a_replacement_sync_queues_behind_the_run_it_retired() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-wt", "wt@example.com")).unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    let sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        Arc::new(Mutex::new(HashMap::from([("acc-wt".to_string(), lock.clone())])));
+    let held = lock.lock().await;
+
+    emailops_lib::services::emails::request_sync_abort(&abort_flags, "acc-wt");
+
+    let flags_for_task = abort_flags.clone();
+    let db_for_task = db.clone();
+    let replacement = tokio::spawn(async move {
+        // Errors once past the lock (no credentials in a test keychain) — the
+        // point under test is *when* it gets there, not what it syncs.
+        let _ = emailops_lib::services::emails::sync_account_with_contention(
+            &db_for_task,
+            "acc-wt",
+            std::path::Path::new("/tmp"),
+            None,
+            ai_queue,
+            flags_for_task,
+            sync_locks,
+            emailops_lib::services::emails::SyncContention::Wait,
+        )
+        .await;
+    });
+
+    // While the retired run holds the account, the replacement is parked: the
+    // abort request it raised is still outstanding.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        abort_flags.lock().unwrap().contains_key("acc-wt"),
+        "the replacement must wait, not run alongside the sync it retired"
+    );
+    assert!(!replacement.is_finished(), "the replacement must not have given up");
+
+    // The retired run stops; the replacement takes the account and consumes the
+    // abort request that belonged to the run that just ended.
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(5), replacement)
+        .await
+        .expect("the replacement must start once the account is free")
+        .expect("replacement task panicked");
+    assert!(
+        !abort_flags.lock().unwrap().contains_key("acc-wt"),
+        "the replacement must clear the request so it does not abort itself"
+    );
+}
+
 // ── Custom IMAP folder sync ────────────────────────────────────────────────
 
 fn listed_folder(name: &str, attrs: &[&str]) -> emailops_lib::sync::folder_plan::ListedFolder {

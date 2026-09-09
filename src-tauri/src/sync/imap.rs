@@ -249,6 +249,15 @@ impl ImapClient {
         self
     }
 
+    /// The `SEARCH` query for the Sent pass: bounded below by the account's own
+    /// floor and unbounded above, since a thread's opening message is often one
+    /// the user sent, older than anything in INBOX. An unbounded `ALL` here (as
+    /// this used to be) downloaded every sent message ever, so an account set to
+    /// "last 7 days" kept pulling years of mail (issue #50).
+    fn sent_search_query(&self) -> String {
+        build_search_query(self.sync_from_timestamp, None)
+    }
+
     /// Build the stable email ID for an IMAP INBOX message.
     /// When account_id is set, IDs are prefixed to prevent collisions across accounts.
     fn make_email_id(&self, uid: u32) -> String {
@@ -818,7 +827,7 @@ impl EmailProvider for ImapClient {
         // The Sent listing is bounded by the *account's* floor rather than by
         // this pass's window (see below). Resolved out here so the blocking
         // closure captures a plain query string.
-        let sent_query = build_search_query(self.sync_from_timestamp, None);
+        let sent_query = self.sent_search_query();
         let (inbox_uids, sent_uids): (Vec<u32>, Vec<u32>) =
             tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, Vec<u32>)> {
                 let mut session =
@@ -1540,6 +1549,39 @@ mod tests {
     #[test]
     fn search_query_is_all_when_unbounded() {
         assert_eq!(build_search_query(None, None), "ALL");
+    }
+
+    fn imap_client_synced_from(sync_from: Option<i64>) -> ImapClient {
+        ImapClient::new(
+            ImapCredentials {
+                host: "imap.example.com".to_string(),
+                port: 993,
+                username: "user@example.com".to_string(),
+                password: "pw".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+                smtp_port: 587,
+            },
+            "user@example.com".to_string(),
+            "User".to_string(),
+            "acc-1".to_string(),
+        )
+        .with_sync_from(sync_from)
+    }
+
+    #[test]
+    fn the_sent_pass_is_bounded_by_the_accounts_sync_range() {
+        // Regression for #50: "last 7 days" used to still pull every sent
+        // message ever, because the Sent search was a flat `ALL`.
+        assert_eq!(
+            imap_client_synced_from(Some(1_770_940_800)).sent_search_query(),
+            "SINCE 12-Feb-2026"
+        );
+    }
+
+    #[test]
+    fn an_all_mail_account_keeps_an_unbounded_sent_pass() {
+        // "All mail" must not regress into a bounded search.
+        assert_eq!(imap_client_synced_from(None).sent_search_query(), "ALL");
     }
 
     #[test]

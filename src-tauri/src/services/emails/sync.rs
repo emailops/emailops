@@ -266,6 +266,10 @@ pub async fn sync_account_with_provider(
 ) -> Result<()> {
     let account_id = &account.id;
 
+    // A widened sync range leaves a reset queued for the extra mailboxes. This
+    // is the first point at which applying it is safe — see the function docs.
+    apply_pending_extra_mailbox_backfill_reset(db, account_id);
+
     // Load account settings: Gmail category filter + attachment auto-download categories
     let (label_filter_for_list, skip_promotions, auto_download_attachment_categories) = {
         let key = format!("account_settings:{}", account_id);
@@ -1316,6 +1320,13 @@ fn extra_mailbox_backfill_key(account_id: &str, target: &SyncTarget) -> String {
     format!("extra_mailbox_backfill:{}:{}", account_id, target.mailbox_value())
 }
 
+/// Marks "the sync range widened; the extra-mailbox backfill owes a reset".
+/// Account-scoped rather than per-mailbox: the set of mailboxes is open-ended
+/// (one key per custom folder) and they all reopen together.
+fn extra_mailbox_backfill_reset_key(account_id: &str) -> String {
+    format!("extra_mailbox_backfill_reset_pending:{account_id}")
+}
+
 fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> String {
     format!(
         "extra_mailbox_backfill_cursor:{}:{}",
@@ -1334,7 +1345,7 @@ fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> S
 ///
 /// The forward (incremental) watermark is deliberately left alone: it tracks
 /// the newest message seen, which a wider floor does not invalidate.
-pub fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Result<()> {
+fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Result<()> {
     for prefix in [
         format!("extra_mailbox_backfill:{account_id}:"),
         format!("extra_mailbox_backfill_cursor:{account_id}:"),
@@ -1342,6 +1353,63 @@ pub fn reset_extra_mailbox_backfill(db: &Arc<Database>, account_id: &str) -> Res
         db.delete_preferences_with_prefix(&prefix)?;
     }
     Ok(())
+}
+
+/// Queue [`reset_extra_mailbox_backfill`] for `account_id`'s next sync.
+///
+/// Called when the user widens the sync range. The reset is *queued* rather
+/// than performed here because a sync may still be running to the old range:
+/// it holds an `Account` snapshot with the old floor, and its extra-mailbox
+/// phase never checks the abort flag, so it can write the "swept back to the
+/// floor" marker straight back over a reset done at this point — pinning
+/// Sent/Spam/Trash to the range the user has just abandoned.
+///
+/// Persisting the request also makes it survive a restart, so quitting between
+/// the settings change and the next sync no longer loses it.
+pub fn request_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &str) -> Result<()> {
+    db.set_preference(&extra_mailbox_backfill_reset_key(account_id), "1")
+}
+
+/// Apply a queued extra-mailbox reset, if there is one.
+///
+/// Runs at the start of every sync — the first moment the reset is safe, since
+/// the caller holds the per-account sync lock and the run whose settings were
+/// replaced has therefore fully exited.
+///
+/// Failures are logged and leave the request in place: the reset is idempotent,
+/// so retrying it on the next sync is strictly better than dropping it and
+/// leaving the mailboxes pinned.
+fn apply_pending_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &str) {
+    let key = extra_mailbox_backfill_reset_key(account_id);
+    match db.get_preference(&key) {
+        Ok(None) => return,
+        Ok(Some(_)) => {}
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!("failed to read the pending backfill reset for {account_id}: {e}"),
+            );
+            return;
+        }
+    }
+
+    if let Err(e) = reset_extra_mailbox_backfill(db, account_id) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to reopen the extra-mailbox backfill for {account_id}, will retry next sync: {e}"),
+        );
+        return;
+    }
+
+    if let Err(e) = db.delete_preference(&key) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to clear the pending backfill reset for {account_id}: {e}"),
+        );
+    }
 }
 
 /// All watermark preference keys of one custom folder (forward, backfill-done,
@@ -2244,6 +2312,70 @@ mod extra_mailbox_window_tests {
             stored_ids(&db),
             vec!["recent".to_string()],
             "backfill must stop at the account's sync date, not walk the whole mailbox"
+        );
+    }
+
+    #[test]
+    fn a_queued_reset_reopens_the_backfill_and_is_consumed() {
+        // Applied by the sync run, under the account lock, so the run being
+        // retired can no longer write its stale markers back (issue #50).
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(None);
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+        db.set_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target), "1700000000")
+            .unwrap();
+        db.set_preference(&extra_mailbox_forward_key(&account.id, &target), "1800000000")
+            .unwrap();
+
+        request_extra_mailbox_backfill_reset(&db, &account.id).expect("queue the reset");
+        apply_pending_extra_mailbox_backfill_reset(&db, &account.id);
+
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_key(&account.id, &target))
+                .unwrap(),
+            None,
+            "the done marker must be dropped so the backfill walks further back"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target))
+                .unwrap(),
+            None,
+            "the cursor is relative to the old floor and goes with it"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_forward_key(&account.id, &target))
+                .unwrap(),
+            Some("1800000000".to_string()),
+            "the forward watermark tracks the newest message and stays valid"
+        );
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_reset_key(&account.id))
+                .unwrap(),
+            None,
+            "the request is consumed, so later syncs do not keep reopening"
+        );
+    }
+
+    #[test]
+    fn a_sync_with_no_queued_reset_leaves_the_markers_alone() {
+        // Every sync calls the apply step, so a no-op has to stay a no-op —
+        // otherwise each pass would re-walk mailboxes that are genuinely done.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+
+        apply_pending_extra_mailbox_backfill_reset(&db, &account.id);
+
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_key(&account.id, &target))
+                .unwrap(),
+            Some("1".to_string())
         );
     }
 

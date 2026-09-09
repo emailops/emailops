@@ -30,8 +30,8 @@ pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
 pub use sync::{
-    request_sync_abort, reset_extra_mailbox_backfill, resync_mailbox_full, sync_account, sync_account_with_contention,
-    sync_account_with_provider, SyncContention,
+    request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
+    sync_account_with_contention, sync_account_with_provider, SyncContention,
 };
 
 /// List emails for one account, or — when `account_id` is `None` — merged
