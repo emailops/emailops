@@ -64,7 +64,7 @@ urlencoding = "2"
 url = "2"
 open = "5"
 dotenvy = "0.15"
-argon2 = { version = "0.5", features = ["std"] }
+argon2 = "0.6"
 sha2 = "0.11"
 hex = "0.4"
 # Constant-time comparison for the legacy SHA-256 main-password path. Already in
