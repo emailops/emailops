@@ -71,7 +71,7 @@ hex = "0.4"
 # the tree via argon2/password-hash; declared directly so we can call it.
 subtle = "2"
 clap = { version = "4", features = ["derive"] }
-dirs = "6"
+dirs = "7"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
 # so it never touches default/release desktop builds.
 reedline = { version = "0.51", optional = true }
@@ -91,7 +91,7 @@ async-trait = "0.1"
 imap = { version = "2", features = ["native-tls"] }
 native-tls = "0.2"
 lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "builder"] }
-mailparse = "0.16"
+mailparse = "0.17"
 ammonia = "4"
 futures = "0.3"
 sys-locale = "0.3"
