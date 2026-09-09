@@ -5,7 +5,9 @@
 //! `needs_rehash` after a successful verify and upgrade to Argon2 when true.
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    // `phc::PasswordHash` rather than the root re-export: password-hash 0.6
+    // deprecated the latter, and this crate builds with `-D warnings`.
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use sha2::{Digest, Sha256};
@@ -14,9 +16,11 @@ use crate::models::error::{AppError, Result};
 
 /// Hash `password` with Argon2id (random salt). Returns a PHC-format string.
 pub fn hash_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
+    // password-hash 0.6 generates the salt itself (getrandom, on by default in
+    // argon2 0.6) instead of taking one — same CSPRNG source as the explicit
+    // `SaltString::generate(&mut OsRng)` this replaces.
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| AppError::AuthError(format!("Failed to hash password: {e}")))
 }
@@ -57,7 +61,8 @@ pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
     // with no way to tell the difference.
     match Argon2::default().verify_password(password.as_bytes(), &parsed) {
         Ok(()) => Ok(true),
-        Err(argon2::password_hash::Error::Password) => Ok(false),
+        // `Error::Password` in password-hash 0.5.
+        Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
         Err(e) => Err(AppError::AuthError(format!(
             "Stored password hash is unusable ({e}). Reset the main password to continue."
         ))),
@@ -105,6 +110,43 @@ fn sha2_hex(password: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A PHC string produced by argon2 0.5 — the version every existing
+    /// install hashed its main password with. Verification reads its
+    /// parameters (m=19456, t=2, p=1) out of the string itself rather than
+    /// from the crate's current defaults, so a version bump must keep
+    /// accepting it. If this ever fails, the upgrade locks every user out of
+    /// their vault with no way back.
+    const HASH_FROM_ARGON2_0_5: &str =
+        "$argon2id$v=19$m=19456,t=2,p=1$Xvs3i2UkHxTx49tD9UKLlw$WHMpw4/HziB9dtLLh4BkIyQvIgQ/g5MES0vHGPs+r4c";
+    const PASSWORD_FOR_THAT_HASH: &str = "correct horse battery staple";
+
+    #[test]
+    fn new_hashes_keep_the_same_argon2id_parameters() {
+        // Deliberate tripwire. Verification reads parameters from the stored
+        // string, so a change here would not lock anyone out — but it silently
+        // alters the cost of every new password, in either direction. If
+        // upstream moves its defaults, that should be an accepted change rather
+        // than something noticed later.
+        let fresh = super::hash_password("whatever").expect("hash");
+        assert!(
+            fresh.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+            "argon2 defaults moved: {fresh}"
+        );
+    }
+
+    #[test]
+    fn a_hash_written_by_the_previous_argon2_still_verifies() {
+        assert!(super::verify_password(PASSWORD_FOR_THAT_HASH, HASH_FROM_ARGON2_0_5).expect("verify"));
+    }
+
+    #[test]
+    fn a_wrong_password_against_a_previous_argon2_hash_is_still_a_mismatch() {
+        // Not an error — the caller distinguishes "wrong password" from
+        // "unusable record", and conflating them either locks users out or
+        // hides corruption.
+        assert!(!super::verify_password("wrong password", HASH_FROM_ARGON2_0_5).expect("verify"));
+    }
+
     use super::*;
 
     fn legacy_hash(password: &str) -> String {
