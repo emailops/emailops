@@ -46,6 +46,85 @@ pub struct CatalogModel {
     pub bundled: bool,
 }
 
+/// How much headroom over a model's stated minimum a machine needs before that
+/// model is *recommended* rather than merely offered.
+///
+/// `min_ram_gb` is peak inference RAM — weights, KV cache and activations — so
+/// a machine that only just meets it has nothing left for the OS, the mail
+/// database, the webview, or whatever else the user has open. Recommending at
+/// twice the minimum keeps the suggested model comfortable on a machine that is
+/// also being used as a computer. Models below the bar are still listed and
+/// still downloadable; this only moves the badge.
+const RECOMMENDATION_RAM_HEADROOM: u64 = 2;
+
+/// Pick the chat model to badge as "Recommended" for this machine.
+///
+/// The largest model the hardware can carry wins, because within that limit
+/// bigger is better at every job the app uses the chat model for. Ties are
+/// broken by catalog order, which is curated — without that the pick would
+/// depend on nothing more meaningful than where an entry happens to sit in the
+/// array.
+///
+/// Two independent signals qualify a model, and either is enough:
+///
+/// - **System RAM** — the model's stated minimum with
+///   [`RECOMMENDATION_RAM_HEADROOM`] to spare.
+/// - **A discrete GPU** — `vram_budget_bytes` (from
+///   `gpu_plan::discrete_vram_budget`) large enough to hold the weights. The
+///   weights then live on the card rather than in system RAM, so a 16 GB
+///   machine with a 24 GB card is not a 16 GB machine for this decision.
+///   `None` means no usable discrete card; unified memory (Apple Silicon,
+///   iGPUs) arrives as `None` because it *is* the system RAM already counted,
+///   and counting it twice would spend one pool as if it were two.
+///
+/// Two deliberate fallbacks:
+///
+/// - Both signals absent — `total_ram_gb == 0` means the probe failed (see
+///   `util::system`), not that the machine has no memory. Guessing "smallest"
+///   from a failed probe would be a silent downgrade, so the catalog's own
+///   default stands.
+/// - A machine too small for anything still gets the smallest chat model.
+///   Whether local AI is viable at all is `ai_capability_from`'s decision;
+///   returning nothing here would just leave the picker with no default
+///   selected and the onboarding Continue button dead.
+pub fn recommended_chat_model(
+    models: &[CatalogModel],
+    total_ram_gb: u64,
+    vram_budget_bytes: Option<u64>,
+) -> Option<&CatalogModel> {
+    let chat = || models.iter().filter(|m| matches!(m.kind, ModelKind::Chat));
+
+    // A model qualifies on either signal. They are alternatives, not a
+    // minimum: a discrete card holds the weights itself, so it lifts a machine
+    // above what its RAM alone would allow — while a small card must never drag
+    // a roomy machine's pick back down.
+    let fits_in_ram = |m: &CatalogModel| {
+        total_ram_gb > 0 && (m.min_ram_gb as u64).saturating_mul(RECOMMENDATION_RAM_HEADROOM) <= total_ram_gb
+    };
+    let fits_on_gpu = |m: &CatalogModel| vram_budget_bytes.is_some_and(|budget| m.size_bytes <= budget);
+
+    if total_ram_gb == 0 && vram_budget_bytes.is_none() {
+        return chat().find(|m| m.recommended).or_else(|| smallest_chat_model(models));
+    }
+
+    chat()
+        .filter(|m| fits_in_ram(m) || fits_on_gpu(m))
+        // `max_by_key` keeps the *last* maximum; the catalog is ordered, so the
+        // first entry at a given size is the curated pick.
+        .fold(None, |best: Option<&CatalogModel>, candidate| match best {
+            Some(current) if current.min_ram_gb >= candidate.min_ram_gb => Some(current),
+            _ => Some(candidate),
+        })
+        .or_else(|| smallest_chat_model(models))
+}
+
+fn smallest_chat_model(models: &[CatalogModel]) -> Option<&CatalogModel> {
+    models
+        .iter()
+        .filter(|m| matches!(m.kind, ModelKind::Chat))
+        .min_by_key(|m| m.min_ram_gb)
+}
+
 /// All models the app knows how to download. Extend this list with new app
 /// releases. Prefer keeping entries — existing installs may reference them by
 /// id — and only retire a model when it's genuinely unfit for the app, e.g. it
@@ -411,5 +490,141 @@ mod tests {
                 m.sha256
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod recommendation_tests {
+    use super::*;
+
+    fn recommended_id(total_ram_gb: u64) -> Option<&'static str> {
+        recommended_chat_model(CATALOG, total_ram_gb, None).map(|m| m.id)
+    }
+
+    fn recommended_id_with(total_ram_gb: u64, vram_budget: Option<u64>) -> Option<&'static str> {
+        recommended_chat_model(CATALOG, total_ram_gb, vram_budget).map(|m| m.id)
+    }
+
+    #[test]
+    fn a_roomier_machine_is_recommended_a_larger_model() {
+        // The point of the change: the badge tracks the hardware instead of
+        // being pinned to the smallest model for everyone.
+        assert_eq!(recommended_id(16), Some("qwen3.5-4b-q4_k_m"));
+        assert_eq!(recommended_id(32), Some("qwen3.5-9b-q4_k_m"));
+        assert_eq!(recommended_id(64), Some("qwen3.6-35b-a3b-ud-q4_k_xl"));
+    }
+
+    #[test]
+    fn a_recommendation_leaves_the_machine_room_to_be_a_computer() {
+        // `min_ram_gb` is peak inference RAM. Recommending a model that only
+        // just fits would have the mail DB, the webview and everything else
+        // the user is running fighting it for pages, so a recommendation needs
+        // twice its minimum. A 24 GB machine can *run* the 9B (16 GB) — it is
+        // offered, just not recommended.
+        assert_eq!(recommended_id(24), Some("qwen3.5-4b-q8_0"));
+    }
+
+    #[test]
+    fn a_machine_too_small_for_any_model_still_gets_the_smallest_one() {
+        // Whether local AI is viable at all is `ai_capability_from`'s call, not
+        // this one's. Returning nothing here would leave the picker with no
+        // default selected and the Continue button dead.
+        assert_eq!(recommended_id(8), Some("qwen3.5-4b-q4_k_m"));
+        assert_eq!(recommended_id(4), Some("qwen3.5-4b-q4_k_m"));
+    }
+
+    #[test]
+    fn a_failed_ram_probe_falls_back_to_the_catalog_default() {
+        // `total_ram_bytes` reports 0 when the probe fails. Treating that as a
+        // 0 GB machine would be a silent downgrade dressed up as a decision.
+        let expected = CATALOG
+            .iter()
+            .find(|m| matches!(m.kind, ModelKind::Chat) && m.recommended)
+            .map(|m| m.id);
+        assert_eq!(recommended_id(0), expected);
+    }
+
+    #[test]
+    fn embedding_models_are_never_recommended_as_the_chat_model() {
+        // The embedding model is bundled and picked separately; suggesting it
+        // for chat would hand the user a model that cannot hold a conversation.
+        for ram in [0, 4, 8, 16, 32, 64, 512] {
+            let picked = recommended_chat_model(CATALOG, ram, None).expect("a chat model is always suggested");
+            assert!(
+                matches!(picked.kind, ModelKind::Chat),
+                "{ram} GB machine was recommended a {:?} model",
+                picked.kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_tie_on_ram_is_broken_by_catalog_order() {
+        // Qwen 9B and Gemma 12B both declare 16 GB. The catalog is curated, so
+        // its order is the tiebreak — otherwise the pick would silently depend
+        // on struct field ordering.
+        assert_eq!(recommended_id(32), Some("qwen3.5-9b-q4_k_m"));
+    }
+
+    #[test]
+    fn the_recommendation_never_exceeds_what_the_machine_can_hold() {
+        // Property: whatever is recommended must itself be runnable.
+        for ram in [16, 24, 32, 48, 64, 128] {
+            let picked = recommended_chat_model(CATALOG, ram, None).expect("a chat model");
+            assert!(
+                picked.min_ram_gb as u64 <= ram,
+                "{ram} GB machine recommended {} which needs {} GB",
+                picked.id,
+                picked.min_ram_gb
+            );
+        }
+    }
+
+    const GB: u64 = 1_000_000_000;
+
+    #[test]
+    fn a_roomy_discrete_card_lifts_a_machine_above_its_ram() {
+        // The case the RAM-only signal got wrong: 16 GB of system RAM with a
+        // 24 GB card was recommended the 4B model, even though the card holds
+        // the 35B's weights comfortably.
+        assert_eq!(
+            recommended_id_with(16, Some(24 * GB)),
+            Some("qwen3.6-35b-a3b-ud-q4_k_xl")
+        );
+    }
+
+    #[test]
+    fn the_card_must_actually_hold_the_weights() {
+        // A 6 GB budget fits the 9B's 5.7 GB of weights but not the 27B's 17.6,
+        // so the recommendation stops where the card does.
+        assert_eq!(recommended_id_with(8, Some(6 * GB)), Some("qwen3.5-9b-q4_k_m"));
+    }
+
+    #[test]
+    fn the_gpu_signal_never_lowers_the_ram_based_pick() {
+        // A big machine with a small card must keep the model its RAM affords;
+        // the two signals are alternatives, not a minimum.
+        assert_eq!(
+            recommended_id_with(64, Some(4 * GB)),
+            Some("qwen3.6-35b-a3b-ud-q4_k_xl")
+        );
+        assert_eq!(recommended_id_with(64, None), Some("qwen3.6-35b-a3b-ud-q4_k_xl"));
+    }
+
+    #[test]
+    fn no_discrete_card_leaves_the_ram_signal_alone() {
+        // Apple Silicon and iGPU machines arrive here as `None` — their memory
+        // is the system RAM already counted.
+        assert_eq!(recommended_id_with(32, None), recommended_id_with(32, Some(0)));
+    }
+
+    #[test]
+    fn a_failed_ram_probe_still_uses_the_card() {
+        // RAM unknown is not "no memory". With a card big enough to hold the
+        // weights the GPU signal alone is a sound basis for the pick.
+        assert_eq!(
+            recommended_id_with(0, Some(24 * GB)),
+            Some("qwen3.6-35b-a3b-ud-q4_k_xl")
+        );
     }
 }

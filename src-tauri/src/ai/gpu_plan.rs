@@ -127,6 +127,30 @@ fn usable_vram(device: &GpuDevice) -> u64 {
     budget.saturating_sub(VRAM_RESERVE_BYTES)
 }
 
+/// Bytes of VRAM a discrete card can give to model weights, if there is one.
+///
+/// Used to recommend a model: a machine with a roomy card can comfortably run
+/// a model its system RAM alone would rule out, because the weights live on the
+/// card. Deliberately reuses [`usable_vram`] — the same budget [`plan_offload`]
+/// decides full offload against — so the picker can never recommend a model the
+/// loader would then refuse to put on the GPU.
+///
+/// `None` when there is no discrete card, or none with room left:
+///
+/// - **Unified memory** (Apple Silicon, iGPUs) is system RAM, which the RAM
+///   signal already counts. Reporting it here as well would let one pool be
+///   spent twice.
+/// - **A busy or tiny card** yields a zero budget, which must read as "no GPU
+///   help available" rather than "a GPU is present with nothing in it".
+pub fn discrete_vram_budget(devices: &[GpuDevice]) -> Option<u64> {
+    devices
+        .iter()
+        .filter(|d| matches!(d.kind, DeviceKind::Discrete))
+        .map(usable_vram)
+        .max()
+        .filter(|budget| *budget > 0)
+}
+
 /// Pick the device to offload to: the one with the most free memory.
 ///
 /// Multi-GPU splitting is not attempted — llama.cpp can do it, but choosing a
@@ -370,6 +394,54 @@ mod tests {
                 "{backend} has its own VRAM"
             );
         }
+    }
+
+    fn device(kind: DeviceKind, free_gb: u64) -> GpuDevice {
+        GpuDevice {
+            name: format!("{kind:?} {free_gb}G"),
+            backend: "test".to_string(),
+            kind,
+            memory_free: free_gb * 1024 * 1024 * 1024,
+            memory_total: free_gb * 1024 * 1024 * 1024,
+        }
+    }
+
+    #[test]
+    fn the_weight_budget_is_the_same_one_the_loader_offloads_against() {
+        // Recommending a model the runtime would then refuse to fully offload
+        // would be worse than not using the signal at all, so this reuses
+        // `usable_vram` rather than inventing a second budget.
+        let devices = [device(DeviceKind::Discrete, 24)];
+        let budget = discrete_vram_budget(&devices).expect("a discrete card has a budget");
+        assert_eq!(budget, usable_vram(&devices[0]));
+    }
+
+    #[test]
+    fn unified_memory_is_not_reported_as_a_separate_budget() {
+        // Apple Silicon and iGPUs carve their memory out of system RAM, which
+        // the RAM signal already counts. Reporting it here too would let a
+        // 16 GB Mac look like a 16 GB machine with a 16 GB card.
+        assert_eq!(discrete_vram_budget(&[device(DeviceKind::Unified, 32)]), None);
+        assert_eq!(discrete_vram_budget(&[device(DeviceKind::Cpu, 0)]), None);
+        assert_eq!(discrete_vram_budget(&[]), None);
+    }
+
+    #[test]
+    fn the_roomiest_discrete_card_sets_the_budget() {
+        // Same choice `best_device` makes: one card, the one with the most
+        // free memory. Weights are never split across cards.
+        let devices = [device(DeviceKind::Discrete, 8), device(DeviceKind::Discrete, 24)];
+        assert_eq!(
+            discrete_vram_budget(&devices),
+            Some(usable_vram(&device(DeviceKind::Discrete, 24)))
+        );
+    }
+
+    #[test]
+    fn a_card_with_nothing_left_reports_no_budget() {
+        // A busy or tiny card must yield None, not a zero budget that reads as
+        // "a GPU is available".
+        assert_eq!(discrete_vram_budget(&[device(DeviceKind::Discrete, 0)]), None);
     }
 
     #[test]
