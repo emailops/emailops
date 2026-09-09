@@ -36,6 +36,29 @@ OUT_DMG="$OUT_DIR/EmailOps-CLI.dmg"
 
 mkdir -p "$OUT_DIR"
 
+# Fail fast on an identity that codesign will reject. `codesign` only resolves
+# the identity at the signing step — after a full universal compile — so a bare
+# Common Name that matches two certificates costs ten minutes before it fails.
+# That happens as soon as an "Apple Distribution" certificate is installed
+# alongside the "Developer ID Application" one, which building for iOS does.
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  identity_matches=$(security find-identity -v -p codesigning | grep -c -F "$APPLE_SIGNING_IDENTITY" || true)
+  if [ "$identity_matches" -eq 0 ]; then
+    echo "[build-cli] APPLE_SIGNING_IDENTITY matches no codesigning identity:" >&2
+    echo "             $APPLE_SIGNING_IDENTITY" >&2
+    echo "           Available:" >&2
+    security find-identity -v -p codesigning >&2
+    exit 1
+  fi
+  if [ "$identity_matches" -gt 1 ]; then
+    echo "[build-cli] APPLE_SIGNING_IDENTITY is ambiguous — it matches $identity_matches identities:" >&2
+    echo "             $APPLE_SIGNING_IDENTITY" >&2
+    security find-identity -v -p codesigning | grep -F "$APPLE_SIGNING_IDENTITY" >&2
+    echo "           Use the full subject, e.g. 'Developer ID Application: Name (TEAMID)'." >&2
+    exit 1
+  fi
+fi
+
 SLICES=()
 for target in "${TARGETS[@]}"; do
   echo "[build-cli] compiling emailops-cli for $target (features: $FEATURES)"
