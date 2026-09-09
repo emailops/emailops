@@ -1612,7 +1612,12 @@ async fn ingest_mailbox_refs(
                     if email.timestamp > max_timestamp {
                         max_timestamp = email.timestamp;
                     }
-                    min_timestamp = Some(min_timestamp.map_or(email.timestamp, |m| m.min(email.timestamp)));
+                    // Undated messages (Gmail occasionally reports internalDate 0)
+                    // must not become the window's floor — see
+                    // `get_min_timestamp_for_ids`.
+                    if email.timestamp > 0 {
+                        min_timestamp = Some(min_timestamp.map_or(email.timestamp, |m| m.min(email.timestamp)));
+                    }
                     chunk_emails.push((email, attachment_infos));
                 }
                 Err(e) => {

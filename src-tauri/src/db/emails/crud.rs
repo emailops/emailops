@@ -738,7 +738,16 @@ impl Database {
                 .map(|(i, _)| format!("?{}", i + 1))
                 .collect::<Vec<_>>()
                 .join(",");
-            let sql = format!("SELECT MIN(timestamp) FROM emails WHERE id IN ({})", placeholders);
+            // `timestamp > 0` excludes undated messages. A message whose date
+            // never parsed is not the oldest mail in a window, it is mail with
+            // no date — and the extra-mailbox backfill walks backwards by
+            // setting its cursor to this value, so letting the epoch through
+            // moved the cursor to 1970 and the next iteration latched the whole
+            // mailbox as swept back to the account floor.
+            let sql = format!(
+                "SELECT MIN(timestamp) FROM emails WHERE timestamp > 0 AND id IN ({})",
+                placeholders
+            );
             let mut stmt = conn.prepare(&sql)?;
             let params_dyn: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
             let chunk_min: Option<i64> = stmt.query_row(params_dyn.as_slice(), |row| row.get(0)).unwrap_or(None);
@@ -754,6 +763,35 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    #[test]
+    fn min_timestamp_ignores_undated_messages() {
+        // An undated message (Gmail reports internalDate 0 for the occasional
+        // spam) is not "the oldest mail in this window" — it has no date at
+        // all. The extra-mailbox backfill walks backwards by setting its cursor
+        // to this value, so returning 0 moved the cursor to the epoch, and the
+        // next iteration read that as "older than the account floor" and marked
+        // the whole mailbox swept. One undated message truncated the backfill.
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "undated", "acc1", "thread-a", 0);
+        insert_email(&db, "dated", "acc1", "thread-b", 1_700_000_000);
+
+        let min = db
+            .get_min_timestamp_for_ids(&["undated".to_string(), "dated".to_string()])
+            .unwrap();
+
+        assert_eq!(min, Some(1_700_000_000), "the undated row must not set the floor");
+    }
+
+    #[test]
+    fn min_timestamp_is_none_when_every_message_is_undated() {
+        // Nothing usable to walk back to — the caller must treat this as "no
+        // progress" rather than as a date at the epoch.
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "undated", "acc1", "thread-a", 0);
+
+        assert_eq!(db.get_min_timestamp_for_ids(&["undated".to_string()]).unwrap(), None);
+    }
 
     #[test]
     fn deleted_email_excluded_from_get_emails() {

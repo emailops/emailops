@@ -700,11 +700,16 @@ impl GmailClient {
         // into the standalone inbox view. Use Gmail's authoritative labels.
         let mailbox = mailbox_from_labels(&labels);
 
-        // Parse timestamp
-        let timestamp = msg
-            .internal_date
-            .parse::<i64>()
-            .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
+        // Parse timestamp. Gmail reports `internalDate` "0" for the occasional
+        // message with no usable received time — zero is not a date, and
+        // storing it puts the message at the epoch, where it sorts below
+        // everything forever and drags the extra-mailbox backfill cursor to
+        // 1970 (see `get_min_timestamp_for_ids`). Treated like a parse failure:
+        // stamped on arrival, which is the closest thing to the truth we have.
+        let timestamp = match msg.internal_date.parse::<i64>() {
+            Ok(millis) if millis > 0 => millis,
+            _ => chrono::Utc::now().timestamp_millis(),
+        };
 
         let email = Email {
             id: msg.id,
@@ -2998,6 +3003,10 @@ mod tests {
 
     /// Minimal `format=full` message carrying the given labels.
     fn test_message(label_ids: &[&str]) -> GmailMessage {
+        test_message_dated(label_ids, "1700000000000")
+    }
+
+    fn test_message_dated(label_ids: &[&str], internal_date: &str) -> GmailMessage {
         let labels_json = serde_json::to_string(label_ids).expect("labels");
         serde_json::from_str(&format!(
             r#"{{
@@ -3005,7 +3014,7 @@ mod tests {
                 "threadId": "t1",
                 "labelIds": {labels_json},
                 "snippet": "hello",
-                "internalDate": "1700000000000",
+                "internalDate": "{internal_date}",
                 "payload": {{
                     "mimeType": "text/plain",
                     "headers": [
@@ -3036,6 +3045,30 @@ mod tests {
     fn mailbox_self_sent_email_stays_in_inbox() {
         // Self-sent emails carry both labels — they should remain visible in inbox.
         assert_eq!(mailbox_from_labels(&labels(&["INBOX", "SENT"])), "inbox");
+    }
+
+    #[tokio::test]
+    async fn an_undated_message_is_stamped_rather_than_left_at_the_epoch() {
+        // Gmail reports `internalDate` "0" for the occasional message (spam
+        // with no usable received time). Dividing that by 1000 stored a date of
+        // 1970, which sorts to the bottom of every list forever and — worse —
+        // dragged the extra-mailbox backfill cursor to the epoch, where the
+        // next pass read it as "older than the account floor" and marked the
+        // whole mailbox swept. The parse-failure path already falls back to
+        // now(); a literal zero must do the same.
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let before = chrono::Utc::now().timestamp();
+
+        let parsed = client
+            .parse_message(test_message_dated(&["INBOX"], "0"))
+            .await
+            .expect("parse");
+
+        assert!(
+            parsed.0.timestamp >= before,
+            "an undated message must be stamped on arrival, got {}",
+            parsed.0.timestamp
+        );
     }
 
     #[tokio::test]
