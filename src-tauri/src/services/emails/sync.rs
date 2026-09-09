@@ -1375,6 +1375,21 @@ fn extra_mailbox_backfill_cursor_key(account_id: &str, target: &SyncTarget) -> S
     )
 }
 
+/// Whether a persisted backfill cursor is a position in a mailbox's history or
+/// wreckage to be thrown away.
+///
+/// The cursor records "walked back to here". Zero or negative is not a date: it
+/// is the trace of an undated message (Gmail reports `internalDate` "0" for the
+/// occasional spam) having dragged the walk to the epoch — after which the loop
+/// reads it as "older than the account floor" and latches the mailbox as fully
+/// swept, hiding everything older for good.
+///
+/// An absent or unparseable cursor is *not* corrupt: both already fall through
+/// to the "start from now()" default without latching anything.
+fn backfill_cursor_is_corrupt(raw: Option<&str>) -> bool {
+    matches!(raw.and_then(|s| s.parse::<i64>().ok()), Some(ts) if ts <= 0)
+}
+
 /// Forget how far the extra-mailbox backfill has walked for `account_id`.
 ///
 /// The backfill records "swept back to the account floor" as a done marker plus
@@ -1928,6 +1943,25 @@ async fn sync_extra_mailbox_backfill(
     let done_key = extra_mailbox_backfill_key(account_id, target);
     let cursor_key = extra_mailbox_backfill_cursor_key(account_id, target);
 
+    // Self-heal installs that were latched by an undated message before the
+    // guards below existed. Runs before the done check, because a latched
+    // mailbox returns there without ever looking at its cursor. Idempotent: the
+    // repair drops both keys, so the walk restarts from now() and a healthy
+    // mailbox never enters this branch at all.
+    if backfill_cursor_is_corrupt(db.get_preference(&cursor_key).ok().flatten().as_deref()) {
+        let _ = db.delete_preference(&cursor_key);
+        let _ = db.delete_preference(&done_key);
+        emit_account_log(
+            "info",
+            "sync",
+            &account.email,
+            &format!(
+                "Reopening the {} backfill — its saved position was not a date",
+                target.mailbox_value()
+            ),
+        );
+    }
+
     if matches!(db.get_preference(&done_key).ok().flatten().as_deref(), Some("1")) {
         return;
     }
@@ -2444,6 +2478,55 @@ mod extra_mailbox_window_tests {
             stored_ids(&db),
             vec!["recent".to_string()],
             "backfill must stop at the account's sync date, not walk the whole mailbox"
+        );
+    }
+
+    #[test]
+    fn a_cursor_that_is_not_a_date_is_recognised_as_corrupt() {
+        // The cursor is a "walked back to here" timestamp. Zero or negative is
+        // not a position in a mailbox's history — it is the trace of an undated
+        // message having driven the walk to the epoch.
+        assert!(backfill_cursor_is_corrupt(Some("0")));
+        assert!(backfill_cursor_is_corrupt(Some("-1")));
+        // A real position, an absent cursor, and an unparseable one are all
+        // handled by the existing "start from now()" fallback.
+        assert!(!backfill_cursor_is_corrupt(Some("1788300000")));
+        assert!(!backfill_cursor_is_corrupt(None));
+        assert!(!backfill_cursor_is_corrupt(Some("not-a-number")));
+    }
+
+    #[tokio::test]
+    async fn a_mailbox_latched_by_a_corrupt_cursor_reopens_itself() {
+        // Repair path for installs that already hit this: an undated message
+        // moved the cursor to the epoch, the next pass read that as "older than
+        // the account floor" and marked the mailbox swept, and the done marker
+        // then survived every later sync. Nothing older was ever fetched again.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        db.set_preference(&extra_mailbox_backfill_key(&account.id, &target), "1")
+            .unwrap();
+        db.set_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target), "0")
+            .unwrap();
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("older", FLOOR + 10), EmailCategory::Primary, vec![]);
+
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+
+        assert_eq!(
+            stored_ids(&db),
+            vec!["older".to_string()],
+            "the reopened backfill must fetch what the latch was hiding"
+        );
+        assert_ne!(
+            db.get_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target))
+                .unwrap()
+                .as_deref(),
+            Some("0"),
+            "the corrupt cursor must not survive the repair"
         );
     }
 
