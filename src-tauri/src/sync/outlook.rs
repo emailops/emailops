@@ -55,6 +55,10 @@ const MAX_BACKOFF_MS: u64 = 30_000;
 /// Graph caps the returned header list (~256 entries) and some tenants omit it
 /// altogether. That is why an absent header set must degrade to `Unknown`
 /// rather than to a confident `Clean`.
+/// Graph caps one `$batch` at 20 sub-requests, which is also the sync loop's
+/// chunk size — kept as its own constant so the two can move independently.
+const GRAPH_BATCH_LIMIT: usize = 20;
+
 const MESSAGE_SELECT_FIELDS: &str = "id,conversationId,internetMessageId,subject,bodyPreview,\
     body,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,inferenceClassification,\
     internetMessageHeaders";
@@ -313,7 +317,13 @@ impl OutlookClient {
             return Err(AppError::SyncError(format!("Failed to get message: {}", error_text)));
         }
         let msg: GraphMessage = response.json().await?;
+        self.finalize_message(msg).await
+    }
 
+    /// Turn a fetched `GraphMessage` into a stored email: attachments, parse,
+    /// and inline-image substitution. Shared by the single-message path and the
+    /// `$batch` path so both produce identical rows.
+    async fn finalize_message(&self, msg: GraphMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         // Only skip the attachments call when Graph explicitly reports `false`.
         // Some Outlook mailboxes return `hasAttachments` as `null` even when
         // attachments exist; defaulting that to "no attachments" silently drops
@@ -806,6 +816,113 @@ impl EmailProvider for OutlookClient {
         self.get_message(message_id).await
     }
 
+    /// Fetch a chunk of messages with **one** Graph `$batch` request.
+    ///
+    /// The trait default calls [`Self::get_message`] per ID — twenty sequential
+    /// HTTPS round trips for a twenty-message chunk. Graph's `$batch` endpoint
+    /// takes up to [`GRAPH_BATCH_LIMIT`] sub-requests in a single POST, so the
+    /// same chunk costs one round trip plus (only for messages that have them)
+    /// the per-message attachment call.
+    ///
+    /// Per-message throttling is normal inside a batch: Graph answers those
+    /// sub-requests with 429 while the rest succeed. Those slots are retried on
+    /// their own with the same exponential backoff the single-message path
+    /// uses, rather than re-fetching the whole chunk.
+    async fn batch_get_messages(
+        &self,
+        message_ids: &[&str],
+    ) -> Result<Vec<Result<(Email, provider::EmailCategory, Vec<provider::AttachmentInfo>)>>> {
+        type ProviderResult = Result<(Email, provider::EmailCategory, Vec<provider::AttachmentInfo>)>;
+
+        let mut slots: Vec<Option<ProviderResult>> = (0..message_ids.len()).map(|_| None).collect();
+
+        for (chunk_index, chunk) in message_ids.chunks(GRAPH_BATCH_LIMIT).enumerate() {
+            let offset = chunk_index * GRAPH_BATCH_LIMIT;
+            // Slots of this chunk still waiting for an answer, as indices into
+            // `chunk`. Shrinks as sub-responses land; whatever is left after
+            // the retries becomes a per-message error.
+            let mut pending: Vec<usize> = (0..chunk.len()).collect();
+            let mut delay_ms = INITIAL_BACKOFF_MS;
+
+            for attempt in 0..=MAX_RETRIES {
+                if pending.is_empty() {
+                    break;
+                }
+
+                let ids: Vec<&str> = pending.iter().map(|i| chunk[*i]).collect();
+                let payload = build_message_batch_payload(&ids);
+                let url = format!("{}/$batch", self.base_url);
+                let response = self
+                    .send_post_json_with_retry(&url, &payload, "batch get messages")
+                    .await?;
+                let envelope: serde_json::Value = response.json().await?;
+
+                let mut still_pending: Vec<usize> = Vec::new();
+                let mut answered = vec![false; pending.len()];
+
+                for sub in parse_batch_response(&envelope) {
+                    let Some(chunk_slot) = pending.get(sub.index).copied() else {
+                        continue; // an id outside the request we sent
+                    };
+                    answered[sub.index] = true;
+
+                    if sub.status == 200 {
+                        let parsed = match sub.body {
+                            Some(body) => match serde_json::from_value::<GraphMessage>(body) {
+                                Ok(msg) => self.finalize_message(msg).await,
+                                Err(e) => Err(AppError::SyncError(format!("Malformed message in $batch: {e}"))),
+                            },
+                            None => Err(AppError::SyncError("Batch sub-response had no body".to_string())),
+                        };
+                        slots[offset + chunk_slot] = Some(parsed);
+                    } else if StatusCode::from_u16(sub.status).is_ok_and(is_retryable_graph_status)
+                        && attempt < MAX_RETRIES
+                    {
+                        still_pending.push(chunk_slot);
+                    } else {
+                        slots[offset + chunk_slot] = Some(Err(AppError::SyncError(format!(
+                            "Batch sub-request failed with HTTP {}",
+                            sub.status
+                        ))));
+                    }
+                }
+
+                // A slot Graph never answered: treat it like a retryable gap
+                // rather than silently dropping the message.
+                for (position, chunk_slot) in pending.iter().enumerate() {
+                    if !answered[position] {
+                        still_pending.push(*chunk_slot);
+                    }
+                }
+
+                pending = still_pending;
+                if !pending.is_empty() && attempt < MAX_RETRIES {
+                    sleep(Duration::from_millis(delay_ms.min(MAX_BACKOFF_MS))).await;
+                    delay_ms = (delay_ms * 2).min(MAX_BACKOFF_MS);
+                }
+            }
+
+            for chunk_slot in pending {
+                slots[offset + chunk_slot] = Some(Err(AppError::SyncError(
+                    "Batch sub-request still throttled after retries".to_string(),
+                )));
+            }
+        }
+
+        Ok(slots
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                slot.unwrap_or_else(|| {
+                    Err(AppError::SyncError(format!(
+                        "Batch returned no result for {}",
+                        message_ids[index]
+                    )))
+                })
+            })
+            .collect())
+    }
+
     async fn list_mailbox_messages(
         &self,
         mailbox: provider::ExtraMailbox,
@@ -1124,6 +1241,65 @@ fn build_inbox_list_url(base: &str, top: u32, after_timestamp: Option<i64>, befo
     url
 }
 
+/// One sub-response of a `$batch`, resolved back to the slot it answers.
+#[derive(Debug)]
+struct GraphBatchSubResponse {
+    /// Index in the caller's `message_ids` slice.
+    index: usize,
+    status: u16,
+    /// `None` for a non-200: Graph puts an error object there, not a message.
+    body: Option<serde_json::Value>,
+}
+
+/// Build the JSON body for a `$batch` of message GETs.
+///
+/// Each sub-request is identified by its **index** in `message_ids`, because
+/// Graph does not promise to answer in request order — the id is how a body
+/// finds its way back to the right slot. The `$select` projection matches the
+/// single-message path so both produce the same `GraphMessage`.
+fn build_message_batch_payload(message_ids: &[&str]) -> serde_json::Value {
+    let requests: Vec<serde_json::Value> = message_ids
+        .iter()
+        .enumerate()
+        .map(|(index, message_id)| {
+            serde_json::json!({
+                "id": index.to_string(),
+                "method": "GET",
+                "url": format!(
+                    "/me/messages/{}?$select={}",
+                    urlencoding::encode(message_id),
+                    MESSAGE_SELECT_FIELDS
+                ),
+            })
+        })
+        .collect();
+    serde_json::json!({ "requests": requests })
+}
+
+/// Pull the sub-responses out of a `$batch` envelope.
+///
+/// Anything that does not match the documented shape is skipped rather than
+/// failing the chunk: the caller turns a missing slot into a per-message error,
+/// which is how one malformed entry stays one malformed message.
+fn parse_batch_response(payload: &serde_json::Value) -> Vec<GraphBatchSubResponse> {
+    let Some(responses) = payload.get("responses").and_then(|r| r.as_array()) else {
+        return Vec::new();
+    };
+    responses
+        .iter()
+        .filter_map(|entry| {
+            let index = entry.get("id")?.as_str()?.parse::<usize>().ok()?;
+            let status = entry.get("status")?.as_u64()? as u16;
+            let body = if status == 200 {
+                entry.get("body").cloned()
+            } else {
+                None
+            };
+            Some(GraphBatchSubResponse { index, status, body })
+        })
+        .collect()
+}
+
 fn is_retryable_graph_status(status: StatusCode) -> bool {
     // 429 = throttled, 503 = service unavailable, 504 = gateway timeout,
     // 509 = bandwidth (rare). Graph docs also call out 500 occasionally but
@@ -1163,6 +1339,84 @@ fn format_graph_error(status: StatusCode, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_payload_asks_for_every_message_in_one_request() {
+        // The win: twenty messages become one HTTP request instead of twenty.
+        let payload = build_message_batch_payload(&["msg-a", "msg-b", "msg-c"]);
+        let requests = payload["requests"].as_array().expect("requests array");
+
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0]["method"], "GET");
+        let url = requests[0]["url"].as_str().expect("url");
+        assert!(url.starts_with("/me/messages/msg-a"), "got {url}");
+        assert!(
+            url.contains("$select="),
+            "sub-requests must keep the field projection: {url}"
+        );
+    }
+
+    #[test]
+    fn batch_payload_ids_the_sub_requests_by_slot() {
+        // Graph may answer in any order, so the id has to carry the position.
+        let payload = build_message_batch_payload(&["msg-a", "msg-b"]);
+        let requests = payload["requests"].as_array().expect("requests array");
+        assert_eq!(requests[0]["id"], "0");
+        assert_eq!(requests[1]["id"], "1");
+    }
+
+    #[test]
+    fn batch_payload_percent_encodes_the_message_id() {
+        // Graph message IDs are base64url-ish and can carry characters that
+        // would otherwise terminate the path or start a query string.
+        let payload = build_message_batch_payload(&["a/b+c=="]);
+        let url = payload["requests"][0]["url"].as_str().expect("url");
+        assert!(!url.contains("a/b+c=="), "raw id leaked into the path: {url}");
+        assert!(url.contains("a%2Fb%2Bc%3D%3D"), "got {url}");
+    }
+
+    #[test]
+    fn batch_responses_are_matched_by_id_not_by_position() {
+        // Graph explicitly does not guarantee response order.
+        let body = serde_json::json!({
+            "responses": [
+                {"id": "1", "status": 200, "body": {"id": "msg-b"}},
+                {"id": "0", "status": 200, "body": {"id": "msg-a"}}
+            ]
+        });
+        let parsed = parse_batch_response(&body);
+
+        assert_eq!(parsed.len(), 2);
+        let first = parsed.iter().find(|r| r.index == 0).expect("slot 0");
+        assert_eq!(first.body.as_ref().expect("body")["id"], "msg-a");
+        let second = parsed.iter().find(|r| r.index == 1).expect("slot 1");
+        assert_eq!(second.body.as_ref().expect("body")["id"], "msg-b");
+    }
+
+    #[test]
+    fn a_throttled_sub_response_is_reported_with_its_status() {
+        // Per-message 429s are normal in a batch; the caller retries just those
+        // rather than re-fetching the whole chunk.
+        let body = serde_json::json!({
+            "responses": [
+                {"id": "0", "status": 200, "body": {"id": "msg-a"}},
+                {"id": "1", "status": 429, "headers": {"Retry-After": "3"}}
+            ]
+        });
+        let parsed = parse_batch_response(&body);
+
+        let throttled = parsed.iter().find(|r| r.index == 1).expect("slot 1");
+        assert_eq!(throttled.status, 429);
+        assert!(throttled.body.is_none());
+    }
+
+    #[test]
+    fn a_malformed_batch_envelope_yields_no_sub_responses() {
+        // Never panic on a shape Graph didn't promise; the caller turns missing
+        // slots into per-message errors.
+        assert!(parse_batch_response(&serde_json::json!({})).is_empty());
+        assert!(parse_batch_response(&serde_json::json!({"responses": "nope"})).is_empty());
+    }
 
     #[test]
     fn unix_to_iso_formats_epoch() {

@@ -174,6 +174,16 @@ pub struct ImapClient {
     pub display_name: String,
 }
 
+/// One chunk of message IDs, resolved into per-folder UID batches.
+/// See [`ImapClient::plan_batch_fetch`].
+#[derive(Debug, Default, PartialEq)]
+struct ImapBatchPlan {
+    /// UIDs to fetch per folder, each paired with its slot in the request.
+    groups: Vec<(ImapFolder, Vec<(usize, u32)>)>,
+    /// Slots whose message ID carried no usable UID.
+    invalid: Vec<usize>,
+}
+
 /// Which IMAP mailbox a given message UID belongs to. Inbox is the default for
 /// historic IDs that predate multi-mailbox support, so the parser falls back to
 /// Inbox whenever no `*::` sub-prefix is present. `Custom` carries the exact
@@ -234,6 +244,29 @@ impl ImapClient {
             email,
             display_name,
         }
+    }
+
+    /// How one chunk of message IDs maps onto IMAP work: the UIDs to fetch,
+    /// grouped by the folder they live in, plus the slots whose ID could not be
+    /// parsed. Each UID carries its index in the caller's slice because results
+    /// are returned positionally.
+    ///
+    /// Pure, so the grouping is unit-testable without a server; the executor in
+    /// `batch_get_messages` just walks the plan.
+    fn plan_batch_fetch(&self, message_ids: &[&str]) -> ImapBatchPlan {
+        let mut plan = ImapBatchPlan::default();
+        for (index, message_id) in message_ids.iter().enumerate() {
+            let (folder, uid_str) = self.parse_message_ref(message_id);
+            let Ok(uid) = uid_str.parse::<u32>() else {
+                plan.invalid.push(index);
+                continue;
+            };
+            match plan.groups.iter_mut().find(|(f, _)| *f == folder) {
+                Some((_, uids)) => uids.push((index, uid)),
+                None => plan.groups.push((folder, vec![(index, uid)])),
+            }
+        }
+        plan
     }
 
     /// Build the stable email ID for an IMAP INBOX message.
@@ -857,6 +890,131 @@ impl EmailProvider for ImapClient {
             .collect();
 
         Ok((refs, next_token))
+    }
+
+    /// Fetch a whole chunk over **one** connection.
+    ///
+    /// The trait's default implementation calls [`Self::get_message`] per ID,
+    /// and this client's `get_message` opens a TCP + TLS connection and logs in
+    /// for every single message — so a twenty-message chunk paid twenty
+    /// handshakes, serially, before any mail moved. It also hammered servers
+    /// that throttle logins, which is what an `[UNAVAILABLE]` mid-sync is.
+    ///
+    /// Here: one connection, one SELECT and one FETCH per folder in the chunk.
+    /// Failures stay scoped — a folder that cannot be selected, a UID the
+    /// server drops, or an unparseable ID fails only its own slots, exactly as
+    /// the per-message path did.
+    async fn batch_get_messages(
+        &self,
+        message_ids: &[&str],
+    ) -> Result<Vec<Result<(Email, EmailCategory, Vec<AttachmentInfo>)>>> {
+        type Parsed = Result<(Email, Vec<AttachmentInfo>)>;
+
+        let plan = self.plan_batch_fetch(message_ids);
+        let mut slots: Vec<Option<Parsed>> = (0..message_ids.len()).map(|_| None).collect();
+        for index in &plan.invalid {
+            slots[*index] = Some(Err(AppError::SyncError(format!(
+                "Invalid IMAP UID in {}",
+                message_ids[*index]
+            ))));
+        }
+
+        if !plan.groups.is_empty() {
+            let creds = self.credentials.clone();
+            let groups = plan.groups.clone();
+            let fetched: Vec<(usize, Parsed)> = tokio::task::spawn_blocking(move || -> Vec<(usize, Parsed)> {
+                let mut out: Vec<(usize, Parsed)> = Vec::new();
+
+                // A connect failure retires the chunk, not the sync: the caller
+                // records these as failed emails and retries them, which is
+                // what the per-message path did before this batched one.
+                let mut session = match Self::connect_sync(&creds) {
+                    Ok(session) => session,
+                    Err(e) => {
+                        let message = format!("IMAP connect failed: {e}");
+                        for (_, items) in &groups {
+                            for (index, _) in items {
+                                out.push((*index, Err(AppError::SyncError(message.clone()))));
+                            }
+                        }
+                        return out;
+                    }
+                };
+
+                for (folder, items) in &groups {
+                    if !Self::select_folder_blocking(&mut session, folder) {
+                        for (index, _) in items {
+                            out.push((
+                                *index,
+                                Err(AppError::SyncError(format!(
+                                    "IMAP {folder:?} folder not found on server"
+                                ))),
+                            ));
+                        }
+                        continue;
+                    }
+
+                    let uids: Vec<u32> = items.iter().map(|(_, uid)| *uid).collect();
+                    match imap_search::uid_fetch_rfc822_batch(&mut session, &uids) {
+                        Ok(bodies) => {
+                            for (index, uid) in items {
+                                let parsed = match bodies.get(uid) {
+                                    Some(raw) => Self::parse_message(*uid, raw),
+                                    None => Err(AppError::NotFound(format!("IMAP UID {uid}: body not found"))),
+                                };
+                                out.push((*index, parsed));
+                            }
+                        }
+                        Err(e) => {
+                            let message = e.to_string();
+                            for (index, _) in items {
+                                out.push((*index, Err(AppError::SyncError(message.clone()))));
+                            }
+                        }
+                    }
+                }
+
+                let _ = session.logout();
+                out
+            })
+            .await
+            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?;
+
+            for (index, parsed) in fetched {
+                slots[index] = Some(parsed);
+            }
+        }
+
+        // Same post-processing the single-message path applies: globally unique
+        // stored ID, the folder the UID actually came from, and sent mail is
+        // read by definition.
+        let folder_by_index: std::collections::HashMap<usize, ImapFolder> = plan
+            .groups
+            .iter()
+            .flat_map(|(folder, items)| items.iter().map(move |(index, _)| (*index, folder.clone())))
+            .collect();
+
+        Ok(slots
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| match slot {
+                Some(Ok((mut email, attachments))) => {
+                    email.id = message_ids[index].to_string();
+                    if let Some(folder) = folder_by_index.get(&index) {
+                        email.mailbox = folder.mailbox_value();
+                        if *folder == ImapFolder::Sent {
+                            email.is_read = true;
+                        }
+                    }
+                    Ok((email, EmailCategory::Primary, attachments))
+                }
+                Some(Err(e)) => Err(e),
+                None => Err(AppError::SyncError(format!(
+                    "IMAP batch returned no result for {}",
+                    message_ids[index]
+                ))),
+            })
+            .collect())
     }
 
     async fn get_message(&self, message_id: &str) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
@@ -1515,6 +1673,75 @@ mod tests {
     // lister used to ignore `before_timestamp` and return no page token, so the
     // backfill pass re-listed the newest 100 UIDs (all already stored) forever,
     // concluded "nothing new", and latched `backfill_swept_from`.
+
+    fn imap_client_synced_from(_sync_from: Option<i64>) -> ImapClient {
+        ImapClient::new(
+            ImapCredentials {
+                host: "imap.example.com".to_string(),
+                port: 993,
+                username: "user@example.com".to_string(),
+                password: "pw".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+                smtp_port: 587,
+            },
+            "user@example.com".to_string(),
+            "User".to_string(),
+            "acc-1".to_string(),
+        )
+    }
+
+    #[test]
+    fn a_batch_from_one_folder_becomes_a_single_select_and_fetch() {
+        // The whole point: twenty inbox messages cost one SELECT and one FETCH
+        // on one connection, not twenty connect/login/fetch/logout cycles.
+        let client = imap_client_synced_from(None);
+        let plan = client.plan_batch_fetch(&["acc-1::1", "acc-1::2", "acc-1::3"]);
+
+        assert_eq!(plan.groups.len(), 1, "one folder, one group");
+        assert_eq!(plan.groups[0].0, ImapFolder::Inbox);
+        assert_eq!(plan.groups[0].1, vec![(0, 1), (1, 2), (2, 3)]);
+        assert!(plan.invalid.is_empty());
+    }
+
+    #[test]
+    fn a_mixed_batch_is_grouped_per_folder_keeping_each_messages_slot() {
+        // Results are returned positionally, so every UID has to carry the
+        // index it came from or the caller would mis-attribute bodies.
+        let client = imap_client_synced_from(None);
+        let plan = client.plan_batch_fetch(&["acc-1::7", "acc-1::SENT::4", "acc-1::9", "acc-1::SENT::5"]);
+
+        assert_eq!(plan.groups.len(), 2);
+        let inbox = plan
+            .groups
+            .iter()
+            .find(|(f, _)| *f == ImapFolder::Inbox)
+            .expect("inbox group");
+        let sent = plan
+            .groups
+            .iter()
+            .find(|(f, _)| *f == ImapFolder::Sent)
+            .expect("sent group");
+        assert_eq!(inbox.1, vec![(0, 7), (2, 9)]);
+        assert_eq!(sent.1, vec![(1, 4), (3, 5)]);
+    }
+
+    #[test]
+    fn a_malformed_uid_fails_only_its_own_message() {
+        // One bad ID must not cost the other nineteen messages in the chunk.
+        let client = imap_client_synced_from(None);
+        let plan = client.plan_batch_fetch(&["acc-1::1", "acc-1::not-a-uid", "acc-1::3"]);
+
+        assert_eq!(plan.invalid, vec![1]);
+        assert_eq!(plan.groups.len(), 1);
+        assert_eq!(plan.groups[0].1, vec![(0, 1), (2, 3)]);
+    }
+
+    #[test]
+    fn an_empty_batch_plans_no_work() {
+        let client = imap_client_synced_from(None);
+        let plan = client.plan_batch_fetch(&[]);
+        assert!(plan.groups.is_empty() && plan.invalid.is_empty());
+    }
 
     #[test]
     fn search_query_is_all_when_unbounded() {
