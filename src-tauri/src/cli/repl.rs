@@ -172,7 +172,14 @@ async fn handle_slash(session: &mut CliSession, rest: &str) -> Result<()> {
         "model" => match args.first() {
             Some(m) => switch_model(session, m),
             None => {
-                println!("{}", format_model_menu(&session.model));
+                println!(
+                    "{}",
+                    format_model_menu(
+                        &session.model,
+                        crate::util::system::total_ram_gb(),
+                        crate::ai::discrete_vram_budget_bytes(),
+                    )
+                );
                 Ok(())
             }
         },
@@ -385,10 +392,16 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
 /// current model id; if it isn't a catalog entry (e.g. an Ollama model the user
 /// typed by hand), it's still surfaced on its own line so the user can see what
 /// is actually active.
-fn format_model_menu(selected: &str) -> String {
+///
+/// `total_ram_gb` decides which entry carries `(recommended)` — the same
+/// hardware-aware pick the onboarding picker badges, passed in rather than
+/// probed here so the layout stays testable at any machine size.
+fn format_model_menu(selected: &str, total_ram_gb: u64, vram_budget_bytes: Option<u64>) -> String {
     use crate::ai::model_catalog;
 
     let models: Vec<&model_catalog::CatalogModel> = model_catalog::chat_models().collect();
+    let recommended_id =
+        model_catalog::recommended_chat_model(model_catalog::CATALOG, total_ram_gb, vram_budget_bytes).map(|m| m.id);
     let id_width = models.iter().map(|m| m.id.len()).max().unwrap_or(0);
 
     let mut out = String::from("available chat models (* = current):\n");
@@ -400,7 +413,11 @@ fn format_model_menu(selected: &str) -> String {
         } else {
             ' '
         };
-        let tag = if m.recommended { " (recommended)" } else { "" };
+        let tag = if Some(m.id) == recommended_id {
+            " (recommended)"
+        } else {
+            ""
+        };
         out.push_str(&format!(
             "  {marker} {id:<id_width$}  {name}{tag}\n",
             id = m.id,
@@ -530,7 +547,7 @@ mod tests {
 
     #[test]
     fn model_menu_lists_every_chat_model_and_marks_current() {
-        let menu = format_model_menu("qwen3.5-9b-q4_k_m");
+        let menu = format_model_menu("qwen3.5-9b-q4_k_m", 32, None);
         // Every chat model in the catalog is listed.
         for m in crate::ai::model_catalog::chat_models() {
             assert!(menu.contains(m.id), "menu must list {}", m.id);
@@ -552,10 +569,33 @@ mod tests {
     }
 
     #[test]
+    fn model_menu_recommends_by_machine_size() {
+        // Same hardware-aware pick the onboarding badge uses: the CLI must not
+        // tell a 64 GB workstation that the 4B model is the one for it.
+        let small = format_model_menu("qwen3.5-4b-q4_k_m", 16, None);
+        assert!(
+            small.contains("qwen3.5-4b-q4_k_m           Qwen 3.5 4B (recommended)")
+                || small.contains("Qwen 3.5 4B (recommended)"),
+            "16 GB machine should be pointed at the 4B: {small}"
+        );
+
+        let large = format_model_menu("qwen3.5-4b-q4_k_m", 64, None);
+        assert!(
+            !large.contains("Qwen 3.5 4B (recommended)"),
+            "64 GB machine should not be pointed at the smallest model: {large}"
+        );
+        assert_eq!(
+            large.matches("(recommended)").count(),
+            1,
+            "exactly one model carries the tag: {large}"
+        );
+    }
+
+    #[test]
     fn model_menu_surfaces_current_model_absent_from_catalog() {
         // A model the user typed by hand (e.g. an Ollama tag) isn't in the
         // download catalog, but the menu still shows it as the active one.
-        let menu = format_model_menu("llama3:8b");
+        let menu = format_model_menu("llama3:8b", 32, None);
         assert!(
             menu.contains("* llama3:8b"),
             "off-catalog current model must show: {menu}"

@@ -46,6 +46,17 @@ pub async fn list_catalog_models(state: State<'_, AppState>) -> Result<Vec<Catal
     let local = model_manager::list_local_models(&state.app_data_dir);
     let local_by_id: HashMap<&str, &model_manager::LocalModel> = local.iter().map(|m| (m.id.as_str(), m)).collect();
 
+    // Which chat model to badge depends on the machine in front of the user,
+    // not on a flag fixed when the catalog was written: a 64 GB desktop and an
+    // 8 GB laptop were both being pointed at the smallest model. The embedding
+    // model is bundled and hardware-independent, so it keeps its catalog flag.
+    let recommended_chat_id = crate::ai::model_catalog::recommended_chat_model(
+        CATALOG,
+        crate::util::system::total_ram_gb(),
+        crate::ai::discrete_vram_budget_bytes(),
+    )
+    .map(|m| m.id);
+
     let models: Vec<CatalogModelResponse> = CATALOG
         .iter()
         .map(|m| CatalogModelResponse {
@@ -59,7 +70,10 @@ pub async fn list_catalog_models(state: State<'_, AppState>) -> Result<Vec<Catal
             context_window: m.context_window,
             license: m.license.to_string(),
             min_ram_gb: m.min_ram_gb,
-            recommended: m.recommended,
+            recommended: match m.kind {
+                ModelKind::Chat => Some(m.id) == recommended_chat_id,
+                ModelKind::Embedding => m.recommended,
+            },
             supports_tools: m.supports_tools,
             is_local: local_by_id.contains_key(m.id),
             is_linked: local_by_id.get(m.id).map(|m| m.is_linked).unwrap_or(false),
