@@ -9,6 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.7] — 2026-09-09
+
+### Added
+
+- **Reading and deleting mail now reaches Gmail itself.** Marking a message read
+  or deleting it only ever changed EmailOps' local copy, so a message you had
+  read here stayed unread everywhere else, and a deleted one stayed in your
+  inbox on the web and on your phone. Both now push to the account. Deletes go
+  to Gmail's Trash, so they stay recoverable there for 30 days. Reading stays
+  instant and works offline; the account catches up in the background.
+- **The recommended chat model now follows your hardware.** The badge in
+  onboarding was fixed when the catalog was written, so an 8 GB laptop and a
+  64 GB workstation were both pointed at the smallest model — and since the
+  picker pre-selects the recommendation, that was also the model you continued
+  with. It now suggests the largest model the machine can carry comfortably,
+  from system RAM or from a discrete GPU's memory when one can hold the weights.
+
+### Fixed
+
+- **Changing an account's sync time frame takes effect immediately.** Picking a
+  narrower range only wrote it to the database; the sync already running kept
+  walking the old one — and for IMAP, which syncs on new-mail notifications,
+  "already running" could mean "until new mail happens to arrive". An account
+  set to "last 7 days" kept pulling years of history, across restarts. The run
+  in flight now stops at its next batch boundary, keeping what it has already
+  downloaded, and a replacement starts on the new range.
+- **Widening the range reaches Sent, Spam, Trash and custom folders again.**
+  Those mailboxes record how far back they have been swept, which stops being
+  true when the range widens. The marker is now cleared by the next sync, where
+  the run being replaced can no longer write it back.
+- **Mail appears while a large first sync is still running.** The sync listed
+  every page of your history before downloading anything, which on a big
+  mailbox is minutes of an empty inbox behind a spinner. It now downloads each
+  slice as it goes, so mail arrives within seconds and the full history still
+  finishes in one run.
+- **A message with no date no longer cuts a mailbox's history short.** Mail
+  providers occasionally report no usable received time. Stored as 1970, such a
+  message convinced the backfill it had reached the beginning of that mailbox
+  and marked it complete, hiding everything older for good. Affected installs
+  repair themselves on the next sync.
+- **Mail in a category you sync is no longer hidden from the inbox.** Choosing
+  to sync Promotions downloaded and stored it, then filtered it out of the list
+  by a default nobody had chosen. Category tabs also went missing when picked
+  during onboarding, and were unreachable past the fourth one in a narrow list
+  pane.
+- **Drafts edited elsewhere show up without waiting for a sync.** A draft
+  changed in Gmail was pulled into the database correctly, but the Drafts screen
+  kept showing the snapshot it read when you opened it. It now refreshes when a
+  sync completes, and checks the account when you open the Drafts list or a
+  draft itself.
+- **Oversized secrets no longer fail to store on Windows.** Values beyond the
+  platform credential limit are split across chunks instead of being rejected.
+
+### Changed
+
+- **Faster first sync.** Messages are fetched a chunk at a time over a single
+  connection rather than one at a time — for IMAP that removes a full
+  connection and login per message, which also stops servers that limit logins
+  from refusing connections mid-sync. The fixed pause between batches is now
+  derived from each provider's own published limit instead of one conservative
+  value for everyone.
+- Password hashing moved to argon2 0.6. Existing passwords keep working — the
+  stored hashes remain valid and are unchanged.
+- Daily release metrics now archive repository traffic alongside download
+  counts.
+
+### Security
+
+- Updated the `h2` HTTP/2 library to 0.4.19, picking up the fix for
+  RUSTSEC-2026-0258.
+
 ## [0.6.6] — 2026-08-14
 
 ### Added

@@ -50,6 +50,22 @@ La última fila es la única vía por la que tu correo puede llegar a un tercero
 por defecto y requiere un cambio deliberado en **Ajustes → IA: backend y modelos** más tu
 propia clave de API.
 
+## Qué cambia EmailOps en tu buzón
+
+Casi todo lo que hace EmailOps es de solo lectura: descarga tu correo y guarda una copia
+local. Dos acciones llegan deliberadamente hasta la cuenta, para que lo que haces aquí sea lo
+que ves en todas partes:
+
+| Acción | Efecto en la cuenta |
+|---|---|
+| Marcar un mensaje como leído o no leído | El mismo mensaje se marca como leído en la cuenta (Gmail) |
+| Eliminar un mensaje | El mensaje se mueve a la **Papelera** de la cuenta (Gmail), donde se puede recuperar durante 30 días |
+
+EmailOps nunca borra un mensaje de forma permanente: las eliminaciones siempre van a la
+papelera, nunca a un borrado definitivo. La lectura se aplica primero en local para que la app
+funcione sin conexión, y la cuenta se pone al día en segundo plano. Todo lo demás — etiquetas,
+filtros, carpetas que no has tocado — se queda exactamente como está.
+
 ## Sin telemetría
 
 La app no recopila analíticas de uso, no envía informes de fallos y no tiene ninguna llamada

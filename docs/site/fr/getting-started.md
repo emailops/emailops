@@ -70,8 +70,10 @@ compte.
 EmailOps télécharge votre courrier dans une base de données locale, et la première passe doit
 tout récupérer depuis zéro. La durée dépend de la taille de la boîte — quelques minutes pour
 un petit compte, nettement plus pour un compte avec des années d'historique et de grosses
-pièces jointes. Cela tourne en arrière-plan et vous pouvez lire et rechercher ce qui est déjà
-arrivé pendant que le reste se met à jour.
+pièces jointes. Cela tourne en arrière-plan et les premiers messages apparaissent en quelques secondes — le
+courrier est téléchargé par tranches au fur et à mesure du parcours de la boîte, et non une
+fois tout l'historique parcouru — vous pouvez donc lire et rechercher ce qui est déjà arrivé
+pendant que le reste se met à jour.
 
 C'est un coût unique. Chaque synchronisation ultérieure est **incrémentale** : elle ne demande
 à votre fournisseur que ce qui a changé depuis la dernière fois, donc elle se termine en

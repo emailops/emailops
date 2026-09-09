@@ -64,8 +64,9 @@ unified "All accounts" inbox on top of the per-account views.
 EmailOps downloads your mail into a local database, and the first pass has to fetch
 everything from scratch. How long that takes depends on the size of the mailbox — a few
 minutes for a small account, considerably longer for one with years of history and heavy
-attachments. It runs in the background and you can read and search what has already arrived
-while the rest catches up.
+attachments. It runs in the background, and the first messages appear within seconds — mail is
+downloaded in slices as the mailbox is listed, rather than after the whole history has been
+scanned — so you can read and search what has already arrived while the rest catches up.
 
 This is a one-time cost. Every later sync is **incremental**: it asks your provider only for
 what changed since last time, so it finishes in seconds and runs quietly on a schedule. If

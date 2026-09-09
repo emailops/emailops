@@ -50,6 +50,23 @@ La dernière ligne est le seul chemin par lequel votre courrier peut atteindre u
 désactivé par défaut et exige une modification délibérée dans
 **Paramètres → IA : backend et modèles** ainsi que votre propre clé d'API.
 
+## Ce qu'EmailOps modifie dans votre boîte
+
+L'essentiel de ce que fait EmailOps est en lecture seule : l'application télécharge votre
+courrier et en conserve une copie locale. Deux actions atteignent délibérément le compte, pour
+que ce que vous faites ici soit ce que vous voyez partout ailleurs :
+
+| Action | Effet sur le compte |
+|---|---|
+| Marquer un message comme lu ou non lu | Le même message est marqué comme lu sur le compte (Gmail) |
+| Supprimer un message | Le message est placé dans la **Corbeille** du compte (Gmail), où il reste récupérable pendant 30 jours |
+
+EmailOps ne supprime jamais définitivement un message : les suppressions vont toujours à la
+corbeille, jamais à un effacement définitif. La lecture est appliquée d'abord en local pour que
+l'application fonctionne hors ligne, et le compte se met à jour en arrière-plan. Tout le
+reste — libellés, filtres, dossiers auxquels vous n'avez pas touché — reste exactement en
+l'état.
+
 ## Aucune télémétrie
 
 L'application ne collecte aucune donnée d'usage, n'envoie aucun rapport de plantage et ne

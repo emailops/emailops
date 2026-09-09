@@ -30,7 +30,7 @@ verificado:
 
 | Modelo | Tamaño de descarga | Memoria necesaria para ejecutarlo |
 |---|---|---|
-| Qwen 3.5 4B *(recomendado)* | ~3,0 GB | 8 GB |
+| Qwen 3.5 4B | ~3,0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4,6 GB | 12 GB |
 | Qwen 3.5 9B | ~5,7 GB | 16 GB |
 | Gemma 4 12B Instruct | ~6,7 GB | 16 GB |
@@ -50,8 +50,11 @@ hardware:
 - **Sin GPU** — la RAM del sistema, en la CPU. Funciona; solo que más lento.
 
 Los modelos demasiado grandes para la memoria de tu sistema aparecen atenuados en el selector.
-Los modelos más grandes responden mejor y van más lentos — empieza por el recomendado y sube
-solo si al hardware le sobra margen. Los requisitos completos están en
+Un modelo lleva la etiqueta **Recomendado**, elegida para la máquina en la que estás: EmailOps
+mira la memoria del sistema y, si tienes una tarjeta gráfica dedicada, también su memoria, y
+sugiere el modelo más grande que quepa con holgura. Por eso un portátil y una estación de
+trabajo verán sugerencias distintas. Los modelos más grandes responden mejor y van más lentos,
+así que la etiqueta es un punto de partida, no una regla. Los requisitos completos están en
 [Instalación](../installation/#with-local-ai).
 
 ### Ajustes de rendimiento

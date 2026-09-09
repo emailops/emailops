@@ -29,7 +29,7 @@ checksum:
 
 | Model | Download size | Memory needed to run it |
 |---|---|---|
-| Qwen 3.5 4B *(recommended)* | ~3.0 GB | 8 GB |
+| Qwen 3.5 4B | ~3.0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4.6 GB | 12 GB |
 | Qwen 3.5 9B | ~5.7 GB | 16 GB |
 | Gemma 4 12B Instruct | ~6.7 GB | 16 GB |
@@ -48,9 +48,12 @@ hardware:
   has.
 - **No GPU** — system RAM, on the CPU. It works; it is just slower.
 
-Models too large for your system memory are greyed out in the picker. Bigger models answer
-better and run slower — start with the recommended one and move up only if the hardware has
-headroom. Full requirements are in [Installation](../installation/#with-local-ai).
+Models too large for your system memory are greyed out in the picker. One model carries a
+**Recommended** badge, chosen for the machine you are on: EmailOps looks at your system memory
+and, if you have a discrete graphics card, at its memory too, then suggests the largest model
+that fits comfortably. A laptop and a workstation will therefore see different suggestions.
+Bigger models answer better and run slower, so the badge is a starting point rather than a
+rule. Full requirements are in [Installation](../installation/#with-local-ai).
 
 ### Performance knobs
 

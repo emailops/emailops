@@ -68,8 +68,10 @@ verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereint
 EmailOps lädt Ihre E-Mails in eine lokale Datenbank, und der erste Durchlauf muss alles von
 Grund auf holen. Wie lange das dauert, hängt von der Größe des Postfachs ab — ein paar Minuten
 bei einem kleinen Konto, deutlich länger bei einem mit jahrelanger Historie und großen
-Anhängen. Es läuft im Hintergrund, und Sie können bereits Eingetroffenes lesen und
-durchsuchen, während der Rest nachzieht.
+Anhängen. Es läuft im Hintergrund, und die ersten Nachrichten erscheinen innerhalb von Sekunden — die
+E-Mails werden abschnittsweise geladen, während das Postfach durchgegangen wird, und nicht
+erst danach — sodass Sie bereits Eingetroffenes lesen und durchsuchen können, während der
+Rest nachzieht.
 
 Das sind einmalige Kosten. Jede spätere Synchronisierung ist **inkrementell**: Sie fragt beim
 Anbieter nur ab, was sich seither geändert hat, ist daher in Sekunden fertig und läuft

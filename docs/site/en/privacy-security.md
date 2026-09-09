@@ -48,6 +48,22 @@ The last row is the only path by which your mail can reach a third party, it is 
 default, and it takes a deliberate change in **Settings → AI Backend & Models** plus your own
 API key to enable.
 
+## What EmailOps changes in your mailbox
+
+Most of what EmailOps does is read-only: it downloads your mail and keeps a local copy. Two
+actions deliberately reach back to the account, so that what you do here is what you see
+everywhere else:
+
+| Action | Effect on the account |
+|---|---|
+| Marking a message read or unread | The same message is marked read on the account (Gmail) |
+| Deleting a message | The message is moved to the account's **Trash** (Gmail), where it stays recoverable for 30 days |
+
+EmailOps never permanently erases a message: deletes always go to Trash, never to a hard
+delete. Reading is applied locally first so the app works offline, and the account catches up
+in the background. Everything else — labels, filters, folders you have not touched — is left
+exactly as it is.
+
 ## No telemetry
 
 The app collects no usage analytics, sends no crash reports, and has no phone-home of any

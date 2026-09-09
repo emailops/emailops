@@ -744,3 +744,25 @@ only its key in the keychain* — breaks the "OAuth tokens live in the OS keycha
 in files" guarantee in `CLAUDE.md`, and puts the ciphertext somewhere a backup or sync
 tool can copy. *Storing only refresh tokens to shrink the blob* — Microsoft refresh
 tokens are themselves multi-kilobyte, so the limit is still breached by one account.
+
+## 2026-09-09 — Narrowing an account's sync range is not retroactive
+
+**Decision:** Changing an account to a narrower sync window stops EmailOps fetching
+anything older than the new floor, but leaves mail already downloaded in place. Only
+the *future* of the sync is bounded; the local database is never pruned to match.
+**Context:** The setting reads as a description of a window ("last 7 days"), so it is
+natural to expect the inbox to end up containing exactly that window. Issue #50's fix
+made the floor take effect immediately — the run in flight stops and a replacement
+starts on the new range — which sharpened the question: after narrowing, an account
+still shows older mail that the new range says it should not have. That is deliberate.
+Mail already synced is the user's local copy of their own mailbox, and a setting about
+how much to *download* is a weak mandate for deleting data the user can still see and
+search. Widening is symmetric: it re-opens the backfill rather than re-fetching what
+is already stored.
+**Rejected:** *Pruning below the floor on narrowing* — destroys local data as a side
+effect of a settings change, with no undo, and the mail may be the only copy if the
+provider has since removed it. *Hiding rather than deleting below-floor mail* — the
+data stays on disk, so the disk-space motive for narrowing is not served, and search
+results silently disappearing is harder to understand than mail simply remaining.
+*Prompting the user to choose at narrowing time* — a modal on a settings toggle, for a
+question most users have no basis to answer.

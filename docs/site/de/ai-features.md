@@ -31,7 +31,7 @@ Prüfsumme festgelegt:
 
 | Modell | Downloadgröße | Benötigter Speicher zur Ausführung |
 |---|---|---|
-| Qwen 3.5 4B *(empfohlen)* | ~3,0 GB | 8 GB |
+| Qwen 3.5 4B | ~3,0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4,6 GB | 12 GB |
 | Qwen 3.5 9B | ~5,7 GB | 16 GB |
 | Gemma 4 12B Instruct | ~6,7 GB | 16 GB |
@@ -51,9 +51,12 @@ Hardware ab:
 - **Keine GPU** — System-RAM, auf der CPU. Es funktioniert; es ist nur langsamer.
 
 Modelle, die für Ihren Systemspeicher zu groß sind, erscheinen in der Auswahl ausgegraut.
-Größere Modelle antworten besser und laufen langsamer — beginnen Sie mit dem empfohlenen und
-steigen Sie nur auf, wenn die Hardware Luft hat. Die vollständigen Anforderungen stehen unter
-[Installation](../installation/#with-local-ai).
+Ein Modell trägt die Markierung **Empfohlen**, ausgewählt für die Maschine, an der Sie sitzen:
+EmailOps betrachtet den Systemspeicher und, sofern eine dedizierte Grafikkarte vorhanden ist,
+auch deren Speicher, und schlägt dann das größte Modell vor, das bequem hineinpasst. Ein
+Laptop und eine Workstation sehen deshalb unterschiedliche Vorschläge. Größere Modelle
+antworten besser und laufen langsamer — die Markierung ist ein Ausgangspunkt, keine Regel.
+Die vollständigen Anforderungen stehen unter [Installation](../installation/#with-local-ai).
 
 ### Leistungsstellschrauben
 

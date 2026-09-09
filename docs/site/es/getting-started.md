@@ -68,7 +68,9 @@ una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 EmailOps descarga tu correo a una base de datos local, y la primera pasada tiene que traerlo
 todo desde cero. Cuánto tarda depende del tamaño del buzón — unos minutos en una cuenta
 pequeña, bastante más en una con años de historial y adjuntos pesados. Se ejecuta en segundo
-plano y puedes leer y buscar lo que ya ha llegado mientras el resto se pone al día.
+plano y los primeros mensajes aparecen en segundos — el correo se descarga por tramos a
+medida que se recorre el buzón, no al terminar de recorrerlo entero — así que puedes leer y
+buscar lo que ya ha llegado mientras el resto se pone al día.
 
 Es un coste único. Cada sincronización posterior es **incremental**: solo pide a tu proveedor
 lo que ha cambiado desde la última vez, así que termina en segundos y se ejecuta discretamente

@@ -51,6 +51,22 @@ Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gela
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
 **Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
 
+## Was EmailOps in Ihrem Postfach verändert
+
+Das meiste, was EmailOps tut, ist rein lesend: Es lädt Ihre E-Mails herunter und hält eine
+lokale Kopie. Zwei Aktionen greifen bewusst auf das Konto zurück, damit das, was Sie hier tun,
+auch überall sonst zu sehen ist:
+
+| Aktion | Wirkung auf das Konto |
+|---|---|
+| Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert (Gmail) |
+| Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gmail) und bleibt dort 30 Tage wiederherstellbar |
+
+EmailOps löscht eine Nachricht nie endgültig: Löschungen gehen immer in den Papierkorb,
+niemals in ein hartes Löschen. Der Lesestatus wird zuerst lokal gesetzt, damit die App offline
+funktioniert; das Konto zieht im Hintergrund nach. Alles andere — Labels, Filter, Ordner, die
+Sie nicht angefasst haben — bleibt genau so, wie es ist.
+
 ## Keine Telemetrie
 
 Die App sammelt keine Nutzungsstatistiken, sendet keine Absturzberichte und ruft in
