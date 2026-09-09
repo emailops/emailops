@@ -629,6 +629,20 @@ pub async fn start_resync_mailbox(
 /// must `APPEND` to the Sent folder itself — shows up in the Sent view without
 /// waiting for the next periodic sync.
 async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
+    enqueue_account_sync_with_contention(app, state, account_id, services::emails::SyncContention::Skip).await;
+}
+
+/// Same as [`enqueue_account_sync`], but lets the caller decide what happens
+/// when a sync for the account is already running. `SyncContention::Wait` is
+/// for callers that have just invalidated the in-flight run's settings (see
+/// `update_account_sync_from`): skipping there would leave the account on the
+/// settings the user just replaced.
+pub(crate) async fn enqueue_account_sync_with_contention(
+    app: &AppHandle,
+    state: &AppState,
+    account_id: String,
+    contention: services::emails::SyncContention,
+) {
     let db = state.db.clone();
     let app_data_dir = state.app_data_dir.clone();
     let ai_background = state.ai_background.clone();
@@ -642,7 +656,7 @@ async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: Str
     let account_queue = state.sync_queue_for(&account_id);
     account_queue
         .submit_named(&task_label, async move {
-            if let Err(error) = services::emails::sync_account(
+            if let Err(error) = services::emails::sync_account_with_contention(
                 &db,
                 &account_id_for_task,
                 &app_data_dir,
@@ -650,6 +664,7 @@ async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: Str
                 ai_background,
                 sync_abort_flags,
                 sync_locks,
+                contention,
             )
             .await
             {

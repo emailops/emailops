@@ -172,6 +172,10 @@ pub struct ImapClient {
     pub account_id: String,
     pub email: String,
     pub display_name: String,
+    /// The account's chosen history floor (`Account::sync_from_timestamp`).
+    /// Only the Sent listing needs it — every other pass is handed an explicit
+    /// window by the caller. `None` means "All mail".
+    sync_from_timestamp: Option<i64>,
 }
 
 /// One chunk of message IDs, resolved into per-folder UID batches.
@@ -243,6 +247,7 @@ impl ImapClient {
             account_id,
             email,
             display_name,
+            sync_from_timestamp: None,
         }
     }
 
@@ -267,6 +272,23 @@ impl ImapClient {
             }
         }
         plan
+    }
+
+    /// Bind the account's sync range to this client. Separate from [`new`] so
+    /// the credential-probing call sites (which have no account row yet) stay
+    /// unchanged.
+    pub fn with_sync_from(mut self, sync_from_timestamp: Option<i64>) -> Self {
+        self.sync_from_timestamp = sync_from_timestamp;
+        self
+    }
+
+    /// The `SEARCH` query for the Sent pass: bounded below by the account's own
+    /// floor and unbounded above, since a thread's opening message is often one
+    /// the user sent, older than anything in INBOX. An unbounded `ALL` here (as
+    /// this used to be) downloaded every sent message ever, so an account set to
+    /// "last 7 days" kept pulling years of mail (issue #50).
+    fn sent_search_query(&self) -> String {
+        build_search_query(self.sync_from_timestamp, None)
     }
 
     /// Build the stable email ID for an IMAP INBOX message.
@@ -831,10 +853,14 @@ impl EmailProvider for ImapClient {
         _label_filter: Option<&str>,
     ) -> Result<(Vec<MessageRef>, Option<String>)> {
         let creds = self.credentials.clone();
-        // Sent is listed once per pass, on the first page only — it is unbounded
-        // by date (see below) and re-listing it per page would multiply the work
-        // for no gain.
+        // Sent is listed once per pass, on the first page only — it spans the
+        // whole account range (see below) and re-listing it per page would
+        // multiply the work for no gain.
         let include_sent = page_token.is_none();
+        // The Sent listing is bounded by the *account's* floor rather than by
+        // this pass's window (see below). Resolved out here so the blocking
+        // closure captures a plain query string.
+        let sent_query = self.sent_search_query();
         let (inbox_uids, sent_uids): (Vec<u32>, Vec<u32>) =
             tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, Vec<u32>)> {
                 let mut session =
@@ -849,16 +875,20 @@ impl EmailProvider for ImapClient {
                 imap_search::select(&mut session, "INBOX")?;
                 let inbox_uids = imap_search::uid_search(&mut session, &query)?;
 
-                // Fetch Sent folder UIDs with NO date filter ("ALL").
+                // Fetch Sent folder UIDs bounded only by the account's sync range.
                 //
                 // Sent emails can predate every email in INBOX (e.g. the first message in a
                 // thread was sent by the user). Using the same incremental/backfill timestamp
-                // would miss those older emails. Searching ALL and letting `emails_exist_batch`
-                // deduplicate is cheap — UID scanning is a pure-index operation on the server
-                // and never re-downloads already-synced messages.
+                // would miss those older emails, so this pass deliberately ignores the
+                // caller's window and lets `emails_exist_batch` deduplicate — UID scanning is
+                // a pure-index operation on the server and never re-downloads already-synced
+                // messages. It does NOT ignore the account's own floor: an unbounded "ALL"
+                // here downloaded every sent message ever, so an IMAP account set to
+                // "last 7 days" kept pulling years of mail and the range looked ignored
+                // (issue #50).
                 let mut sent_uids: Vec<u32> = Vec::new();
                 if include_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
-                    match imap_search::uid_search(&mut session, "ALL") {
+                    match imap_search::uid_search(&mut session, &sent_query) {
                         Ok(uids) => sent_uids = uids,
                         // The Sent pass is best-effort — INBOX results still stand.
                         Err(e) => {
@@ -1674,22 +1704,6 @@ mod tests {
     // backfill pass re-listed the newest 100 UIDs (all already stored) forever,
     // concluded "nothing new", and latched `backfill_swept_from`.
 
-    fn imap_client_synced_from(_sync_from: Option<i64>) -> ImapClient {
-        ImapClient::new(
-            ImapCredentials {
-                host: "imap.example.com".to_string(),
-                port: 993,
-                username: "user@example.com".to_string(),
-                password: "pw".to_string(),
-                smtp_host: "smtp.example.com".to_string(),
-                smtp_port: 587,
-            },
-            "user@example.com".to_string(),
-            "User".to_string(),
-            "acc-1".to_string(),
-        )
-    }
-
     #[test]
     fn a_batch_from_one_folder_becomes_a_single_select_and_fetch() {
         // The whole point: twenty inbox messages cost one SELECT and one FETCH
@@ -1746,6 +1760,39 @@ mod tests {
     #[test]
     fn search_query_is_all_when_unbounded() {
         assert_eq!(build_search_query(None, None), "ALL");
+    }
+
+    fn imap_client_synced_from(sync_from: Option<i64>) -> ImapClient {
+        ImapClient::new(
+            ImapCredentials {
+                host: "imap.example.com".to_string(),
+                port: 993,
+                username: "user@example.com".to_string(),
+                password: "pw".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+                smtp_port: 587,
+            },
+            "user@example.com".to_string(),
+            "User".to_string(),
+            "acc-1".to_string(),
+        )
+        .with_sync_from(sync_from)
+    }
+
+    #[test]
+    fn the_sent_pass_is_bounded_by_the_accounts_sync_range() {
+        // Regression for #50: "last 7 days" used to still pull every sent
+        // message ever, because the Sent search was a flat `ALL`.
+        assert_eq!(
+            imap_client_synced_from(Some(1_770_940_800)).sent_search_query(),
+            "SINCE 12-Feb-2026"
+        );
+    }
+
+    #[test]
+    fn an_all_mail_account_keeps_an_unbounded_sent_pass() {
+        // "All mail" must not regress into a bounded search.
+        assert_eq!(imap_client_synced_from(None).sent_search_query(), "ALL");
     }
 
     #[test]
