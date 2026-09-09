@@ -1640,6 +1640,86 @@ async fn sync_with_provider_stores_new_emails() {
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
+/// Regression: a large backfill must put mail on screen while it is still
+/// listing, not after.
+///
+/// The listing loop used to run to completion before downloading anything. On a
+/// mailbox needing hundreds of pages that is many minutes during which nothing
+/// is written — and the inbox only refreshes when a batch lands, so the user
+/// saw an empty list behind a spinner (the reported symptom). The sync now
+/// lists a slice, downloads it, and repeats.
+#[tokio::test]
+async fn a_large_backfill_downloads_while_it_is_still_listing() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-il", "il@example.com")).unwrap();
+
+    // An email already stored puts the account into backfill mode (there is
+    // history below the oldest known message).
+    db.insert_email(&make_email_with(
+        "anchor",
+        "acc-il",
+        1_800_000_000,
+        "anchor@x.com",
+        "inbox",
+    ))
+    .unwrap();
+
+    // More history than one slice can list: PAGE_SIZE is 100 and a slice is 10
+    // pages, so 1200 messages force at least two slices.
+    let provider = FakeEmailProvider::new("il@example.com", "Il");
+    for i in 0..1200 {
+        provider.add_message(
+            make_email_with(
+                &format!("old-{i}"),
+                "acc-il",
+                1_700_000_000 + i as i64,
+                "sender@x.com",
+                "inbox",
+            ),
+            EmailCategory::Primary,
+            vec![],
+        );
+    }
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    let calls_handle = provider.call_log();
+    let account = db.get_account("acc-il").unwrap().unwrap();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let calls = calls_handle.read().unwrap().clone();
+    let first_fetch = calls
+        .iter()
+        .position(|c| c == "batch_get_messages")
+        .expect("downloaded something");
+    let lists_before_first_fetch = calls[..first_fetch].iter().filter(|c| *c == "list_messages").count();
+
+    // 1200 messages is 12 pages, and a slice is 10 — so the old
+    // enumerate-everything-first loop listed all 12 before fetching, while the
+    // sliced one fetches after 10. Asserting only "a list happens after a
+    // fetch" would pass either way, because the incremental pass always lists
+    // once more after the backfill has downloaded.
+    assert!(
+        lists_before_first_fetch <= 10,
+        "downloading must start after one slice, not after the whole mailbox is enumerated \
+         ({lists_before_first_fetch} list calls came first): {calls:?}"
+    );
+    assert!(
+        calls.iter().filter(|c| *c == "list_messages").count() > lists_before_first_fetch,
+        "the run must keep listing after the first download, so one sync still finishes the history: {calls:?}"
+    );
+}
+
 // ── Custom IMAP folder sync ────────────────────────────────────────────────
 
 fn listed_folder(name: &str, attrs: &[&str]) -> emailops_lib::sync::folder_plan::ListedFolder {
@@ -4025,6 +4105,41 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
 // against real (sanitised) recordings without code changes.
 //
 // See `tests/common/mock_server.rs` for the wiremock wiring.
+
+/// The Graph `$batch` path end to end: one POST answers a whole chunk, and the
+/// out-of-order responses land in the caller's slots.
+///
+/// The cassette deliberately answers slot 1 before slot 0 — Graph does not
+/// promise response order, and matching by position would swap the two emails.
+#[tokio::test]
+async fn outlook_batch_get_messages_against_cassette_mock() {
+    use emailops_lib::sync::outlook::OutlookClient;
+    use emailops_lib::sync::provider::EmailProvider;
+    use std::path::Path;
+
+    let mock = common::mock_server::MockProviderServer::from_cassette_path(Path::new(
+        "tests/fixtures/cassettes/outlook/batch_get_two_messages.json",
+    ))
+    .await;
+
+    let client = OutlookClient::new("dummy-token".into(), None, None, None).with_base_url(mock.base_url());
+
+    let results = client
+        .batch_get_messages(&["AAMkAD-msg-001", "AAMkAD-msg-002"])
+        .await
+        .expect("batch_get_messages against cassette");
+
+    assert_eq!(results.len(), 2);
+    let first = results[0].as_ref().expect("slot 0 fetched");
+    let second = results[1].as_ref().expect("slot 1 fetched");
+    assert_eq!(first.0.id, "AAMkAD-msg-001", "slot 0 must hold the first requested id");
+    assert_eq!(first.0.subject, "First message");
+    assert_eq!(
+        second.0.id, "AAMkAD-msg-002",
+        "slot 1 must hold the second requested id"
+    );
+    assert_eq!(second.0.subject, "Second message");
+}
 
 #[tokio::test]
 async fn outlook_client_list_messages_against_cassette_mock() {
