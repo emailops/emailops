@@ -316,6 +316,18 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
         .collect()
 }
 
+/// The device list for planning decisions made outside the loader — currently
+/// the model picker's "Recommended" badge.
+///
+/// Initialises the backend first, because ggml reports no devices until the
+/// backends have registered. That is a `OnceLock`, so the cost is paid once per
+/// process and is the same initialisation the first chat turn would trigger
+/// anyway.
+pub(crate) fn devices_for_planning() -> Vec<crate::ai::gpu_plan::GpuDevice> {
+    let _ = backend();
+    probe_devices()
+}
+
 /// Model params with `n_gpu_layers` sized to the GPU that will actually hold
 /// the weights.
 ///
