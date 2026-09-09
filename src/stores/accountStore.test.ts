@@ -282,3 +282,18 @@ describe('planChatAccountChange', () => {
     });
   });
 });
+
+describe('account settings version', () => {
+  it('bumps so the inbox refetches the account categories after a save', () => {
+    // Regression: the onboarding wizard and the sidebar each render their own
+    // AccountSettingsDialog, and only the sidebar's save invalidated the
+    // category chips (the counter lived in App's local state). A user who
+    // picked Promotions during onboarding got a strip showing Primary alone —
+    // the categories were fetched at account creation, before the settings
+    // existed, and nothing re-ran the query. The counter lives in the store so
+    // any dialog's save invalidates it.
+    const before = useAccountStore.getState().accountSettingsVersion;
+    useAccountStore.getState().bumpAccountSettingsVersion();
+    expect(useAccountStore.getState().accountSettingsVersion).toBe(before + 1);
+  });
+});

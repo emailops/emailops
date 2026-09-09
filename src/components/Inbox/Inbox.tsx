@@ -492,7 +492,12 @@ export function Inbox({
           <div
             role="tablist"
             aria-label={t('inbox:categoriesAria')}
-            className="mt-3 -mx-4 px-4 flex items-stretch gap-1 overflow-x-auto border-b border-transparent"
+            /* Wraps rather than scrolls. `overflow-x-auto` looked fine on a wide
+               pane but clipped silently on a narrow one: macOS hides scrollbars,
+               so with five or six categories the ones past the fold had no
+               affordance at all and were simply unreachable. Wrapping costs a
+               second row only when the pane is too narrow to fit one. */
+            className="mt-3 -mx-4 px-4 flex flex-wrap items-stretch gap-1 border-b border-transparent"
           >
             {visibleCategories.length > 1 && (
               <CategoryTab
