@@ -78,6 +78,32 @@ pub struct Database {
     read_conns: Vec<Mutex<Connection>>,
 }
 
+/// Excludes mail the junk detector called spam or phishing, unless the user
+/// overruled it. Graymail only joins them when `hide_graymail` is set: bulk
+/// newsletters and receipts are the user's own mail and most of what a company
+/// block legitimately holds, so dropping them is the user's call (the same
+/// `junk_flagged_action` preference the inbox's "Hide junk" checkbox writes).
+/// Only the `junk` band is dropped — `uncertain` and `unknown` would hide real
+/// mail on a maybe.
+///
+/// `{alias}` is the `emails` alias to correlate against.
+pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
+    let kinds = if hide_graymail {
+        "('spam', 'phishing', 'graymail')"
+    } else {
+        "('spam', 'phishing')"
+    };
+    format!(
+        "AND NOT EXISTS (
+             SELECT 1 FROM email_junk j
+             WHERE j.email_id = {alias}.id
+               AND j.band = 'junk'
+               AND j.primary_kind IN {kinds}
+               AND (j.user_override IS NULL OR j.user_override <> 'not_junk')
+         )"
+    )
+}
+
 impl Database {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&data_dir)

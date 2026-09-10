@@ -1,5 +1,19 @@
 use super::*;
 
+/// Split a `Name <addr@host>` header into its display name and address.
+/// A bare address yields an empty name.
+fn split_addressee(raw: &str) -> (String, String) {
+    let raw = raw.trim();
+    if let Some(open) = raw.rfind('<') {
+        if let Some(close) = raw[open..].find('>') {
+            let address = raw[open + 1..open + close].trim().to_string();
+            let name = raw[..open].trim().trim_matches('"').trim().to_string();
+            return (name, address);
+        }
+    }
+    (String::new(), raw.to_string())
+}
+
 impl Database {
     /// Get aggregate stats for smart filter suggestions, excluding removed filters.
     ///
@@ -192,6 +206,7 @@ impl Database {
         tag_type: Option<&str>,
         tag_value: Option<&str>,
         attachment_ext: Option<&str>,
+        window: &crate::models::EmailWindow,
         limit: i32,
         offset: i32,
     ) -> Result<FilteredEmailsResult> {
@@ -235,6 +250,11 @@ impl Database {
             // (which yields ~hundreds of rows). With the hint, matched_threads
             // costs O(emails_tagged_with_this_value), not O(account_emails).
             let first_idx = if account_param.is_some() { 2 } else { 1 };
+            // Window binds land after limit/offset so the fixed indices above
+            // keep their positions.
+            let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
+            let mut window_idx = first_idx + 4;
+            let (window_sql, window_binds) = window.sql("e2", &mut window_idx);
             let select_sql = format!(
                 "WITH matched_threads AS (
                      SELECT DISTINCT e2.account_id AS aid, e2.thread_id AS tid
@@ -243,6 +263,8 @@ impl Database {
                      WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
                        AND {scope_e2} AND e2.is_deleted = 0
                        AND e2.mailbox IN ('inbox', 'sent')
+                       {junk_sql}
+                       {window_sql}
                  ),
                  {thread_latest}
                  {representative}
@@ -267,6 +289,7 @@ impl Database {
             params_vec.push(Box::new(tv.to_string()));
             params_vec.push(Box::new(limit));
             params_vec.push(Box::new(offset));
+            params_vec.extend(window_binds);
             let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
             let mut emails = Vec::new();
             let mut rows = stmt.query(params_refs.as_slice())?;
@@ -326,11 +349,12 @@ impl Database {
             param_idx += 1;
         }
 
+        let (window_sql, window_binds) = window.sql("emails", &mut param_idx);
         let select_sql = format!(
             "WITH matched_threads AS (
                  SELECT DISTINCT account_id AS aid, thread_id AS tid
                  FROM emails
-                 WHERE {match_cond}
+                 WHERE {match_cond}{window_sql}
              ),
              {thread_latest}
              {representative}
@@ -344,6 +368,7 @@ impl Database {
             offset_idx = param_idx + 1,
         );
 
+        params_vec.extend(window_binds);
         params_vec.push(Box::new(limit));
         params_vec.push(Box::new(offset));
 
@@ -359,6 +384,59 @@ impl Database {
             emails,
             total_count: -1,
         })
+    }
+
+    /// Sender and recipient pairs for each of the given threads, newest message
+    /// first, appended into `out` keyed by thread id.
+    ///
+    /// Returns `(display_name, address)` pairs — the caller dedupes by address
+    /// and decides which name to show. Kept as a separate query rather than
+    /// bolted onto `get_filtered_emails`: that one is shared with the sidebar,
+    /// and its join order is load-bearing (see the CROSS JOIN note in
+    /// `db::tags`).
+    pub fn read_thread_people(
+        &self,
+        account_id: &str,
+        thread_ids: &[String],
+        out: &mut std::collections::HashMap<String, Vec<(String, String)>>,
+    ) -> Result<()> {
+        if thread_ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = std::iter::repeat_n("?", thread_ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT thread_id, sender, sender_email, recipients_json, cc_json
+             FROM emails
+             WHERE account_id = ?1 AND is_deleted = 0
+               AND thread_id IN ({placeholders})
+             ORDER BY timestamp DESC, id DESC"
+        );
+
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + thread_ids.len());
+        bound.push(&account_id);
+        for t in thread_ids {
+            bound.push(t);
+        }
+
+        let mut rows = stmt.query(bound.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let thread_id: String = row.get(0)?;
+            let sender: String = row.get(1)?;
+            let sender_email: String = row.get(2)?;
+            let recipients: Vec<String> =
+                serde_json::from_str(&row.get::<_, String>(3).unwrap_or_default()).unwrap_or_default();
+            let cc: Vec<String> =
+                serde_json::from_str(&row.get::<_, String>(4).unwrap_or_default()).unwrap_or_default();
+
+            let people = out.entry(thread_id).or_default();
+            people.push((sender, sender_email));
+            for raw in recipients.into_iter().chain(cc) {
+                people.push(split_addressee(&raw));
+            }
+        }
+        Ok(())
     }
 
     /// Date-only search: return all individual emails in the given window,
@@ -655,6 +733,72 @@ impl Database {
                 };
                 let range_params = if upper_bound.is_some() { 2 } else { 1 };
 
+                // Branch 3 (relaxed, multi-token needles only): every
+                // meaningful token must appear SOMEWHERE in "display name +
+                // address". Neither indexed branch can span the two fields —
+                // the FTS `sender` column holds only the display name, and the
+                // address branch is a prefix scan pinned to the local part — so
+                // a needle like "nadia de northwind" (a person AND their
+                // company) matched nothing at all. This branch is a scan, which
+                // is why it is gated on a multi-token needle: single-token
+                // lookups (the overwhelming majority) keep the pure index path.
+                let relaxed_tokens = relaxed_sender_tokens(from);
+                let relaxed_branch = if relaxed_tokens.is_empty() {
+                    String::new()
+                } else {
+                    let first = param_idx + range_params + 1;
+                    let conds: Vec<String> = (0..relaxed_tokens.len())
+                        .map(|i| format!("haystack LIKE ?{}", first + i))
+                        .collect();
+                    format!(
+                        "
+                         UNION
+                         SELECT email_id FROM (
+                             SELECT id AS email_id,
+                                    lower(sender || ' ' || sender_email) AS haystack
+                             FROM emails
+                             WHERE account_id = ?1
+                         ) WHERE {}",
+                        conds.join(" AND "),
+                    )
+                };
+
+                // Branch 4 (company / domain needles): the user names the
+                // COMPANY, not the person — "northwind", "de northwind". The domain
+                // is in no display name, and it is not a prefix of the address
+                // (that starts with the local part), so branches 1-2 find only
+                // the few senders who spell the company into their display
+                // name. Prefix-matched against the indexed `sender_domain`
+                // column, so this is a B-tree range scan, not a table scan.
+                let domain_needle = sender_domain_needle(from);
+                let domain_branch = match domain_needle {
+                    None => String::new(),
+                    Some(ref d) => {
+                        let lo = param_idx + range_params + 1 + relaxed_tokens.len();
+                        match prefix_upper_bound(d) {
+                            Some(_) => format!(
+                                "
+                         UNION
+                         SELECT id AS email_id
+                         FROM emails INDEXED BY idx_emails_sender_domain
+                         WHERE account_id = ?1
+                           AND sender_domain >= ?{lo} AND sender_domain < ?{hi}",
+                                lo = lo,
+                                hi = lo + 1,
+                            ),
+                            None => format!(
+                                "
+                         UNION
+                         SELECT id AS email_id
+                         FROM emails INDEXED BY idx_emails_sender_domain
+                         WHERE account_id = ?1
+                           AND sender_domain >= ?{lo}",
+                                lo = lo,
+                            ),
+                        }
+                    }
+                };
+
                 from_match_cte = Some(format!(
                     "from_match AS (
                          SELECT id AS email_id
@@ -662,10 +806,12 @@ impl Database {
                          WHERE account_id = ?1
                            AND {range}
                          UNION
-                         SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}
+                         SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}{relaxed}{domain}
                      )",
                     range = range_clause,
                     fts_idx = param_idx + range_params,
+                    relaxed = relaxed_branch,
+                    domain = domain_branch,
                 ));
                 params_vec.push(Box::new(from_lower));
                 if let Some(ub) = upper_bound {
@@ -673,6 +819,19 @@ impl Database {
                 }
                 params_vec.push(Box::new(fts_sender));
                 param_idx += range_params + 1;
+                for tok in &relaxed_tokens {
+                    params_vec.push(Box::new(format!("%{}%", tok)));
+                    param_idx += 1;
+                }
+                if let Some(d) = domain_needle {
+                    let ub = prefix_upper_bound(&d);
+                    params_vec.push(Box::new(d));
+                    param_idx += 1;
+                    if let Some(ub) = ub {
+                        params_vec.push(Box::new(ub));
+                        param_idx += 1;
+                    }
+                }
                 // The JOIN into from_match is handled in query assembly below.
             }
             from_params_end = params_vec.len();
@@ -943,6 +1102,7 @@ mod tests {
                 Some("priority"),
                 Some("urgent"),
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )
@@ -1312,6 +1472,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )
@@ -1356,6 +1517,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )
@@ -1385,6 +1547,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )
@@ -1418,6 +1581,7 @@ mod tests {
                 Some("company"),
                 Some("Acme"),
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )
@@ -1649,6 +1813,267 @@ mod tests {
             1,
             "exactly one email matches both filters, got: {:?}",
             ids
+        );
+    }
+
+    // Regression: a `from:` needle that spans the display NAME and the address
+    // DOMAIN ("nadia de northwind" — Spanish "Nadia from Northwind") matched
+    // nothing. The FTS branch ANDs every token against the `sender` column,
+    // which only holds the display name, so the domain token could never hit;
+    // the address branch is a PREFIX scan, so the name token pinned it to the
+    // local part. Neither branch can span both fields, and connector words
+    // ("de", "from") are in no field at all.
+    #[test]
+    fn search_from_filter_spans_display_name_and_address_domain() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_search_email(
+            &db,
+            "e1",
+            account,
+            "thread-nadia",
+            "Nadia Brookes",
+            "nadia.brookes@northwind.example",
+            "Contract review",
+            "attached the revised draft",
+            100,
+        );
+        // Same first name, different company — must NOT match.
+        insert_search_email(
+            &db,
+            "e2",
+            account,
+            "thread-other",
+            "Nadia Ferrer",
+            "nadia.ferrer@seabright.example",
+            "Lunch tomorrow?",
+            "want to grab lunch",
+            200,
+        );
+
+        let results = db
+            .search_emails(
+                account,
+                "",
+                None,
+                Some("nadia de northwind"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+            )
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(
+            ids.contains(&"e1"),
+            "name + domain needle must find the sender at that domain, got: {:?}",
+            ids
+        );
+        assert!(
+            !ids.contains(&"e2"),
+            "the same first name at another domain must not match, got: {:?}",
+            ids
+        );
+    }
+
+    // The relaxed multi-token branch must still be an AND across the meaningful
+    // tokens — it broadens WHERE each token may appear (display name or
+    // address), never WHICH senders qualify.
+    #[test]
+    fn search_from_filter_multi_token_requires_every_token() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_search_email(
+            &db,
+            "e1",
+            account,
+            "thread-nadia",
+            "Nadia Brookes",
+            "nadia.brookes@northwind.example",
+            "Contract review",
+            "attached the revised draft",
+            100,
+        );
+
+        let results = db
+            .search_emails(
+                account,
+                "",
+                None,
+                Some("nadia seabright"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+            )
+            .unwrap();
+
+        assert!(
+            results.is_empty(),
+            "a token matching no field must exclude the sender, got: {:?}",
+            results.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    // A multi-word DISPLAY NAME needle must keep working — the relaxed branch is
+    // additive, never a replacement for the existing FTS name match.
+    #[test]
+    fn search_from_filter_multi_token_display_name_still_matches() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_search_email(
+            &db,
+            "e1",
+            account,
+            "thread-nadia",
+            "Nadia Brookes",
+            "nadia.brookes@northwind.example",
+            "Contract review",
+            "attached the revised draft",
+            100,
+        );
+
+        let results = db
+            .search_emails(
+                account,
+                "",
+                None,
+                Some("Nadia Brookes"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+            )
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+
+        assert!(ids.contains(&"e1"), "full display name must match, got: {:?}", ids);
+    }
+
+    // ── `from:` filter contract ─────────────────────────────────────────────
+    //
+    // The tests above this point each pin ONE needle shape, added reactively
+    // after a user hit it. That is how the "person + company" bug survived:
+    // nobody had written down what the filter is supposed to accept, so every
+    // new phrasing was an untested shape. These two tests are that contract —
+    // one seeded sender, and the space of needles a human or the query planner
+    // can plausibly produce for them. Add a row here before adding a branch to
+    // the `from` filter.
+    //
+    // The sender is deliberately synthetic (`.example` is the RFC 2606 reserved
+    // TLD) so the table can live in git.
+
+    /// The one sender every contract row is aimed at.
+    const CONTRACT_SENDER: (&str, &str) = ("Nadia Brookes", "nadia.brookes@northwind.example");
+    /// A decoy sharing the first name, at a different company.
+    const CONTRACT_DECOY: (&str, &str) = ("Nadia Ferrer", "nadia.ferrer@seabright.example");
+
+    fn contract_db() -> Database {
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "thread-brookes",
+            CONTRACT_SENDER.0,
+            CONTRACT_SENDER.1,
+            "Contract review",
+            "attached the revised draft",
+            100,
+        );
+        insert_search_email(
+            &db,
+            "e2",
+            "acc1",
+            "thread-ferrer",
+            CONTRACT_DECOY.0,
+            CONTRACT_DECOY.1,
+            "Lunch tomorrow?",
+            "want to grab lunch",
+            200,
+        );
+        db
+    }
+
+    fn from_search(db: &Database, needle: &str) -> Vec<String> {
+        db.search_emails("acc1", "", None, Some(needle), None, None, None, None, None, 50)
+            .unwrap()
+            .iter()
+            .map(|e| e.id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn from_filter_contract_finds_the_sender_for_every_plausible_needle() {
+        let db = contract_db();
+        // (needle, why it is a shape a real caller produces)
+        let must_match: &[(&str, &str)] = &[
+            ("nadia", "first name alone"),
+            ("brookes", "surname alone"),
+            ("Nadia Brookes", "full display name"),
+            ("nadia brookes", "display name, lowercased"),
+            ("nadia.brookes@northwind.example", "the verbatim address"),
+            ("nadia.brookes", "the address local part"),
+            (
+                "northwind",
+                "the COMPANY alone — the domain, which is in no display name",
+            ),
+            ("northwind.example", "the bare domain with its TLD"),
+            ("de northwind", "Spanish 'from <company>' — connector plus domain"),
+            ("nadia northwind", "person AND company, no connector"),
+            ("nadia de northwind", "person AND company, Spanish connector"),
+            ("brookes northwind", "surname AND company"),
+        ];
+        let mut failures = Vec::new();
+        for (needle, why) in must_match {
+            let ids = from_search(&db, needle);
+            if !ids.contains(&"e1".to_string()) {
+                failures.push(format!("  from={:?} ({}) → {:?}", needle, why, ids));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "these needles must all reach {} <{}>:\n{}",
+            CONTRACT_SENDER.0,
+            CONTRACT_SENDER.1,
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn from_filter_contract_does_not_leak_the_other_sender() {
+        // Broadening recall must not cost precision: nothing that names only
+        // the decoy's company may return the contract sender, and vice versa.
+        let db = contract_db();
+        let must_not_match: &[(&str, &str)] = &[
+            ("seabright", "the decoy's company alone"),
+            ("ferrer", "the decoy's surname"),
+            ("nadia seabright", "shared first name, WRONG company"),
+            ("brookes seabright", "right surname, wrong company"),
+        ];
+        let mut failures = Vec::new();
+        for (needle, why) in must_not_match {
+            let ids = from_search(&db, needle);
+            if ids.contains(&"e1".to_string()) {
+                failures.push(format!("  from={:?} ({}) → {:?}", needle, why, ids));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "these needles must NOT reach {} <{}>:\n{}",
+            CONTRACT_SENDER.0,
+            CONTRACT_SENDER.1,
+            failures.join("\n")
         );
     }
 

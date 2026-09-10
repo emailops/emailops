@@ -1163,6 +1163,106 @@ pub struct TagPriority {
     pub priority_score: f64,
 }
 
+/// One tag value with the number of threads carrying it, for a single
+/// `tag_type` and account scope. Computed live from `email_tags` (see
+/// `services::filters::get_tag_stats`) rather than read from the cached
+/// `smart_filter_suggestions` table, so the tag board reflects classification
+/// that landed since the last "recalculate filters".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagStat {
+    /// The account whose threads this count covers. `None` when the caller
+    /// asked for tag values aggregated across the whole scope.
+    pub account_id: Option<String>,
+    pub tag_value: String,
+    pub count: i32,
+    /// Share of this tag's messages that the user sent — an explicit act, and
+    /// the strongest available signal that the tag matters to them.
+    pub sent_share: f64,
+    /// Share that the user has read. Weaker than replying, but it separates
+    /// mail they consume from mail they ignore.
+    pub read_share: f64,
+    /// Newest message carrying this tag, unix seconds.
+    pub last_activity_at: Option<i64>,
+    /// Engagement decayed by recency, 0..1. Drives the board's block order.
+    pub score: f64,
+}
+
+/// Everyone other than the account owner who appears in a thread — senders and
+/// recipients alike, most recently active first.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadParticipants {
+    pub thread_id: String,
+    /// Display names where the mail carried one, addresses otherwise.
+    pub names: Vec<String>,
+}
+
+/// Slice of the mailbox a board query looks at: which Gmail categories, and
+/// which time range. Both are optional narrowings — the default is "every
+/// category, all of time" so an omitted field never hides mail.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EmailWindow {
+    /// Categories to include. Empty means every category.
+    pub categories: Vec<String>,
+    /// Case-insensitive substring the tag value must contain. Blank or absent
+    /// means no filter. Lets the board reach values that ranking would never
+    /// surface — company alone has thousands.
+    pub search: Option<String>,
+    /// Inclusive lower bound on `emails.timestamp` (unix seconds).
+    pub since: Option<i64>,
+    /// Exclusive upper bound. Half-open so back-to-back day ranges cannot
+    /// both claim a thread that lands exactly on the boundary.
+    pub until: Option<i64>,
+    /// Also drop mail the junk detector called graymail. Spam and phishing are
+    /// always excluded; bulk newsletters and receipts are the user's call,
+    /// driven by the same `junk_flagged_action` preference as the inbox.
+    pub hide_graymail: bool,
+}
+
+impl EmailWindow {
+    /// SQL fragment + bind values for this window, against table alias `alias`.
+    /// Returns an empty fragment when nothing is narrowed.
+    pub fn sql(&self, alias: &str, next_index: &mut usize) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let mut parts: Vec<String> = Vec::new();
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if !self.categories.is_empty() {
+            let placeholders: Vec<String> = self
+                .categories
+                .iter()
+                .map(|_| {
+                    let p = format!("?{}", next_index);
+                    *next_index += 1;
+                    p
+                })
+                .collect();
+            parts.push(format!("{alias}.category IN ({})", placeholders.join(", ")));
+            for c in &self.categories {
+                binds.push(Box::new(c.clone()));
+            }
+        }
+        if let Some(since) = self.since {
+            parts.push(format!("{alias}.timestamp >= ?{next_index}"));
+            *next_index += 1;
+            binds.push(Box::new(since));
+        }
+        if let Some(until) = self.until {
+            parts.push(format!("{alias}.timestamp < ?{next_index}"));
+            *next_index += 1;
+            binds.push(Box::new(until));
+        }
+
+        let sql = if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", parts.join(" AND "))
+        };
+        (sql, binds)
+    }
+}
+
 /// Write-side input for a new pending task. Separate from `PendingTask` so
 /// callers don't fabricate id/timestamps and to keep the Tauri command
 /// surface small.

@@ -1077,6 +1077,7 @@ fn get_filtered_emails_by_domain_returns_matching_threads() {
             None,
             None,
             None,
+            &emailops_lib::models::EmailWindow::default(),
             50,
             0,
         )
@@ -1110,6 +1111,7 @@ fn get_filtered_emails_by_sender_returns_matching_threads() {
             None,
             None,
             None,
+            &emailops_lib::models::EmailWindow::default(),
             50,
             0,
         )
@@ -3395,6 +3397,7 @@ fn get_filtered_emails_by_tag_returns_only_tagged() {
             Some("priority"),
             Some("urgent"),
             None,
+            &emailops_lib::models::EmailWindow::default(),
             50,
             0,
         )
@@ -3502,6 +3505,7 @@ fn get_filtered_emails_no_filter_returns_all_inbox_emails() {
             None,
             None,
             None,
+            &emailops_lib::models::EmailWindow::default(),
             50,
             0,
         )
@@ -3535,6 +3539,7 @@ fn get_filtered_emails_no_filter_excludes_soft_deleted() {
             None,
             None,
             None,
+            &emailops_lib::models::EmailWindow::default(),
             50,
             0,
         )

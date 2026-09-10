@@ -399,6 +399,51 @@ export interface TagPriority {
   priorityScore: number;
 }
 
+/** One tag value plus the number of threads carrying it, for a single
+ *  `tagType`. Computed live from `email_tags` by `get_tag_stats` — unlike
+ *  `SmartFilter`, which serves the cached `smart_filter_suggestions` table. */
+export interface TagStat {
+  /** Account whose threads this count covers. Null when the caller asked for
+   *  values aggregated across the whole scope. */
+  accountId: string | null;
+  tagValue: string;
+  count: number;
+  /** Share of this tag's messages the user sent — the strongest signal that
+   *  the tag matters to them. */
+  sentShare: number;
+  /** Share the user has read. Weaker than replying, but it separates mail
+   *  they consume from mail they ignore. */
+  readShare: number;
+  /** Newest message carrying this tag, unix seconds. */
+  lastActivityAt: number | null;
+  /** Engagement decayed by recency, 0..1. Drives the board's block order. */
+  score: number;
+}
+
+/** Everyone other than the account owner in a thread, most recently active
+ *  first. Display names where the mail carried one, addresses otherwise. */
+export interface ThreadParticipants {
+  threadId: string;
+  names: string[];
+}
+
+/** Slice of the mailbox a board query looks at. Both fields are optional
+ *  narrowings — omitted means "every category, all of time". */
+export interface EmailWindow {
+  /** Categories to include. Empty means every category. */
+  categories?: string[];
+  /** Case-insensitive substring the tag value must contain. Blank means no
+   *  filter — it reaches values that ranking would never surface. */
+  search?: string | null;
+  /** Inclusive lower bound, unix seconds. */
+  since?: number | null;
+  /** Exclusive upper bound, unix seconds. */
+  until?: number | null;
+  /** Also drop mail the detector called graymail. Spam and phishing are always
+   *  excluded; bulk mail is the user's call. */
+  hideGraymail?: boolean;
+}
+
 export interface ClassificationConfig {
   enabled: boolean;
   classifyPrevious: boolean;

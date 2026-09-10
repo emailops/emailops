@@ -336,16 +336,25 @@ export function EmailView({
     <div className="flex-1 bg-white flex flex-col overflow-hidden">
       {lightboxMeta && <AttachmentLightbox meta={lightboxMeta} onClose={() => setLightboxMeta(null)} />}
       <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
-        {/* Row 1: subject + inline tags on the left, window controls on the right */}
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-900 truncate">{latestEmail.subject || '(No subject)'}</h1>
+        {/* Row 1: subject + inline tags on the left, window controls on the right.
+            `flex-wrap` on both the row and the control cluster is load-bearing:
+            with the chat panel docked the email pane can narrow to ~180px, and
+            an unshrinkable single-line cluster overflowed the header — the
+            ancestor's `overflow-hidden` then clipped its right edge, silently
+            eating the LAST control, which is Close. Wrapping makes the header
+            grow taller instead of hiding actions. `flex-1 basis-0` on the title
+            keeps its long content from forcing a wrap at normal widths. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+          <h1 className="flex-1 basis-0 min-w-0 text-lg font-semibold text-gray-900 truncate">
+            {latestEmail.subject || '(No subject)'}
+          </h1>
           {emailTags.length > 0 && (
             <div className="flex-shrink-0">
               <TagChips tags={emailTags} />
             </div>
           )}
           {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
-          <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <button
               onClick={() => {
                 setReplyMode('reply');

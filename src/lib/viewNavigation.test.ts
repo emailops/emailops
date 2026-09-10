@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEmailListView, planViewChange } from './viewNavigation';
+import { isEmailListView, planAccountSwitchView, planViewChange } from './viewNavigation';
 
 describe('isEmailListView', () => {
   it('recognises every mailbox-backed view', () => {
@@ -46,5 +46,33 @@ describe('planViewChange', () => {
   it('keeps the open email when switching views in split layout', () => {
     expect(planViewChange('sent', 'split').closeOpenEmail).toBe(false);
     expect(planViewChange('inbox', 'split').closeOpenEmail).toBe(false);
+  });
+});
+
+describe('planAccountSwitchView', () => {
+  it('keeps the tag board when the account scope changes', () => {
+    // The board is scope-aware end to end — both queries behind it take the
+    // unified scope — so flipping between one account and "All accounts" is a
+    // thing you do *to* the board, not a reason to leave it.
+    expect(planAccountSwitchView('tagboard')).toBe('tagboard');
+  });
+
+  it('returns to the inbox from every per-account view', () => {
+    // These views are hard-scoped to a single account and reset their own
+    // state on a switch; landing back on the inbox is the established
+    // behaviour and this change must not widen past the board.
+    expect(planAccountSwitchView('contacts')).toBe('inbox');
+    expect(planAccountSwitchView('tasks')).toBe('inbox');
+    expect(planAccountSwitchView('memory')).toBe('inbox');
+    expect(planAccountSwitchView('chat')).toBe('inbox');
+    expect(planAccountSwitchView('drafts')).toBe('inbox');
+    expect(planAccountSwitchView('dashboard')).toBe('inbox');
+  });
+
+  it('returns to the inbox from a mailbox-backed view', () => {
+    // A folder belongs to one account, so its id is meaningless after a switch.
+    expect(planAccountSwitchView('sent')).toBe('inbox');
+    expect(planAccountSwitchView('folder:Projects/2026')).toBe('inbox');
+    expect(planAccountSwitchView('inbox')).toBe('inbox');
   });
 });

@@ -34,6 +34,7 @@ import type {
   EmailAttachmentMeta,
   EmailCategory,
   EmailTag,
+  EmailWindow,
   EmbeddingsConfig,
   FilteredEmailsResult,
   FilterSuggestion,
@@ -65,8 +66,10 @@ import type {
   StorageStats,
   SyncStatus,
   TagPriority,
+  TagStat,
   TaskConfig,
   TaskCountsSummary,
+  ThreadParticipants,
   ThreadState,
   UpdateLensInput,
 } from '@/types';
@@ -595,6 +598,8 @@ export async function getFilteredEmails(
   limit?: number,
   offset?: number,
   attachmentExt?: string,
+  /** Category / time-range narrowing. Omitted = every category, all of time. */
+  window?: EmailWindow,
 ): Promise<FilteredEmailsResult> {
   return invoke('get_filtered_emails', {
     accountId,
@@ -605,7 +610,33 @@ export async function getFilteredEmails(
     limit,
     offset,
     attachmentExt,
+    window,
   });
+}
+
+/** Live thread counts per tag value for one classified tag type — the tag
+ *  board's column source. `accountId: null` aggregates every enabled account.
+ *  Unlike `getSavedSuggestions` this never serves a stale cache. */
+export async function getTagStats(accountId: string | null, tagType: string, limit?: number): Promise<TagStat[]> {
+  return invoke('get_tag_stats', { accountId, tagType, limit });
+}
+
+/** Per-(account, tag) thread counts — one row per block the tag board renders.
+ *  `accountId: null` spans every enabled account, splitting a shared tag into
+ *  one block per mailbox rather than merging them. */
+export async function getTagBoardStats(
+  accountId: string | null,
+  tagType: string,
+  window?: EmailWindow,
+  limit?: number,
+): Promise<TagStat[]> {
+  return invoke('get_tag_board_stats', { accountId, tagType, window, limit });
+}
+
+/** Everyone other than you in each thread. Batched: one call per page of
+ *  cards, not one per card. */
+export async function getThreadParticipants(accountId: string, threadIds: string[]): Promise<ThreadParticipants[]> {
+  return invoke('get_thread_participants', { accountId, threadIds });
 }
 
 export async function getFilterPrefs(accountId: string | null): Promise<SmartFilterPref[]> {

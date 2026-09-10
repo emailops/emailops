@@ -766,3 +766,34 @@ data stays on disk, so the disk-space motive for narrowing is not served, and se
 results silently disappearing is harder to understand than mail simply remaining.
 *Prompting the user to choose at narrowing time* — a modal on a settings toggle, for a
 question most users have no basis to answer.
+
+## 2026-09-10 — Tag Board groups by one classified tag type at a time
+
+**Decision:** The Tag Board renders a responsive grid of columns for a **single**
+classified tag type at a time — Company, Priority, Intent or Topic, chosen from a
+segmented control and persisted in `user_preferences` under `tagboard_tag_type`.
+Columns are the tag values of that type, ordered by thread count, capped at 15.
+Clicking a card opens the thread in the ordinary `EmailView` pane beside the board;
+clicking a column header applies that tag as a smart filter and switches to the inbox.
+
+**Context:** Emails already carry four independent classification dimensions, and the
+sidebar only ever exposed them as a flat list of filters — one tag at a time, with no
+way to see the shape of the mailbox along a dimension. A board answers "what is in my
+mailbox, grouped how the classifier sees it". Keeping one dimension on screen makes the
+per-column counts comparable and each thread appear exactly once, which is what makes
+the board readable as a distribution rather than a pile.
+
+Columns come from a new `get_tag_stats` command (live `COUNT(DISTINCT thread)` over
+`email_tags`), not from the cached `smart_filter_suggestions` table the sidebar reads.
+The cache is only written by an explicit "recalculate filters", so a board built on it
+would be empty for any user who never pressed that button and stale for everyone else.
+
+**Rejected:** *All four tag types mixed into one grid* — counts across dimensions are
+not comparable, and a single thread appears in up to four columns, so the board reads
+as a pile rather than a breakdown. *Rows per tag with horizontally-scrolling card
+strips* — hides most of each tag behind a sideways scroll and wastes vertical space,
+which is the axis a mail client has to spare. *Inline expansion of a card inside its
+column* — a ~17rem column is a poor place to read HTML mail, and expanding one card
+pushes every other column's content out of alignment. *Reusing the sidebar's saved
+suggestions as the column source* — stale by construction, and empty until the user
+finds the recalculate button.

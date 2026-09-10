@@ -1,7 +1,10 @@
 use tauri::State;
 
 use crate::models::error::AppError;
-use crate::models::{FilterSuggestion, FilteredEmailsResult, QuickFilterStats, SmartFilterPref, SmartFilterSuggestion};
+use crate::models::{
+    EmailWindow, FilterSuggestion, FilteredEmailsResult, QuickFilterStats, SmartFilterPref, SmartFilterSuggestion,
+    TagStat, ThreadParticipants,
+};
 use crate::services;
 use crate::AppState;
 
@@ -36,6 +39,7 @@ pub async fn get_filtered_emails(
     tag_type: Option<String>,
     tag_value: Option<String>,
     attachment_ext: Option<String>,
+    window: Option<EmailWindow>,
     limit: Option<i32>,
     offset: Option<i32>,
 ) -> Result<FilteredEmailsResult, AppError> {
@@ -47,9 +51,52 @@ pub async fn get_filtered_emails(
         tag_type.as_deref(),
         tag_value.as_deref(),
         attachment_ext.as_deref(),
+        &window.unwrap_or_default(),
         limit.unwrap_or(50),
         offset.unwrap_or(0),
     )
+}
+
+/// Live per-tag thread counts for one classified `tag_type` — the tag board's
+/// column source. `account_id: None` aggregates across every enabled account.
+#[tauri::command]
+pub async fn get_tag_stats(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+    tag_type: String,
+    limit: Option<i32>,
+) -> Result<Vec<TagStat>, AppError> {
+    services::filters::get_tag_stats(&state.db, account_id.as_deref(), &tag_type, limit.unwrap_or(0))
+}
+
+/// Per-(account, tag) thread counts for the tag board, narrowed by category
+/// and time range. One row per block the board renders.
+#[tauri::command]
+pub async fn get_tag_board_stats(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+    tag_type: String,
+    window: Option<EmailWindow>,
+    limit: Option<i32>,
+) -> Result<Vec<TagStat>, AppError> {
+    services::filters::get_tag_board_stats(
+        &state.db,
+        account_id.as_deref(),
+        &tag_type,
+        &window.unwrap_or_default(),
+        limit.unwrap_or(0),
+    )
+}
+
+/// Everyone other than the account owner in each thread — the tag board shows
+/// one message per thread, so the card can't otherwise name the conversation.
+#[tauri::command]
+pub async fn get_thread_participants(
+    state: State<'_, AppState>,
+    account_id: String,
+    thread_ids: Vec<String>,
+) -> Result<Vec<ThreadParticipants>, AppError> {
+    services::filters::get_thread_participants(&state.db, &account_id, &thread_ids)
 }
 
 #[tauri::command]

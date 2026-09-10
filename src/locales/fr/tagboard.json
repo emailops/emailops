@@ -1,0 +1,52 @@
+{
+  "title": "Tableau d'étiquettes",
+  "subtitle": "Fils groupés par étiquette classée",
+  "groupBy": "Grouper par",
+  "types": {
+    "company": "Entreprise",
+    "priority": "Priorité",
+    "intent": "Intention",
+    "topic": "Sujet"
+  },
+  "refresh": "Actualiser le tableau",
+  "threadCount_one": "{{count}} fil",
+  "threadCount_other": "{{count}} fils",
+  "showMore": "Afficher plus",
+  "columnEmpty": "Aucun fil",
+  "columnError": "Impossible de charger cette étiquette",
+  "retry": "Réessayer",
+  "empty": {
+    "title": "Pas encore d'étiquettes",
+    "body": "Les e-mails sont étiquetés lorsque la classification IA s'exécute. Activez-la dans les Paramètres, puis synchronisez ou reclassez pour remplir ce tableau.",
+    "openSettings": "Ouvrir les paramètres de classification"
+  },
+  "aiDisabled": "Activez les fonctions IA pour classer les e-mails et utiliser ce tableau.",
+  "blockMenu": "Options du bloc",
+  "hideTag": "Masquer cette étiquette",
+  "openInInbox": "Ouvrir dans la boîte de réception",
+  "restoreHidden_one": "Afficher {{count}} étiquette masquée",
+  "restoreHidden_other": "Afficher {{count}} étiquettes masquées",
+  "range": {
+    "label": "Période",
+    "all": "Tout",
+    "today": "Aujourd'hui",
+    "yesterday": "Hier",
+    "last7": "7 derniers jours",
+    "custom": "Personnalisé",
+    "from": "Du",
+    "to": "au"
+  },
+  "dragHint": "Glisser pour réorganiser",
+  "searchPlaceholder": "Rechercher des étiquettes…",
+  "density": {
+    "label": "Largeur des blocs",
+    "granular": "Blocs étroits",
+    "extended": "Blocs larges"
+  },
+  "noMatches": {
+    "title": "Aucune étiquette ne correspond à « {{query}} »",
+    "body": "La recherche porte sur les noms d'étiquettes, pas sur le texte des messages. Essayez un fragment plus court ou changez de dimension.",
+    "clear": "Effacer la recherche"
+  },
+  "you": "Moi"
+}

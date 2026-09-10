@@ -31,3 +31,16 @@ export function planViewChange(mode: ViewMode, layout: InboxLayout): ViewChangeP
     closeOpenEmail: layout === 'full-width',
   };
 }
+
+/**
+ * Pure planner: which view to show after the user changes the account scope.
+ *
+ * Almost every view is hard-scoped to one account, so a switch returns to the
+ * inbox. The tag board is the exception — its two queries (`get_tag_stats`,
+ * `get_filtered_emails`) both take the scope directly and aggregate across
+ * enabled accounts, so switching between one account and "All accounts" is an
+ * operation *on* the board and should leave the user looking at it.
+ */
+export function planAccountSwitchView(current: ViewMode): ViewMode {
+  return current === 'tagboard' ? 'tagboard' : 'inbox';
+}
