@@ -442,6 +442,10 @@ export interface EmailWindow {
   /** Also drop mail the detector called graymail. Spam and phishing are always
    *  excluded; bulk mail is the user's call. */
   hideGraymail?: boolean;
+  /** Count and list a thread under the tag of its newest classified message
+   *  only, so it lands in one board block. Off, a thread matches every tag any
+   *  of its messages carries (the inbox filter rule). */
+  latestTagOnly?: boolean;
 }
 
 export interface ClassificationConfig {

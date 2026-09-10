@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import {
   type CustomRange,
+  customRangeOnEdit,
   TAG_BOARD_RANGES,
   TAG_BOARD_TYPES,
   type TagBoardDensity,
@@ -15,7 +16,10 @@ interface TagBoardToolbarProps {
   range: TagBoardRange;
   onChangeRange: (r: TagBoardRange) => void;
   custom: CustomRange;
+  /** Every edit, as typed — see `customRangeOnEdit`. */
   onChangeCustom: (c: CustomRange) => void;
+  /** A box was left: put the pair in order. */
+  onCommitCustom: () => void;
   /** Gmail categories this scope can offer. Empty hides the row entirely
    *  (IMAP accounts have no categories to filter by). */
   availableCategories: EmailCategory[];
@@ -79,6 +83,7 @@ export function TagBoardToolbar({
   onChangeRange,
   custom,
   onChangeCustom,
+  onCommitCustom,
   availableCategories,
   selectedCategories,
   onSelectCategories,
@@ -104,14 +109,20 @@ export function TagBoardToolbar({
 
   return (
     <header className="flex-shrink-0 border-b border-gray-200 px-6 py-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
+      {/* With the reading pane open the board is about half its width, and a
+          non-wrapping row squeezed the subtitle into four lines while the
+          controls ran off the right edge. The title takes a zero flex basis so
+          it never forces the controls onto a second line at full width; once
+          the controls really do not fit they drop below the title and wrap
+          within their own rows. */}
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-0">
           <h1 className="truncate text-xl font-semibold text-gray-900">{t('tagboard:title')}</h1>
-          <p className="mt-0.5 text-xs text-gray-500">{t('tagboard:subtitle')}</p>
+          <p className="mt-0.5 truncate text-xs text-gray-500">{t('tagboard:subtitle')}</p>
         </div>
 
-        <div className="flex flex-shrink-0 flex-col items-end gap-2">
-          <div className="flex items-center gap-2">
+        <div className="flex max-w-full flex-col items-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <span className="text-xs text-gray-500">{t('tagboard:groupBy')}</span>
             <Segmented
               label={t('tagboard:groupBy')}
@@ -160,7 +171,7 @@ export function TagBoardToolbar({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="relative">
               <svg
                 aria-hidden="true"
@@ -234,39 +245,45 @@ export function TagBoardToolbar({
               options={TAG_BOARD_RANGES.map((v) => ({ value: v, label: t(`tagboard:range.${v}`) }))}
             />
           </div>
+
+          {/* Under the Range control, so the dates read as part of "Custom".
+              WebKit anchors the calendar pop-up to the box's LEFT edge and
+              does not pull it back inside the window, so with the boxes
+              flush right the "to" calendar was cut off on a maximised window.
+              The boxes are wider than the pop-up (~140px) for that reason:
+              a pop-up that starts inside the box ends inside it too. */}
+          {range === 'custom' && (
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <label htmlFor="tagboard-from">{t('tagboard:range.from')}</label>
+              <input
+                id="tagboard-from"
+                type="date"
+                value={custom.from}
+                // Bounding each field by the other makes a reversed range
+                // impossible to enter, rather than silently corrected after.
+                max={custom.to || undefined}
+                onChange={(e) => onChangeCustom(customRangeOnEdit(custom, 'from', e.target.value))}
+                onBlur={onCommitCustom}
+                aria-label={t('tagboard:range.from')}
+                className="w-40 rounded border border-gray-300 px-2 py-1"
+              />
+              <label htmlFor="tagboard-to">{t('tagboard:range.to')}</label>
+              <input
+                id="tagboard-to"
+                type="date"
+                value={custom.to}
+                min={custom.from || undefined}
+                onChange={(e) => onChangeCustom(customRangeOnEdit(custom, 'to', e.target.value))}
+                onBlur={onCommitCustom}
+                aria-label={t('tagboard:range.to')}
+                className="w-40 rounded border border-gray-300 px-2 py-1"
+              />
+            </div>
+          )}
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        {/* Left-aligned on purpose: sitting in the right-hand control stack,
-              these were flush against the window edge and the native date
-              picker opened off-screen, clipped. */}
-        {range === 'custom' && (
-          <div className="flex items-center gap-2 text-xs text-gray-600">
-            <label htmlFor="tagboard-from">{t('tagboard:range.from')}</label>
-            <input
-              id="tagboard-from"
-              type="date"
-              value={custom.from}
-              // Bounding each field by the other makes a reversed range
-              // impossible to enter, rather than silently corrected after.
-              max={custom.to || undefined}
-              onChange={(e) => onChangeCustom({ ...custom, from: e.target.value })}
-              aria-label={t('tagboard:range.from')}
-              className="rounded border border-gray-300 px-2 py-1"
-            />
-            <label htmlFor="tagboard-to">{t('tagboard:range.to')}</label>
-            <input
-              id="tagboard-to"
-              type="date"
-              value={custom.to}
-              min={custom.from || undefined}
-              onChange={(e) => onChangeCustom({ ...custom, to: e.target.value })}
-              aria-label={t('tagboard:range.to')}
-              className="rounded border border-gray-300 px-2 py-1"
-            />
-          </div>
-        )}
         {availableCategories.length > 0 && (
           <nav className="flex items-center gap-1" aria-label={t('inbox:categoriesAria')}>
             <button

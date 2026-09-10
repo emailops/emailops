@@ -1386,6 +1386,17 @@ function AppInner() {
                 onChangeTagType={setTagBoardType}
                 density={tagBoardDensity}
                 onChangeDensity={setTagBoardDensity}
+                cardActions={{
+                  onAddSenderFilter: addSenderAsFilter,
+                  onBlockSender: handleBlockSender,
+                  onCreateAttachmentRule: handleCreateAttachmentRule,
+                  onCreateClassificationRule: (prefill) => {
+                    setClassificationRulePrefill(prefill);
+                    setSettingsTab('classification');
+                  },
+                  onOpenInTab: openTab,
+                  onChatAboutThread: aiEnabled ? handleChatAboutThread : undefined,
+                }}
               />
               {/* Reading pane. Shrinkable on purpose: with the chat panel also
                   docked, a `flex-shrink-0` pane would squeeze the board to
@@ -1404,6 +1415,7 @@ function AppInner() {
                   onSelectTab={setActiveTab}
                   onCloseTab={closeTab}
                   onCloseMain={() => void selectEmail(null)}
+                  onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                   className="flex w-[42%] min-w-[20rem] max-w-[46rem] flex-col border-l border-gray-200 overflow-hidden"
                 />
               )}
@@ -1447,6 +1459,7 @@ function AppInner() {
                     onCloseMain={() => void selectEmail(null)}
                     fullWidth={inboxLayout === 'full-width'}
                     onOpenInTab={handleOpenInTab}
+                    onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                   />
                 );
 

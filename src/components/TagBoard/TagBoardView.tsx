@@ -5,6 +5,8 @@ import { errorText } from '@/lib/errors';
 import {
   applySavedOrder,
   type CustomRange,
+  capColumns,
+  customRangeOnSelect,
   DENSITY_MIN_COLUMN_PX,
   type DropSide,
   dedupeOrdinalThreads,
@@ -26,6 +28,7 @@ import {
   type TagBoardRange,
   type TagBoardType,
   tagBoardReducer,
+  tagBoardStatsLimit,
 } from '@/lib/tagBoard';
 import { toQueryAccountId, useAccountStore } from '@/stores/accountStore';
 import { useJunkStore } from '@/stores/junkStore';
@@ -33,6 +36,7 @@ import { useLogStore } from '@/stores/logStore';
 import type { Email, EmailCategory, EmailWindow, SmartFilterPref } from '@/types';
 import { TagBoardToolbar } from './TagBoardToolbar';
 import { TagColumn } from './TagColumn';
+import type { TagEmailCardProps } from './TagEmailCard';
 
 interface TagBoardViewProps {
   /** UI account identity — may be the unified "All accounts" sentinel, which
@@ -52,6 +56,8 @@ interface TagBoardViewProps {
   /** Persisted block width. */
   density: TagBoardDensity;
   onChangeDensity: (density: TagBoardDensity) => void;
+  /** The inbox row's ⋮ actions, offered on every card. */
+  cardActions?: TagEmailCardProps['actions'];
 }
 
 /** Hidden-block key. Mirrors the backend pref row: prefs are per account, and
@@ -71,6 +77,7 @@ export function TagBoardView({
   onChangeTagType,
   density,
   onChangeDensity,
+  cardActions,
 }: TagBoardViewProps) {
   const { t } = useTranslation(['tagboard', 'common']);
   const addLog = useLogStore((s) => s.addLog);
@@ -116,7 +123,15 @@ export function TagBoardView({
   const windowKey = useMemo(() => {
     const w = rangeToWindow(range, new Date(), custom);
     const categories = Array.from(selectedCategories).sort();
-    return JSON.stringify({ ...w, categories, search: debouncedSearch || null, hideGraymail: hideJunk });
+    // One block per thread: a thread's tag is that of its newest classified
+    // message. Without this a six-message thread sat in four intent blocks.
+    return JSON.stringify({
+      ...w,
+      categories,
+      search: debouncedSearch || null,
+      hideGraymail: hideJunk,
+      latestTagOnly: true,
+    });
   }, [range, custom, selectedCategories, debouncedSearch, hideJunk]);
   const window: EmailWindow = useMemo(() => JSON.parse(windowKey), [windowKey]);
   /** Query identity for the rows on screen: dimension + category + window. */
@@ -157,10 +172,21 @@ export function TagBoardView({
     return set;
   }, [prefs]);
 
+  // Hidden tags of this dimension. They still rank, so the stats request asks
+  // for this many extra rows and drops them here — the next tags move up.
+  const hiddenForType = useMemo(
+    () => prefs.filter((p) => p.status === 'removed' && p.filterType === tagType).length,
+    [prefs, tagType],
+  );
+
   // Blocks the user hid, then blocks that came back with no threads in the
   // current slice — an empty block tells you nothing and costs a grid cell.
   const unhiddenColumns = useMemo(
-    () => state.columns.filter((c) => !hiddenSet.has(hiddenKey(c.accountId, state.tagType, c.value))),
+    () =>
+      capColumns(
+        state.columns.filter((c) => !hiddenSet.has(hiddenKey(c.accountId, state.tagType, c.value))),
+        TAG_BOARD_MAX_COLUMNS,
+      ),
     [state.columns, hiddenSet, state.tagType],
   );
   const visibleColumnsOrdered = useMemo(
@@ -171,7 +197,7 @@ export function TagBoardView({
     [unhiddenColumns, savedOrder, state.tagType],
   );
   const visibleColumns = visibleColumnsOrdered;
-  const hiddenCount = state.columns.length - unhiddenColumns.length;
+  const hiddenCount = state.columns.filter((c) => hiddenSet.has(hiddenKey(c.accountId, state.tagType, c.value))).length;
 
   const minColumnPx = DENSITY_MIN_COLUMN_PX[density];
   const oneRow = fitsInOneRow(visibleColumns.length, gridWidth, minColumnPx);
@@ -287,7 +313,7 @@ export function TagBoardView({
     const loadId = loadIdRef.current;
     dispatch({ type: 'COLUMNS_LOADING' });
     try {
-      const stats = await api.getTagBoardStats(queryAccountId, tagType, window, TAG_BOARD_MAX_COLUMNS);
+      const stats = await api.getTagBoardStats(queryAccountId, tagType, window, tagBoardStatsLimit(hiddenForType));
       if (loadIdRef.current !== loadId) return;
       dispatch({ type: 'COLUMNS_LOADED', stats, queryKey });
     } catch (e) {
@@ -296,7 +322,7 @@ export function TagBoardView({
       dispatch({ type: 'COLUMNS_ERROR', error: message });
       addLog('error', 'system', `Tag board: could not load ${tagType} tags — ${message}`);
     }
-  }, [queryAccountId, tagType, window, queryKey, addLog]);
+  }, [queryAccountId, tagType, window, queryKey, hiddenForType, addLog]);
 
   useEffect(() => {
     dispatch({ type: 'SET_TAG_TYPE', tagType });
@@ -389,9 +415,13 @@ export function TagBoardView({
         tagType={tagType}
         onChangeTagType={onChangeTagType}
         range={range}
-        onChangeRange={setRange}
+        onChangeRange={(r) => {
+          if (r === 'custom') setCustom((c) => customRangeOnSelect(c, new Date()));
+          setRange(r);
+        }}
         custom={custom}
-        onChangeCustom={(c) => setCustom(normaliseCustomRange(c))}
+        onChangeCustom={setCustom}
+        onCommitCustom={() => setCustom((c) => normaliseCustomRange(c))}
         availableCategories={availableCategories}
         selectedCategories={selectedCategories}
         onSelectCategories={setSelectedCategories}
@@ -462,6 +492,7 @@ export function TagBoardView({
                 selectedEmailId={selectedEmailId}
                 onSelectEmail={onSelectEmail}
                 participants={participants}
+                cardActions={cardActions}
                 onLoadMore={handleLoadMore}
                 onOpenInInbox={(c) => onOpenTagInInbox(state.tagType, c.value)}
                 onHide={(c) => void handleHide(c)}

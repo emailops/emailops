@@ -413,6 +413,7 @@ impl Database {
         // quiet altogether.
         // Last placeholder allocated for this query, so no further increment.
         let junk_sql = crate::db::exclude_junk_sql("e", window.hide_graymail);
+        let latest_sql = crate::db::latest_tagged_in_thread_sql("e", 1, window.latest_tag_only);
         let now_idx = next_index;
         let w =
             format!("(1.0 / (1.0 + (MAX(0, ?{now_idx} - e.timestamp) / 86400.0) / {INTERACTION_HALF_LIFE_DAYS:.1}))");
@@ -443,6 +444,7 @@ impl Database {
                AND e.is_deleted = 0
                AND e.mailbox IN ('inbox', 'sent')
                {junk_sql}
+               {latest_sql}
                {search_sql}
                {window_sql}
              GROUP BY aid, tag_value
@@ -597,6 +599,7 @@ mod tests {
             until: Some(9_999_999),
             search: None,
             hide_graymail: false,
+            latest_tag_only: true,
         };
         let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
 

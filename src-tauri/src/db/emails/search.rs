@@ -253,6 +253,9 @@ impl Database {
             // Window binds land after limit/offset so the fixed indices above
             // keep their positions.
             let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
+            // The board asks for `latest_tag_only`; the sidebar filter never
+            // does, so the "ANY email in the thread" rule above is untouched.
+            let latest_sql = crate::db::latest_tagged_in_thread_sql("e2", first_idx, window.latest_tag_only);
             let mut window_idx = first_idx + 4;
             let (window_sql, window_binds) = window.sql("e2", &mut window_idx);
             let select_sql = format!(
@@ -264,6 +267,7 @@ impl Database {
                        AND {scope_e2} AND e2.is_deleted = 0
                        AND e2.mailbox IN ('inbox', 'sent')
                        {junk_sql}
+                       {latest_sql}
                        {window_sql}
                  ),
                  {thread_latest}

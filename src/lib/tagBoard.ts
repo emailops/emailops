@@ -82,6 +82,42 @@ export function normaliseCustomRange(custom: CustomRange): CustomRange {
   return { from: custom.to, to: custom.from };
 }
 
+function formatLocalDate(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+const DEFAULT_CUSTOM_DAYS = 30;
+
+/**
+ * The custom range to show when the user picks the Custom preset.
+ *
+ * Two empty date boxes are drawn by macOS WebKit as today's date, while an
+ * empty pair filters nothing — so the board looked like "today → today" and
+ * listed years of mail. Seeding a real range (the last 30 days, today
+ * included) on selection keeps what is shown and what is applied identical.
+ * Anything the user already typed, even one box, is kept.
+ */
+export function customRangeOnSelect(custom: CustomRange, now: Date): CustomRange {
+  if (custom.from || custom.to) return custom;
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (DEFAULT_CUSTOM_DAYS - 1));
+  return { from: formatLocalDate(from), to: formatLocalDate(now) };
+}
+
+/**
+ * One date box edited. The value is stored exactly as typed — a reversed pair
+ * is put in order by `normaliseCustomRange` when the box is left, not while
+ * the user is still typing the year digit by digit (0002 → 0020 → 0202 → 2026
+ * would otherwise flip the boxes under their fingers). A half-typed date
+ * reports an empty value; that keeps the last complete one so the field does
+ * not blank.
+ */
+export function customRangeOnEdit(custom: CustomRange, field: keyof CustomRange, value: string): CustomRange {
+  if (value === '') return custom;
+  return { ...custom, [field]: value };
+}
+
 function startOfLocalDay(d: Date): number {
   return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000);
 }
@@ -305,6 +341,20 @@ export function selectNextPageOffset(state: TagBoardState, key: string): number 
  */
 export function selectRenderableColumns(columns: TagBoardColumn[]): TagBoardColumn[] {
   return columns.filter((c) => !(c.hasLoaded && c.error === null && c.emails.length === 0));
+}
+
+/**
+ * How many blocks to ask the backend for. Hidden tags still rank, so each one
+ * the user hid must be fetched and dropped for the next tag to move up — with
+ * a fixed limit, hiding three tags left three empty slots.
+ */
+export function tagBoardStatsLimit(hiddenForType: number): number {
+  return TAG_BOARD_MAX_COLUMNS + Math.max(0, hiddenForType);
+}
+
+/** The blocks that fit on the board, once hidden ones are out of the way. */
+export function capColumns<T>(columns: T[], max: number): T[] {
+  return columns.length > max ? columns.slice(0, max) : columns;
 }
 
 /** True while the board has nothing to show and is not still fetching. */

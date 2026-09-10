@@ -5,7 +5,7 @@ import { tagHeaderBackground } from '@/components/common/TagChips';
 import { accountColorClass } from '@/lib/colors';
 import type { DropSide, TagBoardColumn, TagBoardType } from '@/lib/tagBoard';
 import type { Email } from '@/types';
-import { TagEmailCard } from './TagEmailCard';
+import { TagEmailCard, type TagEmailCardProps } from './TagEmailCard';
 
 interface TagColumnProps {
   column: TagBoardColumn;
@@ -16,6 +16,8 @@ interface TagColumnProps {
   onSelectEmail: (email: Email) => void;
   /** Thread participants keyed `accountId\nthreadId`. */
   participants: Record<string, string[]>;
+  /** Per-card ⋮ actions, same set as the inbox row. */
+  cardActions?: TagEmailCardProps['actions'];
   /** Load the block's next page. */
   onLoadMore: (key: string) => void;
   /** Apply this tag as a smart filter and jump to the inbox. */
@@ -44,6 +46,7 @@ export function TagColumn({
   selectedEmailId,
   onSelectEmail,
   participants,
+  cardActions,
   onLoadMore,
   onOpenInInbox,
   onHide,
@@ -184,6 +187,7 @@ export function TagColumn({
             participants={participants[`${email.accountId}\n${email.threadId}`]}
             ownerEmail={accountEmail}
             onSelect={onSelectEmail}
+            actions={cardActions}
           />
         ))}
 

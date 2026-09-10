@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { EmailActionsMenu, type EmailActionsMenuProps } from '@/components/Inbox/EmailActionsMenu';
 import { useFormatters } from '@/hooks/useFormatters';
 import { senderTextColorClass } from '@/lib/colors';
 import { senderLabel } from '@/lib/tagBoard';
 import type { Email } from '@/types';
 
-interface TagEmailCardProps {
+export interface TagEmailCardProps {
   email: Email;
   /** Everyone else in the thread, most recently active first. Empty for a
    *  one-to-one message where the sender line already says it all. */
@@ -17,6 +19,8 @@ interface TagEmailCardProps {
    *  Same colour source as the unified inbox's row indicator. */
   accountBadge?: { colorClass: string; label: string };
   onSelect: (email: Email) => void;
+  /** The inbox row's ⋮ actions, offered here too. */
+  actions?: Omit<EmailActionsMenuProps, 'email' | 'onStatus'>;
 }
 
 /** One thread inside a tag column. Denser than `EmailRow` — a board column is
@@ -30,8 +34,10 @@ export function TagEmailCard({
   isSelected,
   accountBadge,
   onSelect,
+  actions,
 }: TagEmailCardProps) {
   const { t } = useTranslation(['tagboard']);
+  const [status, setStatus] = useState<string | null>(null);
   const fmt = useFormatters();
   const senderColor = senderTextColorClass(email.senderEmail || email.sender);
   const from = senderLabel(email, ownerEmail, t('tagboard:you'));
@@ -39,11 +45,20 @@ export function TagEmailCard({
   const others = participants.filter((p) => p !== email.sender && p !== email.senderEmail);
 
   return (
-    <button
-      type="button"
+    // A div, not a <button>: the ⋮ menu is itself a button and buttons cannot
+    // nest. Keyboard activation is restored by hand below.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(email)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(email);
+        }
+      }}
       aria-current={isSelected}
-      className={`relative block w-full flex-shrink-0 rounded-lg border py-2.5 pr-3 text-left transition-colors ${
+      className={`relative block w-full flex-shrink-0 cursor-pointer rounded-lg border py-2.5 pr-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-500 ${
         accountBadge ? 'pl-4' : 'pl-3'
       } ${
         isSelected
@@ -76,6 +91,11 @@ export function TagEmailCard({
           )}
         </span>
         <span className="flex-shrink-0 text-xs text-gray-600">{fmt.relativeTime(email.timestamp)}</span>
+        {actions && (
+          <span className="-my-1 flex-shrink-0 self-center">
+            <EmailActionsMenu email={email} onStatus={setStatus} {...actions} />
+          </span>
+        )}
       </div>
 
       <div
@@ -90,6 +110,7 @@ export function TagEmailCard({
       {email.snippet && (
         <div className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-gray-600">{email.snippet}</div>
       )}
-    </button>
+      {status && <div className="mt-1 text-xs text-gray-500">{status}</div>}
+    </div>
   );
 }

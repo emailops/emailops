@@ -984,6 +984,168 @@ mod tests {
     }
 
     #[test]
+    fn board_stats_count_a_thread_under_its_latest_tag_only_when_asked() {
+        // A six-message thread whose messages were classified as delivery,
+        // scheduling, request and conversation showed up in four blocks at
+        // once. With `latest_tag_only` the thread belongs to the tag of its
+        // newest classified message and nowhere else.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "old", "acc1", "t1", "inbox", "intent", "request", "primary", 100);
+        insert_email_tagged_at(
+            &db,
+            "new",
+            "acc1",
+            "t1",
+            "inbox",
+            "intent",
+            "conversation",
+            "primary",
+            200,
+        );
+
+        let window = EmailWindow {
+            latest_tag_only: true,
+            ..Default::default()
+        };
+        let stats = get_tag_board_stats(&db, None, "intent", &window, 10).unwrap();
+        let values: Vec<&str> = stats.iter().map(|s| s.tag_value.as_str()).collect();
+        assert_eq!(values, vec!["conversation"], "got {stats:?}");
+        assert_eq!(stats[0].count, 1);
+    }
+
+    #[test]
+    fn board_stats_count_a_thread_under_every_tag_by_default() {
+        // The sidebar's filters keep the inbox rule: a thread matches when ANY
+        // of its messages carries the tag.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "old", "acc1", "t1", "inbox", "intent", "request", "primary", 100);
+        insert_email_tagged_at(
+            &db,
+            "new",
+            "acc1",
+            "t1",
+            "inbox",
+            "intent",
+            "conversation",
+            "primary",
+            200,
+        );
+
+        let stats = get_tag_board_stats(&db, None, "intent", &EmailWindow::default(), 10).unwrap();
+        let mut values: Vec<&str> = stats.iter().map(|s| s.tag_value.as_str()).collect();
+        values.sort_unstable();
+        assert_eq!(values, vec!["conversation", "request"]);
+    }
+
+    #[test]
+    fn latest_tag_ignores_a_newer_message_that_is_deleted_or_in_spam() {
+        // A trashed or spam-foldered message is not what the thread is about.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "old", "acc1", "t1", "inbox", "intent", "request", "primary", 100);
+        insert_email_tagged_at(
+            &db,
+            "spam",
+            "acc1",
+            "t1",
+            "spam",
+            "intent",
+            "conversation",
+            "primary",
+            200,
+        );
+        insert_email_tagged_at(&db, "gone", "acc1", "t1", "inbox", "intent", "delivery", "primary", 300);
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'gone'", [])
+            .unwrap();
+
+        let window = EmailWindow {
+            latest_tag_only: true,
+            ..Default::default()
+        };
+        let stats = get_tag_board_stats(&db, None, "intent", &window, 10).unwrap();
+        let values: Vec<&str> = stats.iter().map(|s| s.tag_value.as_str()).collect();
+        assert_eq!(values, vec!["request"], "got {stats:?}");
+    }
+
+    #[test]
+    fn latest_tag_only_looks_at_the_asked_tag_type() {
+        // The newest message has a topic but no intent: the thread's intent is
+        // still the one on the older message.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "old", "acc1", "t1", "inbox", "intent", "request", "primary", 100);
+        insert_email_tagged_at(&db, "new", "acc1", "t1", "inbox", "topic", "billing", "primary", 200);
+
+        let window = EmailWindow {
+            latest_tag_only: true,
+            ..Default::default()
+        };
+        let stats = get_tag_board_stats(&db, None, "intent", &window, 10).unwrap();
+        let values: Vec<&str> = stats.iter().map(|s| s.tag_value.as_str()).collect();
+        assert_eq!(values, vec!["request"], "got {stats:?}");
+    }
+
+    #[test]
+    fn filtered_emails_list_a_thread_under_its_latest_tag_only_when_asked() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "old", "acc1", "t1", "inbox", "intent", "request", "primary", 100);
+        insert_email_tagged_at(
+            &db,
+            "new",
+            "acc1",
+            "t1",
+            "inbox",
+            "intent",
+            "conversation",
+            "primary",
+            200,
+        );
+
+        let window = EmailWindow {
+            latest_tag_only: true,
+            ..Default::default()
+        };
+        let under_old = get_filtered_emails(
+            &db,
+            Some("acc1"),
+            None,
+            None,
+            Some("intent"),
+            Some("request"),
+            None,
+            &window,
+            50,
+            0,
+        )
+        .unwrap();
+        assert!(
+            under_old.emails.is_empty(),
+            "got {:?}",
+            under_old.emails.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
+
+        let under_new = get_filtered_emails(
+            &db,
+            Some("acc1"),
+            None,
+            None,
+            Some("intent"),
+            Some("conversation"),
+            None,
+            &window,
+            50,
+            0,
+        )
+        .unwrap();
+        assert_eq!(under_new.emails.len(), 1);
+        assert_eq!(under_new.emails[0].thread_id, "t1");
+    }
+
+    #[test]
     fn board_stats_respect_a_not_junk_override() {
         // The user overruled the detector; the board must not overrule them.
         let db = Arc::new(Database::new_for_testing().unwrap());

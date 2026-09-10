@@ -1219,6 +1219,11 @@ pub struct EmailWindow {
     /// always excluded; bulk newsletters and receipts are the user's call,
     /// driven by the same `junk_flagged_action` preference as the inbox.
     pub hide_graymail: bool,
+    /// Count and list a thread under the tag of its newest classified message
+    /// only. Off, a thread matches every tag any of its messages carries — the
+    /// inbox filter rule — which put one six-message thread in four board
+    /// blocks at once.
+    pub latest_tag_only: bool,
 }
 
 impl EmailWindow {

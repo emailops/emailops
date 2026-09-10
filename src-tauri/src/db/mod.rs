@@ -104,6 +104,33 @@ pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
     )
 }
 
+/// Keeps only tagged messages that are the newest classified message (for the
+/// tag type bound at `?{tag_type_idx}`) of their thread, so a thread lands under
+/// exactly one tag value. Messages that are deleted or outside inbox/sent do not
+/// count as "newer": a trashed or spam-foldered reply is not what the thread is
+/// about. Empty when `enabled` is false.
+///
+/// `{alias}` is the `emails` alias to correlate against. The probe is a point
+/// lookup on `idx_emails_thread_latest (account_id, thread_id, timestamp DESC,
+/// id DESC)`, so it costs one index seek per tagged row.
+pub(crate) fn latest_tagged_in_thread_sql(alias: &str, tag_type_idx: usize, enabled: bool) -> String {
+    if !enabled {
+        return String::new();
+    }
+    format!(
+        "AND NOT EXISTS (
+             SELECT 1 FROM emails n INDEXED BY idx_emails_thread_latest
+             JOIN email_tags nt ON nt.email_id = n.id AND nt.tag_type = ?{tag_type_idx}
+             WHERE n.account_id = {alias}.account_id
+               AND n.thread_id = {alias}.thread_id
+               AND n.is_deleted = 0
+               AND n.mailbox IN ('inbox', 'sent')
+               AND (n.timestamp > {alias}.timestamp
+                    OR (n.timestamp = {alias}.timestamp AND n.id > {alias}.id))
+         )"
+    )
+}
+
 impl Database {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&data_dir)

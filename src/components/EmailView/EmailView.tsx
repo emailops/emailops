@@ -24,6 +24,8 @@ interface EmailViewProps {
   /** When true, renders at full width (used in full-width inbox layout). */
   fullWidth?: boolean;
   onOpenInTab?: () => void;
+  /** Open a chat seeded with this thread. */
+  onChatAboutThread?: (email: Email) => void;
 }
 
 /**
@@ -77,6 +79,7 @@ export function EmailView({
   activeAccountId,
   fullWidth,
   onOpenInTab,
+  onChatAboutThread,
 }: EmailViewProps) {
   const { t } = useTranslation(['inbox']);
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
@@ -412,6 +415,23 @@ export function EmailView({
                   </svg>
                 )}
                 AI Draft
+              </button>
+            )}
+            {onChatAboutThread && (
+              <button
+                onClick={() => onChatAboutThread(latestEmail)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title={t('inbox:emailRow.chatAboutThread')}
+                aria-label={t('inbox:emailRow.chatAboutThread')}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
               </button>
             )}
             <button

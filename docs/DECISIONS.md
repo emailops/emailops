@@ -797,3 +797,29 @@ column* — a ~17rem column is a poor place to read HTML mail, and expanding one
 pushes every other column's content out of alignment. *Reusing the sidebar's saved
 suggestions as the column source* — stale by construction, and empty until the user
 finds the recalculate button.
+
+## 2026-09-10 — Tag Board places a thread under the tag of its newest classified message
+
+**Decision:** On the Tag Board a thread belongs to exactly one block per dimension: the
+tag value carried by its most recent classified message (deleted messages and copies
+outside inbox/sent do not count as "newest"). The rule is opt-in through
+`EmailWindow.latest_tag_only`, which only the board sets; the sidebar smart filters and
+their counts keep the inbox rule — a thread matches when **any** of its messages carries
+the tag. Also: picking the Custom range seeds the two date boxes with the last 30 days
+instead of leaving them empty.
+
+**Context:** A six-message thread whose messages the classifier had labelled delivery,
+notification, scheduling, request and conversation appeared in five intent blocks at
+once, so the board read as a pile again. The newest message is what the thread is
+currently about, and it is what the card already shows. The filter is a `NOT EXISTS`
+probe on `idx_emails_thread_latest`, measured at 0.34 s vs 0.21 s for the unfiltered
+company query on a 6 GB mailbox. Empty custom dates were rendered by macOS WebKit as
+today's date while filtering nothing, so the board looked like "today → today" and
+listed years of mail.
+
+**Rejected:** *Most frequent tag in the thread* — ties are common in short threads and a
+long-running thread would be stuck with its early history. *Applying the rule to the
+sidebar filters too* — the user chose the any-message rule for the inbox on purpose:
+replying to a company must not drop the thread from that company's filter. *Deduplicating
+across blocks on the frontend* (as the priority ordinal dedupe does) — blocks page lazily,
+so a thread's "right" block may not be loaded yet, and the counts would still disagree.

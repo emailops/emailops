@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { Email, TagStat } from '@/types';
 import {
   applySavedOrder,
+  capColumns,
   columnKey,
+  customRangeOnEdit,
+  customRangeOnSelect,
   DENSITY_MIN_COLUMN_PX,
   dedupeOrdinalThreads,
   fitsInOneRow,
@@ -19,10 +22,12 @@ import {
   selectNextPageOffset,
   selectRenderableColumns,
   senderLabel,
+  TAG_BOARD_MAX_COLUMNS,
   TAG_BOARD_PAGE_SIZE,
   type TagBoardRange,
   type TagBoardState,
   tagBoardReducer,
+  tagBoardStatsLimit,
 } from './tagBoard';
 
 function email(id: string, overrides: Partial<Email> = {}): Email {
@@ -792,6 +797,74 @@ describe('planColumnLoads', () => {
   it('carries the query key on the ledger it returns', () => {
     const plan = planColumnLoads(board('q1', 'a'), fresh(), 'q1', false);
     expect(plan.ledger.queryKey).toBe('q1');
+  });
+});
+
+describe('customRangeOnEdit', () => {
+  // Typing a year digit by digit in the "to" box produced 0002-09-10, which is
+  // before "from" — and the old swap-on-change flipped the two boxes under
+  // the user's fingers. Edits are stored as typed; ordering waits for commit.
+  const current = { from: '2026-08-12', to: '2026-09-10' };
+
+  it('stores a reversed intermediate value without swapping', () => {
+    expect(customRangeOnEdit(current, 'to', '0002-09-10')).toEqual({ from: '2026-08-12', to: '0002-09-10' });
+  });
+
+  it('ignores the empty value a half-typed date reports, keeping the last full date', () => {
+    expect(customRangeOnEdit(current, 'to', '')).toBe(current);
+  });
+
+  it('updates the from box the same way', () => {
+    expect(customRangeOnEdit(current, 'from', '2026-01-05')).toEqual({ from: '2026-01-05', to: '2026-09-10' });
+  });
+});
+
+describe('tagBoardStatsLimit', () => {
+  // Hidden blocks used to eat slots: the board asked for 15 tags, the user
+  // hid 3, and 12 stayed on screen with nothing moving up to fill the gap.
+  it('asks for one extra block per hidden tag of this dimension', () => {
+    expect(tagBoardStatsLimit(0)).toBe(TAG_BOARD_MAX_COLUMNS);
+    expect(tagBoardStatsLimit(3)).toBe(TAG_BOARD_MAX_COLUMNS + 3);
+  });
+});
+
+describe('capColumns', () => {
+  it('keeps only the first max blocks after hidden ones are removed', () => {
+    const cols = Array.from({ length: 4 }, (_, i) => ({ key: `k${i}` }));
+    expect(capColumns(cols, 2).map((c) => c.key)).toEqual(['k0', 'k1']);
+  });
+
+  it('leaves a short list alone', () => {
+    const cols = [{ key: 'a' }];
+    expect(capColumns(cols, 3)).toEqual(cols);
+  });
+});
+
+describe('customRangeOnSelect', () => {
+  // Two empty date boxes render as today's date on macOS WebKit while the
+  // board stays unfiltered — what is shown and what is applied disagree.
+  // Seeding a real range on selection makes them the same thing.
+  const now = new Date(2026, 8, 10, 15, 30);
+
+  it('seeds the last 30 days when both boxes are empty', () => {
+    expect(customRangeOnSelect({ from: '', to: '' }, now)).toEqual({ from: '2026-08-12', to: '2026-09-10' });
+  });
+
+  it('keeps a range the user already filled in', () => {
+    const filled = { from: '2026-06-01', to: '2026-07-01' };
+    expect(customRangeOnSelect(filled, now)).toBe(filled);
+  });
+
+  it('keeps a half-filled range so a typed date survives switching presets', () => {
+    const half = { from: '2026-06-01', to: '' };
+    expect(customRangeOnSelect(half, now)).toBe(half);
+  });
+
+  it('zero-pads month and day', () => {
+    expect(customRangeOnSelect({ from: '', to: '' }, new Date(2026, 0, 5))).toEqual({
+      from: '2025-12-07',
+      to: '2026-01-05',
+    });
   });
 });
 

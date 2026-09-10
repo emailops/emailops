@@ -26,6 +26,8 @@ interface ReadingPaneProps {
   fullWidth?: boolean;
   /** Only meaningful for the main email; omitted where tabs don't apply. */
   onOpenInTab?: () => void;
+  /** Header chat icon: open a chat seeded with the shown thread. */
+  onChatAboutThread?: (email: Email) => void;
   className?: string;
 }
 
@@ -53,6 +55,7 @@ export function ReadingPane({
   onCloseMain,
   fullWidth = false,
   onOpenInTab,
+  onChatAboutThread,
   className = 'flex flex-col flex-1 overflow-hidden',
 }: ReadingPaneProps) {
   // A tab shows its own content; otherwise the main selection does.
@@ -98,6 +101,7 @@ export function ReadingPane({
           activeAccountId={activeAccountId}
           fullWidth={fullWidth}
           onOpenInTab={onOpenInTab}
+          onChatAboutThread={onChatAboutThread}
         />
       )}
     </div>
