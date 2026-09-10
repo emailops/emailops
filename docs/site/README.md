@@ -43,7 +43,7 @@ different fragment spellings. When you add a link to a heading, give that headin
 id first — in all four files.
 
 Current ids: `with-local-ai`, `direct-download`, `linux` (installation);
-`choosing-a-backend`, `the-model-catalog`, `classification` (ai-features);
+`choosing-a-backend`, `the-model-catalog`, `classification`, `tag-board` (ai-features);
 `where-your-data-is-stored` (privacy-security).
 
 ## How it reaches the site

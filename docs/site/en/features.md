@@ -22,7 +22,8 @@ and drag messages between folders from inside the app.
 ## Smart filters
 
 Narrow the list by domain, sender, or any classification tag — useful for triaging one
-client, one project or one newsletter flood at a time.
+client, one project or one newsletter flood at a time. With AI on, the same tags also
+feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid of blocks.
 
 ## Calendar
 

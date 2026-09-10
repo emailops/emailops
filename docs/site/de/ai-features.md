@@ -124,6 +124,32 @@ Sie bestimmen, welche Gmail-Kategorien klassifiziert werden, können nach einer
 Prompt-Änderung alles neu klassifizieren und nicht klassifizierte E-Mails bei Bedarf
 nachholen.
 
+## Tag-Board {#tag-board}
+
+Das **Tag-Board** (unter **Ansichten** in der Seitenleiste, neben dem Posteingang) macht aus
+diesen Kennzeichnungen ein Board. Wählen Sie eine Dimension — **Unternehmen**, **Priorität**,
+**Absicht** oder **Thema** — und jeder Kennzeichnungswert wird zu einem Block mit seinen
+Threads; unter **Alle Konten** gibt es je Konto und Kennzeichnung einen Block. Ein Thread
+steht in genau einem Block, unter der Kennzeichnung seiner zuletzt klassifizierten Nachricht.
+
+Die Blöcke sind danach geordnet, wie viel Aufmerksamkeit eine Kennzeichnung tatsächlich
+bekommt — wie oft Sie ihre Threads beantworten und lesen, mit mehr Gewicht auf jüngerer
+Aktivität — Werbung und Benachrichtigungen stehen zuletzt. Die intelligenten Filter in der
+Seitenleiste folgen derselben Reihenfolge. Ziehen Sie Blöcke, um sie umzuordnen (die
+Reihenfolge wird je Dimension gemerkt), blenden Sie ein Tag über sein ⋮-Menü aus — das
+nächste Tag rückt an seine Stelle, und der Filter verschwindet auch aus der Seitenleiste —
+und holen Sie ausgeblendete Tags über den Link **Ausgeblendete Tags anzeigen** zurück.
+
+Die Werkzeugleiste grenzt das Board nach Zeitraum ein (**Heute**, **Gestern**, **Letzte 7
+Tage** oder ein eigener Datumsbereich), nach Gmail-Kategorie, nach Tag-Name und mit
+demselben Schalter zum Ausblenden von Junk wie im Posteingang; zwei Symbole legen die
+Blockbreite fest. Ein Klick auf eine Karte öffnet den Thread im Lesebereich, ihr ⋮-Menü
+bietet dieselben Aktionen wie eine Zeile im Posteingang, und das Chat-Symbol im Lesebereich
+startet eine Unterhaltung mit diesem Thread als Kontext.
+
+Das Board braucht die Klassifizierung: Es bleibt leer, bis E-Mails gekennzeichnet sind, und
+wird bei ausgeschalteten KI-Funktionen nicht angezeigt.
+
 ## Semantische Suche
 
 E-Mails werden lokal eingebettet, damit die Suche nach Bedeutung statt nur nach Stichwörtern
