@@ -73,6 +73,13 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if !case.expected_answer_contains_any.is_empty() {
+        checks.push(check_answer_contains_any(
+            &case.expected_answer_contains_any,
+            &outcome.assistant_content,
+        ));
+    }
+
     if !case.expected_answer_not_contains.is_empty() {
         checks.push(check_answer_not_contains(
             &case.expected_answer_not_contains,
@@ -226,6 +233,28 @@ fn check_answer_contains(expected: &[String], content: &str) -> HeuristicCheck {
 }
 
 /// Case-insensitive substrings that must NOT appear in the final assistant
+/// At least ONE of `alternatives` must appear in the answer (case-insensitive).
+///
+/// The disjunctive twin of [`check_answer_contains`], for anchoring on a fact
+/// the model states in more than one shape. A retrieval case wants to assert
+/// "the answer names the right email"; the model may do that by subject on one
+/// run and by date on the next, so an AND of both flakes and either one alone
+/// flakes on the other. List every phrasing that proves the same fact.
+fn check_answer_contains_any(alternatives: &[String], content: &str) -> HeuristicCheck {
+    let lc = content.to_lowercase();
+    let hit = alternatives.iter().find(|needle| lc.contains(&needle.to_lowercase()));
+    HeuristicCheck {
+        name: "answer_contains_any".into(),
+        passed: hit.is_some(),
+        expected: format!("any of: {}", alternatives.join(", ")),
+        actual: truncate(content, 200),
+        detail: match hit {
+            Some(found) => format!("matched alternative: {found}"),
+            None => format!("none of the alternatives present: {}", alternatives.join(", ")),
+        },
+    }
+}
+
 /// content — the negative twin of [`check_answer_contains`]. Guards against
 /// failure-mode phrasings ("I couldn't access your emails", "please paste the
 /// content") that a positive anchor cannot distinguish from a real answer.
@@ -317,6 +346,40 @@ fn truncate(s: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::models::ToolCallTrace;
+
+    // ── expected_answer_contains_any ────────────────────────────────────────
+    //
+    // `expected_answer_contains` is AND, which cannot express "the answer names
+    // the right email". A model that retrieved correctly may report it by
+    // SUBJECT on one run and by DATE on the next; requiring both flaked ~1 run
+    // in 4, and requiring either one alone flaked on the other. A flaky guard
+    // is worse than none — people learn to ignore it.
+
+    #[test]
+    fn contains_any_passes_when_a_single_alternative_is_present() {
+        let alts = vec!["mayo".to_string(), "dificultades desarrollo".to_string()];
+        let check = check_answer_contains_any(&alts, "Fue enviado el 5 de mayo de 2026.");
+        assert!(check.passed, "one alternative is enough: {}", check.detail);
+    }
+
+    #[test]
+    fn contains_any_passes_on_the_other_alternative() {
+        let alts = vec!["mayo".to_string(), "dificultades desarrollo".to_string()];
+        let check = check_answer_contains_any(&alts, "Asunto: RE: Chatbot: Dificultades desarrollo");
+        assert!(check.passed, "case-insensitive, either side: {}", check.detail);
+    }
+
+    #[test]
+    fn contains_any_fails_when_no_alternative_is_present() {
+        let alts = vec!["mayo".to_string(), "dificultades desarrollo".to_string()];
+        let check = check_answer_contains_any(&alts, "El correo es del 16 de febrero de 2026.");
+        assert!(!check.passed, "the near-miss answer must not satisfy the anchor");
+        assert!(
+            check.detail.contains("mayo"),
+            "the failure must list what it looked for: {}",
+            check.detail
+        );
+    }
 
     fn tool_call(name: &str, args: serde_json::Value) -> ToolCallTrace {
         ToolCallTrace {

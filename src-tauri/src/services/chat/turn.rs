@@ -294,6 +294,28 @@ struct DispatchedTool {
 /// mangled-address rescue in [`dispatch_tool`].
 const NO_MATCHING_EMAILS: &str = "No matching emails found";
 
+/// The selective filters a `search_emails` call actually carried, rendered for
+/// the zero-result diagnostic log. Plumbing args (`limit`, `include_bodies`,
+/// `order`) are omitted — they are never why a search missed.
+///
+/// Pure so the formatting is unit-tested without a tool round-trip.
+fn describe_search_filters(args: &serde_json::Value) -> String {
+    const SELECTIVE: &[&str] = &["query", "from", "to", "subject", "since", "until"];
+    let parts: Vec<String> = SELECTIVE
+        .iter()
+        .filter_map(|k| {
+            let v = args.get(*k)?.as_str()?.trim();
+            (!v.is_empty()).then(|| format!("{k}={v:?}"))
+        })
+        .collect();
+    if parts.is_empty() {
+        // `search_emails({})` is a real emission from a flaky model — say so
+        // rather than logging an empty pair of quotes.
+        return "no filters".to_string();
+    }
+    parts.join(", ")
+}
+
 /// Dispatch one tool call through the registry: look up the tool (honouring
 /// feature gating), execute it, emit any `ToolEffect`s as `chat-tool-effect`
 /// Tauri events for the frontend to react to, and return the text the LLM
@@ -352,6 +374,24 @@ question. Retried with {right}, written verbatim in the question. Use {right} fr
                                 }
                             }
                         }
+                        // Still empty after the rescue. "No matching emails
+                        // found." is also what a genuinely empty mailbox
+                        // returns, so the two are indistinguishable downstream
+                        // — the model reports absence as fact either way. Leave
+                        // a diagnostic naming the filter that missed, so an
+                        // unsupported filter shape is greppable the day it
+                        // happens instead of surfacing months later as a bug
+                        // report. Local-only: this goes to the output panel and
+                        // the CLI's stderr log stream, never off the machine.
+                        if out.text.starts_with(NO_MATCHING_EMAILS) {
+                            emit_log(
+                                "debug",
+                                &format!(
+                                    "tool_loop: search_emails({}) found nothing",
+                                    describe_search_filters(&args)
+                                ),
+                            );
+                        }
                     }
                     // Effects are fire-and-forget through the event seam: a
                     // dropped effect never poisons the tool result — the LLM
@@ -375,9 +415,24 @@ question. Retried with {right}, written verbatim in the question. Use {right} fr
             }
         }
         None => {
-            // Distinguish unknown vs gated-off so the LLM and the user get a
-            // useful hint instead of a flat "unknown tool".
-            let text = if registry.lookup(name).is_some() {
+            // Distinguish malformed vs unknown vs gated-off so the LLM and the
+            // user get a useful hint instead of a flat "unknown tool".
+            let text = if name.is_empty() {
+                // The model emitted `<tool_call>{"arguments":{…}}</tool_call>`
+                // with no `name` field. The parser surfaces it nameless rather
+                // than guessing which tool was meant, so the correction has to
+                // say what is missing and show the shape to re-emit.
+                emit_log(
+                    "debug",
+                    &format!(
+                        "tool_loop: dropped a tool call with no \"name\" field (args: {}) — asked the model to re-issue it",
+                        args
+                    ),
+                );
+                "Error: that tool call was missing the required \"name\" field. Re-issue it as \
+<tool_call>{\"name\":\"<tool>\",\"arguments\":{...}}</tool_call>, naming one of the tools listed above."
+                    .to_string()
+            } else if registry.lookup(name).is_some() {
                 format!("Tool '{name}' is currently disabled in Settings.")
             } else {
                 format!("Unknown tool: {name}")
@@ -3760,6 +3815,74 @@ mod tests {
     /// string in at every call.
     fn tpl() -> &'static str {
         crate::services::prompts::defaults::CHAT_SYSTEM
+    }
+
+    // ── Zero-result search diagnostic ───────────────────────────────────────
+    //
+    // "No matching emails found." is returned both when the mailbox genuinely
+    // has nothing AND when the filter was malformed or unsupported. That
+    // ambiguity is what let the person+company `from:` bug sit in production:
+    // nothing crashed, nothing logged, and the model reported absence as fact.
+    // These pin the diagnostic that makes the second case greppable.
+
+    #[test]
+    fn describe_search_filters_lists_only_the_selective_ones() {
+        let args = serde_json::json!({
+            "from": "eva de northwind",
+            "limit": 1,
+            "include_bodies": true,
+        });
+        // limit / include_bodies are plumbing, not the reason a search missed.
+        assert_eq!(describe_search_filters(&args), r#"from="eva de northwind""#);
+    }
+
+    #[test]
+    fn describe_search_filters_joins_every_filter_that_was_set() {
+        let args = serde_json::json!({
+            "query": "factura",
+            "from": "alice",
+            "since": "2026-01-01",
+        });
+        let out = describe_search_filters(&args);
+        assert!(out.contains(r#"query="factura""#), "got: {out}");
+        assert!(out.contains(r#"from="alice""#), "got: {out}");
+        assert!(out.contains(r#"since="2026-01-01""#), "got: {out}");
+    }
+
+    #[test]
+    fn describe_search_filters_names_the_degenerate_call() {
+        // `search_emails({})` is a real emission from a flaky model; the log
+        // must say "no filters" rather than an empty string.
+        assert_eq!(describe_search_filters(&serde_json::json!({})), "no filters");
+    }
+
+    #[test]
+    fn empty_search_emits_a_debug_log_naming_the_filter() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let args = serde_json::json!({ "from": "nobody at all", "limit": 5 });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &args);
+        assert!(
+            out.starts_with(NO_MATCHING_EMAILS),
+            "precondition: the search must come back empty, got: {out}"
+        );
+
+        // Match on THIS call's filter, not merely on "found nothing": the
+        // logger seam is global and the tool tests run in parallel without
+        // taking it, so another test's empty search can land in this sink.
+        let logged = logger
+            .events()
+            .into_iter()
+            .find(|e| e.level == "debug" && e.message.contains(r#"from="nobody at all""#));
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        let logged = logged.expect("an empty search must leave a diagnostic naming its own filter");
+        assert!(
+            logged.message.contains("found nothing"),
+            "the log must say the search missed, got: {}",
+            logged.message
+        );
     }
 
     fn make_scored(citation_number: i32, subject: &str, body: &str) -> ScoredEmail {
