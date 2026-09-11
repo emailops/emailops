@@ -289,5 +289,6 @@ async fn run_variant(
         assistant_latency_ms: assistant.latency_ms,
         wall_elapsed_ms,
         sources_used,
+        ambient_thread: None,
     })
 }

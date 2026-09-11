@@ -307,16 +307,30 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
         })
         .unwrap_or_default();
 
+    // An open email is the third kind of grounding: the turn answered from
+    // that thread, with no RAG sources and no tools, so without it the judge
+    // reads every detail of the answer as invented.
+    let open_thread_section = outcome
+        .ambient_thread
+        .as_deref()
+        .map(|t| {
+            format!(
+                "\nOPEN THREAD SHOWN TO THE ASSISTANT (the email the user had open):\n{}\n",
+                indent_lines(t, "    ")
+            )
+        })
+        .unwrap_or_default();
+
     let metrics: Vec<&str> = case.metrics.iter().map(|m| m.as_str()).collect();
 
     format!(
         "QUESTION:\n{question}\n\n\
 GOLDEN REFERENCE ANSWER:\n{expected}\n\n\
-SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}\n\
+SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}{open_thread}\n\
 ASSISTANT RESPONSE:\n{response}\n\n\
 Score the assistant response on the following metrics only: {metrics}.\n\
-For faithfulness / contextual_* metrics, treat BOTH the SOURCES block and the TOOL CALLS block \
-(if present) as valid grounding context — the assistant is allowed to ground claims on either.\n\
+For faithfulness / contextual_* metrics, treat the SOURCES, TOOL CALLS and OPEN THREAD blocks \
+(whichever are present) as valid grounding context — the assistant is allowed to ground claims on any of them.\n\
 Each score is a float in [0.0, 1.0]. If you cannot score a metric, return null for it.\n\
 Return strict JSON with this shape:\n\
 {{\n\
@@ -331,6 +345,7 @@ Only include keys for the metrics requested; set others to null.",
         expected = expected,
         sources = sources,
         tool_calls = tool_calls_section,
+        open_thread = open_thread_section,
         response = outcome.assistant_content,
         metrics = metrics.join(", "),
     )
@@ -357,14 +372,42 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod judge_rule_tests {
-    use super::{judge_passes, parse_judge_content, JudgeScores};
+    use super::{build_prompt, judge_passes, parse_judge_content, JudgeScores};
     use crate::evals::case_loader::{EvalCase, MetricKind};
+    use crate::evals::harness::CaseOutcome;
 
     fn case_with(metrics: Vec<MetricKind>) -> EvalCase {
         let mut c: EvalCase =
             serde_yaml::from_str("id: t\nquestion: q\ncategory: c\ntier: smoke\n").expect("minimal case");
         c.metrics = metrics;
         c
+    }
+
+    fn outcome_with(ambient_thread: Option<&str>) -> CaseOutcome {
+        CaseOutcome {
+            conversation_id: String::new(),
+            conversation_title: String::new(),
+            assistant_message_id: String::new(),
+            assistant_content: "answer".into(),
+            assistant_trace: None,
+            assistant_token_count: None,
+            assistant_latency_ms: None,
+            wall_elapsed_ms: 0,
+            sources_used: Vec::new(),
+            ambient_thread: ambient_thread.map(str::to_string),
+        }
+    }
+
+    /// A turn run with an email open answers from that thread, not from RAG
+    /// sources or tools; the judge must see it or it scores faithfulness 0.
+    #[test]
+    fn prompt_shows_the_open_thread_as_grounding_when_the_case_has_one() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let with = build_prompt(&case, &outcome_with(Some("From: Nadia\nHow do I add an account?")));
+        assert!(with.contains("OPEN THREAD SHOWN TO THE ASSISTANT"));
+        assert!(with.contains("How do I add an account?"));
+        let without = build_prompt(&case, &outcome_with(None));
+        assert!(!without.contains("OPEN THREAD SHOWN TO THE ASSISTANT"));
     }
 
     #[test]

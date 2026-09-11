@@ -126,6 +126,10 @@ pub struct CaseOutcome {
     /// Wall-clock time inside the harness (turn dispatch + DB readback).
     pub wall_elapsed_ms: i64,
     pub sources_used: Vec<SourceSummary>,
+    /// Text of the open thread the turn ran against (`ambient_thread_id`), the
+    /// same block the model saw. It is the answer's grounding when the case
+    /// used neither RAG sources nor tools, so the judge gets it too.
+    pub ambient_thread: Option<String>,
 }
 
 /// Lightweight view of a `ChatMessageSource` for the report.
@@ -268,6 +272,18 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         })
         .collect();
 
+    // Same lookup the turn made: the thread under its own account when the
+    // case names one, else under the account the chat ran on.
+    let ambient_thread = match case.ambient_thread_id.as_deref() {
+        Some(thread_id) => {
+            let owner = resolve_ambient_account(&db, case.ambient_account.as_deref());
+            let (context, _subject) =
+                crate::services::chat::build_thread_context(&db, owner.as_deref().unwrap_or(account_id), thread_id)?;
+            Some(context)
+        }
+        None => None,
+    };
+
     Ok(CaseOutcome {
         conversation_id: conv.id,
         conversation_title: final_title,
@@ -278,6 +294,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         assistant_latency_ms: assistant.latency_ms,
         wall_elapsed_ms,
         sources_used,
+        ambient_thread,
     })
 }
 

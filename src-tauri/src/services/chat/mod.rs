@@ -27,8 +27,8 @@ mod turn;
 
 // ── Re-exports for external callers (commands/, evals/) ──────────────────────
 pub use conversations::{
-    create_conversation, create_conversation_with_thread, delete_conversation, get_messages, list_conversations,
-    rename_conversation,
+    build_thread_context, create_conversation, create_conversation_with_thread, delete_conversation, get_messages,
+    list_conversations, rename_conversation,
 };
 pub use prewarm::prewarm_chat;
 pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, DEFAULT_RAG_CATEGORIES};
