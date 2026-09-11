@@ -68,6 +68,15 @@ descendants() { # all descendant pids of $1, depth-first
 
 cmd_launch() {
   case "$DATA_DIR" in *"Application Support/com.emailops.app"*) die "refusing to drive the production data dir";; esac
+  # Reuse a healthy instance from a previous launch: relaunching relinks the app
+  # crate (minutes) whenever HEAD or the feature set changed since the last build.
+  if RUN_DIR="$(readlink "$CURRENT" 2>/dev/null)" && [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/app.pid" ] \
+     && kill -0 "$(cat "$RUN_DIR/app.pid")" 2>/dev/null && [ "$(cat "$RUN_DIR/data_dir" 2>/dev/null)" = "$DATA_DIR" ] \
+     && app_has_file "$(cat "$RUN_DIR/app.pid")" "$DATA_DIR/emailops.db" \
+     && TAURI_WEBDRIVER_PORT="$(cat "$RUN_DIR/wd_port" 2>/dev/null || echo "$WD_PORT")" node "$WD" status >/dev/null 2>&1; then
+    echo "ready (reused): pid=$(cat "$RUN_DIR/app.pid") webdriver=$(cat "$RUN_DIR/wd_port") run_dir=$RUN_DIR"
+    return 0
+  fi
   if [ -n "$(port_listener)" ]; then die "port $PORT is already in use by pid $(port_listener); not started by this run — pick another VERIFY_PORT"; fi
   if find_app_pid >/dev/null; then die "an emailops process already has $DATA_DIR/emailops.db open (pid $(find_app_pid)); refusing to double-drive"; fi
   if [ "$DATA_DIR" = "$REPO/.emailops-demo-data" ]; then
@@ -82,23 +91,24 @@ cmd_launch() {
   (cd "$REPO" && EMAILOPS_DATA_DIR="$DATA_DIR" TAURI_WEBDRIVER_PORT="$WD_PORT" nohup npm run tauri dev -- --features webdriver --config "$cfg" > "$RUN_DIR/app.log" 2>&1 &
    echo $! > "$RUN_DIR/launcher.pid")
   local launcher; launcher="$(cat "$RUN_DIR/launcher.pid")"
-  echo "launcher pid=$launcher log=$RUN_DIR/app.log (cold build can take minutes)"
+  echo "$(date +%T) launcher pid=$launcher log=$RUN_DIR/app.log (relinks the app when HEAD or the feature set changed: ~1 min; cold build: minutes)"
   local deadline=$(( $(date +%s) + ${VERIFY_LAUNCH_TIMEOUT:-900} )) pid=""
   while [ -z "$pid" ]; do
     kill -0 "$launcher" 2>/dev/null || { tail -20 "$RUN_DIR/app.log"; die "launcher exited before the app came up"; }
     [ "$(date +%s)" -lt "$deadline" ] || die "timed out waiting for the app (see $RUN_DIR/app.log)"
     pid="$(find_app_pid || true)"; [ -n "$pid" ] || { sleep 3; printf '.'; }
   done; echo
-  echo "$pid" > "$RUN_DIR/app.pid"; echo "app process up: pid=$pid"
-  until node "$WD" status >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || die "app is up but the WebDriver server never answered on $WD_PORT"
+  echo "$pid" > "$RUN_DIR/app.pid"; echo "$(date +%T) app process up: pid=$pid"
+  local wd_deadline=$(( $(date +%s) + 120 ))
+  until TAURI_WEBDRIVER_PORT="$WD_PORT" node "$WD" status >>"$RUN_DIR/launch.trace" 2>&1; do
+    [ "$(date +%s)" -lt "$wd_deadline" ] || { tail -5 "$RUN_DIR/launch.trace"; die "app is up but the WebDriver server never answered on $WD_PORT (see $RUN_DIR/launch.trace and app.log)"; }
     sleep 2
   done
-  echo "webdriver answering on $WD_PORT"
+  echo "$(date +%T) webdriver answering on $WD_PORT"
   # The window id only matters for the cua-driver layer; do not hold the run for it.
   local win="" tries=0
   while [ -z "$win" ] && [ "$tries" -lt 15 ]; do win="$(main_window_id "$pid")"; [ -n "$win" ] || { sleep 2; tries=$((tries+1)); }; done
-  [ -n "$win" ] && echo "$win" > "$RUN_DIR/window.id" || echo "no window listed by cua-driver yet (WebDriver driving still works; doctor will re-check)"
+  [ -n "$win" ] && echo "$win" > "$RUN_DIR/window.id" || echo "$(date +%T) no window listed by cua-driver yet (WebDriver driving still works; doctor will re-check)"
   echo "ready: pid=$pid window_id=$win port=$PORT webdriver=$WD_PORT data_dir=$DATA_DIR run_dir=$RUN_DIR"
 }
 
