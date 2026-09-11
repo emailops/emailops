@@ -17,6 +17,7 @@ data = json.loads(src.read_text())
 meta, layers, records = data["meta"], data["layers"], data["records"]
 features = data["features"]; types = data["types"]
 E = html.escape
+TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
 TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "static": "Calidad estática", "perf": "Rendimiento"}
 STATUS_LABEL = {"ok": "OK", "fail": "FALLO", "skip": "N/A", "info": "INFO"}
 slug = lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -40,7 +41,8 @@ def summary_table(rows, first_col):
     for label, anchor, c in rows:
         total = sum(c.values())
         cls = "bad" if c["fail"] else ("quiet" if total == 0 else "good")
-        cell = f'<a href="#{anchor}">{E(label)}</a>' if anchor else E(label)
+        hint = TYPE_HINT.get(next((k for k, v in TYPE_LABEL.items() if v == label), ""), "")
+        cell = (f'<a href="#{anchor}" title="{E(hint)}">{E(label)}</a>' if anchor else f'<span title="{E(hint)}">{E(label)}</span>') if hint else (f'<a href="#{anchor}">{E(label)}</a>' if anchor else E(label))
         body += f'<tr class="{cls}"><td>{cell}</td><td>{total}</td><td class="ok">{c["ok"]}</td><td class="fail">{c["fail"] or ""}</td><td class="skip">{c["skip"] or ""}</td><td class="info">{c["info"] or ""}</td></tr>'
     return f'<table class="sum"><thead><tr><th>{first_col}</th><th>Total</th><th>OK</th><th>Fallos</th><th>N/A</th><th>Info</th></tr></thead><tbody>{body}</tbody></table>'
 
@@ -52,6 +54,7 @@ def img(path):
 def evidence(r):
     ev = r.get("evidence") or {}; parts = []
     if r["type"] == "eval":
+        parts.append(f'<p><span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: {E(ev.get("judge") or "heurística")}</span></p>')
         parts.append(f'<div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E(ev.get("answer", "") or "(vacía)")}</div></div>')
         checks = ev.get("checks") or []
         if checks:
@@ -70,10 +73,19 @@ def rows_html(rs, expand_fail=True):
     for r in rs:
         st = r["status"]; cls = {"ok": "good", "fail": "bad", "skip": "quiet", "info": "note"}[st]
         dur = f'{r["duration_ms"] / 1000:.1f} s' if r.get("duration_ms") else ""
-        out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{E(r["name"])}</td><td class="det">{E(r["detail"] or "")}</td><td class="dur">{dur}</td></tr>'
+        hint = r.get("desc") or ""
+        name_cell = f'<span class="hint" title="{E(hint)}">{E(r["name"])}</span>' if hint else E(r["name"])
+        model = (r.get("evidence") or {}).get("model")
+        det = E(r["detail"] or "") + (f' <span class="muted">· modelo {E(model)}</span>' if model else "")
+        out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
         if st in ("fail", "info") and (r.get("evidence") or {}) and (expand_fail or st == "info"):
             ev = evidence(r)
             if ev: out += f'<tr class="ev"><td colspan="4">{ev}</td></tr>'
+        elif r["type"] == "eval" and st == "ok":
+            ev = r.get("evidence") or {}
+            checks = ev.get("checks") or []
+            tbl = '<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th></tr></thead><tbody>' + "".join(f'<tr><td>{E(c["name"])}</td><td>{E(str(c["expected"]))}</td><td>{E(str(c["actual"]))[:160]}</td></tr>' for c in checks) + "</tbody></table>"
+            out += f'<tr class="ev"><td colspan="4"><details><summary>Pregunta, checks y traza</summary><div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E((ev.get("answer") or "")[:1500])}</div></div>{tbl}' + (f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>' if ev.get("ai_trace") is not None else "") + '</details></td></tr>'
     return out
 
 # ---------- build ----------
@@ -118,7 +130,12 @@ for f in feat_order:
             sub_tbl = f'<table class="tests"><tbody>{body}</tbody></table><details><summary>{len(rest)} tests sin fallo</summary><table class="tests"><tbody>{passing}</tbody></table></details>'
         else:
             sub_tbl = f'<table class="tests"><tbody>{body}{passing}</tbody></table>'
-        sub += f'<h3 id="f-{slug(f)}-{t}">{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span> <a class="up" href="#top">↑ índice</a></h3>{sub_tbl}'
+        head = ""
+        if t == "eval":
+            ai = meta.get("ai") or {}; models = sorted({(r.get("evidence") or {}).get("model") or "" for r in trs} - {""})
+            judge = next(((r.get("evidence") or {}).get("judge") for r in trs if (r.get("evidence") or {}).get("judge")), "ninguno")
+            head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or ai.get("model", "?"))} <span class="muted">({E(ai.get("provider", "?"))}, embeddings {E(ai.get("embeddingModel", "?"))})</span><br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Checks</span>answer_nonempty (respuesta no vacía), route (ruta elegida: ToolsFirst / RAG), tools_called (herramientas invocadas en orden), answer_contains / answer_not_contains (anclas de texto o enlaces email:// draft://), expected_tool_args_contains (argumentos de la herramienta). Cada caso lista los suyos en el desplegable.</p>'
+        sub += f'<h3 id="f-{slug(f)}-{t}">{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span> <a class="up" href="#top">↑ índice</a></h3>{head}{sub_tbl}'
     sections += f'<section class="feature" id="f-{slug(f)}"><h2>{E(f)} <span class="muted">{c["ok"]} ok · {c["fail"]} fallos · {c["skip"]} n/a</span></h2>{type_tbl}{sub}</section>'
 
 layers_html = "".join(f'<tr class="{ {"ok": "good", "error": "bad", "skipped": "quiet"}[l["status"]] }"><td>{E(l["layer"])}</td><td>{E(l["status"])}</td><td class="dur">{l.get("seconds", "")}</td><td class="det">{E(l.get("error", "") or "")}</td></tr>' for l in layers)
@@ -149,6 +166,7 @@ table.sum td:not(:first-child){{text-align:right;font-variant-numeric:tabular-nu
 .tablewrap{{overflow-x:auto;border:1px solid var(--line);border-radius:6px;margin:8px 0}}
 table.tests td.name{{font-family:"IBM Plex Mono",monospace;font-size:12.5px;max-width:48ch;word-break:break-word}} table.tests td.det{{color:var(--muted);max-width:56ch;word-break:break-word}} table.tests td.dur{{text-align:right;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}}
 tr.bad td{{background:var(--badbg)}} tr.ev td{{background:var(--evbg);padding:12px 14px}}
+.hint{{border-bottom:1px dotted var(--muted);cursor:help}} .evalmeta{{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 12px;max-width:none}}
 .chip{{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.05em;padding:2px 8px;border-radius:999px;background:var(--chipbg);white-space:nowrap}} .chip.ok{{color:var(--ok)}} .chip.fail{{color:var(--fail)}} .chip.skip{{color:var(--skip)}} .chip.info{{color:var(--info)}}
 pre{{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto;font-size:12px;max-height:480px;white-space:pre-wrap;word-break:break-word}}
 details summary{{cursor:pointer;color:var(--accent);margin:6px 0}}

@@ -7,7 +7,7 @@ Layers, in order: git, static, rust, vitest, contract, e2e, oracle, evals, perf.
 `quick` skips e2e, oracle and evals. Writes <run>/results.json (normalised test
 records + layer log) and <run>/layers/*.raw; report_all.py renders it.
 """
-import argparse, json, os, re, shutil, subprocess, sys, time, datetime, pathlib
+import argparse, collections, json, os, re, shutil, subprocess, sys, time, datetime, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -40,8 +40,8 @@ def log(msg): print(f"[{datetime.datetime.now():%H:%M:%S}] {msg}", flush=True)
 def sh(cmd, cwd=REPO, timeout=3600, env=None):
     p = subprocess.run(cmd, cwd=cwd, shell=isinstance(cmd, str), capture_output=True, text=True, timeout=timeout, env=env or ENV)
     return p.returncode, p.stdout, p.stderr
-def add(feature, typ, name, status, detail="", duration_ms=None, **evidence):
-    records.append({"feature": feature, "type": typ, "name": name, "status": status, "detail": detail[:2000], "duration_ms": duration_ms, "evidence": evidence})
+def add(feature, typ, name, status, detail="", duration_ms=None, desc="", **evidence):
+    records.append({"feature": feature, "type": typ, "name": name, "status": status, "detail": detail[:2000], "duration_ms": duration_ms, "desc": desc[:400], "evidence": evidence})
 def enabled(layer): return layer not in skip and (not only or layer in only)
 def layer_run(name, fn):
     if not enabled(name):
@@ -54,6 +54,36 @@ def layer_run(name, fn):
         add("Transversal", "static", f"capa {name}", "fail", err)
     layers.append({"layer": name, "status": status, "seconds": round(time.time() - t0, 1), "error": err})
     log(f"layer {name} done ({time.time() - t0:.0f}s)")
+
+# ---------- descriptions ----------
+RUST_TEST_RE = re.compile(r"((?:^[ \t]*//[^\n]*\n)*)[ \t]*#\[(?:tokio::)?test[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub )?(?:async )?fn ([A-Za-z0-9_]+)", re.M)
+def humanize(name): return name.replace("_", " ").strip().capitalize()
+def rust_doc_index():
+    """test fn → [(module_of_file, description)] from the comment block right above #[test]."""
+    idx = collections.defaultdict(list)
+    for base in (REPO / "src-tauri/src", REPO / "src-tauri/tests"):
+        for f in base.rglob("*.rs"):
+            rel = f.relative_to(REPO / "src-tauri")
+            mod = str(rel.with_suffix("")).replace("src/", "").replace("/mod", "").replace("/", "::").replace("lib", "")
+            text = f.read_text(errors="replace")
+            for m in RUST_TEST_RE.finditer(text):
+                comment = " ".join(l.strip().lstrip("/").strip() for l in m.group(1).splitlines() if l.strip())
+                idx[m.group(2)].append((mod, (comment or humanize(m.group(2)))[:300]))
+    return idx
+RUST_DOCS = rust_doc_index()
+def rust_desc(path):
+    fn = path.split("::")[-1]; cands = RUST_DOCS.get(fn) or []
+    for mod, d in cands:
+        if mod and path.startswith(mod): return d
+    return cands[0][1] if cands else humanize(fn)
+VITEST_HEADER = {}
+def vitest_desc(rel, full_name):
+    if rel not in VITEST_HEADER:
+        text = (REPO / rel).read_text(errors="replace")
+        m = re.match(r"\s*((?://[^\n]*\n)+)", text)
+        VITEST_HEADER[rel] = " ".join(l.strip().lstrip("/").strip() for l in m.group(1).splitlines()) [:300] if m else ""
+    head = VITEST_HEADER[rel]
+    return f"{full_name}" + (f" — {head}" if head else "")
 
 # ---------- attribution ----------
 FEATURES = MANIFEST["features"]
@@ -112,7 +142,7 @@ def layer_static():
         text = (out + err).strip(); tail = "\n".join(text.splitlines()[-40:])
         status = "ok" if rc == 0 else ("info" if sev == "info" else "fail")
         (LAYERS / f"static-{re.sub('[^a-z0-9]+', '-', name.lower())}.txt").write_text(text)
-        add("Transversal", "static", name, status, "" if rc == 0 else tail, int((time.time() - t0) * 1000), trace=tail if rc else "")
+        add("Transversal", "static", name, status, "" if rc == 0 else tail, int((time.time() - t0) * 1000), desc=f"Comando: {cmd}", trace=tail if rc else "")
 
 RUST_TEST = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)")
 def layer_rust():
@@ -139,7 +169,7 @@ def layer_rust():
             typ, feature = "unit", "Transversal"
         else:
             typ, feature = ("contract" if is_contract("rust", name) else "unit"), feature_for_rust(name)
-        add(feature, typ, name, status, "" if status != "fail" else "assertion failed (ver traza)", trace=traces.get(name, ""))
+        add(feature, typ, name, status, "" if status != "fail" else "assertion failed (ver traza)", desc=rust_desc(name), trace=traces.get(name, ""))
     if rc != 0 and not any(r["status"] == "fail" and r["type"] in ("unit", "integration", "contract") for r in records):
         add("Transversal", "static", "cargo test (compilación)", "fail", "\n".join(text.splitlines()[-40:]))
 
@@ -152,17 +182,20 @@ def layer_vitest():
         for a in f.get("assertionResults", []):
             status = {"passed": "ok", "failed": "fail", "skipped": "skip", "pending": "skip", "todo": "skip"}.get(a["status"], a["status"])
             typ = "contract" if is_contract("vitest", rel) else "unit"
-            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), trace="\n".join(a.get("failureMessages", []))[:6000])
+            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), desc=vitest_desc(rel, a["fullName"]), trace="\n".join(a.get("failureMessages", []))[:6000])
     if rc != 0 and not any(r["status"] == "fail" and r["name"].startswith("src/") for r in records):
         add("Transversal", "static", "vitest (arranque)", "fail", (out + err)[-3000:])
 
 def layer_contract():
     # The CLI's --json envelope is the contract agents script against.
-    rc, out, err = sh('make cli-fast ARGS="doctor --json"', timeout=1800)
+    # cli-demo: the same data dir the sweep and the evals use, so the AI config in the
+    # report is the one that was actually exercised (cli-fast would read the real install).
+    rc, out, err = sh('make cli-demo ARGS="doctor --json"', timeout=1800)
     body = out[out.find("{"):] if "{" in out else ""
     try:
         d = json.loads(body); okshape = set(d) == {"ok", "data", "error"} and isinstance(d["ok"], bool)
-        add("Transversal", "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "ok" if okshape else "fail", "" if okshape else f"claves: {sorted(d)}", trace=body[:2000] if not okshape else "")
+        if okshape and d.get("data"): meta["ai"] = {k: d["data"].get(k) for k in ("provider", "model", "embeddingModel", "aiEnabled")}
+        add("Transversal", "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "ok" if okshape else "fail", "" if okshape else f"claves: {sorted(d)}", desc="La CLI devuelve siempre el mismo sobre JSON {ok, data, error} para que un agente pueda parsear éxito y fallo con una sola forma", trace=body[:2000] if not okshape else "")
     except Exception as e:
         add("Transversal", "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "fail", f"sin JSON: {e}", trace=(out + err)[-2000:])
 
@@ -184,7 +217,7 @@ def layer_e2e():
     for r in json.loads(res.read_text()):
         typ = "ui" if re.search(r"barra de herramientas|anchura|cabecera|panel|Escape", r["step"]) else "e2e"
         shots = [str(APP / "sweep" / r["shot"])] if r.get("shot") else []
-        add(feature_for_e2e(r["feature"], r["step"]), typ, f"{r['feature']} › {r['step']}", r["status"], r["detail"], None, expect=r.get("expect", ""), shots=shots, log_tail=log_tail() if r["status"] == "fail" else "")
+        add(feature_for_e2e(r["feature"], r["step"]), typ, f"{r['feature']} › {r['step']}", r["status"], r["detail"], None, desc=r.get("expect", ""), expect=r.get("expect", ""), shots=shots, log_tail=log_tail() if r["status"] == "fail" else "")
 def log_tail():
     p = APP / "app.log"
     return "\n".join(p.read_text(errors="replace").splitlines()[-25:]) if p.exists() else ""
@@ -196,7 +229,7 @@ def layer_oracle():
     if not res.exists():
         add("Tag Board y clasificación", "oracle", "oráculo del Tag Board (tagboard_check.mjs)", "fail", (out + err)[-2000:]); return
     for r in json.loads(res.read_text()):
-        add("Tag Board y clasificación", "oracle", f"{r['kind']} › {r['step']}", r["status"], r["detail"], None, expect=r.get("expect", ""), shots=[str(APP / "tagboard" / r["shot"])] if r.get("shot") else [])
+        add("Tag Board y clasificación", "oracle", f"{r['kind']} › {r['step']}", r["status"], r["detail"], None, desc=r.get("expect", ""), expect=r.get("expect", ""), shots=[str(APP / "tagboard" / r["shot"])] if r.get("shot") else [])
 
 def teardown():
     if (APP / "app.pid").exists():
@@ -216,14 +249,16 @@ def layer_evals():
     for c in d["data"]["cases"]:
         failing = [ck for ck in c["checks"] if not ck["passed"]]
         detail = "; ".join(f"{ck['name']}: esperado {ck['expected']!r}, obtenido {ck['actual']!r}" for ck in failing)[:1500]
+        model = (c.get("trace") or {}).get("model") or (meta.get("ai") or {}).get("model") or ""
         add(feature_for_eval(c["id"]), "eval", f"{c['id']} ({c['tier']})", "ok" if c["passed"] else "fail",
             detail or f"{c['checksPassed']}/{c['checksTotal']} checks", c.get("latencyMs"),
-            question=c.get("question", ""), answer=c.get("answer", ""), ai_trace=c.get("trace"), checks=c["checks"])
+            desc=f"Pregunta: {c.get('question', '')} · Checks: {', '.join(ck['name'] for ck in c['checks'])}",
+            question=c.get("question", ""), answer=c.get("answer", ""), ai_trace=c.get("trace"), checks=c["checks"], model=model, judge="ninguno: métricas heurísticas (anclas de texto, ruta, herramientas llamadas)")
 
 def layer_perf():
     b = MANIFEST["budgets"]
     if "launch_s" in meta:
-        add("Transversal", "perf", f"arranque de la instancia de verificación ≤ {b['launch_s']} s", "ok" if meta["launch_s"] <= b["launch_s"] else "fail", f"{meta['launch_s']} s")
+        add("Transversal", "perf", f"arranque de la instancia de verificación ≤ {b['launch_s']} s", "ok" if meta["launch_s"] <= b["launch_s"] else "fail", f"{meta['launch_s']} s", desc="Tiempo desde `verify.sh launch` hasta que el WebDriver embebido responde; presupuesto en features.json")
     for r in records:
         if r["type"] == "e2e" and "pregunta y respuesta" in r["name"]:
             m = re.search(r"(\d+) s;", r["detail"])
