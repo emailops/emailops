@@ -101,6 +101,10 @@ $V wd shot  "$(readlink src-tauri/reports/verify/current)/inbox.png"
 
 Selectors are WebdriverIO's: CSS, `button=Inbox` (exact text), `button*=Nadia` (partial
 text), `aria/Close chat panel` (accessible name, i.e. the `aria-label` or visible label).
+Keys are synthetic DOM events on this server: `wd keys Enter` also submits the active
+field's `<form>` (a real Enter does that implicitly, a dispatched event does not).
+`launch` prints progress (`.` while waiting for the process, then the WebDriver line); a
+warm start is ~20 s, a rebuild after a Rust change several minutes.
 
 **cua-driver second** (native layer: window screenshots, menus, anything outside the
 webview). Daemon at `~/Library/Caches/cua-driver/cua-driver.sock`; it works on a backgrounded

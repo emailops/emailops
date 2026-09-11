@@ -87,20 +87,18 @@ cmd_launch() {
   while [ -z "$pid" ]; do
     kill -0 "$launcher" 2>/dev/null || { tail -20 "$RUN_DIR/app.log"; die "launcher exited before the app came up"; }
     [ "$(date +%s)" -lt "$deadline" ] || die "timed out waiting for the app (see $RUN_DIR/app.log)"
-    pid="$(find_app_pid || true)"; [ -n "$pid" ] || sleep 3
-  done
-  echo "$pid" > "$RUN_DIR/app.pid"
-  local win=""
-  while [ -z "$win" ]; do
-    [ "$(date +%s)" -lt "$deadline" ] || die "app pid $pid is up but no window appeared"
-    win="$(main_window_id "$pid")"
-    [ -n "$win" ] || sleep 2
-  done
-  echo "$win" > "$RUN_DIR/window.id"
+    pid="$(find_app_pid || true)"; [ -n "$pid" ] || { sleep 3; printf '.'; }
+  done; echo
+  echo "$pid" > "$RUN_DIR/app.pid"; echo "app process up: pid=$pid"
   until node "$WD" status >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] || die "app is up but the WebDriver server never answered on $WD_PORT"
     sleep 2
   done
+  echo "webdriver answering on $WD_PORT"
+  # The window id only matters for the cua-driver layer; do not hold the run for it.
+  local win="" tries=0
+  while [ -z "$win" ] && [ "$tries" -lt 15 ]; do win="$(main_window_id "$pid")"; [ -n "$win" ] || { sleep 2; tries=$((tries+1)); }; done
+  [ -n "$win" ] && echo "$win" > "$RUN_DIR/window.id" || echo "no window listed by cua-driver yet (WebDriver driving still works; doctor will re-check)"
   echo "ready: pid=$pid window_id=$win port=$PORT webdriver=$WD_PORT data_dir=$DATA_DIR run_dir=$RUN_DIR"
 }
 

@@ -44,7 +44,7 @@ Each file has an H1, one paragraph of user-visible behaviour, then exactly four 
 ## Features
 
 - [Inbox: open and close a thread](./inbox-open-email.md) — list, open, reading pane, Back. **Driven live 11/09/2026.**
-- [Search emails](./search.md) — search box, results, empty, clear. Selectors confirmed present, not yet driven.
+- [Search emails](./search.md) — search box, results, empty, clear. **Driven live 11/09/2026.**
 - [Chat with the inbox](./chat.md) — panel, ask, sources, new chat. Selectors confirmed present, not yet driven.
 - [Tag Board](./tag-board.md) — blocks per classified tag, range filter, tag search. Entry button confirmed, not yet driven.
 - [Compose](./compose.md) — new email, fields, discard, send-without-credentials path. Entry button confirmed, not yet driven.

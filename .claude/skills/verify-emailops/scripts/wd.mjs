@@ -77,6 +77,16 @@ try {
     }
     case 'keys': {
       await browser.keys(a1);
+      // The embedded server dispatches synthetic DOM key events, which never
+      // trigger a form's implicit submission the way a real Enter does. Do
+      // that part ourselves so a search box or login form behaves as for a user.
+      if (a1 === 'Enter') {
+        await browser.execute(() => {
+          const el = document.activeElement;
+          const form = el && el.closest ? el.closest('form') : null;
+          if (form && el.tagName !== 'TEXTAREA') form.requestSubmit();
+        });
+      }
       console.log('sent');
       break;
     }
