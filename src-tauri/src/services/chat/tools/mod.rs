@@ -193,6 +193,15 @@ pub trait Tool: Send + Sync {
     /// `function.parameters`. Build with `serde_json::json!({...})`.
     fn parameters_schema(&self) -> serde_json::Value;
 
+    /// The schema as it should be advertised right now, given user settings —
+    /// e.g. a parameter whose accepted values come from Settings (the
+    /// classifier's tag list). Default: the static `parameters_schema()`.
+    /// The registry always goes through this hook; `parameters_schema()`
+    /// stays the settings-free form for tests and static rendering.
+    fn parameters_schema_for(&self, _db: &Database) -> serde_json::Value {
+        self.parameters_schema()
+    }
+
     /// Short summary inlined into the chat system prompt's `Tools:` section.
     /// Default: full `description()`. Override with a tight one-liner —
     /// small models pick tools off this list, so it must be precise but
@@ -252,7 +261,7 @@ impl ToolRegistry {
                     "function": {
                         "name": t.name(),
                         "description": t.description(),
-                        "parameters": t.parameters_schema(),
+                        "parameters": t.parameters_schema_for(db),
                     },
                 })
             })
@@ -309,7 +318,7 @@ impl ToolRegistry {
                     format!(
                         "  - {}({}): {}",
                         t.name(),
-                        tool_arg_signature(&t.parameters_schema()),
+                        tool_arg_signature(&t.parameters_schema_for(db)),
                         t.prompt_summary()
                     ),
                 )
@@ -356,7 +365,7 @@ impl ToolRegistry {
             .values()
             .filter(|t| t.is_available(db))
             .map(|t| {
-                let schema = t.parameters_schema();
+                let schema = t.parameters_schema_for(db);
                 let props = schema
                     .get("properties")
                     .and_then(|p| p.as_object())
@@ -523,6 +532,54 @@ mod tests {
             .map(|d| d["function"]["name"].as_str().expect("name"))
             .collect();
         assert_eq!(names, vec!["get_lens_data"]);
+    }
+
+    /// A tool whose parameter menu depends on user settings (the classifier's
+    /// tag list) overrides `parameters_schema_for(db)`; both the function
+    /// catalogue and the prompt section must go through that hook.
+    struct DbAwareTool;
+    #[async_trait]
+    impl Tool for DbAwareTool {
+        fn name(&self) -> &'static str {
+            "db_aware"
+        }
+        fn description(&self) -> &'static str {
+            "db aware"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"static_arg": {}}, "required": []})
+        }
+        fn parameters_schema_for(&self, db: &Database) -> serde_json::Value {
+            let extra = db.get_preference("db_aware_arg").ok().flatten().unwrap_or_default();
+            serde_json::json!({"type": "object", "properties": {extra: {}}, "required": []})
+        }
+        async fn execute(&self, _ctx: &ToolCtx<'_>, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text("ran"))
+        }
+    }
+
+    #[test]
+    fn definitions_and_prompt_section_use_the_db_aware_schema() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("db_aware_arg", "dynamic_arg").expect("set pref");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(DbAwareTool)]);
+        let defs = registry.definitions(&db);
+        assert!(
+            defs[0]["function"]["parameters"]["properties"]
+                .get("dynamic_arg")
+                .is_some(),
+            "definitions must call parameters_schema_for(db): {defs:?}"
+        );
+        let section = registry.render_system_prompt_section(&db);
+        assert!(section.contains("db_aware(dynamic_arg?)"), "{section}");
+        assert!(!section.contains("static_arg"), "{section}");
+    }
+
+    #[test]
+    fn parameters_schema_for_defaults_to_the_static_schema() {
+        let db = Database::new_for_testing().expect("test db");
+        let tool = FakeToolWithSummary;
+        assert_eq!(tool.parameters_schema_for(&db), tool.parameters_schema());
     }
 
     #[test]

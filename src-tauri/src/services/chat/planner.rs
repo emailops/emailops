@@ -16,6 +16,7 @@
 //! the fast path can only ever *save* a round, never break a turn.
 
 use crate::ai::provider::{AIProvider, AiToolCall, AiToolCallFunction, CompletionOptions};
+use crate::services::classification::TagGlossary;
 
 /// The planner's decision for a turn.
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +41,9 @@ pub struct SearchPlan {
     /// the mailbox never spells out.
     pub intent: Option<String>,
     pub topic: Option<String>,
+    /// `"semantic"` to rank `query` by meaning instead of exact keywords —
+    /// the planner's way to search for a description no tag captures.
+    pub mode: Option<String>,
     pub since: Option<String>,
     pub until: Option<String>,
     pub limit: Option<i64>,
@@ -91,6 +95,7 @@ impl SearchPlan {
         put("subject", self.subject);
         put("intent", self.intent);
         put("topic", self.topic);
+        put("mode", self.mode);
         put("since", self.since);
         put("until", self.until);
         if oldest {
@@ -180,6 +185,9 @@ pub fn parse_plan(text: &str) -> Plan {
         subject: str_field("subject"),
         intent: str_field("intent").map(|v| v.to_lowercase()),
         topic: str_field("topic").map(|v| v.to_lowercase()),
+        // Only the semantic switch is meaningful; "keyword" is the default
+        // and anything else is noise.
+        mode: str_field("mode").map(|m| m.to_lowercase()).filter(|m| m == "semantic"),
         since: str_field("since"),
         until: str_field("until"),
         limit,
@@ -242,11 +250,22 @@ pub(crate) fn week_bounds(today: &str) -> Option<WeekBounds> {
 /// Render the planner prompt from its registry template, substituting the
 /// per-turn variables. Pure (no DB / no I/O) so it is unit-testable; the executor
 /// fetches the template via `prompts::get_template`.
-pub(crate) fn render_planner_prompt(template: &str, user_email: &str, today: &str, query: &str) -> String {
+pub(crate) fn render_planner_prompt(
+    template: &str,
+    user_email: &str,
+    today: &str,
+    query: &str,
+    glossary: &TagGlossary,
+) -> String {
     let mut vars = std::collections::HashMap::new();
     vars.insert("user_email", user_email.to_string());
     vars.insert("today", today.to_string());
     vars.insert("query", query.to_string());
+    // The classifier's tags with their meanings, so a concept in the question
+    // ("prospects", "quote requests") maps onto a tag by definition — the
+    // vocabulary follows Settings, not a hard-coded list.
+    vars.insert("intent_definitions", TagGlossary::render_lines(&glossary.intents));
+    vars.insert("topic_definitions", TagGlossary::render_lines(&glossary.topics));
     // Deterministic Monday-anchored week ranges so "this week" / "last week"
     // never rely on the model's weekday arithmetic. Empty on an unparseable
     // date — the template's generic relative-date rule still applies.
@@ -279,8 +298,9 @@ pub(crate) async fn plan_search(
     user_email: &str,
     today: &str,
     query: &str,
+    glossary: &TagGlossary,
 ) -> Plan {
-    let prompt = render_planner_prompt(template, user_email, today, query);
+    let prompt = render_planner_prompt(template, user_email, today, query, glossary);
     let opts = CompletionOptions {
         temperature: Some(0.0),
         max_tokens: Some(128),
@@ -295,6 +315,7 @@ pub(crate) async fn plan_search(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::classification::ClassificationConfig;
 
     fn search(text: &str) -> SearchPlan {
         match parse_plan(text) {
@@ -334,8 +355,46 @@ mod tests {
     #[test]
     fn render_planner_prompt_injects_week_ranges() {
         let tmpl = "this={{this_week_since}}..{{this_week_until}} last={{last_week_since}}..{{last_week_until}}";
-        let out = render_planner_prompt(tmpl, "me@x.com", "2026-06-30", "this week");
+        let out = render_planner_prompt(tmpl, "me@x.com", "2026-06-30", "this week", &TagGlossary::defaults());
         assert_eq!(out, "this=2026-06-29..2026-07-06 last=2026-06-22..2026-06-29");
+    }
+
+    #[test]
+    fn render_planner_prompt_lists_the_tag_glossary() {
+        let g = TagGlossary::from_config(&ClassificationConfig {
+            enabled: true,
+            classify_previous: false,
+            intents: vec!["request".into(), "escalation".into()],
+            topics: vec!["wine".into()],
+            categories: vec![],
+        });
+        let out = render_planner_prompt(
+            "I:\n{{intent_definitions}}\nT:\n{{topic_definitions}}",
+            "me@x.com",
+            "2026-06-30",
+            "q",
+            &g,
+        );
+        assert!(out.contains("  request: "), "{out}");
+        assert!(out.contains("  escalation\n"), "custom tag listed bare: {out}");
+        assert!(out.contains("T:\n  wine"), "{out}");
+    }
+
+    #[test]
+    fn parses_semantic_mode_and_ignores_unknown_modes() {
+        let p = search(r#"{"query":"pido presupuesto a un proveedor","mode":"semantic"}"#);
+        assert_eq!(p.mode.as_deref(), Some("semantic"));
+        let call = p.into_tool_call();
+        assert_eq!(call.function.arguments["mode"], "semantic");
+        let p = search(r#"{"query":"x","mode":"fuzzy"}"#);
+        assert_eq!(p.mode, None);
+        let call = p.into_tool_call();
+        assert!(call.function.arguments.get("mode").is_none());
+    }
+
+    #[test]
+    fn mode_alone_is_not_a_filter() {
+        assert_eq!(parse_plan(r#"{"mode":"semantic"}"#), Plan::Defer);
     }
 
     #[test]
@@ -542,6 +601,7 @@ mod tests {
             "me@x.com",
             "2026-06-17",
             "emails I sent",
+            &TagGlossary::defaults(),
         );
         assert_eq!(out, "addr=me@x.com day=2026-06-17 q=emails I sent");
     }

@@ -192,6 +192,14 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
         name: "last_week_until",
         description: "Monday of the current week (YYYY-MM-DD, end-exclusive) — deterministic 'last week' range end.",
     },
+    VariableDef {
+        name: "intent_definitions",
+        description: "One line per intent tag from your Classification settings — `name: meaning` — so the planner can map a concept in the question onto a tag.",
+    },
+    VariableDef {
+        name: "topic_definitions",
+        description: "One line per topic tag from your Classification settings — `name: meaning`.",
+    },
 ];
 
 const TRANSLATE_DETECT_VARS: &[VariableDef] = &[VariableDef {

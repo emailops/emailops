@@ -69,6 +69,23 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "recibí",
     "recibi",
     "me llegaron",
+    // First-person mail actions (the user asked / requested / wrote): a
+    // from=<me> filter. Accented forms only where the bare stem is a common
+    // unrelated word ("pedi" sits inside "pedido").
+    "pedí",
+    "solicité",
+    "solicite",
+    "mandé",
+    "mande",
+    "escribí",
+    "escribi",
+    "pregunté",
+    "pregunte",
+    "i asked",
+    "did i ask",
+    "i requested",
+    "i wrote",
+    "i emailed",
     // Listings / counts (EN)
     "how many",
     "count of",
@@ -389,6 +406,24 @@ mod tests {
             "correos enviados por mí",
             "qué le envié a marisol",
             "qué correos me enviaron",
+        ] {
+            let res = heuristic_route(q);
+            assert!(res.is_some(), "expected ToolsFirst for: {}", q);
+            assert_eq!(res.unwrap().0, RouteMode::ToolsFirst, "query: {}", q);
+        }
+    }
+
+    #[test]
+    fn heuristic_routes_first_person_mail_actions_to_tools() {
+        // "what I asked / requested / wrote to X" is a from=<me> filter, which
+        // only the tool loop can express; RAG over primary sources answered
+        // "no such request" for a quote the user had sent the week before.
+        for q in [
+            "emails en los que pedí un presupuesto a un proveedor",
+            "lo que solicité a la gestoría",
+            "what did I ask the supplier for",
+            "the quote I requested from the printer",
+            "correos donde escribí a soporte",
         ] {
             let res = heuristic_route(q);
             assert!(res.is_some(), "expected ToolsFirst for: {}", q);

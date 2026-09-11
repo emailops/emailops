@@ -21,7 +21,7 @@ pub mod tools;
 mod conversations;
 mod planner;
 mod prewarm;
-mod retrieval;
+pub(crate) mod retrieval;
 mod routing;
 mod turn;
 

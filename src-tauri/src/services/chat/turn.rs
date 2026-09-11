@@ -3472,7 +3472,16 @@ pub async fn run_chat_turn(
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
-        let plan = super::planner::plan_search(provider.as_ref(), &template, &user_email, &today, &user_question).await;
+        let glossary = crate::services::classification::TagGlossary::load(&db);
+        let plan = super::planner::plan_search(
+            provider.as_ref(),
+            &template,
+            &user_email,
+            &today,
+            &user_question,
+            &glossary,
+        )
+        .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
         match plan {
             super::planner::Plan::Search(plan) => {

@@ -141,8 +141,8 @@ WHEN A SENDER LOOKUP RETURNS NOTHING OR IS AMBIGUOUS:
 FOLLOW-UP MESSAGES:
   - A short follow-up ("put them in a table", "and the ones from May?", "I mean X", "look in the last 10", "it was in December 2024") refers to the previous question. Resolve the referent from the conversation history and RE-ISSUE the previous tool call with the adjusted filters (new date range, larger limit, different sender). Never reply that the history lacks the information — the tools are still available to you.
 
-PROSPECTS / LEADS / POTENTIAL CLIENTS:
-  - A prospect is someone asking about YOUR services, proposing to work with you, or asking for a quote — search with intent="introduction" (then "question" / "request"), not with the word "prospects". People offering you THEIR services (SEO, marketing, recruiting, agencies), job seekers and newsletters are NOT prospects even if they wrote to you: leave them out and say so. If nobody qualifies, say that plainly.
+KINDS OF MAIL (prospects, complaints, quote requests, newsletters, cold outreach, …):
+  - When the question describes a kind of mail rather than words it contains, do not search for the concept as a keyword: filter search_emails by `intent` / `topic` — each value's meaning is listed on the parameter — combined with from/to/since/until as the question implies, or use mode="semantic" when no tag fits. Judge each result against the question's own definition (a prospect asks about YOUR services; a vendor pitching theirs is not one) and say plainly when nobody qualifies.
 
 COUNTS:
   - A search result that starts with "(showing N of M matching threads …)" tells you the real total M; answer "how many" questions with M. Without that line, the rows shown are all there is.
@@ -218,16 +218,20 @@ pub const CHAT_QUERY_PLAN: &str = r#"You convert ONE mailbox question into a sin
 The user's own address is {{user_email}}. Today is {{today}} (UTC).
 
 Fields (use null when the question does not imply them):
-  query   : topic / keywords
+  query   : keywords that appear in the mail itself (subject/body)
+  mode    : "semantic" when the question DESCRIBES the mail and its words may differ from the mail's ("emails where I ask a supplier for a quote"); omit for exact words (names, codes, invoice numbers)
   from    : sender filter
-  to      : recipient filter
+  to      : recipient filter — only when the question says who received the mail
   subject : subject keywords
   since   : ISO date YYYY-MM-DD (range start)
   until   : ISO date YYYY-MM-DD (range end)
   limit   : integer 1-25
   order   : "newest" (default) or "oldest"
-  intent  : classifier tag — introduction | question | request | scheduling | delivery | feedback | conversation | notification | promotion | newsletter
-  topic   : classifier tag (sales, billing, project, hiring, travel, ...)
+  intent  : what the sender wants — one of:
+{{intent_definitions}}
+  topic   : what the mail is about — ONLY when the question names one of these subjects
+            ("facturas" -> billing, "viajes" -> travel); never inferred from the intent — one of:
+{{topic_definitions}}
 
 Rules:
 - "emails I sent" / "sent by me" -> the user is the AUTHOR -> from = {{user_email}}.
@@ -239,16 +243,21 @@ Rules:
 - "this week" / "esta semana" -> since = {{this_week_since}}, until = {{this_week_until}} (week starts Monday; until is end-exclusive).
 - "last week" / "semana pasada" -> since = {{last_week_since}}, until = {{last_week_until}}.
 - Other relative dates ("today", "yesterday", "in May") -> resolve against {{today}} into since/until.
+- A KIND of mail (a concept, in any language) is never a keyword: pick the intent/topic whose
+  definition matches it and leave query null. If no tag fits, put the description in query
+  with mode = "semantic".
+- When the question uses a tag's own name or its translation ("newsletters", "quejas",
+  "complaints", "solicitudes"), that tag IS the filter — do not substitute a neighbouring one,
+  and do not add a second tag the question did not ask for.
+- Meetings, appointments, calendar, agenda, events ("qué reuniones tengo hoy") are answered by
+  the calendar tool, not by an email search -> {"defer": true}.
 - If the question is NOT a single email search (it asks to write/draft/summarize/reply,
   needs multiple steps, or is not about finding mail), output exactly {"defer": true} and nothing else.
 
-- Concepts the mailbox never spells out go through `intent`, never `query`: "prospects" /
-  "potenciales clientes" / "leads" / "oportunidades" -> intent = "introduction";
-  "newsletters" / "boletines" -> intent = "newsletter"; "promociones" / "marketing" /
-  "cold outreach" -> intent = "promotion". Leave query null in those cases.
-
 Example: "primer correo que envié a acme" -> {"to": "acme", "order": "oldest", "limit": 1}
-Example: "últimos correos de prospects" -> {"intent": "introduction", "limit": 5}
+Example: "latest emails from potential clients" -> {"intent": "introduction", "limit": 5}
+Example: "correos donde pido presupuesto a un proveedor" -> {"from": "{{user_email}}", "intent": "request", "query": "presupuesto", "mode": "semantic"}
+Example: "quejas de clientes en 2025" -> {"intent": "complaint", "since": "2025-01-01", "until": "2026-01-01"}
 
 Output ONLY the JSON object — no prose, no markdown fences.
 

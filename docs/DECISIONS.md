@@ -902,3 +902,37 @@ one of many. *Excluding spam at the DB search for every caller* — the inbox se
 still find a message the detector got wrong. *Relying on the model to filter vendors out
 of a broad result* — it did not, twice; the definition in the prompt plus the intent filter
 make the right set the default rather than a judgement call.
+
+## 2026-09-11 — Concepts reach the search through the tag glossary, not per-concept prompt rules
+
+**Decision:** The chat maps a *kind* of mail in the question ("prospects", "quote requests I
+sent", "complaints in 2025", "newsletters this week") onto the classifier's tags through
+data, not prose. Each built-in intent and topic carries a one-line definition next to its
+name in `services::classification` (`TagGlossary`); the user's configured tag list — plus
+any tag value actually present in `email_tags` that the list no longer names, since rules and
+older defaults keep tagging — with those definitions, is rendered into the `search_emails`
+parameter menu (a new
+`Tool::parameters_schema_for(db)` hook, since the vocabulary follows Settings), into the
+query planner prompt (`{{intent_definitions}}` / `{{topic_definitions}}`), and the planner
+prompt keeps a handful of diverse examples. `search_emails` also takes `mode="semantic"`,
+which ranks the query by meaning through the chat's hybrid retrieval and then applies the
+sender / recipient / date / tag filters in memory — for descriptions no tag captures. The
+system prompt keeps one generic sentence ("a kind of mail is a tag filter or a semantic
+search, never a keyword") in place of the PROSPECTS paragraph.
+
+**Context:** The prospects fix taught the prompt one concept. The next question ("emails
+where I ask a provider for a quote") would have needed its own paragraph, and so would every
+concept after it — a system prompt that grows per concept and still never covers what the
+user says next. The classifier already has a vocabulary; what was missing was its meaning
+in front of the model at the two points where it chooses filters. The first run also showed
+why the menu cannot be the Settings list alone: the production mailbox has ~1,000 emails
+tagged `newsletter` while its Settings list had dropped that intent, so a data-driven planner
+could not name the tag the old hard-coded prompt used to spell out.
+
+**Rejected:** *A concept → intent lookup table in code* — the same growth problem in a
+different file, and blind to paraphrase and language. *Putting the definitions in the
+static tool description* — the tag list is user-configurable, so the menu must be rendered
+from the DB. *Semantic mode as a separate tool* — one tool with one `mode` switch keeps the
+filters and output shape identical, so the model needs no second contract. *Feeding the
+definitions to the classifier prompt in the same change* — it would move classification
+results and needs its own eval run; the glossary is there for it when that lands.
