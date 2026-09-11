@@ -348,11 +348,18 @@ export function EmailView({
             grow taller instead of hiding actions. `flex-1 basis-0` on the title
             keeps its long content from forcing a wrap at normal widths. */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-          <h1 className="flex-1 basis-0 min-w-0 text-lg font-semibold text-gray-900 truncate">
+          {/*
+           * A real flex basis, not 0: with basis-0 the title counted for
+           * nothing when the row decided what fits, so on a laptop-width
+           * full-width pane the chips and buttons took the line and the
+           * subject shrank to one letter. Now the title keeps ~16rem and the
+           * controls wrap under it when there is no room.
+           */}
+          <h1 className="flex-[1_1_16rem] min-w-0 text-lg font-semibold text-gray-900 truncate">
             {latestEmail.subject || '(No subject)'}
           </h1>
           {emailTags.length > 0 && (
-            <div className="flex-shrink-0">
+            <div className="min-w-0">
               <TagChips tags={emailTags} />
             </div>
           )}
