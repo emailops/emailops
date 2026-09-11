@@ -373,12 +373,33 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             output::render_drafts(&drafts, session.style)
         }
 
-        Command::Draft { id } => {
+        Command::Draft { id, delete } => {
             let draft = session
                 .db
                 .get_draft(&id)?
                 .ok_or_else(|| AppError::NotFound(format!("draft '{}' not found", id)))?;
-            output::render_draft_detail(&draft, session.style)
+            if !delete {
+                return output::render_draft_detail(&draft, session.style);
+            }
+            // Same provider seam `compose` uses to push a draft: without it the
+            // provider copy would linger in Gmail / Outlook Drafts after the
+            // local row is gone.
+            let account = session
+                .db
+                .get_account(&draft.account_id)?
+                .ok_or_else(|| AppError::NotFound(format!("account '{}' not found", draft.account_id)))?;
+            let provider = if crate::sync::provider::provider_supports_drafts(&account.provider) {
+                crate::services::emails::build_provider(&account, None).await.ok()
+            } else {
+                None
+            };
+            crate::services::emails::delete_draft(&session.db, &account, &id, provider.as_deref()).await?;
+            if session.mode == OutputMode::Json {
+                output::emit_ok(serde_json::json!({ "deleted": id }))?;
+            } else {
+                println!("Deleted draft {id} ({}).", draft.subject);
+            }
+            Ok(())
         }
 
         Command::Translate { id, to, detect_only } => {

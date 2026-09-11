@@ -71,6 +71,26 @@
   metrics:
     - answer_relevancy
 
+# A lookup must never end in a saved draft. Observed on the real mailbox with
+# Qwen 3.6 35B: "primer correo que envié a X" found the email and the model
+# then called generate_email_draft on its own, saving (and pushing) a reply
+# nobody asked for. The tool loop now refuses generate_email_draft on a turn
+# whose question does not ask to write/reply/draft (`draft_call_allowed`), so
+# this holds regardless of what the model attempts. Same demo anchor as
+# `demo_planner_oldest` (the oldest sent email is a deterministic hit).
+- id: demo_lookup_never_drafts
+  question: "muéstrame el primer correo que envié, solo quiero verlo"
+  account: "ulises@emailopslabs.dev"
+  category: summary
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "](draft://"
+  metrics:
+    - answer_relevancy
+
 # Exercises the planner's ORDER=oldest path — "primer correo / first email".
 # Regression for the bug where "first" returned recent mail: search_emails had
 # no ascending sort, so the oldest match was structurally unreachable. The

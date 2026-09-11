@@ -346,6 +346,10 @@ pub enum Command {
     Draft {
         /// Draft id.
         id: String,
+        /// Delete the draft instead of showing it — locally and, for Gmail /
+        /// Outlook, in the provider's Drafts folder too.
+        #[arg(long)]
+        delete: bool,
     },
 
     /// Upcoming calendar events for one account (the calendar is per-account

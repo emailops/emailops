@@ -45,6 +45,18 @@ fn now_utc() -> chrono::DateTime<Utc> {
     chrono::DateTime::<Utc>::from_timestamp(crate::services::clock::current().now_secs(), 0).unwrap_or_else(Utc::now)
 }
 
+/// The calendar day `now_secs` falls on in the user's zone. Pure so the
+/// midnight edge is testable: 23:30 UTC with a +2h offset is already tomorrow.
+pub(crate) fn local_today(now_secs: i64, offset_secs: i32) -> chrono::NaiveDate {
+    super::local_date(now_secs, offset_secs)
+}
+
+/// "Now" as the user's wall clock — the only notion of today/tomorrow the
+/// model should ever see.
+fn now_local() -> chrono::NaiveDateTime {
+    now_utc().naive_utc() + chrono::Duration::seconds(crate::services::clock::utc_offset_secs() as i64)
+}
+
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
@@ -151,8 +163,12 @@ pub fn build_prompt(
     system_template: &str,
     tools_section: &str,
 ) -> Vec<(String, String)> {
-    let today = now_utc().format("%Y-%m-%d").to_string();
-    let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let now = now_local();
+    let today = now.format("%Y-%m-%d").to_string();
+    let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    // The weekday name: with ISO dates alone the model guessed weekdays and
+    // labelled a Thursday "martes" in a week agenda.
+    let weekday = now.format("%A").to_string();
     let language_instruction = if language.is_empty() {
         "Reply in the language the user writes in.".to_string()
     } else {
@@ -184,6 +200,7 @@ Do not swap from and to: \"I sent\" is always from, \"sent to me\" is always to.
     let mut tpl_vars = std::collections::HashMap::new();
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
+    tpl_vars.insert("weekday", weekday);
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("user_identity", user_identity);
     tpl_vars.insert("tools_section", tools_section.to_string());
@@ -201,13 +218,16 @@ before answering any factual question about the user's mailbox.)\n",
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
             let marked = mark_relevant_region(&sliced);
+            // `id=` lets a RAG answer link the email (`email://ID`) the same
+            // way a tool result does; without it the model invented ids.
             tail.push_str(&format!(
-                "[{}] From: {} <{}>  Subject: {}  Date: {}\n    {}\n\n",
+                "[{}] From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
                 src.citation_number,
                 src.email.sender,
                 src.email.sender_email,
                 src.email.subject,
                 format_date(src.email.timestamp),
+                src.email.id,
                 marked
             ));
         }
@@ -252,6 +272,68 @@ fn prepend_to_final_user_message(messages: &mut [(String, String)], block: &str)
 /// onto the user row so future turns replay them byte-identically — see
 /// `ChatMessage::prompt_content`. Failure degrades to a debug log: a turn
 /// must not fail because cache-warmth metadata could not be written.
+/// Ids of the pre-retrieved sources, in citation order. Seeds the turn's
+/// `email://` allowlist on the RAG route so a link to a numbered source
+/// survives validation — until now that allowlist started empty on RAG turns
+/// and every link in a RAG answer was silently dropped.
+fn source_email_ids(sources: &[ScoredEmail]) -> Vec<String> {
+    sources.iter().map(|s| s.email.id.clone()).collect()
+}
+
+/// Whether this turn may run `generate_email_draft`.
+///
+/// The tool has side effects (a draft is saved and pushed to the provider),
+/// so it must only run when the user asked to write/reply/draft — either in
+/// this message, or with a short confirmation ("sí", "ok, hazlo", "yes
+/// please") right after the assistant offered a draft. Observed failure: a
+/// plain lookup ("primer correo que envié a X") found the email and the model
+/// went on to draft a reply nobody asked for. An empty question means a
+/// programmatic caller with no user context; those are not gated.
+pub(super) fn draft_call_allowed(user_question: &str, last_assistant: Option<&str>) -> bool {
+    let q = user_question.trim();
+    if q.is_empty() || wants_email_draft(q) {
+        return true;
+    }
+    let folded = fold_for_intent_match(q);
+    let words: Vec<&str> = folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.len() > 4 {
+        return false;
+    }
+    const CONFIRMATIONS: &[&str] = &[
+        "si", "yes", "ok", "okay", "vale", "hazlo", "dale", "adelante", "claro", "please", "favor", "ahead", "go",
+        "yep", "sure", "oui", "ja",
+    ];
+    let confirms = words.iter().any(|w| CONFIRMATIONS.contains(w));
+    confirms && last_assistant.map(wants_email_draft).unwrap_or(false)
+}
+
+/// The tool-result text that replaces an unrequested `generate_email_draft`
+/// call. `None` when the call may run (any other tool, or drafting was asked).
+fn unrequested_draft_refusal(tool_name: &str, draft_allowed: bool) -> Option<String> {
+    if tool_name != "generate_email_draft" || draft_allowed {
+        return None;
+    }
+    Some(
+        "Not executed: the user did not ask to write, reply to or draft anything in this turn, so no draft \
+was created. Answer the question with the information you already have from the other tool results (search \
+again if needed). You may offer to draft a reply, but do not create one unless the user asks."
+            .to_string(),
+    )
+}
+
+/// Content of the most recent assistant message in the prompt, if any — the
+/// context a short confirmation like "sí" refers to.
+fn last_assistant_content(messages: &[AiMessage]) -> Option<&str> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "assistant")
+        .map(|m| m.content.as_str())
+}
+
 fn persist_prompted_tail(db: &Database, user_message_id: &str, messages: &[(String, String)]) {
     let Some((role, content)) = messages.last() else {
         return;
@@ -1181,6 +1263,24 @@ fn heuristic_direct_tools(
     user_question: &str,
     calendar_available: bool,
 ) -> Option<Vec<crate::ai::provider::AiToolCall>> {
+    heuristic_direct_tools_at(
+        user_question,
+        calendar_available,
+        local_today(
+            crate::services::clock::now_secs(),
+            crate::services::clock::utc_offset_secs(),
+        ),
+    )
+}
+
+/// [`heuristic_direct_tools`] against an explicit "today" — the user's local
+/// day, so a "summary of today" asked at 00:30 covers the day that just
+/// started, not the UTC one still running.
+fn heuristic_direct_tools_at(
+    user_question: &str,
+    calendar_available: bool,
+    today: chrono::NaiveDate,
+) -> Option<Vec<crate::ai::provider::AiToolCall>> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
     let q = user_question.trim().to_lowercase();
     if q.is_empty() {
@@ -1201,6 +1301,9 @@ fn heuristic_direct_tools(
                     // one shot — the model never has to call get_email_body and
                     // can't leak that tool-call markup into the summary.
                     "include_bodies": true,
+                    // "Emails I received today" — the user's own replies sent
+                    // today were listed and summarised as if they had arrived.
+                    "received_only": true,
                 }),
             },
         }]
@@ -1224,7 +1327,6 @@ fn heuristic_direct_tools(
 
     // Summary of today's emails (EN + ES).
     if has_today && has_summary && !has_week && !has_month {
-        let today = now_utc().date_naive();
         let tomorrow = today + chrono::Duration::days(1);
         return Some(search_since_until(today, tomorrow));
     }
@@ -1233,9 +1335,8 @@ fn heuristic_direct_tools(
     // integration, also preseed the week's calendar events so the report
     // covers meetings — the model summarises both in one pass.
     if has_week && has_summary && !has_month {
-        let now = now_utc().date_naive();
-        let days_since_monday = now.weekday().num_days_from_monday() as i64;
-        let monday = now - chrono::Duration::days(days_since_monday);
+        let days_since_monday = today.weekday().num_days_from_monday() as i64;
+        let monday = today - chrono::Duration::days(days_since_monday);
         let next_monday = monday + chrono::Duration::days(7);
         let mut calls = search_since_until(monday, next_monday);
         if calendar_available {
@@ -1398,6 +1499,36 @@ No digas que no hay resultados.\n\n\
 Your previous answer claims no emails were found, but the tool results above DO contain emails. Re-read \
 those results and answer the user's question NOW using them. Do not claim there are no results.";
 
+/// Corrective instruction when the answer stopped mid-sentence ("…con el
+/// código de descuento:" and nothing after). Observed on Qwen 3.6 35B on a
+/// RAG turn: the stream ended right where the fact should have followed.
+const TRUNCATED_RETRY_INSTRUCTION: &str =
+    "Tu respuesta anterior se cortó a mitad de frase y no llegó a dar el dato. Escribe AHORA la respuesta \
+completa, incluyendo el dato concreto que ibas a dar, usando los resultados y fuentes de arriba.\n\n\
+Your previous answer stopped mid-sentence and never gave the fact. Write the COMPLETE answer NOW, including \
+the concrete detail you were about to give, using the results and sources above.";
+
+/// True when the answer visibly stopped before its point: it ends on a colon
+/// or a comma, i.e. an introduction with nothing after it. A finished answer
+/// ends on a sentence, a link, a table row or a list item.
+fn answer_looks_truncated(answer: &str) -> bool {
+    let trimmed = answer.trim_end();
+    !trimmed.is_empty() && (trimmed.ends_with(':') || trimmed.ends_with(','))
+}
+
+/// Which corrective instruction, if any, a finished answer earns: a "no
+/// results" claim that contradicts the tool results, or an answer cut off
+/// before its point. Pure so both shapes are pinned by tests.
+fn answer_retry_instruction(answer: &str) -> Option<&'static str> {
+    if answer_claims_no_results(answer) {
+        Some(CONTRADICTION_RETRY_INSTRUCTION)
+    } else if answer_looks_truncated(answer) {
+        Some(TRUNCATED_RETRY_INSTRUCTION)
+    } else {
+        None
+    }
+}
+
 /// Max length (in chars) for an answer to count as a categorical "no results"
 /// claim in [`answer_claims_no_results`]. Real summaries run much longer; the
 /// observed failure shape is 1-3 short sentences, possibly with an empty
@@ -1433,6 +1564,15 @@ fn answer_claims_no_results(answer: &str) -> bool {
         "no encontré correo",
         "no encontré ning",
         "no tienes correos",
+        // "I can't see the results" — the model denies the tool output it was
+        // just given (observed after a refused tool call on Qwen 3.6 35B).
+        "no logro ver",
+        "no puedo ver",
+        "no veo el correo",
+        "no veo ning",
+        "parecen estar vac",
+        "necesito que me facilites",
+        "necesito que me proporciones",
         // English
         "no emails were found",
         "no emails found",
@@ -1445,6 +1585,10 @@ fn answer_claims_no_results(answer: &str) -> bool {
         "found no email",
         "no messages were found",
         "no messages found",
+        "i cannot see",
+        "i can't see",
+        "i don't see any",
+        "please provide the",
         // French
         "aucun courriel",
         "aucun e-mail",
@@ -1655,6 +1799,11 @@ async fn run_tool_loop(
         })
         .collect();
 
+    // Side-effect gate for generate_email_draft: decided once from the
+    // question (and the assistant's last message, for a bare "sí"), applied
+    // to every round — see `draft_call_allowed`.
+    let draft_allowed = draft_call_allowed(user_question, last_assistant_content(&messages));
+
     let mut had_any_answer = false;
     let mut abort_error: Option<String> = None;
     // Set when the round that produced the final answer streamed its prose to
@@ -1726,8 +1875,23 @@ async fn run_tool_loop(
                 // draft" / …) so the UI reflects what each call is doing.
                 emit_phase(conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
-                let dispatched =
-                    dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await;
+                let dispatched = match unrequested_draft_refusal(name, draft_allowed) {
+                    Some(note) => {
+                        emit_log(
+                            "info",
+                            "tool_loop: refused generate_email_draft — the user did not ask for a draft",
+                        );
+                        DispatchedTool {
+                            text: note,
+                            email_refs: Vec::new(),
+                            draft_refs: Vec::new(),
+                            corrected_args: None,
+                        }
+                    }
+                    None => {
+                        dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await
+                    }
+                };
                 let elapsed_ms = t_tool.elapsed().as_millis() as i64;
                 let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
                 let result = dispatched.text;
@@ -2063,8 +2227,21 @@ async fn run_tool_loop(
             // "Running tools" for the whole loop.
             emit_phase(conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
-            let dispatched =
-                dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await;
+            let dispatched = match unrequested_draft_refusal(name, draft_allowed) {
+                Some(note) => {
+                    emit_log(
+                        "info",
+                        "tool_loop: refused generate_email_draft — the user did not ask for a draft",
+                    );
+                    DispatchedTool {
+                        text: note,
+                        email_refs: Vec::new(),
+                        draft_refs: Vec::new(),
+                        corrected_args: None,
+                    }
+                }
+                None => dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await,
+            };
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
             let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
             let result = dispatched.text;
@@ -2333,8 +2510,10 @@ async fn run_thread_bound_turn(
     // on top via the pure `build_thread_bound_system` helper.
     let language = crate::services::i18n::resolve_ai_language(&db)?;
     let language_instruction = format!("Reply in {}.", language.english_name());
-    let today = now_utc().format("%Y-%m-%d").to_string();
-    let tomorrow = (now_utc() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let now = now_local();
+    let today = now.format("%Y-%m-%d").to_string();
+    let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let weekday = now.format("%A").to_string();
     // Drafts are gated behind a Settings toggle (defaults ON) AND behind the
     // user actually asking for one this turn. Both must hold: with a single
     // tool on the menu the model treats any imperative as licence to use it,
@@ -2360,6 +2539,7 @@ async fn run_thread_bound_turn(
     let mut tpl_vars = std::collections::HashMap::new();
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
+    tpl_vars.insert("weekday", weekday);
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
     // Empty rather than omitted, for the same reason: the identity block only
@@ -3089,7 +3269,7 @@ pub async fn run_chat_turn(
     let mut planner_trace: Option<LlmCallTrace> = None;
     if preseeded_tool_calls.is_none() && route.mode == RouteMode::ToolsFirst && planner_enabled(&db) {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
-        let today = now_utc().format("%Y-%m-%d").to_string();
+        let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let plan = super::planner::plan_search(provider.as_ref(), &template, &user_email, &today, &user_question).await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -3316,7 +3496,7 @@ pub async fn run_chat_turn(
                 .collect();
             // RagFirst never runs the tool loop, so nothing was streamed there;
             // the synthesis stream below ships the answer.
-            (msgs, 0i64, false, None, Vec::new(), Vec::new(), false)
+            (msgs, 0i64, false, None, source_email_ids(&sources), Vec::new(), false)
         }
     };
 
@@ -3371,11 +3551,16 @@ pub async fn run_chat_turn(
                 // (observed on Qwen 3.6 35B-A3B). Run ONE corrective retry
                 // over the same transcript; keep the original answer if the
                 // retry fails, so the guard can never make things worse.
-                let retry_messages = contradiction_retry_messages.filter(|_| answer_claims_no_results(&answer));
-                if let Some(mut retry_messages) = retry_messages {
+                let retry = contradiction_retry_messages
+                    .and_then(|messages| answer_retry_instruction(&answer).map(|instruction| (messages, instruction)));
+                if let Some((mut retry_messages, retry_instruction)) = retry {
                     emit_log(
                         "info",
-                        "contradiction guard: answer claims no results but tools returned emails — one corrective retry",
+                        if std::ptr::eq(retry_instruction, CONTRADICTION_RETRY_INSTRUCTION) {
+                            "contradiction guard: answer claims no results but tools returned emails — one corrective retry"
+                        } else {
+                            "truncation guard: answer stopped mid-sentence — one corrective retry"
+                        },
                     );
                     // The wrong answer may already sit in the live bubble
                     // (streamed by the tool loop) — clear it before the retry
@@ -3400,7 +3585,7 @@ pub async fn run_chat_turn(
                     // DirectText) — append only the corrective instruction.
                     retry_messages.push(AiMessage {
                         role: "user".to_string(),
-                        content: CONTRADICTION_RETRY_INSTRUCTION.to_string(),
+                        content: retry_instruction.to_string(),
                         tool_calls: None,
                     });
                     streaming_happened = true;
@@ -5386,6 +5571,7 @@ mod tests {
         let mut vars = std::collections::HashMap::new();
         vars.insert("today", "2026-01-01".to_string());
         vars.insert("tomorrow", "2026-01-02".to_string());
+        vars.insert("weekday", "Thursday".to_string());
         vars.insert("language_instruction", "Reply in Spanish.".to_string());
         vars.insert("tools_section", String::new());
         vars.insert("user_identity", String::new());
@@ -5460,6 +5646,161 @@ mod tests {
         // "borrador"/"reply" must match as words, not inside unrelated ones.
         assert!(!wants_email_draft("el correo es irreplicable"));
         assert!(!wants_email_draft(""));
+    }
+
+    #[test]
+    fn denying_the_tool_results_counts_as_a_no_results_claim() {
+        // After a refused draft call the model answered "No logro ver el
+        // correo original … necesito que me facilites la lista" although the
+        // search result (with body) was right above it. That must trigger the
+        // contradiction retry like a literal "no emails found" does.
+        assert!(answer_claims_no_results(
+            "No logro ver el correo original enviado a Acme en los datos proporcionados."
+        ));
+        assert!(answer_claims_no_results(
+            "I can't see the email in the results you gave me."
+        ));
+        assert!(!answer_claims_no_results(
+            "El primer correo que enviaste fue el 20 de mayo de 2024, con asunto Propuesta inicial."
+        ));
+    }
+
+    #[test]
+    fn an_answer_that_stops_on_a_colon_earns_a_retry() {
+        // "Te adjunto la oferta de Globex…, con el código de descuento:" —
+        // and nothing after. The fact never arrived.
+        let cut = "Te adjunto la oferta de Globex de hace unas semanas, con el código de descuento:";
+        assert!(answer_looks_truncated(cut));
+        assert_eq!(answer_retry_instruction(cut), Some(TRUNCATED_RETRY_INSTRUCTION));
+        assert!(answer_looks_truncated("The latest emails are,"));
+        // Finished shapes: a sentence, a table row, a list item, a link.
+        for done in [
+            "El código es SAVE10 (10 %).",
+            "| Globex | [asunto](email://abc) | Baja |",
+            "- 07:00–09:30 Hierro",
+            "Ver [el correo](email://abc)",
+            "",
+        ] {
+            assert!(!answer_looks_truncated(done), "{done:?}");
+        }
+        // A "no results" claim keeps its own instruction.
+        assert_eq!(
+            answer_retry_instruction("No se encontraron correos de Ana."),
+            Some(CONTRADICTION_RETRY_INSTRUCTION)
+        );
+        assert_eq!(answer_retry_instruction("El código es SAVE10."), None);
+    }
+
+    // ── RAG sources: ids for email:// links ─────────────────────────────
+    //
+    // A RAG-first answer could never produce a valid open-the-email chip: the
+    // Sources block carried no ids and the allowlist for the turn started
+    // empty, so the model either invented `email://2` (the citation number)
+    // or copied the prompt example's `email://eml-4`. Both were dropped by the
+    // validator — "the links don't work" from the user's point of view.
+
+    #[test]
+    fn prompt_sources_carry_email_ids_for_links() {
+        let sources = vec![
+            make_scored(1, "Q1 plan", "we ship in march"),
+            make_scored(2, "Invoice", "pay"),
+        ];
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
+        let (_, last) = msgs.last().unwrap();
+        assert!(last.contains("[1] From: Alice"), "numbered header kept: {last}");
+        assert!(last.contains("id=e1"), "source 1 must carry its email id: {last}");
+        assert!(last.contains("id=e2"), "source 2 must carry its email id: {last}");
+    }
+
+    #[test]
+    fn rag_sources_seed_the_email_link_allowlist() {
+        let sources = vec![make_scored(1, "A", "a"), make_scored(2, "B", "b")];
+        assert_eq!(source_email_ids(&sources), vec!["e1".to_string(), "e2".to_string()]);
+        assert!(source_email_ids(&[]).is_empty());
+    }
+
+    // ── Draft gate in the tool loop ─────────────────────────────────────
+    //
+    // "primer correo que envie a acme" found the email and then the model
+    // decided, unasked, to call generate_email_draft — saving a real reply
+    // draft into the user's account (and pushing it to Gmail Drafts). A tool
+    // with side effects must not run on a turn where nobody asked for it.
+
+    #[test]
+    fn draft_calls_need_an_explicit_request_in_the_question() {
+        assert!(!draft_call_allowed("primer correo que envie a acme", None));
+        assert!(!draft_call_allowed("cual fue el último email de ana de acme", None));
+        assert!(!draft_call_allowed("resume el último correo de la newsletter", None));
+        assert!(draft_call_allowed(
+            "escribe un borrador para el último mail de ana",
+            None
+        ));
+        assert!(draft_call_allowed("draft a reply to John about the invoice", None));
+        assert!(draft_call_allowed("respóndele que sí", None));
+    }
+
+    #[test]
+    fn draft_calls_allowed_on_a_confirmation_after_the_assistant_offered_one() {
+        let offer = Some("Encontré el correo. ¿Quieres que redacte un borrador de respuesta?");
+        assert!(draft_call_allowed("sí", offer));
+        assert!(draft_call_allowed("ok, hazlo", offer));
+        assert!(draft_call_allowed("yes please", offer));
+        // A bare "yes" after an unrelated answer is not a draft request.
+        assert!(!draft_call_allowed("sí", Some("Tienes 4 reuniones hoy.")));
+        // A long message is not a confirmation, whatever came before.
+        assert!(!draft_call_allowed("y cuál fue el anterior a ese correo de ana", offer));
+    }
+
+    #[test]
+    fn draft_gate_is_open_when_there_is_no_question_context() {
+        // Programmatic callers (eval helpers, thread-bound paths) pass an empty
+        // question; the gate must not block them.
+        assert!(draft_call_allowed("", None));
+    }
+
+    #[test]
+    fn unrequested_draft_is_refused_with_a_model_facing_note() {
+        let note = unrequested_draft_refusal("generate_email_draft", false).expect("refused");
+        assert!(note.contains("did not ask"), "note must explain: {note}");
+        assert!(unrequested_draft_refusal("generate_email_draft", true).is_none());
+        assert!(unrequested_draft_refusal("search_emails", false).is_none());
+    }
+
+    // ── Weekday in the date line ─────────────────────────────────────────
+    //
+    // "what meetings do I have this week?" came back with every day mislabelled
+    // (Thursday the 10th called "martes"): the model only ever saw ISO dates.
+
+    #[test]
+    fn local_today_follows_the_offset() {
+        let late = chrono::NaiveDate::from_ymd_opt(2026, 4, 16)
+            .and_then(|d| d.and_hms_opt(23, 30, 0))
+            .map(|ndt| ndt.and_utc().timestamp())
+            .expect("date");
+        assert_eq!(local_today(late, 0).to_string(), "2026-04-16");
+        assert_eq!(local_today(late, 7_200).to_string(), "2026-04-17");
+    }
+
+    #[test]
+    fn today_shortcut_window_is_the_given_local_day() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 4, 17).expect("date");
+        let calls = heuristic_direct_tools_at("resumen de hoy", false, today).expect("today shortcut");
+        let args = &calls[0].function.arguments;
+        assert_eq!(args.get("since").and_then(|v| v.as_str()), Some("2026-04-17"));
+        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2026-04-18"));
+    }
+
+    #[test]
+    fn prompt_today_carries_the_weekday() {
+        let msgs = build_prompt(&[], &[], "hi", "en", "", "Today is {{weekday}} {{today}}", "");
+        // Local weekday, not UTC's: at 01:00 Madrid time on Friday, UTC is
+        // still Thursday — which is exactly the mismatch this test caught.
+        let expected = now_local().format("%A").to_string();
+        assert!(
+            msgs[0].1.contains(&format!("Today is {expected} ")),
+            "weekday missing: {}",
+            msgs[0].1
+        );
     }
 
     // ── Turn-mode planning (ambient view context) ───────────────────────
@@ -5586,6 +5927,11 @@ Termina con un párrafo breve destacando lo más importante del día.";
             args.get("include_bodies").and_then(|v| v.as_bool()),
             Some(true),
             "summary shortcut must preseed full bodies so the model need not call get_email_body"
+        );
+        assert_eq!(
+            args.get("received_only").and_then(|v| v.as_bool()),
+            Some(true),
+            "a 'received today' summary must not list the user's own sent replies"
         );
     }
 

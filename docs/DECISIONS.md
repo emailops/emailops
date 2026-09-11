@@ -823,3 +823,31 @@ sidebar filters too* — the user chose the any-message rule for the inbox on pu
 replying to a company must not drop the thread from that company's filter. *Deduplicating
 across blocks on the frontend* (as the priority ordinal dedupe does) — blocks page lazily,
 so a thread's "right" block may not be loaded yet, and the counts would still disagree.
+
+## 2026-09-10 — Chat dates are the user's local day; drafts need an explicit request; RAG sources carry ids
+
+**Decision:** Every date the chat shows the model or parses from it — "today" and
+"tomorrow" in the system prompt, the summary shortcuts' windows, `since`/`until` bounds,
+message dates in tool results — is computed in the machine's local zone through a new
+`Clock::utc_offset_secs()` seam (`SystemClock` reads the local offset; `FixedClock` pins
+one for tests). `generate_email_draft` only runs on a turn whose question asks to
+write/reply/draft, or on a short confirmation right after the assistant offered a draft;
+otherwise the call is replaced by a note to the model and nothing is saved. Pre-retrieved
+RAG sources carry `id=` on their header line and seed the turn's `email://` allowlist.
+`search_emails` prepends the real total ("showing 25 of 156 matching threads") when a page
+is full, and the daily/weekly summary shortcuts ask for received mail only.
+
+**Context:** A judged pass of 18 real questions against the production mailbox found: a
+lookup ("primer correo que envié a X") that ended in an unrequested reply draft saved to
+the provider; RAG answers whose links were either the citation number (`email://2`) or a
+prompt-example id, because the sources had no ids and the RAG allowlist started empty;
+"¿cuántos correos de X?" answered "25" on a sender with 156; a Thursday labelled
+"martes"; the user's own sent reply summarised as received mail; and every day boundary
+computed in UTC for a user in Europe/Madrid.
+
+**Rejected:** *Gating drafts only on inferred (nameless) tool calls* — the observed turn
+also emitted explicit `generate_email_draft` calls after the first inferred one.
+*A COUNT query inside the search SQL* — the sender filter is a three-arm UNION assembled
+in two phases; re-running the same search with a 500-row probe only when the page is
+full is one line and costs nothing on the common path. *Applying the draft gate to
+thread-bound turns* — those already expose the tool only when the question asks for it.

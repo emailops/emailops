@@ -1233,6 +1233,115 @@ mod tests {
         );
     }
 
+    /// "¿cuántos correos de X hay?" was answered "25" on a sender with 156
+    /// messages: results are capped at `limit` and nothing told the model the
+    /// page was only a slice. A full page now carries the total.
+    #[test]
+    fn search_emails_reports_the_total_when_the_page_is_full() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..30 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Newsletter",
+                "news@example.com",
+                &format!("Issue {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
+        );
+        assert!(
+            out.starts_with("(showing 25 of 30 matching threads"),
+            "full page must lead with the total; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn search_emails_omits_the_total_when_everything_fits() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "N",
+                "news@example.com",
+                "Issue",
+                "b",
+                t + i as i64,
+            );
+        }
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
+        );
+        assert!(
+            !out.contains("showing"),
+            "no total note when the page is not full; out:\n{out}"
+        );
+    }
+
+    /// The "emails I received today" shortcut listed a reply the user had
+    /// just SENT among the received mail, and the model summarised it as if
+    /// it had arrived. The shortcut asks for received mail only.
+    #[test]
+    fn search_emails_received_only_drops_sent_mail() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "in1",
+            "acc",
+            "t1",
+            "Alice",
+            "alice@example.com",
+            "Hello",
+            "hi",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "out1",
+            "acc",
+            "t2",
+            "Me",
+            "me@example.com",
+            "Re: Hello",
+            "reply",
+            t + 200,
+        );
+        db.connection()
+            .execute("UPDATE emails SET is_sent = 1 WHERE id = 'out1'", [])
+            .unwrap();
+        let args =
+            serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18", "limit": 25, "received_only": true });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args));
+        assert!(out.contains("id=in1"), "received mail kept; out:\n{out}");
+        assert!(!out.contains("id=out1"), "sent mail dropped; out:\n{out}");
+
+        let args = serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18", "limit": 25 });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args));
+        assert!(
+            out.contains("id=out1"),
+            "without the flag sent mail is still listed; out:\n{out}"
+        );
+    }
+
     /// `search_emails` output must be grouped by Gmail category in the order
     /// Primary → Updates → Other, with the `category=` field emitted on every
     /// row so the LLM can reference it when summarising.

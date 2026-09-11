@@ -7,6 +7,29 @@ use crate::services::chat::{
 };
 use crate::services::{emails, thread_clean};
 
+/// How far the total-count probe looks when a page comes back full. Past
+/// this the note reports a floor ("500+"); counting further costs a wider
+/// scan for a number nobody needs exactly.
+const COUNT_PROBE_LIMIT: i32 = 500;
+
+/// The line that leads a full page of results so the model never presents
+/// the page size as the total ("¿cuántos correos de X hay?" → "25" on a
+/// sender with 156). `None` when the page was not full — the rows shown are
+/// all there is.
+fn total_count_note(shown: usize, limit: i32, total: i32) -> Option<String> {
+    if (shown as i32) < limit {
+        return None;
+    }
+    let total_text = if total >= COUNT_PROBE_LIMIT {
+        format!("{COUNT_PROBE_LIMIT}+")
+    } else {
+        total.to_string()
+    };
+    Some(format!(
+        "(showing {shown} of {total_text} matching threads — narrow with since/until, from, or a keyword to see the rest)"
+    ))
+}
+
 pub struct SearchEmailsTool;
 
 #[async_trait]
@@ -16,7 +39,7 @@ impl Tool for SearchEmailsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until must be non-empty. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
+        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until must be non-empty. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
 
     fn prompt_summary(&self) -> &'static str {
@@ -65,6 +88,9 @@ impl Tool for SearchEmailsTool {
         // letting a weak local model summarise complete emails in one pass
         // instead of chaining a `get_email_body` call per row.
         let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
+        // Internal too: the "emails I received today/this week" shortcuts set
+        // it so the user's own sent replies do not show up as received mail.
+        let received_only = args.get("received_only").and_then(|v| v.as_bool()).unwrap_or(false);
         // Sort direction: "oldest" (ascending) is the only way to surface the
         // FIRST email matching a filter ("primer correo", "first email I sent to
         // X"). Anything other than "oldest" keeps the default newest-first.
@@ -163,14 +189,45 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             map
         };
 
+        let primary = primary.map(|emails| {
+            if received_only {
+                emails.into_iter().filter(|e| !e.is_sent).collect()
+            } else {
+                emails
+            }
+        });
+
         match primary {
             Err(e) => Ok(ToolOutput::text(format!("Search error: {}", e))),
             Ok(emails) if !emails.is_empty() => {
-                let body = if include_bodies {
+                let mut body = if include_bodies {
                     format_search_emails_output_with_bodies(&emails, &fetch_bodies(&emails))
                 } else {
                     format_search_emails_output(&emails)
                 };
+                // A full page is only a slice: probe how many threads match
+                // in total so the model can say "at least 156", not "25".
+                if emails.len() as i32 >= limit {
+                    let total = emails::search_emails_filtered(
+                        ctx.db,
+                        ctx.account_id,
+                        query,
+                        cat_filter,
+                        from_filter,
+                        to_filter,
+                        subject_filter,
+                        since_ts,
+                        until_ts,
+                        None,
+                        COUNT_PROBE_LIMIT,
+                        ascending,
+                    )
+                    .map(|all| all.len() as i32)
+                    .unwrap_or(emails.len() as i32);
+                    if let Some(note) = total_count_note(emails.len(), limit, total) {
+                        body = format!("{note}\n{body}");
+                    }
+                }
                 Ok(ToolOutput::text_with_email_refs(body, ids(&emails)))
             }
             Ok(_) => {
@@ -237,6 +294,23 @@ showing recent matches without since/until instead)\n",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn total_note_only_when_the_page_is_full() {
+        assert_eq!(total_count_note(10, 25, 10), None);
+        assert_eq!(
+            total_count_note(25, 25, 156).as_deref(),
+            Some("(showing 25 of 156 matching threads — narrow with since/until, from, or a keyword to see the rest)")
+        );
+    }
+
+    #[test]
+    fn total_note_marks_a_capped_probe() {
+        // The probe itself stops at COUNT_PROBE_LIMIT; past it the total is a floor.
+        let note = total_count_note(25, 25, COUNT_PROBE_LIMIT).unwrap();
+        assert!(note.contains(&format!("of {COUNT_PROBE_LIMIT}+ matching")), "{note}");
+    }
+
     use crate::db::Database;
     use std::sync::Arc;
 

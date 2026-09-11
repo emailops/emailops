@@ -102,6 +102,41 @@ impl SearchPlan {
 /// may wrap the JSON in prose or ``` fences. Anything ambiguous (no JSON, an
 /// explicit `{"defer": true}`, or an all-empty filter) becomes [`Plan::Defer`] so
 /// the turn falls back to the normal loop rather than running a broken search.
+impl SearchPlan {
+    /// Deterministic clean-up of what the model planned, applied before the
+    /// plan becomes a tool call:
+    ///
+    /// 1. A sender/recipient name copied into `query` is dropped. The planner
+    ///    prompt forbids it, the model does it anyway ("acmenews" in
+    ///    both `from` and `query`), and the extra full-text match over bodies
+    ///    cost ~8 s per question for no gain.
+    /// 2. A bare first name in `from` ("alex") asks for 5 rows instead of 1
+    ///    so namesakes surface: "último email de alex" returned one
+    ///    newsletter and the model never learned there was another Alex to
+    ///    ask about. "oldest" keeps a single row — "the first email" is one.
+    fn normalised(mut self) -> Self {
+        let same = |a: &Option<String>, b: &Option<String>| match (a, b) {
+            (Some(x), Some(y)) => x.trim().eq_ignore_ascii_case(y.trim()),
+            _ => false,
+        };
+        if same(&self.query, &self.from) || same(&self.query, &self.to) {
+            self.query = None;
+        }
+        let bare_name = self
+            .from
+            .as_deref()
+            .map(|f| {
+                let f = f.trim();
+                !f.is_empty() && !f.contains('@') && !f.contains('.') && !f.contains(char::is_whitespace)
+            })
+            .unwrap_or(false);
+        if bare_name && !self.wants_oldest() && self.limit.unwrap_or(25) < 5 {
+            self.limit = Some(5);
+        }
+        self
+    }
+}
+
 pub fn parse_plan(text: &str) -> Plan {
     let Some(obj) = extract_json_object(text) else {
         return Plan::Defer;
@@ -142,7 +177,7 @@ pub fn parse_plan(text: &str) -> Plan {
     if plan.is_empty() {
         return Plan::Defer;
     }
-    Plan::Search(plan)
+    Plan::Search(plan.normalised())
 }
 
 /// Lenient JSON-object extraction: drop ``` fences, then parse the first
@@ -354,9 +389,43 @@ mod tests {
 
     #[test]
     fn limit_is_clamped_and_accepts_numeric_string() {
-        assert_eq!(search(r#"{"from":"a","limit":1000}"#).limit, Some(25));
-        assert_eq!(search(r#"{"from":"a","limit":0}"#).limit, Some(1));
-        assert_eq!(search(r#"{"from":"a","limit":"3"}"#).limit, Some(3));
+        // An address, so the bare-first-name widening does not apply here.
+        assert_eq!(search(r#"{"from":"a@x.com","limit":1000}"#).limit, Some(25));
+        assert_eq!(search(r#"{"from":"a@x.com","limit":0}"#).limit, Some(1));
+        assert_eq!(search(r#"{"from":"a@x.com","limit":"3"}"#).limit, Some(3));
+    }
+
+    #[test]
+    fn duplicated_sender_in_query_is_dropped() {
+        match parse_plan(r#"{"from": "acmenews", "query": "acmenews", "limit": 5}"#) {
+            Plan::Search(p) => {
+                assert_eq!(p.query, None);
+                assert_eq!(p.from.as_deref(), Some("acmenews"));
+            }
+            other => panic!("expected search, got {other:?}"),
+        }
+        // A genuine keyword next to the sender is kept.
+        match parse_plan(r#"{"from": "acme", "query": "invoice"}"#) {
+            Plan::Search(p) => assert_eq!(p.query.as_deref(), Some("invoice")),
+            other => panic!("expected search, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_first_name_lookup_asks_for_five_rows() {
+        let limit = |json: &str| match parse_plan(json) {
+            Plan::Search(p) => p.limit,
+            other => panic!("expected search, got {other:?}"),
+        };
+        assert_eq!(limit(r#"{"from": "alex", "limit": 1}"#), Some(5));
+        // An address, a full name or a domain identifies one sender: untouched.
+        assert_eq!(limit(r#"{"from": "alex.smith@example.com", "limit": 1}"#), Some(1));
+        assert_eq!(limit(r#"{"from": "ana de acme", "limit": 1}"#), Some(1));
+        assert_eq!(limit(r#"{"from": "example.com", "limit": 1}"#), Some(1));
+        // "the first email from alex" is one email, however many Alexes.
+        assert_eq!(limit(r#"{"from": "alex", "order": "oldest", "limit": 1}"#), Some(1));
+        // An explicit larger count is kept.
+        assert_eq!(limit(r#"{"from": "alex", "limit": 10}"#), Some(10));
     }
 
     #[test]

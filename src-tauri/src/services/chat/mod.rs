@@ -249,24 +249,36 @@ pub(crate) fn strip_tool_call_markup(content: &str) -> String {
 
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
-pub(crate) fn format_date(ts: i64) -> String {
-    Utc.timestamp_opt(ts, 0)
+/// The calendar day a timestamp falls on in a zone `offset_secs` ahead of UTC.
+pub(crate) fn local_date(ts: i64, offset_secs: i32) -> chrono::NaiveDate {
+    Utc.timestamp_opt(ts + offset_secs as i64, 0)
         .single()
-        .map(|dt| dt.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| ts.to_string())
+        .map(|dt| dt.date_naive())
+        .unwrap_or_default()
+}
+
+/// Unix seconds of local midnight starting `date` in a zone `offset_secs`
+/// ahead of UTC — the inclusive start of that local day.
+pub(crate) fn local_day_start(date: chrono::NaiveDate, offset_secs: i32) -> i64 {
+    date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() - offset_secs as i64
+}
+
+/// A message's date as the user sees it (their zone, not UTC).
+pub(crate) fn format_date(ts: i64) -> String {
+    local_date(ts, crate::services::clock::utc_offset_secs())
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Parse an ISO-8601 date ('YYYY-MM-DD') to a unix timestamp in **seconds**
-/// (midnight UTC on that date). Used by the `search_emails` tool to accept
+/// (local midnight on that date). Used by the `search_emails` tool to accept
 /// human-friendly date bounds from the model.
 pub(crate) fn parse_iso_date_secs(s: &str) -> std::result::Result<i64, String> {
     let date = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
         .map_err(|_| format!("expected 'YYYY-MM-DD', got '{}'", s))?;
-    let dt = date
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| format!("invalid date: {}", s))?
-        .and_utc();
-    Ok(dt.timestamp())
+    // Midnight in the user's zone: a `since=today` bound must not start
+    // yesterday evening (or tonight) just because the machine is not on UTC.
+    Ok(local_day_start(date, crate::services::clock::utc_offset_secs()))
 }
 
 pub(crate) fn truncate_chars(s: &str, max_chars: usize) -> String {
@@ -459,7 +471,7 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
         return Some(dt.timestamp());
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc().timestamp());
+        return Some(local_day_start(d, crate::services::clock::utc_offset_secs()));
     }
     None
 }
@@ -467,6 +479,35 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Local day boundaries ────────────────────────────────────────────
+    //
+    // Dates shown to and parsed from the model were UTC: at 01:30 Madrid
+    // time a "today" search started yesterday, and a message received at
+    // 00:30 was dated the day before. All day math goes through the clock's
+    // UTC offset now.
+
+    fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> i64 {
+        chrono::NaiveDate::from_ymd_opt(y, m, d)
+            .and_then(|date| date.and_hms_opt(h, min, 0))
+            .map(|ndt| ndt.and_utc().timestamp())
+            .expect("valid test date")
+    }
+
+    #[test]
+    fn local_date_shifts_by_the_offset() {
+        let late_evening = utc(2026, 4, 16, 23, 0);
+        assert_eq!(local_date(late_evening, 0).to_string(), "2026-04-16");
+        assert_eq!(local_date(late_evening, 7_200).to_string(), "2026-04-17");
+        assert_eq!(local_date(utc(2026, 4, 17, 1, 0), -7_200).to_string(), "2026-04-16");
+    }
+
+    #[test]
+    fn local_day_start_is_midnight_in_the_offset() {
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 4, 17).expect("date");
+        assert_eq!(local_day_start(day, 0), utc(2026, 4, 17, 0, 0));
+        assert_eq!(local_day_start(day, 7_200), utc(2026, 4, 16, 22, 0));
+    }
 
     #[test]
     fn phase_for_tool_maps_known_tools_to_specific_phases() {
