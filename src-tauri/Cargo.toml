@@ -36,6 +36,7 @@ tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 tauri = { version = "2", features = [], optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 tauri-plugin-shell = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-os = { version = "2", optional = true }
@@ -164,6 +165,13 @@ desktop = [
     "dep:tauri-plugin-os",
     "dep:tauri-plugin-notification",
 ]
+
+# Embedded W3C WebDriver server for driving the real app in UI verification
+# runs (`.claude/skills/verify-emailops`). Dev-only: never part of `default`,
+# `src/webdriver.rs` refuses to compile it into a release profile, and the
+# server only starts when `TAURI_WEBDRIVER_PORT` is set at launch:
+#   TAURI_WEBDRIVER_PORT=4445 npm run tauri dev -- --features webdriver
+webdriver = ["desktop", "dep:tauri-plugin-wdio-webdriver"]
 llamacpp = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
 
 # Phoenix (Arize AI) observability via OpenTelemetry OTLP.

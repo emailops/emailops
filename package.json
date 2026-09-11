@@ -69,7 +69,8 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "webdriverio": "^9.31.7"
   },
   "optionalDependencies": {
     "@biomejs/cli-darwin-x64": "^2.5.0"

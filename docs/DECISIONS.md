@@ -936,3 +936,25 @@ from the DB. *Semantic mode as a separate tool* — one tool with one `mode` swi
 filters and output shape identical, so the model needs no second contract. *Feeding the
 definitions to the classifier prompt in the same change* — it would move classification
 results and needs its own eval run; the glossary is there for it when that lands.
+
+## 2026-09-11 — UI verification drives the real app through an embedded, dev-only WebDriver
+
+**Decision:** Agent-driven UI verification (`.claude/skills/verify-emailops`) drives the real
+desktop app through `tauri-plugin-wdio-webdriver`, an embedded W3C WebDriver server. It is
+behind the `webdriver` cargo feature (never in `default`, a `compile_error!` refuses release
+profiles) and only starts when `TAURI_WEBDRIVER_PORT` is set at launch; the skill launches its
+own instance on a separate Vite/Tauri port against the synthetic demo DB. cua-driver stays as
+the native layer (window screenshots, menus, focus-free checks).
+
+**Context:** Frontend fixes kept shipping on jsdom-only evidence and coming back as "still
+broken" screenshots; the driver that can see the running app (cua-driver, Accessibility)
+exposes nothing of a WKWebView whose window sits on another Space, which is the normal state
+when the terminal is full-screen. DOM-level driving inside the app does not depend on Spaces,
+focus or AX, and reaches the real IPC and data.
+
+**Rejected:** *Opening the frontend in a browser through a dev HTTP bridge* — a second
+dispatch path over 213 Tauri commands and 27 events that would drift from the real one, and a
+localhost surface on the mailbox reachable from any web page. *`tauri-driver`* — no macOS
+support. *CrabNebula's driver* — paid, external process. *Always-on plugin in debug builds* —
+`make dev` often holds the production mailbox; an unauthenticated automation port must be
+opt-in per launch.
