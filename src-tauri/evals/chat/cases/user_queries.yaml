@@ -47,6 +47,7 @@
   # so a real grounded link is the meaningful signal.
   expected_answer_contains:
     - "email://"
+  expected_output: "Summary of the most recent day in the inbox: Codeberg opened PR #58 (carrier rate API) on faro-logistics/dashboard; Fly.io reported a successful production deploy of lumen-api; Nadia Brunner asked how to add a second email account in EmailOps. Each item links its email://."
   metrics:
     - answer_relevancy
     - faithfulness
@@ -68,8 +69,10 @@
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "The latest messages sent by Ulises: “Re: Production bug: orders stuck in 'processing'” to Marisol Vega (9 Sept, fix rolled out), “Re: Mobile nav overlapping the footer” (8 Sept), “Re: Sprint 5 demo recap + next milestone” (8 Sept), “Re: API latency on the /search endpoint” (7 Sept); each with an email:// link."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # A lookup must never end in a saved draft. Observed on the real mailbox with
 # Qwen 3.6 35B: "primer correo que envié a X" found the email and the model
@@ -88,8 +91,10 @@
   expected_tools_not_called: ["generate_email_draft"]
   expected_answer_not_contains:
     - "](draft://"
+  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone» (5 de septiembre de 2026), mostrado con su enlace email://, sin crear ningún borrador."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Exercises the planner's ORDER=oldest path — "primer correo / first email".
 # Regression for the bug where "first" returned recent mail: search_emails had
@@ -106,8 +111,10 @@
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone», del 5 de septiembre de 2026, con su enlace email://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Exercises the EMAIL LINKS prompt clause: a sender-anchored query that
 # reliably hits multiple demo emails, giving the model the chance to wrap
@@ -140,8 +147,10 @@
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "The latest email from Marisol Vega is “Re: Production bug: orders stuck in 'processing'” (9 Sept 2026): she confirms the orders are moving again and thanks for the fast turnaround; linked as email://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Exercises the DRAFT LINKS clause: ask the chat to draft a reply, expect
 # the assistant's confirmation to contain a `draft://` link. Per CLAUDE.md
@@ -177,8 +186,10 @@
   expected_tools_called: ["search_emails", "generate_email_draft"]
   expected_answer_contains:
     - "](draft://"
+  expected_output: "Finds the production-bug thread from Marisol Vega (orders stuck in 'processing', now fixed) and produces a brief reply draft confirming the fix and offering follow-up, linked as draft://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Regression case for the Qwen 3.5 4B failure where a user-requested table
 # format caused the model to skip every `email://` link. The strengthened
@@ -209,5 +220,7 @@
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "](email://"
+  expected_output: "A markdown table with one row per email from Marisol Vega: “Re: Production bug: orders stuck in 'processing'” (9 Sept), “Production bug: orders stuck in 'processing'” (9 Sept), “Sprint 5 demo recap + next milestone” (7 Sept) and “Project inquiry: real-time logistics dashboard” (12 Mar 2025), each subject linked as email://."
   metrics:
     - answer_relevancy
+    - faithfulness

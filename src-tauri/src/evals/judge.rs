@@ -16,7 +16,8 @@ const OPENROUTER_ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions
 /// How long we give the judge per case before giving up.
 const JUDGE_TIMEOUT_SECS: u64 = 60;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JudgeScores {
     pub answer_relevancy: Option<f64>,
     pub faithfulness: Option<f64>,
@@ -150,6 +151,12 @@ fn parse_judge_response(raw: &str, case: &EvalCase) -> JudgeScores {
     };
 
     // The content is JSON — but models sometimes wrap it in ```json fences.
+    parse_judge_content(content, case)
+}
+
+/// Parse the judge's reply body (the JSON object it was asked for, possibly
+/// fenced) into scores, keeping only the metrics the case requested.
+pub fn parse_judge_content(content: &str, case: &EvalCase) -> JudgeScores {
     let stripped = strip_code_fence(content);
     let payload: JudgePayload = match serde_json::from_str(&stripped) {
         Ok(p) => p,
@@ -191,6 +198,52 @@ fn parse_judge_response(raw: &str, case: &EvalCase) -> JudgeScores {
         rationale: payload.rationale,
         error: None,
     }
+}
+
+/// Score a case with a model served by the app itself (embedded llama.cpp,
+/// Ollama…) instead of OpenRouter. Same system prompt, same rubric, same
+/// parsing; the provider's `complete` is asked for JSON with temperature 0.
+pub async fn score_with_provider(
+    provider: &dyn crate::ai::provider::AIProvider,
+    case: &EvalCase,
+    outcome: &CaseOutcome,
+) -> JudgeScores {
+    if case.metrics.is_empty() {
+        return JudgeScores::default();
+    }
+    let prompt = format!(
+        "{JUDGE_SYSTEM}\n\n{}\n\nReply with the JSON object only.",
+        build_prompt(case, outcome)
+    );
+    let options = crate::ai::provider::CompletionOptions {
+        temperature: Some(0.0),
+        max_tokens: Some(600),
+        think: Some(false),
+    };
+    match provider.complete(&prompt, options).await {
+        Ok(result) => parse_judge_content(&result.text, case),
+        Err(e) => JudgeScores {
+            error: Some(format!("judge provider error: {e}")),
+            ..Default::default()
+        },
+    }
+}
+
+/// A case passes the judge when every metric it asked for scored at least
+/// `threshold`. A judge error is a failure, never a silent pass. When the case
+/// requested no metrics there is nothing to judge and this returns `true`.
+pub fn judge_passes(scores: &JudgeScores, case: &EvalCase, threshold: f64) -> bool {
+    if case.metrics.is_empty() {
+        return true;
+    }
+    if scores.error.is_some() {
+        return false;
+    }
+    let wanted = |m: MetricKind, v: Option<f64>| !case.metrics.contains(&m) || v.is_some_and(|x| x >= threshold);
+    wanted(MetricKind::AnswerRelevancy, scores.answer_relevancy)
+        && wanted(MetricKind::Faithfulness, scores.faithfulness)
+        && wanted(MetricKind::ContextualRelevancy, scores.contextual_relevancy)
+        && wanted(MetricKind::ContextualRecall, scores.contextual_recall)
 }
 
 fn strip_code_fence(s: &str) -> String {
@@ -300,4 +353,65 @@ fn truncate(s: &str, max_chars: usize) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod judge_rule_tests {
+    use super::{judge_passes, parse_judge_content, JudgeScores};
+    use crate::evals::case_loader::{EvalCase, MetricKind};
+
+    fn case_with(metrics: Vec<MetricKind>) -> EvalCase {
+        let mut c: EvalCase =
+            serde_yaml::from_str("id: t\nquestion: q\ncategory: c\ntier: smoke\n").expect("minimal case");
+        c.metrics = metrics;
+        c
+    }
+
+    #[test]
+    fn parses_a_fenced_json_reply_and_keeps_only_requested_metrics() {
+        let case = case_with(vec![MetricKind::AnswerRelevancy]);
+        let s = parse_judge_content(
+            "```json\n{\"answer_relevancy\": 0.9, \"faithfulness\": 0.2, \"rationale\": \"ok\"}\n```",
+            &case,
+        );
+        assert_eq!(s.answer_relevancy, Some(0.9));
+        assert_eq!(s.faithfulness, None, "unrequested metrics are dropped");
+        assert_eq!(s.rationale.as_deref(), Some("ok"));
+        assert!(s.error.is_none());
+    }
+
+    #[test]
+    fn a_case_passes_only_when_every_requested_metric_reaches_the_threshold() {
+        let case = case_with(vec![MetricKind::AnswerRelevancy, MetricKind::Faithfulness]);
+        let good = JudgeScores {
+            answer_relevancy: Some(0.8),
+            faithfulness: Some(0.7),
+            ..Default::default()
+        };
+        let low = JudgeScores {
+            answer_relevancy: Some(0.8),
+            faithfulness: Some(0.4),
+            ..Default::default()
+        };
+        let missing = JudgeScores {
+            answer_relevancy: Some(0.9),
+            ..Default::default()
+        };
+        assert!(judge_passes(&good, &case, 0.7));
+        assert!(!judge_passes(&low, &case, 0.7));
+        assert!(
+            !judge_passes(&missing, &case, 0.7),
+            "a metric the judge did not return is a failure"
+        );
+    }
+
+    #[test]
+    fn a_judge_error_never_passes_and_no_metrics_means_nothing_to_judge() {
+        let err = JudgeScores {
+            error: Some("timeout".into()),
+            ..Default::default()
+        };
+        assert!(!judge_passes(&err, &case_with(vec![MetricKind::AnswerRelevancy]), 0.7));
+        assert!(judge_passes(&err, &case_with(vec![]), 0.7));
+    }
 }

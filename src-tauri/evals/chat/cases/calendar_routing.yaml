@@ -45,8 +45,12 @@
   expected_answer_not_contains:
     - "list_calendar_events"
     - "no puedo acceder"
+  expected_output: "La próxima reunión es «Sprint 6 planning — Faro Logistics», mañana a las 10:00 (una hora, por Google Meet, con Marisol Vega). Le sigue ese mismo día a las 16:30 la revisión del PR #131 de Proton Bridge."
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["Sprint 6"]
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # English counterpart: the keyword list is bilingual, and a regression that
 # only restored one language would otherwise pass.
@@ -58,5 +62,9 @@
   expected_route: tools_first
   expected_answer_not_contains:
     - "list_calendar_events"
+  expected_output: "The next meeting is “Sprint 6 planning — Faro Logistics”, tomorrow at 10:00 (one hour, Google Meet, with Marisol Vega). Later that day at 16:30 there is the Proton Bridge PR #131 review."
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["Sprint 6"]
   metrics:
     - answer_relevancy
+    - faithfulness

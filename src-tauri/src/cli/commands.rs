@@ -435,7 +435,13 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
 
         Command::Config { action } => super::config::run_config(session, action),
 
-        Command::Eval { case, tier, cases_dir } => super::eval::run_eval(session, case, tier, cases_dir).await,
+        Command::Eval {
+            case,
+            tier,
+            cases_dir,
+            judge,
+            judge_model,
+        } => super::eval::run_eval(session, case, tier, cases_dir, judge, judge_model).await,
     }
 }
 

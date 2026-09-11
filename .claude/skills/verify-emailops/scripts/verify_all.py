@@ -71,13 +71,32 @@ def rust_doc_index():
                 idx[m.group(2)].append((mod, (comment or humanize(m.group(2)))[:300]))
     return idx
 RUST_DOCS = rust_doc_index()
+GEN = {"rust": {}, "vitest": {}}
+for f in sorted((SKILL / "descriptions").glob("*.json")):
+    try:
+        d = json.loads(f.read_text())
+        for k in GEN: GEN[k].update(d.get(k, {}))
+    except Exception as e:
+        print(f"descriptions: {f.name} ignored ({e})")
+GEN_RUST_BY_FN = collections.defaultdict(list)
+for key, desc in GEN["rust"].items():
+    file, _, fn = key.rpartition("::")
+    mod = file.replace("src-tauri/src/", "").replace("src-tauri/", "").replace(".rs", "").replace("/mod", "").replace("/", "::")
+    GEN_RUST_BY_FN[fn].append((mod, desc))
 def rust_desc(path):
-    fn = path.split("::")[-1]; cands = RUST_DOCS.get(fn) or []
+    fn = path.split("::")[-1]
+    gen = GEN_RUST_BY_FN.get(fn) or []
+    for mod, d in gen:
+        if mod and (path.startswith(mod) or path.startswith(mod.replace("lib::", ""))): return d
+    if len(gen) == 1: return gen[0][1]
+    cands = RUST_DOCS.get(fn) or []
     for mod, d in cands:
         if mod and path.startswith(mod): return d
     return cands[0][1] if cands else humanize(fn)
 VITEST_HEADER = {}
-def vitest_desc(rel, full_name):
+def vitest_desc(rel, full_name, title=None):
+    gen = GEN["vitest"].get(f"{rel}::{title}") if title else None
+    if gen: return gen
     if rel not in VITEST_HEADER:
         text = (REPO / rel).read_text(errors="replace")
         m = re.match(r"\s*((?://[^\n]*\n)+)", text)
@@ -119,7 +138,20 @@ def is_contract(kind, name):
     return any(re.search(p, name) for p in MANIFEST["contract"].get(kind, []))
 
 # ---------- layers ----------
+def db_facts():
+    demo = REPO / ".emailops-demo-data/emailops.db"
+    if not demo.exists(): return {}
+    def q(sql):
+        p = subprocess.run(["sqlite3", "-readonly", str(demo), sql], capture_output=True, text=True); return p.stdout.strip()
+    return {"path": str(demo.relative_to(REPO)), "accounts": q("select count(*) from accounts where enabled=1"), "emails": q("select count(*) from emails where is_deleted=0"),
+            "threads": q("select count(distinct thread_id) from emails"), "tags": q("select count(*) from email_tags"), "events": q("select count(*) from calendar_events"),
+            "tasks": q("select count(*) from pending_tasks"), "drafts": q("select count(*) from drafts"), "embeddings": q("select count(*) from embedding_chunks")}
 def layer_git():
+    meta["db"] = {
+        "demo": db_facts(),
+        "by_type": {"unit": "BD en memoria creada por las migraciones (`Database::new_for_testing`) o sin BD", "integration": "BD en memoria + FakeEmailProvider", "contract": "BD demo (doctor de la CLI) y BD en memoria (paridad de esquema)",
+                    "e2e": "BD demo sintética", "ui": "BD demo sintética", "oracle": "BD demo sintética, leída también por SQL", "eval": "BD demo sintética (conversaciones desechables)", "static": "ninguna", "perf": "BD demo sintética"},
+    }
     rc, top, _ = sh(["git", "rev-parse", "--show-toplevel"])
     rc, br, _ = sh(["git", "branch", "--show-current"])
     rc, c, _ = sh(["git", "log", "-1", "--format=%h %s (%ci)"])
@@ -182,7 +214,7 @@ def layer_vitest():
         for a in f.get("assertionResults", []):
             status = {"passed": "ok", "failed": "fail", "skipped": "skip", "pending": "skip", "todo": "skip"}.get(a["status"], a["status"])
             typ = "contract" if is_contract("vitest", rel) else "unit"
-            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), desc=vitest_desc(rel, a["fullName"]), trace="\n".join(a.get("failureMessages", []))[:6000])
+            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), desc=vitest_desc(rel, a["fullName"], a.get("title")), trace="\n".join(a.get("failureMessages", []))[:6000])
     if rc != 0 and not any(r["status"] == "fail" and r["name"].startswith("src/") for r in records):
         add("Transversal", "static", "vitest (arranque)", "fail", (out + err)[-3000:])
 
@@ -237,7 +269,11 @@ def teardown():
 
 def layer_evals():
     teardown()  # one llama.cpp at a time on the GPU
-    t0 = time.time(); rc, out, err = sh('make cli-eval ARGS="--json"', timeout=3600)
+    model = os.environ.get("VERIFY_EVAL_MODEL", "")
+    judge_model = os.environ.get("VERIFY_JUDGE_MODEL", model)
+    flags = "--json --judge" + (f" --model {model}" if model else "") + (f" --judge-model {judge_model}" if judge_model else "")
+    meta["evals"] = {"flags": flags, "model": model or "(preferencia ai_model de la BD demo)", "judge_model": judge_model or model or "(preferencia ai_model)"}
+    t0 = time.time(); rc, out, err = sh(f'make cli-eval ARGS="{flags}"', timeout=7200)
     body = out[out.find("{"):] if "{" in out else ""
     (LAYERS / "evals.raw.json").write_text(body or out + err)
     try: d = json.loads(body)
@@ -250,10 +286,15 @@ def layer_evals():
         failing = [ck for ck in c["checks"] if not ck["passed"]]
         detail = "; ".join(f"{ck['name']}: esperado {ck['expected']!r}, obtenido {ck['actual']!r}" for ck in failing)[:1500]
         model = (c.get("trace") or {}).get("model") or (meta.get("ai") or {}).get("model") or ""
+        j = c.get("judge")
+        if j and not j.get("passed"):
+            sc = j.get("scores") or {}
+            detail = (detail + "; " if detail else "") + "juez: " + (sc.get("error") or ", ".join(f"{k} {v:.2f}" for k, v in sc.items() if isinstance(v, (int, float))) + f" < {j.get('threshold')}")
+        judge_desc = (f"juez {j['model']} (umbral {j['threshold']}) sobre {', '.join(j['metrics']) or 'sin métricas'}" if j else "sin juez: solo métricas heurísticas")
         add(feature_for_eval(c["id"]), "eval", f"{c['id']} ({c['tier']})", "ok" if c["passed"] else "fail",
-            detail or f"{c['checksPassed']}/{c['checksTotal']} checks", c.get("latencyMs"),
-            desc=f"Pregunta: {c.get('question', '')} · Checks: {', '.join(ck['name'] for ck in c['checks'])}",
-            question=c.get("question", ""), answer=c.get("answer", ""), ai_trace=c.get("trace"), checks=c["checks"], model=model, judge="ninguno: métricas heurísticas (anclas de texto, ruta, herramientas llamadas)")
+            detail or f"{c['checksPassed']}/{c['checksTotal']} checks" + (" · juez ok" if j else ""), c.get("latencyMs"),
+            desc=f"Pregunta: {c.get('question', '')} · Checks: {', '.join(ck['name'] for ck in c['checks'])} · {judge_desc}",
+            question=c.get("question", ""), answer=c.get("answer", ""), expected_output=c.get("expectedOutput"), ai_trace=c.get("trace"), checks=c["checks"], model=model, judge=judge_desc, judge_report=j)
 
 def layer_perf():
     b = MANIFEST["budgets"]

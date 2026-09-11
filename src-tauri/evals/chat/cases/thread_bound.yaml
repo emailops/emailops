@@ -34,8 +34,10 @@
   expected_answer_not_contains:
     - "draft saved"
     - "generate_email_draft"
+  expected_output: "Traducción del correo de Nadia Brunner: acaba de instalar EmailOps, le encanta que la IA corra en local y pregunta cómo añadir una segunda cuenta de correo (tiene una cuenta Fastmail por IMAP y un buzón de trabajo) y si existe una página de ajustes para ello. Sin generar borrador."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # The positive counterpart: an explicit draft request must STILL reach the tool.
 # Without this, "gate the tool off" could regress into "never offer the tool",
@@ -47,8 +49,10 @@
   category: thread_bound
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
+  expected_output: "Un borrador de respuesta a Nadia Brunner, breve y cordial, que explica cómo añadir una segunda cuenta desde Ajustes → Cuentas → Añadir cuenta (Fastmail por IMAP con host, usuario y contraseña de aplicación), enlazado como draft://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # The open email is context, not a cage. With a thread in the panel, a
 # question about the mailbox at large ("que correos tengo hoy") used to run
@@ -72,8 +76,10 @@
     - "no tengo herramientas"
     - "no tools"
     - "no puedo acceder"
+  expected_output: "Los correos del día más reciente del buzón: el PR #58 de Codeberg sobre la API de tarifas de transportistas (faro-logistics/dashboard), el aviso de Fly.io de despliegue correcto de lumen-api en producción, y la pregunta de Nadia Brunner sobre cómo añadir una segunda cuenta en EmailOps; cada uno con su enlace email://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # With an email OPEN (ambient context, all tools available) a question about
 # that email is answered from it — no draft, no detour through search for
@@ -90,8 +96,10 @@
   expected_answer_not_contains:
     - "no tengo herramientas"
     - "no puedo acceder"
+  expected_output: "Resumen: Nadia Brunner, recién instalada EmailOps, pregunta cómo añadir una segunda cuenta (una Fastmail por IMAP además de su buzón de trabajo) y si hay una página de ajustes para ello; agradece el producto."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # The old failure that made thread mode tool-less in the first place: a
 # translate request must not save a reply draft — now enforced by the draft
@@ -107,5 +115,7 @@
   expected_answer_not_contains:
     - "](draft://"
     - "no tengo herramientas"
+  expected_output: "Traducción al español del correo de Nadia Brunner (instalación reciente, pregunta cómo añadir una segunda cuenta Fastmail IMAP y si hay una página de ajustes), sin crear ningún borrador."
   metrics:
     - answer_relevancy
+    - faithfulness

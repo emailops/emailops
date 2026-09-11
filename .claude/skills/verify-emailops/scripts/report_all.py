@@ -56,6 +56,11 @@ def evidence(r):
     if r["type"] == "eval":
         parts.append(f'<p><span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: {E(ev.get("judge") or "heurística")}</span></p>')
         parts.append(f'<div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E(ev.get("answer", "") or "(vacía)")}</div></div>')
+        if ev.get("expected_output"): parts.append(f'<div class="qa"><div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div></div>')
+        jr = ev.get("judge_report")
+        if jr:
+            sc = jr.get("scores") or {}
+            parts.append('<p><span class="lbl">Juez</span>' + E(jr.get("model", "")) + " · " + ", ".join(f"{k} {v:.2f}" for k, v in sc.items() if isinstance(v, (int, float))) + (f' · <em>{E(sc.get("rationale") or "")}</em>' if sc.get("rationale") else "") + (f' · <b class="fail">error: {E(sc["error"])}</b>' if sc.get("error") else "") + "</p>")
         checks = ev.get("checks") or []
         if checks:
             parts.append('<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th><th>Detalle</th></tr></thead><tbody>' + "".join(
@@ -85,7 +90,10 @@ def rows_html(rs, expand_fail=True):
             ev = r.get("evidence") or {}
             checks = ev.get("checks") or []
             tbl = '<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th></tr></thead><tbody>' + "".join(f'<tr><td>{E(c["name"])}</td><td>{E(str(c["expected"]))}</td><td>{E(str(c["actual"]))[:160]}</td></tr>' for c in checks) + "</tbody></table>"
-            out += f'<tr class="ev"><td colspan="4"><details><summary>Pregunta, checks y traza</summary><div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E((ev.get("answer") or "")[:1500])}</div></div>{tbl}' + (f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>' if ev.get("ai_trace") is not None else "") + '</details></td></tr>'
+            jr = ev.get("judge_report") or {}; sc = jr.get("scores") or {}
+            jtxt = ("<p><span class=\"lbl\">Juez</span>" + E(jr.get("model", "")) + " · " + ", ".join(f"{k} {v:.2f}" for k, v in sc.items() if isinstance(v, (int, float))) + (f" · <em>{E(sc.get('rationale') or '')}</em>" if sc.get("rationale") else "") + "</p>") if jr else ""
+            gold = f'<div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div>' if ev.get("expected_output") else ""
+            out += f'<tr class="ev"><td colspan="4"><details><summary>Pregunta, golden, checks, juez y traza</summary><div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div>{gold}<div class="a"><span class="lbl">Respuesta</span>{E((ev.get("answer") or "")[:1500])}</div></div>{jtxt}{tbl}' + (f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>' if ev.get("ai_trace") is not None else "") + '</details></td></tr>'
     return out
 
 # ---------- build ----------
@@ -93,9 +101,11 @@ by_feat = collections.defaultdict(list)
 for r in records: by_feat[r["feature"]].append(r)
 feat_order = [f for f in features if f in by_feat] + [f for f in by_feat if f not in features]
 
+def toc_count(rs):
+    c = counts(rs); return f'<span class="n">{c["ok"]}</span>' + (f' <span class="f">{c["fail"]} ✗</span>' if c["fail"] else "")
 index_html = "".join(
-    f'<li><a href="#f-{slug(f)}">{E(f)}</a> <span class="muted">{counts(by_feat[f])["ok"]} ok · {counts(by_feat[f])["fail"]} fallos</span><ul>' +
-    "".join(f'<li><a href="#f-{slug(f)}-{t}">{TYPE_LABEL[t]}</a></li>' for t in types if any(r["type"] == t for r in by_feat[f])) + "</ul></li>"
+    f'<li><a href="#f-{slug(f)}">{E(f)}</a> {toc_count(by_feat[f])}<ul>' +
+    "".join(f'<li><a href="#f-{slug(f)}-{t}">{TYPE_LABEL[t]}</a> {toc_count([r for r in by_feat[f] if r["type"] == t])}</li>' for t in types if any(r["type"] == t for r in by_feat[f])) + "</ul></li>"
     for f in feat_order)
 
 global_rows = [(f, f"f-{slug(f)}", counts(by_feat[f])) for f in feat_order]
@@ -134,10 +144,16 @@ for f in feat_order:
         if t == "eval":
             ai = meta.get("ai") or {}; models = sorted({(r.get("evidence") or {}).get("model") or "" for r in trs} - {""})
             judge = next(((r.get("evidence") or {}).get("judge") for r in trs if (r.get("evidence") or {}).get("judge")), "ninguno")
-            head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or ai.get("model", "?"))} <span class="muted">({E(ai.get("provider", "?"))}, embeddings {E(ai.get("embeddingModel", "?"))})</span><br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Checks</span>answer_nonempty (respuesta no vacía), route (ruta elegida: ToolsFirst / RAG), tools_called (herramientas invocadas en orden), answer_contains / answer_not_contains (anclas de texto o enlaces email:// draft://), expected_tool_args_contains (argumentos de la herramienta). Cada caso lista los suyos en el desplegable.</p>'
-        sub += f'<h3 id="f-{slug(f)}-{t}">{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span> <a class="up" href="#top">↑ índice</a></h3>{head}{sub_tbl}'
-    sections += f'<section class="feature" id="f-{slug(f)}"><h2>{E(f)} <span class="muted">{c["ok"]} ok · {c["fail"]} fallos · {c["skip"]} n/a</span></h2>{type_tbl}{sub}</section>'
+            ev_meta = meta.get("evals") or {}
+            head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or ai.get("model", "?"))} <span class="muted">({E(ai.get("provider", "?"))}, embeddings {E(ai.get("embeddingModel", "?"))})</span><br><span class="lbl">Juez</span>{E(ev_meta.get("judge_model", "?"))} <span class="muted">· umbral 0,70 por métrica · una respuesta se acepta solo si superan los checks heurísticos y el juez</span><br><span class="lbl">Golden</span>cada caso lleva `expected_output` cuando la respuesta es determinable a partir de la BD demo; el juez la usa como referencia<br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Checks</span>answer_nonempty (respuesta no vacía), route (ruta elegida: ToolsFirst / RAG), tools_called (herramientas invocadas en orden), answer_contains / answer_not_contains (anclas de texto o enlaces email:// draft://), expected_tool_args_contains (argumentos de la herramienta). Cada caso lista los suyos en el desplegable.</p>'
+        sub += f'<details class="type" id="f-{slug(f)}-{t}"{" open" if fails else ""}><summary>{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span></summary>{head}{sub_tbl}</details>'
+    sections += f'<details class="feature" id="f-{slug(f)}"{" open" if c["fail"] else ""}><summary>{E(f)} <span class="muted">{c["ok"]} ok · {c["fail"]} fallos · {c["skip"]} n/a</span></summary>{type_tbl}{sub}</details>'
 
+dbm = meta.get("db") or {}; demo = dbm.get("demo") or {}
+db_html = ""
+if demo:
+    db_html += f'<p><span class="lbl">BD demo</span><code>{E(demo.get("path", ""))}</code> · {E(demo.get("accounts", "?"))} cuentas activas · {E(demo.get("emails", "?"))} correos en {E(demo.get("threads", "?"))} hilos · {E(demo.get("tags", "?"))} tags · {E(demo.get("events", "?"))} eventos de calendario · {E(demo.get("tasks", "?"))} tareas · {E(demo.get("drafts", "?"))} borradores · {E(demo.get("embeddings", "?"))} chunks de embeddings. Datos sintéticos (persona Ulises / EmailOps Labs), sin correo real.</p>'
+db_html += '<div class="tablewrap"><table class="tests"><thead><tr><th>Tipo de test</th><th>Base de datos</th></tr></thead><tbody>' + "".join(f'<tr><td>{E(TYPE_LABEL.get(t, t))}</td><td class="det">{E(v)}</td></tr>' for t, v in (dbm.get("by_type") or {}).items()) + "</tbody></table></div>"
 layers_html = "".join(f'<tr class="{ {"ok": "good", "error": "bad", "skipped": "quiet"}[l["status"]] }"><td>{E(l["layer"])}</td><td>{E(l["status"])}</td><td class="dur">{l.get("seconds", "")}</td><td class="det">{E(l.get("error", "") or "")}</td></tr>' for l in layers)
 dirty = meta.get("dirty") or []
 gc = counts(records)
@@ -149,7 +165,16 @@ page = f'''<title>Verificación completa de EmailOps</title>
 @media (prefers-color-scheme: dark){{:root:not([data-theme="light"]){{--bg:#151A20;--panel:#1E252E;--ink:#E7EAEE;--muted:#9AA4B2;--line:#2E3843;--accent:#6FB6D0;--ok:#63C48A;--fail:#E27272;--skip:#E0A43C;--info:#9BA9E8;--chipbg:#273039;--badbg:#3A2323;--evbg:#1A2028;color-scheme:dark}}}}
 :root[data-theme="dark"]{{--bg:#151A20;--panel:#1E252E;--ink:#E7EAEE;--muted:#9AA4B2;--line:#2E3843;--accent:#6FB6D0;--ok:#63C48A;--fail:#E27272;--skip:#E0A43C;--info:#9BA9E8;--chipbg:#273039;--badbg:#3A2323;--evbg:#1A2028;color-scheme:dark}}
 body{{background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:14.5px;line-height:1.5;margin:0;padding-block:28px 64px;padding-inline:clamp(16px,4vw,40px)}}
-main{{max-width:1180px;margin:0 auto}}
+.layout{{display:grid;grid-template-columns:280px minmax(0,1fr);gap:32px;max-width:1500px;margin:0 auto}}
+nav.toc{{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow-y:auto;font-size:13px;padding-right:8px;border-right:1px solid var(--line)}}
+nav.toc h2{{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border:0;margin:0 0 8px;padding:0}}
+nav.toc ul{{list-style:none;padding:0;margin:0}} nav.toc>ul>li{{margin:6px 0}} nav.toc li li{{padding-left:14px;font-size:12px}} nav.toc a{{text-decoration:none}} nav.toc a:hover{{text-decoration:underline}}
+nav.toc .n{{color:var(--muted)}} nav.toc .f{{color:var(--fail);font-weight:600}}
+main{{min-width:0}}
+details.feature>summary{{cursor:pointer;list-style:none;font-size:20px;font-weight:600;margin:32px 0 10px;padding-top:8px;border-top:1px solid var(--line)}} details.feature>summary::-webkit-details-marker{{display:none}}
+details.feature>summary::before,details.type>summary::before{{content:"▸";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}} details[open]>summary::before{{transform:rotate(90deg)}}
+details.type>summary{{cursor:pointer;list-style:none;font-size:15px;font-weight:600;margin:20px 0 8px}} details.type>summary::-webkit-details-marker{{display:none}}
+@media (max-width:900px){{.layout{{grid-template-columns:1fr}} nav.toc{{position:static;max-height:none;border:0}}}}
 h1{{font-size:clamp(24px,3vw,34px);font-weight:600;margin:0 0 4px;text-wrap:balance}}
 h2{{font-size:20px;font-weight:600;margin:44px 0 10px;padding-top:8px;border-top:1px solid var(--line);text-wrap:balance}}
 h3{{font-size:15px;font-weight:600;margin:24px 0 8px}}
@@ -177,6 +202,11 @@ ul.index{{columns:2;column-gap:32px;padding-left:18px}} ul.index ul{{padding-lef
 ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 @media (max-width:720px){{ul.index{{columns:1}}}}
 </style>
+<div class="layout">
+<nav class="toc" aria-label="Índice">
+<h2>Índice</h2>
+<ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
+</nav>
 <main id="top">
 <div class="eyebrow">Verificación completa · {E(meta.get("tier", ""))}</div>
 <h1>Verificación completa de EmailOps</h1>
@@ -196,9 +226,6 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
   <div class="tile"><span class="eyebrow">Info</span><b>{gc["info"]}</b></div>
 </div>
 
-<h2 id="indice">Índice</h2>
-<ul class="index">{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
-
 <h2 id="resumen">Resumen global</h2>
 <div class="tablewrap">{summary_table(global_rows, "Feature")}</div>
 <div class="tablewrap">{summary_table(type_rows, "Tipo de test")}</div>
@@ -208,10 +235,18 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 <h2 id="capas">Capas ejecutadas</h2>
 <div class="tablewrap"><table class="tests"><thead><tr><th>Capa</th><th>Estado</th><th>s</th><th>Error</th></tr></thead><tbody>{layers_html}</tbody></table></div>
 
+<h2 id="bd">Bases de datos</h2>
+{db_html}
 <h2 id="huecos">Huecos de cobertura</h2>
 <p class="muted">Tipos de test sin ningún caso atribuido a la feature. No es un fallo: es dónde no hay red.</p>
 <div class="tablewrap"><table class="tests"><thead><tr><th>Feature</th><th>Sin tests de</th></tr></thead><tbody>{"".join(f"<tr><td>{E(f)}</td><td>{E(', '.join(m))}</td></tr>" for f, m in gaps)}</tbody></table></div>
 </main>
+</div>
+<script>
+// A link into a collapsed section opens it (and its parents) before jumping.
+function openHash(){{const id=location.hash.slice(1); if(!id) return; let el=document.getElementById(id); if(!el) return; for(let p=el; p; p=p.parentElement) if(p.tagName==='DETAILS') p.open=true; el.scrollIntoView({{block:'start'}});}}
+window.addEventListener('hashchange', openHash); openHash();
+</script>
 '''
 out.write_text(page)
 print(f"{out} ({out.stat().st_size // 1024} KB) · {gc}")

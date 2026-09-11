@@ -51,7 +51,26 @@ pub(crate) struct CaseReport {
     pub answer: String,
     pub trace: Option<ChatTrace>,
     pub checks: Vec<CheckReport>,
+    /// Golden reference the judge compared against, when the case has one.
+    pub expected_output: Option<String>,
+    /// LLM-judge verdict, present only when `--judge` was given.
+    pub judge: Option<JudgeReport>,
 }
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct JudgeReport {
+    pub model: String,
+    pub passed: bool,
+    pub threshold: f64,
+    pub metrics: Vec<String>,
+    pub scores: crate::evals::judge::JudgeScores,
+}
+
+/// Minimum score, per requested metric, for the judge to accept a case.
+#[cfg(feature = "eval")]
+pub(crate) const JUDGE_THRESHOLD: f64 = 0.7;
 
 #[cfg(feature = "eval")]
 #[derive(Serialize)]
@@ -72,6 +91,8 @@ pub async fn run_eval(
     case: Option<String>,
     tier: Option<String>,
     cases_dir: Option<PathBuf>,
+    judge: bool,
+    judge_model: Option<String>,
 ) -> Result<()> {
     use crate::evals::{case_loader, harness, metrics};
     use crate::models::error::AppError;
@@ -106,6 +127,22 @@ pub async fn run_eval(
     let session_account = session.require_account()?;
     let mut case_reports: Vec<CaseReport> = Vec::with_capacity(selected.len());
 
+    // The judge runs on the app's own provider (embedded llama.cpp by default);
+    // with the same model as the chat it shares the loaded weights.
+    let judge_provider = if judge {
+        let model = judge_model.clone().unwrap_or_else(|| session.model.clone());
+        let provider_name = session
+            .db
+            .get_preference("ai_provider")?
+            .unwrap_or_else(|| "llamacpp".to_string());
+        Some((
+            model.clone(),
+            crate::services::ai::AiService::build_provider(&session.db, &provider_name, &model)?,
+        ))
+    } else {
+        None
+    };
+
     for c in &selected {
         let account = resolve_case_account(&session.db, c.account.as_deref(), &session_account)?;
         let model = c.model.as_deref().unwrap_or(&session.model);
@@ -115,19 +152,35 @@ pub async fn run_eval(
             .map_err(map_eval_err)?;
         let report = metrics::evaluate(c, &outcome).map_err(map_eval_err)?;
 
+        let judge_report = match &judge_provider {
+            Some((model, provider)) => {
+                let scores = crate::evals::judge::score_with_provider(provider.as_ref(), c, &outcome).await;
+                Some(JudgeReport {
+                    model: model.clone(),
+                    passed: crate::evals::judge::judge_passes(&scores, c, JUDGE_THRESHOLD),
+                    threshold: JUDGE_THRESHOLD,
+                    metrics: c.metrics.iter().map(|m| m.as_str().to_string()).collect(),
+                    scores,
+                })
+            }
+            None => None,
+        };
+
         // Keep the live DB clean: the eval conversation is throwaway.
         session.db.delete_chat_conversation(&outcome.conversation_id)?;
 
         case_reports.push(CaseReport {
             id: c.id.clone(),
             tier: c.tier.clone(),
-            passed: report.all_passed(),
+            passed: report.all_passed() && judge_report.as_ref().is_none_or(|j| j.passed),
             checks_passed: report.passed_count(),
             checks_total: report.total(),
             latency_ms: outcome.wall_elapsed_ms,
             question: c.question.clone(),
             answer: outcome.assistant_content.clone(),
             trace: outcome.assistant_trace.clone(),
+            expected_output: c.expected_output.clone(),
+            judge: judge_report,
             checks: report
                 .checks
                 .iter()
@@ -239,6 +292,8 @@ mod tests {
             question: "¿Qué dijo Marisol?".into(),
             answer: "Marisol pidió el informe.".into(),
             trace: None,
+            expected_output: Some("Kwame Boateng preguntó por Ollama.".into()),
+            judge: None,
             checks: vec![CheckReport {
                 name: "contains".into(),
                 passed: false,
@@ -255,6 +310,8 @@ mod tests {
             "trace key is present even when the engine recorded none"
         );
         assert_eq!(json["checks"][0]["name"], "contains");
+        assert_eq!(json["expectedOutput"], "Kwame Boateng preguntó por Ollama.");
+        assert!(json["judge"].is_null(), "no judge unless --judge was given");
     }
 
     use super::*;
@@ -316,6 +373,8 @@ pub async fn run_eval(
     _case: Option<String>,
     _tier: Option<String>,
     _cases_dir: Option<std::path::PathBuf>,
+    _judge: bool,
+    _judge_model: Option<String>,
 ) -> Result<()> {
     Err(crate::models::error::AppError::InvalidInput(
         "the `eval` subcommand requires the 'eval' feature — rebuild with: \
