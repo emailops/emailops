@@ -187,8 +187,10 @@ await step('Compose', 'rellenar', 'To, Subject y cuerpo aceptan texto y Send se 
 await step('Compose', 'enviar sin credenciales', 'Send falla con un aviso visible, no en silencio', async () => {
   if (!(await clickComposeSend())) return 'FAIL: no hay botón Send en el compositor';
   await sleep(5000);
-  const t = await bodyText(); const m = t.match(/Failed to send[^\n]*|not authenticated[^\n]*|Authentication required for account[^\n]*|could not[^\n]*|error[^\n]*/i);
-  return ok(!!m, `aviso: ${m?.[0]}`, 'ningún aviso de error tras Send');
+  // The notice must be inside the composer (the sidebar's sync banner also says "Authentication required").
+  const t = await js(() => document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]')?.innerText || '');
+  const m = t.match(/Failed to send[^\n]*|not authenticated[^\n]*|Authentication required[^\n]*|could not[^\n]*|error[^\n]*/i);
+  return ok(!!m, `aviso: ${m?.[0]}`, 'ningún aviso de error en el compositor tras Send');
 });
 await step('Compose', 'cerrar y borrador', 'al cancelar, el borrador aparece en Drafts (los borradores se guardan automáticamente)', async () => {
   if (await exists('button=Cancel')) { await click('button=Cancel'); await sleep(800); for (const c of ['button=Discard', 'button=Keep', 'button=Save draft']) if (await exists(c)) { await click(c === 'button=Discard' ? 'button=Keep' : c).catch(() => {}); break; } }
@@ -217,8 +219,10 @@ await step('Ajustes', 'abrir', 'el diálogo de ajustes abre con sus pestañas', 
 });
 for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 'AI Translation', 'Privacy', 'Junk', 'Calendar', 'Appearance']) {
   await step('Ajustes', `pestaña ${tab}`, `la pestaña ${tab} renderiza contenido`, async () => {
-    if (!(await exists(`button*=${tab}`))) return `FAIL: no hay pestaña ${tab}`;
-    await click(`button*=${tab}`); await sleep(1200);
+    // Scope to the dialog: the sidebar has a "Calendar" view button behind the modal that `button*=` would hit first.
+    const hit = await js((label) => { const d = [...document.querySelectorAll('[role="dialog"]')].pop(); const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.includes(label)); if (!b) return false; b.click(); return true; }, tab);
+    if (!hit) return `FAIL: no hay pestaña ${tab}`;
+    await sleep(1200);
     const t = (await js(() => { const d = [...document.querySelectorAll('[role="dialog"]')].pop(); return d ? d.innerText : document.body.innerText; })).replace(/\s+/g, ' ');
     return ok(t.length > 100, t.slice(0, 100), 'contenido vacío');
   });
