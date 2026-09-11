@@ -15,7 +15,7 @@ What it does
 1. Copies the *schema only* from the current production DB into a fresh demo DB
    so the demo always matches whatever the app currently expects.
 2. Populates it with synthetic-but-plausible founder-flavored data:
-   - 2 accounts (one Gmail, one Outlook)
+   - 2 IMAP mail accounts plus a credential-less Gmail account that owns the demo calendar
    - ~180 emails across realistic SaaS/customer/investor/newsletter senders
    - Read/unread mix, multiple threads, categories, mailboxes
    - email_bodies + emails_fts entries
@@ -90,6 +90,16 @@ ACCOUNT_PERSONAL = Account(
     provider="imap",
     email="ulises@fastmail.com",
     name="Ulises",
+)
+# Owns the demo calendar. The chat's `list_calendar_events` tool (and the
+# Calendar view) are only offered to Gmail/Outlook accounts, so the IMAP work
+# account cannot carry the events. No credentials are stored for it — like the
+# IMAP accounts it simply reports "authentication required" on auto-sync.
+ACCOUNT_CALENDAR = Account(
+    id="demo-acct-calendar",
+    provider="gmail",
+    email="ulises.emailopslabs@gmail.com",
+    name="Ulises · Google Calendar",
 )
 
 # Spanish-locale variant. Same personas, Spanish-flavored email/name. Account ids
@@ -1139,6 +1149,17 @@ class Locale:
     prospects: list = field(default_factory=list)
     support: list = field(default_factory=list)
     stats: dict | None = None
+    # Extra Gmail account that owns the demo calendar when `work` is IMAP (which
+    # cannot have a calendar). None when `work` already supports calendars.
+    calendar: Account | None = None
+
+
+def demo_accounts(locale: "Locale") -> list[Account]:
+    return [locale.work, locale.personal] + ([locale.calendar] if locale.calendar else [])
+
+
+def calendar_account(locale: "Locale") -> Account:
+    return locale.calendar or locale.work
 
 
 def insert_calendar_events(conn: sqlite3.Connection, locale: Locale) -> None:
@@ -1146,18 +1167,22 @@ def insert_calendar_events(conn: sqlite3.Connection, locale: Locale) -> None:
     `list_calendar_events` tool, the calendar evals and any calendar view have
     something deterministic to show. Idempotent: replaces the demo calendar.
 
+    The calendar hangs off `calendar_account(locale)` — a Gmail/Outlook account,
+    because that is the only kind the app offers calendar features to.
+
     Times are anchored to the generation moment: tomorrow 10:00 is always the
     next meeting, which is what the `calendar_next_meeting_*` eval cases ask for.
     """
-    work = locale.work.id
+    owner = calendar_account(locale)
+    me = owner.email
     now = now_s()
-    conn.execute("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = 'demo-cal-work'", (work,))
-    conn.execute("DELETE FROM calendars WHERE account_id = ? AND id = 'demo-cal-work'", (work,))
+    conn.execute("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = 'demo-cal-work'", (owner.id,))
+    conn.execute("DELETE FROM calendars WHERE account_id = ? AND id = 'demo-cal-work'", (owner.id,))
     conn.execute(
         """INSERT INTO calendars (id, account_id, provider_calendar_id, name, color, is_primary, access_role,
                                   is_visible, sort_order, created_at, updated_at)
            VALUES ('demo-cal-work', ?, 'primary', 'Work', '#1F6F8B', 1, 'owner', 1, 0, ?, ?)""",
-        (work, now, now),
+        (owner.id, now, now),
     )
 
     def local_at(days: int, hour: int, minute: int = 0) -> int:
@@ -1168,17 +1193,17 @@ def insert_calendar_events(conn: sqlite3.Connection, locale: Locale) -> None:
     events = [
         # (days from today, hour, minutes, duration min, title, location, attendees)
         (1, 10, 0, 60, "Sprint 6 planning — Faro Logistics" if not es else "Planificación del sprint 6 — Faro Logistics",
-         "Google Meet", ["marisol.vega@farologistics.example", "ulises@emailopslabs.dev"]),
+         "Google Meet", ["marisol.vega@farologistics.example", me]),
         (1, 16, 30, 30, "Proton Bridge PR #131 review" if not es else "Revisión del PR #131 (Proton Bridge)",
-         "", ["ulises@emailopslabs.dev"]),
+         "", [me]),
         (2, 9, 30, 45, "PrivacyHub analytics migration — proposal walkthrough" if not es else "Migración de analítica PrivacyHub — repaso de la propuesta",
-         "Zoom", ["janos@privacyhub.example", "ulises@emailopslabs.dev"]),
+         "Zoom", ["janos@privacyhub.example", me]),
         (4, 12, 0, 60, "Bahía Studio — May milestone invoice sign-off" if not es else "Bahía Studio — cierre de la factura de mayo",
-         "", ["hello@bahiastudio.example", "ulises@emailopslabs.dev"]),
+         "", ["hello@bahiastudio.example", me]),
         (-1, 11, 0, 30, "Weekly ops sync" if not es else "Sincronización semanal de operaciones",
-         "Google Meet", ["ulises@emailopslabs.dev"]),
+         "Google Meet", [me]),
         (-3, 15, 0, 60, "Sprint 5 demo" if not es else "Demo del sprint 5",
-         "Google Meet", ["marisol.vega@farologistics.example", "ulises@emailopslabs.dev"]),
+         "Google Meet", ["marisol.vega@farologistics.example", me]),
     ]
     for i, (days, hour, minute, dur, title, location, attendees) in enumerate(events):
         start = local_at(days, hour, minute)
@@ -1190,9 +1215,9 @@ def insert_calendar_events(conn: sqlite3.Connection, locale: Locale) -> None:
                VALUES (?, ?, ?, 'demo-cal-work', ?, ?, ?, ?, ?, 0, 'Europe/Madrid', ?, ?, ?, ?, 'confirmed', NULL,
                        NULL, ?, ?, NULL)""",
             (
-                f"demo-evt-{i:02d}", work, f"demo-evt-{i:02d}", title,
+                f"demo-evt-{i:02d}", owner.id, f"demo-evt-{i:02d}", title,
                 "Demo event generated by scripts/generate_demo_db.py", location, start, start + dur * 60,
-                "ulises@emailopslabs.dev", json.dumps(attendees),
+                me, json.dumps(attendees),
                 "https://meet.example/demo" if location else None, ("google_meet" if location == "Google Meet" else ("zoom" if location == "Zoom" else None)),
                 now, now,
             ),
@@ -1314,6 +1339,7 @@ LOCALE_EN = Locale(
     code="en",
     work=ACCOUNT_WORK,
     personal=ACCOUNT_PERSONAL,
+    calendar=ACCOUNT_CALENDAR,
     # EN uses the thread-based path (work_threads, below). The legacy template
     # fields are unused for English but kept empty to satisfy the dataclass.
     work_templates=[],
@@ -1575,7 +1601,7 @@ def pick_timestamp_within_days(days: int) -> int:
 
 def insert_accounts(conn: sqlite3.Connection, locale: Locale) -> None:
     now = now_s()
-    for i, acct in enumerate([locale.work, locale.personal]):
+    for i, acct in enumerate(demo_accounts(locale)):
         conn.execute(
             """INSERT INTO accounts
                (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp)

@@ -18,23 +18,18 @@
 # corpus — the layer where a prompt or model change could still send a calendar
 # question down the retrieval path.
 #
-# WHY THESE ASSERT THE ROUTE, NOT THE TOOL CALL
-# The synthetic demo DB has no calendars and no events — the generator creates
-# emails *about* calendars, not calendar entries. Asserting
-# `expected_tools_called: [list_calendar_events]` measured the model's judgement
-# on an empty calendar rather than the routing change, and failed even with the
-# fix in place. The route is what this change actually controls and is
-# deterministic: pre-fix these questions produced `rag_first` (which exposes no
-# tool definitions at all, so the calendar tool was unreachable), post-fix they
-# produce `tools_first`.
-#
-# To assert the tool call itself, the demo generator would need to seed calendar
-# rows; until then that end of the path is covered by a private case against a
-# real mailbox.
+# WHY THESE RUN AGAINST THE GMAIL DEMO ACCOUNT
+# `list_calendar_events` is only offered to Gmail/Outlook accounts with the
+# calendar integration enabled (`ListCalendarEventsTool::is_available`). The
+# demo persona's mail accounts are IMAP, so `scripts/generate_demo_db.py` adds a
+# credential-less Gmail account (`demo-acct-calendar`) that owns the demo
+# calendar `demo-cal-work` with six events anchored to the generation moment
+# (tomorrow 10:00 is always "Sprint 6 planning — Faro Logistics"). These cases
+# assert the route, the tool call and the golden answer end to end.
 
 - id: calendar_next_meeting_es
   question: "cual es la siguiente reunión en mi calendario?"
-  account: "ulises@emailopslabs.dev"
+  account: "ulises.emailopslabs@gmail.com"
   category: routing
   tier: smoke
   expected_route: tools_first
@@ -56,7 +51,7 @@
 # only restored one language would otherwise pass.
 - id: calendar_next_meeting_en
   question: "what is my next meeting?"
-  account: "ulises@emailopslabs.dev"
+  account: "ulises.emailopslabs@gmail.com"
   category: routing
   tier: smoke
   expected_route: tools_first
