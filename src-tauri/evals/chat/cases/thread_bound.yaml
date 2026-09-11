@@ -49,3 +49,28 @@
   expected_tools_called: ["generate_email_draft"]
   metrics:
     - answer_relevancy
+
+# The open email is context, not a cage. With a thread in the panel, a
+# question about the mailbox at large ("que correos tengo hoy") used to run
+# thread-bound — no search tools — and came back "No tengo herramientas
+# disponibles para acceder a tu bandeja". `question_leaves_thread` now drops
+# the ambient thread for such questions, so the ordinary tool loop answers.
+- id: demo_thread_mailbox_question_leaves_thread
+  question: "que correos tengo hoy"
+  account: "ulises@emailopslabs.dev"
+  category: routing
+  tier: smoke
+  # `ambient_*`, not `thread_id`: the panel hands the OPEN email as ambient
+  # context for one turn. A conversation seeded with `thread_id` ("chat about
+  # this thread") is an explicit binding and deliberately stays thread-bound.
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  as_of: latest
+  expected_tools_called: ["search_emails"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "no tengo herramientas"
+    - "no tools"
+    - "no puedo acceder"
+  metrics:
+    - answer_relevancy

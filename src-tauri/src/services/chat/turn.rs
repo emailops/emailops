@@ -2332,9 +2332,17 @@ pub(super) fn plan_turn_mode(
     system_message_count: usize,
     ambient_thread_id: Option<&str>,
     ambient_account_id: Option<&str>,
+    user_question: &str,
 ) -> ChatTurnMode {
     if system_message_count > 0 {
         return ChatTurnMode::ConversationThread;
+    }
+    // The open email is context, not a cage: a question that is plainly
+    // about the mailbox ("que correos tengo hoy") runs as an ordinary turn
+    // with the search and calendar tools, instead of being answered from a
+    // thread that has nothing to do with it (and no tools).
+    if question_leaves_thread(user_question) {
+        return ChatTurnMode::Rag;
     }
     match ambient_thread_id.map(str::trim) {
         Some(id) if !id.is_empty() => ChatTurnMode::AmbientThread {
@@ -2358,6 +2366,41 @@ pub(super) fn plan_turn_mode(
 /// Deliberately verb-led: bare nouns like `respuesta` / `reply` are excluded
 /// because they appear in ordinary questions about a thread ("¿qué respuesta
 /// espera?"), which must be answered as text, not turned into a draft.
+/// True when a question asked with an email open is about the mailbox at
+/// large rather than that email: a time window ("hoy", "last week"), plural
+/// mail ("correos", "emails"), a count, the calendar, a search, or "the last
+/// email from X". Anything that points at the open thread ("este correo",
+/// "this thread", "it", "what does she say") keeps it, and so does a bare
+/// instruction with no scope at all ("resume con bullet points").
+pub(super) fn question_leaves_thread(user_question: &str) -> bool {
+    use std::sync::OnceLock;
+    static KEEP: OnceLock<regex::Regex> = OnceLock::new();
+    static LEAVE: OnceLock<regex::Regex> = OnceLock::new();
+    let folded = fold_for_intent_match(user_question);
+    if folded.trim().is_empty() {
+        return false;
+    }
+    // Hard-coded literals: `Regex::new` can only fail on a syntax error,
+    // which every build exercises through the tests below.
+    let keep = KEEP.get_or_init(|| {
+        #[allow(clippy::unwrap_used, clippy::expect_used)]
+        let re = regex::Regex::new(
+            r"\b(este|esta|ese|esa|el|la)\s+(correo|email|mail|hilo|mensaje|conversacion)\b\s*(abiert|actual|$|[^\w]|con|en|a\b)|\bthis\s+(email|thread|message|conversation|mail)\b|\besto\b|\bit\b|\b(dice|dicen|pide|piden|says|said|asking|asks)\b|\b(traduc|translat)",
+        )
+        .expect("static regex");
+        re
+    });
+    let leave = LEAVE.get_or_init(|| {
+        #[allow(clippy::unwrap_used, clippy::expect_used)]
+        let re = regex::Regex::new(
+            r"\b(hoy|ayer|today|yesterday|tonight)\b|\b(esta|la|this|last|next)\s+(semana|week)\b|\bsemana\s+pasada\b|\b(correos|emails|mails|mensajes)\b|\bcorreo\s+nuevo\b|\bnew\s+(emails?|mail|messages?)\b|\b(cuantos|cuantas|how\s+many)\b|\b(calendario|calendar|reuniones|meetings?|agenda|citas?)\b|\b(busca|buscar|buscame|search|find|encuentra|lista|listame|list)\b|\b(ultimo|ultima|last|latest|primer|primero|first)\s+(correo|email|mail|mensaje)s?\s+(de|from|que)\b|\b(facturas|invoices|newsletters?|adjuntos|attachments)\b|\b(bandeja|inbox|unread|sin\s+leer|recibido|recibidos|recibi|received)\b",
+        )
+        .expect("static regex");
+        re
+    });
+    leave.is_match(&folded) && !keep.is_match(&folded)
+}
+
 const DRAFT_INTENT_STEMS: &[&str] = &[
     // Spanish
     "borrador",
@@ -3123,11 +3166,19 @@ pub async fn run_chat_turn(
     //      main view as ambient context for this turn only.
     // `plan_turn_mode` owns the precedence between them.
     let system_messages = db.get_chat_system_messages(&conversation_id).unwrap_or_default();
-    let thread_context: Option<Vec<ChatMessage>> = match plan_turn_mode(
+    let turn_mode = plan_turn_mode(
         system_messages.len(),
         ambient_thread_id.as_deref(),
         ambient_account_id.as_deref(),
-    ) {
+        &user_question,
+    );
+    if ambient_thread_id.is_some() && turn_mode == ChatTurnMode::Rag {
+        emit_log(
+            "info",
+            "open email ignored for this turn: the question is about the mailbox, not the thread",
+        );
+    }
+    let thread_context: Option<Vec<ChatMessage>> = match turn_mode {
         ChatTurnMode::ConversationThread => Some(system_messages),
         ChatTurnMode::AmbientThread {
             thread_id,
@@ -5807,14 +5858,14 @@ mod tests {
 
     #[test]
     fn turn_mode_is_rag_without_any_context() {
-        assert_eq!(plan_turn_mode(0, None, None), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, None, None, ""), ChatTurnMode::Rag);
     }
 
     #[test]
     fn turn_mode_is_conversation_bound_when_seeded_with_thread() {
         // "Chat about this thread" seeds a role='system' message at creation;
         // that binding owns the whole conversation.
-        assert_eq!(plan_turn_mode(1, None, None), ChatTurnMode::ConversationThread);
+        assert_eq!(plan_turn_mode(1, None, None, ""), ChatTurnMode::ConversationThread);
     }
 
     #[test]
@@ -5822,11 +5873,71 @@ mod tests {
         // Right-hand chat panel: the thread the user is looking at grounds
         // this turn only.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), None),
+            plan_turn_mode(0, Some("t-42"), None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None
             }
+        );
+    }
+
+    // ── Ambient thread vs mailbox-wide questions ────────────────────────
+    //
+    // With an email open, the right-hand panel grounds every turn in that
+    // thread and exposes no search tools — so "que correos tengo hoy" came
+    // back "No tengo herramientas disponibles para acceder a tu bandeja".
+    // A question that is plainly about the mailbox, not the open thread,
+    // must run as an ordinary turn.
+
+    #[test]
+    fn mailbox_wide_questions_leave_the_open_thread() {
+        for q in [
+            "que correos tengo hoy",
+            "resumen de los correos de ayer",
+            "cuántos correos de acme hay?",
+            "qué reuniones tengo esta semana",
+            "what meetings do I have today?",
+            "cual fue el último email de ana",
+            "busca las facturas de acme de 2025",
+            "list my unread emails from last week",
+            "Summarise the emails I have received today as a table",
+            "tengo algún correo nuevo?",
+        ] {
+            assert!(question_leaves_thread(q), "should leave the thread: {q}");
+        }
+    }
+
+    #[test]
+    fn questions_about_the_open_thread_keep_it() {
+        for q in [
+            "resume el correo",
+            "resume este hilo con bullet points",
+            "traduce este email al español",
+            "qué me pide?",
+            "responde que sí",
+            "resume con bullet points",
+            "summarise it",
+            "crea un draft para decirle que no",
+            "de qué va esto",
+            "what is she asking for?",
+            "cuándo dice que es la reunión?",
+            "",
+        ] {
+            assert!(!question_leaves_thread(q), "should keep the thread: {q}");
+        }
+    }
+
+    #[test]
+    fn turn_mode_drops_the_ambient_thread_for_a_mailbox_wide_question() {
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), Some("acct"), "que correos tengo hoy"),
+            ChatTurnMode::Rag
+        );
+        // A conversation explicitly seeded with a thread keeps its binding —
+        // the user chose "chat about this thread".
+        assert_eq!(
+            plan_turn_mode(1, Some("t-42"), Some("acct"), "que correos tengo hoy"),
+            ChatTurnMode::ConversationThread
         );
     }
 
@@ -5840,7 +5951,7 @@ mod tests {
         // open and is told the model doesn't know which email they mean.
         // The thread's own account must ride along with the thread id.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), Some("acct-owning-t-42")),
+            plan_turn_mode(0, Some("t-42"), Some("acct-owning-t-42"), "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: Some("acct-owning-t-42".to_string()),
@@ -5854,7 +5965,7 @@ mod tests {
         // turn's own account is correct there, so `None` must stay valid
         // rather than disabling the grounding.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), None),
+            plan_turn_mode(0, Some("t-42"), None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None,
@@ -5867,7 +5978,7 @@ mod tests {
         // Same defensive treatment the thread id already gets: an empty string
         // must not become an account lookup that matches nothing.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), Some("   ")),
+            plan_turn_mode(0, Some("t-42"), Some("   "), "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None,
@@ -5879,7 +5990,10 @@ mod tests {
     fn conversation_binding_wins_over_ambient_thread() {
         // A conversation explicitly created about thread A must not silently
         // re-point at thread B just because the user scrolled to it.
-        assert_eq!(plan_turn_mode(1, Some("t-99"), None), ChatTurnMode::ConversationThread);
+        assert_eq!(
+            plan_turn_mode(1, Some("t-99"), None, "resume el correo"),
+            ChatTurnMode::ConversationThread
+        );
     }
 
     #[test]
@@ -5887,8 +6001,11 @@ mod tests {
         // Defensive: an empty string from the frontend must not be treated as
         // a real thread and send the turn down the grounded path with no
         // context at all.
-        assert_eq!(plan_turn_mode(0, Some(""), None), ChatTurnMode::Rag);
-        assert_eq!(plan_turn_mode(0, Some("   "), None), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, Some(""), None, "resume el correo"), ChatTurnMode::Rag);
+        assert_eq!(
+            plan_turn_mode(0, Some("   "), None, "resume el correo"),
+            ChatTurnMode::Rag
+        );
     }
 
     #[test]
