@@ -116,8 +116,10 @@ def layer_static():
 
 RUST_TEST = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)")
 def layer_rust():
-    rc, out, err = sh("cargo test --manifest-path src-tauri/Cargo.toml", timeout=3600)
-    text = out + "\n" + err; (LAYERS / "rust.raw").write_text(text)
+    # Merge the streams in order: the "Running unittests/tests/…" headers go to stderr
+    # and are what tells a unit test from an integration test.
+    rc, out, err = sh("cargo test --manifest-path src-tauri/Cargo.toml 2>&1", timeout=3600)
+    text = out; (LAYERS / "rust.raw").write_text(text)
     # failure traces: "---- name stdout ----" blocks
     traces = {}
     for m in re.finditer(r"^---- (\S+) stdout ----\n(.*?)(?=^---- \S+ stdout ----|^failures:|^test result|\Z)", text, re.S | re.M):

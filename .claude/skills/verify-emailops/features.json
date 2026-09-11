@@ -36,7 +36,9 @@
     "services::emails::sync",
     "services::emails::mailbox_state",
     "commands::system",
-    "util::instance_lock"
+    "util::instance_lock",
+    "db::folders",
+    "services::sync_error_dedup"
    ],
    "vitest": [
     "src/stores/accountStore",
@@ -160,7 +162,9 @@
     "ai::model_manager",
     "ai::gpu_plan",
     "ai::ollama",
-    "db::chat"
+    "db::chat",
+    "commands::chat",
+    "ai::provider"
    ],
    "vitest": [
     "src/components/Chat",
@@ -294,7 +298,11 @@
     "db::contacts",
     "services::task_queue",
     "runtime::spawn",
-    "runtime::ctx"
+    "runtime::ctx",
+    "services::dashboard",
+    "services::storage_stats",
+    "services::background_tasks",
+    "db::backup_tests"
    ],
    "vitest": [
     "src/components/Dashboard",
@@ -314,7 +322,11 @@
     "services::updates",
     "util::startup_dialog",
     "util::system",
-    "db::feature_flag_tests"
+    "db::feature_flag_tests",
+    "db::ai_enabled_tests",
+    "services::clock",
+    "services::events",
+    "services::logger"
    ],
    "vitest": [
     "src/components/Settings",
@@ -335,7 +347,9 @@
    "name": "CLI y agentes",
    "rust": [
     "cli",
-    "evals"
+    "evals",
+    "webdriver",
+    "util::private_eval_db"
    ],
    "vitest": [],
    "e2e": [],
