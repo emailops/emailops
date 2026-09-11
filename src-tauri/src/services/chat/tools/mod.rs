@@ -1233,6 +1233,185 @@ mod tests {
         );
     }
 
+    fn tag_email(db: &Database, email_id: &str, tag_type: &str, tag_value: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at) VALUES (?1, ?2, ?3, 1.0, 0)",
+                params![email_id, tag_type, tag_value],
+            )
+            .unwrap();
+    }
+
+    fn mark_spam(db: &Database, email_id: &str, account: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_junk
+                 (email_id, account_id, spam_score, phish_score, gray_score, band, primary_kind,
+                  reasons_json, method, model_version, scored_at, user_override)
+                 VALUES (?1, ?2, 0.9, 0.0, 0.0, 'junk', 'spam', '[]', 'deterministic', 1, 0, NULL)",
+                params![email_id, account],
+            )
+            .unwrap();
+    }
+
+    /// "últimos correos de prospects": the literal word matches nothing, but
+    /// the classifier already knows a prospect (intent introduction /
+    /// question / request). The tool exposes that as a filter.
+    #[test]
+    fn search_emails_filters_by_classification_intent_and_topic() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "lead",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Posible colaboración",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "promo",
+            "acc",
+            "t2",
+            "Shop",
+            "shop@example.com",
+            "50% off",
+            "sale",
+            t + 200,
+        );
+        seed_email(
+            &db,
+            "q",
+            "acc",
+            "t3",
+            "Bob",
+            "bob@example.com",
+            "Cost?",
+            "how much",
+            t + 300,
+        );
+        tag_email(&db, "lead", "intent", "introduction");
+        tag_email(&db, "lead", "topic", "sales");
+        tag_email(&db, "promo", "intent", "promotion");
+        tag_email(&db, "q", "intent", "question");
+        tag_email(&db, "q", "topic", "sales");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "introduction" })),
+        );
+        assert!(out.contains("id=lead"), "{out}");
+        assert!(!out.contains("id=promo") && !out.contains("id=q"), "{out}");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "question", "topic": "sales" })),
+        );
+        assert!(
+            out.contains("id=q") && !out.contains("id=lead"),
+            "both filters must hold: {out}"
+        );
+
+        let schema = super::search_emails::SearchEmailsTool.parameters_schema();
+        for key in ["intent", "topic", "with_bodies"] {
+            assert!(schema["properties"].get(key).is_some(), "schema must offer {key}");
+        }
+    }
+
+    /// Mail the junk detector called spam or phishing never surfaces in a
+    /// chat search (an SEO cold email flagged spam was listed as a prospect).
+    #[test]
+    fn chat_search_excludes_spam_flagged_mail() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "ok",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Hello",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "bad",
+            "acc",
+            "t2",
+            "Seo",
+            "seo@example.com",
+            "Grow your traffic",
+            "seo",
+            t + 200,
+        );
+        mark_spam(&db, "bad", "acc");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18" })),
+        );
+        assert!(out.contains("id=ok") && !out.contains("id=bad"), "{out}");
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "query": "traffic" })),
+        );
+        assert!(!out.contains("id=bad"), "keyword path too: {out}");
+
+        // The app's own search box still reaches it: only chat drops junk.
+        let app = db
+            .search_emails("acc", "traffic", None, None, None, None, None, None, None, 10)
+            .expect("search");
+        assert!(app.iter().any(|e| e.id == "bad"));
+    }
+
+    /// `with_bodies` lets the model pull cleaned bodies in the same call
+    /// instead of one get_email_body round per row.
+    #[test]
+    fn search_emails_with_bodies_inlines_the_body() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "m1",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Hello",
+            "the full body text here",
+            t + 100,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(
+            out.contains("body:") && out.contains("the full body text here"),
+            "{out}"
+        );
+    }
+
     /// "¿cuántos correos de X hay?" was answered "25" on a sender with 156
     /// messages: results are capped at `limit` and nothing told the model the
     /// page was only a slice. A full page now carries the total.

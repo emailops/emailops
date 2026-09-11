@@ -314,6 +314,7 @@ pub(crate) fn or_fallback_search(
     from_filter: Option<&str>,
     to_filter: Option<&str>,
     subject_filter: Option<&str>,
+    tag_filters: Option<&[String]>,
     limit: i32,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
@@ -332,7 +333,7 @@ pub(crate) fn or_fallback_search(
             subject_filter,
             None,
             None,
-            None,
+            tag_filters,
             limit,
             false,
         ) {

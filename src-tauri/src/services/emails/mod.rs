@@ -113,5 +113,7 @@ pub fn search_emails_filtered(
         tag_filters,
         limit,
         ascending,
+        // Chat never wants spam or phishing in its results.
+        true,
     )
 }

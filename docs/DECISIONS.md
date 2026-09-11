@@ -878,3 +878,27 @@ and never cover four languages. *A separate classifier round trip* — a per-tur
 for a decision the main model can make in the same call. *Keeping thread mode tool-less
 and re-running the whole turn on a refusal* — the corrective-retry ladder already
 exists and costs one extra generation only on failure.
+
+## 2026-09-11 — Chat search exposes the classifier's tags and never returns detector spam
+
+**Decision:** `search_emails` (the chat tool) takes `intent` and `topic` filters backed by
+the classification tags, plus `with_bodies` to inline cleaned bodies in one call. The
+query planner maps concepts the mailbox never spells out onto `intent` — prospects /
+potential clients / leads → `introduction` (then `question` / `request`), newsletters →
+`newsletter`, marketing → `promotion` — instead of a literal keyword. Chat searches drop
+mail the junk detector banded as spam or phishing (unless the user overrode it); the app's
+own search box is unchanged. The system prompt defines a prospect (someone asking about
+*your* services) and excludes vendors, recruiters and newsletters from that label.
+
+**Context:** "últimos correos de prospects" on the consulting inbox ran
+`search_emails(query="prospects")` → nothing, then broad retries, and the answer listed two
+SEO vendors (one banded spam), a job seeker and one lead — while the five real prospects
+(intent introduction/question/request, clean) never appeared. The classifier already
+encoded the answer; the tool schema did not let the model reach it. Nine rounds and
+26.6 s, half of them one `get_email_body` per row.
+
+**Rejected:** *Teaching the keyword router about "prospects"* — a concept, not a word, and
+one of many. *Excluding spam at the DB search for every caller* — the inbox search box must
+still find a message the detector got wrong. *Relying on the model to filter vendors out
+of a broad result* — it did not, twice; the definition in the prompt plus the intent filter
+make the right set the default rather than a judgement call.

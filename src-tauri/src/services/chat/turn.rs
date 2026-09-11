@@ -3478,7 +3478,7 @@ pub async fn run_chat_turn(
             super::planner::Plan::Search(plan) => {
                 emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, "search"));
-                preseeded_tool_calls = Some(vec![plan.into_tool_call()]);
+                preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
             }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));

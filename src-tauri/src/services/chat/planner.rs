@@ -21,7 +21,8 @@ use crate::ai::provider::{AIProvider, AiToolCall, AiToolCallFunction, Completion
 #[derive(Debug, Clone, PartialEq)]
 pub enum Plan {
     /// Pre-seed `search_emails` with these filters as the turn's round-0 call.
-    Search(SearchPlan),
+    /// Boxed: eight optional strings make the variant far larger than `Defer`.
+    Search(Box<SearchPlan>),
     /// Not a single email search — let the normal model tool loop handle it.
     Defer,
 }
@@ -35,6 +36,10 @@ pub struct SearchPlan {
     pub from: Option<String>,
     pub to: Option<String>,
     pub subject: Option<String>,
+    /// Classifier tags — the planner's way to express a concept ("prospects")
+    /// the mailbox never spells out.
+    pub intent: Option<String>,
+    pub topic: Option<String>,
     pub since: Option<String>,
     pub until: Option<String>,
     pub limit: Option<i64>,
@@ -59,6 +64,8 @@ impl SearchPlan {
             && self.subject.is_none()
             && self.since.is_none()
             && self.until.is_none()
+            && self.intent.is_none()
+            && self.topic.is_none()
     }
 
     /// Convert the plan into the `search_emails` tool call fed into the loop as
@@ -82,6 +89,8 @@ impl SearchPlan {
         put("from", self.from);
         put("to", self.to);
         put("subject", self.subject);
+        put("intent", self.intent);
+        put("topic", self.topic);
         put("since", self.since);
         put("until", self.until);
         if oldest {
@@ -169,6 +178,8 @@ pub fn parse_plan(text: &str) -> Plan {
         from: str_field("from"),
         to: str_field("to"),
         subject: str_field("subject"),
+        intent: str_field("intent").map(|v| v.to_lowercase()),
+        topic: str_field("topic").map(|v| v.to_lowercase()),
         since: str_field("since"),
         until: str_field("until"),
         limit,
@@ -177,7 +188,7 @@ pub fn parse_plan(text: &str) -> Plan {
     if plan.is_empty() {
         return Plan::Defer;
     }
-    Plan::Search(plan.normalised())
+    Plan::Search(Box::new(plan.normalised()))
 }
 
 /// Lenient JSON-object extraction: drop ``` fences, then parse the first
@@ -287,7 +298,7 @@ mod tests {
 
     fn search(text: &str) -> SearchPlan {
         match parse_plan(text) {
-            Plan::Search(p) => p,
+            Plan::Search(p) => *p,
             Plan::Defer => panic!("expected Search, got Defer for: {text}"),
         }
     }
@@ -393,6 +404,25 @@ mod tests {
         assert_eq!(search(r#"{"from":"a@x.com","limit":1000}"#).limit, Some(25));
         assert_eq!(search(r#"{"from":"a@x.com","limit":0}"#).limit, Some(1));
         assert_eq!(search(r#"{"from":"a@x.com","limit":"3"}"#).limit, Some(3));
+    }
+
+    #[test]
+    fn classification_filters_reach_the_tool_call() {
+        // "últimos correos de prospects" → the planner maps the concept onto
+        // the intent filter instead of a literal keyword.
+        match parse_plan(r#"{"intent": "introduction", "limit": 5}"#) {
+            Plan::Search(p) => {
+                assert_eq!(p.intent.as_deref(), Some("introduction"));
+                let call = (*p).into_tool_call();
+                assert_eq!(call.function.arguments["intent"], "introduction");
+                assert!(call.function.arguments.get("query").is_none());
+            }
+            other => panic!("expected search, got {other:?}"),
+        }
+        match parse_plan(r#"{"topic": "sales", "from": "acme"}"#) {
+            Plan::Search(p) => assert_eq!(p.topic.as_deref(), Some("sales")),
+            other => panic!("expected search, got {other:?}"),
+        }
     }
 
     #[test]

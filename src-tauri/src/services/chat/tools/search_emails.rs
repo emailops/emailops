@@ -39,7 +39,7 @@ impl Tool for SearchEmailsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until must be non-empty. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
+        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic must be non-empty. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
 
     fn prompt_summary(&self) -> &'static str {
@@ -57,7 +57,10 @@ impl Tool for SearchEmailsTool {
                 "since": { "type": "string", "description": "Only return emails on or after this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: '2026-04-17' for today." },
                 "until": { "type": "string", "description": "Only return emails strictly before this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: use until='2026-04-18' together with since='2026-04-17' to get today's emails only." },
                 "limit": { "type": "integer", "description": "Max number of results to return. Default 20, max 25. Use 25 for 'all X' / 'todas' queries, 5 for 'latest X' / 'última'." },
-                "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." }
+                "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." },
+                "intent": { "type": "string", "enum": ["introduction", "question", "request", "scheduling", "delivery", "feedback", "conversation", "notification", "promotion", "newsletter"], "description": "Filter by the classifier's intent tag. USE THIS for concepts the mailbox does not spell out: prospects / potential clients / leads / oportunidades → 'introduction' (also try 'question' and 'request'); marketing / cold outreach → 'promotion'; boletines → 'newsletter'. Combine with since/until or from as needed; leave query empty." },
+                "topic": { "type": "string", "description": "Filter by the classifier's topic tag (e.g. 'sales', 'billing', 'project', 'hiring', 'travel')." },
+                "with_bodies": { "type": "boolean", "description": "Return each email's cleaned body (budgeted per row) in this same call. Set it when you will summarise or extract from the results, instead of calling get_email_body once per email." }
             },
             "required": []
         })
@@ -87,7 +90,22 @@ impl Tool for SearchEmailsTool {
         // shortcuts preseed it so each result carries its full cleaned body —
         // letting a weak local model summarise complete emails in one pass
         // instead of chaining a `get_email_body` call per row.
-        let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
+        // `with_bodies` is the model-facing name; `include_bodies` the
+        // shortcuts' internal one — same effect.
+        let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false)
+            || args.get("with_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
+        // Classification filters: intent / topic tag values, both must hold.
+        let tag_filters: Vec<String> = ["intent", "topic"]
+            .iter()
+            .filter_map(|k| args.get(*k).and_then(|v| v.as_str()))
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .collect();
+        let tag_filter_arg: Option<&[String]> = if tag_filters.is_empty() {
+            None
+        } else {
+            Some(&tag_filters)
+        };
         // Internal too: the "emails I received today/this week" shortcuts set
         // it so the user's own sent replies do not show up as received mail.
         let received_only = args.get("received_only").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -109,6 +127,7 @@ impl Tool for SearchEmailsTool {
             && subject_filter.is_none()
             && since_str.is_none()
             && until_str.is_none()
+            && tag_filter_arg.is_none()
         {
             // Include a concrete call to imitate: a flaky model that emitted a
             // name-only call (`search_emails({})`) recovers far more reliably
@@ -158,7 +177,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             subject_filter,
             since_ts,
             until_ts,
-            None,
+            tag_filter_arg,
             limit,
             ascending,
         );
@@ -218,7 +237,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         subject_filter,
                         since_ts,
                         until_ts,
-                        None,
+                        tag_filter_arg,
                         COUNT_PROBE_LIMIT,
                         ascending,
                     )
@@ -232,8 +251,11 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             }
             Ok(_) => {
                 // ── Empty-result fallback ladder ───────────────────────
-                let has_non_date_anchor =
-                    !query.is_empty() || from_filter.is_some() || to_filter.is_some() || subject_filter.is_some();
+                let has_non_date_anchor = !query.is_empty()
+                    || from_filter.is_some()
+                    || to_filter.is_some()
+                    || subject_filter.is_some()
+                    || tag_filter_arg.is_some();
 
                 if (since_ts.is_some() || until_ts.is_some()) && has_non_date_anchor {
                     let retry = emails::search_emails_filtered(
@@ -246,7 +268,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         subject_filter,
                         None,
                         None,
-                        None,
+                        tag_filter_arg,
                         limit,
                         ascending,
                     );
@@ -278,6 +300,7 @@ showing recent matches without since/until instead)\n",
                     from_filter,
                     to_filter,
                     subject_filter,
+                    tag_filter_arg,
                     limit,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");

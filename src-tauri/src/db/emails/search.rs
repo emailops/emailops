@@ -161,6 +161,16 @@ impl Database {
     /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
     /// the planner prefers the mailbox index for the inner MAX() too (54s);
     /// with it each lookup is a single (account_id, thread_id) seek (40ms).
+    /// The junk detector's spam/phishing exclusion as a bare WHERE term
+    /// (`exclude_junk_sql` returns it with a leading `AND` for callers that
+    /// append it to a finished clause).
+    fn junk_condition(alias: &str) -> String {
+        crate::db::exclude_junk_sql(alias, false)
+            .trim_start()
+            .trim_start_matches("AND ")
+            .to_string()
+    }
+
     const THREAD_LATEST_CTE: &'static str = "thread_latest AS (
                  SELECT mt.aid AS aid, mt.tid AS tid,
                         (SELECT MAX(e3.timestamp)
@@ -455,6 +465,7 @@ impl Database {
         before_timestamp: Option<i64>,
         limit: i32,
         ascending: bool,
+        exclude_spam: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut conditions: Vec<String> = vec![
@@ -463,6 +474,9 @@ impl Database {
             // Spam/trash never surface in search (see search_emails_inner).
             "e.mailbox NOT IN ('spam', 'trash')".to_string(),
         ];
+        if exclude_spam {
+            conditions.push(Self::junk_condition("e"));
+        }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
         let mut param_idx = 2usize;
 
@@ -547,6 +561,7 @@ impl Database {
             tag_filters,
             limit,
             false,
+            false,
         )
     }
 
@@ -568,6 +583,10 @@ impl Database {
         tag_filters: Option<&[String]>,
         limit: i32,
         ascending: bool,
+        // `true` drops mail the junk detector called spam or phishing (unless
+        // the user overrode it) — what the chat wants; the app's own search
+        // box keeps everything reachable.
+        exclude_spam: bool,
     ) -> Result<Vec<Email>> {
         self.search_emails_inner(
             account_id,
@@ -581,6 +600,7 @@ impl Database {
             tag_filters,
             limit,
             ascending,
+            exclude_spam,
         )
     }
 
@@ -598,6 +618,7 @@ impl Database {
         tag_filters: Option<&[String]>,
         limit: i32,
         ascending: bool,
+        exclude_spam: bool,
     ) -> Result<Vec<Email>> {
         // ── Date-only fast path (no text filters) ────────────────────────────────
         // When there are no text-based filters (keyword, from, to, subject, tag),
@@ -618,6 +639,7 @@ impl Database {
                 before_timestamp,
                 limit,
                 ascending,
+                exclude_spam,
             );
         }
 
@@ -647,6 +669,9 @@ impl Database {
         // Spam/trash never surface in search — a spam email classified
         // `primary` must not sail through the category filter.
         cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string());
+        if exclude_spam {
+            cte_conditions.push(Self::junk_condition("match_e"));
+        }
         param_idx += 1;
 
         // Category filter
@@ -2154,6 +2179,7 @@ mod tests {
                 None,
                 1,
                 true,
+                false,
             )
             .unwrap();
         assert_eq!(
