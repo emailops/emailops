@@ -12,13 +12,17 @@
 # text anchor cannot distinguish "translated the email" from "wrote a draft
 # that happens to contain those words".
 #
-# Thread `thread_4369f40221bd` is the demo DB's "How do I add a new email
-# account in EmailOps?" enquiry from a synthetic sender.
+# Thread `thread_30bb61af7512` is the demo DB's "How do I add a new email
+# account in EmailOps?" enquiry from a synthetic sender. The generator draws
+# thread ids at random, so this id changes every `make demo-db`; re-key it
+# from the subject with:
+#   sqlite3 .emailops-demo-data/emailops.db \
+#     "SELECT DISTINCT thread_id FROM emails WHERE subject LIKE 'How do I add%'"
 
 - id: demo_thread_translate_answers_inline
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
+  thread_id: "thread_30bb61af7512"
   category: thread_bound
   tier: smoke
   expected_tools_not_called: ["generate_email_draft"]
@@ -39,7 +43,7 @@
 - id: demo_thread_explicit_draft_still_works
   question: "escribe una respuesta a este correo"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
+  thread_id: "thread_30bb61af7512"
   category: thread_bound
   tier: smoke
   expected_tools_called: ["generate_email_draft"]

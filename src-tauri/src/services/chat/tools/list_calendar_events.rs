@@ -97,7 +97,7 @@ impl Tool for ListCalendarEventsTool {
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "list the user's calendar events (meetings) for a date range."
+        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\") — never search_emails for those."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -212,6 +212,18 @@ mod tests {
     }
 
     // ── execute (against the in-memory DB) ─────────────────────────────────
+
+    #[test]
+    fn prompt_summary_claims_meeting_questions_only_when_the_tool_is_offered() {
+        // The routing hint lives on the tool, not in the static system prompt:
+        // a static "meetings → list_calendar_events" rule made the model name
+        // the tool in its refusal on installs where the calendar is off.
+        let summary = ListCalendarEventsTool.prompt_summary();
+        for word in ["reunión", "calendario", "meeting"] {
+            assert!(summary.contains(word), "missing {word}: {summary}");
+        }
+        assert!(!crate::services::prompts::defaults::CHAT_SYSTEM.contains("list_calendar_events"));
+    }
 
     #[test]
     fn calendar_output_opens_with_todays_weekday_and_date() {
