@@ -48,6 +48,10 @@ interface InboxProps {
   fullWidth?: boolean;
   /** Display name of the active account shown in the inbox title. */
   accountName?: string;
+  /** Pane title: the mailbox the user opened plus the account (see `mailboxTitle`). */
+  title?: string;
+  /** Re-docks the chat panel; only passed while the panel is closed. */
+  onOpenChatPanel?: () => void;
   /** Account ID used for sender autocomplete in the inline search box. */
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
@@ -159,6 +163,8 @@ export function Inbox({
   disableAutoSelect = false,
   fullWidth = false,
   accountName,
+  title,
+  onOpenChatPanel,
   accountId,
   onSearch,
 }: InboxProps) {
@@ -412,7 +418,7 @@ export function Inbox({
           {/* Title */}
           <div className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 truncate">
-              {accountName ? `Inbox — ${accountName}` : 'Inbox'}
+              {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
             </h2>
             {isSyncing && (
               <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
@@ -466,6 +472,24 @@ export function Inbox({
                     strokeLinejoin="round"
                     strokeWidth={2}
                     d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+              </button>
+            )}
+            {onOpenChatPanel && (
+              <button
+                type="button"
+                onClick={onOpenChatPanel}
+                title={t('chat:panel.open')}
+                aria-label={t('chat:panel.open')}
+                className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 10h8M8 14h5m-9 6l3.5-3.5H18a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v14z"
                   />
                 </svg>
               </button>

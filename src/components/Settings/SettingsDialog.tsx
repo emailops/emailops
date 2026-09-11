@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
@@ -106,6 +106,15 @@ export function SettingsDialog({
 
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(activeAccountId);
   const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
+
+  // Escape closes, like every dialog built on the shared Modal.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {

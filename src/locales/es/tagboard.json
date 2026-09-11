@@ -11,6 +11,7 @@
   "refresh": "Actualizar tablero",
   "threadCount_one": "{{count}} conversación",
   "threadCount_other": "{{count}} conversaciones",
+  "threadCount_many": "{{count}} conversaciones",
   "showMore": "Ver más",
   "columnEmpty": "Sin conversaciones",
   "columnError": "No se pudo cargar esta etiqueta",
@@ -26,6 +27,7 @@
   "openInInbox": "Abrir en la bandeja",
   "restoreHidden_one": "Mostrar {{count}} etiqueta oculta",
   "restoreHidden_other": "Mostrar {{count}} etiquetas ocultas",
+  "restoreHidden_many": "Mostrar {{count}} etiquetas ocultas",
   "range": {
     "label": "Periodo",
     "all": "Todo",

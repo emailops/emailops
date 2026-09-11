@@ -11,6 +11,7 @@
   "refresh": "Actualiser le tableau",
   "threadCount_one": "{{count}} fil",
   "threadCount_other": "{{count}} fils",
+  "threadCount_many": "{{count}} fils",
   "showMore": "Afficher plus",
   "columnEmpty": "Aucun fil",
   "columnError": "Impossible de charger cette étiquette",
@@ -26,6 +27,7 @@
   "openInInbox": "Ouvrir dans la boîte de réception",
   "restoreHidden_one": "Afficher {{count}} étiquette masquée",
   "restoreHidden_other": "Afficher {{count}} étiquettes masquées",
+  "restoreHidden_many": "Afficher {{count}} étiquettes masquées",
   "range": {
     "label": "Période",
     "all": "Tout",

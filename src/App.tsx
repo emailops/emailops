@@ -53,6 +53,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import { isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
@@ -1507,6 +1508,12 @@ function AppInner() {
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                     accountName={isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email}
+                    title={mailboxTitle(
+                      viewMode,
+                      isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email,
+                      (key) => t(key as 'sidebar:inbox'),
+                    )}
+                    onOpenChatPanel={aiEnabled && !isChatPanelOpen ? () => setIsChatPanelOpen(true) : undefined}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
                   />

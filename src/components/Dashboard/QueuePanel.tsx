@@ -92,7 +92,9 @@ function QueueColumn({
       ) : (
         <ul className="space-y-0.5">
           {snapshot.history.map((entry) => (
-            <HistoryRow key={entry.id} entry={entry} accounts={accounts} />
+            // A retried task finishes more than once with the same id; the attempt's
+            // start time tells them apart.
+            <HistoryRow key={`${entry.id}-${entry.startedAt}`} entry={entry} accounts={accounts} />
           ))}
         </ul>
       )}
