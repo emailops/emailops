@@ -50,6 +50,9 @@ export function TagEmailCard({
     <div
       role="button"
       tabIndex={0}
+      data-testid="tag-card"
+      data-thread-id={email.threadId}
+      data-account-id={email.accountId}
       onClick={() => onSelect(email)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {

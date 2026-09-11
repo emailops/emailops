@@ -71,7 +71,13 @@ try {
     case 'type': {
       const el = await browser.$(a1);
       await el.click();
-      await el.setValue(a2 ?? '');
+      if (await el.getAttribute('contenteditable')) {
+        // Rich-text editors (tiptap) only see DOM mutations that come with input
+        // events; execCommand produces both, a direct value write produces neither.
+        await browser.execute((text) => document.execCommand('insertText', false, text), a2 ?? '');
+      } else {
+        await el.setValue(a2 ?? '');
+      }
       console.log('typed');
       break;
     }

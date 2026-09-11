@@ -97,6 +97,14 @@ describe('DraftsView', () => {
     expect(container.textContent).toContain('Before');
   });
 
+  it('marks each row with its draft id so a driver can address it', async () => {
+    await render(null);
+    const rows = container.querySelectorAll('[data-testid="draft-row"]');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].getAttribute('data-draft-id')).toBeTruthy();
+    expect(rows[0].querySelector('button[title="compose:drafts.delete"]')).not.toBeNull();
+  });
+
   it('re-reads the list when a sync completes for the shown account', async () => {
     await render(null);
     listDrafts.mockImplementation(() => Promise.resolve([draft('Edited in Gmail')] as unknown[]));

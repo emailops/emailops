@@ -151,25 +151,42 @@ await step('Tag Board', 'barra de herramientas visible', 'con el panel de chat a
 });
 
 // ---------- Compose ----------
+// The docked chat panel also has a "Send" button; scope to the composer.
+// The modal root is the fixed overlay around the subject field; `body` would also match a `:has()` query.
+const composeSend = () => js(() => { const m = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]'); const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Send'); return b ? { disabled: b.disabled } : null; });
+const clickComposeSend = () => js(() => { const m = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]'); const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Send'); if (!b) return false; b.click(); return true; });
 await click('button=Inbox'); await sleep(1200);
 await step('Compose', 'abrir', 'el modal de redacción aparece con To, Subject y cuerpo', async () => {
   await click('button=Compose'); await sleep(1500);
   const f = await js(() => [...document.querySelectorAll('input,textarea,[contenteditable=true]')].map(i => i.placeholder || i.getAttribute('aria-label') || i.tagName));
   return ok(f.some(x => /subject/i.test(x)), `campos: ${f.join(', ')}`, `campos: ${f.join(', ')}`);
 });
+await step('Compose', 'sin avisos de tiptap', 'abrir el editor no registra extensiones duplicadas', async () => {
+  const log = fs.readFileSync(path.join(runDir, 'app.log'), 'utf8');
+  const n = (log.match(/Duplicate extension names/g) || []).length;
+  return ok(n === 0, 'sin avisos', `${n} aviso(s) "Duplicate extension names" en app.log`);
+});
 await step('Compose', 'Send deshabilitado sin destinatario', 'Send está deshabilitado hasta que hay un destinatario', async () => {
-  const d = await js(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Send')?.disabled);
+  const d = (await composeSend())?.disabled;
   return ok(d === true, 'Send deshabilitado', `Send habilitado sin destinatario (disabled=${d})`);
 });
 await step('Compose', 'rellenar', 'To, Subject y cuerpo aceptan texto y Send se habilita', async () => {
-  await type('input[placeholder^="Add recipients"]', 'someone@example.com'); await b.keys('Enter'); await sleep(500);
+  await type('input[placeholder^="Add recipients"]', 'someone@example.com'); await sleep(400);
+  // Commit the chip with a keydown on the field itself: within one WebDriver session the
+  // server's `keys` does not always reach the element that was just typed into.
+  await js(() => { const i = document.querySelector('input[placeholder^="Add recipients"]'); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })); }); await sleep(500);
   await type('input[placeholder^="Email subject"]', 'Verification run');
-  const body = await b.$('[contenteditable="true"]'); await body.click(); await body.setValue('hello from the verifier'); await sleep(800);
-  const v = await js(() => ({ subject: document.querySelector('input[placeholder^="Email subject"]')?.value, body: document.querySelector('[contenteditable="true"]')?.innerText, chips: [...document.querySelectorAll('[role="dialog"] span, [role="dialog"] div')].map(e => e.textContent.trim()).filter(t => /someone@example\.com/.test(t)).length, sendDisabled: [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Send')?.disabled }));
+  // A contenteditable (tiptap/ProseMirror) ignores a value written straight into the DOM; execCommand produces the
+  // DOM mutations + input events the editor listens to, like real typing does.
+  const body = await b.$('[contenteditable="true"]'); await body.click(); await sleep(200);
+  await js(() => document.execCommand('insertText', false, 'hello from the verifier')); await sleep(800);
+  const v = await js(() => { const box = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]'); return { subject: document.querySelector('input[placeholder^="Email subject"]')?.value, body: document.querySelector('[contenteditable="true"]')?.innerText, chip: !!box && box.innerText.includes('someone@example.com') }; });
+  v.sendDisabled = (await composeSend())?.disabled;
   return ok(v.subject === 'Verification run' && /hello from the verifier/.test(v.body || '') && v.sendDisabled === false, JSON.stringify(v), JSON.stringify(v));
 });
 await step('Compose', 'enviar sin credenciales', 'Send falla con un aviso visible, no en silencio', async () => {
-  await click('button=Send'); await sleep(5000);
+  if (!(await clickComposeSend())) return 'FAIL: no hay botón Send en el compositor';
+  await sleep(5000);
   const t = await bodyText(); const m = t.match(/Failed to send[^\n]*|not authenticated[^\n]*|Authentication required for account[^\n]*|could not[^\n]*|error[^\n]*/i);
   return ok(!!m, `aviso: ${m?.[0]}`, 'ningún aviso de error tras Send');
 });
@@ -182,11 +199,14 @@ await step('Compose', 'cerrar y borrador', 'al cancelar, el borrador aparece en 
 });
 await step('Compose', 'descartar borrador', 'Continue editing + Discard elimina el borrador', async () => {
   if (!(await bodyText()).includes('Verification run')) return 'SKIP: no hay borrador que descartar (ver paso anterior)';
-  if (await exists('aria/Delete draft')) await click('aria/Delete draft'); else if (await exists('button=Continue editing')) { await click('button=Continue editing'); await sleep(1200); if (await exists('button=Discard')) await click('button=Discard'); }
-  await sleep(800);
-  for (const c of ['button=Discard', 'button=Delete', 'button=OK', 'button=Confirm', 'button=Yes']) if (await exists(c)) { await click(c); break; }
-  await sleep(1200); await click('button=Drafts'); await sleep(1200);
-  return ok(!(await bodyText()).includes('Verification run'), 'borrador eliminado', 'el borrador sigue en Drafts');
+  // Delete every draft this run created, through the row's own "Delete draft" button.
+  for (let i = 0; i < 30; i++) {
+    const clicked = await js(() => { const row = [...document.querySelectorAll('[data-testid="draft-row"]')].find((r) => /Verification run|hello from the verifier/.test(r.textContent)); const btn = row?.querySelector('button[title="Delete draft"]'); if (btn) { btn.click(); return true; } return false; });
+    if (!clicked) break; await sleep(1200);
+    for (const c of ['button=Delete', 'button=Discard', 'button=OK', 'button=Confirm', 'button=Yes']) if (await exists(c)) { await click(c); await sleep(800); break; }
+  }
+  await click('button=Inbox'); await sleep(600); await click('button=Drafts'); await sleep(1200);
+  return ok(!/Verification run|hello from the verifier/.test(await bodyText()), 'borradores del run eliminados', 'el borrador sigue en Drafts');
 });
 
 // ---------- Settings ----------
@@ -228,10 +248,13 @@ await step('Chat', 'pregunta y respuesta', 'una pregunta recibe respuesta con fu
   return ok(got, `${secs} s; ${answer || 'respuesta sin mención explícita a Ollama'}`, `sin respuesta tras ${secs} s`);
 });
 await step('Chat', 'nuevo chat', 'New chat vacía la conversación', async () => { await click('aria/New chat'); await sleep(1200); return ok(!(await bodyText()).includes('Sources'), 'conversación nueva', 'la respuesta anterior sigue visible'); });
-await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y Chat lo vuelve a abrir', async () => {
+await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y "Open chat panel" en la cabecera del inbox lo vuelve a acoplar', async () => {
+  if (!(await exists('aria/Close chat panel'))) { await click('button=Inbox'); await sleep(1000); }
+  if (!(await exists('aria/Close chat panel'))) return 'FAIL: el panel acoplado no está visible desde el inbox';
   await click('aria/Close chat panel'); await sleep(1000); const closed = !(await exists('button=Send'));
-  if (await exists('button=Chat')) { await click('button=Chat'); await sleep(1200); }
-  return ok(closed && await exists('button=Send'), 'cerrado y reabierto', closed ? 'no se reabrió' : 'no se cerró');
+  if (!(await exists('aria/Open chat panel'))) return `FAIL: sin botón "Open chat panel" tras cerrar (cerrado=${closed})`;
+  await click('aria/Open chat panel'); await sleep(1200);
+  return ok(closed && await exists('button=Send'), 'cerrado y reabierto desde la cabecera', closed ? 'no se reabrió' : 'no se cerró');
 });
 
 fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2));

@@ -8,6 +8,10 @@ import base64, html, json, sys, datetime, pathlib
 sweep = pathlib.Path(sys.argv[1])
 out = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else sweep.parent / "informe.html"
 results = json.loads((sweep / "results.json").read_text())
+# A Tag Board oracle run (tagboard_check.mjs) next to the sweep joins the table.
+tagboard = sweep.parent / "tagboard" / "results.json"
+if tagboard.exists():
+    results += [dict(r, feature=f"Tag Board · {r.get('kind', 'oráculo')}") for r in json.loads(tagboard.read_text())]
 findings = json.loads((sweep / "findings.json").read_text()) if (sweep / "findings.json").exists() else []
 meta = json.loads((sweep / "meta.json").read_text()) if (sweep / "meta.json").exists() else {}
 
@@ -118,7 +122,7 @@ pre{{background:var(--panel);border:1px solid var(--line);border-radius:6px;padd
 </div>
 
 <h2>Hallazgos</h2>
-<p>Ordenados por gravedad. Cada uno lleva los pasos para reproducirlo a mano, la captura tomada en el momento del fallo y el fichero donde mirar. Los cinco pasos en rojo de la tabla corresponden a H1 (tres vistas), H5 y a un paso del chat que resultó ser una limitación del guion, no de la app.</p>
+<p>{E(meta.get("findings_intro", "Ordenados por gravedad. Cada uno lleva los pasos para reproducirlo a mano, la captura tomada en el momento del fallo y el fichero donde mirar."))}</p>
 {find_html}
 
 <h2>Todos los pasos</h2>
