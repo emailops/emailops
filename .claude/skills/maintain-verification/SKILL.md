@@ -65,8 +65,19 @@ never keeps a missing layer silently.
   SQL reproduces the backend rule with no cap; the UI is compared to the backend's ranked
   output; rows are compared to the DB set.
 - **Eval**: a YAML case in `src-tauri/evals/chat/cases/` keyed to the demo persona
-  (`ulises@emailopslabs.dev`), deterministic anchors, no judge. Run it alone first:
-  `make cli-eval ARGS="--case <id> --json"`.
+  (`ulises@emailopslabs.dev`; calendar questions use the Gmail account
+  `ulises.emailopslabs@gmail.com`, the only one the calendar tool is offered to). Give it
+  deterministic anchors (`expected_route`, `expected_tools_called`,
+  `expected_answer_contains` / `_not_contains`) **and** an `expected_output` golden with
+  `metrics: [answer_relevancy, faithfulness]` so the LLM judge scores it. Run it alone first:
+  `make cli-eval ARGS="--case <id> --json --judge --model qwen3.6-35b-a3b-ud-q4_k_xl"`.
+  Anchor goldens on data the generator seeds (`scripts/generate_demo_db.py`); if the case
+  needs rows the demo DB lacks, seed them there and apply the same SQL to the live
+  `.emailops-demo-data/emailops.db` (never regenerate it: ids are random).
+- **Description**: every new test gets a one-line Spanish description in
+  `.claude/skills/verify-emailops/descriptions/<batch>.json` (`rust` key
+  `src-tauri/<file>::<fn>`, `vitest` key `<file>::<full test name>`). Say what behaviour it
+  proves, not what the code does.
 
 Red first: run the new test, watch it fail for the right reason, then make it pass.
 
@@ -80,7 +91,7 @@ Red first: run the new test, watch it fail for the right reason, then make it pa
 ## 5. Full run, then triage
 
 ```bash
-make verify                            # all layers, ~25 min with evals
+VERIFY_EVAL_MODEL=qwen3.6-35b-a3b-ud-q4_k_xl make verify   # all layers, ~35 min with judged evals
 ```
 
 Every failure is one of: **product bug** (fix in a separate commit, with its regression

@@ -9,11 +9,14 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 
 - Instance started by `$V launch`: Vite/Tauri on port 1421, WebDriver on 4445, data dir
   `.emailops-demo-data`, synthetic persona `ulises@emailopslabs.dev` (`demo-acct-work`,
-  selected by default) and `ulises@fastmail.com` (`demo-acct-personal`), 79 emails,
-  embeddings present, AI on (embedded llama.cpp, `qwen3.5-4b-q4_k_m`).
+  selected by default) and `ulises@fastmail.com` (`demo-acct-personal`), both IMAP, 79 emails,
+  embeddings present, AI on (embedded llama.cpp, `qwen3.5-4b-q4_k_m`). A third,
+  credential-less Gmail account `ulises.emailopslabs@gmail.com` (`demo-acct-calendar`) owns
+  the demo calendar `demo-cal-work` (six events around today; tomorrow 10:00 is "Sprint 6
+  planning — Faro Logistics") because calendar features are only offered to Gmail/Outlook.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's
   own app on port 1420 usually holds the production mailbox).
-- The red "Authentication required for account demo-acct-work" banner is expected.
+- The red "Authentication required for account …" banners are expected on all three accounts.
 - The chat panel is docked open on the right by default; the inbox list sits in the middle.
 - UI language English (the demo DB default). Handles below are the English strings.
 

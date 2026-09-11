@@ -190,6 +190,31 @@ broken attempt does not leave a second instance squatting on 1421.
 Do not delete the run dir. If disk matters, prune old runs by hand:
 `ls src-tauri/reports/verify/`.
 
+## Full verification (`make verify`)
+
+`make verify` (`scripts/verify_all.sh` → `scripts/verify_all.py` + `scripts/report_all.py`)
+runs every layer once and renders `src-tauri/reports/verify/<stamp>-full/informe.html`
+(`current-full` symlinks the latest): git facts, static gates (tsc, biome, i18n, fmt, clippy,
+audits), `cargo test`, vitest, CLI contract, the e2e sweep, the Tag Board oracle, the chat
+evals and the perf budgets. Results are attributed to features through `features.json`.
+`--tier quick` skips the UI, oracle and eval layers; `--only`/`--skip` take layer names.
+
+- **Database.** Every dynamic layer runs on the synthetic demo DB in `.emailops-demo-data/`
+  (`make demo-db` output: `emailops.db`, `models/` symlinked to the real app's models). The
+  report's "Base de datos" section lists its accounts, row counts per table and the AI
+  preferences. Never point a layer at the production data dir.
+- **Models.** `VERIFY_EVAL_MODEL=<gguf stem>` selects the chat model the evals run with,
+  `VERIFY_JUDGE_MODEL` the judge (defaults to the same). Unset, both fall back to the demo
+  DB's `ai_model` preference. The reference run uses `qwen3.6-35b-a3b-ud-q4_k_xl` for both.
+- **Evals.** `make cli-eval ARGS="--json --judge …"`: each case carries deterministic checks
+  (route, tools called, answer contains/not contains, draft link…) **and** an
+  `expected_output` golden; the judge (`evals/judge.rs`, same local provider) scores
+  `answer_relevancy` / `faithfulness` against it, threshold 0.7. The report shows question,
+  answer, golden, judge scores and the collapsible AI trace for failures.
+- **Descriptions.** Hover hints per test come from `descriptions/*.json` (`rust`:
+  `src-tauri/<file>::<fn>`, `vitest`: `<file>::<full test name>`), falling back to the doc
+  comment above `#[test]` or a humanised name. Add an entry for every new test.
+
 ## Helpers
 
 `scripts/verify.sh` (executable) is the entry point; its subcommands are shown above and in
