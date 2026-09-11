@@ -851,3 +851,30 @@ also emitted explicit `generate_email_draft` calls after the first inferred one.
 in two phases; re-running the same search with a 500-row probe only when the page is
 full is one line and costs nothing on the common path. *Applying the draft gate to
 thread-bound turns* — those already expose the tool only when the question asks for it.
+
+## 2026-09-11 — The open email is context on an all-tools turn, not a tool-less mode
+
+**Decision:** When the chat panel has an email open, the turn runs as an ordinary
+turn — every tool available, no retrieval, no planner — with the thread injected as an
+"OPEN EMAIL" block in the user message that states both halves of the contract: answer
+from it when the question is about it, ignore it and use the tools otherwise. A keyword
+hint (`question_leaves_thread`) still short-circuits obvious mailbox-wide questions to a
+plain turn with no thread block, and a language-agnostic net catches the remaining
+misses: an answer that claims to have no tools or no inbox access triggers one
+corrective retry that salvages and runs the tool call the model then emits. Only a
+conversation explicitly created with "chat about this thread" keeps the thread-bound,
+tool-less path.
+
+**Context:** Thread-bound turns exposed zero tools (a translate request had once saved a
+reply draft), so "que correos tengo hoy" asked with an email open was answered "No tengo
+herramientas disponibles para acceder a tu bandeja". Keyword detection of "is this about
+the thread?" is not robust to paraphrase or to the FR/DE users; letting the model decide
+with the whole question and the thread in front of it is. The draft gate
+(`draft_call_allowed`) now prevents the original regression with every tool on the menu;
+a refused draft call is labelled `(refused: no draft requested)` in the trace.
+
+**Rejected:** *Improving the keyword classifier* — it would keep growing case by case
+and never cover four languages. *A separate classifier round trip* — a per-turn cost
+for a decision the main model can make in the same call. *Keeping thread mode tool-less
+and re-running the whole turn on a refusal* — the corrective-retry ladder already
+exists and costs one extra generation only on failure.

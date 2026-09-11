@@ -163,6 +163,47 @@ pub fn build_prompt(
     system_template: &str,
     tools_section: &str,
 ) -> Vec<(String, String)> {
+    build_prompt_with_thread(
+        sources,
+        history,
+        user_question,
+        language,
+        user_email,
+        system_template,
+        tools_section,
+        None,
+    )
+}
+
+/// The block that carries the email the user is reading into an ordinary
+/// (all-tools) turn. It tells the model both halves of the contract: answer
+/// from the thread when the question is about it, ignore it otherwise. Pure
+/// so the wording is pinned by tests.
+pub(super) fn ambient_thread_block(thread_context: &str) -> String {
+    format!(
+        "OPEN EMAIL — the user is reading this thread in the app right now:\n{thread_context}\n\n\
+How to use it: if the question is about THIS thread (summarise, translate, explain, what does someone say, \
+reply to it), answer from it directly — no search is needed — and link messages with `email://ID` using the \
+ids shown above. If the question is about other mail, the calendar, or the mailbox in general (\"what did I \
+receive today\", \"how many emails from X\"), IGNORE this thread and use the tools as usual. To reply to a \
+message here, call generate_email_draft with the exact id shown next to it."
+    )
+}
+
+/// [`build_prompt`] plus, when the user has an email open, that thread as
+/// context in place of the "you MUST call search_emails" nag — the nag would
+/// push the model to search for an answer that is already in front of it.
+#[allow(clippy::too_many_arguments)]
+pub fn build_prompt_with_thread(
+    sources: &[ScoredEmail],
+    history: &[ChatMessage],
+    user_question: &str,
+    language: &str,
+    user_email: &str,
+    system_template: &str,
+    tools_section: &str,
+    ambient_thread: Option<&str>,
+) -> Vec<(String, String)> {
     let now = now_local();
     let today = now.format("%Y-%m-%d").to_string();
     let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
@@ -207,7 +248,10 @@ Do not swap from and to: \"I sent\" is always from, \"sent to me\" is always to.
     let system = crate::services::prompts::render(system_template, &tpl_vars);
 
     let mut tail = String::with_capacity(user_question.len() + sources.len() * 1200 + 128);
-    if sources.is_empty() {
+    if let Some(thread) = ambient_thread {
+        tail.push_str(&ambient_thread_block(thread));
+        tail.push('\n');
+    } else if sources.is_empty() {
         tail.push_str(
             "Sources: (none pre-retrieved for this turn — you MUST call search_emails \
 before answering any factual question about the user's mailbox.)\n",
@@ -322,6 +366,17 @@ was created. Answer the question with the information you already have from the 
 again if needed). You may offer to draft a reply, but do not create one unless the user asks."
             .to_string(),
     )
+}
+
+/// Name recorded in the trace for a tool call. A refused draft call is
+/// labelled as such so the reasoning panel and the eval harness see "the
+/// model asked, the gate said no" rather than a draft tool that ran.
+fn traced_tool_name(name: &str, refused: bool) -> String {
+    if refused {
+        format!("{name} (refused: no draft requested)")
+    } else {
+        name.to_string()
+    }
 }
 
 /// Content of the most recent assistant message in the prompt, if any — the
@@ -1516,14 +1571,74 @@ fn answer_looks_truncated(answer: &str) -> bool {
     !trimmed.is_empty() && (trimmed.ends_with(':') || trimmed.ends_with(','))
 }
 
+/// Corrective instruction when, with an email open as context, the model
+/// answered a mailbox question by claiming it has no tools. The keyword hint
+/// (`question_leaves_thread`) can miss a phrasing in any language; this is
+/// the language-agnostic net behind it — the model's own refusal is what we
+/// detect, and the retry stream salvages and executes the tool call it emits.
+const NO_TOOLS_RETRY_INSTRUCTION: &str =
+    "Tu respuesta anterior dice que no tienes herramientas o acceso a la bandeja. SÍ las tienes en este turno. \
+El correo abierto no es lo que el usuario pregunta: ignóralo y llama AHORA a search_emails (o \
+list_calendar_events si pregunta por reuniones) para responder sobre el buzón. No repitas que no puedes.\n\n\
+Your previous answer claims you have no tools or no access to the inbox. You DO have them on this turn. The \
+open email is not what the user is asking about: ignore it and call search_emails NOW (or \
+list_calendar_events for meetings) to answer about the mailbox. Do not repeat that you cannot.";
+
+/// Longest answer that still counts as a "no tools / no access" refusal.
+const NO_TOOLS_CLAIM_MAX_CHARS: usize = 600;
+
+/// True when the answer says the assistant has no tools or no access to the
+/// mailbox — the shape an ambient-thread turn produced for "que correos
+/// tengo hoy". Covers the four UI languages.
+fn answer_claims_no_tools(answer: &str) -> bool {
+    let trimmed = answer.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > NO_TOOLS_CLAIM_MAX_CHARS {
+        return false;
+    }
+    let norm = fold_for_intent_match(trimmed);
+    const PATTERNS: &[&str] = &[
+        // Spanish
+        "no tengo herramientas",
+        "no dispongo de herramientas",
+        "no tengo acceso a tu bandeja",
+        "no tengo acceso a tus correos",
+        "no puedo acceder a tu bandeja",
+        "no puedo acceder a tus correos",
+        "revisa directamente tu aplicacion de correo",
+        // English
+        "no tools available",
+        "i don't have tools",
+        "i do not have tools",
+        "i don't have access to your inbox",
+        "i do not have access to your inbox",
+        "i can't access your inbox",
+        "i cannot access your inbox",
+        "no access to your mailbox",
+        "no access to your inbox",
+        // French
+        "je n'ai pas acces a votre boite",
+        "je n'ai pas d'outils",
+        "je ne peux pas acceder a votre boite",
+        // German
+        "keinen zugriff auf dein postfach",
+        "keinen zugriff auf ihr postfach",
+        "keine werkzeuge",
+        "keine tools",
+    ];
+    PATTERNS.iter().any(|p| norm.contains(p))
+}
+
 /// Which corrective instruction, if any, a finished answer earns: a "no
-/// results" claim that contradicts the tool results, or an answer cut off
-/// before its point. Pure so both shapes are pinned by tests.
-fn answer_retry_instruction(answer: &str) -> Option<&'static str> {
+/// results" claim that contradicts the tool results, an answer cut off
+/// before its point, or — with an email open as context — a claim of having
+/// no tools. Pure so every shape is pinned by tests.
+fn answer_retry_instruction(answer: &str, ambient_thread: bool) -> Option<&'static str> {
     if answer_claims_no_results(answer) {
         Some(CONTRADICTION_RETRY_INSTRUCTION)
     } else if answer_looks_truncated(answer) {
         Some(TRUNCATED_RETRY_INSTRUCTION)
+    } else if ambient_thread && answer_claims_no_tools(answer) {
+        Some(NO_TOOLS_RETRY_INSTRUCTION)
     } else {
         None
     }
@@ -1875,7 +1990,9 @@ async fn run_tool_loop(
                 // draft" / …) so the UI reflects what each call is doing.
                 emit_phase(conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
-                let dispatched = match unrequested_draft_refusal(name, draft_allowed) {
+                let refusal = unrequested_draft_refusal(name, draft_allowed);
+                let refused = refusal.is_some();
+                let dispatched = match refusal {
                     Some(note) => {
                         emit_log(
                             "info",
@@ -1918,7 +2035,7 @@ async fn run_tool_loop(
                 );
 
                 tool_traces.push(ToolCallTrace {
-                    name: name.clone(),
+                    name: traced_tool_name(name, refused),
                     // Preseeded shortcut tools run before the LLM loop.
                     round: -1,
                     arguments: traced_args,
@@ -2227,7 +2344,9 @@ async fn run_tool_loop(
             // "Running tools" for the whole loop.
             emit_phase(conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
-            let dispatched = match unrequested_draft_refusal(name, draft_allowed) {
+            let refusal = unrequested_draft_refusal(name, draft_allowed);
+            let refused = refusal.is_some();
+            let dispatched = match refusal {
                 Some(note) => {
                     emit_log(
                         "info",
@@ -2266,7 +2385,7 @@ async fn run_tool_loop(
             // tool output for debugging — large enough for a typical thread or
             // 25-row search_emails dump, small enough to bound the JSON blob.
             tool_traces.push(ToolCallTrace {
-                name: name.clone(),
+                name: traced_tool_name(name, refused),
                 round: round as i32,
                 arguments: traced_args,
                 result_preview: truncate_chars(&result, 16000),
@@ -3178,6 +3297,11 @@ pub async fn run_chat_turn(
             "open email ignored for this turn: the question is about the mailbox, not the thread",
         );
     }
+    // The open email (ambient thread) rides along as context on an ordinary
+    // all-tools turn; only a conversation explicitly seeded with a thread
+    // takes the thread-bound path. Its message ids join the link allowlist.
+    let mut ambient_context: Option<String> = None;
+    let mut ambient_refs: Vec<String> = Vec::new();
     let thread_context: Option<Vec<ChatMessage>> = match turn_mode {
         ChatTurnMode::ConversationThread => Some(system_messages),
         ChatTurnMode::AmbientThread {
@@ -3193,7 +3317,14 @@ pub async fn run_chat_turn(
             // deleted mid-session, unreadable rows) must not kill the turn —
             // fall back to normal retrieval so the user still gets an answer.
             match super::conversations::build_thread_context(&db, lookup_account, &thread_id) {
-                Ok((context, _subject)) => Some(vec![ChatMessage::ephemeral_system(&conversation_id, &context)]),
+                Ok((context, _subject)) => {
+                    ambient_context = Some(context);
+                    ambient_refs = db
+                        .get_thread(lookup_account, &thread_id)
+                        .map(|emails| emails.into_iter().map(|e| e.id).collect())
+                        .unwrap_or_default();
+                    None
+                }
                 Err(e) => {
                     // Surface this, don't just log it. The answer that
                     // follows is ungrounded but sounds confident ("which
@@ -3268,7 +3399,18 @@ pub async fn run_chat_turn(
     let t_route = std::time::Instant::now();
     emit_log("info", "stage: route");
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Routing);
-    let route = classify_route(&db, &user_question, &history);
+    let route = if ambient_context.is_some() {
+        // No retrieval and no planner: the thread is the context, and the
+        // model keeps every tool for questions that are not about it.
+        RouteDecision {
+            mode: RouteMode::ToolsFirst,
+            reason: "open email as context; all tools available".to_string(),
+            matched_keywords: Vec::new(),
+            classifier: "ambient".to_string(),
+        }
+    } else {
+        classify_route(&db, &user_question, &history)
+    };
     emit_log(
         "info",
         &format!(
@@ -3291,7 +3433,11 @@ pub async fn run_chat_turn(
                 && db.calendar_enabled(&a.id).unwrap_or(false)
         })
         .unwrap_or(false);
-    let mut preseeded_tool_calls = heuristic_direct_tools(&user_question, calendar_available);
+    let mut preseeded_tool_calls = if ambient_context.is_some() {
+        None
+    } else {
+        heuristic_direct_tools(&user_question, calendar_available)
+    };
     if preseeded_tool_calls.is_some() {
         emit_log("info", "shortcut: matched direct-tool pattern");
     }
@@ -3318,7 +3464,11 @@ pub async fn run_chat_turn(
     // Trace entry for the planner LLM call, prepended to `llm_calls` below so it
     // shows in the flow timeline ahead of the tool rounds.
     let mut planner_trace: Option<LlmCallTrace> = None;
-    if preseeded_tool_calls.is_none() && route.mode == RouteMode::ToolsFirst && planner_enabled(&db) {
+    if preseeded_tool_calls.is_none()
+        && ambient_context.is_none()
+        && route.mode == RouteMode::ToolsFirst
+        && planner_enabled(&db)
+    {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
@@ -3428,7 +3578,7 @@ pub async fn run_chat_turn(
     let tools_section = registry.render_system_prompt_section(db.as_ref());
     // `user_email` was resolved earlier (before the query planner) and feeds the
     // system prompt's first-person identity line here.
-    let mut initial_messages = build_prompt(
+    let mut initial_messages = build_prompt_with_thread(
         &sources,
         &history,
         &user_question,
@@ -3436,6 +3586,7 @@ pub async fn run_chat_turn(
         &user_email,
         &system_template,
         &tools_section,
+        ambient_context.as_deref(),
     );
 
     // Inject the memory header into the final user message — but only when
@@ -3501,7 +3652,9 @@ pub async fn run_chat_turn(
                 &user_question,
                 initial_messages,
                 preseeded_tool_calls,
-                true,
+                // A plain answer from the open thread is a real answer, not
+                // an "announcement" to nudge past.
+                ambient_context.is_none(),
                 &mut tool_traces,
                 &mut llm_calls,
             )
@@ -3577,7 +3730,15 @@ pub async fn run_chat_turn(
         // corrective retry; only worth keeping when tools actually handed
         // back emails this turn (`aggregated_email_refs` is the
         // format-independent "the tools found something" signal).
-        let contradiction_retry_messages: Option<Vec<AiMessage>> = if aggregated_email_refs.is_empty() {
+        let ambient_turn = ambient_context.is_some();
+        // The open thread's messages are citable the same way tool results are.
+        for id in &ambient_refs {
+            if !aggregated_email_refs.contains(id) {
+                aggregated_email_refs.push(id.clone());
+            }
+        }
+        let contradiction_retry_messages: Option<Vec<AiMessage>> = if aggregated_email_refs.is_empty() && !ambient_turn
+        {
             None
         } else {
             Some(final_messages.clone())
@@ -3602,13 +3763,16 @@ pub async fn run_chat_turn(
                 // (observed on Qwen 3.6 35B-A3B). Run ONE corrective retry
                 // over the same transcript; keep the original answer if the
                 // retry fails, so the guard can never make things worse.
-                let retry = contradiction_retry_messages
-                    .and_then(|messages| answer_retry_instruction(&answer).map(|instruction| (messages, instruction)));
+                let retry = contradiction_retry_messages.and_then(|messages| {
+                    answer_retry_instruction(&answer, ambient_turn).map(|instruction| (messages, instruction))
+                });
                 if let Some((mut retry_messages, retry_instruction)) = retry {
                     emit_log(
                         "info",
                         if std::ptr::eq(retry_instruction, CONTRADICTION_RETRY_INSTRUCTION) {
                             "contradiction guard: answer claims no results but tools returned emails — one corrective retry"
+                        } else if std::ptr::eq(retry_instruction, NO_TOOLS_RETRY_INSTRUCTION) {
+                            "open-email guard: answer claims no tools — retrying with the mailbox tools"
                         } else {
                             "truncation guard: answer stopped mid-sentence — one corrective retry"
                         },
@@ -5722,7 +5886,7 @@ mod tests {
         // and nothing after. The fact never arrived.
         let cut = "Te adjunto la oferta de Globex de hace unas semanas, con el código de descuento:";
         assert!(answer_looks_truncated(cut));
-        assert_eq!(answer_retry_instruction(cut), Some(TRUNCATED_RETRY_INSTRUCTION));
+        assert_eq!(answer_retry_instruction(cut, false), Some(TRUNCATED_RETRY_INSTRUCTION));
         assert!(answer_looks_truncated("The latest emails are,"));
         // Finished shapes: a sentence, a table row, a list item, a link.
         for done in [
@@ -5736,10 +5900,10 @@ mod tests {
         }
         // A "no results" claim keeps its own instruction.
         assert_eq!(
-            answer_retry_instruction("No se encontraron correos de Ana."),
+            answer_retry_instruction("No se encontraron correos de Ana.", false),
             Some(CONTRADICTION_RETRY_INSTRUCTION)
         );
-        assert_eq!(answer_retry_instruction("El código es SAVE10."), None);
+        assert_eq!(answer_retry_instruction("El código es SAVE10.", false), None);
     }
 
     // ── RAG sources: ids for email:// links ─────────────────────────────
@@ -5807,6 +5971,15 @@ mod tests {
         // Programmatic callers (eval helpers, thread-bound paths) pass an empty
         // question; the gate must not block them.
         assert!(draft_call_allowed("", None));
+    }
+
+    #[test]
+    fn refused_draft_calls_are_labelled_in_the_trace() {
+        assert_eq!(
+            traced_tool_name("generate_email_draft", true),
+            "generate_email_draft (refused: no draft requested)"
+        );
+        assert_eq!(traced_tool_name("search_emails", false), "search_emails");
     }
 
     #[test]
@@ -5878,6 +6051,61 @@ mod tests {
                 thread_id: "t-42".to_string(),
                 account_id: None
             }
+        );
+    }
+
+    // ── Open email as context on an all-tools turn ──────────────────────
+
+    #[test]
+    fn ambient_thread_block_states_both_halves_of_the_contract() {
+        let block = ambient_thread_block("[thread text]");
+        assert!(block.contains("[thread text]"));
+        assert!(block.contains("answer from it directly"), "{block}");
+        assert!(block.contains("IGNORE this thread and use the tools"), "{block}");
+        assert!(block.contains("generate_email_draft"), "{block}");
+    }
+
+    #[test]
+    fn prompt_with_open_thread_replaces_the_search_nag() {
+        let with = build_prompt_with_thread(&[], &[], "resume el correo", "en", "", tpl(), "", Some("THREAD CTX"));
+        let (_, tail) = with.last().unwrap();
+        assert!(tail.contains("THREAD CTX"));
+        assert!(
+            !tail.contains("you MUST call search_emails"),
+            "nag would push a search: {tail}"
+        );
+        assert!(tail.trim_end().ends_with("resume el correo"));
+
+        let without = build_prompt_with_thread(&[], &[], "resume el correo", "en", "", tpl(), "", None);
+        assert!(without.last().unwrap().1.contains("you MUST call search_emails"));
+    }
+
+    #[test]
+    fn a_no_tools_claim_is_recognised_in_the_four_ui_languages() {
+        for a in [
+            "No tengo herramientas disponibles en este momento para acceder a tu bandeja de entrada.",
+            "No puedo acceder a tu bandeja de entrada desde aquí.",
+            "I don't have tools available to check your inbox right now.",
+            "I cannot access your inbox from this conversation.",
+            "Je n'ai pas accès à votre boîte de réception.",
+            "Ich habe keinen Zugriff auf dein Postfach.",
+        ] {
+            assert!(answer_claims_no_tools(a), "{a}");
+        }
+        for a in ["Tienes 3 correos hoy: …", "No se encontraron correos de zzqx.", ""] {
+            assert!(!answer_claims_no_tools(a), "{a}");
+        }
+    }
+
+    #[test]
+    fn no_tools_claim_earns_a_retry_only_when_an_email_is_open() {
+        let claim = "No tengo herramientas disponibles para acceder a tu bandeja de entrada.";
+        assert_eq!(answer_retry_instruction(claim, true), Some(NO_TOOLS_RETRY_INSTRUCTION));
+        assert_eq!(answer_retry_instruction(claim, false), None);
+        // The other guards are unaffected by the flag.
+        assert_eq!(
+            answer_retry_instruction("No se encontraron correos de Ana.", true),
+            Some(CONTRADICTION_RETRY_INSTRUCTION)
         );
     }
 

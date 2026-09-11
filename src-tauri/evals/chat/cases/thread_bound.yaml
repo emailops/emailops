@@ -74,3 +74,38 @@
     - "no puedo acceder"
   metrics:
     - answer_relevancy
+
+# With an email OPEN (ambient context, all tools available) a question about
+# that email is answered from it — no draft, no detour through search for
+# something already in front of the model.
+- id: demo_ambient_summary_answers_from_thread
+  question: "resume este correo"
+  account: "ulises@emailopslabs.dev"
+  category: thread
+  tier: smoke
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["generate_email_draft", "search_emails"]
+  expected_answer_contains_any: ["cuenta", "account"]
+  expected_answer_not_contains:
+    - "no tengo herramientas"
+    - "no puedo acceder"
+  metrics:
+    - answer_relevancy
+
+# The old failure that made thread mode tool-less in the first place: a
+# translate request must not save a reply draft — now enforced by the draft
+# gate even with every tool on the menu.
+- id: demo_ambient_translate_never_drafts
+  question: "traduceme este email al español"
+  account: "ulises@emailopslabs.dev"
+  category: thread
+  tier: smoke
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "](draft://"
+    - "no tengo herramientas"
+  metrics:
+    - answer_relevancy
