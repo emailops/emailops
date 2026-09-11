@@ -1,55 +1,370 @@
 {
-  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes that count as contract tests instead of unit tests. Unmatched tests land in `Transversal`.",
-  "types": ["unit", "integration", "contract", "e2e", "ui", "oracle", "eval", "static", "perf"],
-  "features": [
-    {"id": "cuentas-sync", "name": "Cuentas y sincronización",
-     "rust": ["services::accounts", "services::sync_scheduler", "sync::gmail", "sync::imap", "sync::imap_search", "sync::outlook", "sync::outlook_payload", "sync::provider", "sync::folder_plan", "sync::header_capture", "sync::http_retry", "sync::oauth", "sync::mock", "sync::mime_builder", "services::keychain", "services::secrets_vault", "services::password", "services::emails::sync", "services::emails::mailbox_state", "commands::system", "util::instance_lock"],
-     "vitest": ["src/stores/accountStore", "src/components/Onboarding", "src/components/Sidebar", "src/lib/accountSettings"],
-     "e2e": ["Cuentas"], "integration_names": ["sync", "account", "imap", "gmail", "outlook", "backfill"]},
-    {"id": "inbox", "name": "Inbox y lectura",
-     "rust": ["db::emails", "services::emails", "services::thread_clean", "services::search", "util::html", "services::email_company", "db::trusted_senders"],
-     "vitest": ["src/components/Inbox", "src/components/EmailView", "src/stores/emailStore", "src/lib/mailboxTitle", "src/lib/inbox", "src/lib/threadOrder", "src/components/shared/EmailHtmlFrame"],
-     "e2e": ["Inbox", "Vistas/Sent", "Vistas/Spam", "Vistas/Deleted", "Vistas/Attachments"], "integration_names": ["thread", "email", "search", "filtered"]},
-    {"id": "busqueda", "name": "Búsqueda",
-     "rust": ["db::emails::search", "services::retrieval", "services::embeddings", "db::embeddings", "services::agent_search"],
-     "vitest": ["src/components/Inbox/InboxSearchBox", "src/lib/searchQuery"],
-     "e2e": ["Búsqueda"], "evals": ["agent_search"]},
-    {"id": "compose", "name": "Redacción y borradores",
-     "rust": ["db::drafts", "sync::draft_plan", "services::drafts", "services::translation"],
-     "vitest": ["src/lib/composeDraft", "src/lib/composeHtml", "src/lib/composeRecipients", "src/lib/draftOpen", "src/lib/forward", "src/components/DraftsView", "src/components/ComposeModal", "src/components/shared/RichTextEditor", "src/components/EmailView/ComposeTabView"],
-     "e2e": ["Compose", "Vistas/Drafts"], "evals": ["draft", "translate"], "integration_names": ["draft"]},
-    {"id": "chat", "name": "Chat con el buzón",
-     "rust": ["services::chat", "services::prompts", "services::memory", "db::memory", "services::ai", "ai::llama_cpp", "ai::stream_gate", "ai::thinking_filter", "ai::model_catalog", "ai::model_manager", "ai::gpu_plan", "ai::ollama", "db::chat"],
-     "vitest": ["src/components/Chat", "src/lib/chatContext", "src/lib/chatPanelLayout", "src/lib/chatToolEffects", "src/stores/chatStore", "src/lib/reasoning"],
-     "e2e": ["Chat", "Vistas/Memory"], "evals": ["demo_", "calendar_", "memory_", "thread_"], "integration_names": ["chat", "turn", "planner"]},
-    {"id": "tagboard", "name": "Tag Board y clasificación",
-     "rust": ["db::tags", "services::filters", "services::tag_priority", "services::classification", "db::filters"],
-     "vitest": ["src/lib/tagBoard", "src/components/TagBoard", "src/lib/colors", "src/stores/tagStore", "src/stores/filterStore", "src/components/common/TagChips"],
-     "e2e": ["Tag Board", "Vistas/Tag Board"], "oracle": true, "evals": ["classification"], "integration_names": ["tag", "classif", "filter"]},
-    {"id": "junk", "name": "Correo no deseado",
-     "rust": ["services::junk", "db::junk"],
-     "vitest": ["src/stores/junkStore", "src/components/Settings/JunkSettings", "src/components/Inbox/hideJunkLabel"],
-     "e2e": ["Vistas/Spam"], "evals": ["junk"]},
-    {"id": "calendario", "name": "Calendario",
-     "rust": ["services::calendar", "db::calendar", "db::calendars", "sync::gmail_calendar", "sync::outlook_calendar", "sync::calendar_provider"],
-     "vitest": ["src/components/Calendar", "src/lib/calendar"],
-     "e2e": ["Vistas/Calendar"], "evals": ["calendar_routing"]},
-    {"id": "lenses-tasks", "name": "Lenses, tareas y adjuntos",
-     "rust": ["services::lenses", "db::lenses", "services::tasks", "db::tasks", "services::attachments", "db::attachments"],
-     "vitest": ["src/components/Lenses", "src/lib/lens", "src/stores/lensStore", "src/components/Tasks"],
-     "e2e": ["Vistas/Tasks", "Vistas/Lenses"], "evals": ["lens", "task", "invoice"]},
-    {"id": "contactos-dashboard", "name": "Contactos y Dashboard",
-     "rust": ["services::contacts", "db::contacts", "services::task_queue", "runtime::spawn", "runtime::ctx"],
-     "vitest": ["src/components/Dashboard", "src/components/Contacts"],
-     "e2e": ["Vistas/Contacts", "Vistas/Dashboard"]},
-    {"id": "ajustes", "name": "Ajustes, idioma y actualizaciones",
-     "rust": ["commands::preferences", "services::i18n", "services::updates", "util::startup_dialog", "util::system", "db::feature_flag_tests"],
-     "vitest": ["src/components/Settings", "src/i18n", "src/hooks", "src/lib/appUpdate", "src/stores/updateStore", "src/stores/aiStore", "src/components/common/ToastHost", "src/components/ErrorBanner"],
-     "e2e": ["Ajustes"]}
-  ],
-  "contract": {
-    "rust": ["schema_parity", "envelope", "serializ", "round_trip", "roundtrip", "parity", "contract", "json"],
-    "vitest": ["i18n.parity", "nativeNames", "api.test"]
+ "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes that count as contract tests instead of unit tests. Unmatched tests land in `Transversal`.",
+ "types": [
+  "unit",
+  "integration",
+  "contract",
+  "e2e",
+  "ui",
+  "oracle",
+  "eval",
+  "static",
+  "perf"
+ ],
+ "features": [
+  {
+   "id": "cuentas-sync",
+   "name": "Cuentas y sincronización",
+   "rust": [
+    "services::accounts",
+    "services::sync_scheduler",
+    "sync::gmail",
+    "sync::imap",
+    "sync::imap_search",
+    "sync::outlook",
+    "sync::outlook_payload",
+    "sync::provider",
+    "sync::folder_plan",
+    "sync::header_capture",
+    "sync::http_retry",
+    "sync::oauth",
+    "sync::mock",
+    "sync::mime_builder",
+    "services::keychain",
+    "services::secrets_vault",
+    "services::password",
+    "services::emails::sync",
+    "services::emails::mailbox_state",
+    "commands::system",
+    "util::instance_lock"
+   ],
+   "vitest": [
+    "src/stores/accountStore",
+    "src/components/Onboarding",
+    "src/components/Sidebar",
+    "src/lib/accountSettings"
+   ],
+   "e2e": [
+    "Cuentas"
+   ],
+   "integration_names": [
+    "sync",
+    "account",
+    "imap",
+    "gmail",
+    "outlook",
+    "backfill"
+   ]
   },
-  "budgets": {"launch_s": 120, "chat_answer_s": 60, "eval_case_s": 90}
+  {
+   "id": "inbox",
+   "name": "Inbox y lectura",
+   "rust": [
+    "db::emails",
+    "services::emails",
+    "services::thread_clean",
+    "services::search",
+    "util::html",
+    "services::email_company",
+    "db::trusted_senders"
+   ],
+   "vitest": [
+    "src/components/Inbox",
+    "src/components/EmailView",
+    "src/stores/emailStore",
+    "src/lib/mailboxTitle",
+    "src/lib/inbox",
+    "src/lib/threadOrder",
+    "src/components/shared/EmailHtmlFrame"
+   ],
+   "e2e": [
+    "Inbox",
+    "Vistas/Sent",
+    "Vistas/Spam",
+    "Vistas/Deleted",
+    "Vistas/Attachments"
+   ],
+   "integration_names": [
+    "thread",
+    "email",
+    "search",
+    "filtered"
+   ]
+  },
+  {
+   "id": "busqueda",
+   "name": "Búsqueda",
+   "rust": [
+    "db::emails::search",
+    "services::retrieval",
+    "services::embeddings",
+    "db::embeddings",
+    "services::agent_search"
+   ],
+   "vitest": [
+    "src/components/Inbox/InboxSearchBox",
+    "src/lib/searchQuery"
+   ],
+   "e2e": [
+    "Búsqueda"
+   ],
+   "evals": [
+    "agent_search"
+   ]
+  },
+  {
+   "id": "compose",
+   "name": "Redacción y borradores",
+   "rust": [
+    "db::drafts",
+    "sync::draft_plan",
+    "services::drafts",
+    "services::translation"
+   ],
+   "vitest": [
+    "src/lib/composeDraft",
+    "src/lib/composeHtml",
+    "src/lib/composeRecipients",
+    "src/lib/draftOpen",
+    "src/lib/forward",
+    "src/components/DraftsView",
+    "src/components/ComposeModal",
+    "src/components/shared/RichTextEditor",
+    "src/components/EmailView/ComposeTabView"
+   ],
+   "e2e": [
+    "Compose",
+    "Vistas/Drafts"
+   ],
+   "evals": [
+    "draft",
+    "translate"
+   ],
+   "integration_names": [
+    "draft"
+   ]
+  },
+  {
+   "id": "chat",
+   "name": "Chat con el buzón",
+   "rust": [
+    "services::chat",
+    "services::prompts",
+    "services::memory",
+    "db::memory",
+    "services::ai",
+    "ai::llama_cpp",
+    "ai::stream_gate",
+    "ai::thinking_filter",
+    "ai::model_catalog",
+    "ai::model_manager",
+    "ai::gpu_plan",
+    "ai::ollama",
+    "db::chat"
+   ],
+   "vitest": [
+    "src/components/Chat",
+    "src/lib/chatContext",
+    "src/lib/chatPanelLayout",
+    "src/lib/chatToolEffects",
+    "src/stores/chatStore",
+    "src/lib/reasoning"
+   ],
+   "e2e": [
+    "Chat",
+    "Vistas/Memory"
+   ],
+   "evals": [
+    "demo_",
+    "calendar_",
+    "memory_",
+    "thread_"
+   ],
+   "integration_names": [
+    "chat",
+    "turn",
+    "planner"
+   ]
+  },
+  {
+   "id": "tagboard",
+   "name": "Tag Board y clasificación",
+   "rust": [
+    "db::tags",
+    "services::filters",
+    "services::tag_priority",
+    "services::classification",
+    "db::filters"
+   ],
+   "vitest": [
+    "src/lib/tagBoard",
+    "src/components/TagBoard",
+    "src/lib/colors",
+    "src/stores/tagStore",
+    "src/stores/filterStore",
+    "src/components/common/TagChips"
+   ],
+   "e2e": [
+    "Tag Board",
+    "Vistas/Tag Board"
+   ],
+   "oracle": true,
+   "evals": [
+    "classification"
+   ],
+   "integration_names": [
+    "tag",
+    "classif",
+    "filter"
+   ]
+  },
+  {
+   "id": "junk",
+   "name": "Correo no deseado",
+   "rust": [
+    "services::junk",
+    "db::junk"
+   ],
+   "vitest": [
+    "src/stores/junkStore",
+    "src/components/Settings/JunkSettings",
+    "src/components/Inbox/hideJunkLabel"
+   ],
+   "e2e": [
+    "Vistas/Spam"
+   ],
+   "evals": [
+    "junk"
+   ]
+  },
+  {
+   "id": "calendario",
+   "name": "Calendario",
+   "rust": [
+    "services::calendar",
+    "db::calendar",
+    "db::calendars",
+    "sync::gmail_calendar",
+    "sync::outlook_calendar",
+    "sync::calendar_provider"
+   ],
+   "vitest": [
+    "src/components/Calendar",
+    "src/lib/calendar"
+   ],
+   "e2e": [
+    "Vistas/Calendar"
+   ],
+   "evals": [
+    "calendar_routing"
+   ]
+  },
+  {
+   "id": "lenses-tasks",
+   "name": "Lenses, tareas y adjuntos",
+   "rust": [
+    "services::lenses",
+    "db::lenses",
+    "services::tasks",
+    "db::tasks",
+    "services::attachments",
+    "db::attachments"
+   ],
+   "vitest": [
+    "src/components/Lenses",
+    "src/lib/lens",
+    "src/stores/lensStore",
+    "src/components/Tasks"
+   ],
+   "e2e": [
+    "Vistas/Tasks",
+    "Vistas/Lenses"
+   ],
+   "evals": [
+    "lens",
+    "task",
+    "invoice"
+   ]
+  },
+  {
+   "id": "contactos-dashboard",
+   "name": "Contactos y Dashboard",
+   "rust": [
+    "services::contacts",
+    "db::contacts",
+    "services::task_queue",
+    "runtime::spawn",
+    "runtime::ctx"
+   ],
+   "vitest": [
+    "src/components/Dashboard",
+    "src/components/Contacts"
+   ],
+   "e2e": [
+    "Vistas/Contacts",
+    "Vistas/Dashboard"
+   ]
+  },
+  {
+   "id": "ajustes",
+   "name": "Ajustes, idioma y actualizaciones",
+   "rust": [
+    "commands::preferences",
+    "services::i18n",
+    "services::updates",
+    "util::startup_dialog",
+    "util::system",
+    "db::feature_flag_tests"
+   ],
+   "vitest": [
+    "src/components/Settings",
+    "src/i18n",
+    "src/hooks",
+    "src/lib/appUpdate",
+    "src/stores/updateStore",
+    "src/stores/aiStore",
+    "src/components/common/ToastHost",
+    "src/components/ErrorBanner"
+   ],
+   "e2e": [
+    "Ajustes"
+   ]
+  },
+  {
+   "id": "cli",
+   "name": "CLI y agentes",
+   "rust": [
+    "cli",
+    "evals"
+   ],
+   "vitest": [],
+   "e2e": [],
+   "integration_names": [
+    "cli"
+   ],
+   "contract_note": "el envelope --json se comprueba en la capa contract"
+  }
+ ],
+ "contract": {
+  "rust": [
+   "schema_parity",
+   "envelope",
+   "serializ",
+   "round_trip",
+   "roundtrip",
+   "parity",
+   "contract",
+   "json"
+  ],
+  "vitest": [
+   "i18n.parity",
+   "nativeNames",
+   "api.test"
+  ]
+ },
+ "budgets": {
+  "launch_s": 120,
+  "chat_answer_s": 60,
+  "eval_case_s": 90
+ }
 }
