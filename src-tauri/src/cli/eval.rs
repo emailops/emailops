@@ -13,11 +13,56 @@
 //! caller how to rebuild.
 
 #[cfg(feature = "eval")]
+use crate::models::ChatTrace;
+#[cfg(feature = "eval")]
+use serde::Serialize;
+#[cfg(feature = "eval")]
 use std::path::PathBuf;
 
 use crate::models::error::Result;
 
 use super::session::CliSession;
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CheckReport {
+    pub name: String,
+    pub passed: bool,
+    pub expected: String,
+    pub actual: String,
+    pub detail: String,
+}
+
+/// One case in the `eval --json` envelope. `question`, `answer` and the
+/// engine `trace` travel with every case so a failing check can be debugged
+/// from the report alone, without re-running the model.
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CaseReport {
+    pub id: String,
+    pub tier: String,
+    pub passed: bool,
+    pub checks_passed: usize,
+    pub checks_total: usize,
+    pub latency_ms: i64,
+    pub question: String,
+    pub answer: String,
+    pub trace: Option<ChatTrace>,
+    pub checks: Vec<CheckReport>,
+}
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvalRunReport {
+    pub passed: bool,
+    pub cases_total: usize,
+    pub cases_passed: usize,
+    pub cases_failed: usize,
+    pub cases: Vec<CaseReport>,
+}
 
 /// Run eval cases filtered by `case` (exact id) and/or `tier`. `cases_dir`
 /// overrides the default case location. Emits one report envelope.
@@ -28,45 +73,11 @@ pub async fn run_eval(
     tier: Option<String>,
     cases_dir: Option<PathBuf>,
 ) -> Result<()> {
-    use serde::Serialize;
-
     use crate::evals::{case_loader, harness, metrics};
     use crate::models::error::AppError;
 
     use super::output;
     use super::OutputMode;
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CheckReport {
-        name: String,
-        passed: bool,
-        expected: String,
-        actual: String,
-        detail: String,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CaseReport {
-        id: String,
-        tier: String,
-        passed: bool,
-        checks_passed: usize,
-        checks_total: usize,
-        latency_ms: i64,
-        checks: Vec<CheckReport>,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct EvalRunReport {
-        passed: bool,
-        cases_total: usize,
-        cases_passed: usize,
-        cases_failed: usize,
-        cases: Vec<CaseReport>,
-    }
 
     // eval-side failures (load/run/evaluate) are infrastructure errors from the
     // CLI's perspective — surface them as a typed AppError.
@@ -114,6 +125,9 @@ pub async fn run_eval(
             checks_passed: report.passed_count(),
             checks_total: report.total(),
             latency_ms: outcome.wall_elapsed_ms,
+            question: c.question.clone(),
+            answer: outcome.assistant_content.clone(),
+            trace: outcome.assistant_trace.clone(),
             checks: report
                 .checks
                 .iter()
@@ -211,6 +225,38 @@ fn resolve_case_account(
 #[cfg(test)]
 #[cfg(feature = "eval")]
 mod tests {
+    use super::{CaseReport, CheckReport};
+
+    #[test]
+    fn case_report_carries_question_answer_and_trace_for_debugging() {
+        let report = CaseReport {
+            id: "demo_case".into(),
+            tier: "smoke".into(),
+            passed: false,
+            checks_passed: 0,
+            checks_total: 1,
+            latency_ms: 12,
+            question: "¿Qué dijo Marisol?".into(),
+            answer: "Marisol pidió el informe.".into(),
+            trace: None,
+            checks: vec![CheckReport {
+                name: "contains".into(),
+                passed: false,
+                expected: "factura".into(),
+                actual: "".into(),
+                detail: "missing".into(),
+            }],
+        };
+        let json = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(json["question"], "¿Qué dijo Marisol?");
+        assert_eq!(json["answer"], "Marisol pidió el informe.");
+        assert!(
+            json.get("trace").is_some(),
+            "trace key is present even when the engine recorded none"
+        );
+        assert_eq!(json["checks"][0]["name"], "contains");
+    }
+
     use super::*;
     use crate::db::Database;
     use std::sync::Arc;

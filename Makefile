@@ -284,6 +284,11 @@ deploy:
 	npm run tauri build -- --bundles app
 	bash scripts/install_to_applications.sh src-tauri/target/release/bundle/macos/EmailOps.app
 
+# Full verification: every test layer, results per feature, HTML report under src-tauri/reports/verify/
+# (quick tier skips the UI, oracle and eval layers). See .claude/skills/verify-emailops/.
+verify:
+	bash scripts/verify_all.sh $(ARGS)
+
 # Security audit
 audit:
 	cargo audit --file src-tauri/Cargo.lock
