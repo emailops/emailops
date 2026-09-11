@@ -40,6 +40,8 @@ When you do need to run something the Makefile does not cover, prefer extending 
 
 ## Agent self-validation with `emailops-cli`
 
+**Mandatory skill routing.** A screenshot, trace fragment or pasted answer showing wrong chat/AI behaviour means the first tool call of the turn is `Skill fix-ai-bug`, before any grep, CLI run or edit. A request to add or change an AI surface means the first tool call is `Skill build-ai-feature`. Do not reproduce the loop by hand: the skills carry the repro, gate and report format the developer expects.
+
 **When the user reports a bug in chat, drafts, classification, lenses, retrieval, memory, or any other AI feature, drive the fix through the `fix-ai-bug` skill** (`.claude/skills/fix-ai-bug/SKILL.md`). It codifies the loop in this section — frame → CLI repro → root-cause → fix (with confirmation gated to genuine design forks) → re-run until green → gated graduation into `private-evals/` — and reports back in a chat-style format that hides the raw `--trace` payload by default. Invoke it whenever a bug report lands, even from a screenshot or trace fragment.
 
 **When the user wants to add a new AI feature or change an existing AI surface** (a new chat tool, a planner/route, a prompt edit, a shortcut fast-path, a classifier/extractor, or a retrieval/draft/memory tweak), **drive the work through the `build-ai-feature` skill** (`.claude/skills/build-ai-feature/SKILL.md`). It runs the build loop — frame → pick the seam → check setup/config fit (context budget + KV-prefix prompt cache) → CLI baseline → TDD the pure planner → wire the thin executor (+ frontend toggle/gating) → mandatory eval gate → gated eval-case graduation — and reports a chat-style before/after delta.
@@ -153,7 +155,7 @@ Every user-facing operation must emit log entries so they appear in the output p
 - **Sources**: `sync`, `embeddings`, `account`, `ai`, `system`
 
 ## Git Conventions
-- NEVER commit not push changes automatically. Developer will do
+- On a `feature/*`, `fix/*` or `refactor/*` branch, commit at every green checkpoint (gates below pass) without asking. If on `main`, create the branch first. NEVER push unless the developer explicitly asks.
 - NEVER include claude or other agent as author or co-author in commits
 - After implementing a feature, bug fix, or any moderate change, run the full pre-commit hook suite locally (`npx lefthook run pre-commit` or, if some files are unstaged, the equivalent commands directly: `npx biome check src/`, `npx tsc --noEmit`, `cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings` (must match CI's exact flags — see `lefthook.yml`'s clippy comment), `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, plus the `no-invoke-outside-api` grep check). Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures.
 - For changes that affect Rust behavior, also run `cargo test --manifest-path src-tauri/Cargo.toml` (matches the pre-push hook) before declaring the work done.
