@@ -88,8 +88,16 @@ cmd_launch() {
   local cfg="{\"build\":{\"devUrl\":\"http://localhost:$PORT\",\"beforeDevCommand\":\"npm run dev -- --port $PORT --strictPort\"}}"
   if lsof -nP -iTCP:"$WD_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then die "WebDriver port $WD_PORT is already in use; set TAURI_WEBDRIVER_PORT to a free port"; fi
   echo "$WD_PORT" > "$RUN_DIR/wd_port"
-  (cd "$REPO" && EMAILOPS_DATA_DIR="$DATA_DIR" TAURI_WEBDRIVER_PORT="$WD_PORT" nohup npm run tauri dev -- --features webdriver --config "$cfg" > "$RUN_DIR/app.log" 2>&1 &
-   echo $! > "$RUN_DIR/launcher.pid")
+  # Start npm in its own session (setsid) so that whatever invoked launch — a
+  # monitor, a tool timeout, a closed terminal — cannot take the app down with it.
+  EMAILOPS_DATA_DIR="$DATA_DIR" TAURI_WEBDRIVER_PORT="$WD_PORT" python3 - "$REPO" "$RUN_DIR" "$cfg" <<'PY'
+import os, subprocess, sys
+repo, run_dir, cfg = sys.argv[1:4]
+log = open(os.path.join(run_dir, "app.log"), "ab")
+p = subprocess.Popen(["npm", "run", "tauri", "dev", "--", "--features", "webdriver", "--config", cfg],
+                     cwd=repo, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+open(os.path.join(run_dir, "launcher.pid"), "w").write(str(p.pid))
+PY
   local launcher; launcher="$(cat "$RUN_DIR/launcher.pid")"
   echo "$(date +%T) launcher pid=$launcher log=$RUN_DIR/app.log (relinks the app when HEAD or the feature set changed: ~1 min; cold build: minutes)"
   local deadline=$(( $(date +%s) + ${VERIFY_LAUNCH_TIMEOUT:-900} )) pid=""
