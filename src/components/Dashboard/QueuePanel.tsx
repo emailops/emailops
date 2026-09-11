@@ -69,7 +69,7 @@ function QueueColumn({
       ) : (
         <ul className="mb-2 space-y-0.5">
           {snapshot.running.map((t) => (
-            <TaskRow key={t.id} task={t} accounts={accounts} suffix={elapsed(t.startedAt)} />
+            <TaskRow key={`${t.name}-${t.id}`} task={t} accounts={accounts} suffix={elapsed(t.startedAt)} />
           ))}
         </ul>
       )}
@@ -80,7 +80,7 @@ function QueueColumn({
       ) : (
         <ul className="space-y-0.5">
           {snapshot.pending.slice(0, 8).map((t) => (
-            <TaskRow key={t.id} task={t} accounts={accounts} />
+            <TaskRow key={`${t.name}-${t.id}`} task={t} accounts={accounts} />
           ))}
           {snapshot.pending.length > 8 && <li className="text-gray-500 italic">+{snapshot.pending.length - 8} more</li>}
         </ul>
@@ -92,9 +92,10 @@ function QueueColumn({
       ) : (
         <ul className="space-y-0.5">
           {snapshot.history.map((entry) => (
-            // A retried task finishes more than once with the same id; the attempt's
-            // start time tells them apart.
-            <HistoryRow key={`${entry.id}-${entry.startedAt}`} entry={entry} accounts={accounts} />
+            // The sync column merges one queue per account and every queue numbers
+            // its tasks from 1; the name embeds the account id, so it is the part
+            // of the identity that differs across queues.
+            <HistoryRow key={`${entry.name}-${entry.id}-${entry.startedAt}`} entry={entry} accounts={accounts} />
           ))}
         </ul>
       )}

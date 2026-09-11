@@ -1,7 +1,9 @@
-// Regression: a task that is retried (the demo accounts fail auth on every
-// sync) finishes more than once and lands in one queue's history twice with the
-// same task id, so React logged "Encountered two children with the same key,
-// `3`" on every Dashboard open. The key must include the attempt, not only the id.
+// Regression: the "sync" column merges one TaskQueue per account, and every
+// queue numbers its tasks from 1. Two accounts syncing in the same second land
+// in the merged history with the same id AND the same start time, so React
+// logged "Encountered two children with the same key" on every Dashboard open.
+// Task names embed the account id (`sync:account:{uuid}`), which is what tells
+// them apart.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -34,13 +36,20 @@ afterEach(() => {
 });
 
 describe('QueuePanel history keys', () => {
-  it('renders a retried task twice in one history without a duplicate-key error', () => {
+  it('renders merged per-account sync queues without a duplicate-key error', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sameSecond = 1_789_135_641;
     const state: AllQueuesState = {
       ai: queue('ai', []),
       aiBackground: queue('aiBackground', []),
       db: queue('db', []),
-      sync: queue('sync', [entry(4, 'sync', 120), entry(3, 'sync', 110), entry(4, 'sync', 100), entry(3, 'sync', 90)]),
+      sync: {
+        ...queue('sync', [entry(2, 'sync:account:aaaa', sameSecond), entry(2, 'sync:account:bbbb', sameSecond)]),
+        running: [
+          { id: 1, name: 'sync:account:aaaa', startedAt: sameSecond },
+          { id: 1, name: 'sync:account:bbbb', startedAt: sameSecond },
+        ],
+      },
     };
     act(() => root.render(<QueuePanel state={state} accounts={[]} />));
     const dup = errors.mock.calls.filter((c) => c.some((a) => String(a).includes('same key')));

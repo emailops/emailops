@@ -11,6 +11,7 @@
   "refresh": "Refresh board",
   "threadCount_one": "{{count}} thread",
   "threadCount_other": "{{count}} threads",
+  "threadCount_many": "{{count}} threads",
   "showMore": "Show more",
   "columnEmpty": "No threads",
   "columnError": "Couldn't load this tag",
@@ -26,6 +27,7 @@
   "openInInbox": "Open in inbox",
   "restoreHidden_one": "Show {{count}} hidden tag",
   "restoreHidden_other": "Show {{count}} hidden tags",
+  "restoreHidden_many": "Show {{count}} hidden tags",
   "range": {
     "label": "Range",
     "all": "All time",

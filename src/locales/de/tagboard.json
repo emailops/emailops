@@ -11,6 +11,7 @@
   "refresh": "Board aktualisieren",
   "threadCount_one": "{{count}} Konversation",
   "threadCount_other": "{{count}} Konversationen",
+  "threadCount_many": "{{count}} Konversationen",
   "showMore": "Mehr anzeigen",
   "columnEmpty": "Keine Konversationen",
   "columnError": "Dieses Tag konnte nicht geladen werden",
@@ -26,6 +27,7 @@
   "openInInbox": "Im Posteingang öffnen",
   "restoreHidden_one": "{{count}} ausgeblendetes Tag anzeigen",
   "restoreHidden_other": "{{count}} ausgeblendete Tags anzeigen",
+  "restoreHidden_many": "{{count}} ausgeblendete Tags anzeigen",
   "range": {
     "label": "Zeitraum",
     "all": "Gesamt",
