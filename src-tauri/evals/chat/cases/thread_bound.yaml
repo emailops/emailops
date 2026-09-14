@@ -23,7 +23,7 @@
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
   thread_id: "thread_30bb61af7512"
-  category: thread_bound
+  category: email_summary
   tier: smoke
   expected_tools_not_called: ["generate_email_draft"]
   # Content words from the source email that any faithful Spanish rendering
@@ -46,7 +46,7 @@
   question: "escribe una respuesta a este correo"
   account: "ulises@emailopslabs.dev"
   thread_id: "thread_30bb61af7512"
-  category: thread_bound
+  category: drafting
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
   # The chat reply is a confirmation, not the draft: the text lives in the
@@ -64,7 +64,7 @@
 - id: demo_thread_mailbox_question_leaves_thread
   question: "que correos tengo hoy"
   account: "ulises@emailopslabs.dev"
-  category: routing
+  category: period_summary
   tier: smoke
   # `ambient_*`, not `thread_id`: the panel hands the OPEN email as ambient
   # context for one turn. A conversation seeded with `thread_id` ("chat about
@@ -89,7 +89,7 @@
 - id: demo_ambient_summary_answers_from_thread
   question: "resume este correo"
   account: "ulises@emailopslabs.dev"
-  category: thread
+  category: email_summary
   tier: smoke
   ambient_thread_id: "thread_30bb61af7512"
   ambient_account: "ulises@emailopslabs.dev"
@@ -109,7 +109,7 @@
 - id: demo_ambient_translate_never_drafts
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
-  category: thread
+  category: email_summary
   tier: smoke
   ambient_thread_id: "thread_30bb61af7512"
   ambient_account: "ulises@emailopslabs.dev"

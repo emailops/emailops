@@ -23,7 +23,7 @@
   # path and grounding, independent of any specific sender.
   question: "summarize today's emails"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: period_summary
   tier: smoke
   # `as_of: latest` pins "today" to the newest primary-category email in this
   # account's inbox at run start, so the case is robust against demo-DB age.
@@ -67,7 +67,7 @@
 - id: demo_planner_self_sent
   question: "show me the latest emails I sent"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
@@ -88,7 +88,7 @@
 - id: demo_lookup_never_drafts
   question: "muéstrame el primer correo que envié, solo quiero verlo"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: counts_aggregates
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
@@ -109,7 +109,7 @@
 - id: demo_planner_oldest
   question: "muéstrame el primer correo que envié"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: counts_aggregates
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
@@ -145,7 +145,7 @@
 - id: demo_email_links_emitted
   question: "show me the latest email from Marisol"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
@@ -218,7 +218,7 @@
 - id: demo_email_links_in_table
   question: "list all emails from Marisol and show every result as a markdown table with columns | Sender | Subject |"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: full
   expected_route: tools_first
   expected_tools_called: ["search_emails"]

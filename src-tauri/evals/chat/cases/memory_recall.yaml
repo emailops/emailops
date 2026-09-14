@@ -15,7 +15,7 @@
 - id: demo_memory_pending_tasks
   question: "list all my pending tasks"
   account: "ulises@emailopslabs.dev"
-  category: memory_tasks
+  category: pending_actions
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["list_pending_tasks"]
