@@ -46,17 +46,6 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "find the email",
     "open thread",
     "get thread",
-    // Open conversations and remembered facts live behind tools
-    // (list_open_threads, memory_search); on RagFirst neither is reachable.
-    "open conversation",
-    "still open",
-    "sigue abiert",
-    "siguen abiert",
-    "customer number",
-    "client number",
-    "account number",
-    "número de cliente",
-    "numero de cliente",
     // Self-reference — the user is the sender or recipient (EN). These resolve
     // to a from/to filter on the user's own address (see build_prompt's
     // user_identity block), which semantic RAG can't target — force the tool
@@ -180,18 +169,6 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "reunión",
     "reunion",
     "evento",
-    // Day-relative and event-name phrasings with no calendar noun: "¿qué
-    // tengo pasado mañana?", "when is the sprint review". `mañana` also
-    // matches "esta mañana" (this morning), which is time-scoped anyway;
-    // `sprint` and `cuándo es` / `when is` lean on the cheap false positive:
-    // a tools-first turn still has search_emails for a mail question.
-    "mañana",
-    "tomorrow",
-    "sprint",
-    "cuándo es",
-    "cuando es",
-    "when is",
-    "when's",
     // Month names — Spanish. The risk of false positives ("hola Mayo") is
     // low and the cost of routing to ToolsFirst when RAG would have worked
     // is also low (the model still has tools to find the email). We omit
@@ -510,18 +487,6 @@ mod tests {
             "que tengo en el calendario",
             "mi agenda de la proxima semana",
             "hay algun evento importante",
-            // Day-relative and event-name phrasings caught by the demo eval:
-            // no calendar noun at all, yet plainly about the calendar.
-            "¿qué tengo pasado mañana?",
-            "cuándo es la demo del sprint",
-            "que tengo mañana por la tarde",
-            "what do i have tomorrow",
-            "when is the sprint review",
-            // Tool-backed memory: open conversations and remembered facts.
-            "which conversations are still open?",
-            "¿qué hilos siguen abiertos?",
-            "¿cuál es mi número de cliente de BorgBase?",
-            "what is my customer number at BorgBase?",
             // EN
             "what is my next meeting",
             "show my calendar",
@@ -544,11 +509,6 @@ mod tests {
             "eventually we should discuss the proposal",
             "eventualmente hablamos del contrato",
             "necesito solicitar el presupuesto",
-            // "mañana" the noun (this morning) is time-related enough that a
-            // tools-first turn still answers it; the real guard is that plain
-            // mail questions stay on RAG.
-            "resume el correo de carla sobre la web",
-            "what did nadia ask in her email",
         ] {
             assert!(heuristic_route(q).is_none(), "unexpected ToolsFirst for: {}", q);
         }
