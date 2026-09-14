@@ -51,10 +51,19 @@ def img(path):
     if not p.exists(): return f'<p class="muted">captura no disponible: {E(p.name)}</p>'
     return f'<figure><img loading="lazy" src="data:image/png;base64,{base64.b64encode(p.read_bytes()).decode()}" alt="{E(p.name)}"><figcaption>{E(p.name)}</figcaption></figure>'
 
+# Models per (feature, type) section. A section run on one model names it in its
+# header, so its rows and evidence blocks do not repeat it.
+_models_by_section = {}
+for _r in records:
+    if _r["type"] == "eval":
+        _models_by_section.setdefault((_r["feature"], _r["type"]), set()).add((_r.get("evidence") or {}).get("model") or "")
+def per_row_model(r): return len(_models_by_section.get((r["feature"], r["type"]), set()) - {""}) > 1
+
 def evidence(r):
     ev = r.get("evidence") or {}; parts = []
     if r["type"] == "eval":
-        parts.append(f'<p><span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: {E(ev.get("judge") or "heurística")}</span></p>')
+        model_txt = f'<span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: ' if per_row_model(r) else '<span class="lbl">Validación</span><span class="muted">'
+        parts.append(f'<p>{model_txt}{E(ev.get("judge") or "heurística")}</span></p>')
         parts.append(f'<div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E(ev.get("answer", "") or "(vacía)")}</div></div>')
         if ev.get("expected_output"): parts.append(f'<div class="qa"><div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div></div>')
         jr = ev.get("judge_report")
@@ -80,7 +89,7 @@ def rows_html(rs, expand_fail=True):
         dur = f'{r["duration_ms"] / 1000:.1f} s' if r.get("duration_ms") else ""
         hint = r.get("desc") or ""
         name_cell = f'<span class="hint" title="{E(hint)}">{E(r["name"])}</span>' if hint else E(r["name"])
-        model = (r.get("evidence") or {}).get("model")
+        model = (r.get("evidence") or {}).get("model") if per_row_model(r) else None
         det = E(r["detail"] or "") + (f' <span class="muted">· modelo {E(model)}</span>' if model else "")
         out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
         if st in ("fail", "info") and (r.get("evidence") or {}) and (expand_fail or st == "info"):
