@@ -286,8 +286,10 @@ export function ComposeModal({
       // this snapshot leaves it undefined.
       draftId: undefined,
       accountId: fromAccountId,
-      toAddresses: toRecipients,
-      ccAddresses: ccRecipients,
+      // A valid address still in the input box (typed, not tokenised) is a
+      // recipient the user means; the saved draft must not drop it.
+      toAddresses: mergePendingRecipient(toRecipients, toInput),
+      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
@@ -300,7 +302,7 @@ export function ComposeModal({
       return;
     }
     debouncedRef.current.schedule(state);
-  }, [toRecipients, ccRecipients, subject, bodyHtml, fromAccountId, isSending, sent]);
+  }, [toRecipients, ccRecipients, toInput, ccInput, subject, bodyHtml, fromAccountId, isSending, sent]);
 
   // Closing the composer must not drop the edit still inside the quiet period.
   useEffect(() => {
