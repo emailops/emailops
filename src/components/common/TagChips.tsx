@@ -13,6 +13,11 @@ interface TagChipsProps {
 }
 
 const TAG_COLORS: Record<string, Record<string, string>> = {
+  // Company values are an open vocabulary (one per organisation), so they get
+  // one shared colour rather than a per-value map.
+  company: {
+    _default: 'bg-indigo-50 text-indigo-700',
+  },
   priority: {
     urgent: 'bg-red-100 text-red-800',
     normal: 'bg-green-100 text-green-800',
@@ -44,7 +49,10 @@ const TAG_COLORS: Record<string, Record<string, string>> = {
   },
 };
 
-function getChipColor(tagType: string, tagValue: string): string {
+/** Chip background/foreground for a (tagType, tagValue) pair. Exported so
+ *  surfaces outside the chip row — the tag board's column headers — colour a
+ *  tag the same way the inline chips do. */
+export function getTagChipColor(tagType: string, tagValue: string): string {
   const typeColors = TAG_COLORS[tagType];
   if (!typeColors) return 'bg-gray-100 text-gray-600';
   return typeColors[tagValue] || typeColors._default || 'bg-gray-100 text-gray-600';
@@ -65,7 +73,7 @@ export function TagChips({ tags, compact = false, nowrap = false }: TagChipsProp
       {sorted.map((tag) => (
         <span
           key={tag.tagType}
-          className={`inline-block rounded-full font-medium ${sizeClass} ${getChipColor(tag.tagType, tag.tagValue)}`}
+          className={`inline-block rounded-full font-medium ${sizeClass} ${getTagChipColor(tag.tagType, tag.tagValue)}`}
           title={`${tag.tagType}: ${tag.tagValue}${tag.confidence != null ? ` (${Math.round(tag.confidence * 100)}%)` : ''}`}
         >
           {tag.tagValue}
@@ -73,4 +81,19 @@ export function TagChips({ tags, compact = false, nowrap = false }: TagChipsProp
       ))}
     </div>
   );
+}
+
+/**
+ * Just the background tint of a tag's chip colour.
+ *
+ * Block headers on the tag board are a full-width bar, not a small pill, so
+ * they pair the tint with their own near-black text. The chip's own foreground
+ * (a 700-weight of the same hue) is tuned for a tiny pill and reads as washed
+ * out across a whole header — amber especially.
+ */
+export function tagHeaderBackground(tagType: string, tagValue: string): string {
+  const background = getTagChipColor(tagType, tagValue)
+    .split(' ')
+    .find((c) => c.startsWith('bg-'));
+  return background ?? 'bg-gray-100';
 }

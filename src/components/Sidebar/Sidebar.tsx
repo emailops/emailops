@@ -49,6 +49,7 @@ export type ViewMode =
   | 'tasks'
   | 'memory'
   | 'lenses'
+  | 'tagboard'
   | 'dashboard'
   | `folder:${string}`;
 
@@ -139,7 +140,7 @@ export function Sidebar({
   // enabled so the sidebar shows them even before the user opens the Lenses view.
   const { lenses, activeLensId, initialize: initializeLenses } = useLensStore();
 
-  const { t } = useTranslation(['common', 'sidebar', 'chat']);
+  const { t } = useTranslation(['common', 'sidebar', 'chat', 'tagboard']);
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [viewsOpen, setViewsOpen] = useState(true);
   const [aiFeaturesOpen, setAiFeaturesOpen] = useState(true);
@@ -437,6 +438,26 @@ export function Sidebar({
                   {t('sidebar:inbox')}
                 </button>
               </li>
+              {aiEnabled && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('tagboard')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'tagboard' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 5a1 1 0 011-1h4a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v8a1 1 0 01-1 1h-4a1 1 0 01-1-1V5z"
+                      />
+                    </svg>
+                    {t('tagboard:title')}
+                  </button>
+                </li>
+              )}
               <li>
                 <button
                   onClick={() => onSetViewMode('attachments')}

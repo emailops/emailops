@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **Tag Board view.** A new entry under Views lays the classified tags out as a
+  grid: pick Company, Priority, Intent or Topic and every tag value becomes a
+  block listing its threads — one block per account in All accounts. Each
+  thread appears once, under the tag of its newest classified message. Blocks
+  are ordered by how much attention a tag actually gets (replies and reads,
+  weighted towards recent mail; promotions and notifications last), and the
+  sidebar's smart filters now follow the same order. The board narrows by
+  time range, Gmail category, tag search and the inbox's "Hide junk" switch;
+  blocks can be dragged into a remembered order or hidden, with the next tag
+  moving up to take a hidden one's place. Cards carry the inbox row's ⋮ menu,
+  and the reading pane gained a chat icon that opens a conversation with the
+  shown thread as context.
 
 ## [0.6.7] — 2026-09-09
 

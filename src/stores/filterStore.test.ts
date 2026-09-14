@@ -3,8 +3,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ActiveFilter, SmartFilter, SmartFilterPref } from '@/types';
+import type { ActiveFilter, SmartFilter, SmartFilterPref, TagStat } from '@/types';
 import {
+  buildTagFilters,
   type FilterAction,
   type FilterState,
   filterReducer,
@@ -17,7 +18,7 @@ import {
 
 vi.mock('@/lib/api', () => ({
   getSavedSuggestions: vi.fn(async () => []),
-  getTagPriorities: vi.fn(async () => []),
+  getTagBoardStats: vi.fn(async () => []),
   getFilterPrefs: vi.fn(async () => []),
   refreshFilterStats: vi.fn(async () => ({ topDomains: [], topSenders: [] })),
   pinFilter: vi.fn(async () => {}),
@@ -324,7 +325,10 @@ describe('unified (All accounts) mode', () => {
     await useFilterStore.getState().loadSaved(ALL_ACCOUNTS_ID);
 
     expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledWith(null);
-    expect(vi.mocked(api.getTagPriorities)).toHaveBeenCalledWith(null, 'company', expect.any(Number));
+    // The sidebar now orders classified tags with the tag board's ranking, so
+    // the sentinel has to reach that call as null too.
+    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(null, 'company', undefined, expect.any(Number));
+    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(null, 'topic', undefined, expect.any(Number));
     // Identity tracking keeps the sentinel, so stale-response guards still work.
     expect(useFilterStore.getState().currentAccountId).toBe(ALL_ACCOUNTS_ID);
   });
@@ -340,5 +344,59 @@ describe('unified (All accounts) mode', () => {
   it('a real account id passes through unchanged', async () => {
     await useFilterStore.getState().fetchPrefs('acc-1');
     expect(vi.mocked(api.getFilterPrefs)).toHaveBeenCalledWith('acc-1');
+  });
+});
+
+describe('buildTagFilters', () => {
+  const st = (accountId: string, tagValue: string, count: number): TagStat => ({
+    accountId,
+    tagValue,
+    count,
+    sentShare: 0,
+    readShare: 0,
+    lastActivityAt: null,
+    score: 0,
+  });
+
+  it('keeps the ranked order the board returned', () => {
+    const out = buildTagFilters({ company: [st('a1', 'c', 3), st('a1', 'a', 1), st('a1', 'b', 2)] });
+    expect(out.map((f) => f.value)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('shows a value once, at its best rank, across accounts', () => {
+    // The board renders one block per (account, tag); the sidebar filters the
+    // whole scope, so it lists the value once.
+    const out = buildTagFilters({ company: [st('a1', 'globex', 3), st('a2', 'globex', 4), st('a1', 'acme', 1)] });
+    expect(out.map((f) => f.value)).toEqual(['globex', 'acme']);
+  });
+
+  it('sums the per-account counts for a merged value', () => {
+    // Distinct threads per account, so the scope total is the sum.
+    const out = buildTagFilters({ company: [st('a1', 'globex', 3), st('a2', 'globex', 4)] });
+    expect(out[0].count).toBe(7);
+  });
+
+  it('groups the tag types in the sidebar order', () => {
+    const out = buildTagFilters({
+      topic: [st('a1', 'billing', 1)],
+      company: [st('a1', 'globex', 1)],
+      intent: [st('a1', 'request', 1)],
+      priority: [st('a1', 'urgent', 1)],
+    });
+    expect(out.map((f) => f.type)).toEqual(['company', 'priority', 'intent', 'topic']);
+  });
+
+  it('carries the tag type onto each filter', () => {
+    const out = buildTagFilters({ intent: [st('a1', 'request', 2)] });
+    expect(out[0]).toEqual({ type: 'intent', value: 'request', count: 2 });
+  });
+
+  it('returns nothing when no type was ranked', () => {
+    expect(buildTagFilters({})).toEqual([]);
+  });
+
+  it('skips a type whose ranking came back empty', () => {
+    const out = buildTagFilters({ company: [], topic: [st('a1', 'billing', 1)] });
+    expect(out.map((f) => f.value)).toEqual(['billing']);
   });
 });

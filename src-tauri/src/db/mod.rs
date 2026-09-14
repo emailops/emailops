@@ -78,6 +78,59 @@ pub struct Database {
     read_conns: Vec<Mutex<Connection>>,
 }
 
+/// Excludes mail the junk detector called spam or phishing, unless the user
+/// overruled it. Graymail only joins them when `hide_graymail` is set: bulk
+/// newsletters and receipts are the user's own mail and most of what a company
+/// block legitimately holds, so dropping them is the user's call (the same
+/// `junk_flagged_action` preference the inbox's "Hide junk" checkbox writes).
+/// Only the `junk` band is dropped — `uncertain` and `unknown` would hide real
+/// mail on a maybe.
+///
+/// `{alias}` is the `emails` alias to correlate against.
+pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
+    let kinds = if hide_graymail {
+        "('spam', 'phishing', 'graymail')"
+    } else {
+        "('spam', 'phishing')"
+    };
+    format!(
+        "AND NOT EXISTS (
+             SELECT 1 FROM email_junk j
+             WHERE j.email_id = {alias}.id
+               AND j.band = 'junk'
+               AND j.primary_kind IN {kinds}
+               AND (j.user_override IS NULL OR j.user_override <> 'not_junk')
+         )"
+    )
+}
+
+/// Keeps only tagged messages that are the newest classified message (for the
+/// tag type bound at `?{tag_type_idx}`) of their thread, so a thread lands under
+/// exactly one tag value. Messages that are deleted or outside inbox/sent do not
+/// count as "newer": a trashed or spam-foldered reply is not what the thread is
+/// about. Empty when `enabled` is false.
+///
+/// `{alias}` is the `emails` alias to correlate against. The probe is a point
+/// lookup on `idx_emails_thread_latest (account_id, thread_id, timestamp DESC,
+/// id DESC)`, so it costs one index seek per tagged row.
+pub(crate) fn latest_tagged_in_thread_sql(alias: &str, tag_type_idx: usize, enabled: bool) -> String {
+    if !enabled {
+        return String::new();
+    }
+    format!(
+        "AND NOT EXISTS (
+             SELECT 1 FROM emails n INDEXED BY idx_emails_thread_latest
+             JOIN email_tags nt ON nt.email_id = n.id AND nt.tag_type = ?{tag_type_idx}
+             WHERE n.account_id = {alias}.account_id
+               AND n.thread_id = {alias}.thread_id
+               AND n.is_deleted = 0
+               AND n.mailbox IN ('inbox', 'sent')
+               AND (n.timestamp > {alias}.timestamp
+                    OR (n.timestamp = {alias}.timestamp AND n.id > {alias}.id))
+         )"
+    )
+}
+
 impl Database {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&data_dir)

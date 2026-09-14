@@ -2072,6 +2072,26 @@ mod tests {
         assert!(out.starts_with("Unknown tool:"), "output was: {}", out);
     }
 
+    // Regression: a `<tool_call>` block the model emitted with no `name` field
+    // reaches dispatch with an empty name. "Unknown tool: " (blank) tells the
+    // model nothing; it needs to be told the `name` field itself was missing,
+    // with the shape to re-emit.
+    #[test]
+    fn nameless_tool_call_returns_missing_name_correction() {
+        let db = tools_test_db();
+        let out = execute_tool(&db, "acc", &[], "", &arg(serde_json::json!({ "from": "alice" })));
+        assert!(
+            out.contains("\"name\""),
+            "the correction must name the missing field, output was: {}",
+            out
+        );
+        assert!(
+            !out.starts_with("Unknown tool:"),
+            "a blank name is a malformed call, not an unknown tool: {}",
+            out
+        );
+    }
+
     #[test]
     fn registry_omits_memory_tools_when_memory_disabled() {
         use crate::services::chat::tools::default_registry;

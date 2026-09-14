@@ -1,0 +1,52 @@
+{
+  "title": "Tablero de etiquetas",
+  "subtitle": "Conversaciones agrupadas por etiqueta clasificada",
+  "groupBy": "Agrupar por",
+  "types": {
+    "company": "Empresa",
+    "priority": "Prioridad",
+    "intent": "Intención",
+    "topic": "Tema"
+  },
+  "refresh": "Actualizar tablero",
+  "threadCount_one": "{{count}} conversación",
+  "threadCount_other": "{{count}} conversaciones",
+  "showMore": "Ver más",
+  "columnEmpty": "Sin conversaciones",
+  "columnError": "No se pudo cargar esta etiqueta",
+  "retry": "Reintentar",
+  "empty": {
+    "title": "Todavía no hay etiquetas",
+    "body": "Los correos se etiquetan cuando se ejecuta la clasificación con IA. Actívala en Ajustes y luego sincroniza o reclasifica para llenar este tablero.",
+    "openSettings": "Abrir ajustes de clasificación"
+  },
+  "aiDisabled": "Activa las funciones de IA para clasificar correos y usar este tablero.",
+  "blockMenu": "Opciones del bloque",
+  "hideTag": "Ocultar esta etiqueta",
+  "openInInbox": "Abrir en la bandeja",
+  "restoreHidden_one": "Mostrar {{count}} etiqueta oculta",
+  "restoreHidden_other": "Mostrar {{count}} etiquetas ocultas",
+  "range": {
+    "label": "Periodo",
+    "all": "Todo",
+    "today": "Hoy",
+    "yesterday": "Ayer",
+    "last7": "Últimos 7 días",
+    "custom": "Personalizado",
+    "from": "Desde",
+    "to": "hasta"
+  },
+  "dragHint": "Arrastra para reordenar",
+  "searchPlaceholder": "Buscar etiquetas…",
+  "density": {
+    "label": "Ancho de bloque",
+    "granular": "Bloques estrechos",
+    "extended": "Bloques anchos"
+  },
+  "noMatches": {
+    "title": "Ninguna etiqueta coincide con «{{query}}»",
+    "body": "La búsqueda mira los nombres de las etiquetas, no el texto de los mensajes. Prueba con un fragmento más corto o cambia de dimensión.",
+    "clear": "Borrar búsqueda"
+  },
+  "you": "Yo"
+}

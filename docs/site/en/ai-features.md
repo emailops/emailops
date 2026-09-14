@@ -117,6 +117,30 @@ Classification works in two layers:
 You control which Gmail categories are classified, can reclassify everything after changing
 the prompt, and can catch up on unclassified mail on demand.
 
+## Tag Board {#tag-board}
+
+The **Tag Board** (under **Views** in the sidebar, next to the inbox) turns those tags into a
+board. Pick one dimension — **Company**, **Priority**, **Intent** or **Topic** — and every
+tag value becomes a block listing its threads; in **All accounts** you get one block per
+account and tag. A thread sits in exactly one block, under the tag of its most recent
+classified message.
+
+Blocks are ordered by how much attention a tag actually gets — how often you reply to and
+read its threads, weighted towards recent activity — with promotions and notifications
+ranked last. The smart filters in the sidebar follow the same order. Drag blocks to reorder
+them (the order is remembered per dimension), hide a tag from its ⋮ menu — the next tag moves
+up to take its place, and the filter leaves the sidebar too — and bring hidden tags back with
+the **Show hidden tags** link.
+
+The toolbar narrows the board by time (**Today**, **Yesterday**, **Last 7 days**, or a custom
+date range), by Gmail category, by tag name, and with the same **Hide junk messages** switch
+as the inbox; two icons set the block width. Clicking a card opens the thread in the reading
+pane, its ⋮ menu offers the same actions as an inbox row, and the chat icon in the reading
+pane starts a conversation with that thread as context.
+
+The board needs classification: it is empty until mail has been tagged, and it is not shown
+while AI features are off.
+
 ## Semantic search
 
 Emails are embedded locally so search can match meaning, not just keywords — describe what

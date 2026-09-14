@@ -123,6 +123,32 @@ La clasificación funciona en dos capas:
 Tú controlas qué categorías de Gmail se clasifican, puedes reclasificar todo tras cambiar el
 prompt y puedes ponerte al día con el correo sin clasificar cuando quieras.
 
+## Tablero de etiquetas {#tag-board}
+
+El **Tablero de etiquetas** (en **Vistas**, en el menú lateral, junto a la bandeja de
+entrada) convierte esas etiquetas en un tablero. Elige una dimensión — **Empresa**,
+**Prioridad**, **Intención** o **Tema** — y cada valor de etiqueta se convierte en un bloque
+con sus hilos; en **Todas las cuentas** hay un bloque por cuenta y etiqueta. Cada hilo está
+en un único bloque, bajo la etiqueta de su mensaje clasificado más reciente.
+
+Los bloques se ordenan por la atención que recibe realmente cada etiqueta — cuánto respondes
+y lees sus hilos, con más peso para la actividad reciente — y las promociones y
+notificaciones quedan al final. Los filtros inteligentes del menú lateral siguen el mismo
+orden. Arrastra los bloques para reordenarlos (el orden se recuerda por dimensión), oculta
+una etiqueta desde su menú ⋮ — la siguiente etiqueta sube a ocupar su sitio, y el filtro
+desaparece también del menú lateral — y recupera las ocultas con el enlace **Mostrar
+etiquetas ocultas**.
+
+La barra superior acota el tablero por periodo (**Hoy**, **Ayer**, **Últimos 7 días** o un
+rango de fechas personalizado), por categoría de Gmail, por nombre de etiqueta y con el mismo
+interruptor de ocultar correo basura que la bandeja; dos iconos fijan el ancho de los
+bloques. Al pulsar una tarjeta el hilo se abre en el panel de lectura, su menú ⋮ ofrece las
+mismas acciones que una fila de la bandeja, y el icono de chat del panel de lectura inicia
+una conversación con ese hilo como contexto.
+
+El tablero necesita la clasificación: está vacío hasta que el correo tiene etiquetas y no se
+muestra con las funciones de IA desactivadas.
+
 ## Búsqueda semántica
 
 Los correos se indexan localmente para que la búsqueda case por significado y no solo por

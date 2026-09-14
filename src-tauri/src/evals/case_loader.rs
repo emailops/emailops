@@ -134,6 +134,14 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_answer_contains: Vec<String>,
 
+    /// Case-insensitive substrings of which AT LEAST ONE must appear in the
+    /// final assistant content. Use when a single fact has several equally
+    /// correct phrasings — a retrieval answer that names the right email by
+    /// subject on one run and by date on the next. `expected_answer_contains`
+    /// is an AND and would flake on that; listing both here does not.
+    #[serde(default)]
+    pub expected_answer_contains_any: Vec<String>,
+
     /// Case-insensitive substrings that must NOT appear in the final assistant
     /// content. Guards against failure-mode phrasings ("I couldn't access…")
     /// that a positive anchor cannot distinguish from a real answer.

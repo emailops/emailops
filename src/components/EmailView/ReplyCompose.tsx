@@ -47,6 +47,41 @@ function extractEmail(raw: string): string {
   return (match ? match[1] : raw).trim().toLowerCase();
 }
 
+/**
+ * Who a plain Reply should be addressed to.
+ *
+ * Usually the sender. The exception is a message **I** sent — replying to my
+ * own last word in a thread means writing to the people I wrote to, not to
+ * myself. Using the sender unconditionally addressed those replies back to the
+ * user's own mailbox.
+ *
+ * Falls back to the most recent other party in the thread when my message has
+ * no usable recipients, and returns an empty list rather than ever addressing
+ * the user to themselves.
+ */
+export function computeReplyRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+  const self = new Set(selfEmails.map((e) => e.trim().toLowerCase()));
+  const sender = extractEmail(email.senderEmail);
+
+  if (!self.has(sender)) return [sender];
+
+  // My own message: reply to whoever it was addressed to.
+  const mine = [...email.recipients, ...email.cc].map(extractEmail).filter((r) => r.includes('@') && !self.has(r));
+  if (mine.length > 0) return dedupe(mine);
+
+  // Nothing addressable there — use the latest other party in the thread.
+  const lastOther = [...threadEmails]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .map((m) => extractEmail(m.senderEmail))
+    .find((addr) => addr.includes('@') && !self.has(addr));
+
+  return lastOther ? [lastOther] : [];
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function detectUnusualRecipients(recipients: string[], selfEmails: string[]): string[] {
   const nonSelf = recipients.filter((r) => !selfEmails.includes(r.toLowerCase()));
   if (nonSelf.length < 2) return [];
@@ -101,7 +136,7 @@ export function ReplyCompose({
   // Compute initial recipients
   const initialTo = (() => {
     if (mode === 'reply') {
-      return [email.senderEmail.toLowerCase()];
+      return computeReplyRecipients(email, threadEmails, selfEmails);
     }
     // Reply All: collect senders + recipients from ALL thread messages, minus self.
     // Using only the latest email misses participants from earlier in the thread.

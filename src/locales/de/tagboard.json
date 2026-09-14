@@ -1,0 +1,52 @@
+{
+  "title": "Tag-Board",
+  "subtitle": "Konversationen nach klassifiziertem Tag gruppiert",
+  "groupBy": "Gruppieren nach",
+  "types": {
+    "company": "Unternehmen",
+    "priority": "Priorität",
+    "intent": "Absicht",
+    "topic": "Thema"
+  },
+  "refresh": "Board aktualisieren",
+  "threadCount_one": "{{count}} Konversation",
+  "threadCount_other": "{{count}} Konversationen",
+  "showMore": "Mehr anzeigen",
+  "columnEmpty": "Keine Konversationen",
+  "columnError": "Dieses Tag konnte nicht geladen werden",
+  "retry": "Erneut versuchen",
+  "empty": {
+    "title": "Noch keine Tags",
+    "body": "E-Mails werden getaggt, sobald die KI-Klassifizierung läuft. Aktiviere sie in den Einstellungen und synchronisiere oder klassifiziere neu, um dieses Board zu füllen.",
+    "openSettings": "Klassifizierungseinstellungen öffnen"
+  },
+  "aiDisabled": "Aktiviere die KI-Funktionen, um E-Mails zu klassifizieren und dieses Board zu nutzen.",
+  "blockMenu": "Blockoptionen",
+  "hideTag": "Dieses Tag ausblenden",
+  "openInInbox": "Im Posteingang öffnen",
+  "restoreHidden_one": "{{count}} ausgeblendetes Tag anzeigen",
+  "restoreHidden_other": "{{count}} ausgeblendete Tags anzeigen",
+  "range": {
+    "label": "Zeitraum",
+    "all": "Gesamt",
+    "today": "Heute",
+    "yesterday": "Gestern",
+    "last7": "Letzte 7 Tage",
+    "custom": "Benutzerdefiniert",
+    "from": "Von",
+    "to": "bis"
+  },
+  "dragHint": "Zum Umsortieren ziehen",
+  "searchPlaceholder": "Tags suchen…",
+  "density": {
+    "label": "Blockbreite",
+    "granular": "Schmale Blöcke",
+    "extended": "Breite Blöcke"
+  },
+  "noMatches": {
+    "title": "Keine Tags passen zu „{{query}}“",
+    "body": "Die Suche betrachtet Tag-Namen, nicht den Nachrichtentext. Versuche einen kürzeren Ausschnitt oder wechsle die Dimension.",
+    "clear": "Suche löschen"
+  },
+  "you": "Ich"
+}

@@ -23,7 +23,9 @@ renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 ## Filtros inteligentes
 
 Acota la lista por dominio, remitente o cualquier etiqueta de clasificación — útil para
-despachar un cliente, un proyecto o una avalancha de newsletters de una vez.
+despachar un cliente, un proyecto o una avalancha de newsletters de una vez. Con la IA
+activada, esas mismas etiquetas alimentan el [Tablero de etiquetas](../ai-features/#tag-board),
+que las muestra como una cuadrícula de bloques.
 
 ## Calendario
 

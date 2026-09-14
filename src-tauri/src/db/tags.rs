@@ -3,6 +3,24 @@ use crate::models::error::Result;
 use crate::models::{ClassificationRule, EmailTag};
 use rusqlite::params;
 
+/// Days after which a single message's contribution to the engagement shares
+/// halves. Longer than the block-level recency half-life: this re-balances a
+/// tag's own history, it doesn't decide whether the tag is still live.
+pub const INTERACTION_HALF_LIFE_DAYS: f64 = 180.0;
+
+/// One (account, tag value) row of the tag board's stats query, with the two
+/// engagement signals aggregated over the same scan as the thread count.
+#[derive(Debug, Clone)]
+pub struct TagBoardRow {
+    pub account_id: String,
+    pub tag_value: String,
+    pub count: i32,
+    pub sent_share: f64,
+    pub read_share: f64,
+    /// Newest message carrying this tag — drives the recency decay.
+    pub last_activity_at: Option<i64>,
+}
+
 impl Database {
     /// Upsert the same `tag_type` on many emails in one transaction.
     /// Used by the company-tag backfill and sync hook; generic enough that
@@ -288,6 +306,165 @@ impl Database {
         Ok(stats)
     }
 
+    /// Per-`(account, tag_value)` thread counts for the tag board, narrowed by
+    /// an [`EmailWindow`]. Unlike [`Database::get_tag_stats`] — which
+    /// aggregates a whole scope into one row per tag value — this keeps the
+    /// account, because the board renders one block per account+tag pair.
+    ///
+    /// Counts distinct `(account_id, thread_id)` pairs, matching what
+    /// `get_filtered_emails` will actually list for the same block.
+    pub fn get_tag_board_stats(
+        &self,
+        scope: crate::db::AccountScope<'_>,
+        tag_type: &str,
+        window: &crate::models::EmailWindow,
+        now_ts: i64,
+        limit: i32,
+    ) -> Result<Vec<TagBoardRow>> {
+        let (sql, binds) = Self::tag_board_stats_query(scope, tag_type, window, now_ts, limit);
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let mut rows = stmt.query(refs.as_slice())?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(TagBoardRow {
+                account_id: row.get(0)?,
+                tag_value: row.get(1)?,
+                count: row.get(2)?,
+                sent_share: row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                read_share: row.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
+                last_activity_at: row.get::<_, Option<i64>>(5)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// `EXPLAIN QUERY PLAN` rows for the query above, so a test can assert the
+    /// planner still drives from the tag index. See the test for why that is
+    /// worth pinning.
+    #[cfg(test)]
+    pub(crate) fn explain_tag_board_stats(
+        &self,
+        scope: crate::db::AccountScope<'_>,
+        tag_type: &str,
+        window: &crate::models::EmailWindow,
+        now_ts: i64,
+        limit: i32,
+    ) -> Vec<String> {
+        let (sql, binds) = Self::tag_board_stats_query(scope, tag_type, window, now_ts, limit);
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let mut rows = stmt.query(refs.as_slice()).unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            plan.push(row.get::<_, String>(3).unwrap());
+        }
+        plan
+    }
+
+    /// SQL + bind values for the tag board's stats query. Shared so the plan
+    /// test explains exactly what production runs.
+    fn tag_board_stats_query(
+        scope: crate::db::AccountScope<'_>,
+        tag_type: &str,
+        window: &crate::models::EmailWindow,
+        now_ts: i64,
+        limit: i32,
+    ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        // ?1 tag_type, ?2 limit, then the scope's account id (if any), then the
+        // window binds — so the fixed indices stay stable.
+        let mut next_index = 3usize;
+        let (scope_cond, account_param): (String, Option<&str>) = match scope {
+            crate::db::AccountScope::Account(id) => {
+                let cond = format!("e.account_id = ?{next_index}");
+                next_index += 1;
+                (cond, Some(id))
+            }
+            crate::db::AccountScope::AllEnabled => (
+                "e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)".to_string(),
+                None,
+            ),
+        };
+        // `\` escapes LIKE's own wildcards so a user searching for "%" finds a
+        // percent sign rather than everything.
+        let search_term = window
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{}%", s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")));
+        let search_sql = if search_term.is_some() {
+            let frag = format!("AND t.tag_value LIKE ?{next_index} ESCAPE '\\'");
+            next_index += 1;
+            frag
+        } else {
+            String::new()
+        };
+        let (window_sql, window_binds) = window.sql("e", &mut next_index);
+
+        // Each message contributes in proportion to how recent it is, so a tag
+        // answered diligently three years ago and skimmed ever since reads as
+        // cooling rather than as a live correspondence. The shares are
+        // normalised by the same weights, so a uniformly-aged history is
+        // unaffected — this shifts the *balance* within a history, while the
+        // block-level decay in `tag_recency_factor` handles a tag that has gone
+        // quiet altogether.
+        // Last placeholder allocated for this query, so no further increment.
+        let junk_sql = crate::db::exclude_junk_sql("e", window.hide_graymail);
+        let latest_sql = crate::db::latest_tagged_in_thread_sql("e", 1, window.latest_tag_only);
+        let now_idx = next_index;
+        let w =
+            format!("(1.0 / (1.0 + (MAX(0, ?{now_idx} - e.timestamp) / 86400.0) / {INTERACTION_HALF_LIFE_DAYS:.1}))");
+
+        // Engagement is aggregated in the SAME pass as the thread count. The
+        // obvious formulation — join back to every message of every matched
+        // thread to ask "was this thread replied to?" — measured 202 SECONDS
+        // for `company` on a 6 GB mailbox. Reading the signals off the tagged
+        // messages themselves is one scan of rows already being touched: 219 ms
+        // for the same query. Do not reintroduce the thread-level join.
+        let sql = format!(
+            "SELECT e.account_id AS aid,
+                    t.tag_value AS tag_value,
+                    COUNT(DISTINCT e.thread_id) AS cnt,
+                    SUM({w} * CASE WHEN e.is_sent = 1 THEN 1.0 ELSE 0.0 END) / SUM({w}) AS sent_share,
+                    SUM({w} * CASE WHEN e.is_read = 1 THEN 1.0 ELSE 0.0 END) / SUM({w}) AS read_share,
+                    MAX(e.timestamp) AS last_ts
+             FROM email_tags t INDEXED BY idx_email_tags_type_value
+             -- CROSS JOIN pins the join order; SQLite never reorders one.
+             -- `INDEXED BY` only fixes WHICH index is used for `t`, not that
+             -- `t` drives the loop. Adding a timestamp filter was enough to
+             -- flip the planner into scanning `emails` by date and probing the
+             -- tag index per row: 190ms became 11s with a category+range
+             -- window, and 86 SECONDS with a range alone, on a 6 GB mailbox.
+             CROSS JOIN emails e ON e.id = t.email_id
+             WHERE {scope_cond}
+               AND t.tag_type = ?1
+               AND e.is_deleted = 0
+               AND e.mailbox IN ('inbox', 'sent')
+               {junk_sql}
+               {latest_sql}
+               {search_sql}
+               {window_sql}
+             GROUP BY aid, tag_value
+             ORDER BY cnt DESC, aid, tag_value
+             LIMIT ?2"
+        );
+
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(tag_type.to_string()), Box::new(limit)];
+        if let Some(id) = account_param {
+            binds.push(Box::new(id.to_string()));
+        }
+        if let Some(term) = search_term {
+            binds.push(Box::new(term));
+        }
+        binds.extend(window_binds);
+        binds.push(Box::new(now_ts));
+
+        (sql, binds)
+    }
+
     // -- Classification rules CRUD --
 
     pub fn insert_classification_rule(&self, rule: &ClassificationRule) -> Result<()> {
@@ -398,6 +575,40 @@ mod tests {
                 params![account_id],
             )
             .unwrap();
+    }
+
+    /// The tag board's stats query must always drive from `email_tags`, never
+    /// scan `emails` and probe the tag index per row.
+    ///
+    /// This is a *plan* test on purpose. The inverted plan returns identical
+    /// results, so no assertion about rows can catch it — but it took the
+    /// unified board from 190ms to 11s with a date range applied, and to 86
+    /// seconds with a range and no category. The planner flipped on its own
+    /// once a timestamp filter appeared; only `CROSS JOIN` holds the order.
+    #[test]
+    fn tag_board_stats_drives_from_the_tag_index() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        insert_email(&db, "e1", "acc1", "t1", 1_000);
+        tag_email(&db, "e1", "company", "globex");
+
+        // A window is what used to flip the planner, so explain the worst case.
+        let window = crate::models::EmailWindow {
+            categories: vec!["primary".into()],
+            since: Some(0),
+            until: Some(9_999_999),
+            search: None,
+            hide_graymail: false,
+            latest_tag_only: true,
+        };
+        let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
+
+        let first = plan.first().expect("query plan should not be empty");
+        assert!(
+            first.contains("email_tags"),
+            "the outer loop must be email_tags, got: {first}\nfull plan: {plan:#?}"
+        );
+        assert!(!first.contains("SCAN emails"), "must never scan emails first: {first}");
     }
 
     fn insert_email(db: &Database, id: &str, account_id: &str, thread_id: &str, timestamp: i64) {
@@ -608,6 +819,7 @@ mod tests {
                 Some("intent"),
                 Some("request"),
                 None,
+                &crate::models::EmailWindow::default(),
                 100,
                 0,
             )

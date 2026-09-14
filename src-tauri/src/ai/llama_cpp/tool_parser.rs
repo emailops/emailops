@@ -99,13 +99,26 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         let name = match obj.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.to_string(),
             None => {
-                let Some(args_obj) = arguments.as_object_mut() else {
-                    continue;
-                };
-                let Some(serde_json::Value::String(n)) = args_obj.remove("name") else {
-                    continue;
-                };
-                n
+                let nested = arguments
+                    .as_object_mut()
+                    .and_then(|args_obj| match args_obj.remove("name") {
+                        Some(serde_json::Value::String(n)) => Some(n),
+                        _ => None,
+                    });
+                match nested {
+                    Some(n) => n,
+                    // No `name` anywhere. Dropping the block silently made the
+                    // round report ZERO tool calls, so the turn fell through to
+                    // synthesis with nothing retrieved and no trace of why.
+                    // Surface it with an EMPTY name instead and let the
+                    // dispatcher hand the model a corrective tool result. The
+                    // intended tool is deliberately NOT inferred from the
+                    // argument keys: running the wrong tool is worse than one
+                    // wasted round. A block with no arguments either carries
+                    // nothing to correct, so that stays dropped.
+                    None if arguments.as_object().is_some_and(|a| !a.is_empty()) => String::new(),
+                    None => continue,
+                }
             }
         };
 
@@ -125,6 +138,34 @@ mod tests {
     fn empty_input_returns_empty() {
         assert!(parse_qwen_tool_calls("").is_empty());
         assert!(parse_qwen_tool_calls("just prose, no tool calls").is_empty());
+    }
+
+    // Regression: Qwen 3.6 sometimes emits a block carrying only `arguments`,
+    // with no `name` anywhere — observed as the model's own retry after a
+    // pre-seeded search came back empty. The block used to be skipped
+    // silently, so the round reported ZERO tool calls and the turn went
+    // straight to synthesis with nothing to synthesise. Surface it with an
+    // empty name instead: the dispatcher turns that into a corrective tool
+    // result the model can act on, rather than guessing which tool was meant.
+    #[test]
+    fn nameless_call_with_arguments_is_surfaced_for_correction() {
+        let text = r#"<tool_call>{"arguments":{"from":"alice","query":"acme","limit":1}}</tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1, "the block must not be dropped");
+        assert_eq!(calls[0].function.name, "", "no name may be invented");
+        assert_eq!(
+            calls[0].function.arguments,
+            json!({"from":"alice","query":"acme","limit":1}),
+            "the arguments the model did emit are preserved"
+        );
+    }
+
+    // A block with neither a name NOR any arguments carries nothing to correct.
+    // Keep dropping it so a degenerate emission cannot spend a tool round.
+    #[test]
+    fn nameless_call_without_arguments_is_still_dropped() {
+        assert!(parse_qwen_tool_calls(r#"<tool_call>{}</tool_call>"#).is_empty());
+        assert!(parse_qwen_tool_calls(r#"<tool_call>{"arguments":{}}</tool_call>"#).is_empty());
     }
 
     #[test]
@@ -210,13 +251,6 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "no_args");
         assert_eq!(calls[0].function.arguments, json!({}));
-    }
-
-    #[test]
-    fn missing_name_field_skips_the_block() {
-        // Without a name there is no tool to dispatch — silently drop.
-        let text = r#"<tool_call>{"arguments":{"x":1}}</tool_call>"#;
-        assert!(parse_qwen_tool_calls(text).is_empty());
     }
 
     #[test]

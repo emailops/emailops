@@ -127,6 +127,33 @@ La classification fonctionne en deux couches :
 Vous choisissez quelles catégories Gmail sont classées, vous pouvez tout reclasser après avoir
 modifié le prompt, et rattraper le courrier non classé à la demande.
 
+## Tableau d'étiquettes {#tag-board}
+
+Le **Tableau d'étiquettes** (sous **Vues** dans la barre latérale, à côté de la boîte de
+réception) transforme ces étiquettes en tableau. Choisissez une dimension — **Entreprise**,
+**Priorité**, **Intention** ou **Sujet** — et chaque valeur d'étiquette devient un bloc qui
+liste ses fils ; dans **Tous les comptes**, vous obtenez un bloc par compte et par étiquette.
+Un fil ne figure que dans un seul bloc, sous l'étiquette de son message classé le plus
+récent.
+
+Les blocs sont ordonnés selon l'attention réelle que reçoit une étiquette — à quelle
+fréquence vous répondez à ses fils et les lisez, avec plus de poids pour l'activité récente —
+les promotions et notifications venant en dernier. Les filtres intelligents de la barre
+latérale suivent le même ordre. Glissez les blocs pour les réordonner (l'ordre est mémorisé
+par dimension), masquez une étiquette depuis son menu ⋮ — l'étiquette suivante monte prendre
+sa place, et le filtre quitte aussi la barre latérale — et récupérez les étiquettes masquées
+avec le lien **Afficher les étiquettes masquées**.
+
+La barre d'outils restreint le tableau par période (**Aujourd'hui**, **Hier**, **7 derniers
+jours** ou une plage de dates personnalisée), par catégorie Gmail, par nom d'étiquette, et
+avec le même interrupteur de masquage des indésirables que la boîte de réception ; deux
+icônes règlent la largeur des blocs. Un clic sur une carte ouvre le fil dans le volet de
+lecture, son menu ⋮ propose les mêmes actions qu'une ligne de la boîte de réception, et
+l'icône de chat du volet de lecture démarre une conversation avec ce fil en contexte.
+
+Le tableau a besoin de la classification : il reste vide tant que le courrier n'est pas
+étiqueté, et n'apparaît pas lorsque les fonctions d'IA sont désactivées.
+
 ## Recherche sémantique
 
 Les e-mails sont indexés localement pour que la recherche corresponde au sens et pas seulement

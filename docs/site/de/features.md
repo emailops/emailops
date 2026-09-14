@@ -23,7 +23,9 @@ direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-dro
 ## Intelligente Filter
 
 Grenzen Sie die Liste nach Domain, Absender oder einer Klassifizierungs-Kennzeichnung ein —
-praktisch, um einen Kunden, ein Projekt oder eine Newsletter-Flut am Stück abzuarbeiten.
+praktisch, um einen Kunden, ein Projekt oder eine Newsletter-Flut am Stück abzuarbeiten. Mit
+aktivierter KI speisen dieselben Kennzeichnungen auch das [Tag-Board](../ai-features/#tag-board),
+das sie als Raster aus Blöcken darstellt.
 
 ## Kalender
 

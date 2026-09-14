@@ -17,10 +17,7 @@ import { ContactsView } from '@/components/Contacts/ContactsView';
 import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
 import { DraftsView } from '@/components/DraftsView';
-import { AttachmentTabView } from '@/components/EmailView/AttachmentTabView';
-import { ComposeTabView } from '@/components/EmailView/ComposeTabView';
-import { EmailTabBar } from '@/components/EmailView/EmailTabBar';
-import { EmailView } from '@/components/EmailView/EmailView';
+import { ReadingPane } from '@/components/EmailView/ReadingPane';
 import { ErrorBanner } from '@/components/ErrorBanner/ErrorBanner';
 import type { RulePrefill } from '@/components/Inbox/EmailRow';
 import { Inbox } from '@/components/Inbox/Inbox';
@@ -38,6 +35,7 @@ import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
+import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
@@ -55,7 +53,8 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
-import { isEmailListView, planViewChange } from '@/lib/viewNavigation';
+import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
+import { isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -147,6 +146,18 @@ function AppInner() {
     parse: (raw) => (raw === 'split' || raw === 'full-width' ? raw : null),
     serialize: (v) => v,
   });
+  // Tag board "group by" dimension. Persisted in SQLite (never localStorage)
+  // so the board opens on the dimension the user left it on.
+  const [tagBoardType, setTagBoardType] = usePersistedPref<TagBoardType>('tagboard_tag_type', 'company', {
+    parse: (raw) => (isTagBoardType(raw) ? raw : null),
+    serialize: (v) => v,
+  });
+  // Block width. Persisted next to the dimension so the board reopens in the
+  // layout the user left it in.
+  const [tagBoardDensity, setTagBoardDensity] = usePersistedPref<TagBoardDensity>('tagboard_density', 'granular', {
+    parse: (raw) => (isTagBoardDensity(raw) ? raw : null),
+    serialize: (v) => v,
+  });
   // The Memory and Tasks experimental flags ARE the master switches for the
   // backend extraction pipelines — they share the same `memory_enabled` /
   // `task_enabled` SQLite preference rows that `MemoryConfig.enabled` and
@@ -236,6 +247,7 @@ function AppInner() {
     else if (viewMode === 'memory' && (!memoriesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'lenses' && (!lensesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'chat' && !aiEnabled) setViewMode('inbox');
+    else if (viewMode === 'tagboard' && !aiEnabled) setViewMode('inbox');
   }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, aiEnabled]);
   const addLog = useLogStore((s) => s.addLog);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
@@ -1229,7 +1241,9 @@ function AppInner() {
           activeAccount={activeAccount}
           isUnifiedActive={isUnified}
           onSelectAccount={(id) => {
-            setViewMode('inbox');
+            // The tag board is scope-aware, so a scope change keeps you on it;
+            // every other view is single-account and returns to the inbox.
+            setViewMode((prev) => planAccountSwitchView(prev));
             clearSearchQuery();
             clearActiveFilter();
             setSelectedCategories(new Set<EmailCategory>(['primary']));
@@ -1353,6 +1367,59 @@ function AppInner() {
             </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView />
+          ) : viewMode === 'tagboard' && aiEnabled ? (
+            // The board is a list surface like the inbox: it owns the left
+            // pane and hands the selected thread to the same EmailView. Both
+            // queries behind it accept the unified scope, so no scope bar.
+            <>
+              <TagBoardView
+                accountId={activeAccountId}
+                selectedEmailId={selectedEmail?.id ?? null}
+                onSelectEmail={(email) => {
+                  setActiveTab(null);
+                  void selectEmail(email);
+                }}
+                onOpenTagInInbox={(tagType, tagValue) => handleToggleSmartFilter({ type: tagType, value: tagValue })}
+                onOpenClassificationSettings={() => setSettingsTab('classification')}
+                onNewChat={aiEnabled ? () => void handleNewChat() : undefined}
+                tagType={tagBoardType}
+                onChangeTagType={setTagBoardType}
+                density={tagBoardDensity}
+                onChangeDensity={setTagBoardDensity}
+                cardActions={{
+                  onAddSenderFilter: addSenderAsFilter,
+                  onBlockSender: handleBlockSender,
+                  onCreateAttachmentRule: handleCreateAttachmentRule,
+                  onCreateClassificationRule: (prefill) => {
+                    setClassificationRulePrefill(prefill);
+                    setSettingsTab('classification');
+                  },
+                  onOpenInTab: openTab,
+                  onChatAboutThread: aiEnabled ? handleChatAboutThread : undefined,
+                }}
+              />
+              {/* Reading pane. Shrinkable on purpose: with the chat panel also
+                  docked, a `flex-shrink-0` pane would squeeze the board to
+                  nothing. The floor keeps the pane itself usable. */}
+              {(selectedEmail || activeTab) && (
+                <ReadingPane
+                  threadEmails={threadEmails}
+                  isLoading={isLoadingThread}
+                  selectedEmail={selectedEmail}
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  activeTab={activeTab}
+                  accounts={accounts}
+                  activeAccountId={queryAccountId}
+                  onSelectMainTab={() => setActiveTab(null)}
+                  onSelectTab={setActiveTab}
+                  onCloseTab={closeTab}
+                  onCloseMain={() => void selectEmail(null)}
+                  onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
+                  className="flex w-[42%] min-w-[20rem] max-w-[46rem] flex-col border-l border-gray-200 overflow-hidden"
+                />
+              )}
+            </>
           ) : viewMode === 'dashboard' ? (
             <Dashboard accounts={accounts} onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)} />
           ) : viewMode === 'calendar' ? (
@@ -1363,20 +1430,8 @@ function AppInner() {
             // biome-ignore lint/complexity/noUselessFragments: IIFE result needs a fragment wrapper for the ternary
             <>
               {(() => {
-                // When a tab is active, show its content; otherwise show the main selected email.
-                const displayThreadEmails = activeTab?.type === 'thread' ? activeTab.threadEmails : threadEmails;
-                const displayIsLoading = activeTab?.type === 'thread' ? activeTab.isLoading : isLoadingThread;
-                // In full-width mode, "close/back" always returns to the inbox list by
-                // clearing both the active tab and the selected email.
-                const displayOnClose =
-                  inboxLayout === 'full-width'
-                    ? () => {
-                        if (activeTab) closeTab(activeTab.id);
-                        void selectEmail(null);
-                      }
-                    : activeTab
-                      ? () => closeTab(activeTab.id)
-                      : () => selectEmail(null);
+                // Which thread is shown, and what "close" means in each layout,
+                // now live in ReadingPane — see that component.
                 // "Open in tab" only makes sense when viewing the main (non-tab) email.
                 const handleOpenInTab = !activeTab && selectedEmail ? () => openTab(selectedEmail) : undefined;
                 const hasEmailToShow = activeTab !== null || selectedEmail !== null;
@@ -1387,46 +1442,25 @@ function AppInner() {
                 };
 
                 const emailPane = (
-                  <div className="flex flex-col flex-1 overflow-hidden">
-                    {tabs.length > 0 && (
-                      <EmailTabBar
-                        mainEmail={selectedEmail}
-                        isMainTabActive={activeTabId === null}
-                        tabs={tabs}
-                        activeTabId={activeTabId}
-                        onSelectMainTab={() => setActiveTab(null)}
-                        onSelectTab={setActiveTab}
-                        onCloseTab={closeTab}
-                      />
-                    )}
-                    {activeTab?.type === 'attachment' ? (
-                      <AttachmentTabView
-                        tab={activeTab}
-                        onClose={
-                          inboxLayout === 'full-width'
-                            ? () => {
-                                closeTab(activeTab.id);
-                                void selectEmail(null);
-                              }
-                            : () => closeTab(activeTab.id)
-                        }
-                      />
-                    ) : activeTab?.type === 'compose' ? (
-                      <ComposeTabView tab={activeTab} accounts={accounts} onClose={() => closeTab(activeTab.id)} />
-                    ) : (
-                      <EmailView
-                        threadEmails={displayThreadEmails}
-                        isLoading={displayIsLoading}
-                        onClose={displayOnClose}
-                        accounts={accounts}
-                        // null in unified mode → EmailView's own fallback picks
-                        // the thread's latest email's account as the reply-from.
-                        activeAccountId={queryAccountId}
-                        fullWidth={inboxLayout === 'full-width'}
-                        onOpenInTab={handleOpenInTab}
-                      />
-                    )}
-                  </div>
+                  <ReadingPane
+                    threadEmails={threadEmails}
+                    isLoading={isLoadingThread}
+                    selectedEmail={selectedEmail}
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    activeTab={activeTab}
+                    accounts={accounts}
+                    // null in unified mode → EmailView's own fallback picks
+                    // the thread's latest email's account as the reply-from.
+                    activeAccountId={queryAccountId}
+                    onSelectMainTab={() => setActiveTab(null)}
+                    onSelectTab={setActiveTab}
+                    onCloseTab={closeTab}
+                    onCloseMain={() => void selectEmail(null)}
+                    fullWidth={inboxLayout === 'full-width'}
+                    onOpenInTab={handleOpenInTab}
+                    onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
+                  />
                 );
 
                 const inboxList = isInboxCollapsed ? (

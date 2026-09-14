@@ -24,6 +24,8 @@ interface EmailViewProps {
   /** When true, renders at full width (used in full-width inbox layout). */
   fullWidth?: boolean;
   onOpenInTab?: () => void;
+  /** Open a chat seeded with this thread. */
+  onChatAboutThread?: (email: Email) => void;
 }
 
 /**
@@ -77,6 +79,7 @@ export function EmailView({
   activeAccountId,
   fullWidth,
   onOpenInTab,
+  onChatAboutThread,
 }: EmailViewProps) {
   const { t } = useTranslation(['inbox']);
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
@@ -336,16 +339,25 @@ export function EmailView({
     <div className="flex-1 bg-white flex flex-col overflow-hidden">
       {lightboxMeta && <AttachmentLightbox meta={lightboxMeta} onClose={() => setLightboxMeta(null)} />}
       <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
-        {/* Row 1: subject + inline tags on the left, window controls on the right */}
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-lg font-semibold text-gray-900 truncate">{latestEmail.subject || '(No subject)'}</h1>
+        {/* Row 1: subject + inline tags on the left, window controls on the right.
+            `flex-wrap` on both the row and the control cluster is load-bearing:
+            with the chat panel docked the email pane can narrow to ~180px, and
+            an unshrinkable single-line cluster overflowed the header — the
+            ancestor's `overflow-hidden` then clipped its right edge, silently
+            eating the LAST control, which is Close. Wrapping makes the header
+            grow taller instead of hiding actions. `flex-1 basis-0` on the title
+            keeps its long content from forcing a wrap at normal widths. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+          <h1 className="flex-1 basis-0 min-w-0 text-lg font-semibold text-gray-900 truncate">
+            {latestEmail.subject || '(No subject)'}
+          </h1>
           {emailTags.length > 0 && (
             <div className="flex-shrink-0">
               <TagChips tags={emailTags} />
             </div>
           )}
           {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
-          <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <button
               onClick={() => {
                 setReplyMode('reply');
@@ -403,6 +415,23 @@ export function EmailView({
                   </svg>
                 )}
                 AI Draft
+              </button>
+            )}
+            {onChatAboutThread && (
+              <button
+                onClick={() => onChatAboutThread(latestEmail)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                title={t('inbox:emailRow.chatAboutThread')}
+                aria-label={t('inbox:emailRow.chatAboutThread')}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
               </button>
             )}
             <button

@@ -2126,6 +2126,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    &crate::models::EmailWindow::default(),
                     50,
                     0,
                 )
@@ -2150,6 +2151,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    &crate::models::EmailWindow::default(),
                     50,
                     0,
                 )
@@ -2173,6 +2175,7 @@ mod tests {
                 Some("intent"),
                 Some("informational"),
                 None,
+                &crate::models::EmailWindow::default(),
                 50,
                 0,
             )

@@ -22,6 +22,7 @@ import deModal from '../locales/de/modal.json';
 import deNotifications from '../locales/de/notifications.json';
 import deSettings from '../locales/de/settings.json';
 import deSidebar from '../locales/de/sidebar.json';
+import deTagboard from '../locales/de/tagboard.json';
 import deTasks from '../locales/de/tasks.json';
 import enAttachments from '../locales/en/attachments.json';
 import enAuth from '../locales/en/auth.json';
@@ -39,6 +40,7 @@ import enModal from '../locales/en/modal.json';
 import enNotifications from '../locales/en/notifications.json';
 import enSettings from '../locales/en/settings.json';
 import enSidebar from '../locales/en/sidebar.json';
+import enTagboard from '../locales/en/tagboard.json';
 import enTasks from '../locales/en/tasks.json';
 import esAttachments from '../locales/es/attachments.json';
 import esAuth from '../locales/es/auth.json';
@@ -56,6 +58,7 @@ import esModal from '../locales/es/modal.json';
 import esNotifications from '../locales/es/notifications.json';
 import esSettings from '../locales/es/settings.json';
 import esSidebar from '../locales/es/sidebar.json';
+import esTagboard from '../locales/es/tagboard.json';
 import esTasks from '../locales/es/tasks.json';
 import frAttachments from '../locales/fr/attachments.json';
 import frAuth from '../locales/fr/auth.json';
@@ -73,6 +76,7 @@ import frModal from '../locales/fr/modal.json';
 import frNotifications from '../locales/fr/notifications.json';
 import frSettings from '../locales/fr/settings.json';
 import frSidebar from '../locales/fr/sidebar.json';
+import frTagboard from '../locales/fr/tagboard.json';
 import frTasks from '../locales/fr/tasks.json';
 
 export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de'] as const;
@@ -108,6 +112,7 @@ export const NAMESPACES = [
   'lenses',
   'dashboard',
   'attachments',
+  'tagboard',
 ] as const;
 
 export type Namespace = (typeof NAMESPACES)[number];
@@ -122,6 +127,7 @@ export const resources = {
     chat: enChat,
     memory: enMemory,
     tasks: enTasks,
+    tagboard: enTagboard,
     contacts: enContacts,
     compose: enCompose,
     auth: enAuth,
@@ -141,6 +147,7 @@ export const resources = {
     chat: esChat,
     memory: esMemory,
     tasks: esTasks,
+    tagboard: esTagboard,
     contacts: esContacts,
     compose: esCompose,
     auth: esAuth,
@@ -160,6 +167,7 @@ export const resources = {
     chat: frChat,
     memory: frMemory,
     tasks: frTasks,
+    tagboard: frTagboard,
     contacts: frContacts,
     compose: frCompose,
     auth: frAuth,
@@ -179,6 +187,7 @@ export const resources = {
     chat: deChat,
     memory: deMemory,
     tasks: deTasks,
+    tagboard: deTagboard,
     contacts: deContacts,
     compose: deCompose,
     auth: deAuth,

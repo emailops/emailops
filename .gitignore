@@ -29,6 +29,9 @@ Thumbs.db
 .env.*.local
 # macOS code-signing / notarization secrets — see .env.signing.example
 .env.signing
+# A macOS text clipping of the same secrets (drag-to-Finder) is still the
+# secrets — it was sitting untracked in the repo root.
+*.textClipping
 
 # Local scripts (not committed)
 scripts/*.local.sh

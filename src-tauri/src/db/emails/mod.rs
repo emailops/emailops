@@ -77,6 +77,75 @@ pub(super) fn prefix_upper_bound(prefix: &str) -> Option<String> {
     None // every byte was 0xFF — no upper bound
 }
 
+/// Connectors people put between a person and their company across the
+/// languages the app ships in. Only ever dropped as a whole token, so a sender
+/// genuinely named e.g. "De Vries" still matches on "vries".
+const SENDER_NEEDLE_CONNECTORS: &[&str] = &[
+    "de", "del", "la", "el", "los", "las", "da", "di", "du", "van", "von", "of", "from", "at", "the", "and", "y", "et",
+    "und", "en",
+];
+
+/// Split a `from:` needle into the tokens worth matching on: lowercased, cut on
+/// non-alphanumerics, with one-character and connector tokens dropped.
+fn sender_needle_tokens(needle: &str) -> Vec<String> {
+    needle
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 2)
+        .map(str::to_lowercase)
+        .filter(|t| !SENDER_NEEDLE_CONNECTORS.contains(&t.as_str()))
+        .take(6)
+        .collect()
+}
+
+/// Meaningful tokens of a multi-word `from:` needle, for the relaxed sender
+/// match that spans the display name AND the address (see the `from` filter in
+/// `search.rs`). A needle like "nadia de northwind" ("Nadia from Northwind")
+/// carries a preposition that appears in neither field and would otherwise veto
+/// every candidate.
+///
+/// Returns an empty vec when fewer than two meaningful tokens survive: a
+/// single-token needle is served by the indexed prefix / FTS / domain branches,
+/// and relaxing it would only cost a scan.
+pub(super) fn relaxed_sender_tokens(needle: &str) -> Vec<String> {
+    let tokens = sender_needle_tokens(needle);
+    if tokens.len() < 2 {
+        return Vec::new();
+    }
+    tokens
+}
+
+/// The domain prefix to try for a `from:` needle that names a COMPANY rather
+/// than a person — "northwind", "de northwind", "northwind.example". The company
+/// lives in the address domain, which appears in no display name and is not a
+/// prefix of the address (that starts with the local part), so without this the
+/// needle matches only the handful of senders who happen to spell the company
+/// into their display name.
+///
+/// Matched as a prefix against the indexed `sender_domain` column, so this
+/// costs a B-tree range scan, not a table scan.
+///
+/// `None` when the needle cannot be a bare domain:
+///   - it contains `@` — that is an address, and the address branch owns it;
+///   - more than one meaningful token survives — the relaxed branch spans
+///     name + address already, and "nadia northwind" is not a domain.
+pub(super) fn sender_domain_needle(needle: &str) -> Option<String> {
+    let trimmed = needle.trim().to_lowercase();
+    if trimmed.is_empty() || trimmed.contains('@') {
+        return None;
+    }
+    // A bare domain is used verbatim so the range covers its dots
+    // ("northwind.example" must not be cut at the first dot).
+    if !trimmed.contains(char::is_whitespace) {
+        return Some(trimmed);
+    }
+    // "de northwind": one meaningful word once the connectors are dropped.
+    let mut tokens = sender_needle_tokens(&trimmed);
+    if tokens.len() == 1 {
+        return Some(tokens.remove(0));
+    }
+    None
+}
+
 /// Domain extracted for the `sender_domain` index column. Empty default when
 /// no `@` is present so the column is never NULL.
 pub(super) fn extract_sender_domain(sender_email: &str) -> String {

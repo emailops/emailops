@@ -26,6 +26,7 @@ import type modal from '../locales/en/modal.json';
 import type notifications from '../locales/en/notifications.json';
 import type settings from '../locales/en/settings.json';
 import type sidebar from '../locales/en/sidebar.json';
+import type tagboard from '../locales/en/tagboard.json';
 import type tasks from '../locales/en/tasks.json';
 
 declare module 'i18next' {
@@ -49,6 +50,7 @@ declare module 'i18next' {
       lenses: typeof lenses;
       dashboard: typeof dashboard;
       attachments: typeof attachments;
+      tagboard: typeof tagboard;
     };
     returnNull: false;
   }

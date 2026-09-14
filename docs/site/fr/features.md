@@ -24,7 +24,9 @@ l'application.
 ## Filtres intelligents
 
 Restreignez la liste par domaine, expéditeur ou étiquette de classification — pratique pour
-traiter un client, un projet ou un déluge de newsletters à la fois.
+traiter un client, un projet ou un déluge de newsletters à la fois. Avec l'IA activée, ces
+mêmes étiquettes alimentent aussi le [Tableau d'étiquettes](../ai-features/#tag-board), qui
+les présente sous forme de grille de blocs.
 
 ## Calendrier
 

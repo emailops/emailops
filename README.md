@@ -26,6 +26,7 @@ All installers, checksums, and older versions are on the [Releases page](https:/
 - **Chat with your emails**: use AI to answer questions about your emails, generate drafts, ...
 - **AI email classification**: auto-tag emails by priority, intent, and topic using configurable rules + local AI
 - **Smart filters**: filter inbox by domain, sender, or classification tags
+- **Tag Board**: a grid of blocks, one per company, priority, intent or topic, listing each thread under its newest tag — ordered by how much you actually engage with each tag
 - **AI draft generation**: context-aware reply drafts using persona + thread history
 - **Attachments view**: organize and access your attachments directly without searching in emails
 - **AI provider abstraction**: embedded llama.cpp (default), local Ollama, or remote OpenRouter — switchable per feature
