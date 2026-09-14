@@ -357,7 +357,10 @@ def layer_perf():
         add("Chat con el buzón", "perf", f"caso de eval más lento ≤ {b['eval_case_s']} s", "ok" if worst["duration_ms"] / 1000 <= b["eval_case_s"] else "fail", f"{worst['name']}: {worst['duration_ms'] / 1000:.1f} s")
 
 try:
-    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("e2e", layer_e2e), ("oracle", layer_oracle), ("evals", layer_evals), ("junk", layer_junk), ("translation", layer_translation), ("perf", layer_perf)]:
+    # Model-backed evals run before the UI layers: a fresh CLI process with the GPU
+    # to itself, instead of right after the dev app's teardown (a 35B run after
+    # that teardown once degraded to garbage answers at 5x the latency).
+    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("evals", layer_evals), ("junk", layer_junk), ("translation", layer_translation), ("e2e", layer_e2e), ("oracle", layer_oracle), ("perf", layer_perf)]:
         layer_run(name, fn)
 finally:
     teardown()

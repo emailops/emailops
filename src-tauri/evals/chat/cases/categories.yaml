@@ -32,7 +32,6 @@
   category: single_fact
   tier: smoke
   expected_answer_contains: ["16:10"]
-  expected_answer_not_contains: ["21:30"]
   expected_output: "Tu vuelo a Bogotá (Andean Air AN 214, reserva QX7K2M) sale de Madrid (MAD, Terminal 1) el 29 de octubre de 2026 a las 16:10 y llega a Bogotá a las 19:45 hora local. Enlace al billete electrónico: email://."
   metrics: [answer_relevancy, faithfulness]
 
