@@ -49,7 +49,9 @@
   category: thread_bound
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
-  expected_output: "Un borrador de respuesta a Nadia Brunner, breve y cordial, que explica cómo añadir una segunda cuenta desde Ajustes → Cuentas → Añadir cuenta (Fastmail por IMAP con host, usuario y contraseña de aplicación), enlazado como draft://."
+  # The chat reply is a confirmation, not the draft: the text lives in the
+  # saved draft the draft:// chip opens.
+  expected_output: "Confirmación breve de que el borrador de respuesta a Nadia Brunner se ha guardado, con el enlace draft:// para abrirlo, revisarlo y enviarlo. El texto de la respuesta va en el borrador, no en el chat."
   metrics:
     - answer_relevancy
     - faithfulness

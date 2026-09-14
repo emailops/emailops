@@ -23,9 +23,10 @@
 # calendar integration enabled (`ListCalendarEventsTool::is_available`). The
 # demo persona's mail accounts are IMAP, so `scripts/generate_demo_db.py` adds a
 # credential-less Gmail account (`demo-acct-calendar`) that owns the demo
-# calendar `demo-cal-work` with six events anchored to the generation moment
-# (tomorrow 10:00 is always "Sprint 6 planning — Faro Logistics"). These cases
-# assert the route, the tool call and the golden answer end to end.
+# calendar `demo-cal-work` with six events anchored to "now": `ensure_demo_db.sh`
+# re-anchors them before every `make cli-*` / `make demo` run, so tomorrow 10:00
+# is always "Sprint 6 planning — Faro Logistics" however old the DB is. These
+# cases assert the route, the tool call and the golden answer end to end.
 
 - id: calendar_next_meeting_es
   question: "cual es la siguiente reunión en mi calendario?"

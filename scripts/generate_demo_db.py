@@ -2449,11 +2449,28 @@ def main() -> int:
                              f"{DEFAULT_DEMO_DB} for en, {DEFAULT_DEMO_DB_ES} for es)")
     parser.add_argument("--lang", choices=["en", "es"], default="en",
                         help="Locale to generate (default: en)")
+    parser.add_argument("--refresh-calendar", action="store_true",
+                        help="Only re-anchor the demo calendar events to now in an existing demo DB "
+                             "(the calendar evals ask for 'tomorrow 10:00'); everything else is left alone")
     args = parser.parse_args()
 
     locale = get_locale(args.lang)
     demo_db = args.demo_db or (DEFAULT_DEMO_DB if args.lang == "en" else DEFAULT_DEMO_DB_ES)
     demo_dir = demo_db.parent
+
+    if args.refresh_calendar:
+        if not demo_db.exists():
+            print(f"[demo-db] no demo DB at {demo_db}; run without --refresh-calendar first", file=sys.stderr)
+            return 1
+        conn = sqlite3.connect(str(demo_db))
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            with conn:
+                insert_calendar_events(conn, locale)
+        finally:
+            conn.close()
+        print(f"[demo-db] calendar events re-anchored to now in {demo_db}")
+        return 0
 
     print(f"[demo-db] lang:          {args.lang}")
     print(f"[demo-db] schema source: {args.prod_db}")

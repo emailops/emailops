@@ -22,3 +22,8 @@ if ! sqlite3 "$db" "SELECT 1 FROM embedding_chunks LIMIT 1;" 2>/dev/null | grep 
   echo "[demo] no embeddings found — generating (needed for chat)"
   make "$embed_target"
 fi
+
+# The demo calendar is anchored to "now" (tomorrow 10:00 is always the next
+# meeting) so the calendar chat evals stay deterministic however old the DB is.
+lang=en; case "$db_target" in *-es) lang=es;; esac
+uv run scripts/generate_demo_db.py --refresh-calendar --lang "$lang" --demo-db "$db" >/dev/null

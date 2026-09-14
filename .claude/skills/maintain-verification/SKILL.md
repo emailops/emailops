@@ -71,7 +71,9 @@ never keeps a missing layer silently.
   `expected_answer_contains` / `_not_contains`) **and** an `expected_output` golden with
   `metrics: [answer_relevancy, faithfulness]` so the LLM judge scores it. Run it alone first:
   `make cli-eval ARGS="--case <id> --json --judge --model qwen3.6-35b-a3b-ud-q4_k_xl"`.
-  Anchor goldens on data the generator seeds (`scripts/generate_demo_db.py`); if the case
+  Anchor goldens on data the generator seeds (`scripts/generate_demo_db.py`); date-relative
+  data ("tomorrow's meeting") must be re-anchored on every run the way `ensure_demo_db.sh`
+  refreshes the calendar (`--refresh-calendar`), never frozen at generation time. If the case
   needs rows the demo DB lacks, seed them there and apply the same SQL to the live
   `.emailops-demo-data/emailops.db` (never regenerate it: ids are random).
 - **Description**: every new test gets a one-line Spanish description in
