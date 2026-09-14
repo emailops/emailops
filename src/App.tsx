@@ -1504,7 +1504,15 @@ function AppInner() {
                     }
                     availableCategories={availableCategories ?? undefined}
                     onCollapse={inboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
-                    onNewChat={aiEnabled ? () => void handleNewChat() : undefined}
+                    // One header button: re-dock the closed panel (keeping its
+                    // conversation), or start a fresh chat while it is open.
+                    onNewChat={
+                      aiEnabled
+                        ? isChatPanelOpen
+                          ? () => void handleNewChat()
+                          : () => setIsChatPanelOpen(true)
+                        : undefined
+                    }
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                     accountName={isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email}
@@ -1513,7 +1521,7 @@ function AppInner() {
                       isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email,
                       (key) => t(key as 'sidebar:inbox'),
                     )}
-                    onOpenChatPanel={aiEnabled && !isChatPanelOpen ? () => setIsChatPanelOpen(true) : undefined}
+                    isChatPanelOpen={isChatPanelOpen}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
                   />

@@ -6,7 +6,7 @@ With a thread open, the panel grounds the answer in that thread (chip "USING AS 
 
 ## Sub-features
 
-- `chat.panel` "Close chat panel" hides it; the sidebar **Chat** entry / "Open full chat view" opens it.
+- `chat.panel` "Close chat panel" hides it; the inbox header's single chat button re-docks it (labelled "Open chat panel" while closed, "New chat" while open). The sidebar **Chat** entry opens the full-screen view.
 - `chat.ask` typing a question and pressing Send streams an answer.
 - `chat.sources` the answer lists sources; each has an "Open email" action.
 - `chat.new` "New chat" starts an empty conversation.

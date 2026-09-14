@@ -37,8 +37,12 @@ interface InboxProps {
    *  combine this with `showCategoryFilter` to gate visibility for non-Gmail accounts. */
   availableCategories?: EmailCategory[];
   onCollapse?: () => void;
-  /** Start a fresh chat and dock the panel. Omitted when AI is disabled. */
+  /** Header chat button. With the panel open it starts a fresh chat; with the
+   *  panel closed (`isChatPanelOpen` false) it re-docks the panel. Omitted
+   *  when AI is disabled. */
   onNewChat?: () => void;
+  /** Whether the docked chat panel is visible; picks the header button's label. */
+  isChatPanelOpen?: boolean;
   onOpenInTab?: (email: Email) => void;
   /** Open a new chat session seeded with the cleaned email thread. */
   onChatAboutThread?: (email: Email) => void;
@@ -50,8 +54,6 @@ interface InboxProps {
   accountName?: string;
   /** Pane title: the mailbox the user opened plus the account (see `mailboxTitle`). */
   title?: string;
-  /** Re-docks the chat panel; only passed while the panel is closed. */
-  onOpenChatPanel?: () => void;
   /** Account ID used for sender autocomplete in the inline search box. */
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
@@ -164,7 +166,7 @@ export function Inbox({
   fullWidth = false,
   accountName,
   title,
-  onOpenChatPanel,
+  isChatPanelOpen = true,
   accountId,
   onSearch,
 }: InboxProps) {
@@ -462,8 +464,8 @@ export function Inbox({
             {onNewChat && (
               <button
                 onClick={onNewChat}
-                title={t('chat:panel.newChat')}
-                aria-label={t('chat:panel.newChat')}
+                title={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
+                aria-label={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
                 className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -472,24 +474,6 @@ export function Inbox({
                     strokeLinejoin="round"
                     strokeWidth={2}
                     d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-              </button>
-            )}
-            {onOpenChatPanel && (
-              <button
-                type="button"
-                onClick={onOpenChatPanel}
-                title={t('chat:panel.open')}
-                aria-label={t('chat:panel.open')}
-                className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 10h8M8 14h5m-9 6l3.5-3.5H18a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v14z"
                   />
                 </svg>
               </button>
