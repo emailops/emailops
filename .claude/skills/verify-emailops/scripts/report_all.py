@@ -16,7 +16,7 @@ out = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else run / "informe.html"
 data = json.loads(src.read_text())
 meta, layers, records = data["meta"], data["layers"], data["records"]
 features = data["features"]; types = data["types"]
-def E(s): return html.escape(str(s))  # numbers and None land here too
+def E(s): return html.escape(str(s)).replace("\ufffd", "&#xFFFD;")  # numbers and None land here too; a model's garbled byte stays visible as an entity
 TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
 TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "static": "Calidad estática", "perf": "Rendimiento"}
 STATUS_LABEL = {"ok": "OK", "fail": "FALLO", "skip": "N/A", "info": "INFO"}
