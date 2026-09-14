@@ -749,7 +749,8 @@ impl ChatMessage {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteMode {
-    /// Run RAG retrieval, answer from sources only. No tools exposed.
+    /// Pre-retrieve RAG sources into the turn. The tool loop still runs with
+    /// every tool, so the model answers from the sources or calls a tool.
     RagFirst,
     /// Skip RAG, go straight to the tool loop. Sources are whatever the
     /// model retrieves via tool calls this turn.

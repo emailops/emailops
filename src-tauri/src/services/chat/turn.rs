@@ -1796,6 +1796,14 @@ fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
 /// This is the exact inverse of the nudge guard in the loop, kept as one pure
 /// function so both the gate decision and the nudge branch share a single
 /// source of truth.
+/// Whether the tool loop should nudge a bare-text first reply towards a tool
+/// call. Only a turn with no grounding at all must call a tool: when RAG
+/// sources were pre-retrieved or the user has an email open, a plain answer
+/// from that context is a real answer. Pure so the rule is pinned by tests.
+fn tool_loop_forces_tool_use(sources_present: bool, ambient_present: bool) -> bool {
+    !sources_present && !ambient_present
+}
+
 fn round_may_stream_live(force_tool_use: bool, no_tool_executed_yet: bool, nudges_used: u32, max_nudges: u32) -> bool {
     !(force_tool_use && no_tool_executed_yet && nudges_used < max_nudges)
 }
@@ -3632,11 +3640,12 @@ pub async fn run_chat_turn(
         llm_calls.push(pt);
     }
 
-    // Run the tool loop only on the ToolsFirst path. RagFirst is strictly
-    // sources-only: no tool definitions exposed, no tool loop, single LLM
-    // stream over the prompt with retrieved sources. This is Pattern B —
-    // exactly one retrieval mechanism per turn, so the model never has to
-    // choose between stale RAG sources and a fresh tool call.
+    // The route is a retrieval hint, never a capability gate (docs/DECISIONS.md,
+    // 2026-09-14): every turn runs the tool loop with the full tool menu. On a
+    // RagFirst turn the pre-retrieved sources ride in the prompt, so the model
+    // answers from them in one round or calls a tool when they do not cover
+    // the question (a calendar, an open thread, a remembered fact); a keyword
+    // miss in the router can no longer make a tool unreachable.
     let (
         final_messages,
         tool_loop_ms,
@@ -3645,72 +3654,54 @@ pub async fn run_chat_turn(
         mut aggregated_email_refs,
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
-    ) = match &route.mode {
-        RouteMode::ToolsFirst => {
-            emit_log("info", "stage: tool_loop");
-            emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
-            let t_tool_loop = std::time::Instant::now();
-            let outcome = run_tool_loop(
-                &db,
-                &registry,
-                provider.as_ref(),
-                &conversation_id,
-                &assistant_message_id,
-                &account_id,
-                &categories,
-                &user_question,
-                initial_messages,
-                preseeded_tool_calls,
-                // A plain answer from the open thread is a real answer, not
-                // an "announcement" to nudge past.
-                ambient_context.is_none(),
-                &mut tool_traces,
-                &mut llm_calls,
-            )
-            .await;
-            let elapsed = t_tool_loop.elapsed().as_millis() as i64;
-            emit_log(
-                "info",
-                &format!(
-                    "tool_loop: done ({} tool calls, {} llm rounds) [{}ms]",
-                    tool_traces.len(),
-                    llm_calls.len(),
-                    elapsed
-                ),
-            );
-            (
-                outcome.messages,
-                elapsed,
-                outcome.failed_without_answer,
-                outcome.error,
-                outcome.aggregated_email_refs,
-                outcome.aggregated_draft_refs,
-                outcome.answer_streamed_live,
-            )
+    ) = {
+        emit_log("info", "stage: tool_loop");
+        emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
+        let t_tool_loop = std::time::Instant::now();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            provider.as_ref(),
+            &conversation_id,
+            &assistant_message_id,
+            &account_id,
+            &categories,
+            &user_question,
+            initial_messages,
+            preseeded_tool_calls,
+            // A plain answer grounded in the sources or the open thread is a
+            // real answer, not an "announcement" to nudge past.
+            tool_loop_forces_tool_use(!sources.is_empty(), ambient_context.is_some()),
+            &mut tool_traces,
+            &mut llm_calls,
+        )
+        .await;
+        let elapsed = t_tool_loop.elapsed().as_millis() as i64;
+        emit_log(
+            "info",
+            &format!(
+                "tool_loop: done ({} tool calls, {} llm rounds) [{}ms]",
+                tool_traces.len(),
+                llm_calls.len(),
+                elapsed
+            ),
+        );
+        // Numbered sources are citable with `email://` as well as tool results.
+        let mut email_refs = source_email_ids(&sources);
+        for id in outcome.aggregated_email_refs {
+            if !email_refs.contains(&id) {
+                email_refs.push(id);
+            }
         }
-        RouteMode::RagFirst => {
-            // No tool loop, no preseeded tools. Convert the prompt directly
-            // into AiMessages so the stream branch below can run a single
-            // LLM call over sources + history. tool_traces/llm_calls stay
-            // empty — they get populated only by the tool loop. The RAG
-            // path also has no email-ref or draft-ref allowlist: every
-            // source the model can cite is already in `sources` as a
-            // numbered citation, and those drive `[n](citation://n)`
-            // chips — `email://` / `draft://` are reserved for tool-mode
-            // mentions.
-            emit_log("info", "stage: tool_loop skipped (RagFirst route)");
-            let msgs: Vec<AiMessage> = initial_messages
-                .into_iter()
-                .map(|(role, content)| AiMessage {
-                    role,
-                    content,
-                    tool_calls: None,
-                })
-                .collect();
-            // RagFirst never runs the tool loop, so nothing was streamed there;
-            // the synthesis stream below ships the answer.
-            (msgs, 0i64, false, None, source_email_ids(&sources), Vec::new(), false)
-        }
+        (
+            outcome.messages,
+            elapsed,
+            outcome.failed_without_answer,
+            outcome.error,
+            email_refs,
+            outcome.aggregated_draft_refs,
+            outcome.answer_streamed_live,
+        )
     };
 
     emit_log("info", "stage: stream");
@@ -4875,6 +4866,24 @@ mod tests {
         // The hint must steer the user toward a rephrase, in their language.
         assert!(empty_answer_hint(Language::Es).contains("reformular"));
         assert!(empty_answer_hint(Language::En).contains("rephras"));
+    }
+
+    /// The route only decides whether RAG sources are pre-retrieved; the tool
+    /// loop runs on every turn with the full tool menu. A plain answer is
+    /// legitimate when the turn already carries grounding (retrieved sources or
+    /// the open email); only a turn with neither is nudged towards a tool call.
+    #[test]
+    fn tool_use_is_forced_only_on_turns_without_grounding() {
+        assert!(tool_loop_forces_tool_use(false, false));
+        assert!(
+            !tool_loop_forces_tool_use(true, false),
+            "RAG sources can answer directly"
+        );
+        assert!(
+            !tool_loop_forces_tool_use(false, true),
+            "the open email can answer directly"
+        );
+        assert!(!tool_loop_forces_tool_use(true, true));
     }
 
     #[test]

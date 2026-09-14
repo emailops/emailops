@@ -142,14 +142,12 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "último trimestre",
     "ultimo trimestre",
     "trimestre pasado",
-    // Calendar / meetings (EN + ES). These MUST route tools-first: the
-    // RagFirst path exposes no tool definitions at all (see turn.rs, "RagFirst
-    // is strictly sources-only"), so `list_calendar_events` is unreachable
-    // there and the model can only answer from retrieved email chunks — it
-    // correctly refuses, which reads to the user as the calendar being broken.
-    // Before these entries a calendar question only reached the tool loop by
-    // accident, when it happened to carry an unrelated keyword ("¿qué tengo
-    // hoy?", "reuniones de marzo").
+    // Calendar / meetings (EN + ES). Routing them tools-first skips the RAG
+    // pre-retrieval of email chunks that cannot answer a calendar question.
+    // A miss is not fatal: RagFirst turns carry the full tool menu too (see
+    // turn.rs, "the route is a retrieval hint"), so `list_calendar_events`
+    // stays reachable. Do not grow this list to chase paraphrases — see
+    // docs/DECISIONS.md (2026-09-14).
     //
     // `calendar` is deliberately listed once: it is a substring of the Spanish
     // `calendario`, so it covers both languages. `reunion` (unaccented) covers
@@ -475,11 +473,9 @@ mod tests {
 
     #[test]
     fn heuristic_routes_calendar_questions_to_tools() {
-        // Calendar questions must reach the tool loop: RagFirst exposes no tool
-        // definitions at all (see turn.rs "RagFirst is strictly sources-only"),
-        // so `list_calendar_events` is unreachable on that path and the model
-        // can only answer from email chunks. Without a calendar keyword the
-        // heuristic sent every one of these to RagFirst.
+        // Calendar questions skip RAG pre-retrieval: email chunks cannot answer
+        // them. (Tool reachability no longer depends on this: RagFirst turns
+        // carry every tool too.)
         for q in [
             // ES — the reported failure, plus accent/plural variants.
             "cual es la siguiente reunión en mi calendario?",

@@ -958,3 +958,23 @@ localhost surface on the mailbox reachable from any web page. *`tauri-driver`* �
 support. *CrabNebula's driver* — paid, external process. *Always-on plugin in debug builds* —
 `make dev` often holds the production mailbox; an unauthenticated automation port must be
 opt-in per launch.
+
+## 2026-09-14 — Chat routing is a retrieval hint, never a capability gate
+
+**Decision:** Every chat turn runs the tool loop with the full, feature-gated tool menu.
+The route (`RagFirst` / `ToolsFirst`) only decides whether RAG sources are pre-retrieved
+into the turn. Reaching a tool must never depend on the question matching a keyword; the
+routing keyword list is not grown to chase paraphrases.
+**Context:** `RagFirst` used to be sources-only, so any question the keyword heuristic
+missed ("¿qué tengo pasado mañana?", "which conversations are still open?") could never
+reach `list_calendar_events`, `list_open_threads` or `memory_search`. A fix that added
+more keywords was rejected by the developer as fragile and reverted. Measured on the
+embedded runtime: the system prefix is identical on both routes (~6.9k tokens, the tools
+section already lives in the system prompt), so exposing tools on `RagFirst` turns costs
+nothing in the KV-prefix cache.
+**Rejected:** more routing keywords (fragile, every paraphrase and language needs an
+entry, a miss silently removes capabilities); an LLM route classifier (a model round-trip
+on every turn, and still a gate that can be wrong); dropping pre-retrieval altogether
+(kept open: `chat.routing_mode=always_rag|always_tools` stay available to A/B it on the
+eval).
+
