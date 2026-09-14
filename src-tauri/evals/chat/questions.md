@@ -13,9 +13,9 @@ thread); tier as in the README.
 
 | # | Question | ctx | tier | Golden / checks | Data |
 |---|---|---|---|---|---|
-| 1 | ¿Cuánto es la factura de Hetzner de mayo? | none | smoke | the amount from the May invoice body, `email://` link, faithfulness | demo (amount must be in the seeded body) |
+| 1 | ¿qué servidores incluye la factura de Hetzner de mayo? | none | smoke | "2 × CPX31 (Falkenstein)" from the invoice body, `email://` link | demo (`sf_hetzner_may_servers`) |
 | 2 | When did Marisol first write about the logistics dashboard? | none | full | 12/03/2025, one link | demo |
-| 3 | ¿A qué hora sale mi vuelo a Bogotá? | none | full | departure time from one itinerary email; no other flight | **import** (a travel confirmation) |
+| 3 | ¿A qué hora sale mi vuelo a Bogotá? | none | smoke | 16:10, flight AN 214, not the return leg's 21:30 | imported 14/09/2026 (`sf_bogota_flight_time`, personal account) |
 
 ## topic_retrieval
 
@@ -39,7 +39,7 @@ thread); tier as in the README.
 |---|---|---|---|---|---|
 | 10 | resume el hilo del bug de producción de Faro | none | smoke | 3 messages in order, current state (fix pending), links | demo |
 | 11 | en qué quedamos con Marisol | none | full | inquiry → sprint 5 recap → production bug, chronological | demo |
-| 12 | summarise my exchange with Janos this year | none | full | needs ≥3 messages both ways | **import** (a real back-and-forth, anonymised) |
+| 12 | summarise my exchange with Rafael this year | none | smoke | six messages both ways, open point: the call | imported 14/09/2026 (`ts_rafael_exchange`) |
 
 ## period_summary
 
@@ -55,7 +55,7 @@ thread); tier as in the README.
 |---|---|---|---|---|---|
 | 16 | list all my pending tasks | none | smoke | the 6 seeded tasks | demo (exists) |
 | 17 | ¿qué me piden en este correo? | open email (Marisol bug) | full | the concrete asks in that email, no draft | demo |
-| 18 | who am I still owing a reply to? | none | full | unanswered inbound threads older than N days | **import** (needs replied/unreplied pairs) |
+| 18 | who am I still owing a reply to? | none | full | unanswered inbound threads (Nadia, Kwame, Hiroshi, Juan Ramírez, Diego, Tomás) | demo (`pa_owed_replies`) |
 
 ## drafting
 
@@ -95,23 +95,25 @@ thread); tier as in the README.
 |---|---|---|---|---|---|
 | 31 | mándame la factura de Fly.io de marzo | none | smoke | `flyio-invoice-mar.pdf`, its email linked | demo |
 | 32 | which receipts did I get from Fastmail? | none | full | the five Fastmail receipts | demo |
-| 33 | what is the total on the BorgBase April invoice? | none | full | value read from the PDF | **import** or seed a real PDF body |
+| 33 | how much storage was BorgBase billing me for in April? | none | full | 250 GB, 3 repositories (from the email body) | demo (`at_borgbase_april_storage`) |
 
 ## memory
 
 | # | Question | ctx | tier | Golden / checks | Data |
 |---|---|---|---|---|---|
-| 34 | what did I promise Nadia? | none | smoke | the seeded memory fact | demo (facts exist; content to confirm) |
-| 35 | ¿cuál es mi número de cliente de BorgBase? | none | full | a seeded fact | **seed** a fact in the generator |
+| 34 | what do I know about Tomás? | none | full | the seeded contact fact plus the 2026 emails | demo (`mem_tomas_known_facts`) |
+| 35 | ¿cuál es mi número de cliente de BorgBase? | none | smoke | BB-48213 | seeded 14/09/2026 (`mem_borgbase_customer_number`) |
 | 36 | which threads did I leave open last week? | none | full | memory threads | demo |
 
 ## out_of_scope
 
 | # | Question | ctx | tier | Golden / checks | Data |
 |---|---|---|---|---|---|
-| 37 | resume el correo de Juan | none | smoke | asks which Juan / says none found; no invention | **seed** two senders named Juan |
+| 37 | resume el correo de Juan | none | smoke | asks which Juan (Ramírez / Pérez); no invention | seeded 14/09/2026 (`oos_juan_ambiguous`) |
 | 38 | what is the capital of Peru? | none | smoke | declines or answers briefly without tools; no `search_emails` | demo |
 | 39 | ¿qué descuento me dio Hetzner? (none exists) | none | full | says there is no such discount; no invented value | demo |
+
+Imported and seeded data is described in the gitignored `private-evals/imports/` log.
 
 ## Cross-cutting variants to add once the base set is green
 

@@ -675,6 +675,9 @@ class Thread:
     mailbox: str = "inbox"
     days_ago: int = 7
     read: bool = True
+    # Per-message age in days, one per msg, for exchanges that span months
+    # (the default spaces replies a few hours apart from `days_ago`).
+    msg_days_ago: list[int] | None = None
 
 
 WORK_THREADS_EN: list[Thread] = [
@@ -833,7 +836,82 @@ WORK_THREADS_EN: list[Thread] = [
 ]
 
 
+# ── Imported from the maintainer's mailbox, anonymised (see private-evals/imports/) ──
+# A beta tester's back-and-forth over several months: exercises thread and
+# per-person summaries with both directions of the conversation.
+WORK_THREADS_EN += [
+    Thread("Rafael Ortega", "rafael.ortega@posteo.net",
+           "New EmailOps version", "primary",
+           [("me",
+             "Hi Rafael,\n\nHere is the new version. This one is signed and ships "
+             "new features like Lenses, which let you analyse a set of emails with "
+             "the AI and pull the information into a table.\n\n"
+             "https://github.com/emailops/emailops/releases/tag/v0.5.0\n\n"
+             "Let me know what you think.\n\nUlises"),
+            ("them",
+             "Hi Ulises,\n\nSorry for going quiet, it has been a hectic few weeks. "
+             "I just installed v0.6 from the repo. I should have time to play with "
+             "it in the next few days, and some availability if you want to talk.\n\n"
+             "Glad you are still going full steam on this.\n\nRafael"),
+            ("me",
+             "Hi Rafael,\n\nNo worries, I figured you were swamped. If it suits "
+             "you, we could meet on Wednesday at 16:00 and go through it.\n\n"
+             "Ulises"),
+            ("them",
+             "Morning Ulises,\n\nI would like a few more days using your client for "
+             "work first. Let's write again to set that call up another week, ok?\n\n"
+             "Rafael"),
+            ("me",
+             "Sure, great that you are trying it on real work, that is the best way "
+             "to see the value. Let's schedule in the coming weeks.\n\nThanks!\nUlises"),
+            ("me",
+             "Hi Rafael,\n\nI guess you are back from holidays; I got back from my "
+             "trip on Tuesday. Pinging you to see if you kept using the app. I have "
+             "kept shipping releases, 0.6.7 went out yesterday, and over the last "
+             "weeks web traffic and downloads are growing. Still modest, but several "
+             "people have reported bugs, so they seem to be using it.\n\n"
+             "Let me know and we can set up that call.\n\nUlises")],
+           msg_days_ago=[107, 81, 80, 76, 76, 4]),
+    Thread("Juan Ramírez", "juan@ramirezdesign.example",
+           "Quote for the EmailOps landing page illustrations", "primary",
+           [("them",
+             "Hi Ulises,\n\nAs discussed, here is my quote for the three hero "
+             "illustrations for the EmailOps landing page: 900 EUR total, two "
+             "revision rounds included, delivery in two weeks from the go-ahead.\n\n"
+             "Juan Ramírez\nRamírez Design")],
+           days_ago=6, read=False),
+]
+
 PERSONAL_THREADS_EN: list[Thread] = [
+    # Imported from the maintainer's mailbox, anonymised (see private-evals/imports/):
+    # an airline e-ticket plus its check-in reminder, for single-fact questions.
+    Thread("Andean Air e-ticket", "eticket@andeanair.example",
+           "ULISES, 29OCT/1610/BOGOTA", "updates",
+           [("them",
+             "Dear customer,\n\nYou can find your electronic ticket with your flight "
+             "details below. We hope you have an enjoyable trip.\n\n"
+             "Booking code: QX7K2M\nE-ticket: 134-2201983476\n\n"
+             "Flight AN 214 · Andean Air\n"
+             "Departure: Madrid (MAD), Terminal 1 · 29 October 2026 · 16:10\n"
+             "Arrival: Bogotá (BOG), El Dorado · 29 October 2026 · 19:45 (local time)\n"
+             "Passenger: ULISES · Seat 14C · Baggage: 1 x 23 kg\n\n"
+             "Return\nFlight AN 215 · Bogotá (BOG) · 12 November 2026 · 21:30 → "
+             "Madrid (MAD) · 13 November 2026 · 14:05\n\n"
+             "Andean Air")],
+           days_ago=12),
+    Thread("Andean Air", "info@andeanair.example",
+           "QX7K2M | Online check-in is open for your flight to Bogotá", "updates",
+           [("them",
+             "Hi Ulises,\n\nOnline check-in is now open for flight AN 214 to Bogotá "
+             "on 29 October at 16:10. Booking code QX7K2M. Check in up to 3 hours "
+             "before departure and pick your seat.\n\nAndean Air")],
+           days_ago=11),
+    Thread("Juan Pérez", "juan.perez@mailbox.org",
+           "Keys for the weekend", "primary",
+           [("them",
+             "Hi Ulises,\n\nCould you leave the spare keys with the concierge on "
+             "Friday? I get in late on Saturday. Thanks a lot!\n\nJuan")],
+           days_ago=5, read=False),
     Thread("Mom", "elena@proton.me",
            "Tía Carmen's birthday next weekend", "primary",
            [("them",
@@ -996,7 +1074,9 @@ def _insert_thread(conn: sqlite3.Connection, account: Account, thread: Thread) -
             subject = thread.subject
         else:
             subject = f"Re: {thread.subject}"
-        if i > 0:
+        if thread.msg_days_ago is not None:
+            ts = now_s() - thread.msg_days_ago[i] * 86400 + i  # +i keeps same-day replies ordered
+        elif i > 0:
             ts += 3600 * RNG.randint(3, 30)
         read = thread.read if i == 0 else True
         email_id = insert_email(
@@ -1373,6 +1453,10 @@ LOCALE_EN = Locale(
         ("Book annual physical", "OnePatient reminder", "low", None, now_plus_days(14)),
     ],
     memory_facts=[
+        ("company", "borgbase.com",
+         "BorgBase customer number is BB-48213; backups are billed monthly to the "
+         "work card.",
+         "BorgBase"),
         ("user", "self",
          "Ulises is a freelance software engineer/consultant (Rust + TypeScript) "
          "and the maintainer of EmailOps, a local-first AI email client, under "
@@ -2417,6 +2501,39 @@ def insert_pending_tasks(conn: sqlite3.Connection, locale: Locale) -> None:
         )
 
 
+def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
+    """Insert the generator's threads and memory facts that an existing demo DB
+    does not have yet. Emails match on (sender_email, subject) of the first
+    message, facts on their text; existing rows and ids are never touched, so a
+    case pinned to an id keeps working after new content lands."""
+    added = {"threads": 0, "facts": 0}
+    for account, threads in ((locale.work, locale.work_threads or []), (locale.personal, locale.personal_threads or [])):
+        for thread in threads:
+            exists = conn.execute(
+                "SELECT 1 FROM emails WHERE account_id = ? AND sender_email = ? AND subject = ? LIMIT 1",
+                (account.id, thread.sender_email if thread.msgs[0][0] == "them" else account.email, thread.subject),
+            ).fetchone()
+            if exists:
+                continue
+            _insert_thread(conn, account, thread)
+            added["threads"] += 1
+    now = now_s()
+    for subject_kind, subject_key, fact, company in locale.memory_facts:
+        if conn.execute("SELECT 1 FROM memory_facts WHERE fact = ? LIMIT 1", (fact,)).fetchone():
+            continue
+        conn.execute(
+            """INSERT INTO memory_facts
+               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
+                confidence, score, status, last_used_at, created_at, updated_at,
+                domain, vigency, company)
+               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
+                       ?, ?, ?, NULL, NULL, ?)""",
+            (f"fact_{uuid.uuid4().hex[:12]}", locale.work.id, subject_kind, subject_key, fact, now, now, now, company),
+        )
+        added["facts"] += 1
+    return added
+
+
 def insert_memory_facts(conn: sqlite3.Connection, locale: Locale) -> None:
     """A small set of promoted facts so the memory panel is non-empty."""
     now = now_s()
@@ -2449,6 +2566,9 @@ def main() -> int:
                              f"{DEFAULT_DEMO_DB} for en, {DEFAULT_DEMO_DB_ES} for es)")
     parser.add_argument("--lang", choices=["en", "es"], default="en",
                         help="Locale to generate (default: en)")
+    parser.add_argument("--append", action="store_true",
+                        help="Add to an existing demo DB the threads and memory facts it lacks (matched by "
+                             "sender + subject / fact text); leaves everything else, including ids, alone")
     parser.add_argument("--refresh-calendar", action="store_true",
                         help="Only re-anchor the demo calendar events to now in an existing demo DB "
                              "(the calendar evals ask for 'tomorrow 10:00'); everything else is left alone")
@@ -2457,6 +2577,20 @@ def main() -> int:
     locale = get_locale(args.lang)
     demo_db = args.demo_db or (DEFAULT_DEMO_DB if args.lang == "en" else DEFAULT_DEMO_DB_ES)
     demo_dir = demo_db.parent
+
+    if args.append:
+        if not demo_db.exists():
+            print(f"[demo-db] no demo DB at {demo_db}; run without --append first", file=sys.stderr)
+            return 1
+        conn = sqlite3.connect(str(demo_db))
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            with conn:
+                added = append_missing(conn, locale)
+        finally:
+            conn.close()
+        print(f"[demo-db] appended {added['threads']} threads and {added['facts']} memory facts to {demo_db}")
+        return 0
 
     if args.refresh_calendar:
         if not demo_db.exists():
