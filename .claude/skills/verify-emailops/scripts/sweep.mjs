@@ -219,8 +219,9 @@ await step('Ajustes', 'abrir', 'el diálogo de ajustes abre con sus pestañas', 
 });
 for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 'AI Translation', 'Privacy', 'Junk', 'Calendar', 'Appearance']) {
   await step('Ajustes', `pestaña ${tab}`, `la pestaña ${tab} renderiza contenido`, async () => {
-    // Scope to the dialog: the sidebar has a "Calendar" view button behind the modal that `button*=` would hit first.
-    const hit = await js((label) => { const d = [...document.querySelectorAll('[role="dialog"]')].pop(); const b = d && [...d.querySelectorAll('button')].find((x) => x.textContent.includes(label)); if (!b) return false; b.click(); return true; }, tab);
+    // The sidebar has a "Calendar" view button behind the modal that `button*=` would hit first. The settings
+    // dialog is portalled after the sidebar, so the last matching button in DOM order is the tab.
+    const hit = await js((label) => { const b = [...document.querySelectorAll('button')].filter((x) => x.textContent.includes(label)).pop(); if (!b) return false; b.click(); return true; }, tab);
     if (!hit) return `FAIL: no hay pestaña ${tab}`;
     await sleep(1200);
     const t = (await js(() => { const d = [...document.querySelectorAll('[role="dialog"]')].pop(); return d ? d.innerText : document.body.innerText; })).replace(/\s+/g, ' ');
