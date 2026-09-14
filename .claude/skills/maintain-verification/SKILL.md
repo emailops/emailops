@@ -76,6 +76,9 @@ never keeps a missing layer silently.
   refreshes the calendar (`--refresh-calendar`), never frozen at generation time. If the case
   needs rows the demo DB lacks, seed them there and apply the same SQL to the live
   `.emailops-demo-data/emailops.db` (never regenerate it: ids are random).
+- **Junk / translation eval**: a case in `src-tauri/evals/junk/cases/*.yaml` (expected verdict
+  per axis) or `src-tauri/evals/translation/cases.yaml` (ISO code, keywords); run
+  `make eval-junk ARGS="--case <id>"` or the `translation_eval` example alone first.
 - **Description**: every new test gets a one-line Spanish description in
   `.claude/skills/verify-emailops/descriptions/<batch>.json` (`rust` key
   `src-tauri/<file>::<fn>`, `vitest` key `<file>::<full test name>`). Say what behaviour it

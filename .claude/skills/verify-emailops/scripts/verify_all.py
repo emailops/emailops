@@ -4,7 +4,7 @@
     verify_all.py [--tier quick|full] [--skip layer,...] [--only layer,...]
 
 Layers, in order: git, static, rust, vitest, contract, e2e, oracle, evals, perf.
-`quick` skips e2e, oracle and evals. Writes <run>/results.json (normalised test
+`quick` skips e2e, oracle and the model-backed evals (chat, translation). Writes <run>/results.json (normalised test
 records + layer log) and <run>/layers/*.raw; report_all.py renders it.
 """
 import argparse, collections, json, os, re, shutil, subprocess, sys, time, datetime, pathlib
@@ -24,9 +24,10 @@ args = ap.parse_args()
 skip = set(filter(None, args.skip.split(",")))
 only = set(filter(None, args.only.split(",")))
 if args.tier == "quick":
-    skip |= {"e2e", "oracle", "evals"}
+    skip |= {"e2e", "oracle", "evals", "translation"}
 
 stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+DEMO_DIR = REPO / ".emailops-demo-data"
 RUN = REPO / "src-tauri/reports/verify" / f"{stamp}-full"
 LAYERS = RUN / "layers"; LAYERS.mkdir(parents=True)
 (REPO / "src-tauri/reports/verify/current-full").unlink(missing_ok=True)
@@ -139,7 +140,7 @@ def is_contract(kind, name):
 
 # ---------- layers ----------
 def db_facts():
-    demo = REPO / ".emailops-demo-data/emailops.db"
+    demo = DEMO_DIR / "emailops.db"
     if not demo.exists(): return {}
     def q(sql):
         p = subprocess.run(["sqlite3", "-readonly", str(demo), sql], capture_output=True, text=True); return p.stdout.strip()
@@ -296,6 +297,46 @@ def layer_evals():
             desc=f"Pregunta: {c.get('question', '')} · Checks: {', '.join(ck['name'] for ck in c['checks'])} · {judge_desc}",
             question=c.get("question", ""), answer=c.get("answer", ""), expected_output=c.get("expectedOutput"), ai_trace=c.get("trace"), checks=c["checks"], model=model, judge=judge_desc, judge_report=j)
 
+def _json_run_report(out_dir):
+    """Newest JsonRunReport (shared eval schema) in out_dir, or None."""
+    files = sorted(f for f in out_dir.glob("*.json") if not f.name.endswith("_metrics.json"))
+    return json.loads(files[-1].read_text()) if files else None
+
+def layer_junk():
+    # Deterministic junk detector gate: synthetic cases, no model, no DB.
+    out = LAYERS / "junk"; out.mkdir(exist_ok=True)
+    rc, o, e = sh(f'make eval-junk ARGS="--out {out}"', timeout=1800)
+    rep = _json_run_report(out)
+    if rep is None:
+        add("Correo no deseado", "eval", "junk_eval (harness)", "fail", (o + e)[-3000:]); return
+    harness = "junk_eval: casos sintéticos en src-tauri/evals/junk/cases, sin modelo ni BD; cada caso fija el veredicto esperado por eje (spam / phishing / graymail) y las puertas globales limitan la tasa de falsos positivos sobre correo legítimo"
+    for it in rep["per_item_results"]:
+        add("Correo no deseado", "eval", it["id"], "ok" if it["passed"] else "fail", it.get("detail") or "", None,
+            desc=f"Caso sintético de junk_eval; puntuación {it.get('score')}", model="determinista (Naive Bayes local)", judge="sin juez: veredicto esperado por caso", harness=harness, checks=[])
+    metrics = sorted(out.glob("*_metrics.json"))
+    if metrics:
+        m = json.loads(metrics[-1].read_text())
+        for g in m.get("gates", []):
+            add("Correo no deseado", "eval", f"puerta {g['name']}", "ok" if g["passed"] else "fail",
+                f"actual {g['actual']:.4f} · límite {g['limit']:.4f}", None,
+                desc="Puerta global del detector sobre el conjunto de casos", model="determinista (Naive Bayes local)", judge="sin juez: umbral fijo", harness=harness, checks=[])
+
+def layer_translation():
+    # Language detection + translation on synthetic cases; needs the chat model.
+    teardown()
+    out = LAYERS / "translation"; out.mkdir(exist_ok=True)
+    model = os.environ.get("VERIFY_EVAL_MODEL", "") or (meta.get("ai") or {}).get("model") or "qwen3.5-4b-q4_k_m"
+    cases = REPO / "src-tauri/evals/translation/cases.yaml"
+    env = dict(ENV, EMAILOPS_DATA_DIR=str(DEMO_DIR))
+    rc, o, e = sh(f'cargo run --manifest-path src-tauri/Cargo.toml --features eval --example translation_eval -- --model {model} --provider llamacpp --cases "{cases}" --out "{out}"', timeout=3600, env=env)
+    rep = _json_run_report(out)
+    if rep is None:
+        add("Redacción y borradores", "eval", "translation_eval (harness)", "fail", (o + e)[-3000:]); return
+    harness = "translation_eval: casos sintéticos en src-tauri/evals/translation/cases.yaml; detección de idioma comparada con el código ISO esperado y traducción validada por presencia/ausencia de palabras clave, sin juez"
+    for it in rep["per_item_results"]:
+        add("Redacción y borradores", "eval", it["id"], "ok" if it["passed"] else "fail", it.get("detail") or "", None,
+            desc=f"Caso sintético de translation_eval; puntuación {it.get('score')}", model=rep.get("model") or model, judge="sin juez: heurístico (ISO exacto, palabras clave)", harness=harness, checks=[])
+
 def layer_perf():
     b = MANIFEST["budgets"]
     if "launch_s" in meta:
@@ -310,7 +351,7 @@ def layer_perf():
         add("Chat con el buzón", "perf", f"caso de eval más lento ≤ {b['eval_case_s']} s", "ok" if worst["duration_ms"] / 1000 <= b["eval_case_s"] else "fail", f"{worst['name']}: {worst['duration_ms'] / 1000:.1f} s")
 
 try:
-    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("e2e", layer_e2e), ("oracle", layer_oracle), ("evals", layer_evals), ("perf", layer_perf)]:
+    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("e2e", layer_e2e), ("oracle", layer_oracle), ("evals", layer_evals), ("junk", layer_junk), ("translation", layer_translation), ("perf", layer_perf)]:
         layer_run(name, fn)
 finally:
     teardown()

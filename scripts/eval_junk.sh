@@ -18,7 +18,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 OUT_DIR="src-tauri/reports/evaluations/junk"
-mkdir -p "$OUT_DIR"
 
 # Default to the public synthetic corpus; a caller-supplied --cases-dir (e.g.
 # the private golden set exported from a real mailbox) wins.
@@ -28,12 +27,15 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --cases-dir) CASES_DIR="$2"; shift 2 ;;
     --cases-dir=*) CASES_DIR="${1#*=}"; shift ;;
+    --out) OUT_DIR="$2"; shift 2 ;;
+    --out=*) OUT_DIR="${1#*=}"; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
 
 # `--no-default-features` skips the embedded llama.cpp build: this suite never
 # loads a model, so there is nothing to gain from compiling one in.
+mkdir -p "$OUT_DIR"
 exec cargo run \
   --manifest-path src-tauri/Cargo.toml \
   --no-default-features \
