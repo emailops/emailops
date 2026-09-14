@@ -1073,16 +1073,26 @@ impl LlamaCppRuntime {
         // (`<|channel>…`, `<think>…`), then suppress tool-call syntax;
         // whatever survives is flushed live to the user. The gates travel
         // inside the actor callback; the end-of-stream flush happens here.
+        // The raw text is kept alongside the gates so the round can end the
+        // moment the model repeats a tool call it already emitted (greedy
+        // decoding can loop on one call for minutes; see
+        // `ends_with_repeated_tool_call`). The actor keeps everything generated
+        // so far, so the calls before the repeat still dispatch.
         let gate_state = Arc::new(std::sync::Mutex::new((
             ThinkingGate::new(),
             StreamGate::new(),
             on_token,
+            String::new(),
         )));
         let actor_cb: OnToken = {
             let gate_state = Arc::clone(&gate_state);
             Box::new(move |piece: String| {
                 let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
-                let (think_gate, gate, cb) = &mut *guard;
+                let (think_gate, gate, cb, raw) = &mut *guard;
+                raw.push_str(&piece);
+                if super::tool_parser::ends_with_repeated_tool_call(raw) {
+                    return false;
+                }
                 let dereasoned = think_gate.push(&piece);
                 if dereasoned.is_empty() {
                     return true;
@@ -1113,7 +1123,7 @@ impl LlamaCppRuntime {
             // Flush both gates at end of stream: the thinking gate only ever
             // holds truncated markup (dropped), then forward buffered prose.
             let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
-            let (think_gate, gate, cb) = &mut *guard;
+            let (think_gate, gate, cb, _raw) = &mut *guard;
             think_gate.finish();
             let tail = gate.finish();
             if !tail.is_empty() {

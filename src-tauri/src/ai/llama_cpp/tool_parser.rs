@@ -129,10 +129,71 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
     out
 }
 
+/// True when the raw generation `text` has just completed a tool call that
+/// repeats (same name, same arguments) one already emitted earlier in it.
+///
+/// Called on every streamed piece, so it only does work at a block boundary:
+/// a closing `</tool_call>`, or an opening tag that implicitly closes the
+/// previous block in newline-batched output. Greedy decoding with no
+/// repetition penalty can otherwise loop on one call for minutes (observed on
+/// Qwen 3.6 35B: the same `search_emails` four times, 75 s, a 25k-token
+/// transcript); the runtime ends the round here instead. Pure.
+pub(super) fn ends_with_repeated_tool_call(text: &str) -> bool {
+    let tail = text.trim_end();
+    if !(tail.ends_with(CLOSE_TAG) || tail.ends_with(OPEN_TAG)) {
+        return false;
+    }
+    let calls = parse_qwen_tool_calls(text);
+    match calls.split_last() {
+        Some((last, earlier)) => earlier
+            .iter()
+            .any(|c| c.function.name == last.function.name && c.function.arguments == last.function.arguments),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // Greedy decoding with no repetition penalty can loop: Qwen 3.6 35B was
+    // observed emitting the same `search_emails` call four times in one round
+    // (75 s of generation, a 25k-token transcript). The runtime stops the
+    // round as soon as a block repeats one already emitted; these pin when.
+    const A: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"a@x.io","limit":1}}</tool_call>"#;
+    const B: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"b@x.io","limit":1}}</tool_call>"#;
+
+    #[test]
+    fn a_closed_block_repeating_an_earlier_one_is_detected() {
+        let reordered = r#"<tool_call>{"name":"search_emails","arguments":{"limit":1,"from":"a@x.io"}}</tool_call>"#;
+        assert!(
+            ends_with_repeated_tool_call(&format!("{A}\n{reordered}")),
+            "argument order does not matter"
+        );
+        assert!(ends_with_repeated_tool_call(&format!("{A}\n{B}\n{A}")));
+    }
+
+    #[test]
+    fn distinct_calls_are_not_a_repeat() {
+        assert!(!ends_with_repeated_tool_call(A));
+        assert!(!ends_with_repeated_tool_call(&format!("{A}\n{B}")));
+        assert!(!ends_with_repeated_tool_call(""));
+        assert!(!ends_with_repeated_tool_call("plain prose answer"));
+    }
+
+    #[test]
+    fn a_repeat_counts_only_once_the_block_is_complete() {
+        let half = &A[..A.len() - "</tool_call>".len() - 3];
+        assert!(!ends_with_repeated_tool_call(&format!("{A}\n{half}")));
+    }
+
+    #[test]
+    fn unclosed_newline_batches_repeat_when_the_next_block_opens() {
+        let line = r#"<tool_call>{"name":"list_open_threads","arguments":{}}"#;
+        assert!(ends_with_repeated_tool_call(&format!("{line}\n{line}\n<tool_call>")));
+        assert!(!ends_with_repeated_tool_call(&format!("{line}\n<tool_call>")));
+    }
 
     #[test]
     fn empty_input_returns_empty() {

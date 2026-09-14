@@ -1088,6 +1088,17 @@ fn repair_missing_email_id(
 /// two calls that differ only in JSON key order are recognised as the same.
 /// Used by the tool loop to spot a model re-issuing an identical call instead
 /// of answering.
+/// Drop repeated calls (same name, same arguments in any key order) from one
+/// round, keeping the first occurrence and the order. Returns the kept calls
+/// and how many were dropped. Pure; see `tool_call_key`.
+fn dedupe_tool_calls(calls: Vec<crate::ai::provider::AiToolCall>) -> (Vec<crate::ai::provider::AiToolCall>, usize) {
+    let mut seen = std::collections::HashSet::new();
+    let total = calls.len();
+    let kept: Vec<_> = calls.into_iter().filter(|tc| seen.insert(tool_call_key(tc))).collect();
+    let dropped = total - kept.len();
+    (kept, dropped)
+}
+
 fn tool_call_key(tc: &crate::ai::provider::AiToolCall) -> String {
     format!("{}|{}", tc.function.name, canonical_json(&tc.function.arguments))
 }
@@ -2312,6 +2323,21 @@ async fn run_tool_loop(
                 }
             }
         }
+
+        // A repeated call in the same round adds nothing but tool-result tokens.
+        let (tool_calls, dropped_repeats) = dedupe_tool_calls(tool_calls);
+        let response = if dropped_repeats > 0 {
+            emit_log(
+                "info",
+                &format!("tool_loop: dropped {dropped_repeats} repeated tool call(s) in this round"),
+            );
+            AiMessage {
+                tool_calls: Some(tool_calls.clone()),
+                ..response
+            }
+        } else {
+            response
+        };
 
         // No-progress guard: if every call this round was already executed with
         // identical args, the model is spinning (re-searching instead of
@@ -6583,6 +6609,25 @@ Preséntalos en una tabla markdown …";
                 arguments: args,
             },
         }
+    }
+
+    /// A model that emits the same call twice in one round gets it executed
+    /// once: the repeat adds nothing but tool-result tokens to the transcript.
+    #[test]
+    fn dedupe_tool_calls_drops_repeats_within_a_round() {
+        let a = tc("search_emails", serde_json::json!({"from":"a@x.io","limit":1}));
+        let a_reordered = tc("search_emails", serde_json::json!({"limit":1,"from":"a@x.io"}));
+        let b = tc("list_open_threads", serde_json::json!({}));
+        let (kept, dropped) = dedupe_tool_calls(vec![a.clone(), b, a_reordered, a]);
+        assert_eq!(dropped, 2);
+        let names: Vec<&str> = kept.iter().map(|c| c.function.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["search_emails", "list_open_threads"],
+            "first occurrence kept, order preserved"
+        );
+        let (unique, none) = dedupe_tool_calls(vec![tc("search_emails", serde_json::json!({"limit":5}))]);
+        assert_eq!((unique.len(), none), (1, 0));
     }
 
     #[test]
