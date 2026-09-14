@@ -155,12 +155,9 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
 
     // Category scope the chat turn will use at retrieval time — computed up
     // front so `resolve_as_of` can apply the same filter when resolving
-    // `AsOf::Latest`. Eval runs use the service default (primary only);
-    // callers that need a wider scope should extend the case schema.
-    let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // `AsOf::Latest`. Same `chat.default_categories` preference the app and
+    // the CLI honour, so an eval searches the slice the user would.
+    let categories: Vec<String> = crate::services::chat::default_categories(&db);
 
     // Cases name accounts the way humans do; the grounding lookup keys on the
     // account *id*. `account:` already accepts either form (see

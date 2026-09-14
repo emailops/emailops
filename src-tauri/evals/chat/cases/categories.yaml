@@ -132,7 +132,8 @@
   category: pending_actions
   tier: full
   as_of: latest
-  expected_answer_contains_any: ["Nadia", "Kwame"]
+  expected_tools_called: ["list_open_threads"]
+  expected_answer_contains_any: ["Nadia", "Kwame", "email account", "Ollama"]
   expected_answer_not_contains: ["](draft://"]
   expected_output: "Inbound emails without a reply from you: Nadia Brunner (how to add a second email account), Kwame Boateng (can EmailOps use his own Ollama models), Hiroshi Tan (search does not find emails in an archived folder), Juan Ramírez (quote for the landing page illustrations), Diego Salas (EmailOps on the Lobsters front page) and Tomás Iglesias (proposal accepted, asks to kick off Monday). Each linked with email://."
   metrics: [answer_relevancy, faithfulness]
@@ -159,7 +160,7 @@
   expected_route: tools_first
   expected_tools_called: ["list_calendar_events"]
   expected_answer_contains: ["PrivacyHub"]
-  expected_output: "Pasado mañana tienes una reunión: «PrivacyHub analytics migration — proposal walkthrough», a las 09:30 (45 minutos, por Zoom, con Janos de PrivacyHub)."
+  expected_output: "Pasado mañana tienes una reunión: «PrivacyHub analytics migration — proposal walkthrough», de 09:30 a 10:15 por Zoom, organizada por ti, con Janos de PrivacyHub como asistente. No hay más eventos ese día."
   metrics: [answer_relevancy, faithfulness]
 
 - id: cal_sprint_demo_when
@@ -239,12 +240,9 @@
   question: "which receipts did I get from Fastmail?"
   account: "ulises@emailopslabs.dev"
   category: attachments
-  # The receipts are category Updates; the CLI chat searches Primary only, so
-  # this passes in the app but not here. Kept as a lab case until the CLI
-  # honours chat.default_categories.
-  tier: lab
-  expected_answer_contains: ["fastmail-receipt"]
-  expected_output: "Five Fastmail receipts, one per month from January to May 2026, each with its PDF attached (fastmail-receipt-jan.pdf … fastmail-receipt-may.pdf) and linked email://."
+  tier: full
+  expected_answer_contains: ["February 2026", "May 2026"]
+  expected_output: "Five Fastmail receipts, one per month from January to May 2026 (Standard plan), each linked email://; the PDFs (fastmail-receipt-jan.pdf … fastmail-receipt-may.pdf) are attached to those emails."
   metrics: [answer_relevancy, faithfulness]
 
 - id: at_borgbase_april_storage

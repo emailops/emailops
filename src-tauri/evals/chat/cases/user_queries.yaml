@@ -47,11 +47,9 @@
   # so a real grounded link is the meaningful signal.
   expected_answer_contains:
     - "email://"
-  # The CLI chat searches Primary only (`DEFAULT_RAG_CATEGORIES`), so the
-  # Codeberg PR and Fly.io deploy notifications of the same day (category
-  # `updates`) are out of scope here; the app, which honours
-  # `chat.default_categories`, would include them.
-  expected_output: "Summary of the most recent day's primary mail: one email, from Nadia Brunner, asking how to add a second email account (Fastmail IMAP plus a work mailbox) in EmailOps and whether there is a settings page for it, linked as email://."
+  # The demo pref `chat.default_categories` is primary,updates (same scope the
+  # app and the CLI honour), so the day's Updates mail counts too.
+  expected_output: "Summary of the most recent day in the inbox: Nadia Brunner asked how to add a second email account (Fastmail IMAP plus a work mailbox) in EmailOps and whether there is a settings page for it; Fly.io reported a successful production deploy of lumen-api; Codeberg opened PR #58 (carrier rate API) on faro-logistics/dashboard. Each item links its email://."
   metrics:
     - answer_relevancy
     - faithfulness

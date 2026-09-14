@@ -109,50 +109,14 @@ pub struct SendChatResponse {
     pub assistant_message: ChatMessage,
 }
 
-/// Canonical set of Gmail-style categories the UI can ask RAG to search.
-/// Used to reject unknown values coming from the frontend dropdown.
-const VALID_CATEGORIES: &[&str] = &["primary", "updates", "promotions", "social", "forums"];
-
 /// Resolve the category filter for a turn:
 ///   - `Some(list)` from the frontend → validate + use
-///   - `None` → load the persisted `chat.default_categories` preference, or
-///     fall back to the service-side default (primary only)
+///   - `None` → the persisted `chat.default_categories` preference (shared
+///     with the CLI and the eval harness in `services::chat`)
 fn resolve_categories(state: &AppState, requested: Option<Vec<String>>) -> Vec<String> {
-    let candidate = match requested {
-        Some(list) => list,
-        None => state
-            .db
-            .get_preference("chat.default_categories")
-            .ok()
-            .flatten()
-            .map(|s| s.split(',').map(|t| t.to_string()).collect::<Vec<_>>())
-            .unwrap_or_default(),
-    };
-    normalize_categories(candidate)
-}
-
-/// Lower-case, drop unknown values, and fall back to the default scope (primary)
-/// when nothing valid remains. Pure so it is unit-testable.
-///
-/// The empty fallback is the important part: an empty category list must NEVER
-/// reach the tool layer, because `search_emails` treats empty scope as "no
-/// filter → ALL categories" (`tools/search_emails.rs`). Without this, a stray
-/// empty selection (a corrupt pref, a `[]` from the UI before the pref loads)
-/// silently widens a Primary-scoped chat to every category — the "I see Updates
-/// even though only Primary is selected" bug.
-fn normalize_categories(candidate: Vec<String>) -> Vec<String> {
-    let filtered: Vec<String> = candidate
-        .into_iter()
-        .map(|c| c.trim().to_lowercase())
-        .filter(|c| VALID_CATEGORIES.contains(&c.as_str()))
-        .collect();
-    if filtered.is_empty() {
-        crate::services::chat::DEFAULT_RAG_CATEGORIES
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        filtered
+    match requested {
+        Some(list) => crate::services::chat::normalize_categories(list),
+        None => crate::services::chat::default_categories(&state.db),
     }
 }
 
@@ -286,7 +250,7 @@ pub async fn send_chat_message(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_categories;
+    use crate::services::chat::normalize_categories;
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

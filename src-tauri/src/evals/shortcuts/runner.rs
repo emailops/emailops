@@ -220,10 +220,7 @@ async fn run_variant(
     let assistant_msg: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;
 
     let history: Vec<ChatMessage> = Vec::new();
-    let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let categories: Vec<String> = crate::services::chat::default_categories(&db);
 
     // See harness.rs: run_chat_turn now takes a ToolRegistry.
     let registry = std::sync::Arc::new(crate::services::chat::tools::default_registry());

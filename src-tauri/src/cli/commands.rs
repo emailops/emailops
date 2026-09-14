@@ -596,10 +596,7 @@ async fn run_chat(
     let fresh = fresh && !pinned;
 
     let registry = Arc::new(crate::services::chat::tools::default_registry());
-    let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let categories: Vec<String> = crate::services::chat::default_categories(&session.db);
 
     // `--thread` is documented as grounding "exactly as the app's chat panel"
     // does, and the panel sends the thread together with the account that owns

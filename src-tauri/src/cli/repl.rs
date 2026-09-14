@@ -337,10 +337,7 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
     history.retain(|m| m.id != assistant_message.id && m.id != user_message.id);
 
     let registry = Arc::new(crate::services::chat::tools::default_registry());
-    let categories: Vec<String> = crate::services::chat::DEFAULT_RAG_CATEGORIES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let categories: Vec<String> = crate::services::chat::default_categories(&session.db);
 
     crate::services::chat::run_chat_turn(
         session.db.clone(),

@@ -31,7 +31,10 @@ pub use conversations::{
     list_conversations, rename_conversation,
 };
 pub use prewarm::prewarm_chat;
-pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, DEFAULT_RAG_CATEGORIES};
+pub use retrieval::{
+    default_categories, normalize_categories, retrieve_context, retrieve_context_with_trace, ScoredEmail,
+    DEFAULT_RAG_CATEGORIES,
+};
 // `smart_body_slice` / `MAX_SOURCE_BODY_CHARS` are consumed by the eval harness
 // (`crate::services::chat::…`), which only compiles under the `eval` feature, so
 // the re-export reads as unused on a default `--no-default-features` build.
