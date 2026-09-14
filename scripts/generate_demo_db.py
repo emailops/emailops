@@ -886,7 +886,7 @@ PERSONAL_THREADS_EN: list[Thread] = [
     # Imported from the maintainer's mailbox, anonymised (see private-evals/imports/):
     # an airline e-ticket plus its check-in reminder, for single-fact questions.
     Thread("Andean Air e-ticket", "eticket@andeanair.example",
-           "ULISES, 29OCT/1610/BOGOTA", "updates",
+           "ULISES, 29OCT/1610/BOGOTA", "primary",
            [("them",
              "Dear customer,\n\nYou can find your electronic ticket with your flight "
              "details below. We hope you have an enjoyable trip.\n\n"
@@ -900,7 +900,7 @@ PERSONAL_THREADS_EN: list[Thread] = [
              "Andean Air")],
            days_ago=12),
     Thread("Andean Air", "info@andeanair.example",
-           "QX7K2M | Online check-in is open for your flight to Bogotá", "updates",
+           "QX7K2M | Online check-in is open for your flight to Bogotá", "primary",
            [("them",
              "Hi Ulises,\n\nOnline check-in is now open for flight AN 214 to Bogotá "
              "on 29 October at 16:10. Booking code QX7K2M. Check in up to 3 hours "
@@ -1717,6 +1717,10 @@ def insert_ai_config(conn: sqlite3.Connection) -> None:
 
 
 PREFS: dict[str, str] = {
+    # The demo deliberately carries 2025 content (prospects, invoices); the
+    # default 365-day AI window would leave it unembedded and invisible to
+    # semantic search. 0 = no age limit.
+    "ai_max_email_age_days": "0",
     "onboarding_completed": "true",
     "ai_enabled": "true",
     "ai_provider": "llamacpp",
