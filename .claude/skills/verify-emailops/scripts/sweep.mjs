@@ -255,7 +255,9 @@ await step('Chat', 'pregunta y respuesta', 'una pregunta recibe respuesta con fu
 await step('Chat', 'nuevo chat', 'New chat vacía la conversación', async () => { await click('aria/New chat'); await sleep(1200); return ok(!(await bodyText()).includes('Sources'), 'conversación nueva', 'la respuesta anterior sigue visible'); });
 await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y "Open chat panel" en la cabecera del inbox lo vuelve a acoplar', async () => {
   if (!(await exists('aria/Close chat panel'))) { await click('button=Inbox'); await sleep(1000); }
-  if (!(await exists('aria/Close chat panel'))) return 'FAIL: el panel acoplado no está visible desde el inbox';
+  // The docked state is a persisted pref (`chat_panel_open`), so a previous run can leave it closed: dock it first.
+  if (!(await exists('aria/Close chat panel')) && (await exists('aria/Open chat panel'))) { await click('aria/Open chat panel'); await sleep(1200); }
+  if (!(await exists('aria/Close chat panel'))) return 'FAIL: el panel acoplado no está visible desde el inbox ni se puede acoplar desde la cabecera';
   await click('aria/Close chat panel'); await sleep(1000); const closed = !(await exists('button=Send'));
   if (!(await exists('aria/Open chat panel'))) return `FAIL: sin botón "Open chat panel" tras cerrar (cerrado=${closed})`;
   await click('aria/Open chat panel'); await sleep(1200);

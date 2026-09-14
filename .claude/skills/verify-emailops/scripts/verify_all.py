@@ -235,7 +235,13 @@ def layer_contract():
 APP = RUN / "app"
 V = SKILL / "scripts/verify.sh"
 def app_env(): return dict(ENV, VERIFY_RUN_DIR=str(APP))
+def reset_ui_prefs():
+    """UI state the sweep toggles is persisted in the demo DB (`chat_panel_open`);
+    a run that dies mid-sweep would otherwise change the next run's starting state."""
+    subprocess.run(["sqlite3", str(DEMO_DIR / "emailops.db"), "INSERT OR REPLACE INTO user_preferences (key, value) VALUES ('chat_panel_open', 'true')"], check=True)
+
 def layer_e2e():
+    reset_ui_prefs()
     APP.mkdir(exist_ok=True)
     t0 = time.time(); rc, out, err = sh([str(V), "launch"], timeout=1200, env=app_env())
     launch_s = round(time.time() - t0, 1); meta["launch_s"] = launch_s
