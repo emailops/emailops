@@ -24,7 +24,7 @@ slug = lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 # ---------- previous run for the delta ----------
 prev = None
-runs = sorted(p for p in run.parent.glob("*-full") if p.is_dir() and p != run and (p / "results.json").exists())
+runs = sorted(p for p in run.parent.glob("*-" + run.name.rsplit("-", 1)[-1]) if p.is_dir() and p != run and (p / "results.json").exists())
 if runs:
     prev = json.loads((runs[-1] / "results.json").read_text())
     prev_status = {(r["feature"], r["type"], r["name"]): r["status"] for r in prev["records"]}
@@ -153,8 +153,10 @@ for f in feat_order:
         sub += f'<details class="type" id="f-{slug(f)}-{t}"{" open" if fails else ""}><summary>{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span></summary>{head}{sub_tbl}</details>'
     sections += f'<details class="feature" id="f-{slug(f)}"{" open" if c["fail"] else ""}><summary>{E(f)} <span class="muted">{c["ok"]} ok · {c["fail"]} fallos · {c["skip"]} n/a</span></summary>{type_tbl}{sub}</details>'
 
-dbm = meta.get("db") or {}; demo = dbm.get("demo") or {}
+dbm = meta.get("db") or {}; demo = dbm.get("demo") or {}; snap = dbm.get("snapshot") or {}
 db_html = ""
+if snap:
+    db_html += f'<p><span class="lbl">Snapshot</span><code>{E(snap.get("path", ""))}</code> · copia de la BD de producción hecha el {E(snap.get("copied_at", "?"))} ({E(snap.get("size_gb", "?"))} GB) · {E(snap.get("accounts", "?"))} cuentas activas · {E(snap.get("emails", "?"))} correos en {E(snap.get("threads", "?"))} hilos. <b>Datos reales del buzón: este informe no debe salir de esta máquina.</b></p>'
 if demo:
     db_html += f'<p><span class="lbl">BD demo</span><code>{E(demo.get("path", ""))}</code> · {E(demo.get("accounts", "?"))} cuentas activas · {E(demo.get("emails", "?"))} correos en {E(demo.get("threads", "?"))} hilos · {E(demo.get("tags", "?"))} tags · {E(demo.get("events", "?"))} eventos de calendario · {E(demo.get("tasks", "?"))} tareas · {E(demo.get("drafts", "?"))} borradores · {E(demo.get("embeddings", "?"))} chunks de embeddings. Datos sintéticos (persona Ulises / EmailOps Labs), sin correo real.</p>'
 db_html += '<div class="tablewrap"><table class="tests"><thead><tr><th>Tipo de test</th><th>Base de datos</th></tr></thead><tbody>' + "".join(f'<tr><td>{E(TYPE_LABEL.get(t, t))}</td><td class="det">{E(v)}</td></tr>' for t, v in (dbm.get("by_type") or {}).items()) + "</tbody></table></div>"
@@ -162,7 +164,9 @@ layers_html = "".join(f'<tr class="{ {"ok": "good", "error": "bad", "skipped": "
 dirty = meta.get("dirty") or []
 gc = counts(records)
 
-page = f'''<title>Verificación completa de EmailOps</title>
+PRIVATE = bool(meta.get("private"))
+TITLE = "Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps"
+page = f'''<title>{TITLE}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{{--bg:#F6F7F5;--panel:#FFFFFF;--ink:#1C2430;--muted:#5D6675;--line:#D9DED8;--accent:#1F6F8B;--ok:#2E7D4F;--fail:#B23A3A;--skip:#A66A00;--info:#4A5AA8;--chipbg:#EEF1EC;--badbg:#FBEDED;--evbg:#FAFBF9;color-scheme:light}}
@@ -212,8 +216,9 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 <ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
 </nav>
 <main id="top">
-<div class="eyebrow">Verificación completa · {E(meta.get("tier", ""))}</div>
-<h1>Verificación completa de EmailOps</h1>
+<div class="eyebrow">{"Verificación privada" if PRIVATE else "Verificación completa"} · {E(meta.get("tier", ""))}</div>
+<h1>{TITLE}</h1>
+{'<p class="evalmeta" style="border-color:var(--fail)"><b>Privado.</b> Casos de <code>private-evals/</code> sobre un snapshot del buzón real: remitentes, asuntos y respuestas son datos personales. No publicar ni compartir.</p>' if PRIVATE else ''}
 <p class="muted">Todas las capas de prueba en una pasada, atribuidas por feature. Inicio {E(meta.get("started", ""))}, fin {E(meta.get("finished", ""))}.</p>
 <dl class="meta">
   <div><dt>Worktree</dt><dd>{E(meta.get("worktree", ""))}</dd></div>

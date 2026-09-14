@@ -15,7 +15,8 @@ fi
 
 mkdir -p "$SNAPSHOT_DIR"
 echo "[eval-snapshot] copying source DB from $SOURCE_DATA_DIR -> $SNAPSHOT_DB"
-cp "$SOURCE_DB" "$SNAPSHOT_DB"
+# On APFS `cp -c` clones the 6 GB file instantly instead of streaming it.
+cp -c "$SOURCE_DB" "$SNAPSHOT_DB" 2>/dev/null || cp "$SOURCE_DB" "$SNAPSHOT_DB"
 
 if [ -f "$SOURCE_DB-wal" ]; then
   cp "$SOURCE_DB-wal" "$SNAPSHOT_DIR/"

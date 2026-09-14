@@ -217,6 +217,13 @@ perf budgets. Results are attributed to features through `features.json`.
   `expected_output` golden; the judge (`evals/judge.rs`, same local provider) scores
   `answer_relevancy` / `faithfulness` against it, threshold 0.7. The report shows question,
   answer, golden, judge scores and the collapsible AI trace for failures.
+- **Private run.** `make verify-private` (`scripts/verify_private.sh` → `verify_private.py`) runs the
+  suites that need the real mailbox: `private-evals/chat/cases` through the same judged CLI
+  harness and the private junk golden set, against the `make eval-snapshot` copy of the
+  production DB (`EVAL_SNAPSHOT_DIR`, default `$TMPDIR/eval-snapshot`, with a `models` symlink
+  to the real models dir so the CLI never opens the production data dir). Report under
+  `src-tauri/reports/verify-private/<stamp>-private/informe.html`: real senders, subjects and
+  answers, so it stays on this machine and is never published as an artifact.
 - **Descriptions.** Hover hints per test come from `descriptions/*.json` (`rust`:
   `src-tauri/<file>::<fn>`, `vitest`: `<file>::<full test name>`), falling back to the doc
   comment above `#[test]` or a humanised name. Add an entry for every new test.

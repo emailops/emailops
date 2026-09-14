@@ -289,6 +289,10 @@ deploy:
 verify:
 	bash scripts/verify_all.sh $(ARGS)
 
+# Private evals (real mailbox) against the `make eval-snapshot` copy; report stays local.
+verify-private:
+	bash scripts/verify_private.sh $(ARGS)
+
 # Security audit
 audit:
 	cargo audit --file src-tauri/Cargo.lock
