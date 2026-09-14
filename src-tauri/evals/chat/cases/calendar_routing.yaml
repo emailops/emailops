@@ -18,6 +18,11 @@
 # corpus — the layer where a prompt or model change could still send a calendar
 # question down the retrieval path.
 #
+# WHAT THESE ASSERT
+# The tool call and the answer, not the route: since 2026-09-14 the route is a
+# retrieval hint and every turn carries the calendar tool (docs/DECISIONS.md),
+# so pinning `tools_first` would test the keyword router, not the capability.
+#
 # WHY THESE RUN AGAINST THE GMAIL DEMO ACCOUNT
 # `list_calendar_events` is only offered to Gmail/Outlook accounts with the
 # calendar integration enabled (`ListCalendarEventsTool::is_available`). The
@@ -33,7 +38,6 @@
   account: "ulises.emailopslabs@gmail.com"
   category: calendar
   tier: smoke
-  expected_route: tools_first
   # The pre-fix reply explained it could not call the tool and named it inline.
   # A leaked internal tool name in user-facing prose is a recurring failure in
   # this codebase (see thread_bound.yaml, which guards the same shape for
@@ -55,7 +59,6 @@
   account: "ulises.emailopslabs@gmail.com"
   category: calendar
   tier: smoke
-  expected_route: tools_first
   expected_answer_not_contains:
     - "list_calendar_events"
   expected_output: "The next meeting is “Sprint 6 planning — Faro Logistics”, tomorrow at 10:00 (one hour, Google Meet, with Marisol Vega). Later that day at 16:30 there is the Proton Bridge PR #131 review."
