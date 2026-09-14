@@ -83,6 +83,33 @@ pub(crate) struct EvalRunReport {
     pub cases: Vec<CaseReport>,
 }
 
+#[cfg(feature = "eval")]
+/// One failed row for a case the harness could not run (thread or account
+/// missing from this DB, provider error): the suite goes on and the report
+/// carries the reason instead of dying on the first broken case.
+pub(crate) fn failed_case_report(case: &crate::evals::case_loader::EvalCase, error: &str) -> CaseReport {
+    CaseReport {
+        id: case.id.clone(),
+        tier: case.tier.clone(),
+        passed: false,
+        checks_passed: 0,
+        checks_total: 1,
+        latency_ms: 0,
+        question: case.question.clone(),
+        answer: String::new(),
+        trace: None,
+        expected_output: case.expected_output.clone(),
+        judge: None,
+        checks: vec![CheckReport {
+            name: "run".into(),
+            passed: false,
+            expected: "the case runs to an answer".into(),
+            actual: "the harness could not run it".into(),
+            detail: error.to_string(),
+        }],
+    }
+}
+
 /// Run eval cases filtered by `case` (exact id) and/or `tier`. `cases_dir`
 /// overrides the default case location. Emits one report envelope.
 #[cfg(feature = "eval")]
@@ -144,12 +171,22 @@ pub async fn run_eval(
     };
 
     for c in &selected {
-        let account = resolve_case_account(&session.db, c.account.as_deref(), &session_account)?;
+        let account = match resolve_case_account(&session.db, c.account.as_deref(), &session_account) {
+            Ok(account) => account,
+            Err(e) => {
+                case_reports.push(failed_case_report(c, &e.to_string()));
+                continue;
+            }
+        };
         let model = c.model.as_deref().unwrap_or(&session.model);
 
-        let outcome = harness::run_case(session.db.clone(), &account, model, c)
-            .await
-            .map_err(map_eval_err)?;
+        let outcome = match harness::run_case(session.db.clone(), &account, model, c).await {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                case_reports.push(failed_case_report(c, &map_eval_err(e).to_string()));
+                continue;
+            }
+        };
         let report = metrics::evaluate(c, &outcome).map_err(map_eval_err)?;
 
         let judge_report = match &judge_provider {
@@ -278,7 +315,25 @@ fn resolve_case_account(
 #[cfg(test)]
 #[cfg(feature = "eval")]
 mod tests {
-    use super::{CaseReport, CheckReport};
+    use super::{failed_case_report, CaseReport, CheckReport};
+    use crate::evals::case_loader::EvalCase;
+
+    /// A case the harness cannot even start (thread id that no longer exists,
+    /// account not in this DB) is one failed row, not the end of the suite:
+    /// the other cases still run and the report says why this one did not.
+    #[test]
+    fn a_case_that_cannot_run_is_reported_as_failed_not_fatal() {
+        let case: EvalCase =
+            serde_yaml::from_str("id: broken\nquestion: q\ncategory: c\ntier: smoke\n").expect("minimal case");
+        let report = failed_case_report(&case, "Not found: thread REPLACE_ME");
+        assert!(!report.passed);
+        assert_eq!(report.id, "broken");
+        assert_eq!((report.checks_passed, report.checks_total), (0, 1));
+        assert_eq!(report.checks[0].name, "run");
+        assert!(report.checks[0].detail.contains("REPLACE_ME"));
+        assert!(report.answer.is_empty());
+        assert!(report.judge.is_none());
+    }
 
     #[test]
     fn case_report_carries_question_answer_and_trace_for_debugging() {
