@@ -2505,6 +2505,49 @@ def insert_pending_tasks(conn: sqlite3.Connection, locale: Locale) -> None:
         )
 
 
+def insert_thread_states(conn: sqlite3.Connection, locale: Locale) -> int:
+    """Derive the memory subsystem's per-thread state from the mail itself, the
+    way the extractor would after a sync: a Primary thread whose last message
+    came from a person is awaiting the user; one the user answered last is
+    waiting on them. Automated digests never count. Idempotent (PK upsert), so
+    it runs on fresh builds and on `--append` alike. Feeds `list_open_threads`
+    ("who am I owing a reply to?")."""
+    now = now_s()
+    rows = []
+    for account in (locale.work, locale.personal):
+        # Replies the owner sent sit in the inbox thread with the owner's own
+        # address as sender, so "outbound" is keyed on that address.
+        rows += conn.execute(
+            """SELECT e.account_id, e.thread_id,
+                      MAX(CASE WHEN e.sender_email != ?2 THEN e.timestamp END) AS last_in,
+                      MAX(CASE WHEN e.sender_email = ?2 THEN e.timestamp END) AS last_out,
+                      MAX(e.timestamp) AS last_touched,
+                      MIN(e.subject) AS subject,
+                      GROUP_CONCAT(DISTINCT e.sender_email) AS participants
+               FROM emails e
+               WHERE e.is_deleted = 0 AND e.category = 'primary' AND e.mailbox = 'inbox'
+                 AND e.account_id = ?1
+               GROUP BY e.account_id, e.thread_id""",
+            (account.id, account.email),
+        ).fetchall()
+    own = {locale.work.email, locale.personal.email}
+    n = 0
+    for account_id, thread_id, last_in, last_out, last_touched, subject, participants in rows:
+        people = [p for p in (participants or "").split(",") if p and p not in own and not p.startswith("metrics@")]
+        if not people:
+            continue
+        awaiting = "user" if (last_out or 0) < (last_in or 0) else "them"
+        conn.execute(
+            """INSERT OR REPLACE INTO thread_states
+               (account_id, thread_id, awaiting, last_inbound_at, last_outbound_at, last_touched_at,
+                summary, commitment, deadline_at, participants_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)""",
+            (account_id, thread_id, awaiting, last_in, last_out, last_touched, subject, json.dumps(people), now),
+        )
+        n += 1
+    return n
+
+
 def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
     """Insert the generator's threads and memory facts that an existing demo DB
     does not have yet. Emails match on (sender_email, subject) of the first
@@ -2535,6 +2578,7 @@ def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
             (f"fact_{uuid.uuid4().hex[:12]}", locale.work.id, subject_kind, subject_key, fact, now, now, now, company),
         )
         added["facts"] += 1
+    added["thread_states"] = insert_thread_states(conn, locale)
     return added
 
 
@@ -2593,7 +2637,7 @@ def main() -> int:
                 added = append_missing(conn, locale)
         finally:
             conn.close()
-        print(f"[demo-db] appended {added['threads']} threads and {added['facts']} memory facts to {demo_db}")
+        print(f"[demo-db] appended {added['threads']} threads, {added['facts']} memory facts; {added['thread_states']} thread states refreshed in {demo_db}")
         return 0
 
     if args.refresh_calendar:
@@ -2643,6 +2687,7 @@ def main() -> int:
             insert_attachments_meta(conn, locale)
             insert_pending_tasks(conn, locale)
             insert_memory_facts(conn, locale)
+            insert_thread_states(conn, locale)
             insert_calendar_events(conn, locale)
         n = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
         threads = conn.execute("SELECT COUNT(DISTINCT thread_id) FROM emails").fetchone()[0]
