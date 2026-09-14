@@ -1,12 +1,12 @@
 {
- "commit": "2f524b4",
+ "commit": "068ea3d",
  "date": "2026-09-14",
  "counts": {
-  "ok": 3317,
-  "fail": 0,
+  "ok": 3406,
+  "fail": 10,
   "skip": 12,
-  "info": 1
+  "info": 2
  },
- "tests": 3330,
- "run": "20260914-100346-full"
+ "tests": 3430,
+ "run": "20260914-205927-full"
 }
