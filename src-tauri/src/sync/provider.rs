@@ -236,7 +236,10 @@ fn footer_prefix(language: Language) -> &'static str {
 /// makes most email-client auto-linkers swallow the trailing `)` into the URL,
 /// producing a broken link like `https://getemailops.com)/`.
 pub fn email_footer_plain(language: Language) -> String {
-    format!("\n\n--\n{} EmailOps\nhttps://getemailops.com", footer_prefix(language))
+    format!(
+        "\n\n--\n{} EmailOps\nhttps://getemailops.com/?utm_source=email_footer",
+        footer_prefix(language)
+    )
 }
 
 /// HTML footer appended to every outgoing email, in the user's UI language.
@@ -244,7 +247,7 @@ pub fn email_footer_html(language: Language) -> String {
     format!(
         "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\">\
          <p style=\"color:#888;font-size:12px;margin:0\">{} \
-         <a href=\"https://getemailops.com\" style=\"color:#888\">EmailOps</a></p>",
+         <a href=\"https://getemailops.com/?utm_source=email_footer\" style=\"color:#888\">EmailOps</a></p>",
         footer_prefix(language)
     )
 }
@@ -1655,7 +1658,7 @@ mod tests {
                 !footer.contains("Emailops"),
                 "{lang:?} footer must not lowercase the O: {footer}"
             );
-            assert!(footer.contains("https://getemailops.com"));
+            assert!(footer.contains("https://getemailops.com/?utm_source=email_footer"));
         }
         assert!(email_footer_plain(Language::En).contains("Sent with EmailOps"));
         assert!(email_footer_plain(Language::Es).contains("Enviado con EmailOps"));
@@ -1672,7 +1675,7 @@ mod tests {
                 "{lang:?} html footer must link EmailOps: {footer}"
             );
             assert!(!footer.contains(">Emailops</a>"));
-            assert!(footer.contains("href=\"https://getemailops.com\""));
+            assert!(footer.contains("href=\"https://getemailops.com/?utm_source=email_footer\""));
         }
         assert!(email_footer_html(Language::En).contains("Sent with <a"));
         assert!(email_footer_html(Language::Es).contains("Enviado con <a"));
