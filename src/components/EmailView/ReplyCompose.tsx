@@ -27,7 +27,11 @@ interface ReplyComposeProps {
   }) => Promise<void>;
   onCancel: () => void;
   initialBody: string;
-  mode: 'reply' | 'reply-all';
+  mode: 'reply' | 'reply-all' | 'forward';
+  /** Attachments carried over from the message being forwarded. Pre-attached
+   *  rather than offered, because a forward that silently drops the boarding
+   *  pass is worse than useless. */
+  initialAttachments?: EmailAttachment[];
   /** True while an AI draft is being generated for this reply. Disables the
    *  textarea and shows a spinner inline so the user knows the draft is
    *  being produced on the AI queue. */
@@ -111,6 +115,7 @@ export function ReplyCompose({
   onCancel,
   initialBody,
   mode,
+  initialAttachments = [],
   isLoadingDraft = false,
   draftSources = [],
 }: ReplyComposeProps) {
@@ -135,6 +140,12 @@ export function ReplyCompose({
 
   // Compute initial recipients
   const initialTo = (() => {
+    // A forward goes to someone the original had nothing to do with — the whole
+    // point is that the user chooses. Prefilling anyone here risks sending
+    // someone else's mail back to its own sender.
+    if (mode === 'forward') {
+      return [];
+    }
     if (mode === 'reply') {
       return computeReplyRecipients(email, threadEmails, selfEmails);
     }
@@ -164,7 +175,17 @@ export function ReplyCompose({
   const [toRecipients, setToRecipients] = useState<string[]>(initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [showCc, setShowCc] = useState(false);
-  const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
+  // The forwarded files are fetched and base64-encoded AFTER this panel opens,
+  // so they arrive as a prop change rather than as an initial value. Applied
+  // once, by identity, and appended — anything the user attached in the
+  // meantime survives.
+  const appliedInitialAttachments = useRef(initialAttachments);
+  useEffect(() => {
+    if (appliedInitialAttachments.current === initialAttachments || initialAttachments.length === 0) return;
+    appliedInitialAttachments.current = initialAttachments;
+    setAttachments((existing) => [...initialAttachments, ...existing]);
+  }, [initialAttachments]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Autocomplete state
@@ -513,7 +534,13 @@ export function ReplyCompose({
           disabled={isSending || isLoadingDraft || toRecipients.length === 0 || !bodyHtml.trim()}
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isSending ? 'Sending...' : mode === 'reply-all' ? 'Reply All' : 'Send Reply'}
+          {isSending
+            ? t('compose:sending')
+            : mode === 'forward'
+              ? t('compose:forward')
+              : mode === 'reply-all'
+                ? 'Reply All'
+                : 'Send Reply'}
         </button>
       </div>
 

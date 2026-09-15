@@ -84,5 +84,14 @@
     "translating": "Übersetzen…",
     "undo": "Übersetzung rückgängig machen",
     "failed": "Übersetzung fehlgeschlagen: {{error}}"
+  },
+  "forwardTitle": "Diese Nachricht an jemanden weiterleiten",
+  "forwarded": {
+    "header": "Weitergeleitete Nachricht",
+    "from": "Von",
+    "date": "Datum",
+    "subject": "Betreff",
+    "to": "An",
+    "cc": "Cc"
   }
 }

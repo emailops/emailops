@@ -2,7 +2,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
-import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource } from '@/lib/api';
+import { useFormatters } from '@/hooks/useFormatters';
+import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
 import * as api from '@/lib/api';
 import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
@@ -12,8 +13,28 @@ import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
+import { forwardQuote, forwardSubject, loadForwardBody } from './forward';
 import { ReplyCompose } from './ReplyCompose';
 import { ThreadEmailItem } from './ThreadEmailItem';
+
+/** Date + time, because a forwarded header that says only the day loses the
+ *  ordering the recipient needs to read a thread. */
+const EMAIL_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+};
+
+/** Total attachment bytes a forward will carry. Providers reject well before
+ *  this; the cap exists so one huge file cannot lock the webview while it is
+ *  base64-encoded. Anything skipped is logged — never dropped silently. */
+const MAX_FORWARD_BYTES = 20 * 1024 * 1024;
+
+/** Stable empty array — the compose panel applies `initialAttachments` by
+ *  identity, so a fresh `[]` on every render would re-run that effect. */
+const EMPTY_ATTACHMENTS: EmailAttachment[] = [];
 
 interface EmailViewProps {
   threadEmails: Email[];
@@ -81,7 +102,8 @@ export function EmailView({
   onOpenInTab,
   onChatAboutThread,
 }: EmailViewProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'compose']);
+  const fmt = useFormatters();
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
   const [threadExpanded, setThreadExpanded] = useState(false);
   const [lightboxMeta, setLightboxMeta] = useState<EmailAttachmentMeta | null>(null);
@@ -104,7 +126,10 @@ export function EmailView({
   const [threadMatchIdx, setThreadMatchIdx] = useState(0);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [isReplyOpen, setIsReplyOpen] = useState(false);
-  const [replyMode, setReplyMode] = useState<'reply' | 'reply-all'>('reply');
+  const [replyMode, setReplyMode] = useState<'reply' | 'reply-all' | 'forward'>('reply');
+  // Attachments carried over from the message being forwarded, loaded on demand
+  // — a forward that drops the boarding pass is worse than useless.
+  const [forwardAttachments, setForwardAttachments] = useState<EmailAttachment[]>(EMPTY_ATTACHMENTS);
   const [replyBody, setReplyBody] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
@@ -323,6 +348,41 @@ export function EmailView({
 
   const latestEmail = latestEmailForEffect!;
 
+  /** Pull the message's own attachments in so the forward carries them.
+   *
+   *  Runs after the compose panel is already open: the user can start typing
+   *  while a large PDF is still being encoded, and a failure here degrades to
+   *  "forward without attachments" plus a log line rather than blocking the
+   *  send. */
+  const loadForwardAttachments = async () => {
+    try {
+      const metas = await api.getEmailAttachmentMetas(latestEmail.accountId, latestEmail.id);
+      if (metas.length === 0) return;
+      const carried: EmailAttachment[] = [];
+      const skipped: string[] = [];
+      let bytes = 0;
+      for (const meta of metas) {
+        if (bytes + meta.fileSize > MAX_FORWARD_BYTES) {
+          skipped.push(meta.filename);
+          continue;
+        }
+        const data = await api.fetchEmailAttachmentBytes(
+          latestEmail.accountId,
+          latestEmail.id,
+          meta.providerAttachmentId,
+        );
+        carried.push({ filename: meta.filename, mimeType: meta.mimeType, data });
+        bytes += meta.fileSize;
+      }
+      setForwardAttachments(carried);
+      if (skipped.length > 0) {
+        addLog('error', 'sync', `Too large to forward, attach manually: ${skipped.join(', ')}`);
+      }
+    } catch (err) {
+      addLog('error', 'sync', `Could not attach the original files to the forward: ${err}`);
+    }
+  };
+
   const toggleEmailExpanded = (emailId: string) => {
     setExpandedEmails((prev) => {
       const next = new Set(prev);
@@ -362,6 +422,7 @@ export function EmailView({
               onClick={() => {
                 setReplyMode('reply');
                 setReplyBody('');
+                setForwardAttachments(EMPTY_ATTACHMENTS);
                 setIsReplyOpen((value) => !value);
               }}
               className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
@@ -372,11 +433,46 @@ export function EmailView({
               onClick={() => {
                 setReplyMode('reply-all');
                 setReplyBody('');
+                setForwardAttachments(EMPTY_ATTACHMENTS);
                 setIsReplyOpen((value) => !value);
               }}
               className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
             >
               {t('inbox:emailView.replyAll')}
+            </button>
+            <button
+              onClick={async () => {
+                const body = await loadForwardBody(
+                  latestEmail,
+                  () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
+                  (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
+                );
+                setReplyMode('forward');
+                setReplyBody(
+                  forwardQuote(
+                    { ...latestEmail, body },
+                    {
+                      header: t('compose:forwarded.header'),
+                      from: t('compose:forwarded.from'),
+                      date: t('compose:forwarded.date'),
+                      subject: t('compose:forwarded.subject'),
+                      to: t('compose:forwarded.to'),
+                      cc: t('compose:forwarded.cc'),
+                    },
+                    (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
+                  ),
+                );
+                setForwardAttachments(EMPTY_ATTACHMENTS);
+                setIsReplyOpen(true);
+                void loadForwardAttachments();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 text-gray-700 text-sm font-medium rounded border border-gray-300 hover:bg-gray-200 transition-colors"
+              title={t('compose:forwardTitle')}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M4 5l7 7-7 7" />
+              </svg>
+              {t('compose:forward')}
             </button>
             {aiDraftsEnabled && (
               <button
@@ -530,6 +626,7 @@ export function EmailView({
             defaultAccountId={activeAccountId || latestEmail.accountId}
             mode={replyMode}
             initialBody={replyBody}
+            initialAttachments={forwardAttachments}
             isLoadingDraft={isGeneratingDraft}
             draftSources={draftSources}
             onCancel={() => {
@@ -548,23 +645,41 @@ export function EmailView({
               inlineImages,
               attachments,
             }) => {
-              addLog('info', 'sync', `Sending reply to ${toEmails.join(', ')}...`);
-              await api.sendReply(
-                latestEmail.id,
-                replyText,
-                fromAccountId,
-                toEmails,
-                ccEmails,
-                bodyHtml,
-                inlineImages,
-                attachments,
-              );
+              const isForward = replyMode === 'forward';
+              addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
+              if (isForward) {
+                // A forward is a NEW message, not a reply: it must not carry
+                // In-Reply-To/References, or the recipient's client files it
+                // into a conversation they were never part of.
+                await api.sendNewEmail(
+                  fromAccountId,
+                  toEmails,
+                  ccEmails,
+                  forwardSubject(latestEmail.subject),
+                  replyText,
+                  attachments,
+                  bodyHtml,
+                  inlineImages,
+                );
+              } else {
+                await api.sendReply(
+                  latestEmail.id,
+                  replyText,
+                  fromAccountId,
+                  toEmails,
+                  ccEmails,
+                  bodyHtml,
+                  inlineImages,
+                  attachments,
+                );
+              }
               // The backend inserted the optimistic Sent row before the send
               // command returned (and already enqueued the follow-up account
               // sync) — refetching the thread shows the reply instantly.
               await refreshThread(latestEmail.accountId, latestEmail.threadId);
               bumpSentRefresh();
-              addLog('success', 'sync', `Reply sent to ${toEmails.join(', ')}`);
+              addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
+              setForwardAttachments(EMPTY_ATTACHMENTS);
               setIsReplyOpen(false);
             }}
           />

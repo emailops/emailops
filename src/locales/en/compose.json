@@ -84,5 +84,14 @@
     "translating": "Translating…",
     "undo": "Undo translation",
     "failed": "Translation failed: {{error}}"
+  },
+  "forwardTitle": "Forward this message to someone else",
+  "forwarded": {
+    "header": "Forwarded message",
+    "from": "From",
+    "date": "Date",
+    "subject": "Subject",
+    "to": "To",
+    "cc": "Cc"
   }
 }
