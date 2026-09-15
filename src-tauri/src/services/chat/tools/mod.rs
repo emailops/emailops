@@ -1183,6 +1183,145 @@ mod tests {
         assert!(!out.contains("id=e2"), "output was: {}", out);
     }
 
+    /// A search row is one representative per thread, so a six-message
+    /// exchange shows up as a single row. The row must carry the thread's
+    /// size and the output must say how to read the rest; otherwise the
+    /// model summarises the whole exchange from that one message.
+    #[test]
+    fn search_emails_row_reports_thread_size_and_hints_get_thread() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+        seed_email(
+            &db,
+            "m3",
+            "acc",
+            "t1",
+            "Me",
+            "me@example.com",
+            "Re: Launch",
+            "follow-up",
+            300,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("id=m2"), "output was: {}", out);
+        assert!(out.contains("messages=3"), "output was: {}", out);
+        assert!(out.contains("get_thread(thread_id)"), "output was: {}", out);
+    }
+
+    #[test]
+    fn search_emails_single_message_thread_has_no_thread_size_or_hint() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "s1",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Hello",
+            "hi",
+            100,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("id=s1"), "output was: {}", out);
+        assert!(!out.contains("messages="), "output was: {}", out);
+        assert!(!out.contains("get_thread"), "output was: {}", out);
+    }
+
+    /// The count must match what `get_thread` returns, or the model expects
+    /// messages the follow-up call never delivers.
+    #[test]
+    fn search_emails_thread_size_skips_deleted_messages() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+        seed_email(
+            &db,
+            "m3",
+            "acc",
+            "t1",
+            "Me",
+            "me@example.com",
+            "Re: Launch",
+            "follow-up",
+            300,
+        );
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'm1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("messages=2"), "output was: {}", out);
+    }
+
+    #[test]
+    fn search_emails_with_bodies_row_reports_thread_size() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(out.contains("body:"), "output was: {}", out);
+        assert!(out.contains("messages=2"), "output was: {}", out);
+    }
+
     /// Regression: `search_emails(from=alice)` used to return the latest email
     /// in any thread containing a alice message — which for a reply chain is the
     /// user's own reply TO alice, not alice's email. The tool must return the

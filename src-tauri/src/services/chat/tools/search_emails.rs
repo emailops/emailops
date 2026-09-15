@@ -352,9 +352,9 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             Err(e) => Ok(ToolOutput::text(format!("Search error: {}", e))),
             Ok(emails) if !emails.is_empty() => {
                 let mut body = if include_bodies {
-                    format_search_emails_output_with_bodies(&emails, &fetch_bodies(&emails))
+                    render_rows(ctx, &emails, Some(&fetch_bodies(&emails)))
                 } else {
-                    format_search_emails_output(&emails)
+                    render_rows(ctx, &emails, None)
                 };
                 // A full page is only a slice: probe how many threads match
                 // in total so the model can say "at least 156", not "25".
@@ -416,7 +416,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                                 "(no matches in the requested date window — \
 showing recent matches without since/until instead)\n",
                             );
-                            out.push_str(&format_search_emails_output(emails));
+                            out.push_str(&render_rows(ctx, emails, None));
                             return Ok(ToolOutput::text_with_email_refs(out, ids(emails)));
                         }
                         Ok(_) => {
@@ -443,7 +443,7 @@ showing recent matches without since/until instead)\n",
                     unread_only,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");
-                    out.push_str(&format_search_emails_output(&merged));
+                    out.push_str(&render_rows(ctx, &merged, None));
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
@@ -526,12 +526,34 @@ impl SearchEmailsTool {
                 .filter(|(id, _)| kept.iter().any(|e| &e.id == id))
                 .map(|(id, b)| (id, thread_clean::clean_email_body(&b, per_email)))
                 .collect();
-            out.push_str(&format_search_emails_output_with_bodies(&kept, &cleaned));
+            out.push_str(&render_rows(ctx, &kept, Some(&cleaned)));
         } else {
-            out.push_str(&format_search_emails_output(&kept));
+            out.push_str(&render_rows(ctx, &kept, None));
         }
         let ids: Vec<String> = kept.iter().map(|e| e.id.clone()).collect();
         Ok(ToolOutput::text_with_email_refs(out, ids))
+    }
+}
+
+/// Formats result rows with each thread's message count, so the model can
+/// tell a lone email from the latest message of a longer exchange. A failed
+/// count only drops the `messages=` field; the results still go out.
+fn render_rows(
+    ctx: &ToolCtx<'_>,
+    rows: &[crate::models::Email],
+    bodies: Option<&std::collections::HashMap<String, String>>,
+) -> String {
+    let threads: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|e| (e.account_id.as_str(), e.thread_id.as_str()))
+        .collect();
+    let sizes = emails::thread_sizes(ctx.db, &threads).unwrap_or_else(|e| {
+        crate::services::logger::log("warn", "chat", format!("search_emails: thread sizes unavailable ({e})"));
+        std::collections::HashMap::new()
+    });
+    match bodies {
+        Some(bodies) => format_search_emails_output_with_bodies(rows, bodies, &sizes),
+        None => format_search_emails_output(rows, &sizes),
     }
 }
 
@@ -665,7 +687,10 @@ mod tests {
     fn result_rows_mark_unread_mail_and_only_unread_mail() {
         let mut read = email("r", "alice", "me@x.com", 100);
         read.is_read = true;
-        let out = crate::services::chat::format_search_emails_output(&[read, email("u", "bob", "me@x.com", 200)]);
+        let out = crate::services::chat::format_search_emails_output(
+            &[read, email("u", "bob", "me@x.com", 200)],
+            &std::collections::HashMap::new(),
+        );
         let row = |id: &str| {
             out.lines()
                 .find(|l| l.contains(&format!("id={id} ")))

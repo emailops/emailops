@@ -380,6 +380,33 @@ impl Database {
         Ok(result)
     }
 
+    /// Message count per `(account_id, thread_id)` for the given threads —
+    /// thread ids are only unique per account. Counts the rows `get_thread`
+    /// returns (not deleted), so a caller quoting the count never promises
+    /// messages that call leaves out.
+    pub fn thread_sizes(&self, threads: &[(&str, &str)]) -> Result<std::collections::HashMap<(String, String), i64>> {
+        let thread_ids: std::collections::BTreeSet<&str> = threads.iter().map(|(_, t)| *t).collect();
+        let placeholders = vec!["?"; thread_ids.len()].join(", ");
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT account_id, thread_id, COUNT(*) FROM emails
+             WHERE thread_id IN ({placeholders}) AND is_deleted = 0
+             GROUP BY account_id, thread_id"
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(thread_ids), |row| {
+            Ok((
+                (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut sizes = std::collections::HashMap::new();
+        for row in rows {
+            let (key, n) = row?;
+            sizes.insert(key, n);
+        }
+        Ok(sizes)
+    }
+
     /// Fetch the body for a single email from the email_bodies table.
     /// Returns empty string if no row exists (email awaiting re-download).
     pub fn get_email_body(&self, email_id: &str) -> Result<String> {

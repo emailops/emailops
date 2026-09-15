@@ -61,6 +61,15 @@ pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Resu
     db.get_thread(account_id, thread_id)
 }
 
+/// Message count per `(account_id, thread_id)`. Backs the `messages=N` field
+/// on chat search rows.
+pub fn thread_sizes(
+    db: &Arc<Database>,
+    threads: &[(&str, &str)],
+) -> Result<std::collections::HashMap<(String, String), i64>> {
+    db.thread_sizes(threads)
+}
+
 /// Fetch the full body of one email by id. Backs the chat `get_email_body`
 /// tool and the redownload flow.
 pub fn get_email_body(db: &Arc<Database>, email_id: &str) -> Result<String> {

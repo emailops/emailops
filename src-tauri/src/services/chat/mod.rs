@@ -356,7 +356,14 @@ pub(crate) fn or_fallback_search(
     Some(combined)
 }
 
-pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
+/// Leads a search result in which some row stands for a longer thread. Only a
+/// hint: listing or counting questions don't need the rest of the thread.
+const THREAD_SIZE_HINT: &str = "(messages=N: the row is the latest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n";
+
+pub(crate) fn format_search_emails_output(
+    emails: &[Email],
+    thread_sizes: &std::collections::HashMap<(String, String), i64>,
+) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
     let mut other: Vec<&Email> = Vec::new();
@@ -369,6 +376,17 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
     }
 
     let mut out = String::new();
+    // A row is one representative per thread; say how long that thread is
+    // so the model doesn't summarise an exchange from its latest message.
+    let size_of = |e: &Email| {
+        thread_sizes
+            .get(&(e.account_id.clone(), e.thread_id.clone()))
+            .copied()
+            .filter(|n| *n > 1)
+    };
+    if emails.iter().any(|e| size_of(e).is_some()) {
+        out.push_str(THREAD_SIZE_HINT);
+    }
     // Token-efficiency: the `## Primary`/`## Updates` section headers already
     // convey the category, so emitting `category=` on every row is redundant
     // context bloat. Only the "Other" bucket needs the per-row field because
@@ -391,6 +409,9 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            if let Some(n) = size_of(email) {
+                out.push_str(&format!(" messages={n}"));
+            }
             // Read state is data the model may be asked about; it must never
             // guess it from an email's age or from reply state.
             if !email.is_read {
@@ -418,6 +439,7 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
 pub(crate) fn format_search_emails_output_with_bodies(
     emails: &[Email],
     bodies: &std::collections::HashMap<String, String>,
+    thread_sizes: &std::collections::HashMap<(String, String), i64>,
 ) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
@@ -431,6 +453,17 @@ pub(crate) fn format_search_emails_output_with_bodies(
     }
 
     let mut out = String::new();
+    // A row is one representative per thread; say how long that thread is
+    // so the model doesn't summarise an exchange from its latest message.
+    let size_of = |e: &Email| {
+        thread_sizes
+            .get(&(e.account_id.clone(), e.thread_id.clone()))
+            .copied()
+            .filter(|n| *n > 1)
+    };
+    if emails.iter().any(|e| size_of(e).is_some()) {
+        out.push_str(THREAD_SIZE_HINT);
+    }
     let mut render = |header: &str, group: &[&Email], show_category: bool| {
         if group.is_empty() {
             return;
@@ -447,6 +480,9 @@ pub(crate) fn format_search_emails_output_with_bodies(
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            if let Some(n) = size_of(email) {
+                out.push_str(&format!(" messages={n}"));
+            }
             // Read state is data the model may be asked about; it must never
             // guess it from an email's age or from reply state.
             if !email.is_read {
