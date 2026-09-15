@@ -1118,7 +1118,9 @@ def populate_prospect_requests(conn: sqlite3.Connection, locale: Locale) -> None
             mailbox="inbox",
             category="primary",
         )
-        insert_tags(conn, email_id, subject, body, email)
+        # A prospect's inquiry is a first contact by construction: label it with
+        # the classifier's `introduction` intent, as real mailboxes carry it.
+        insert_tags(conn, email_id, subject, body, email, intent="introduction")
 
 
 def populate_support_emails(conn: sqlite3.Connection, locale: Locale) -> None:
@@ -1878,9 +1880,14 @@ def company_label_for(sender_email: str) -> str:
     return stem if stem else domain
 
 
-def insert_tags(conn: sqlite3.Connection, email_id: str, subject: str, body: str, sender_email: str) -> None:
+def insert_tags(
+    conn: sqlite3.Connection, email_id: str, subject: str, body: str, sender_email: str, intent: str | None = None
+) -> None:
+    """Tag an email the way the app's classifier would. `intent` labels content
+    whose kind is known by construction (e.g. a prospect's first contact);
+    otherwise it is inferred from the text."""
     now = now_s()
-    intent = infer_intent(subject, body)
+    intent = intent or infer_intent(subject, body)
     topic = infer_topic(sender_email)
     company = company_label_for(sender_email)
     rows: list[tuple[str, str]] = [("intent", intent), ("topic", topic)]
