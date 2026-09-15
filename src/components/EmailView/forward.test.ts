@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import type { Email } from '@/types';
 
-import { forwardQuote, forwardSubject } from './forward';
+import { forwardQuote, forwardSubject, loadForwardBody } from './forward';
 
 const LABELS = {
   header: 'Forwarded message',
@@ -20,7 +20,9 @@ function email(overrides: Partial<Email> = {}): Email {
     threadId: 't1',
     messageId: '<m1@example.test>',
     subject: 'Booking confirmed',
-    sender: 'Bookings <bookings@example.test>',
+    // Sync stores the display name and the address in separate fields; the
+    // name never carries the address.
+    sender: 'Bookings',
     senderEmail: 'bookings@example.test',
     recipients: ['me@example.test'],
     cc: [],
@@ -81,5 +83,50 @@ describe('forwardQuote', () => {
   test('falls back to the bare address when there is no display name', () => {
     const quote = forwardQuote(email({ sender: '' }), LABELS, fmt);
     expect(quote).toContain('From: bookings@example.test');
+  });
+
+  /// Forwarding exists to pass the message on — headers alone tell the
+  /// recipient that something was sent, not what it said.
+  test('carries the original message below the headers', () => {
+    const quote = forwardQuote(email({ body: '<div>Hi there,<br><br>The booking is attached.</div>' }), LABELS, fmt);
+    expect(quote).toContain('Hi there,\n\nThe booking is attached.');
+    expect(quote.indexOf('The booking is attached.')).toBeGreaterThan(quote.indexOf('To: me@example.test'));
+  });
+});
+
+/// A thread loads without bodies — only the selected message has one — so the
+/// message being forwarded may still need its body fetched.
+describe('loadForwardBody', () => {
+  test('uses the body the thread already has', async () => {
+    const body = await loadForwardBody(
+      email({ body: '<p>already here</p>' }),
+      async () => '<p>fetched</p>',
+      () => {},
+    );
+    expect(body).toBe('<p>already here</p>');
+  });
+
+  test('fetches the body when the thread arrived without it', async () => {
+    const body = await loadForwardBody(
+      email({ body: '' }),
+      async () => '<p>fetched</p>',
+      () => {},
+    );
+    expect(body).toBe('<p>fetched</p>');
+  });
+
+  /// The attachments still travel, so a forward without the original text is
+  /// worth sending — but the user has to be told why the text is missing.
+  test('degrades to no body, and reports why, when the fetch fails', async () => {
+    const errors: unknown[] = [];
+    const body = await loadForwardBody(
+      email({ body: '' }),
+      async () => {
+        throw new Error('database is locked');
+      },
+      (err) => errors.push(err),
+    );
+    expect(body).toBe('');
+    expect(errors).toHaveLength(1);
   });
 });

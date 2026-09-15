@@ -13,7 +13,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
-import { forwardQuote, forwardSubject } from './forward';
+import { forwardQuote, forwardSubject, loadForwardBody } from './forward';
 import { ReplyCompose } from './ReplyCompose';
 import { ThreadEmailItem } from './ThreadEmailItem';
 
@@ -441,11 +441,16 @@ export function EmailView({
               {t('inbox:emailView.replyAll')}
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
+                const body = await loadForwardBody(
+                  latestEmail,
+                  () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
+                  (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
+                );
                 setReplyMode('forward');
                 setReplyBody(
                   forwardQuote(
-                    latestEmail,
+                    { ...latestEmail, body },
                     {
                       header: t('compose:forwarded.header'),
                       from: t('compose:forwarded.from'),
