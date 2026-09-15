@@ -67,11 +67,11 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         // `from_str` would reject, dropping an otherwise-good call. A block
         // with no leading parseable value is malformed — skip and keep
         // scanning.
-        let Some(value) = serde_json::Deserializer::from_str(inner)
-            .into_iter::<serde_json::Value>()
-            .next()
-            .and_then(|r| r.ok())
-        else {
+        let Some(value) = first_json_value(inner).or_else(|| {
+            // Qwen 3.6 also drops the `,"arguments"` key, leaving the args
+            // object hanging off the name: `{"name":"x":{…}}`.
+            repair_missing_arguments_key(inner).and_then(|fixed| first_json_value(&fixed))
+        }) else {
             continue;
         };
         let Some(obj) = value.as_object() else { continue };
@@ -127,6 +127,30 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         });
     }
     out
+}
+
+/// First complete JSON value in `s`, ignoring trailing garbage.
+fn first_json_value(s: &str) -> Option<serde_json::Value> {
+    serde_json::Deserializer::from_str(s)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(|r| r.ok())
+}
+
+/// Rewrite `{"name":"x":{…}}` (the `,"arguments"` key dropped) into the
+/// canonical `{"name":"x","arguments":{…}}`. `None` for any other shape.
+/// The turn loop's text salvager mirrors this (this module is feature-gated).
+fn repair_missing_arguments_key(inner: &str) -> Option<String> {
+    let rest = inner.trim_start().strip_prefix('{')?.trim_start();
+    let rest = rest
+        .strip_prefix("\"name\"")?
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let (name, after) = (&rest[..end], rest[end + 1..].trim_start().strip_prefix(':')?);
+    Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
 }
 
 /// True when the raw generation `text` has just completed a tool call that
@@ -377,6 +401,23 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "search_emails");
         assert_eq!(calls[0].function.arguments, json!({"from":"sharique","limit":25}));
+    }
+
+    #[test]
+    fn missing_arguments_key_between_name_and_args_is_repaired() {
+        // Verbatim production emission (Qwen 3.6 35B): the `,"arguments"` key
+        // is dropped, so the args object hangs off the name string. Invalid
+        // JSON; before the repair the block vanished and the round reported
+        // zero tool calls.
+        let text =
+            "<tool_call>{\"name\":\"search_emails\":{\"unread\":true,\"order\":\"oldest\",\"limit\":1}}\n</tool_call>";
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            json!({"unread":true,"order":"oldest","limit":1})
+        );
     }
 
     #[test]

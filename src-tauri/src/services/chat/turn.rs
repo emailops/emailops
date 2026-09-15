@@ -476,6 +476,8 @@ async fn dispatch_tool(
 ) -> DispatchedTool {
     match registry.get(name, db.as_ref()) {
         Some(tool) => {
+            let mut args = args;
+            tools::coerce_args_to_schema(&mut args, &tool.parameters_schema_for(db.as_ref()));
             let ctx = tools::ToolCtx {
                 db,
                 account_id,
@@ -756,6 +758,22 @@ fn parse_first_json_value(s: &str) -> Option<serde_json::Value> {
         .ok()
 }
 
+/// Rewrite `{"name":"x":{…}}` (Qwen 3.6 dropped the `,"arguments"` key) into
+/// the canonical `{"name":"x","arguments":{…}}`. `None` for any other shape.
+/// Mirrors the runtime parser's repair, which lives behind the llamacpp feature.
+fn repair_missing_arguments_key(inner: &str) -> Option<String> {
+    let rest = inner.trim_start().strip_prefix('{')?.trim_start();
+    let rest = rest
+        .strip_prefix("\"name\"")?
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let (name, after) = (&rest[..end], rest[end + 1..].trim_start().strip_prefix(':')?);
+    Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
+}
+
 /// Parse the JSON body of a `<tool_call>{…}</tool_call>` block (Qwen 3.6's
 /// shape, as opposed to the `<function=>` Hermes form). Mirrors the leniency
 /// of the runtime's native Qwen parser: hoists a `name` nested inside
@@ -767,7 +785,8 @@ fn parse_first_json_value(s: &str) -> Option<serde_json::Value> {
 fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
-    let value = parse_first_json_value(inner)?;
+    let value = parse_first_json_value(inner)
+        .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))?;
     let obj = value.as_object()?;
     let mut arguments = obj.get("arguments").cloned().unwrap_or_else(|| {
         // Flattened shape: the model dropped the `arguments` wrapper and put
@@ -6596,6 +6615,21 @@ Preséntalos en una tabla markdown …";
         assert_eq!(
             calls[0].function.arguments,
             serde_json::json!({"from":"sharique","limit":25})
+        );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_repairs_a_missing_arguments_key() {
+        // Verbatim production emission (Qwen 3.6 35B): `{"name":"x":{…}}`,
+        // the `,"arguments"` key dropped. Mirrors the runtime parser's repair.
+        let text =
+            "<tool_call>{\"name\":\"search_emails\":{\"unread\":true,\"order\":\"oldest\",\"limit\":1}}\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            serde_json::json!({"unread":true,"order":"oldest","limit":1})
         );
     }
 

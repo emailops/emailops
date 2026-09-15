@@ -410,6 +410,35 @@ fn tool_arg_signature(schema: &serde_json::Value) -> String {
     parts.join(", ")
 }
 
+/// Models sometimes quote scalars (`"unread":"true"`, `"limit":"5"`), and the
+/// tools read them with `as_bool()` / `as_i64()`, which drop a string without a
+/// word. Convert a string argument to the boolean or integer its schema
+/// property declares. A string that is not a valid value for that type, or a
+/// key the schema does not declare, is left for the tool's own validation.
+pub(crate) fn coerce_args_to_schema(args: &mut serde_json::Value, schema: &serde_json::Value) {
+    let (Some(args), Some(props)) = (
+        args.as_object_mut(),
+        schema.get("properties").and_then(|p| p.as_object()),
+    ) else {
+        return;
+    };
+    for (key, value) in args.iter_mut() {
+        let Some(text) = value.as_str().map(str::trim) else {
+            continue;
+        };
+        let declared = props.get(key).and_then(|p| p.get("type")).and_then(|t| t.as_str());
+        let coerced = match declared {
+            Some("boolean") if text.eq_ignore_ascii_case("true") => Some(serde_json::Value::Bool(true)),
+            Some("boolean") if text.eq_ignore_ascii_case("false") => Some(serde_json::Value::Bool(false)),
+            Some("integer") => text.parse::<i64>().ok().map(serde_json::Value::from),
+            _ => None,
+        };
+        if let Some(c) = coerced {
+            *value = c;
+        }
+    }
+}
+
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
@@ -1345,6 +1374,54 @@ mod tests {
             &arg(serde_json::json!({ "from": "ana@example.com", "order": "oldest", "limit": 1 })),
         );
         assert!(out.contains("id=e1") && !out.contains(" unread"), "{out}");
+    }
+
+    /// Models sometimes quote scalars (`"unread":"true"`, `"limit":"1"`).
+    /// Dispatch reads them as the type the tool's schema declares, so the
+    /// filter applies instead of being silently dropped.
+    #[test]
+    fn dispatch_reads_quoted_scalars_as_their_schema_type() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        seed_email(&db, "e3", "acc", "t3", "Ana", "ana@example.com", "Tres", "c", t + 300);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "unread": "true", "order": "oldest", "limit": "1" })),
+        );
+        assert!(out.contains("id=e2"), "{out}");
+        assert!(!out.contains("id=e1") && !out.contains("id=e3"), "{out}");
+    }
+
+    #[test]
+    fn coerce_args_to_schema_converts_only_declared_scalar_strings() {
+        let schema = serde_json::json!({ "type": "object", "properties": {
+            "unread": { "type": "boolean" },
+            "limit": { "type": "integer" },
+            "from": { "type": "string" },
+        }});
+        let mut args = serde_json::json!({
+            "unread": "True", "limit": " 5 ", "from": "7", "extra": "true",
+        });
+        coerce_args_to_schema(&mut args, &schema);
+        assert_eq!(
+            args,
+            serde_json::json!({ "unread": true, "limit": 5, "from": "7", "extra": "true" })
+        );
+
+        // A string that is not a valid value for the declared type stays as
+        // it was, so the tool's own validation still reports it.
+        let mut bad = serde_json::json!({ "unread": "yes", "limit": "many" });
+        coerce_args_to_schema(&mut bad, &schema);
+        assert_eq!(bad, serde_json::json!({ "unread": "yes", "limit": "many" }));
     }
 
     /// "últimos correos de prospects": the literal word matches nothing, but
