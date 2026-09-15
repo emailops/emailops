@@ -312,8 +312,7 @@ pub fn sender_display_name(account: &Account) -> Option<&str> {
 
 /// Rename `account_id`. The name is the sender name on every message sent from
 /// the account, so line breaks and other control characters are rejected. A
-/// blank name falls back to the address: the "no display name" state an account
-/// added without one starts in.
+/// blank name is stored as no name; readers fall back to the address.
 pub fn update_account_name(db: &Arc<Database>, account_id: &str, name: &str) -> Result<Account> {
     let account = db
         .get_account(account_id)?
@@ -325,14 +324,38 @@ pub fn update_account_name(db: &Arc<Database>, account_id: &str, name: &str) -> 
             "Sender name must not contain line breaks or control characters".to_string(),
         ));
     }
-    let name = if name.is_empty() {
-        account.email.clone()
-    } else {
-        name.to_string()
-    };
+    let name = name.to_string();
 
     db.update_account_name(account_id, &name)?;
     Ok(Account { name, ..account })
+}
+
+/// Whether `account` should take its name from Gmail's "Send mail as" setting:
+/// a Gmail account with no name that has not been checked yet.
+pub fn needs_send_as_name(account: &Account, already_checked: bool) -> bool {
+    account.provider == "gmail" && !already_checked && sender_display_name(account).is_none()
+}
+
+/// Name a Gmail account connected before the app read the "Send mail as" name.
+/// Runs once per account, and never replaces a name — not even one set after
+/// `account` was read.
+pub async fn backfill_send_as_name(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn crate::sync::provider::EmailProvider,
+) -> Result<()> {
+    let key = format!("send_as_name_checked:{}", account.id);
+    if !needs_send_as_name(account, db.get_preference(&key)?.is_some()) {
+        return Ok(());
+    }
+
+    let (_, name) = provider.get_profile().await?;
+    let name = name.trim();
+    if !name.is_empty() {
+        db.fill_account_name_if_missing(&account.id, name)?;
+    }
+    db.set_preference(&key, "1")?;
+    Ok(())
 }
 
 /// Register the database that backs dev-mode credential storage.
@@ -722,7 +745,8 @@ pub async fn add_imap_account(
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account> {
     let email = credentials.username.clone();
-    let display = display_name.unwrap_or_else(|| email.clone());
+    // No display name is stored as none; readers fall back to the address.
+    let display = display_name.unwrap_or_default();
 
     // Verify credentials work by actually connecting (no account_id needed for login test)
     let client = ImapClient::new(credentials.clone(), email.clone(), display.clone(), String::new());
@@ -991,7 +1015,8 @@ mod tests {
     }
 
     #[test]
-    fn clearing_the_account_name_falls_back_to_the_address() {
+    fn clearing_the_account_name_stores_no_name() {
+        // "No name" is stored as such; readers fall back to the address.
         let db = Arc::new(Database::new_for_testing().expect("db"));
         db.insert_account(&imap_account("acc-c", "c@example.com"))
             .expect("seed account");
@@ -999,7 +1024,81 @@ mod tests {
 
         let account = update_account_name(&db, "acc-c", "   ").expect("clear");
 
-        assert_eq!(account.name, "c@example.com");
+        assert_eq!(account.name, "");
+        assert_eq!(db.get_account("acc-c").expect("read").expect("account").name, "");
+        assert_eq!(sender_display_name(&account), None);
+    }
+
+    #[test]
+    fn only_a_nameless_gmail_account_not_yet_checked_needs_the_send_as_name() {
+        let gmail = |name: &str| Account {
+            name: name.into(),
+            ..oauth_account("g", "g@example.com")
+        };
+        assert!(needs_send_as_name(&gmail(""), false));
+        assert!(
+            needs_send_as_name(&gmail("g@example.com"), false),
+            "older rows store the address as the name"
+        );
+        assert!(!needs_send_as_name(&gmail(""), true), "checked once per account");
+        assert!(
+            !needs_send_as_name(&gmail("Ada Example"), false),
+            "never replaces a name"
+        );
+        assert!(
+            !needs_send_as_name(&imap_account("i", "i@example.com"), false),
+            "only Gmail has send-as settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_names_a_nameless_gmail_account_after_its_send_as_setting() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = oauth_account("acc-g", "g@example.com");
+        db.insert_account(&account).expect("seed account");
+        let provider = crate::sync::provider::FakeEmailProvider::new("g@example.com", "Ada Example");
+
+        backfill_send_as_name(&db, &account, &provider).await.expect("backfill");
+
+        assert_eq!(
+            db.get_account("acc-g").expect("read").expect("account").name,
+            "Ada Example"
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_checks_each_account_only_once() {
+        // A Gmail account with no send-as name must not cost a request per sync.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = oauth_account("acc-o", "o@example.com");
+        db.insert_account(&account).expect("seed account");
+
+        let unnamed = crate::sync::provider::FakeEmailProvider::new("o@example.com", "");
+        backfill_send_as_name(&db, &account, &unnamed).await.expect("first");
+        let named = crate::sync::provider::FakeEmailProvider::new("o@example.com", "Ada Example");
+        backfill_send_as_name(&db, &account, &named).await.expect("second");
+
+        assert_eq!(
+            db.get_account("acc-o").expect("read").expect("account").name,
+            "o@example.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_never_replaces_a_name_set_meanwhile() {
+        // The sync holds a copy of the account read before the user renamed it.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let stale = oauth_account("acc-m", "m@example.com");
+        db.insert_account(&stale).expect("seed account");
+        update_account_name(&db, "acc-m", "Chosen Name").expect("rename");
+        let provider = crate::sync::provider::FakeEmailProvider::new("m@example.com", "Ada Example");
+
+        backfill_send_as_name(&db, &stale, &provider).await.expect("backfill");
+
+        assert_eq!(
+            db.get_account("acc-m").expect("read").expect("account").name,
+            "Chosen Name"
+        );
     }
 
     #[test]

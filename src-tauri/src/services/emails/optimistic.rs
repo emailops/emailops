@@ -87,7 +87,11 @@ pub fn build_optimistic_sent_email(input: &OptimisticSendInput<'_>) -> Optimisti
             thread_id,
             message_id: input.meta.message_id_header.clone(),
             subject,
-            sender: input.account.name.clone(),
+            // Same name the From header carries; an account without one
+            // sends as its address.
+            sender: crate::services::accounts::sender_display_name(input.account)
+                .unwrap_or(&input.account.email)
+                .to_string(),
             sender_email: input.account.email.clone(),
             recipients: input.to.to_vec(),
             cc: input.cc.to_vec(),
@@ -233,6 +237,18 @@ mod tests {
         assert!(out.email.is_read, "own sent mail is never unread");
         assert_eq!(out.email.timestamp, 1_700_000_000);
         assert_eq!(out.email.recipients, vec!["them@example.com"]);
+    }
+
+    #[test]
+    fn an_account_without_a_name_sends_as_its_address() {
+        let acc = Account {
+            name: String::new(),
+            ..account()
+        };
+        let body = EmailBody::plain("x");
+        let meta = SentMessageMeta::default();
+        let out = build_optimistic_sent_email(&input(&acc, &body, &meta, None));
+        assert_eq!(out.email.sender, "me@example.com");
     }
 
     #[test]

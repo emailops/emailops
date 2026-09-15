@@ -46,6 +46,38 @@ struct GmailProfile {
 }
 
 #[derive(Debug, Deserialize)]
+struct GmailSendAsList {
+    #[serde(rename = "sendAs", default)]
+    send_as: Vec<GmailSendAs>,
+}
+
+/// One "Send mail as" address. `displayName` is the name Gmail itself puts in
+/// the From header when sending from that address.
+#[derive(Debug, Deserialize)]
+struct GmailSendAs {
+    #[serde(rename = "sendAsEmail")]
+    send_as_email: String,
+    #[serde(rename = "displayName", default)]
+    display_name: String,
+    #[serde(rename = "isPrimary", default)]
+    is_primary: bool,
+}
+
+/// Display name Gmail uses for `email`: its own send-as name, else the primary
+/// address's (Gmail's rule for custom "from" addresses). Empty when neither
+/// has one.
+fn pick_send_as_display_name(entries: &[GmailSendAs], email: &str) -> String {
+    let named = |e: &&GmailSendAs| !e.display_name.trim().is_empty();
+    entries
+        .iter()
+        .find(|e| e.send_as_email.eq_ignore_ascii_case(email))
+        .filter(named)
+        .or_else(|| entries.iter().find(|e| e.is_primary).filter(named))
+        .map(|e| e.display_name.trim().to_string())
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Deserialize)]
 struct GmailMessageList {
     messages: Option<Vec<GmailMessageRef>>,
     #[serde(rename = "nextPageToken")]
@@ -287,7 +319,28 @@ impl GmailClient {
         }
 
         let profile: GmailProfile = response.json().await?;
-        Ok((profile.email_address.clone(), profile.email_address))
+        // The profile endpoint carries no name; the "Send mail as" setting
+        // holds the one Gmail itself puts in the From header.
+        let name = self.get_send_as_display_name(&profile.email_address).await?;
+        Ok((profile.email_address, name))
+    }
+
+    /// Display name Gmail uses when sending from `email` (readable with the
+    /// `gmail.modify` scope the app already holds). Empty when none is set.
+    async fn get_send_as_display_name(&self, email: &str) -> Result<String> {
+        let url = format!("{}/users/me/settings/sendAs", self.base_url);
+        let response = self.send_get_with_retry(&url, "list send-as addresses").await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(AppError::SyncError(format!(
+                "Failed to list send-as addresses: {}",
+                error_text
+            )));
+        }
+
+        let list: GmailSendAsList = response.json().await?;
+        Ok(pick_send_as_display_name(&list.send_as, email))
     }
 
     /// Returns Gmail's `messagesTotal` from the profile endpoint — the number
@@ -2329,6 +2382,78 @@ mod tests {
     #[test]
     fn ungated_account_is_not_blocked() {
         assert_eq!(rate_limit_gate_until("test-gate-never-set", RL_NOW), None);
+    }
+
+    fn send_as(email: &str, name: &str, primary: bool) -> GmailSendAs {
+        GmailSendAs {
+            send_as_email: email.to_string(),
+            display_name: name.to_string(),
+            is_primary: primary,
+        }
+    }
+
+    #[test]
+    fn send_as_name_is_the_display_name_of_the_matching_address() {
+        let entries = [
+            send_as("ada@example.com", "Ada Example", true),
+            send_as("alias@example.com", "Alias", false),
+        ];
+        assert_eq!(pick_send_as_display_name(&entries, "ADA@example.com"), "Ada Example");
+    }
+
+    #[test]
+    fn a_send_as_address_without_a_name_uses_the_primary_name() {
+        // Gmail's documented rule for custom "from" addresses.
+        let entries = [
+            send_as("ada@example.com", "Ada Example", true),
+            send_as("alias@example.com", "", false),
+        ];
+        assert_eq!(pick_send_as_display_name(&entries, "alias@example.com"), "Ada Example");
+    }
+
+    #[test]
+    fn no_send_as_name_yields_an_empty_name() {
+        assert_eq!(
+            pick_send_as_display_name(&[send_as("ada@example.com", " ", true)], "ada@example.com"),
+            ""
+        );
+        assert_eq!(pick_send_as_display_name(&[], "ada@example.com"), "");
+    }
+
+    // Regression: the profile endpoint has no name, so Gmail accounts were
+    // stored with their address as the name and sent mail without one.
+    #[tokio::test]
+    async fn get_profile_names_the_account_after_its_send_as_setting() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/profile"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "emailAddress": "ada@example.com" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/settings/sendAs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sendAs": [{
+                    "sendAsEmail": "ada@example.com",
+                    "displayName": "Ada Example",
+                    "isPrimary": true,
+                    "isDefault": true
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-send-as-name".into())).with_base_url(server.uri());
+
+        let (email, name) = client.get_profile().await.expect("profile");
+        assert_eq!(email, "ada@example.com");
+        assert_eq!(name, "Ada Example");
     }
 
     #[tokio::test]

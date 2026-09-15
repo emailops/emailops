@@ -982,17 +982,25 @@ eval).
 
 **Decision:** `accounts.name` is the display name EmailOps puts in the `From` header of
 mail it sends through Gmail and IMAP/SMTP (`"Name" <address>`), editable per account in
-Account settings. An account whose name is blank or equal to its own address has no
-sender name and sends the bare address; clearing the field stores the address again.
-Outlook is unaffected: Graph takes the sender name from the mailbox. Drafts pushed to
-Gmail keep a bare address.
+Account settings. An account whose name is blank or equal to its own address (as older
+rows store it) has no sender name and sends the bare address. "No name" is stored as an
+empty name and every reader falls back to the address; the address is never written in
+its place. Gmail accounts take the name from Gmail's "Send mail as" setting
+(`users.settings.sendAs`, readable under the `gmail.modify` scope already granted) when
+connected, and once on the next sync for accounts connected earlier; a name the user set
+is never replaced. Outlook is unaffected: Graph takes the sender name from the mailbox.
+Drafts pushed to Gmail keep a bare address.
 **Context:** Mail sent from EmailOps went out as `From: address`, so recipients saw no
-name and the synced IMAP Sent copy had an empty sender. `accounts.name` already meant
-"your name on this account" (Outlook profile name, the IMAP setup display name, the
-sender of the optimistic Sent row); its only label use is the Dashboard account panel.
+name and the synced IMAP Sent copy had an empty sender. Gmail's profile endpoint carries
+no name, so Gmail accounts were stored with their address as the name. `accounts.name`
+already meant "your name on this account" (Outlook profile name, the IMAP setup display
+name, the sender of the optimistic Sent row); its only label use is the Dashboard
+account panel.
 **Rejected:** a separate sender-name field beside an account label, as Thunderbird and
 Apple Mail do — a second source of truth for the same identity, for a label shown in one
 panel. It pays off only with per-account aliases / send-as identities, which would bring a
 proper identity model (address + name + signature) anyway. Deriving the name from past
-Sent headers — implicit, and wrong for accounts that never sent with a name.
+Sent headers — implicit, and wrong for accounts that never sent with a name. Writing the
+address as the name when there is none — it invents data and hides the "no name" state;
+the fallback belongs to whoever reads the name.
 
