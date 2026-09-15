@@ -100,6 +100,8 @@ pub fn search_emails_filtered(
     // `true` returns oldest-first — needed to answer "first / primer correo".
     // Default callers pass `false` (newest-first, the historical behaviour).
     ascending: bool,
+    // `true` keeps only mail the user has not read (filtered in SQL).
+    unread_only: bool,
 ) -> Result<Vec<Email>> {
     db.search_emails_ordered(
         account_id,
@@ -115,5 +117,6 @@ pub fn search_emails_filtered(
         ascending,
         // Chat never wants spam or phishing in its results.
         true,
+        unread_only,
     )
 }

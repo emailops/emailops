@@ -51,6 +51,8 @@ pub(crate) struct PostFilters<'a> {
     /// Intent / topic values that must ALL be present on the email.
     pub tags: &'a [String],
     pub received_only: bool,
+    /// Keep only mail the user has not read.
+    pub unread_only: bool,
 }
 
 /// Keep the candidates that satisfy every filter, in their original order.
@@ -78,6 +80,9 @@ pub(crate) fn semantic_post_filter(
                 return false;
             }
             if f.received_only && e.is_sent {
+                return false;
+            }
+            if f.unread_only && e.is_read {
                 return false;
             }
             if !f.tags.is_empty() {
@@ -116,7 +121,8 @@ fn parameters_schema_with(glossary: &TagGlossary) -> Value {
             "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." },
             "intent": { "type": "string", "enum": glossary.intent_names(), "description": intent_desc },
             "topic": { "type": "string", "enum": glossary.topic_names(), "description": topic_desc },
-            "with_bodies": { "type": "boolean", "description": "Return each email's cleaned body (budgeted per row) in this same call. Set it when you will summarise or extract from the results, instead of calling get_email_body once per email." }
+            "with_bodies": { "type": "boolean", "description": "Return each email's cleaned body (budgeted per row) in this same call. Set it when you will summarise or extract from the results, instead of calling get_email_body once per email." },
+            "unread": { "type": "boolean", "description": "true = only mail the user has not read yet. Combine with order/limit ('oldest unread' = order 'oldest', limit 1) and any other filter. Rows the user has not read are marked `unread` in every result." }
         },
         "required": []
     })
@@ -189,6 +195,7 @@ impl Tool for SearchEmailsTool {
         // Internal too: the "emails I received today/this week" shortcuts set
         // it so the user's own sent replies do not show up as received mail.
         let received_only = args.get("received_only").and_then(|v| v.as_bool()).unwrap_or(false);
+        let unread_only = args.get("unread").and_then(|v| v.as_bool()).unwrap_or(false);
         // Sort direction: "oldest" (ascending) is the only way to surface the
         // FIRST email matching a filter ("primer correo", "first email I sent to
         // X"). Anything other than "oldest" keeps the default newest-first.
@@ -208,6 +215,7 @@ impl Tool for SearchEmailsTool {
             && since_str.is_none()
             && until_str.is_none()
             && tag_filter_arg.is_none()
+            && !unread_only
         {
             // Include a concrete call to imitate: a flaky model that emitted a
             // name-only call (`search_emails({})`) recovers far more reliably
@@ -273,6 +281,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         until: until_ts,
                         tags: &tag_filters,
                         received_only,
+                        unread_only,
                     };
                     return self
                         .execute_semantic(ctx, provider.as_ref(), query, cat_filter, &post, limit, include_bodies)
@@ -302,6 +311,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             tag_filter_arg,
             limit,
             ascending,
+            unread_only,
         );
 
         // Each successful branch below builds `ToolOutput::text_with_email_refs`
@@ -362,6 +372,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         tag_filter_arg,
                         COUNT_PROBE_LIMIT,
                         ascending,
+                        unread_only,
                     )
                     .map(|all| all.len() as i32)
                     .unwrap_or(emails.len() as i32);
@@ -380,7 +391,8 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     || from_filter.is_some()
                     || to_filter.is_some()
                     || subject_filter.is_some()
-                    || tag_filter_arg.is_some();
+                    || tag_filter_arg.is_some()
+                    || unread_only;
 
                 if (since_ts.is_some() || until_ts.is_some()) && has_non_date_anchor {
                     let retry = emails::search_emails_filtered(
@@ -396,6 +408,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         tag_filter_arg,
                         limit,
                         ascending,
+                        unread_only,
                     );
                     match &retry {
                         Ok(emails) if !emails.is_empty() => {
@@ -427,6 +440,7 @@ showing recent matches without since/until instead)\n",
                     subject_filter,
                     tag_filter_arg,
                     limit,
+                    unread_only,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");
                     out.push_str(&format_search_emails_output(&merged));
@@ -626,6 +640,40 @@ mod tests {
             is_sent: false,
             headers: None,
         }
+    }
+
+    #[test]
+    fn semantic_post_filter_keeps_only_unread_when_asked() {
+        let mut read = email("r", "alice", "me@x.com", 100);
+        read.is_read = true;
+        let emails = vec![read, email("u", "alice", "me@x.com", 200)];
+        let kept: Vec<String> = semantic_post_filter(
+            emails,
+            &PostFilters {
+                unread_only: true,
+                ..Default::default()
+            },
+            &|_: &str| Vec::new(),
+        )
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+        assert_eq!(kept, ["u"]);
+    }
+
+    #[test]
+    fn result_rows_mark_unread_mail_and_only_unread_mail() {
+        let mut read = email("r", "alice", "me@x.com", 100);
+        read.is_read = true;
+        let out = crate::services::chat::format_search_emails_output(&[read, email("u", "bob", "me@x.com", 200)]);
+        let row = |id: &str| {
+            out.lines()
+                .find(|l| l.contains(&format!("id={id} ")))
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(row("u").contains(" unread"), "{out}");
+        assert!(!row("r").contains("unread"), "{out}");
     }
 
     #[test]

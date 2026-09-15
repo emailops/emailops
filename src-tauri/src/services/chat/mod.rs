@@ -319,6 +319,7 @@ pub(crate) fn or_fallback_search(
     subject_filter: Option<&str>,
     tag_filters: Option<&[String]>,
     limit: i32,
+    unread_only: bool,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
     if tokens.len() < 2 {
@@ -339,6 +340,7 @@ pub(crate) fn or_fallback_search(
             tag_filters,
             limit,
             false,
+            unread_only,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);
@@ -389,6 +391,11 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            // Read state is data the model may be asked about; it must never
+            // guess it from an email's age or from reply state.
+            if !email.is_read {
+                out.push_str(" unread");
+            }
             if show_category {
                 out.push_str(&format!(" category={}", email.category));
             }
@@ -440,6 +447,11 @@ pub(crate) fn format_search_emails_output_with_bodies(
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            // Read state is data the model may be asked about; it must never
+            // guess it from an email's age or from reply state.
+            if !email.is_read {
+                out.push_str(" unread");
+            }
             if show_category {
                 out.push_str(&format!(" category={}", email.category));
             }

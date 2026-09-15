@@ -14,11 +14,11 @@ impl Tool for ListOpenThreadsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Return threads with open state — who's waiting on whom, summary, deadline. Useful for 'what am I waiting on', 'what did I leave hanging'."
+        "Return threads with open conversational state — who owes the next reply, summary, deadline. Useful for 'what am I waiting on', 'what did I leave hanging'. This is reply state, not read state: for mail the user has not read, use search_emails with unread=true."
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "list threads with open state (who's waiting on whom, deadlines)."
+        "list threads awaiting a reply (who owes it, deadlines) — not unread mail."
     }
 
     fn parameters_schema(&self) -> Value {

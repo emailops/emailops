@@ -50,6 +50,9 @@ pub struct SearchPlan {
     /// `"oldest"` to surface the FIRST matching email ("primer correo"),
     /// `"newest"` (or unset) for the default most-recent-first.
     pub order: Option<String>,
+    /// `Some(true)` = only mail the user has not read. `false` is no filter
+    /// and is never stored.
+    pub unread: Option<bool>,
 }
 
 impl SearchPlan {
@@ -70,6 +73,7 @@ impl SearchPlan {
             && self.until.is_none()
             && self.intent.is_none()
             && self.topic.is_none()
+            && self.unread.is_none()
     }
 
     /// Convert the plan into the `search_emails` tool call fed into the loop as
@@ -82,6 +86,7 @@ impl SearchPlan {
         // default to 25.
         let oldest = self.wants_oldest();
         let limit = self.limit.unwrap_or(if oldest { 1 } else { 25 });
+        let unread = self.unread == Some(true);
 
         let mut args = serde_json::Map::new();
         let mut put = |k: &str, v: Option<String>| {
@@ -100,6 +105,9 @@ impl SearchPlan {
         put("until", self.until);
         if oldest {
             args.insert("order".to_string(), serde_json::Value::String("oldest".to_string()));
+        }
+        if unread {
+            args.insert("unread".to_string(), serde_json::Value::Bool(true));
         }
         args.insert("limit".to_string(), serde_json::json!(limit));
         args.insert("include_bodies".to_string(), serde_json::json!(true));
@@ -192,6 +200,7 @@ pub fn parse_plan(text: &str) -> Plan {
         until: str_field("until"),
         limit,
         order,
+        unread: obj.get("unread").and_then(|v| v.as_bool()).filter(|u| *u),
     };
     if plan.is_empty() {
         return Plan::Defer;
@@ -542,6 +551,24 @@ mod tests {
         let p = search(r#"{"to":"acme","order":"oldest"}"#);
         assert_eq!(p.to.as_deref(), Some("acme"));
         assert_eq!(p.order.as_deref(), Some("oldest"));
+    }
+
+    #[test]
+    fn unread_is_a_filter_on_its_own_and_reaches_the_tool_call() {
+        let p = search(r#"{"unread": true, "order": "oldest"}"#);
+        assert_eq!(p.unread, Some(true));
+        let call = p.into_tool_call();
+        assert_eq!(call.function.arguments["unread"], serde_json::json!(true));
+        assert_eq!(call.function.arguments["limit"], serde_json::json!(1));
+        // `unread: false` is not a filter: alone it leaves nothing to search.
+        assert_eq!(parse_plan(r#"{"unread": false}"#), Plan::Defer);
+        assert!(!search(r#"{"from": "a", "unread": false}"#)
+            .into_tool_call()
+            .function
+            .arguments
+            .as_object()
+            .expect("object")
+            .contains_key("unread"));
     }
 
     #[test]

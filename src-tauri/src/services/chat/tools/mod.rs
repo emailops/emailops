@@ -1311,6 +1311,42 @@ mod tests {
             .unwrap();
     }
 
+    /// "el correo más antiguo que tengo sin leer": read state is a filter of
+    /// its own, pushed into SQL so `order=oldest limit=1` returns the oldest
+    /// UNREAD email (a post-filter would drop the oldest read one and return
+    /// nothing). Works alone (date-only path) and with a sender (text path),
+    /// and every unread row says so.
+    #[test]
+    fn search_emails_unread_filter_returns_the_oldest_unread() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        seed_email(&db, "e3", "acc", "t3", "Ana", "ana@example.com", "Tres", "c", t + 300);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        for args in [
+            serde_json::json!({ "unread": true, "order": "oldest", "limit": 1 }),
+            serde_json::json!({ "from": "ana@example.com", "unread": true, "order": "oldest", "limit": 1 }),
+        ] {
+            let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args.clone()));
+            assert!(out.contains("id=e2"), "oldest unread for {args}: {out}");
+            assert!(!out.contains("id=e1"), "a read email must not match {args}: {out}");
+            assert!(out.contains(" unread"), "unread rows are marked: {out}");
+        }
+        // Without the filter the oldest overall (read) email wins, unmarked.
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "order": "oldest", "limit": 1 })),
+        );
+        assert!(out.contains("id=e1") && !out.contains(" unread"), "{out}");
+    }
+
     /// "últimos correos de prospects": the literal word matches nothing, but
     /// the classifier already knows a prospect (intent introduction /
     /// question / request). The tool exposes that as a filter.

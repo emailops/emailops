@@ -56,6 +56,19 @@
   expected_output: "Three emails from Tomás Iglesias (CTO, Lumen Health), each linked: \"Looking for a Rust contractor — patient-records API\" (20 May 2025, first contact asking for availability and an estimate); \"Proposal accepted — let's start the Rust API\" (2 September 2026, proposal approved, signed SOW attached, asks to kick off Monday); \"API latency on the /search endpoint\" (6 September 2026, p95 latency jumped to ~1.8 s after the last deploy, asks you to look this week)."
   metrics: [answer_relevancy, faithfulness]
 
+- id: tr_unread_from_borgbase
+  question: "¿qué correos de BorgBase tengo sin leer?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  # Read state is demo data: opening these invoices in the app changes the
+  # answer (`make demo-db` restores it). The March invoice is read.
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains: ["demo_dd0cc965e4744357", "demo_655eb6df75274de8"]
+  expected_answer_not_contains: ["demo_d5a5ed0055684212"]
+  expected_output: "Tienes dos correos de BorgBase sin leer: «BorgBase invoice for January 2026» (06/01/2026) y «BorgBase invoice for April 2026» (03/04/2026), cada uno enlazado con email://. El resto de facturas de BorgBase ya están leídas."
+  metrics: [answer_relevancy, faithfulness]
+
 # ── email_summary ────────────────────────────────────────────────────────────
 
 - id: es_tomas_latest_ask

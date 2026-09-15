@@ -227,6 +227,7 @@ Fields (use null when the question does not imply them):
   until   : ISO date YYYY-MM-DD (range end)
   limit   : integer 1-25
   order   : "newest" (default) or "oldest"
+  unread  : true only when the question asks for mail the user has not read yet; omit otherwise
   intent  : what the sender wants — one of:
 {{intent_definitions}}
   topic   : what the mail is about — ONLY when the question names one of these subjects

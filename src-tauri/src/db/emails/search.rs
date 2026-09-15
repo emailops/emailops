@@ -466,6 +466,7 @@ impl Database {
         limit: i32,
         ascending: bool,
         exclude_spam: bool,
+        unread_only: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut conditions: Vec<String> = vec![
@@ -476,6 +477,9 @@ impl Database {
         ];
         if exclude_spam {
             conditions.push(Self::junk_condition("e"));
+        }
+        if unread_only {
+            conditions.push("e.is_read = 0".to_string());
         }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
         let mut param_idx = 2usize;
@@ -562,6 +566,7 @@ impl Database {
             limit,
             false,
             false,
+            false,
         )
     }
 
@@ -587,6 +592,9 @@ impl Database {
         // the user overrode it) — what the chat wants; the app's own search
         // box keeps everything reachable.
         exclude_spam: bool,
+        // `true` keeps only mail the user has not read. Applied in SQL, so an
+        // `ascending` + `limit` query returns the oldest UNREAD email.
+        unread_only: bool,
     ) -> Result<Vec<Email>> {
         self.search_emails_inner(
             account_id,
@@ -601,6 +609,7 @@ impl Database {
             limit,
             ascending,
             exclude_spam,
+            unread_only,
         )
     }
 
@@ -619,6 +628,7 @@ impl Database {
         limit: i32,
         ascending: bool,
         exclude_spam: bool,
+        unread_only: bool,
     ) -> Result<Vec<Email>> {
         // ── Date-only fast path (no text filters) ────────────────────────────────
         // When there are no text-based filters (keyword, from, to, subject, tag),
@@ -640,6 +650,7 @@ impl Database {
                 limit,
                 ascending,
                 exclude_spam,
+                unread_only,
             );
         }
 
@@ -671,6 +682,11 @@ impl Database {
         cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string());
         if exclude_spam {
             cte_conditions.push(Self::junk_condition("match_e"));
+        }
+        // Read state rides with the other per-email conditions, so the thread
+        // representative is the latest UNREAD matching email of the thread.
+        if unread_only {
+            cte_conditions.push("match_e.is_read = 0".to_string());
         }
         param_idx += 1;
 
@@ -2179,6 +2195,7 @@ mod tests {
                 None,
                 1,
                 true,
+                false,
                 false,
             )
             .unwrap();
