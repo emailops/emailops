@@ -490,6 +490,17 @@ pub trait EmailProvider: Send + Sync {
         ))
     }
 
+    /// Where a message lives at the provider right now, as an `emails.mailbox`
+    /// value (`inbox`, `sent`, `spam`, `trash`). `Ok(None)` means the provider
+    /// no longer has the message (deleted forever). Lets sync catch up with
+    /// moves the user made in the provider's own clients, so only providers
+    /// whose message ids survive a move (Gmail) implement it.
+    async fn message_mailbox(&self, _message_id: &str) -> Result<Option<String>> {
+        Err(AppError::InvalidInput(
+            "reading a message's mailbox is not supported by this provider".to_string(),
+        ))
+    }
+
     // ── Drafts ────────────────────────────────────────────────────────────
     //
     // Providers that support server-side drafts (Gmail, Outlook) override
@@ -1102,6 +1113,17 @@ impl EmailProvider for FakeEmailProvider {
                 message_id: message_id.to_string(),
             });
         Ok(())
+    }
+
+    async fn message_mailbox(&self, message_id: &str) -> Result<Option<String>> {
+        self.record_call("message_mailbox");
+        Ok(self
+            .messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|m| m.email.id == message_id)
+            .map(|m| m.email.mailbox.clone()))
     }
 
     async fn create_draft(

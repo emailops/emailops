@@ -4,7 +4,7 @@
 
 All business logic for email read/write operations that cross the provider boundary or require multi-step coordination:
 
-- **sync.rs** — full-account sync (fetch from provider → upsert to DB → trigger embeddings/classification)
+- **sync.rs** — full-account sync (fetch from provider → upsert to DB → trigger embeddings/classification). The fetch passes are insert-only, so provider-side moves of already-stored mail are invisible to them; `reconcile_spam_moves` covers Gmail Spam: a message taken out of Spam in Gmail ("Not spam", or moved to Trash) keeps its id, so recent local spam (Gmail's 30-day retention window) is diffed against the Spam listing, rows missing from it are asked about one by one (`EmailProvider::message_mailbox`) and re-filed in place. At most once per `SPAM_RECONCILE_INTERVAL_SECS` per account; messages the provider deleted forever are kept locally and remembered so they are asked about once
 - **drafts.rs** — AI draft generation (prompt assembly, Ollama call, DB write)
 - **send.rs** — send reply / new email through the provider's SMTP or API; after the provider accepts, inserts an optimistic local Sent row (via `optimistic.rs`) so the message shows in the thread/Sent views immediately, and for Gmail spawns a background authoritative `get_message` refresh
 - **optimistic.rs** — pure planner for the optimistic Sent row: provider-keyed permanent row when the send returned a canonical id (Gmail), synthetic `local-sent-<uuid>` row with `pending_sync = 1` otherwise (Outlook/IMAP)

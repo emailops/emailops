@@ -22,9 +22,12 @@ pub use crate::sync::provider::EmailAttachment;
 /// Self-sent emails (the user emailing themselves) carry both `INBOX` and
 /// `SENT` — they stay in the inbox.
 fn mailbox_from_labels(labels: &[String]) -> &'static str {
-    let has_sent = labels.iter().any(|l| l == "SENT");
-    let has_inbox = labels.iter().any(|l| l == "INBOX");
-    if has_sent && !has_inbox {
+    let has = |label: &str| labels.iter().any(|l| l == label);
+    if has("TRASH") {
+        "trash"
+    } else if has("SPAM") {
+        "spam"
+    } else if has("SENT") && !has("INBOX") {
         "sent"
     } else {
         "inbox"
@@ -89,6 +92,14 @@ pub struct GmailMessageRef {
     pub id: String,
     #[serde(rename = "threadId")]
     pub thread_id: String,
+}
+
+/// A `format=minimal` message read: no payload, just the labels that say
+/// which mailbox the message sits in now.
+#[derive(Debug, Deserialize)]
+struct GmailMessageLabels {
+    #[serde(rename = "labelIds", default)]
+    label_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1213,6 +1224,16 @@ impl GmailClient {
 
                     let headers = response.headers().clone();
                     let body = response.text().await.unwrap_or_default();
+                    // Typed so callers can tell "the resource is gone" from a
+                    // failure — the spam reconciliation reads it as "deleted
+                    // forever". Same message text as every other failure.
+                    if status == StatusCode::NOT_FOUND {
+                        return Err(AppError::NotFound(format!(
+                            "Failed to {}: {}",
+                            operation,
+                            format_gmail_error(status, &body)
+                        )));
+                    }
                     let should_retry = is_retryable_gmail_error(status, &body);
 
                     if should_retry && attempt < GMAIL_MAX_RETRIES {
@@ -1432,6 +1453,21 @@ impl EmailProvider for GmailClient {
             })
             .collect();
         Ok((message_refs, token))
+    }
+
+    /// Map the message's current labels to its mailbox (`format=minimal`, so
+    /// no body is transferred). A 404 means it was deleted forever ("Delete
+    /// forever", "Empty Spam now").
+    async fn message_mailbox(&self, message_id: &str) -> Result<Option<String>> {
+        let url = format!("{}/users/me/messages/{}?format=minimal", self.base_url, message_id);
+        match self.send_get_with_retry(&url, "read message labels").await {
+            Ok(response) => {
+                let msg: GmailMessageLabels = response.json().await?;
+                Ok(Some(mailbox_from_labels(&msg.label_ids).to_string()))
+            }
+            Err(AppError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     async fn list_mailbox_messages(
@@ -3394,5 +3430,55 @@ mod tests {
         };
 
         assert!(collect_inline_image_refs(&payload).is_empty());
+    }
+
+    #[test]
+    fn mailbox_follows_the_spam_and_trash_labels() {
+        // The spam reconciliation reads a message's current labels to learn
+        // where the user moved it, so Spam and Trash must map to themselves.
+        assert_eq!(mailbox_from_labels(&labels(&["SPAM"])), "spam");
+        assert_eq!(mailbox_from_labels(&labels(&["TRASH"])), "trash");
+        assert_eq!(mailbox_from_labels(&labels(&["TRASH", "SENT"])), "trash");
+    }
+
+    #[tokio::test]
+    async fn message_mailbox_reads_the_current_labels() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages/m-1"))
+            .and(query_param("format", "minimal"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"id":"m-1","threadId":"t-1","labelIds":["INBOX","CATEGORY_PERSONAL"]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(client.message_mailbox("m-1").await.unwrap().as_deref(), Some("inbox"));
+    }
+
+    #[tokio::test]
+    async fn message_mailbox_is_none_for_a_message_deleted_forever() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages/gone"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(client.message_mailbox("gone").await.unwrap(), None);
     }
 }

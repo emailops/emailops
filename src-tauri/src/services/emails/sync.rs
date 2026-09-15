@@ -1788,6 +1788,16 @@ async fn sync_extra_mailboxes(
         sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget).await;
     }
 
+    // ── Messages taken out of Spam in the provider's own clients ────────────
+    reconcile_spam_moves(
+        db,
+        account,
+        account_id,
+        email_provider,
+        crate::services::clock::now_secs(),
+    )
+    .await;
+
     // ── Custom folders, shared backfill budget across all folders ────────────
     let mut custom_budget = MAX_CUSTOM_BACKFILL_PAGES_PER_SYNC;
     for server_path in custom_folders {
@@ -1797,6 +1807,177 @@ async fn sync_extra_mailboxes(
     }
 
     Ok(())
+}
+
+/// How long Gmail keeps a message in Spam before purging it. Older local spam
+/// rows are missing from the Spam listing whether or not the user rescued them,
+/// so checking them would cost one request per row on every sync.
+const GMAIL_SPAM_RETENTION_SECS: i64 = 30 * 86_400;
+
+/// Minimum gap between two spam checks of one account. Gmail is polled every
+/// minute and a rescue from Spam is rare, so checking on every poll would
+/// repeat the Spam listing ~60 times an hour for nothing; a rescued message
+/// shows up within this delay instead.
+const SPAM_RECONCILE_INTERVAL_SECS: i64 = 15 * 60;
+
+/// Longest Spam listing the reconciliation diffs against. A longer one is
+/// skipped rather than truncated: every id cut off the listing would be
+/// re-checked one request at a time.
+const MAX_SPAM_RECONCILE_LISTING: u32 = 2_000;
+
+/// Move local Spam rows whose message the user has since taken out of Spam at
+/// the provider (Gmail "Not spam", or a move to Trash) to where it lives now.
+///
+/// The other passes are insert-only: the inbox pass skips ids it already
+/// stores and the Spam pass only adds, so a rescued message stayed in Spam
+/// locally forever. Gmail-only — Gmail keeps a message's id across label
+/// changes, while IMAP re-keys a moved message (new UID in INBOX), so a missing
+/// `SPAM::` id says nothing about where the message went.
+///
+/// Diffs recent local spam against one Spam listing and asks the provider only
+/// about rows missing from it: a steady-state sync costs one listing, and none
+/// at all when there is no recent local spam. Non-fatal: failures are logged
+/// and the rows keep their mailbox until the next sync.
+async fn reconcile_spam_moves(
+    db: &Arc<Database>,
+    account: &Account,
+    account_id: &str,
+    email_provider: &dyn EmailProvider,
+    now: i64,
+) {
+    if account.provider != "gmail" {
+        return;
+    }
+    // A stamp in the future (the clock moved back) does not count as recent.
+    let last_check_key = format!("spam_reconcile_last:{account_id}");
+    let last_check = db
+        .get_preference(&last_check_key)
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<i64>().ok());
+    if last_check.is_some_and(|t| (0..SPAM_RECONCILE_INTERVAL_SECS).contains(&(now - t))) {
+        return;
+    }
+    let spam = ExtraMailbox::Spam.as_str();
+    let since = now - GMAIL_SPAM_RETENTION_SECS;
+
+    let local_ids = match db.email_ids_in_mailbox_since(account_id, spam, since) {
+        Ok(ids) if ids.is_empty() => return,
+        Ok(ids) => ids,
+        Err(e) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not read local spam to check for moved messages: {e}"),
+            );
+            return;
+        }
+    };
+
+    let listed = match email_provider
+        .list_mailbox_messages(ExtraMailbox::Spam, MAX_SPAM_RECONCILE_LISTING, Some(since), None)
+        .await
+    {
+        Ok(refs) => refs,
+        Err(e) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not list Spam to check for moved messages: {e}"),
+            );
+            return;
+        }
+    };
+    // Stamped only once the listing succeeds, so a failed one is retried on the
+    // next sync rather than a whole interval later.
+    if let Err(e) = db.set_preference(&last_check_key, &now.to_string()) {
+        emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!("Could not record when Spam was last checked: {e}"),
+        );
+    }
+    if listed.len() as u32 >= MAX_SPAM_RECONCILE_LISTING {
+        emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!(
+                "Spam holds {MAX_SPAM_RECONCILE_LISTING}+ messages; skipping the check for messages moved out of it"
+            ),
+        );
+        return;
+    }
+    let still_spam: std::collections::HashSet<&str> = listed.iter().map(|r| r.id.as_str()).collect();
+
+    // Rows whose message the provider no longer has ("Delete forever", "Empty
+    // Spam now"). Remembered so they are asked about once, not on every sync
+    // until they age out of the window; pruned to the window on each write.
+    let gone_key = format!("spam_reconcile_gone:{account_id}");
+    let previously_gone: std::collections::HashSet<String> = db
+        .get_preference(&gone_key)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    let mut gone: Vec<&str> = Vec::new();
+
+    let mut moved: u32 = 0;
+    for id in local_ids.iter().filter(|id| !still_spam.contains(id.as_str())) {
+        if previously_gone.contains(id) {
+            gone.push(id);
+            continue;
+        }
+        match email_provider.message_mailbox(id).await {
+            Ok(Some(mailbox)) if mailbox != spam => match db.migrate_email_id(id, id, &mailbox) {
+                Ok(()) => moved += 1,
+                Err(e) => emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!("Could not move message {id} out of Spam: {e}"),
+                ),
+            },
+            // Still in Spam: it landed after the listing was taken.
+            Ok(Some(_)) => {}
+            // The local row is kept: it still carries the provider's spam
+            // label, which the junk detector's golden set reads.
+            Ok(None) => gone.push(id),
+            Err(e) => emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not check whether message {id} is still in Spam: {e}"),
+            ),
+        }
+    }
+
+    let gone_changed = gone.len() != previously_gone.len() || gone.iter().any(|id| !previously_gone.contains(*id));
+    if gone_changed {
+        let saved = serde_json::to_string(&gone)
+            .map_err(AppError::from)
+            .and_then(|json| db.set_preference(&gone_key, &json));
+        if let Err(e) = saved {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not remember spam messages deleted at the provider: {e}"),
+            );
+        }
+    }
+
+    if moved > 0 {
+        emit_account_log(
+            "success",
+            "sync",
+            &account.email,
+            &format!("Moved {moved} email(s) out of Spam to match the provider"),
+        );
+    }
 }
 
 /// Pull the provider's Drafts folder into the local `drafts` table, for
@@ -3110,5 +3291,232 @@ mod gmail_label_filter_tests {
     #[test]
     fn no_categories_selected_keeps_listing_sent_only() {
         assert_eq!(gmail_label_filter(&[]), Some("in:sent".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod spam_reconcile_tests {
+    //! A message the user rescues from Spam in Gmail ("Not spam") keeps its
+    //! Gmail id and only loses the SPAM label. The sync used to be insert-only
+    //! — the inbox pass skips ids it already stores and the Spam pass only adds
+    //! — so the local row stayed in Spam forever.
+    use super::*;
+    use crate::sync::provider::{EmailCategory, EmailProvider, FakeEmailProvider, MoveTarget};
+
+    const DAY: i64 = 86_400;
+    /// Explicit "now" for tests that drive `reconcile_spam_moves` directly: the
+    /// global clock is shared with other modules' tests, which pin it freely.
+    const NOW: i64 = 1_800_000_000;
+
+    fn account_on(provider: &str) -> Account {
+        Account {
+            id: "acc-1".to_string(),
+            provider: provider.to_string(),
+            email: "me@example.com".to_string(),
+            name: "Me".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+        }
+    }
+
+    fn seeded_db(account: &Account) -> Arc<Database> {
+        let db = Database::new_for_testing().expect("db");
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+        Arc::new(db)
+    }
+
+    fn email_in(id: &str, mailbox: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: "acc-1".to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            subject: format!("subject {id}"),
+            sender: "Sender".to_string(),
+            sender_email: "sender@example.com".to_string(),
+            recipients: vec!["me@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: false,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: mailbox.to_string(),
+            is_sent: false,
+            headers: None,
+        }
+    }
+
+    fn stored_mailbox(db: &Database, id: &str) -> String {
+        db.get_email(id).expect("read").expect("row still exists").mailbox
+    }
+
+    // ── Through the sync entry point ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_message_rescued_from_spam_upstream_moves_back_to_the_inbox() {
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        let received = crate::services::clock::now_secs() - DAY;
+        db.insert_emails_batch(&[email_in("m-1", "spam", received)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "inbox", received), EmailCategory::Primary, vec![]);
+
+        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "inbox");
+    }
+
+    #[tokio::test]
+    async fn non_gmail_accounts_are_not_reconciled() {
+        // IMAP re-keys a moved message (new UID in INBOX), so a missing
+        // SPAM:: id says nothing about where the message went.
+        let account = account_on("imap");
+        let db = seeded_db(&account);
+        let received = crate::services::clock::now_secs() - DAY;
+        db.insert_emails_batch(&[email_in("m-1", "spam", received)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "inbox", received), EmailCategory::Primary, vec![]);
+
+        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    // ── The reconciliation pass itself ────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_message_moved_from_spam_to_trash_upstream_lands_in_trash() {
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - DAY)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "trash", NOW - DAY), EmailCategory::Primary, vec![]);
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "trash");
+    }
+
+    #[tokio::test]
+    async fn a_message_still_in_spam_upstream_stays_in_spam() {
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - DAY)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "spam", NOW - DAY), EmailCategory::Primary, vec![]);
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    #[tokio::test]
+    async fn a_spam_message_deleted_forever_upstream_is_kept_locally() {
+        // Gone at Gmail ("Delete forever"). The local row is left alone: it
+        // still carries the provider's spam label the junk golden set reads.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - DAY)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    #[tokio::test]
+    async fn a_spam_message_deleted_forever_upstream_is_looked_up_only_once() {
+        // "Empty Spam now" in Gmail deletes every spam message at once. Each
+        // one is then missing from the listing; asking about it again on every
+        // check would cost one request per message until it ages out.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - DAY)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+        reconcile_spam_moves(
+            &db,
+            &account,
+            &account.id,
+            &provider,
+            NOW + SPAM_RECONCILE_INTERVAL_SECS,
+        )
+        .await;
+
+        let lookups = provider.calls().iter().filter(|c| *c == "message_mailbox").count();
+        assert_eq!(
+            lookups, 1,
+            "a message the provider no longer has is not asked about again"
+        );
+    }
+
+    #[tokio::test]
+    async fn spam_older_than_gmails_retention_is_not_rechecked() {
+        // Gmail purges Spam after 30 days, so every older local spam row is
+        // missing from the listing. Re-checking them one by one would cost a
+        // request per row on every check, forever.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - 40 * DAY)])
+            .unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "inbox", NOW - 40 * DAY), EmailCategory::Primary, vec![]);
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    #[tokio::test]
+    async fn spam_is_rechecked_at_most_once_per_interval() {
+        // Gmail is polled every minute and a rescue is rare, so re-listing
+        // Spam on every poll would be wasted requests. A rescue made right
+        // after a check shows up once the interval has passed.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("m-1", "spam", NOW - DAY)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "spam", NOW - DAY), EmailCategory::Primary, vec![]);
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        provider.move_message("m-1", None, &MoveTarget::Inbox).await.unwrap();
+        reconcile_spam_moves(
+            &db,
+            &account,
+            &account.id,
+            &provider,
+            NOW + SPAM_RECONCILE_INTERVAL_SECS - 1,
+        )
+        .await;
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam", "not re-checked within the interval");
+
+        reconcile_spam_moves(
+            &db,
+            &account,
+            &account.id,
+            &provider,
+            NOW + SPAM_RECONCILE_INTERVAL_SECS,
+        )
+        .await;
+        assert_eq!(
+            stored_mailbox(&db, "m-1"),
+            "inbox",
+            "re-checked once the interval has passed"
+        );
     }
 }

@@ -740,6 +740,21 @@ impl Database {
         Ok(count)
     }
 
+    /// Ids of one mailbox's emails timestamped at or after `since` (seconds),
+    /// excluding soft-deleted rows. The Gmail spam reconciliation diffs these
+    /// against the provider's Spam listing.
+    pub fn email_ids_in_mailbox_since(&self, account_id: &str, mailbox: &str, since: i64) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM emails
+             WHERE account_id = ?1 AND mailbox = ?2 AND timestamp >= ?3 AND is_deleted = 0",
+        )?;
+        let ids = stmt
+            .query_map(params![account_id, mailbox, since], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     /// Minimum timestamp across a set of email IDs.
     ///
     /// The extra-mailbox backfill uses this to advance its cursor backward
@@ -790,6 +805,28 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    #[test]
+    fn email_ids_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
+        let db = Database::new_for_testing().unwrap();
+        for (id, account, ts) in [
+            ("recent", "acc1", 2_000),
+            ("old", "acc1", 999),
+            ("deleted", "acc1", 2_000),
+            ("other-account", "acc2", 2_000),
+            ("inbox-row", "acc1", 2_000),
+        ] {
+            insert_email(&db, id, account, &format!("t-{id}"), ts);
+            if id != "inbox-row" {
+                db.migrate_email_id(id, id, "spam").unwrap();
+            }
+        }
+        db.delete_email("deleted").unwrap();
+
+        let ids = db.email_ids_in_mailbox_since("acc1", "spam", 1_000).unwrap();
+
+        assert_eq!(ids, vec!["recent".to_string()]);
+    }
 
     #[test]
     fn min_timestamp_ignores_undated_messages() {
