@@ -439,6 +439,26 @@ pub(crate) fn coerce_args_to_schema(args: &mut serde_json::Value, schema: &serde
     }
 }
 
+/// Models sometimes nest the whole argument object under one extra key (Qwen
+/// 3.6 35B used the schema's own `parameters`). When the arguments are a lone
+/// key the schema does not declare, holding a non-empty object whose keys the
+/// schema all declares, lift that inner object. Anything else is left for the
+/// tool's own validation.
+pub(crate) fn unwrap_nested_args(args: &mut serde_json::Value, schema: &serde_json::Value) {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    let lifted = match args.as_object().map(|obj| (obj.len(), obj.iter().next())) {
+        Some((1, Some((key, serde_json::Value::Object(inner)))))
+            if !props.contains_key(key) && !inner.is_empty() && inner.keys().all(|k| props.contains_key(k)) =>
+        {
+            inner.clone()
+        }
+        _ => return,
+    };
+    *args = serde_json::Value::Object(lifted);
+}
+
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
@@ -1399,6 +1419,56 @@ mod tests {
         );
         assert!(out.contains("id=e2"), "{out}");
         assert!(!out.contains("id=e1") && !out.contains("id=e3"), "{out}");
+    }
+
+    /// Qwen 3.6 35B nested its arguments under the schema's own wrapper key:
+    /// `search_emails({"parameters":{"unread":true,…}})`. The tool saw no
+    /// filter and rejected the call three rounds in a row.
+    #[test]
+    fn dispatch_unwraps_arguments_nested_under_an_undeclared_key() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "parameters": { "unread": true, "order": "oldest", "limit": 1 } })),
+        );
+        assert!(out.contains("id=e2") && !out.contains("id=e1"), "{out}");
+    }
+
+    #[test]
+    fn unwrap_nested_args_lifts_only_a_lone_undeclared_wrapper_of_declared_keys() {
+        let schema = serde_json::json!({ "type": "object", "properties": {
+            "unread": { "type": "boolean" },
+            "limit": { "type": "integer" },
+            "filter": { "type": "object" },
+        }});
+        let mut wrapped = serde_json::json!({ "input": { "unread": true, "limit": 1 } });
+        unwrap_nested_args(&mut wrapped, &schema);
+        assert_eq!(wrapped, serde_json::json!({ "unread": true, "limit": 1 }));
+
+        for keep in [
+            // The wrapper is a real parameter of the tool.
+            serde_json::json!({ "filter": { "unread": true } }),
+            // An inner key the tool does not declare: not a wrapped call.
+            serde_json::json!({ "input": { "unread": true, "bogus": 1 } }),
+            // The wrapper sits beside other arguments.
+            serde_json::json!({ "input": { "unread": true }, "limit": 1 }),
+            // Nothing wrapped.
+            serde_json::json!({ "unread": true }),
+        ] {
+            let mut args = keep.clone();
+            unwrap_nested_args(&mut args, &schema);
+            assert_eq!(args, keep);
+        }
     }
 
     #[test]

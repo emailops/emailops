@@ -477,7 +477,9 @@ async fn dispatch_tool(
     match registry.get(name, db.as_ref()) {
         Some(tool) => {
             let mut args = args;
-            tools::coerce_args_to_schema(&mut args, &tool.parameters_schema_for(db.as_ref()));
+            let schema = tool.parameters_schema_for(db.as_ref());
+            tools::unwrap_nested_args(&mut args, &schema);
+            tools::coerce_args_to_schema(&mut args, &schema);
             let ctx = tools::ToolCtx {
                 db,
                 account_id,
