@@ -1397,23 +1397,25 @@ INVOICE_AMOUNTS_ES = ["1.847,12", "2.104,55", "1.612,40", "2.318,09", "1.950,27"
 
 
 # Attachment rules — the demo shows that incoming invoices with PDFs are
-# auto-classified into the Attachments view, grouped by vendor tag.
+# auto-classified into the Attachments view, grouped by vendor tag. Patterns
+# use the backend glob syntax (`*` wildcard, see services::attachments::
+# matches_glob), not SQL LIKE: a pattern without `*` is an exact match.
 ATTACHMENT_RULES_EN: list[tuple[str, str | None, str | None, str | None, list[str]]] = [
-    ("Hetzner Invoices",   "billing@hetzner.com",  "Hetzner Cloud invoice",      "%.pdf", ["invoice", "hetzner"]),
-    ("Fastmail Receipts",  "billing@fastmail.com", "Fastmail receipt",           "%.pdf", ["invoice", "fastmail"]),
-    ("Fly.io Invoices",    "billing@fly.io",       "Fly.io invoice",             "%.pdf", ["invoice", "fly"]),
-    ("Plausible Invoices", "billing@plausible.io", "Plausible Analytics invoice", "%.pdf", ["invoice", "plausible"]),
-    ("BorgBase Invoices",  "billing@borgbase.com", "BorgBase invoice",           "%.pdf", ["invoice", "borgbase"]),
-    ("Porkbun Receipts",   "support@porkbun.com",  "Porkbun domain renewal",     "%.pdf", ["invoice", "porkbun"]),
+    ("Hetzner Invoices",   "billing@hetzner.com",  "*Hetzner Cloud invoice*",      "*.pdf", ["invoice", "hetzner"]),
+    ("Fastmail Receipts",  "billing@fastmail.com", "*Fastmail receipt*",           "*.pdf", ["invoice", "fastmail"]),
+    ("Fly.io Invoices",    "billing@fly.io",       "*Fly.io invoice*",             "*.pdf", ["invoice", "fly"]),
+    ("Plausible Invoices", "billing@plausible.io", "*Plausible Analytics invoice*", "*.pdf", ["invoice", "plausible"]),
+    ("BorgBase Invoices",  "billing@borgbase.com", "*BorgBase invoice*",           "*.pdf", ["invoice", "borgbase"]),
+    ("Porkbun Receipts",   "support@porkbun.com",  "*Porkbun domain renewal*",     "*.pdf", ["invoice", "porkbun"]),
 ]
 
 ATTACHMENT_RULES_ES: list[tuple[str, str | None, str | None, str | None, list[str]]] = [
-    ("Facturas AWS",           "no-reply-aws@amazon.com",      "factura de AWS",          "%.pdf", ["factura", "aws"]),
-    ("Google Workspace",       "workspace-noreply@google.com", "factura de Google Workspace", "%.pdf", ["factura", "google"]),
-    ("Facturas Notion",        "team@mail.notion.so",          "factura de Notion",       "%.pdf", ["factura", "notion"]),
-    ("Recibos Anthropic",      "billing@anthropic.com",        "Recibo de Anthropic",     "%.pdf", ["factura", "anthropic"]),
-    ("Facturas Linear",        "billing@linear.app",           "Factura de Linear",       "%.pdf", ["factura", "linear"]),
-    ("Tarifas Stripe",         "invoicing@stripe.com",         "Factura de tarifas Stripe", "%.pdf", ["factura", "stripe"]),
+    ("Facturas AWS",           "no-reply-aws@amazon.com",      "*factura de AWS*",          "*.pdf", ["factura", "aws"]),
+    ("Google Workspace",       "workspace-noreply@google.com", "*factura de Google Workspace*", "*.pdf", ["factura", "google"]),
+    ("Facturas Notion",        "team@mail.notion.so",          "*factura de Notion*",       "*.pdf", ["factura", "notion"]),
+    ("Recibos Anthropic",      "billing@anthropic.com",        "*Recibo de Anthropic*",     "*.pdf", ["factura", "anthropic"]),
+    ("Facturas Linear",        "billing@linear.app",           "*Factura de Linear*",       "*.pdf", ["factura", "linear"]),
+    ("Tarifas Stripe",         "invoicing@stripe.com",         "*Factura de tarifas Stripe*", "*.pdf", ["factura", "stripe"]),
 ]
 
 
