@@ -113,7 +113,7 @@ def layer_chat():
         add(feature_for_eval(c["id"]), "eval", f"{c['id']} ({c['tier']})", "ok" if c["passed"] else "fail",
             detail or f"{c['checksPassed']}/{c['checksTotal']} checks" + (" · juez ok" if j else ""), c.get("latencyMs"),
             desc=f"Caso privado · Pregunta: {c.get('question', '')} · Checks: {', '.join(ck['name'] for ck in c['checks'])} · {judge_desc}",
-            question=c.get("question", ""), answer=c.get("answer", ""), expected_output=c.get("expectedOutput"), ai_trace=c.get("trace"), checks=c["checks"], model=case_model, judge=judge_desc, judge_report=j)
+            category=c.get("category"), question=c.get("question", ""), answer=c.get("answer", ""), expected_output=c.get("expectedOutput"), ai_trace=c.get("trace"), checks=c["checks"], model=case_model, judge=judge_desc, judge_report=j)
 
 def layer_junk():
     out = LAYERS / "junk"; out.mkdir(exist_ok=True)

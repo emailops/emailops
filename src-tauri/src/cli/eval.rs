@@ -43,6 +43,9 @@ pub(crate) struct CheckReport {
 pub(crate) struct CaseReport {
     pub id: String,
     pub tier: String,
+    /// What the question exercises (thread_summary, pending_actions…), shown
+    /// next to the case in the verification report.
+    pub category: String,
     pub passed: bool,
     pub checks_passed: usize,
     pub checks_total: usize,
@@ -91,6 +94,7 @@ pub(crate) fn failed_case_report(case: &crate::evals::case_loader::EvalCase, err
     CaseReport {
         id: case.id.clone(),
         tier: case.tier.clone(),
+        category: case.category.clone(),
         passed: false,
         checks_passed: 0,
         checks_total: 1,
@@ -209,6 +213,7 @@ pub async fn run_eval(
         case_reports.push(CaseReport {
             id: c.id.clone(),
             tier: c.tier.clone(),
+            category: c.category.clone(),
             passed: report.all_passed() && judge_report.as_ref().is_none_or(|j| j.passed),
             checks_passed: report.passed_count(),
             checks_total: report.total(),
@@ -335,11 +340,24 @@ mod tests {
         assert!(report.judge.is_none());
     }
 
+    /// The report header shows what each chat question exercises
+    /// (thread_summary, pending_actions…), so every row carries its case's
+    /// category — a case that could not run included.
+    #[test]
+    fn case_report_carries_the_case_category() {
+        let case: EvalCase =
+            serde_yaml::from_str("id: c1\nquestion: q\ncategory: thread_summary\ntier: smoke\n").expect("minimal case");
+        let report = failed_case_report(&case, "boom");
+        let json = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(json["category"], "thread_summary");
+    }
+
     #[test]
     fn case_report_carries_question_answer_and_trace_for_debugging() {
         let report = CaseReport {
             id: "demo_case".into(),
             tier: "smoke".into(),
+            category: "thread_summary".into(),
             passed: false,
             checks_passed: 0,
             checks_total: 1,

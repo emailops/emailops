@@ -89,6 +89,8 @@ def rows_html(rs, expand_fail=True):
         dur = f'{r["duration_ms"] / 1000:.1f} s' if r.get("duration_ms") else ""
         hint = r.get("desc") or ""
         name_cell = f'<span class="hint" title="{E(hint)}">{E(r["name"])}</span>' if hint else E(r["name"])
+        cat = (r.get("evidence") or {}).get("category")  # chat eval cases: what the question exercises
+        if cat: name_cell += f' <span class="muted">· {E(cat)}</span>'
         model = (r.get("evidence") or {}).get("model") if per_row_model(r) else None
         det = E(r["detail"] or "") + (f' <span class="muted">· modelo {E(model)}</span>' if model else "")
         out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
