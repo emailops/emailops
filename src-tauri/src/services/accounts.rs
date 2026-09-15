@@ -298,6 +298,43 @@ pub fn update_account_sync_from(
     Ok((account, change))
 }
 
+/// Name for the From header of mail sent from `account`, or `None` when the
+/// account has no real display name — accounts added without one store their
+/// address as the name.
+pub fn sender_display_name(account: &Account) -> Option<&str> {
+    let name = account.name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case(&account.email) {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Rename `account_id`. The name is the sender name on every message sent from
+/// the account, so line breaks and other control characters are rejected. A
+/// blank name falls back to the address: the "no display name" state an account
+/// added without one starts in.
+pub fn update_account_name(db: &Arc<Database>, account_id: &str, name: &str) -> Result<Account> {
+    let account = db
+        .get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
+
+    let name = name.trim();
+    if name.chars().any(char::is_control) {
+        return Err(AppError::InvalidInput(
+            "Sender name must not contain line breaks or control characters".to_string(),
+        ));
+    }
+    let name = if name.is_empty() {
+        account.email.clone()
+    } else {
+        name.to_string()
+    };
+
+    db.update_account_name(account_id, &name)?;
+    Ok(Account { name, ..account })
+}
+
 /// Register the database that backs dev-mode credential storage.
 ///
 /// Every credential read goes through this global in debug builds, so any
@@ -914,6 +951,80 @@ mod tests {
             None,
             "nothing to reopen, so the next sync must not be asked to"
         );
+    }
+
+    #[test]
+    fn sender_display_name_is_the_trimmed_account_name() {
+        let account = Account {
+            name: " Ada Example ".into(),
+            ..imap_account("a", "ada@example.com")
+        };
+        assert_eq!(sender_display_name(&account), Some("Ada Example"));
+    }
+
+    #[test]
+    fn an_account_named_after_its_address_has_no_sender_display_name() {
+        // Accounts added without a display name store the address as their
+        // name; putting it in the From header would only repeat the address.
+        for name in ["ada@example.com", "ADA@Example.com", "   "] {
+            let account = Account {
+                name: name.into(),
+                ..imap_account("a", "ada@example.com")
+            };
+            assert_eq!(sender_display_name(&account), None, "name {name:?}");
+        }
+    }
+
+    #[test]
+    fn update_account_name_stores_the_trimmed_name() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-r", "r@example.com"))
+            .expect("seed account");
+
+        let account = update_account_name(&db, "acc-r", "  Ada Example ").expect("rename");
+
+        assert_eq!(account.name, "Ada Example");
+        assert_eq!(
+            db.get_account("acc-r").expect("read").expect("account").name,
+            "Ada Example"
+        );
+    }
+
+    #[test]
+    fn clearing_the_account_name_falls_back_to_the_address() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-c", "c@example.com"))
+            .expect("seed account");
+        update_account_name(&db, "acc-c", "Ada Example").expect("name");
+
+        let account = update_account_name(&db, "acc-c", "   ").expect("clear");
+
+        assert_eq!(account.name, "c@example.com");
+    }
+
+    #[test]
+    fn update_account_name_rejects_line_breaks() {
+        // The name goes into the From header of every message sent.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-i", "i@example.com"))
+            .expect("seed account");
+
+        let err = update_account_name(&db, "acc-i", "Ada\r\nBcc: x@example.com").unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+        assert_eq!(
+            db.get_account("acc-i").expect("read").expect("account").name,
+            "i@example.com"
+        );
+    }
+
+    #[test]
+    fn update_account_name_on_an_unknown_account_is_not_found() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+
+        let err = update_account_name(&db, "missing", "Ada Example").unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
     }
 
     fn imap_account(id: &str, email: &str) -> Account {

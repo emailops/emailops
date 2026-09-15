@@ -194,6 +194,12 @@ export async function updateAccountSyncFrom(accountId: string, syncFromTimestamp
   return invoke('update_account_sync_from', { accountId, syncFromTimestamp });
 }
 
+/** Rename an account. The name is the sender name on mail sent from it; a
+ *  blank name falls back to the address. */
+export async function updateAccountName(accountId: string, name: string): Promise<Account> {
+  return invoke('update_account_name', { accountId, name });
+}
+
 export async function getAccountSettings(accountId: string): Promise<AccountSettings> {
   return invoke('get_account_settings', { accountId });
 }

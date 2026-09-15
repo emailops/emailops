@@ -978,3 +978,21 @@ on every turn, and still a gate that can be wrong); dropping pre-retrieval altog
 (kept open: `chat.routing_mode=always_rag|always_tools` stay available to A/B it on the
 eval).
 
+## 2026-09-15 — The account name is the sender name on outgoing mail
+
+**Decision:** `accounts.name` is the display name EmailOps puts in the `From` header of
+mail it sends through Gmail and IMAP/SMTP (`"Name" <address>`), editable per account in
+Account settings. An account whose name is blank or equal to its own address has no
+sender name and sends the bare address; clearing the field stores the address again.
+Outlook is unaffected: Graph takes the sender name from the mailbox. Drafts pushed to
+Gmail keep a bare address.
+**Context:** Mail sent from EmailOps went out as `From: address`, so recipients saw no
+name and the synced IMAP Sent copy had an empty sender. `accounts.name` already meant
+"your name on this account" (Outlook profile name, the IMAP setup display name, the
+sender of the optimistic Sent row); its only label use is the Dashboard account panel.
+**Rejected:** a separate sender-name field beside an account label, as Thunderbird and
+Apple Mail do — a second source of truth for the same identity, for a label shown in one
+panel. It pays off only with per-account aliases / send-as identities, which would bring a
+proper identity model (address + name + signature) anyway. Deriving the name from past
+Sent headers — implicit, and wrong for accounts that never sent with a name.
+

@@ -474,6 +474,7 @@ pub fn run() {
             commands::accounts::reorder_accounts,
             commands::accounts::set_account_enabled,
             commands::accounts::update_account_sync_from,
+            commands::accounts::update_account_name,
             commands::accounts::get_account_settings,
             commands::accounts::set_account_settings,
             commands::accounts::get_available_categories,

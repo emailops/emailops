@@ -163,6 +163,12 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_account_name(&self, account_id: &str, name: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute("UPDATE accounts SET name = ?1 WHERE id = ?2", params![name, account_id])?;
+        Ok(())
+    }
+
     /// Backfill progress, kept separate from the user's `sync_from_timestamp`
     /// preference. See `V017__accounts_backfill_swept_from.sql` for semantics.
     pub fn get_account_backfill_swept_from(&self, account_id: &str) -> Result<Option<i64>> {

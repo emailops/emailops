@@ -1001,6 +1001,7 @@ impl EmailProvider for OutlookClient {
     async fn send_reply(
         &self,
         from_email: &str,
+        _from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         thread_id: &str,
@@ -1025,6 +1026,7 @@ impl EmailProvider for OutlookClient {
     async fn send_new_email(
         &self,
         from_email: &str,
+        _from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,

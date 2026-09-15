@@ -401,6 +401,7 @@ impl GmailClient {
     pub async fn send_reply(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         thread_id: &str,
@@ -412,6 +413,7 @@ impl GmailClient {
         let normalized_subject = reply_subject(subject);
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
+            from_name,
             to_emails,
             cc_emails,
             subject: &normalized_subject,
@@ -439,6 +441,7 @@ impl GmailClient {
     pub async fn send_new_email(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,
@@ -447,6 +450,7 @@ impl GmailClient {
     ) -> Result<crate::sync::provider::SentMessageMeta> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
+            from_name,
             to_emails,
             cc_emails,
             subject,
@@ -481,6 +485,7 @@ impl GmailClient {
     ) -> Result<serde_json::Value> {
         let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
             from_email,
+            from_name: None,
             to_emails,
             cc_emails,
             subject,
@@ -1455,6 +1460,7 @@ impl EmailProvider for GmailClient {
     async fn send_reply(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         thread_id: &str,
@@ -1465,6 +1471,7 @@ impl EmailProvider for GmailClient {
     ) -> Result<provider::SentMessageMeta> {
         self.send_reply(
             from_email,
+            from_name,
             to_emails,
             cc_emails,
             thread_id,
@@ -1479,13 +1486,14 @@ impl EmailProvider for GmailClient {
     async fn send_new_email(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<provider::SentMessageMeta> {
-        self.send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
+        self.send_new_email(from_email, from_name, to_emails, cc_emails, subject, body, attachments)
             .await
     }
 

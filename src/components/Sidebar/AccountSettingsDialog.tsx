@@ -93,6 +93,11 @@ export function AccountSettingsDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The account name is the sender name on outgoing mail. An account added
+  // without a display name stores its address there, which means "no name".
+  const initialSenderName = account.name.trim().toLowerCase() === account.email.toLowerCase() ? '' : account.name;
+  const [senderName, setSenderName] = useState(initialSenderName);
+
   const [syncEnabled, setSyncEnabled] = useState(account.enabled);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -271,6 +276,9 @@ export function AccountSettingsDialog({
         });
         setImapDirty(false);
       }
+      if (senderName.trim() !== initialSenderName.trim()) {
+        await api.updateAccountName(account.id, senderName);
+      }
       await api.updateAccountSyncFrom(account.id, syncFromTimestamp);
       onSaved();
     } catch (e) {
@@ -291,6 +299,8 @@ export function AccountSettingsDialog({
     imapPassword,
     smtpHost,
     smtpPort,
+    senderName,
+    initialSenderName,
     syncFromTimestamp,
     onSaved,
   ]);
@@ -318,6 +328,22 @@ export function AccountSettingsDialog({
             <div className="text-sm text-gray-500">{t('modal:accountSettings.loading')}</div>
           ) : (
             <>
+              <section>
+                <label className="block text-sm font-semibold text-gray-100 mb-1" htmlFor="account-sender-name">
+                  {t('modal:accountSettings.senderNameHeading')}
+                </label>
+                <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.senderNameHint')}</p>
+                <input
+                  id="account-sender-name"
+                  type="text"
+                  autoComplete="name"
+                  value={senderName}
+                  onChange={(e) => setSenderName(e.target.value)}
+                  placeholder={t('modal:accountSettings.senderNamePlaceholder')}
+                  className="w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                />
+              </section>
+
               <section>
                 <h3 className="text-sm font-semibold text-gray-100 mb-3">{t('modal:accountSettings.syncHeading')}</h3>
                 <div className="flex items-start gap-3 rounded-lg border border-gray-700 p-3">

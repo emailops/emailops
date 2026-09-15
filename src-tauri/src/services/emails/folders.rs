@@ -436,6 +436,7 @@ mod tests {
             async fn send_reply(
                 &self,
                 _f: &str,
+                _n: Option<&str>,
                 _t: &[String],
                 _c: &[String],
                 _th: &str,
@@ -449,6 +450,7 @@ mod tests {
             async fn send_new_email(
                 &self,
                 _f: &str,
+                _n: Option<&str>,
                 _t: &[String],
                 _c: &[String],
                 _s: &str,
