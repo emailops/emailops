@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.8] — 2026-09-15
+
 ### Added
 
 - **Tag Board view.** A new entry under Views lays the classified tags out as a

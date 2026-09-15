@@ -80,9 +80,10 @@ Angabe der Quell-E-Mails. Die Antworten erscheinen im Stream, während sie erzeu
 Der Chat sitzt in einem größenveränderlichen Panel rechts neben dem Posteingang, sodass Sie
 beim Fragen weiterlesen können; für längere Sitzungen gibt es zusätzlich eine
 Vollbildansicht. Ist eine E-Mail geöffnet, bietet das Panel diesen Thread über einen
-entfernbaren Chip als Kontext an und antwortet aus dem Thread selbst, statt zu suchen.
-Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhaltung gespeichert — Sie
-können sich also innerhalb eines Chats zwischen E-Mails bewegen.
+entfernbaren Chip als Kontext an: Fragen zu dieser E-Mail beantwortet es aus dem Thread,
+eine Frage zum übrigen Postfach (*„Was ist heute gekommen?“*) durchsucht weiterhin das
+Postfach. Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhaltung
+gespeichert — Sie können sich also innerhalb eines Chats zwischen E-Mails bewegen.
 
 Der Chat durchsucht immer ein Konto, und eine Auswahl benennt welches — so stammt eine
 Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigene
@@ -94,8 +95,11 @@ E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus i
 einstellbar:
 
 - **Immer RAG zuerst** — der Standard; Kontext abrufen, dann antworten.
-- **Auto** — eine Heuristik wählt je Frage zwischen Retrieval und Tools.
-- **Immer Tools zuerst** — direkt zu den strukturierten Abfragen.
+- **Auto** — eine Heuristik entscheidet je Frage, ob zuerst Kontext abgerufen wird.
+- **Immer Tools zuerst** — ohne Retrieval direkt zu den strukturierten Abfragen.
+
+In jedem Modus bleiben die Tools verfügbar; der Modus entscheidet nur, ob vor der Antwort
+Kontext abgerufen wird.
 
 Fortgeschrittene können den System-Prompt und die Retrieval-Prompts (Query-Umschreibung,
 Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** bearbeiten.

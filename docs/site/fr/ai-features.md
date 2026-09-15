@@ -82,10 +82,11 @@ les e-mails sources. Les réponses arrivent en flux au fur et à mesure de leur 
 Le chat occupe un panneau redimensionnable ancré à droite de la boîte de réception : vous
 pouvez continuer à lire tout en posant vos questions, et une vue plein écran reste
 disponible pour les sessions plus longues. Lorsqu'un e-mail est ouvert, le panneau propose
-ce fil comme contexte via une puce que vous pouvez retirer, et répond à partir du fil
-lui-même au lieu de chercher. Ce contexte ne vaut que pour une question et n'est jamais
-enregistré dans la conversation : vous pouvez donc passer d'un e-mail à l'autre au sein d'un
-même chat.
+ce fil comme contexte via une puce que vous pouvez retirer : les questions sur cet e-mail
+trouvent leur réponse dans le fil, et une question sur le reste de votre boîte
+(*« qu'est-ce qui est arrivé aujourd'hui ? »*) continue d'y chercher. Ce contexte ne vaut
+que pour une question et n'est jamais enregistré dans la conversation : vous pouvez donc
+passer d'un e-mail à l'autre au sein d'un même chat.
 
 Le chat interroge un compte à la fois, et un sélecteur indique lequel — une réponse ne
 provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conserve sa propre
@@ -97,8 +98,13 @@ et des appels d'outils (interrogations directes de la base). Le mode de routage 
 configurable :
 
 - **Toujours RAG en premier** — le mode par défaut ; récupérer le contexte, puis répondre.
-- **Auto** — une heuristique choisit récupération ou outils selon la question.
-- **Toujours les outils en premier** — passer directement aux requêtes structurées.
+- **Auto** — une heuristique décide, question par question, s'il faut d'abord récupérer du
+  contexte.
+- **Toujours les outils en premier** — passer directement aux requêtes structurées, sans
+  récupération.
+
+Quel que soit le mode, les outils restent disponibles ; le mode décide seulement si la
+récupération a lieu avant la réponse.
 
 Les utilisateurs avancés peuvent modifier le prompt système et les prompts de récupération
 (réécriture de requête, reclassement) dans

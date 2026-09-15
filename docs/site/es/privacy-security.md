@@ -66,6 +66,11 @@ papelera, nunca a un borrado definitivo. La lectura se aplica primero en local p
 funcione sin conexión, y la cuenta se pone al día en segundo plano. Todo lo demás — etiquetas,
 filtros, carpetas que no has tocado — se queda exactamente como está.
 
+Cada mensaje que envías desde EmailOps termina con una breve línea «Enviado con EmailOps» que
+enlaza a getemailops.com. El enlace lleva `utm_source=email_footer`, que solo indica a la
+analítica de la web que la visita llegó desde el pie de un correo; no contiene nada que os
+identifique ni a ti ni al destinatario.
+
 ## Sin telemetría
 
 La app no recopila analíticas de uso, no envía informes de fallos y no tiene ninguna llamada

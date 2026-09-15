@@ -67,6 +67,11 @@ niemals in ein hartes Löschen. Der Lesestatus wird zuerst lokal gesetzt, damit 
 funktioniert; das Konto zieht im Hintergrund nach. Alles andere — Labels, Filter, Ordner, die
 Sie nicht angefasst haben — bleibt genau so, wie es ist.
 
+Jede Nachricht, die Sie aus EmailOps senden, endet mit einer kurzen Zeile „Gesendet mit
+EmailOps“, die auf getemailops.com verlinkt. Der Link trägt `utm_source=email_footer`; das
+teilt der Analyse der Website nur mit, dass ein Besuch aus einer E-Mail-Fußzeile kam, und
+enthält nichts, was Sie oder den Empfänger identifiziert.
+
 ## Keine Telemetrie
 
 Die App sammelt keine Nutzungsstatistiken, sendet keine Absturzberichte und ruft in

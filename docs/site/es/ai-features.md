@@ -79,8 +79,9 @@ origen citados. Las respuestas llegan en streaming según se generan.
 El chat vive en un panel redimensionable acoplado a la derecha de la bandeja, así que puedes
 seguir leyendo mientras preguntas; también hay una vista a pantalla completa para sesiones
 más largas. Con un correo abierto, el panel ofrece ese hilo como contexto mediante un chip
-que puedes quitar, y responde desde el propio hilo en lugar de buscar. Ese contexto se aplica
-a una sola pregunta y nunca se guarda en la conversación, así que puedes moverte entre
+que puedes quitar: las preguntas sobre ese correo se responden desde el hilo, y una pregunta
+sobre el resto del buzón (*"¿qué me ha llegado hoy?"*) sigue buscando en él. Ese contexto se
+aplica a una sola pregunta y nunca se guarda en la conversación, así que puedes moverte entre
 correos dentro de un mismo chat.
 
 El chat busca en una cuenta cada vez, y un selector indica cuál — de modo que una respuesta
@@ -93,8 +94,12 @@ llamadas a herramientas (consultas directas a la base de datos). El modo de enru
 configurable:
 
 - **Siempre RAG primero** — el predeterminado; recupera contexto y luego responde.
-- **Auto** — una heurística elige recuperación o herramientas según la pregunta.
-- **Siempre herramientas primero** — va directo a las consultas estructuradas.
+- **Auto** — una heurística decide en cada pregunta si recupera contexto antes.
+- **Siempre herramientas primero** — se salta la recuperación y empieza por las consultas
+  estructuradas.
+
+En todos los modos las herramientas siguen disponibles; el modo solo decide si se recupera
+contexto antes de responder.
 
 Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recuperación
 (reescritura de consulta, reordenación) en

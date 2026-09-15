@@ -67,6 +67,11 @@ l'application fonctionne hors ligne, et le compte se met à jour en arrière-pla
 reste — libellés, filtres, dossiers auxquels vous n'avez pas touché — reste exactement en
 l'état.
 
+Chaque message envoyé depuis EmailOps se termine par une courte ligne « Envoyé avec
+EmailOps » qui renvoie vers getemailops.com. Le lien porte `utm_source=email_footer`, qui
+indique seulement à l'outil d'analyse du site que la visite vient d'un pied de message ; il
+ne contient rien qui vous identifie, ni vous ni le destinataire.
+
 ## Aucune télémétrie
 
 L'application ne collecte aucune donnée d'usage, n'envoie aucun rapport de plantage et ne

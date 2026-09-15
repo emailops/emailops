@@ -76,8 +76,9 @@ source emails cited. Answers stream in as they are generated.
 
 Chat lives in a resizable panel docked to the right of the inbox, so you can keep reading
 while you ask; there is also a full-page view for longer sessions. With an email open the
-panel offers that thread as context via a removable chip, and answers from the thread
-itself instead of searching. That context applies to a single question and is never saved
+panel offers that thread as context via a removable chip: questions about that email are
+answered from the thread, while a question about the rest of your mailbox (*"what came in
+today?"*) still searches it. That context applies to a single question and is never saved
 onto the conversation, so you can move between emails inside one chat.
 
 Chat searches one account at a time, and a picker names which one — so an answer is never
@@ -89,8 +90,11 @@ Under the hood, chat combines retrieval (semantic search over your embedded mail
 tool calls (direct lookups against the database). The routing mode is configurable:
 
 - **Always RAG first** — the default; retrieve context, then answer.
-- **Auto** — a heuristic picks retrieval or tools per question.
-- **Always tools first** — go straight to structured lookups.
+- **Auto** — a heuristic decides per question whether to retrieve first.
+- **Always tools first** — skip retrieval and start from structured lookups.
+
+In every mode the tools stay available; the mode only decides whether retrieval runs before
+the answer.
 
 Advanced users can edit the system prompt and the retrieval prompts (query rewriting,
 reranking) in **Settings → AI Backend & Models → Chat prompts**.

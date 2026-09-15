@@ -64,6 +64,11 @@ delete. Reading is applied locally first so the app works offline, and the accou
 in the background. Everything else — labels, filters, folders you have not touched — is left
 exactly as it is.
 
+Every message you send from EmailOps ends with a short "Sent with EmailOps" line that links
+to getemailops.com. The link carries `utm_source=email_footer`, which only tells the
+website's analytics that a visit came from an email footer; nothing in it identifies you or
+the recipient.
+
 ## No telemetry
 
 The app collects no usage analytics, sends no crash reports, and has no phone-home of any
