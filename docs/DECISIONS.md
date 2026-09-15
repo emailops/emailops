@@ -1021,3 +1021,20 @@ counting questions that never need the thread. A dedicated "exchange with a pers
 route — the narrowest fix, and it would lean on keyword detection. An unconditional
 "call `get_thread`" instruction — it would fetch threads for questions that don't need
 them.
+
+## 2026-09-15 — Nightly local verification; Markdown summaries in git, HTML reports local
+
+**Decision:** A launchd agent on the developer's Mac runs `make verify` every night at 03:00
+and commits one Markdown summary per run under `docs/verification/` on the checked-out
+branch (never `main`, never pushed). The full HTML report stays in the gitignored
+`src-tauri/reports/verify/`, pruned to the last 10 runs. Private (real-mailbox) verification
+is never summarised or committed.
+**Context:** The chat evals need the local 35B model on the Metal GPU, the demo DB and a
+WebDriver-driven dev app, so neither GitHub CI nor a cloud routine can run them. A full run
+is about 41 MB (results.json 4.6 MB, informe.html 4.1 MB, raw layers and app evidence),
+roughly 15 GB a year if committed nightly. A run while another EmailOps instance holds the
+demo DB fails every eval with Metal out-of-memory, so the job skips that night instead of
+recording false failures.
+**Rejected:** Committing the HTML report without screenshots — about 4 MB a run, 1.5 GB a
+year. Keeping full runs on a dedicated branch or in Git LFS — a second branch to maintain or
+a new dependency. Running in GitHub CI or a cloud routine — no GPU or local model there.

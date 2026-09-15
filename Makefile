@@ -293,6 +293,17 @@ verify:
 verify-private:
 	bash scripts/verify_private.sh $(ARGS)
 
+# Nightly verification (launchd, daily 03:00): `make verify`, then a Markdown summary committed
+# under docs/verification/; the HTML report stays local. Install the agent once.
+verify-nightly:
+	bash scripts/verify_schedule.sh run
+
+verify-nightly-install:
+	bash scripts/verify_schedule.sh install
+
+verify-nightly-uninstall:
+	bash scripts/verify_schedule.sh uninstall
+
 # Security audit
 audit:
 	cargo audit --file src-tauri/Cargo.lock
