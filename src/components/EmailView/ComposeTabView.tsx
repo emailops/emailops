@@ -123,8 +123,10 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const prepared = prepareOutgoingHtml(bodyHtml);
     const state: ComposeDraftState = {
       accountId: fromAccountId,
-      toAddresses: toRecipients,
-      ccAddresses: ccRecipients,
+      // A valid address still in the input box (typed, not tokenised) is a
+      // recipient the user means; the saved draft must not drop it.
+      toAddresses: mergePendingRecipient(toRecipients, toInput),
+      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
@@ -141,6 +143,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   }, [
     toRecipients,
     ccRecipients,
+    toInput,
+    ccInput,
     subject,
     bodyHtml,
     fromAccountId,
@@ -260,9 +264,12 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   };
 
   const handleSend = async () => {
+    // Same rule as ComposeModal: an address left in the input box counts.
+    const to = mergePendingRecipient(toRecipients, toInput);
+    const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (toRecipients.length === 0 || !subject.trim() || !plain) return;
+    if (to.length === 0 || !subject.trim() || !plain) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -273,7 +280,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         const draftId = await autosaverRef.current?.flush();
         if (!draftId) throw new Error('draft not yet saved');
         await api.sendDraft(draftId, fromAccountId);
-        addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
+        addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
         setSent(true);
         // The backend stored the optimistic Sent row before returning — nudge
         // the list to refetch so the Sent view shows the message instantly.
@@ -283,15 +290,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       }
       await api.sendNewEmail(
         fromAccountId,
-        toRecipients,
-        ccRecipients,
+        to,
+        cc,
         subject.trim(),
         plain,
         attachments,
         prepared.bodyHtml,
         prepared.inlineImages,
       );
-      addLog('success', 'sync', `Email sent to ${toRecipients.join(', ')}`);
+      addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
       setSent(true);
       // The backend stored the optimistic Sent row before returning — nudge
       // the list to refetch so the Sent view shows the message instantly.
@@ -570,7 +577,13 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         <button
           type="button"
           onClick={handleSend}
-          disabled={isSending || sent || toRecipients.length === 0 || !subject.trim() || !bodyHtml.trim()}
+          disabled={
+            isSending ||
+            sent ||
+            mergePendingRecipient(toRecipients, toInput).length === 0 ||
+            !subject.trim() ||
+            !bodyHtml.trim()
+          }
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSending ? 'Sending…' : 'Send'}

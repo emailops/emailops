@@ -193,6 +193,15 @@ pub trait Tool: Send + Sync {
     /// `function.parameters`. Build with `serde_json::json!({...})`.
     fn parameters_schema(&self) -> serde_json::Value;
 
+    /// The schema as it should be advertised right now, given user settings —
+    /// e.g. a parameter whose accepted values come from Settings (the
+    /// classifier's tag list). Default: the static `parameters_schema()`.
+    /// The registry always goes through this hook; `parameters_schema()`
+    /// stays the settings-free form for tests and static rendering.
+    fn parameters_schema_for(&self, _db: &Database) -> serde_json::Value {
+        self.parameters_schema()
+    }
+
     /// Short summary inlined into the chat system prompt's `Tools:` section.
     /// Default: full `description()`. Override with a tight one-liner —
     /// small models pick tools off this list, so it must be precise but
@@ -252,7 +261,7 @@ impl ToolRegistry {
                     "function": {
                         "name": t.name(),
                         "description": t.description(),
-                        "parameters": t.parameters_schema(),
+                        "parameters": t.parameters_schema_for(db),
                     },
                 })
             })
@@ -309,7 +318,7 @@ impl ToolRegistry {
                     format!(
                         "  - {}({}): {}",
                         t.name(),
-                        tool_arg_signature(&t.parameters_schema()),
+                        tool_arg_signature(&t.parameters_schema_for(db)),
                         t.prompt_summary()
                     ),
                 )
@@ -356,7 +365,7 @@ impl ToolRegistry {
             .values()
             .filter(|t| t.is_available(db))
             .map(|t| {
-                let schema = t.parameters_schema();
+                let schema = t.parameters_schema_for(db);
                 let props = schema
                     .get("properties")
                     .and_then(|p| p.as_object())
@@ -399,6 +408,55 @@ fn tool_arg_signature(schema: &serde_json::Value) -> String {
         })
         .collect();
     parts.join(", ")
+}
+
+/// Models sometimes quote scalars (`"unread":"true"`, `"limit":"5"`), and the
+/// tools read them with `as_bool()` / `as_i64()`, which drop a string without a
+/// word. Convert a string argument to the boolean or integer its schema
+/// property declares. A string that is not a valid value for that type, or a
+/// key the schema does not declare, is left for the tool's own validation.
+pub(crate) fn coerce_args_to_schema(args: &mut serde_json::Value, schema: &serde_json::Value) {
+    let (Some(args), Some(props)) = (
+        args.as_object_mut(),
+        schema.get("properties").and_then(|p| p.as_object()),
+    ) else {
+        return;
+    };
+    for (key, value) in args.iter_mut() {
+        let Some(text) = value.as_str().map(str::trim) else {
+            continue;
+        };
+        let declared = props.get(key).and_then(|p| p.get("type")).and_then(|t| t.as_str());
+        let coerced = match declared {
+            Some("boolean") if text.eq_ignore_ascii_case("true") => Some(serde_json::Value::Bool(true)),
+            Some("boolean") if text.eq_ignore_ascii_case("false") => Some(serde_json::Value::Bool(false)),
+            Some("integer") => text.parse::<i64>().ok().map(serde_json::Value::from),
+            _ => None,
+        };
+        if let Some(c) = coerced {
+            *value = c;
+        }
+    }
+}
+
+/// Models sometimes nest the whole argument object under one extra key (Qwen
+/// 3.6 35B used the schema's own `parameters`). When the arguments are a lone
+/// key the schema does not declare, holding a non-empty object whose keys the
+/// schema all declares, lift that inner object. Anything else is left for the
+/// tool's own validation.
+pub(crate) fn unwrap_nested_args(args: &mut serde_json::Value, schema: &serde_json::Value) {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    let lifted = match args.as_object().map(|obj| (obj.len(), obj.iter().next())) {
+        Some((1, Some((key, serde_json::Value::Object(inner)))))
+            if !props.contains_key(key) && !inner.is_empty() && inner.keys().all(|k| props.contains_key(k)) =>
+        {
+            inner.clone()
+        }
+        _ => return,
+    };
+    *args = serde_json::Value::Object(lifted);
 }
 
 impl Default for ToolRegistry {
@@ -523,6 +581,54 @@ mod tests {
             .map(|d| d["function"]["name"].as_str().expect("name"))
             .collect();
         assert_eq!(names, vec!["get_lens_data"]);
+    }
+
+    /// A tool whose parameter menu depends on user settings (the classifier's
+    /// tag list) overrides `parameters_schema_for(db)`; both the function
+    /// catalogue and the prompt section must go through that hook.
+    struct DbAwareTool;
+    #[async_trait]
+    impl Tool for DbAwareTool {
+        fn name(&self) -> &'static str {
+            "db_aware"
+        }
+        fn description(&self) -> &'static str {
+            "db aware"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"static_arg": {}}, "required": []})
+        }
+        fn parameters_schema_for(&self, db: &Database) -> serde_json::Value {
+            let extra = db.get_preference("db_aware_arg").ok().flatten().unwrap_or_default();
+            serde_json::json!({"type": "object", "properties": {extra: {}}, "required": []})
+        }
+        async fn execute(&self, _ctx: &ToolCtx<'_>, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text("ran"))
+        }
+    }
+
+    #[test]
+    fn definitions_and_prompt_section_use_the_db_aware_schema() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("db_aware_arg", "dynamic_arg").expect("set pref");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(DbAwareTool)]);
+        let defs = registry.definitions(&db);
+        assert!(
+            defs[0]["function"]["parameters"]["properties"]
+                .get("dynamic_arg")
+                .is_some(),
+            "definitions must call parameters_schema_for(db): {defs:?}"
+        );
+        let section = registry.render_system_prompt_section(&db);
+        assert!(section.contains("db_aware(dynamic_arg?)"), "{section}");
+        assert!(!section.contains("static_arg"), "{section}");
+    }
+
+    #[test]
+    fn parameters_schema_for_defaults_to_the_static_schema() {
+        let db = Database::new_for_testing().expect("test db");
+        let tool = FakeToolWithSummary;
+        assert_eq!(tool.parameters_schema_for(&db), tool.parameters_schema());
     }
 
     #[test]
@@ -1077,6 +1183,145 @@ mod tests {
         assert!(!out.contains("id=e2"), "output was: {}", out);
     }
 
+    /// A search row is one representative per thread, so a six-message
+    /// exchange shows up as a single row. The row must carry the thread's
+    /// size and the output must say how to read the rest; otherwise the
+    /// model summarises the whole exchange from that one message.
+    #[test]
+    fn search_emails_row_reports_thread_size_and_hints_get_thread() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+        seed_email(
+            &db,
+            "m3",
+            "acc",
+            "t1",
+            "Me",
+            "me@example.com",
+            "Re: Launch",
+            "follow-up",
+            300,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("id=m2"), "output was: {}", out);
+        assert!(out.contains("messages=3"), "output was: {}", out);
+        assert!(out.contains("get_thread(thread_id)"), "output was: {}", out);
+    }
+
+    #[test]
+    fn search_emails_single_message_thread_has_no_thread_size_or_hint() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "s1",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Hello",
+            "hi",
+            100,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("id=s1"), "output was: {}", out);
+        assert!(!out.contains("messages="), "output was: {}", out);
+        assert!(!out.contains("get_thread"), "output was: {}", out);
+    }
+
+    /// The count must match what `get_thread` returns, or the model expects
+    /// messages the follow-up call never delivers.
+    #[test]
+    fn search_emails_thread_size_skips_deleted_messages() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+        seed_email(
+            &db,
+            "m3",
+            "acc",
+            "t1",
+            "Me",
+            "me@example.com",
+            "Re: Launch",
+            "follow-up",
+            300,
+        );
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'm1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com" })),
+        );
+        assert!(out.contains("messages=2"), "output was: {}", out);
+    }
+
+    #[test]
+    fn search_emails_with_bodies_row_reports_thread_size() {
+        let db = tools_test_db();
+        seed_email(&db, "m1", "acc", "t1", "Me", "me@example.com", "Launch", "first", 100);
+        seed_email(
+            &db,
+            "m2",
+            "acc",
+            "t1",
+            "Ana Ruiz",
+            "ana@example.com",
+            "Re: Launch",
+            "reply",
+            200,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(out.contains("body:"), "output was: {}", out);
+        assert!(out.contains("messages=2"), "output was: {}", out);
+    }
+
     /// Regression: `search_emails(from=alice)` used to return the latest email
     /// in any thread containing a alice message — which for a reply chain is the
     /// user's own reply TO alice, not alice's email. The tool must return the
@@ -1230,6 +1475,428 @@ mod tests {
             !out.contains("id=old_primary"),
             "must not fall back to the older primary email; out:\n{}",
             out
+        );
+    }
+
+    fn tag_email(db: &Database, email_id: &str, tag_type: &str, tag_value: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at) VALUES (?1, ?2, ?3, 1.0, 0)",
+                params![email_id, tag_type, tag_value],
+            )
+            .unwrap();
+    }
+
+    fn mark_spam(db: &Database, email_id: &str, account: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_junk
+                 (email_id, account_id, spam_score, phish_score, gray_score, band, primary_kind,
+                  reasons_json, method, model_version, scored_at, user_override)
+                 VALUES (?1, ?2, 0.9, 0.0, 0.0, 'junk', 'spam', '[]', 'deterministic', 1, 0, NULL)",
+                params![email_id, account],
+            )
+            .unwrap();
+    }
+
+    /// "el correo más antiguo que tengo sin leer": read state is a filter of
+    /// its own, pushed into SQL so `order=oldest limit=1` returns the oldest
+    /// UNREAD email (a post-filter would drop the oldest read one and return
+    /// nothing). Works alone (date-only path) and with a sender (text path),
+    /// and every unread row says so.
+    #[test]
+    fn search_emails_unread_filter_returns_the_oldest_unread() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        seed_email(&db, "e3", "acc", "t3", "Ana", "ana@example.com", "Tres", "c", t + 300);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        for args in [
+            serde_json::json!({ "unread": true, "order": "oldest", "limit": 1 }),
+            serde_json::json!({ "from": "ana@example.com", "unread": true, "order": "oldest", "limit": 1 }),
+        ] {
+            let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args.clone()));
+            assert!(out.contains("id=e2"), "oldest unread for {args}: {out}");
+            assert!(!out.contains("id=e1"), "a read email must not match {args}: {out}");
+            assert!(out.contains(" unread"), "unread rows are marked: {out}");
+        }
+        // Without the filter the oldest overall (read) email wins, unmarked.
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "order": "oldest", "limit": 1 })),
+        );
+        assert!(out.contains("id=e1") && !out.contains(" unread"), "{out}");
+    }
+
+    /// Models sometimes quote scalars (`"unread":"true"`, `"limit":"1"`).
+    /// Dispatch reads them as the type the tool's schema declares, so the
+    /// filter applies instead of being silently dropped.
+    #[test]
+    fn dispatch_reads_quoted_scalars_as_their_schema_type() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        seed_email(&db, "e3", "acc", "t3", "Ana", "ana@example.com", "Tres", "c", t + 300);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "unread": "true", "order": "oldest", "limit": "1" })),
+        );
+        assert!(out.contains("id=e2"), "{out}");
+        assert!(!out.contains("id=e1") && !out.contains("id=e3"), "{out}");
+    }
+
+    /// Qwen 3.6 35B nested its arguments under the schema's own wrapper key:
+    /// `search_emails({"parameters":{"unread":true,…}})`. The tool saw no
+    /// filter and rejected the call three rounds in a row.
+    #[test]
+    fn dispatch_unwraps_arguments_nested_under_an_undeclared_key() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Ana", "ana@example.com", "Dos", "b", t + 200);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'e1'", [])
+            .unwrap();
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "parameters": { "unread": true, "order": "oldest", "limit": 1 } })),
+        );
+        assert!(out.contains("id=e2") && !out.contains("id=e1"), "{out}");
+    }
+
+    #[test]
+    fn unwrap_nested_args_lifts_only_a_lone_undeclared_wrapper_of_declared_keys() {
+        let schema = serde_json::json!({ "type": "object", "properties": {
+            "unread": { "type": "boolean" },
+            "limit": { "type": "integer" },
+            "filter": { "type": "object" },
+        }});
+        let mut wrapped = serde_json::json!({ "input": { "unread": true, "limit": 1 } });
+        unwrap_nested_args(&mut wrapped, &schema);
+        assert_eq!(wrapped, serde_json::json!({ "unread": true, "limit": 1 }));
+
+        for keep in [
+            // The wrapper is a real parameter of the tool.
+            serde_json::json!({ "filter": { "unread": true } }),
+            // An inner key the tool does not declare: not a wrapped call.
+            serde_json::json!({ "input": { "unread": true, "bogus": 1 } }),
+            // The wrapper sits beside other arguments.
+            serde_json::json!({ "input": { "unread": true }, "limit": 1 }),
+            // Nothing wrapped.
+            serde_json::json!({ "unread": true }),
+        ] {
+            let mut args = keep.clone();
+            unwrap_nested_args(&mut args, &schema);
+            assert_eq!(args, keep);
+        }
+    }
+
+    #[test]
+    fn coerce_args_to_schema_converts_only_declared_scalar_strings() {
+        let schema = serde_json::json!({ "type": "object", "properties": {
+            "unread": { "type": "boolean" },
+            "limit": { "type": "integer" },
+            "from": { "type": "string" },
+        }});
+        let mut args = serde_json::json!({
+            "unread": "True", "limit": " 5 ", "from": "7", "extra": "true",
+        });
+        coerce_args_to_schema(&mut args, &schema);
+        assert_eq!(
+            args,
+            serde_json::json!({ "unread": true, "limit": 5, "from": "7", "extra": "true" })
+        );
+
+        // A string that is not a valid value for the declared type stays as
+        // it was, so the tool's own validation still reports it.
+        let mut bad = serde_json::json!({ "unread": "yes", "limit": "many" });
+        coerce_args_to_schema(&mut bad, &schema);
+        assert_eq!(bad, serde_json::json!({ "unread": "yes", "limit": "many" }));
+    }
+
+    /// "últimos correos de prospects": the literal word matches nothing, but
+    /// the classifier already knows a prospect (intent introduction /
+    /// question / request). The tool exposes that as a filter.
+    #[test]
+    fn search_emails_filters_by_classification_intent_and_topic() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "lead",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Posible colaboración",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "promo",
+            "acc",
+            "t2",
+            "Shop",
+            "shop@example.com",
+            "50% off",
+            "sale",
+            t + 200,
+        );
+        seed_email(
+            &db,
+            "q",
+            "acc",
+            "t3",
+            "Bob",
+            "bob@example.com",
+            "Cost?",
+            "how much",
+            t + 300,
+        );
+        tag_email(&db, "lead", "intent", "introduction");
+        tag_email(&db, "lead", "topic", "sales");
+        tag_email(&db, "promo", "intent", "promotion");
+        tag_email(&db, "q", "intent", "question");
+        tag_email(&db, "q", "topic", "sales");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "introduction" })),
+        );
+        assert!(out.contains("id=lead"), "{out}");
+        assert!(!out.contains("id=promo") && !out.contains("id=q"), "{out}");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "question", "topic": "sales" })),
+        );
+        assert!(
+            out.contains("id=q") && !out.contains("id=lead"),
+            "both filters must hold: {out}"
+        );
+
+        let schema = super::search_emails::SearchEmailsTool.parameters_schema();
+        for key in ["intent", "topic", "with_bodies"] {
+            assert!(schema["properties"].get(key).is_some(), "schema must offer {key}");
+        }
+    }
+
+    /// Mail the junk detector called spam or phishing never surfaces in a
+    /// chat search (an SEO cold email flagged spam was listed as a prospect).
+    #[test]
+    fn chat_search_excludes_spam_flagged_mail() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "ok",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Hello",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "bad",
+            "acc",
+            "t2",
+            "Seo",
+            "seo@example.com",
+            "Grow your traffic",
+            "seo",
+            t + 200,
+        );
+        mark_spam(&db, "bad", "acc");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18" })),
+        );
+        assert!(out.contains("id=ok") && !out.contains("id=bad"), "{out}");
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "query": "traffic" })),
+        );
+        assert!(!out.contains("id=bad"), "keyword path too: {out}");
+
+        // The app's own search box still reaches it: only chat drops junk.
+        let app = db
+            .search_emails("acc", "traffic", None, None, None, None, None, None, None, 10)
+            .expect("search");
+        assert!(app.iter().any(|e| e.id == "bad"));
+    }
+
+    /// `with_bodies` lets the model pull cleaned bodies in the same call
+    /// instead of one get_email_body round per row.
+    #[test]
+    fn search_emails_with_bodies_inlines_the_body() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "m1",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Hello",
+            "the full body text here",
+            t + 100,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(
+            out.contains("body:") && out.contains("the full body text here"),
+            "{out}"
+        );
+    }
+
+    /// "¿cuántos correos de X hay?" was answered "25" on a sender with 156
+    /// messages: results are capped at `limit` and nothing told the model the
+    /// page was only a slice. A full page now carries the total.
+    #[test]
+    fn search_emails_reports_the_total_when_the_page_is_full() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..30 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Newsletter",
+                "news@example.com",
+                &format!("Issue {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
+        );
+        assert!(
+            out.starts_with("(showing 25 of 30 matching threads"),
+            "full page must lead with the total; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn search_emails_omits_the_total_when_everything_fits() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "N",
+                "news@example.com",
+                "Issue",
+                "b",
+                t + i as i64,
+            );
+        }
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
+        );
+        assert!(
+            !out.contains("showing"),
+            "no total note when the page is not full; out:\n{out}"
+        );
+    }
+
+    /// The "emails I received today" shortcut listed a reply the user had
+    /// just SENT among the received mail, and the model summarised it as if
+    /// it had arrived. The shortcut asks for received mail only.
+    #[test]
+    fn search_emails_received_only_drops_sent_mail() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "in1",
+            "acc",
+            "t1",
+            "Alice",
+            "alice@example.com",
+            "Hello",
+            "hi",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "out1",
+            "acc",
+            "t2",
+            "Me",
+            "me@example.com",
+            "Re: Hello",
+            "reply",
+            t + 200,
+        );
+        db.connection()
+            .execute("UPDATE emails SET is_sent = 1 WHERE id = 'out1'", [])
+            .unwrap();
+        let args =
+            serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18", "limit": 25, "received_only": true });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args));
+        assert!(out.contains("id=in1"), "received mail kept; out:\n{out}");
+        assert!(!out.contains("id=out1"), "sent mail dropped; out:\n{out}");
+
+        let args = serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18", "limit": 25 });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args));
+        assert!(
+            out.contains("id=out1"),
+            "without the flag sent mail is still listed; out:\n{out}"
         );
     }
 

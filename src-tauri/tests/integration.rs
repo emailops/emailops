@@ -787,6 +787,7 @@ async fn fake_provider_send_reply_records_all_fields() {
     provider
         .send_reply(
             "me@example.com",
+            None,
             &["them@example.com".to_string()],
             &["cc@example.com".to_string()],
             "thread-xyz",
@@ -825,6 +826,7 @@ async fn fake_provider_send_new_email_records_attachments() {
     provider
         .send_new_email(
             "me@example.com",
+            None,
             &["x@y.com".to_string()],
             &[],
             "Report",
@@ -1275,6 +1277,56 @@ async fn send_reply_with_provider_routes_to_provider() {
     assert_eq!(sent[0].from_email, "me@example.com");
     // When to_emails is None, defaults to the original sender
     assert_eq!(sent[0].to_emails, vec!["sender@other.com"]);
+}
+
+#[tokio::test]
+async fn send_reply_with_provider_sends_the_account_name_as_sender_name() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-n1", "named@example.com")).unwrap();
+    let email = make_email_with("orig-n1", "acc-n1", 1000, "sender@other.com", "inbox");
+    db.insert_email(&email).unwrap();
+
+    let provider = FakeEmailProvider::new("named@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "orig-n1",
+        &emailops_lib::sync::provider::EmailBody::plain("Hello back!"),
+        None,
+        None,
+        None,
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_reply_with_provider");
+
+    assert_eq!(provider.sent()[0].from_name.as_deref(), Some("Test User"));
+}
+
+#[tokio::test]
+async fn send_new_email_with_provider_omits_a_sender_name_equal_to_the_address() {
+    let db = test_db();
+    db.insert_account(&Account {
+        name: "bare@example.com".to_string(),
+        ..make_account("acc-n2", "bare@example.com")
+    })
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("bare@example.com", "Me");
+    emailops_lib::services::emails::send_new_email_with_provider(
+        &db,
+        "acc-n2",
+        vec!["x@example.com".to_string()],
+        vec![],
+        "Hello",
+        &emailops_lib::sync::provider::EmailBody::plain("hi"),
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_new_email_with_provider");
+
+    assert_eq!(provider.sent()[0].from_name, None);
 }
 
 #[tokio::test]
@@ -2771,6 +2823,7 @@ impl EmailProvider for FailingEmailProvider {
     async fn send_reply(
         &self,
         _from_email: &str,
+        _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
         _thread_id: &str,
@@ -2785,6 +2838,7 @@ impl EmailProvider for FailingEmailProvider {
     async fn send_new_email(
         &self,
         _from_email: &str,
+        _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
         _subject: &str,
@@ -3135,6 +3189,7 @@ impl EmailProvider for ListFailingEmailProvider {
     async fn send_reply(
         &self,
         _from_email: &str,
+        _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
         _thread_id: &str,
@@ -3149,6 +3204,7 @@ impl EmailProvider for ListFailingEmailProvider {
     async fn send_new_email(
         &self,
         _from_email: &str,
+        _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
         _subject: &str,

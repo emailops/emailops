@@ -14,12 +14,27 @@ n'importe quel serveur IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, au
 Le courrier est synchronisé dans une base SQLite locale : la lecture et la recherche restent
 rapides et fonctionnent hors ligne.
 
+Le nom d'un compte est le nom d'expéditeur que voient les destinataires des e-mails envoyés
+depuis ce compte. Modifiez-le dans le champ **Nom de l'expéditeur** des réglages du compte, ou
+laissez-le vide pour envoyer avec l'adresse seule. Les comptes Gmail reprennent au départ le
+nom du paramètre « Envoyer des e-mails en tant que » de Gmail, et les comptes IMAP le nom
+affiché indiqué lors de leur connexion. Les e-mails envoyés via Outlook portent le nom que
+Microsoft associe à la boîte.
+
 ## Boîte de réception unifiée
 
 La vue **Tous les comptes** fusionne chaque boîte activée en une seule liste, à côté des vues
 par compte. Les dossiers IMAP personnalisés sont également synchronisés, et vous pouvez les
 créer, les renommer, les supprimer et y déplacer des messages par glisser-déposer depuis
 l'application.
+
+## Transférer
+
+**Transférer** se trouve à côté de **Répondre** et **Répondre à tous** dans le volet de
+lecture. Le brouillon s'ouvre sans destinataire et contient le message d'origine sous un
+en-tête *Message transféré* avec son expéditeur, sa date et ses destinataires, ainsi que les
+pièces jointes d'origine (jusqu'à 20 Mo au total). Il part comme un nouveau message et ne
+rejoint donc pas les conversations existantes du destinataire.
 
 ## Filtres intelligents
 

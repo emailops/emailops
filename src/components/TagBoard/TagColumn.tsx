@@ -89,6 +89,12 @@ export function TagColumn({
         onDropOnBlock(column.key, sideFromPointer(e));
       }}
       className="relative flex min-h-0 min-w-0 flex-col rounded-xl border border-gray-200 bg-gray-50"
+      data-testid="tag-column"
+      data-account-id={column.accountId}
+      data-tag-value={column.value}
+      data-thread-count={column.threadCount}
+      data-loaded={column.emails.length}
+      data-has-more={column.hasMore ? 'true' : 'false'}
     >
       {/* The drop lands in a gap, so the gap is what lights up: a bar centred
           in the 12px gutter on the chosen side, rather than a ring around a

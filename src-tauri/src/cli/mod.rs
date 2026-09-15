@@ -346,6 +346,10 @@ pub enum Command {
     Draft {
         /// Draft id.
         id: String,
+        /// Delete the draft instead of showing it — locally and, for Gmail /
+        /// Outlook, in the provider's Drafts folder too.
+        #[arg(long)]
+        delete: bool,
     },
 
     /// Upcoming calendar events for one account (the calendar is per-account
@@ -394,6 +398,14 @@ pub enum Command {
         /// Override the eval-cases directory.
         #[arg(long, value_name = "DIR")]
         cases_dir: Option<PathBuf>,
+        /// Also score each case with an LLM judge served by the app's own
+        /// provider (golden reference + rubric from the case file). A case then
+        /// passes only if its heuristic checks AND the judge pass.
+        #[arg(long)]
+        judge: bool,
+        /// Model the judge runs on (defaults to the chat model).
+        #[arg(long, value_name = "MODEL")]
+        judge_model: Option<String>,
     },
 }
 
@@ -864,7 +876,9 @@ mod tests {
     fn eval_case_and_tier_flags_parse() {
         let cli = Cli::parse_from(["emailops-cli", "eval", "--case", "kickoff_es", "--tier", "smoke"]);
         match cli.command {
-            Some(Command::Eval { case, tier, cases_dir }) => {
+            Some(Command::Eval {
+                case, tier, cases_dir, ..
+            }) => {
                 assert_eq!(case.as_deref(), Some("kickoff_es"));
                 assert_eq!(tier.as_deref(), Some("smoke"));
                 assert!(cases_dir.is_none());

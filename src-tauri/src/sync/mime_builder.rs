@@ -39,6 +39,9 @@ use crate::sync::provider::{EmailAttachment, EmailBody};
 /// `None` for fresh mail.
 pub struct SendMimeParams<'a> {
     pub from_email: &'a str,
+    /// Display name for the From header (`Name <address>`); `None` sends the
+    /// bare address.
+    pub from_name: Option<&'a str>,
     pub to_emails: &'a [String],
     pub cc_emails: &'a [String],
     pub subject: &'a str,
@@ -151,10 +154,11 @@ pub fn extract_message_id(msg: &LettreMessage) -> Option<String> {
 }
 
 fn base_builder(params: &SendMimeParams<'_>) -> Result<lettre::message::MessageBuilder> {
-    let from: Mailbox = params
+    let address: lettre::Address = params
         .from_email
         .parse()
         .map_err(|e| AppError::SyncError(format!("Invalid from address: {e}")))?;
+    let from = Mailbox::new(params.from_name.map(str::to_string), address);
     // Generate a client-side Message-ID (`<uuid@hostname>`) instead of leaving
     // it to the mail relay. Gmail and IMAP Sent copies preserve it, which lets
     // the sync reconciler exact-match the provider's Sent copy against the
@@ -237,6 +241,7 @@ mod tests {
         let cc: Vec<String> = vec![];
         build_send_mime(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &cc,
             subject: "hello",
@@ -245,6 +250,50 @@ mod tests {
             attachments,
         })
         .expect("build_send_mime")
+    }
+
+    fn from_line(from_name: Option<&str>) -> String {
+        let to = vec!["you@example.com".to_string()];
+        let mime = build_send_mime(&SendMimeParams {
+            from_email: "me@example.com",
+            from_name,
+            to_emails: &to,
+            cc_emails: &[],
+            subject: "hello",
+            in_reply_to: None,
+            body: &EmailBody::plain("hi"),
+            attachments: &[],
+        })
+        .expect("build_send_mime");
+        mime.lines()
+            .find(|l| l.starts_with("From:"))
+            .expect("From header")
+            .to_string()
+    }
+
+    // Regression: the From header carried only the address, so recipients (and
+    // the synced Sent copy) showed no sender name.
+    #[test]
+    fn from_header_carries_the_display_name() {
+        assert_eq!(from_line(Some("Ada Example")), "From: \"Ada Example\" <me@example.com>");
+    }
+
+    #[test]
+    fn from_header_encodes_a_non_ascii_display_name() {
+        let line = from_line(Some("Adá Exámple"));
+        assert!(
+            line.starts_with("From: =?utf-8?"),
+            "RFC 2047-encoded name expected, got: {line}"
+        );
+        assert!(
+            line.ends_with("<me@example.com>"),
+            "address must follow the name, got: {line}"
+        );
+    }
+
+    #[test]
+    fn from_header_without_a_display_name_is_the_bare_address() {
+        assert_eq!(from_line(None), "From: me@example.com");
     }
 
     #[test]
@@ -399,6 +448,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let mime = build_send_mime(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "Re: hi",
@@ -422,6 +472,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let err = build_send_mime(&SendMimeParams {
             from_email: "not-an-email",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "x",
@@ -445,6 +496,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let result = build_send_mime(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "x",
@@ -466,6 +518,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let mime = build_send_mime(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "Facturas T1 subidas y nuevo número de IVA",
@@ -494,6 +547,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let mime = build_send_mime(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "Hello World",
@@ -513,6 +567,7 @@ mod tests {
         let to = vec!["you@example.com".to_string()];
         let msg = build_lettre_message(&SendMimeParams {
             from_email: "me@example.com",
+            from_name: None,
             to_emails: &to,
             cc_emails: &[],
             subject: "hello",

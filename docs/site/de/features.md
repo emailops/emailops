@@ -14,11 +14,26 @@ IMAP/SMTP-Server (iCloud, Yahoo, Fastmail, ProtonMail Bridge, selbst gehostet). 
 werden in eine lokale SQLite-Datenbank synchronisiert, sodass Lesen und Suchen schnell bleiben
 und offline funktionieren.
 
+Der Name eines Kontos ist der Absendername, den Empfänger bei den von diesem Konto
+gesendeten E-Mails sehen. Sie ändern ihn im Feld **Absendername** in den Kontoeinstellungen;
+bleibt es leer, wird nur mit der Adresse gesendet. Gmail-Konten übernehmen anfangs den Namen
+aus der Gmail-Einstellung „Senden als“, IMAP-Konten den Anzeigenamen, den Sie beim Verbinden
+angegeben haben. Über Outlook gesendete E-Mails tragen den Namen, den Microsoft für das
+Postfach hinterlegt hat.
+
 ## Vereinter Posteingang
 
 Die Ansicht **Alle Konten** führt jedes aktivierte Postfach in einer Liste zusammen, neben den
 Ansichten je Konto. Eigene IMAP-Ordner werden ebenfalls synchronisiert, und Sie können sie
 direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-drop verschieben.
+
+## Weiterleiten
+
+**Weiterleiten** steht im Lesebereich neben **Antworten** und **Allen antworten**. Der Entwurf
+öffnet sich ohne Empfänger und enthält die ursprüngliche Nachricht unter der Kopfzeile
+*Weitergeleitete Nachricht* mit Absender, Datum und Empfängern, dazu die ursprünglichen
+Anhänge (bis zu 20 MB insgesamt). Sie wird als neue Nachricht gesendet und landet daher nicht
+in bestehenden Unterhaltungen des Empfängers.
 
 ## Intelligente Filter
 

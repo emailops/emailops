@@ -9,7 +9,9 @@ import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientS
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
+  createDebouncedDraftSaver,
   createDraftAutosaver,
+  type DebouncedDraftSaver,
   type DraftAutosaver,
   shouldAutosaveDraft,
 } from '@/lib/composeDraft';
@@ -95,6 +97,9 @@ export function ComposeModal({
   // instead of piling up rows (it tracks the id across saves and injects the
   // freshest one at execution time — see createDraftAutosaver).
   const autosaverRef = useRef<DraftAutosaver | null>(null);
+  const debouncedRef = useRef<DebouncedDraftSaver>(
+    createDebouncedDraftSaver((state) => autosaverRef.current?.save(state) ?? Promise.resolve(), 800),
+  );
   if (autosaverRef.current === null) {
     autosaverRef.current = createDraftAutosaver(api.saveDraft, (err) =>
       addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
@@ -281,20 +286,29 @@ export function ComposeModal({
       // this snapshot leaves it undefined.
       draftId: undefined,
       accountId: fromAccountId,
-      toAddresses: toRecipients,
-      ccAddresses: ccRecipients,
+      // A valid address still in the input box (typed, not tokenised) is a
+      // recipient the user means; the saved draft must not drop it.
+      toAddresses: mergePendingRecipient(toRecipients, toInput),
+      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) return;
-    const handle = window.setTimeout(() => {
-      void autosaverRef.current?.save(state);
-    }, 800);
-    return () => window.clearTimeout(handle);
-  }, [toRecipients, ccRecipients, subject, bodyHtml, fromAccountId, isSending, sent]);
+    if (!shouldAutosaveDraft(state)) {
+      // Sending / sent: a save still waiting must not resurrect the draft.
+      debouncedRef.current.cancel();
+      return;
+    }
+    debouncedRef.current.schedule(state);
+  }, [toRecipients, ccRecipients, toInput, ccInput, subject, bodyHtml, fromAccountId, isSending, sent]);
+
+  // Closing the composer must not drop the edit still inside the quiet period.
+  useEffect(() => {
+    const debounced = debouncedRef.current;
+    return () => debounced.flushPending();
+  }, []);
 
   const handleSend = async () => {
     // Include a valid address still sitting in the input box (typed but not

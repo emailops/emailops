@@ -121,8 +121,12 @@ export function TagBoardToolbar({
           <p className="mt-0.5 truncate text-xs text-gray-500">{t('tagboard:subtitle')}</p>
         </div>
 
-        <div className="flex max-w-full flex-col items-end gap-2">
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* `min-w-0` + `overflow-x-auto` on each row: when the board is the
+            narrow column of a three-pane layout (chat docked + thread open) the
+            segmented controls cannot shrink, and `items-end` used to push the
+            overflow off the left edge, under the sidebar. */}
+        <div className="flex min-w-0 max-w-full flex-col items-end gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2 overflow-x-auto">
             <span className="text-xs text-gray-500">{t('tagboard:groupBy')}</span>
             <Segmented
               label={t('tagboard:groupBy')}
@@ -171,7 +175,7 @@ export function TagBoardToolbar({
             )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2 overflow-x-auto">
             <div className="relative">
               <svg
                 aria-hidden="true"

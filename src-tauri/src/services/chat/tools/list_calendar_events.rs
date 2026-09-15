@@ -40,19 +40,30 @@ pub(crate) fn resolve_window(args: &Value, now: i64) -> (i64, i64) {
     }
 }
 
+/// First line of every calendar result: today's date in the user's zone.
+/// Anchors "today"/"tomorrow" right next to the events — the model called
+/// tomorrow's first event "hoy" when the only date it had was in the prompt.
+fn today_header(now_secs: i64) -> String {
+    use chrono::TimeZone;
+    match chrono::Local.timestamp_opt(now_secs, 0).single() {
+        Some(now) => format!("(today is {}, {})\n", now.format("%A"), now.format("%Y-%m-%d %H:%M")),
+        None => String::new(),
+    }
+}
+
 /// One event as a compact, model-friendly line in local time.
 fn format_event_line(event: &crate::models::CalendarEvent) -> String {
     use chrono::TimeZone;
     let when = if event.is_all_day {
         match chrono::Local.timestamp_opt(event.start_time, 0).single() {
-            Some(dt) => format!("{} all-day", dt.format("%Y-%m-%d")),
+            Some(dt) => format!("{} all-day", dt.format("%a %Y-%m-%d")),
             None => "unknown-date".to_string(),
         }
     } else {
         let start = chrono::Local.timestamp_opt(event.start_time, 0).single();
         let end = chrono::Local.timestamp_opt(event.end_time, 0).single();
         match (start, end) {
-            (Some(s), Some(e)) => format!("{}\u{2013}{}", s.format("%Y-%m-%d %H:%M"), e.format("%H:%M")),
+            (Some(s), Some(e)) => format!("{}\u{2013}{}", s.format("%a %Y-%m-%d %H:%M"), e.format("%H:%M")),
             _ => "unknown-time".to_string(),
         }
     };
@@ -86,7 +97,7 @@ impl Tool for ListCalendarEventsTool {
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "list the user's calendar events (meetings) for a date range."
+        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\") — never search_emails for those."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -138,15 +149,19 @@ impl Tool for ListCalendarEventsTool {
                     .to_string(),
             ));
         }
-        let (start, end) = resolve_window(&args, chrono::Utc::now().timestamp());
+        let now = chrono::Utc::now().timestamp();
+        let (start, end) = resolve_window(&args, now);
         let events = match ctx.db.list_visible_calendar_events(ctx.account_id, start, end) {
             Ok(events) => events,
             Err(e) => return Ok(ToolOutput::text(format!("Calendar error: {e}"))),
         };
         if events.is_empty() {
-            return Ok(ToolOutput::text("No calendar events in this period.".to_string()));
+            return Ok(ToolOutput::text(format!(
+                "{}No calendar events in this period.",
+                today_header(now)
+            )));
         }
-        let mut out = String::new();
+        let mut out = today_header(now);
         for event in events.iter().take(MAX_EVENTS) {
             out.push_str(&format_event_line(event));
         }
@@ -197,6 +212,49 @@ mod tests {
     }
 
     // ── execute (against the in-memory DB) ─────────────────────────────────
+
+    #[test]
+    fn prompt_summary_claims_meeting_questions_only_when_the_tool_is_offered() {
+        // The routing hint lives on the tool, not in the static system prompt:
+        // a static "meetings → list_calendar_events" rule made the model name
+        // the tool in its refusal on installs where the calendar is off.
+        let summary = ListCalendarEventsTool.prompt_summary();
+        for word in ["reunión", "calendario", "meeting"] {
+            assert!(summary.contains(word), "missing {word}: {summary}");
+        }
+        assert!(!crate::services::prompts::defaults::CHAT_SYSTEM.contains("list_calendar_events"));
+    }
+
+    #[test]
+    fn calendar_output_opens_with_todays_weekday_and_date() {
+        use chrono::TimeZone;
+        let now = 1_789_016_400;
+        let header = today_header(now);
+        let local = chrono::Local.timestamp_opt(now, 0).single().expect("local");
+        assert_eq!(
+            header,
+            format!(
+                "(today is {}, {})\n",
+                local.format("%A"),
+                local.format("%Y-%m-%d %H:%M")
+            )
+        );
+    }
+
+    #[test]
+    fn event_lines_carry_the_weekday() {
+        // "what meetings do I have this week?" came back with a Thursday
+        // labelled "martes": the model only ever saw ISO dates.
+        use chrono::TimeZone;
+        let start = 1_789_016_400; // 2026-09-10 05:00 UTC
+        let line = format_event_line(&event("acc", "e1", start));
+        let expected = chrono::Local
+            .timestamp_opt(start, 0)
+            .single()
+            .map(|dt| format!("- {}", dt.format("%a %Y-%m-%d")))
+            .expect("local time");
+        assert!(line.starts_with(&expected), "expected `{expected}…`, got: {line}");
+    }
 
     fn event(account_id: &str, id: &str, start: i64) -> CalendarEvent {
         CalendarEvent {
@@ -273,7 +331,8 @@ mod tests {
             categories: &[],
         };
         let out = ListCalendarEventsTool.execute(&ctx, json!({})).await.expect("execute");
-        assert_eq!(out.text, "No calendar events in this period.");
+        assert!(out.text.starts_with("(today is "), "today header first: {}", out.text);
+        assert!(out.text.ends_with("No calendar events in this period."), "{}", out.text);
     }
 
     #[tokio::test]

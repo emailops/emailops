@@ -361,6 +361,28 @@ Respond with ONLY a JSON object, no markdown, no explanation:\n\
         );
     }
 
+    /// Concepts ("prospects", "quote requests", "complaints") reach the search
+    /// through the classifier's tag glossary, rendered from data into the tool
+    /// schema and the planner prompt — never through per-concept rules in the
+    /// static prompts, which would grow one paragraph per concept.
+    #[test]
+    fn chat_prompts_carry_no_per_concept_rules() {
+        assert!(
+            !defaults::CHAT_SYSTEM.contains("PROSPECTS"),
+            "system prompt still special-cases prospects"
+        );
+        assert!(
+            !defaults::CHAT_QUERY_PLAN.contains("prospects"),
+            "planner still hard-codes concept rules"
+        );
+        assert!(defaults::CHAT_QUERY_PLAN.contains("{{intent_definitions}}"));
+        assert!(defaults::CHAT_QUERY_PLAN.contains("{{topic_definitions}}"));
+        assert!(
+            defaults::CHAT_QUERY_PLAN.contains("semantic"),
+            "planner must know the semantic mode"
+        );
+    }
+
     #[test]
     fn every_default_template_is_non_empty_and_uses_only_declared_vars() {
         let re = placeholder_re();

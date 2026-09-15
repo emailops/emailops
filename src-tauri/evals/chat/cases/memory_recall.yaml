@@ -15,10 +15,12 @@
 - id: demo_memory_pending_tasks
   question: "list all my pending tasks"
   account: "ulises@emailopslabs.dev"
-  category: memory_tasks
+  category: pending_actions
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["list_pending_tasks"]
   expected_answer_contains: []
+  expected_output: "Six open tasks: review contributor PR #131 (Proton Bridge IMAP); reply to Nadia about adding a second email account (high); fix the Faro production bug with orders stuck in 'processing' (high); invoice Bahía Studio for the May milestone; send the analytics-migration proposal to Janos at PrivacyHub; book the annual physical (low)."
   metrics:
     - answer_relevancy
+    - faithfulness

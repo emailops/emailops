@@ -37,8 +37,12 @@ interface InboxProps {
    *  combine this with `showCategoryFilter` to gate visibility for non-Gmail accounts. */
   availableCategories?: EmailCategory[];
   onCollapse?: () => void;
-  /** Start a fresh chat and dock the panel. Omitted when AI is disabled. */
+  /** Header chat button. With the panel open it starts a fresh chat; with the
+   *  panel closed (`isChatPanelOpen` false) it re-docks the panel. Omitted
+   *  when AI is disabled. */
   onNewChat?: () => void;
+  /** Whether the docked chat panel is visible; picks the header button's label. */
+  isChatPanelOpen?: boolean;
   onOpenInTab?: (email: Email) => void;
   /** Open a new chat session seeded with the cleaned email thread. */
   onChatAboutThread?: (email: Email) => void;
@@ -48,6 +52,8 @@ interface InboxProps {
   fullWidth?: boolean;
   /** Display name of the active account shown in the inbox title. */
   accountName?: string;
+  /** Pane title: the mailbox the user opened plus the account (see `mailboxTitle`). */
+  title?: string;
   /** Account ID used for sender autocomplete in the inline search box. */
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
@@ -159,6 +165,8 @@ export function Inbox({
   disableAutoSelect = false,
   fullWidth = false,
   accountName,
+  title,
+  isChatPanelOpen = true,
   accountId,
   onSearch,
 }: InboxProps) {
@@ -412,7 +420,7 @@ export function Inbox({
           {/* Title */}
           <div className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] min-w-0">
             <h2 className="text-lg font-semibold text-gray-900 truncate">
-              {accountName ? `Inbox — ${accountName}` : 'Inbox'}
+              {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
             </h2>
             {isSyncing && (
               <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
@@ -456,8 +464,8 @@ export function Inbox({
             {onNewChat && (
               <button
                 onClick={onNewChat}
-                title={t('chat:panel.newChat')}
-                aria-label={t('chat:panel.newChat')}
+                title={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
+                aria-label={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
                 className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

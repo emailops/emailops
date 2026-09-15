@@ -15,7 +15,7 @@ What it does
 1. Copies the *schema only* from the current production DB into a fresh demo DB
    so the demo always matches whatever the app currently expects.
 2. Populates it with synthetic-but-plausible founder-flavored data:
-   - 2 accounts (one Gmail, one Outlook)
+   - 2 IMAP mail accounts plus a credential-less Gmail account that owns the demo calendar
    - ~180 emails across realistic SaaS/customer/investor/newsletter senders
    - Read/unread mix, multiple threads, categories, mailboxes
    - email_bodies + emails_fts entries
@@ -38,6 +38,7 @@ import os
 import random
 import re
 import shutil
+import datetime as _dt
 import sqlite3
 import subprocess
 import sys
@@ -89,6 +90,16 @@ ACCOUNT_PERSONAL = Account(
     provider="imap",
     email="ulises@fastmail.com",
     name="Ulises",
+)
+# Owns the demo calendar. The chat's `list_calendar_events` tool (and the
+# Calendar view) are only offered to Gmail/Outlook accounts, so the IMAP work
+# account cannot carry the events. No credentials are stored for it — like the
+# IMAP accounts it simply reports "authentication required" on auto-sync.
+ACCOUNT_CALENDAR = Account(
+    id="demo-acct-calendar",
+    provider="gmail",
+    email="ulises.emailopslabs@gmail.com",
+    name="Ulises · Google Calendar",
 )
 
 # Spanish-locale variant. Same personas, Spanish-flavored email/name. Account ids
@@ -664,6 +675,9 @@ class Thread:
     mailbox: str = "inbox"
     days_ago: int = 7
     read: bool = True
+    # Per-message age in days, one per msg, for exchanges that span months
+    # (the default spaces replies a few hours apart from `days_ago`).
+    msg_days_ago: list[int] | None = None
 
 
 WORK_THREADS_EN: list[Thread] = [
@@ -822,7 +836,82 @@ WORK_THREADS_EN: list[Thread] = [
 ]
 
 
+# ── Imported from the maintainer's mailbox, anonymised (see private-evals/imports/) ──
+# A beta tester's back-and-forth over several months: exercises thread and
+# per-person summaries with both directions of the conversation.
+WORK_THREADS_EN += [
+    Thread("Rafael Ortega", "rafael.ortega@posteo.net",
+           "New EmailOps version", "primary",
+           [("me",
+             "Hi Rafael,\n\nHere is the new version. This one is signed and ships "
+             "new features like Lenses, which let you analyse a set of emails with "
+             "the AI and pull the information into a table.\n\n"
+             "https://github.com/emailops/emailops/releases/tag/v0.5.0\n\n"
+             "Let me know what you think.\n\nUlises"),
+            ("them",
+             "Hi Ulises,\n\nSorry for going quiet, it has been a hectic few weeks. "
+             "I just installed v0.6 from the repo. I should have time to play with "
+             "it in the next few days, and some availability if you want to talk.\n\n"
+             "Glad you are still going full steam on this.\n\nRafael"),
+            ("me",
+             "Hi Rafael,\n\nNo worries, I figured you were swamped. If it suits "
+             "you, we could meet on Wednesday at 16:00 and go through it.\n\n"
+             "Ulises"),
+            ("them",
+             "Morning Ulises,\n\nI would like a few more days using your client for "
+             "work first. Let's write again to set that call up another week, ok?\n\n"
+             "Rafael"),
+            ("me",
+             "Sure, great that you are trying it on real work, that is the best way "
+             "to see the value. Let's schedule in the coming weeks.\n\nThanks!\nUlises"),
+            ("me",
+             "Hi Rafael,\n\nI guess you are back from holidays; I got back from my "
+             "trip on Tuesday. Pinging you to see if you kept using the app. I have "
+             "kept shipping releases, 0.6.7 went out yesterday, and over the last "
+             "weeks web traffic and downloads are growing. Still modest, but several "
+             "people have reported bugs, so they seem to be using it.\n\n"
+             "Let me know and we can set up that call.\n\nUlises")],
+           msg_days_ago=[107, 81, 80, 76, 76, 4]),
+    Thread("Juan Ramírez", "juan@ramirezdesign.example",
+           "Quote for the EmailOps landing page illustrations", "primary",
+           [("them",
+             "Hi Ulises,\n\nAs discussed, here is my quote for the three hero "
+             "illustrations for the EmailOps landing page: 900 EUR total, two "
+             "revision rounds included, delivery in two weeks from the go-ahead.\n\n"
+             "Juan Ramírez\nRamírez Design")],
+           days_ago=6, read=False),
+]
+
 PERSONAL_THREADS_EN: list[Thread] = [
+    # Imported from the maintainer's mailbox, anonymised (see private-evals/imports/):
+    # an airline e-ticket plus its check-in reminder, for single-fact questions.
+    Thread("Andean Air e-ticket", "eticket@andeanair.example",
+           "ULISES, 29OCT/1610/BOGOTA", "primary",
+           [("them",
+             "Dear customer,\n\nYou can find your electronic ticket with your flight "
+             "details below. We hope you have an enjoyable trip.\n\n"
+             "Booking code: QX7K2M\nE-ticket: 134-2201983476\n\n"
+             "Flight AN 214 · Andean Air\n"
+             "Departure: Madrid (MAD), Terminal 1 · 29 October 2026 · 16:10\n"
+             "Arrival: Bogotá (BOG), El Dorado · 29 October 2026 · 19:45 (local time)\n"
+             "Passenger: ULISES · Seat 14C · Baggage: 1 x 23 kg\n\n"
+             "Return\nFlight AN 215 · Bogotá (BOG) · 12 November 2026 · 21:30 → "
+             "Madrid (MAD) · 13 November 2026 · 14:05\n\n"
+             "Andean Air")],
+           days_ago=12),
+    Thread("Andean Air", "info@andeanair.example",
+           "QX7K2M | Online check-in is open for your flight to Bogotá", "primary",
+           [("them",
+             "Hi Ulises,\n\nOnline check-in is now open for flight AN 214 to Bogotá "
+             "on 29 October at 16:10. Booking code QX7K2M. Check in up to 3 hours "
+             "before departure and pick your seat.\n\nAndean Air")],
+           days_ago=11),
+    Thread("Juan Pérez", "juan.perez@mailbox.org",
+           "Keys for the weekend", "primary",
+           [("them",
+             "Hi Ulises,\n\nCould you leave the spare keys with the concierge on "
+             "Friday? I get in late on Saturday. Thanks a lot!\n\nJuan")],
+           days_ago=5, read=False),
     Thread("Mom", "elena@proton.me",
            "Tía Carmen's birthday next weekend", "primary",
            [("them",
@@ -985,7 +1074,9 @@ def _insert_thread(conn: sqlite3.Connection, account: Account, thread: Thread) -
             subject = thread.subject
         else:
             subject = f"Re: {thread.subject}"
-        if i > 0:
+        if thread.msg_days_ago is not None:
+            ts = now_s() - thread.msg_days_ago[i] * 86400 + i  # +i keeps same-day replies ordered
+        elif i > 0:
             ts += 3600 * RNG.randint(3, 30)
         read = thread.read if i == 0 else True
         email_id = insert_email(
@@ -1027,7 +1118,9 @@ def populate_prospect_requests(conn: sqlite3.Connection, locale: Locale) -> None
             mailbox="inbox",
             category="primary",
         )
-        insert_tags(conn, email_id, subject, body, email)
+        # A prospect's inquiry is a first contact by construction: label it with
+        # the classifier's `introduction` intent, as real mailboxes carry it.
+        insert_tags(conn, email_id, subject, body, email, intent="introduction")
 
 
 def populate_support_emails(conn: sqlite3.Connection, locale: Locale) -> None:
@@ -1138,6 +1231,79 @@ class Locale:
     prospects: list = field(default_factory=list)
     support: list = field(default_factory=list)
     stats: dict | None = None
+    # Extra Gmail account that owns the demo calendar when `work` is IMAP (which
+    # cannot have a calendar). None when `work` already supports calendars.
+    calendar: Account | None = None
+
+
+def demo_accounts(locale: "Locale") -> list[Account]:
+    return [locale.work, locale.personal] + ([locale.calendar] if locale.calendar else [])
+
+
+def calendar_account(locale: "Locale") -> Account:
+    return locale.calendar or locale.work
+
+
+def insert_calendar_events(conn: sqlite3.Connection, locale: Locale) -> None:
+    """A work calendar with a few events around "now" so the chat's
+    `list_calendar_events` tool, the calendar evals and any calendar view have
+    something deterministic to show. Idempotent: replaces the demo calendar.
+
+    The calendar hangs off `calendar_account(locale)` — a Gmail/Outlook account,
+    because that is the only kind the app offers calendar features to.
+
+    Times are anchored to the generation moment: tomorrow 10:00 is always the
+    next meeting, which is what the `calendar_next_meeting_*` eval cases ask for.
+    """
+    owner = calendar_account(locale)
+    me = owner.email
+    now = now_s()
+    conn.execute("DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = 'demo-cal-work'", (owner.id,))
+    conn.execute("DELETE FROM calendars WHERE account_id = ? AND id = 'demo-cal-work'", (owner.id,))
+    conn.execute(
+        """INSERT INTO calendars (id, account_id, provider_calendar_id, name, color, is_primary, access_role,
+                                  is_visible, sort_order, created_at, updated_at)
+           VALUES ('demo-cal-work', ?, 'primary', 'Work', '#1F6F8B', 1, 'owner', 1, 0, ?, ?)""",
+        (owner.id, now, now),
+    )
+
+    def local_at(days: int, hour: int, minute: int = 0) -> int:
+        d = _dt.datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return int((d + _dt.timedelta(days=days)).timestamp())
+
+    es = locale.code == "es"
+    events = [
+        # (days from today, hour, minutes, duration min, title, location, attendees)
+        (1, 10, 0, 60, "Sprint 6 planning — Faro Logistics" if not es else "Planificación del sprint 6 — Faro Logistics",
+         "Google Meet", ["marisol.vega@farologistics.example", me]),
+        (1, 16, 30, 30, "Proton Bridge PR #131 review" if not es else "Revisión del PR #131 (Proton Bridge)",
+         "", [me]),
+        (2, 9, 30, 45, "PrivacyHub analytics migration — proposal walkthrough" if not es else "Migración de analítica PrivacyHub — repaso de la propuesta",
+         "Zoom", ["janos@privacyhub.example", me]),
+        (4, 12, 0, 60, "Bahía Studio — May milestone invoice sign-off" if not es else "Bahía Studio — cierre de la factura de mayo",
+         "", ["hello@bahiastudio.example", me]),
+        (-1, 11, 0, 30, "Weekly ops sync" if not es else "Sincronización semanal de operaciones",
+         "Google Meet", [me]),
+        (-3, 15, 0, 60, "Sprint 5 demo" if not es else "Demo del sprint 5",
+         "Google Meet", ["marisol.vega@farologistics.example", me]),
+    ]
+    for i, (days, hour, minute, dur, title, location, attendees) in enumerate(events):
+        start = local_at(days, hour, minute)
+        conn.execute(
+            """INSERT INTO calendar_events
+               (id, account_id, provider_event_id, calendar_id, title, description, location, start_time, end_time,
+                is_all_day, timezone, organizer, attendees_json, meeting_link, meeting_platform, status, html_link,
+                notified_at, created_at, updated_at, recurring_event_id)
+               VALUES (?, ?, ?, 'demo-cal-work', ?, ?, ?, ?, ?, 0, 'Europe/Madrid', ?, ?, ?, ?, 'confirmed', NULL,
+                       NULL, ?, ?, NULL)""",
+            (
+                f"demo-evt-{i:02d}", owner.id, f"demo-evt-{i:02d}", title,
+                "Demo event generated by scripts/generate_demo_db.py", location, start, start + dur * 60,
+                me, json.dumps(attendees),
+                "https://meet.example/demo" if location else None, ("google_meet" if location == "Google Meet" else ("zoom" if location == "Zoom" else None)),
+                now, now,
+            ),
+        )
 
 
 def now_plus_days(days: int) -> int:
@@ -1255,6 +1421,7 @@ LOCALE_EN = Locale(
     code="en",
     work=ACCOUNT_WORK,
     personal=ACCOUNT_PERSONAL,
+    calendar=ACCOUNT_CALENDAR,
     # EN uses the thread-based path (work_threads, below). The legacy template
     # fields are unused for English but kept empty to satisfy the dataclass.
     work_templates=[],
@@ -1288,6 +1455,10 @@ LOCALE_EN = Locale(
         ("Book annual physical", "OnePatient reminder", "low", None, now_plus_days(14)),
     ],
     memory_facts=[
+        ("company", "borgbase.com",
+         "BorgBase customer number is BB-48213; backups are billed monthly to the "
+         "work card.",
+         "BorgBase"),
         ("user", "self",
          "Ulises is a freelance software engineer/consultant (Rust + TypeScript) "
          "and the maintainer of EmailOps, a local-first AI email client, under "
@@ -1516,7 +1687,7 @@ def pick_timestamp_within_days(days: int) -> int:
 
 def insert_accounts(conn: sqlite3.Connection, locale: Locale) -> None:
     now = now_s()
-    for i, acct in enumerate([locale.work, locale.personal]):
+    for i, acct in enumerate(demo_accounts(locale)):
         conn.execute(
             """INSERT INTO accounts
                (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp)
@@ -1548,6 +1719,10 @@ def insert_ai_config(conn: sqlite3.Connection) -> None:
 
 
 PREFS: dict[str, str] = {
+    # The demo deliberately carries 2025 content (prospects, invoices); the
+    # default 365-day AI window would leave it unembedded and invisible to
+    # semantic search. 0 = no age limit.
+    "ai_max_email_age_days": "0",
     "onboarding_completed": "true",
     "ai_enabled": "true",
     "ai_provider": "llamacpp",
@@ -1705,9 +1880,14 @@ def company_label_for(sender_email: str) -> str:
     return stem if stem else domain
 
 
-def insert_tags(conn: sqlite3.Connection, email_id: str, subject: str, body: str, sender_email: str) -> None:
+def insert_tags(
+    conn: sqlite3.Connection, email_id: str, subject: str, body: str, sender_email: str, intent: str | None = None
+) -> None:
+    """Tag an email the way the app's classifier would. `intent` labels content
+    whose kind is known by construction (e.g. a prospect's first contact);
+    otherwise it is inferred from the text."""
     now = now_s()
-    intent = infer_intent(subject, body)
+    intent = intent or infer_intent(subject, body)
     topic = infer_topic(sender_email)
     company = company_label_for(sender_email)
     rows: list[tuple[str, str]] = [("intent", intent), ("topic", topic)]
@@ -2332,6 +2512,83 @@ def insert_pending_tasks(conn: sqlite3.Connection, locale: Locale) -> None:
         )
 
 
+def insert_thread_states(conn: sqlite3.Connection, locale: Locale) -> int:
+    """Derive the memory subsystem's per-thread state from the mail itself, the
+    way the extractor would after a sync: a Primary thread whose last message
+    came from a person is awaiting the user; one the user answered last is
+    waiting on them. Automated digests never count. Idempotent (PK upsert), so
+    it runs on fresh builds and on `--append` alike. Feeds `list_open_threads`
+    ("who am I owing a reply to?")."""
+    now = now_s()
+    rows = []
+    for account in (locale.work, locale.personal):
+        # Replies the owner sent sit in the inbox thread with the owner's own
+        # address as sender, so "outbound" is keyed on that address.
+        rows += conn.execute(
+            """SELECT e.account_id, e.thread_id,
+                      MAX(CASE WHEN e.sender_email != ?2 THEN e.timestamp END) AS last_in,
+                      MAX(CASE WHEN e.sender_email = ?2 THEN e.timestamp END) AS last_out,
+                      MAX(e.timestamp) AS last_touched,
+                      MIN(e.subject) AS subject,
+                      GROUP_CONCAT(DISTINCT e.sender_email) AS participants
+               FROM emails e
+               WHERE e.is_deleted = 0 AND e.category = 'primary' AND e.mailbox = 'inbox'
+                 AND e.account_id = ?1
+               GROUP BY e.account_id, e.thread_id""",
+            (account.id, account.email),
+        ).fetchall()
+    own = {locale.work.email, locale.personal.email}
+    n = 0
+    for account_id, thread_id, last_in, last_out, last_touched, subject, participants in rows:
+        people = [p for p in (participants or "").split(",") if p and p not in own and not p.startswith("metrics@")]
+        if not people:
+            continue
+        awaiting = "user" if (last_out or 0) < (last_in or 0) else "them"
+        conn.execute(
+            """INSERT OR REPLACE INTO thread_states
+               (account_id, thread_id, awaiting, last_inbound_at, last_outbound_at, last_touched_at,
+                summary, commitment, deadline_at, participants_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)""",
+            (account_id, thread_id, awaiting, last_in, last_out, last_touched, subject, json.dumps(people), now),
+        )
+        n += 1
+    return n
+
+
+def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
+    """Insert the generator's threads and memory facts that an existing demo DB
+    does not have yet. Emails match on (sender_email, subject) of the first
+    message, facts on their text; existing rows and ids are never touched, so a
+    case pinned to an id keeps working after new content lands."""
+    added = {"threads": 0, "facts": 0}
+    for account, threads in ((locale.work, locale.work_threads or []), (locale.personal, locale.personal_threads or [])):
+        for thread in threads:
+            exists = conn.execute(
+                "SELECT 1 FROM emails WHERE account_id = ? AND sender_email = ? AND subject = ? LIMIT 1",
+                (account.id, thread.sender_email if thread.msgs[0][0] == "them" else account.email, thread.subject),
+            ).fetchone()
+            if exists:
+                continue
+            _insert_thread(conn, account, thread)
+            added["threads"] += 1
+    now = now_s()
+    for subject_kind, subject_key, fact, company in locale.memory_facts:
+        if conn.execute("SELECT 1 FROM memory_facts WHERE fact = ? LIMIT 1", (fact,)).fetchone():
+            continue
+        conn.execute(
+            """INSERT INTO memory_facts
+               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
+                confidence, score, status, last_used_at, created_at, updated_at,
+                domain, vigency, company)
+               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
+                       ?, ?, ?, NULL, NULL, ?)""",
+            (f"fact_{uuid.uuid4().hex[:12]}", locale.work.id, subject_kind, subject_key, fact, now, now, now, company),
+        )
+        added["facts"] += 1
+    added["thread_states"] = insert_thread_states(conn, locale)
+    return added
+
+
 def insert_memory_facts(conn: sqlite3.Connection, locale: Locale) -> None:
     """A small set of promoted facts so the memory panel is non-empty."""
     now = now_s()
@@ -2364,11 +2621,45 @@ def main() -> int:
                              f"{DEFAULT_DEMO_DB} for en, {DEFAULT_DEMO_DB_ES} for es)")
     parser.add_argument("--lang", choices=["en", "es"], default="en",
                         help="Locale to generate (default: en)")
+    parser.add_argument("--append", action="store_true",
+                        help="Add to an existing demo DB the threads and memory facts it lacks (matched by "
+                             "sender + subject / fact text); leaves everything else, including ids, alone")
+    parser.add_argument("--refresh-calendar", action="store_true",
+                        help="Only re-anchor the demo calendar events to now in an existing demo DB "
+                             "(the calendar evals ask for 'tomorrow 10:00'); everything else is left alone")
     args = parser.parse_args()
 
     locale = get_locale(args.lang)
     demo_db = args.demo_db or (DEFAULT_DEMO_DB if args.lang == "en" else DEFAULT_DEMO_DB_ES)
     demo_dir = demo_db.parent
+
+    if args.append:
+        if not demo_db.exists():
+            print(f"[demo-db] no demo DB at {demo_db}; run without --append first", file=sys.stderr)
+            return 1
+        conn = sqlite3.connect(str(demo_db))
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            with conn:
+                added = append_missing(conn, locale)
+        finally:
+            conn.close()
+        print(f"[demo-db] appended {added['threads']} threads, {added['facts']} memory facts; {added['thread_states']} thread states refreshed in {demo_db}")
+        return 0
+
+    if args.refresh_calendar:
+        if not demo_db.exists():
+            print(f"[demo-db] no demo DB at {demo_db}; run without --refresh-calendar first", file=sys.stderr)
+            return 1
+        conn = sqlite3.connect(str(demo_db))
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            with conn:
+                insert_calendar_events(conn, locale)
+        finally:
+            conn.close()
+        print(f"[demo-db] calendar events re-anchored to now in {demo_db}")
+        return 0
 
     print(f"[demo-db] lang:          {args.lang}")
     print(f"[demo-db] schema source: {args.prod_db}")
@@ -2403,6 +2694,8 @@ def main() -> int:
             insert_attachments_meta(conn, locale)
             insert_pending_tasks(conn, locale)
             insert_memory_facts(conn, locale)
+            insert_thread_states(conn, locale)
+            insert_calendar_events(conn, locale)
         n = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
         threads = conn.execute("SELECT COUNT(DISTINCT thread_id) FROM emails").fetchone()[0]
         print(f"[demo-db] inserted {n} emails across {threads} threads")

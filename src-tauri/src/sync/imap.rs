@@ -1203,6 +1203,7 @@ impl EmailProvider for ImapClient {
     async fn send_reply(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         _thread_id: &str,
@@ -1213,6 +1214,7 @@ impl EmailProvider for ImapClient {
     ) -> Result<crate::sync::provider::SentMessageMeta> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
+            from_name,
             to_emails,
             cc_emails,
             subject,
@@ -1235,6 +1237,7 @@ impl EmailProvider for ImapClient {
     async fn send_new_email(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,
@@ -1243,6 +1246,7 @@ impl EmailProvider for ImapClient {
     ) -> Result<crate::sync::provider::SentMessageMeta> {
         let message = crate::sync::mime_builder::build_lettre_message(&crate::sync::mime_builder::SendMimeParams {
             from_email,
+            from_name,
             to_emails,
             cc_emails,
             subject,

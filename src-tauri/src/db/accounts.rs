@@ -163,6 +163,24 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_account_name(&self, account_id: &str, name: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute("UPDATE accounts SET name = ?1 WHERE id = ?2", params![name, account_id])?;
+        Ok(())
+    }
+
+    /// Set the name of an account that has none: blank, or its own address as
+    /// older rows store it. A name set in the meantime is never replaced.
+    pub fn fill_account_name_if_missing(&self, account_id: &str, name: &str) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "UPDATE accounts SET name = ?1
+             WHERE id = ?2 AND (TRIM(name) = '' OR LOWER(TRIM(name)) = LOWER(email))",
+            params![name, account_id],
+        )?;
+        Ok(())
+    }
+
     /// Backfill progress, kept separate from the user's `sync_from_timestamp`
     /// preference. See `V017__accounts_backfill_swept_from.sql` for semantics.
     pub fn get_account_backfill_swept_from(&self, account_id: &str) -> Result<Option<i64>> {

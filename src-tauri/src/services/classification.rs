@@ -44,6 +44,171 @@ const DEFAULT_TOPICS: &[&str] = &[
     "security",
 ];
 
+/// One-line meaning of each built-in intent, keyed by tag name. This is the
+/// single place a concept is spelled out: the chat search tool, the query
+/// planner and (later) the classifier prompt all render from it, so "what
+/// counts as a request" is decided once, in data, not per prompt. A tag the
+/// user added in Settings has no entry and is listed by name alone.
+const INTENT_DEFINITIONS: &[(&str, &str)] = &[
+    (
+        "request",
+        "someone asks the user to do, send or provide something — a quote, a document, an action",
+    ),
+    ("approval", "asks for, grants or refuses a sign-off or authorisation"),
+    (
+        "scheduling",
+        "proposes, confirms or moves a meeting, call or appointment",
+    ),
+    ("delivery", "hands over or tracks a deliverable, order or shipment"),
+    ("question", "asks the user for information or an answer"),
+    (
+        "introduction",
+        "a first contact: someone presents themselves, their company or a collaboration proposal",
+    ),
+    ("feedback", "an opinion, review or reaction to the user's work"),
+    (
+        "notification",
+        "an automated account or system notice that expects no reply",
+    ),
+    ("complaint", "reports a problem, dissatisfaction or a broken promise"),
+    (
+        "promotion",
+        "marketing, a sales pitch or cold outreach offering a product or service",
+    ),
+    ("newsletter", "a periodic bulletin or digest sent to a mailing list"),
+    ("conversation", "ordinary back-and-forth that fits no other intent"),
+];
+
+/// One-line meaning of each built-in topic — see [`INTENT_DEFINITIONS`].
+const TOPIC_DEFINITIONS: &[(&str, &str)] = &[
+    ("billing", "invoices, payments, receipts, subscriptions"),
+    ("contract", "agreements, terms, proposals, NDAs"),
+    ("project", "ongoing client or internal project work"),
+    ("hiring", "recruiting, job offers, candidates"),
+    ("support", "help requests, technical issues, customer service"),
+    ("legal", "legal matters, compliance, disputes"),
+    ("sales", "deals, leads, quotes, commercial offers"),
+    ("operations", "logistics, suppliers, day-to-day running of the business"),
+    ("networking", "events, communities, professional contacts"),
+    ("education", "courses, training, learning material"),
+    ("finance", "accounting, taxes, banking, investments"),
+    ("travel", "flights, hotels, bookings, itineraries"),
+    ("personal", "family, friends, life outside work"),
+    ("marketing", "campaigns, advertising, social media, brand"),
+    ("security", "passwords, logins, alerts, verification codes"),
+];
+
+/// The built-in definition of an intent tag, if it has one.
+pub fn intent_definition(name: &str) -> Option<&'static str> {
+    INTENT_DEFINITIONS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d)
+}
+
+/// The built-in definition of a topic tag, if it has one.
+pub fn topic_definition(name: &str) -> Option<&'static str> {
+    TOPIC_DEFINITIONS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d)
+}
+
+/// The user's tag vocabulary with a definition per tag — `(name, definition)`
+/// pairs in Settings order, definition empty for custom tags. Rendered into
+/// every prompt that lets the model reach the classifier's tags, so a concept
+/// the mailbox never spells out ("prospects", "quote requests") maps onto a
+/// tag through its definition rather than through a per-concept prompt rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagGlossary {
+    pub intents: Vec<(String, String)>,
+    pub topics: Vec<(String, String)>,
+}
+
+impl TagGlossary {
+    pub fn from_config(config: &ClassificationConfig) -> Self {
+        let define = |names: &[String], lookup: fn(&str) -> Option<&'static str>| {
+            names
+                .iter()
+                .map(|n| (n.clone(), lookup(n).unwrap_or_default().to_string()))
+                .collect()
+        };
+        Self {
+            intents: define(&config.intents, intent_definition),
+            topics: define(&config.topics, topic_definition),
+        }
+    }
+
+    /// The built-in vocabulary — what a fresh install classifies with.
+    pub fn defaults() -> Self {
+        Self::from_config(&ClassificationConfig {
+            enabled: false,
+            classify_previous: false,
+            intents: DEFAULT_INTENTS.iter().map(|s| s.to_string()).collect(),
+            topics: DEFAULT_TOPICS.iter().map(|s| s.to_string()).collect(),
+            categories: Vec::new(),
+        })
+    }
+
+    /// The vocabulary a chat filter can use: the Settings list first, then any
+    /// tag value present in `email_tags` that the list no longer names (rules
+    /// and older defaults keep tagging, e.g. `newsletter` on a mailbox whose
+    /// Settings dropped it). Falls back to the built-in list when the
+    /// preferences cannot be read — a prompt is still better than none.
+    pub fn load(db: &Database) -> Self {
+        let mut glossary = match get_config(db) {
+            Ok(cfg) => Self::from_config(&cfg),
+            Err(e) => {
+                emit_log(
+                    "warn",
+                    &format!("tag glossary: could not read classification settings ({e}); using defaults"),
+                );
+                Self::defaults()
+            }
+        };
+        let append_observed =
+            |tags: &mut Vec<(String, String)>, tag_type: &str, lookup: fn(&str) -> Option<&'static str>| match db
+                .distinct_tag_values(tag_type)
+            {
+                Ok(values) => {
+                    for v in values {
+                        if !tags.iter().any(|(n, _)| n.eq_ignore_ascii_case(&v)) {
+                            tags.push((v.clone(), lookup(&v).unwrap_or_default().to_string()));
+                        }
+                    }
+                }
+                Err(e) => emit_log("warn", &format!("tag glossary: could not list {tag_type} tags ({e})")),
+            };
+        append_observed(&mut glossary.intents, "intent", intent_definition);
+        append_observed(&mut glossary.topics, "topic", topic_definition);
+        glossary
+    }
+
+    /// Prompt form: one indented `name: definition` line per tag.
+    pub fn render_lines(tags: &[(String, String)]) -> String {
+        tags.iter()
+            .map(|(n, d)| {
+                if d.is_empty() {
+                    format!("  {n}")
+                } else {
+                    format!("  {n}: {d}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Schema form: `name (definition); name (definition); …` on one line.
+    pub fn render_inline(tags: &[(String, String)]) -> String {
+        tags.iter()
+            .map(|(n, d)| if d.is_empty() { n.clone() } else { format!("{n} ({d})") })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    pub fn intent_names(&self) -> Vec<&str> {
+        self.intents.iter().map(|(n, _)| n.as_str()).collect()
+    }
+
+    pub fn topic_names(&self) -> Vec<&str> {
+        self.topics.iter().map(|(n, _)| n.as_str()).collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationConfig {
@@ -1043,5 +1208,90 @@ mod tests {
 
         let loaded = get_config(&db).unwrap();
         assert!(!loaded.enabled); // default when unset
+    }
+
+    // ── Tag glossary ────────────────────────────────────────────────────
+
+    #[test]
+    fn every_default_tag_has_a_one_line_definition() {
+        for name in DEFAULT_INTENTS {
+            let def = intent_definition(name).unwrap_or_else(|| panic!("intent {name} has no definition"));
+            assert!(!def.contains('\n'), "intent {name} definition must be one line");
+        }
+        for name in DEFAULT_TOPICS {
+            let def = topic_definition(name).unwrap_or_else(|| panic!("topic {name} has no definition"));
+            assert!(!def.contains('\n'), "topic {name} definition must be one line");
+        }
+    }
+
+    #[test]
+    fn glossary_follows_config_order_and_keeps_custom_names_bare() {
+        let cfg = ClassificationConfig {
+            enabled: true,
+            classify_previous: false,
+            intents: vec![
+                "newsletter".to_string(),
+                "escalation".to_string(),
+                "request".to_string(),
+            ],
+            topics: vec!["billing".to_string(), "wine".to_string()],
+            categories: vec![],
+        };
+        let g = TagGlossary::from_config(&cfg);
+        let names: Vec<&str> = g.intents.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["newsletter", "escalation", "request"]);
+        // A user-added tag has no definition — it is listed by name only.
+        let custom = g.intents.iter().find(|(n, _)| n == "escalation").unwrap();
+        assert!(custom.1.is_empty());
+        let known = g.intents.iter().find(|(n, _)| n == "request").unwrap();
+        assert_eq!(known.1, intent_definition("request").unwrap());
+        assert_eq!(g.topics.len(), 2);
+        assert!(g.topics[1].1.is_empty(), "custom topic listed bare");
+    }
+
+    #[test]
+    fn glossary_load_appends_tags_present_in_the_mailbox_but_absent_from_settings() {
+        let db = Database::new_for_testing().expect("create test db");
+        db.set_preference("classify_intents", r#"["request","promotion"]"#)
+            .unwrap();
+        db.set_preference("classify_topics", r#"["billing"]"#).unwrap();
+        db.seed_test_account("acc");
+        for (id, tag_type, value) in [
+            ("e1", "intent", "newsletter"),
+            ("e2", "intent", "request"),
+            ("e3", "topic", "wine"),
+        ] {
+            db.connection()
+                .execute(
+                    "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                     recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1, 'acc', ?1, 's', 'x', 'x@example.com', 'example.com', '[]', '[]', '', 0, 0, 'primary', 0)",
+                    rusqlite::params![id],
+                )
+                .unwrap();
+            db.upsert_email_tag(id, tag_type, value, None).unwrap();
+        }
+        let g = TagGlossary::load(&db);
+        // Settings order first, then the observed extras with their definitions.
+        assert_eq!(g.intent_names(), ["request", "promotion", "newsletter"]);
+        assert_eq!(g.intents[2].1, intent_definition("newsletter").unwrap());
+        assert_eq!(g.topic_names(), ["billing", "wine"]);
+        assert!(g.topics[1].1.is_empty(), "unknown observed tag listed bare");
+    }
+
+    #[test]
+    fn glossary_renders_one_line_per_tag_and_an_inline_form() {
+        let g = TagGlossary::defaults();
+        let lines = TagGlossary::render_lines(&g.intents);
+        assert!(lines.starts_with("  request: "), "{lines}");
+        assert_eq!(lines.lines().count(), DEFAULT_INTENTS.len());
+        let inline = TagGlossary::render_inline(&g.topics);
+        assert!(inline.contains("billing ("), "{inline}");
+        assert!(inline.contains("; travel ("), "{inline}");
+        assert!(!inline.contains('\n'));
+        // A bare (custom) tag renders as its name alone, no empty parentheses.
+        let custom = vec![("wine".to_string(), String::new())];
+        assert_eq!(TagGlossary::render_inline(&custom), "wine");
+        assert_eq!(TagGlossary::render_lines(&custom), "  wine");
     }
 }

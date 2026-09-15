@@ -12,14 +12,18 @@
 # text anchor cannot distinguish "translated the email" from "wrote a draft
 # that happens to contain those words".
 #
-# Thread `thread_4369f40221bd` is the demo DB's "How do I add a new email
-# account in EmailOps?" enquiry from a synthetic sender.
+# Thread `thread_30bb61af7512` is the demo DB's "How do I add a new email
+# account in EmailOps?" enquiry from a synthetic sender. The generator draws
+# thread ids at random, so this id changes every `make demo-db`; re-key it
+# from the subject with:
+#   sqlite3 .emailops-demo-data/emailops.db \
+#     "SELECT DISTINCT thread_id FROM emails WHERE subject LIKE 'How do I add%'"
 
 - id: demo_thread_translate_answers_inline
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
-  category: thread_bound
+  thread_id: "thread_30bb61af7512"
+  category: email_summary
   tier: smoke
   expected_tools_not_called: ["generate_email_draft"]
   # Content words from the source email that any faithful Spanish rendering
@@ -30,8 +34,10 @@
   expected_answer_not_contains:
     - "draft saved"
     - "generate_email_draft"
+  expected_output: "Traducción del correo de Nadia Brunner: acaba de instalar EmailOps, le encanta que la IA corra en local y pregunta cómo añadir una segunda cuenta de correo (tiene una cuenta Fastmail por IMAP y un buzón de trabajo) y si existe una página de ajustes para ello. Sin generar borrador."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # The positive counterpart: an explicit draft request must STILL reach the tool.
 # Without this, "gate the tool off" could regress into "never offer the tool",
@@ -39,9 +45,79 @@
 - id: demo_thread_explicit_draft_still_works
   question: "escribe una respuesta a este correo"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_4369f40221bd"
-  category: thread_bound
+  thread_id: "thread_30bb61af7512"
+  category: drafting
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
+  # The chat reply is a confirmation, not the draft: the text lives in the
+  # saved draft the draft:// chip opens.
+  expected_output: "Confirmación breve de que el borrador de respuesta a Nadia Brunner se ha guardado, con el enlace draft:// para abrirlo, revisarlo y enviarlo. El texto de la respuesta va en el borrador, no en el chat."
   metrics:
     - answer_relevancy
+    - faithfulness
+
+# The open email is context, not a cage. With a thread in the panel, a
+# question about the mailbox at large ("que correos tengo hoy") used to run
+# thread-bound — no search tools — and came back "No tengo herramientas
+# disponibles para acceder a tu bandeja". `question_leaves_thread` now drops
+# the ambient thread for such questions, so the ordinary tool loop answers.
+- id: demo_thread_mailbox_question_leaves_thread
+  question: "que correos tengo hoy"
+  account: "ulises@emailopslabs.dev"
+  category: period_summary
+  tier: smoke
+  # `ambient_*`, not `thread_id`: the panel hands the OPEN email as ambient
+  # context for one turn. A conversation seeded with `thread_id` ("chat about
+  # this thread") is an explicit binding and deliberately stays thread-bound.
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  as_of: latest
+  expected_tools_called: ["search_emails"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "no tengo herramientas"
+    - "no tools"
+    - "no puedo acceder"
+  expected_output: "Los correos del día más reciente del buzón: el PR #58 de Codeberg sobre la API de tarifas de transportistas (faro-logistics/dashboard), el aviso de Fly.io de despliegue correcto de lumen-api en producción, y la pregunta de Nadia Brunner sobre cómo añadir una segunda cuenta en EmailOps; cada uno con su enlace email://."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# With an email OPEN (ambient context, all tools available) a question about
+# that email is answered from it — no draft, no detour through search for
+# something already in front of the model.
+- id: demo_ambient_summary_answers_from_thread
+  question: "resume este correo"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["generate_email_draft", "search_emails"]
+  expected_answer_contains_any: ["cuenta", "account"]
+  expected_answer_not_contains:
+    - "no tengo herramientas"
+    - "no puedo acceder"
+  expected_output: "Resumen: Nadia Brunner, recién instalada EmailOps, pregunta cómo añadir una segunda cuenta (una Fastmail por IMAP además de su buzón de trabajo) y si hay una página de ajustes para ello; agradece el producto."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The old failure that made thread mode tool-less in the first place: a
+# translate request must not save a reply draft — now enforced by the draft
+# gate even with every tool on the menu.
+- id: demo_ambient_translate_never_drafts
+  question: "traduceme este email al español"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_thread_id: "thread_30bb61af7512"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "](draft://"
+    - "no tengo herramientas"
+  expected_output: "Traducción al español del correo de Nadia Brunner (instalación reciente, pregunta cómo añadir una segunda cuenta Fastmail IMAP y si hay una página de ajustes), sin crear ningún borrador."
+  metrics:
+    - answer_relevancy
+    - faithfulness

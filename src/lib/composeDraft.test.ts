@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildSaveDraftRequest,
   type ComposeDraftState,
+  createDebouncedDraftSaver,
   createDraftAutosaver,
   shouldAutosaveDraft,
 } from './composeDraft';
@@ -149,5 +150,67 @@ describe('createDraftAutosaver', () => {
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createDebouncedDraftSaver', () => {
+  const state = (subject: string): ComposeDraftState => ({
+    draftId: undefined,
+    accountId: 'acct-1',
+    toAddresses: ['a@example.com'],
+    ccAddresses: [],
+    subject,
+    plainBody: 'body',
+    bodyHtml: '<p>body</p>',
+    isSending: false,
+    sent: false,
+  });
+
+  it('saves once, with the latest snapshot, after the quiet period', () => {
+    vi.useFakeTimers();
+    const save = vi.fn((_state: ComposeDraftState) => Promise.resolve());
+    const saver = createDebouncedDraftSaver(save, 800);
+    saver.schedule(state('a'));
+    saver.schedule(state('ab'));
+    vi.advanceTimersByTime(799);
+    expect(save).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].subject).toBe('ab');
+    vi.useRealTimers();
+  });
+
+  it('flushPending saves an edit that was still waiting when the composer closed', () => {
+    // The bug: the last keystrokes before Escape were lost because the
+    // debounce timer was simply cleared on unmount.
+    vi.useFakeTimers();
+    const save = vi.fn((_state: ComposeDraftState) => Promise.resolve());
+    const saver = createDebouncedDraftSaver(save, 800);
+    saver.schedule(state('typed just before closing'));
+    vi.advanceTimersByTime(100);
+    saver.flushPending();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].subject).toBe('typed just before closing');
+    vi.advanceTimersByTime(1000);
+    expect(save).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('flushPending is a no-op when nothing is waiting', () => {
+    const save = vi.fn((_state: ComposeDraftState) => Promise.resolve());
+    const saver = createDebouncedDraftSaver(save, 800);
+    saver.flushPending();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('cancel drops a pending save without running it', () => {
+    vi.useFakeTimers();
+    const save = vi.fn((_state: ComposeDraftState) => Promise.resolve());
+    const saver = createDebouncedDraftSaver(save, 800);
+    saver.schedule(state('x'));
+    saver.cancel();
+    vi.advanceTimersByTime(1000);
+    expect(save).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

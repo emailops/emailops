@@ -13,11 +13,106 @@
 //! caller how to rebuild.
 
 #[cfg(feature = "eval")]
+use crate::models::ChatTrace;
+#[cfg(feature = "eval")]
+use serde::Serialize;
+#[cfg(feature = "eval")]
 use std::path::PathBuf;
 
 use crate::models::error::Result;
 
 use super::session::CliSession;
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CheckReport {
+    pub name: String,
+    pub passed: bool,
+    pub expected: String,
+    pub actual: String,
+    pub detail: String,
+}
+
+/// One case in the `eval --json` envelope. `question`, `answer` and the
+/// engine `trace` travel with every case so a failing check can be debugged
+/// from the report alone, without re-running the model.
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CaseReport {
+    pub id: String,
+    pub tier: String,
+    /// What the question exercises (thread_summary, pending_actions…), shown
+    /// next to the case in the verification report.
+    pub category: String,
+    pub passed: bool,
+    pub checks_passed: usize,
+    pub checks_total: usize,
+    pub latency_ms: i64,
+    pub question: String,
+    pub answer: String,
+    pub trace: Option<ChatTrace>,
+    pub checks: Vec<CheckReport>,
+    /// Golden reference the judge compared against, when the case has one.
+    pub expected_output: Option<String>,
+    /// LLM-judge verdict, present only when `--judge` was given.
+    pub judge: Option<JudgeReport>,
+}
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct JudgeReport {
+    pub model: String,
+    pub passed: bool,
+    pub threshold: f64,
+    pub metrics: Vec<String>,
+    pub scores: crate::evals::judge::JudgeScores,
+}
+
+/// Minimum score, per requested metric, for the judge to accept a case.
+#[cfg(feature = "eval")]
+pub(crate) const JUDGE_THRESHOLD: f64 = 0.7;
+
+#[cfg(feature = "eval")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvalRunReport {
+    pub passed: bool,
+    pub cases_total: usize,
+    pub cases_passed: usize,
+    pub cases_failed: usize,
+    pub cases: Vec<CaseReport>,
+}
+
+#[cfg(feature = "eval")]
+/// One failed row for a case the harness could not run (thread or account
+/// missing from this DB, provider error): the suite goes on and the report
+/// carries the reason instead of dying on the first broken case.
+pub(crate) fn failed_case_report(case: &crate::evals::case_loader::EvalCase, error: &str) -> CaseReport {
+    CaseReport {
+        id: case.id.clone(),
+        tier: case.tier.clone(),
+        category: case.category.clone(),
+        passed: false,
+        checks_passed: 0,
+        checks_total: 1,
+        latency_ms: 0,
+        question: case.question.clone(),
+        answer: String::new(),
+        trace: None,
+        expected_output: case.expected_output.clone(),
+        judge: None,
+        checks: vec![CheckReport {
+            name: "run".into(),
+            passed: false,
+            expected: "the case runs to an answer".into(),
+            actual: "the harness could not run it".into(),
+            detail: error.to_string(),
+        }],
+    }
+}
 
 /// Run eval cases filtered by `case` (exact id) and/or `tier`. `cases_dir`
 /// overrides the default case location. Emits one report envelope.
@@ -27,46 +122,14 @@ pub async fn run_eval(
     case: Option<String>,
     tier: Option<String>,
     cases_dir: Option<PathBuf>,
+    judge: bool,
+    judge_model: Option<String>,
 ) -> Result<()> {
-    use serde::Serialize;
-
     use crate::evals::{case_loader, harness, metrics};
     use crate::models::error::AppError;
 
     use super::output;
     use super::OutputMode;
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CheckReport {
-        name: String,
-        passed: bool,
-        expected: String,
-        actual: String,
-        detail: String,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CaseReport {
-        id: String,
-        tier: String,
-        passed: bool,
-        checks_passed: usize,
-        checks_total: usize,
-        latency_ms: i64,
-        checks: Vec<CheckReport>,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct EvalRunReport {
-        passed: bool,
-        cases_total: usize,
-        cases_passed: usize,
-        cases_failed: usize,
-        cases: Vec<CaseReport>,
-    }
 
     // eval-side failures (load/run/evaluate) are infrastructure errors from the
     // CLI's perspective — surface them as a typed AppError.
@@ -95,14 +158,54 @@ pub async fn run_eval(
     let session_account = session.require_account()?;
     let mut case_reports: Vec<CaseReport> = Vec::with_capacity(selected.len());
 
+    // The judge runs on the app's own provider (embedded llama.cpp by default);
+    // with the same model as the chat it shares the loaded weights.
+    let judge_provider = if judge {
+        let model = judge_model.clone().unwrap_or_else(|| session.model.clone());
+        let provider_name = session
+            .db
+            .get_preference("ai_provider")?
+            .unwrap_or_else(|| "llamacpp".to_string());
+        Some((
+            model.clone(),
+            crate::services::ai::AiService::build_provider(&session.db, &provider_name, &model)?,
+        ))
+    } else {
+        None
+    };
+
     for c in &selected {
-        let account = resolve_case_account(&session.db, c.account.as_deref(), &session_account)?;
+        let account = match resolve_case_account(&session.db, c.account.as_deref(), &session_account) {
+            Ok(account) => account,
+            Err(e) => {
+                case_reports.push(failed_case_report(c, &e.to_string()));
+                continue;
+            }
+        };
         let model = c.model.as_deref().unwrap_or(&session.model);
 
-        let outcome = harness::run_case(session.db.clone(), &account, model, c)
-            .await
-            .map_err(map_eval_err)?;
+        let outcome = match harness::run_case(session.db.clone(), &account, model, c).await {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                case_reports.push(failed_case_report(c, &map_eval_err(e).to_string()));
+                continue;
+            }
+        };
         let report = metrics::evaluate(c, &outcome).map_err(map_eval_err)?;
+
+        let judge_report = match &judge_provider {
+            Some((model, provider)) => {
+                let scores = crate::evals::judge::score_with_provider(provider.as_ref(), c, &outcome).await;
+                Some(JudgeReport {
+                    model: model.clone(),
+                    passed: crate::evals::judge::judge_passes(&scores, c, JUDGE_THRESHOLD),
+                    threshold: JUDGE_THRESHOLD,
+                    metrics: c.metrics.iter().map(|m| m.as_str().to_string()).collect(),
+                    scores,
+                })
+            }
+            None => None,
+        };
 
         // Keep the live DB clean: the eval conversation is throwaway.
         session.db.delete_chat_conversation(&outcome.conversation_id)?;
@@ -110,10 +213,16 @@ pub async fn run_eval(
         case_reports.push(CaseReport {
             id: c.id.clone(),
             tier: c.tier.clone(),
-            passed: report.all_passed(),
+            category: c.category.clone(),
+            passed: report.all_passed() && judge_report.as_ref().is_none_or(|j| j.passed),
             checks_passed: report.passed_count(),
             checks_total: report.total(),
             latency_ms: outcome.wall_elapsed_ms,
+            question: c.question.clone(),
+            answer: outcome.assistant_content.clone(),
+            trace: outcome.assistant_trace.clone(),
+            expected_output: c.expected_output.clone(),
+            judge: judge_report,
             checks: report
                 .checks
                 .iter()
@@ -211,6 +320,73 @@ fn resolve_case_account(
 #[cfg(test)]
 #[cfg(feature = "eval")]
 mod tests {
+    use super::{failed_case_report, CaseReport, CheckReport};
+    use crate::evals::case_loader::EvalCase;
+
+    /// A case the harness cannot even start (thread id that no longer exists,
+    /// account not in this DB) is one failed row, not the end of the suite:
+    /// the other cases still run and the report says why this one did not.
+    #[test]
+    fn a_case_that_cannot_run_is_reported_as_failed_not_fatal() {
+        let case: EvalCase =
+            serde_yaml::from_str("id: broken\nquestion: q\ncategory: c\ntier: smoke\n").expect("minimal case");
+        let report = failed_case_report(&case, "Not found: thread REPLACE_ME");
+        assert!(!report.passed);
+        assert_eq!(report.id, "broken");
+        assert_eq!((report.checks_passed, report.checks_total), (0, 1));
+        assert_eq!(report.checks[0].name, "run");
+        assert!(report.checks[0].detail.contains("REPLACE_ME"));
+        assert!(report.answer.is_empty());
+        assert!(report.judge.is_none());
+    }
+
+    /// The report header shows what each chat question exercises
+    /// (thread_summary, pending_actions…), so every row carries its case's
+    /// category — a case that could not run included.
+    #[test]
+    fn case_report_carries_the_case_category() {
+        let case: EvalCase =
+            serde_yaml::from_str("id: c1\nquestion: q\ncategory: thread_summary\ntier: smoke\n").expect("minimal case");
+        let report = failed_case_report(&case, "boom");
+        let json = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(json["category"], "thread_summary");
+    }
+
+    #[test]
+    fn case_report_carries_question_answer_and_trace_for_debugging() {
+        let report = CaseReport {
+            id: "demo_case".into(),
+            tier: "smoke".into(),
+            category: "thread_summary".into(),
+            passed: false,
+            checks_passed: 0,
+            checks_total: 1,
+            latency_ms: 12,
+            question: "¿Qué dijo Marisol?".into(),
+            answer: "Marisol pidió el informe.".into(),
+            trace: None,
+            expected_output: Some("Kwame Boateng preguntó por Ollama.".into()),
+            judge: None,
+            checks: vec![CheckReport {
+                name: "contains".into(),
+                passed: false,
+                expected: "factura".into(),
+                actual: "".into(),
+                detail: "missing".into(),
+            }],
+        };
+        let json = serde_json::to_value(&report).expect("serializes");
+        assert_eq!(json["question"], "¿Qué dijo Marisol?");
+        assert_eq!(json["answer"], "Marisol pidió el informe.");
+        assert!(
+            json.get("trace").is_some(),
+            "trace key is present even when the engine recorded none"
+        );
+        assert_eq!(json["checks"][0]["name"], "contains");
+        assert_eq!(json["expectedOutput"], "Kwame Boateng preguntó por Ollama.");
+        assert!(json["judge"].is_null(), "no judge unless --judge was given");
+    }
+
     use super::*;
     use crate::db::Database;
     use std::sync::Arc;
@@ -270,6 +446,8 @@ pub async fn run_eval(
     _case: Option<String>,
     _tier: Option<String>,
     _cases_dir: Option<std::path::PathBuf>,
+    _judge: bool,
+    _judge_model: Option<String>,
 ) -> Result<()> {
     Err(crate::models::error::AppError::InvalidInput(
         "the `eval` subcommand requires the 'eval' feature — rebuild with: \

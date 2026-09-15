@@ -123,11 +123,15 @@ const MEMORY_FACTS_VARS: &[VariableDef] = &[
 const CHAT_SYSTEM_VARS: &[VariableDef] = &[
     VariableDef {
         name: "today",
-        description: "Current date (UTC) as YYYY-MM-DD.",
+        description: "Current date in the user's local zone as YYYY-MM-DD.",
     },
     VariableDef {
         name: "tomorrow",
-        description: "Tomorrow's date (UTC) as YYYY-MM-DD — used in `since/until` examples.",
+        description: "Tomorrow's date (local zone) as YYYY-MM-DD — used in `since/until` examples.",
+    },
+    VariableDef {
+        name: "weekday",
+        description: "Today's weekday name in English (e.g. Thursday), so the model never guesses weekdays from ISO dates.",
     },
     VariableDef {
         name: "language_instruction",
@@ -187,6 +191,14 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
     VariableDef {
         name: "last_week_until",
         description: "Monday of the current week (YYYY-MM-DD, end-exclusive) — deterministic 'last week' range end.",
+    },
+    VariableDef {
+        name: "intent_definitions",
+        description: "One line per intent tag from your Classification settings — `name: meaning` — so the planner can map a concept in the question onto a tag.",
+    },
+    VariableDef {
+        name: "topic_definitions",
+        description: "One line per topic tag from your Classification settings — `name: meaning`.",
     },
 ];
 

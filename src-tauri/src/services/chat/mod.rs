@@ -21,17 +21,20 @@ pub mod tools;
 mod conversations;
 mod planner;
 mod prewarm;
-mod retrieval;
+pub(crate) mod retrieval;
 mod routing;
 mod turn;
 
 // ── Re-exports for external callers (commands/, evals/) ──────────────────────
 pub use conversations::{
-    create_conversation, create_conversation_with_thread, delete_conversation, get_messages, list_conversations,
-    rename_conversation,
+    build_thread_context, create_conversation, create_conversation_with_thread, delete_conversation, get_messages,
+    list_conversations, rename_conversation,
 };
 pub use prewarm::prewarm_chat;
-pub use retrieval::{retrieve_context, retrieve_context_with_trace, ScoredEmail, DEFAULT_RAG_CATEGORIES};
+pub use retrieval::{
+    default_categories, normalize_categories, retrieve_context, retrieve_context_with_trace, ScoredEmail,
+    DEFAULT_RAG_CATEGORIES,
+};
 // `smart_body_slice` / `MAX_SOURCE_BODY_CHARS` are consumed by the eval harness
 // (`crate::services::chat::…`), which only compiles under the `eval` feature, so
 // the re-export reads as unused on a default `--no-default-features` build.
@@ -249,24 +252,36 @@ pub(crate) fn strip_tool_call_markup(content: &str) -> String {
 
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
-pub(crate) fn format_date(ts: i64) -> String {
-    Utc.timestamp_opt(ts, 0)
+/// The calendar day a timestamp falls on in a zone `offset_secs` ahead of UTC.
+pub(crate) fn local_date(ts: i64, offset_secs: i32) -> chrono::NaiveDate {
+    Utc.timestamp_opt(ts + offset_secs as i64, 0)
         .single()
-        .map(|dt| dt.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| ts.to_string())
+        .map(|dt| dt.date_naive())
+        .unwrap_or_default()
+}
+
+/// Unix seconds of local midnight starting `date` in a zone `offset_secs`
+/// ahead of UTC — the inclusive start of that local day.
+pub(crate) fn local_day_start(date: chrono::NaiveDate, offset_secs: i32) -> i64 {
+    date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() - offset_secs as i64
+}
+
+/// A message's date as the user sees it (their zone, not UTC).
+pub(crate) fn format_date(ts: i64) -> String {
+    local_date(ts, crate::services::clock::utc_offset_secs())
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Parse an ISO-8601 date ('YYYY-MM-DD') to a unix timestamp in **seconds**
-/// (midnight UTC on that date). Used by the `search_emails` tool to accept
+/// (local midnight on that date). Used by the `search_emails` tool to accept
 /// human-friendly date bounds from the model.
 pub(crate) fn parse_iso_date_secs(s: &str) -> std::result::Result<i64, String> {
     let date = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
         .map_err(|_| format!("expected 'YYYY-MM-DD', got '{}'", s))?;
-    let dt = date
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| format!("invalid date: {}", s))?
-        .and_utc();
-    Ok(dt.timestamp())
+    // Midnight in the user's zone: a `since=today` bound must not start
+    // yesterday evening (or tonight) just because the machine is not on UTC.
+    Ok(local_day_start(date, crate::services::clock::utc_offset_secs()))
 }
 
 pub(crate) fn truncate_chars(s: &str, max_chars: usize) -> String {
@@ -302,7 +317,9 @@ pub(crate) fn or_fallback_search(
     from_filter: Option<&str>,
     to_filter: Option<&str>,
     subject_filter: Option<&str>,
+    tag_filters: Option<&[String]>,
     limit: i32,
+    unread_only: bool,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
     if tokens.len() < 2 {
@@ -320,9 +337,10 @@ pub(crate) fn or_fallback_search(
             subject_filter,
             None,
             None,
-            None,
+            tag_filters,
             limit,
             false,
+            unread_only,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);
@@ -338,7 +356,14 @@ pub(crate) fn or_fallback_search(
     Some(combined)
 }
 
-pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
+/// Leads a search result in which some row stands for a longer thread. Only a
+/// hint: listing or counting questions don't need the rest of the thread.
+const THREAD_SIZE_HINT: &str = "(messages=N: the row is the latest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n";
+
+pub(crate) fn format_search_emails_output(
+    emails: &[Email],
+    thread_sizes: &std::collections::HashMap<(String, String), i64>,
+) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
     let mut other: Vec<&Email> = Vec::new();
@@ -351,6 +376,17 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
     }
 
     let mut out = String::new();
+    // A row is one representative per thread; say how long that thread is
+    // so the model doesn't summarise an exchange from its latest message.
+    let size_of = |e: &Email| {
+        thread_sizes
+            .get(&(e.account_id.clone(), e.thread_id.clone()))
+            .copied()
+            .filter(|n| *n > 1)
+    };
+    if emails.iter().any(|e| size_of(e).is_some()) {
+        out.push_str(THREAD_SIZE_HINT);
+    }
     // Token-efficiency: the `## Primary`/`## Updates` section headers already
     // convey the category, so emitting `category=` on every row is redundant
     // context bloat. Only the "Other" bucket needs the per-row field because
@@ -373,6 +409,14 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            if let Some(n) = size_of(email) {
+                out.push_str(&format!(" messages={n}"));
+            }
+            // Read state is data the model may be asked about; it must never
+            // guess it from an email's age or from reply state.
+            if !email.is_read {
+                out.push_str(" unread");
+            }
             if show_category {
                 out.push_str(&format!(" category={}", email.category));
             }
@@ -395,6 +439,7 @@ pub(crate) fn format_search_emails_output(emails: &[Email]) -> String {
 pub(crate) fn format_search_emails_output_with_bodies(
     emails: &[Email],
     bodies: &std::collections::HashMap<String, String>,
+    thread_sizes: &std::collections::HashMap<(String, String), i64>,
 ) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
@@ -408,6 +453,17 @@ pub(crate) fn format_search_emails_output_with_bodies(
     }
 
     let mut out = String::new();
+    // A row is one representative per thread; say how long that thread is
+    // so the model doesn't summarise an exchange from its latest message.
+    let size_of = |e: &Email| {
+        thread_sizes
+            .get(&(e.account_id.clone(), e.thread_id.clone()))
+            .copied()
+            .filter(|n| *n > 1)
+    };
+    if emails.iter().any(|e| size_of(e).is_some()) {
+        out.push_str(THREAD_SIZE_HINT);
+    }
     let mut render = |header: &str, group: &[&Email], show_category: bool| {
         if group.is_empty() {
             return;
@@ -424,6 +480,14 @@ pub(crate) fn format_search_emails_output_with_bodies(
                 format_date(email.timestamp),
             );
             out.push_str(&head);
+            if let Some(n) = size_of(email) {
+                out.push_str(&format!(" messages={n}"));
+            }
+            // Read state is data the model may be asked about; it must never
+            // guess it from an email's age or from reply state.
+            if !email.is_read {
+                out.push_str(" unread");
+            }
             if show_category {
                 out.push_str(&format!(" category={}", email.category));
             }
@@ -459,7 +523,7 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
         return Some(dt.timestamp());
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc().timestamp());
+        return Some(local_day_start(d, crate::services::clock::utc_offset_secs()));
     }
     None
 }
@@ -467,6 +531,35 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Local day boundaries ────────────────────────────────────────────
+    //
+    // Dates shown to and parsed from the model were UTC: at 01:30 Madrid
+    // time a "today" search started yesterday, and a message received at
+    // 00:30 was dated the day before. All day math goes through the clock's
+    // UTC offset now.
+
+    fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> i64 {
+        chrono::NaiveDate::from_ymd_opt(y, m, d)
+            .and_then(|date| date.and_hms_opt(h, min, 0))
+            .map(|ndt| ndt.and_utc().timestamp())
+            .expect("valid test date")
+    }
+
+    #[test]
+    fn local_date_shifts_by_the_offset() {
+        let late_evening = utc(2026, 4, 16, 23, 0);
+        assert_eq!(local_date(late_evening, 0).to_string(), "2026-04-16");
+        assert_eq!(local_date(late_evening, 7_200).to_string(), "2026-04-17");
+        assert_eq!(local_date(utc(2026, 4, 17, 1, 0), -7_200).to_string(), "2026-04-16");
+    }
+
+    #[test]
+    fn local_day_start_is_midnight_in_the_offset() {
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 4, 17).expect("date");
+        assert_eq!(local_day_start(day, 0), utc(2026, 4, 17, 0, 0));
+        assert_eq!(local_day_start(day, 7_200), utc(2026, 4, 16, 22, 0));
+    }
 
     #[test]
     fn phase_for_tool_maps_known_tools_to_specific_phases() {

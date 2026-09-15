@@ -108,3 +108,52 @@ export function createDraftAutosaver(
 
   return { save, currentId: () => currentId, flush };
 }
+
+/** Debounced front for a draft saver: one save per quiet period, and the
+ * pending edit is never lost when the composer closes. */
+export interface DebouncedDraftSaver {
+  /** Remember `state` and (re)start the quiet-period timer. */
+  schedule: (state: ComposeDraftState) => void;
+  /** Save right now whatever is still waiting; no-op when nothing is. */
+  flushPending: () => void;
+  /** Drop a pending save (after a successful send, or a deliberate discard). */
+  cancel: () => void;
+}
+
+/**
+ * The bug this exists for: the debounced effect cleared its timer on unmount,
+ * so the last edits before Escape (typically the subject, typed last) never
+ * reached the draft row. `flushPending` on close saves them.
+ */
+export function createDebouncedDraftSaver(
+  save: (state: ComposeDraftState) => Promise<void>,
+  delayMs: number,
+): DebouncedDraftSaver {
+  let pending: ComposeDraftState | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const run = () => {
+    timer = null;
+    const state = pending;
+    pending = null;
+    if (state) void save(state);
+  };
+  const cancel = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    pending = null;
+  };
+  return {
+    schedule: (state) => {
+      if (timer !== null) clearTimeout(timer);
+      pending = state;
+      timer = setTimeout(run, delayMs);
+    },
+    flushPending: () => {
+      if (timer === null) return;
+      clearTimeout(timer);
+      run();
+    },
+    cancel,
+  };
+}

@@ -50,6 +50,9 @@ export function RichTextEditor({
       StarterKit.configure({
         // We want StarterKit defaults but explicit about a few things.
         heading: { levels: [1, 2, 3] },
+        // StarterKit 3 bundles both; we register our own configured copies below.
+        link: false,
+        underline: false,
       }),
       Underline,
       Link.configure({

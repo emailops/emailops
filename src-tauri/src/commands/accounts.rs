@@ -177,6 +177,16 @@ pub async fn update_account_sync_from(
     Ok(account)
 }
 
+/// Rename an account. The name is the sender name on mail sent from it.
+#[tauri::command]
+pub async fn update_account_name(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+) -> Result<Account, AppError> {
+    services::accounts::update_account_name(&state.db, &account_id, &name)
+}
+
 #[tauri::command]
 pub async fn get_account_settings(state: State<'_, AppState>, account_id: String) -> Result<AccountSettings, AppError> {
     let key = format!("account_settings:{}", account_id);

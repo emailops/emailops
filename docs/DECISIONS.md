@@ -823,3 +823,233 @@ sidebar filters too* — the user chose the any-message rule for the inbox on pu
 replying to a company must not drop the thread from that company's filter. *Deduplicating
 across blocks on the frontend* (as the priority ordinal dedupe does) — blocks page lazily,
 so a thread's "right" block may not be loaded yet, and the counts would still disagree.
+
+## 2026-09-10 — Chat dates are the user's local day; drafts need an explicit request; RAG sources carry ids
+
+**Decision:** Every date the chat shows the model or parses from it — "today" and
+"tomorrow" in the system prompt, the summary shortcuts' windows, `since`/`until` bounds,
+message dates in tool results — is computed in the machine's local zone through a new
+`Clock::utc_offset_secs()` seam (`SystemClock` reads the local offset; `FixedClock` pins
+one for tests). `generate_email_draft` only runs on a turn whose question asks to
+write/reply/draft, or on a short confirmation right after the assistant offered a draft;
+otherwise the call is replaced by a note to the model and nothing is saved. Pre-retrieved
+RAG sources carry `id=` on their header line and seed the turn's `email://` allowlist.
+`search_emails` prepends the real total ("showing 25 of 156 matching threads") when a page
+is full, and the daily/weekly summary shortcuts ask for received mail only.
+
+**Context:** A judged pass of 18 real questions against the production mailbox found: a
+lookup ("primer correo que envié a X") that ended in an unrequested reply draft saved to
+the provider; RAG answers whose links were either the citation number (`email://2`) or a
+prompt-example id, because the sources had no ids and the RAG allowlist started empty;
+"¿cuántos correos de X?" answered "25" on a sender with 156; a Thursday labelled
+"martes"; the user's own sent reply summarised as received mail; and every day boundary
+computed in UTC for a user in Europe/Madrid.
+
+**Rejected:** *Gating drafts only on inferred (nameless) tool calls* — the observed turn
+also emitted explicit `generate_email_draft` calls after the first inferred one.
+*A COUNT query inside the search SQL* — the sender filter is a three-arm UNION assembled
+in two phases; re-running the same search with a 500-row probe only when the page is
+full is one line and costs nothing on the common path. *Applying the draft gate to
+thread-bound turns* — those already expose the tool only when the question asks for it.
+
+## 2026-09-11 — The open email is context on an all-tools turn, not a tool-less mode
+
+**Decision:** When the chat panel has an email open, the turn runs as an ordinary
+turn — every tool available, no retrieval, no planner — with the thread injected as an
+"OPEN EMAIL" block in the user message that states both halves of the contract: answer
+from it when the question is about it, ignore it and use the tools otherwise. A keyword
+hint (`question_leaves_thread`) still short-circuits obvious mailbox-wide questions to a
+plain turn with no thread block, and a language-agnostic net catches the remaining
+misses: an answer that claims to have no tools or no inbox access triggers one
+corrective retry that salvages and runs the tool call the model then emits. Only a
+conversation explicitly created with "chat about this thread" keeps the thread-bound,
+tool-less path.
+
+**Context:** Thread-bound turns exposed zero tools (a translate request had once saved a
+reply draft), so "que correos tengo hoy" asked with an email open was answered "No tengo
+herramientas disponibles para acceder a tu bandeja". Keyword detection of "is this about
+the thread?" is not robust to paraphrase or to the FR/DE users; letting the model decide
+with the whole question and the thread in front of it is. The draft gate
+(`draft_call_allowed`) now prevents the original regression with every tool on the menu;
+a refused draft call is labelled `(refused: no draft requested)` in the trace.
+
+**Rejected:** *Improving the keyword classifier* — it would keep growing case by case
+and never cover four languages. *A separate classifier round trip* — a per-turn cost
+for a decision the main model can make in the same call. *Keeping thread mode tool-less
+and re-running the whole turn on a refusal* — the corrective-retry ladder already
+exists and costs one extra generation only on failure.
+
+## 2026-09-11 — Chat search exposes the classifier's tags and never returns detector spam
+
+**Decision:** `search_emails` (the chat tool) takes `intent` and `topic` filters backed by
+the classification tags, plus `with_bodies` to inline cleaned bodies in one call. The
+query planner maps concepts the mailbox never spells out onto `intent` — prospects /
+potential clients / leads → `introduction` (then `question` / `request`), newsletters →
+`newsletter`, marketing → `promotion` — instead of a literal keyword. Chat searches drop
+mail the junk detector banded as spam or phishing (unless the user overrode it); the app's
+own search box is unchanged. The system prompt defines a prospect (someone asking about
+*your* services) and excludes vendors, recruiters and newsletters from that label.
+
+**Context:** "últimos correos de prospects" on the consulting inbox ran
+`search_emails(query="prospects")` → nothing, then broad retries, and the answer listed two
+SEO vendors (one banded spam), a job seeker and one lead — while the five real prospects
+(intent introduction/question/request, clean) never appeared. The classifier already
+encoded the answer; the tool schema did not let the model reach it. Nine rounds and
+26.6 s, half of them one `get_email_body` per row.
+
+**Rejected:** *Teaching the keyword router about "prospects"* — a concept, not a word, and
+one of many. *Excluding spam at the DB search for every caller* — the inbox search box must
+still find a message the detector got wrong. *Relying on the model to filter vendors out
+of a broad result* — it did not, twice; the definition in the prompt plus the intent filter
+make the right set the default rather than a judgement call.
+
+## 2026-09-11 — Concepts reach the search through the tag glossary, not per-concept prompt rules
+
+**Decision:** The chat maps a *kind* of mail in the question ("prospects", "quote requests I
+sent", "complaints in 2025", "newsletters this week") onto the classifier's tags through
+data, not prose. Each built-in intent and topic carries a one-line definition next to its
+name in `services::classification` (`TagGlossary`); the user's configured tag list — plus
+any tag value actually present in `email_tags` that the list no longer names, since rules and
+older defaults keep tagging — with those definitions, is rendered into the `search_emails`
+parameter menu (a new
+`Tool::parameters_schema_for(db)` hook, since the vocabulary follows Settings), into the
+query planner prompt (`{{intent_definitions}}` / `{{topic_definitions}}`), and the planner
+prompt keeps a handful of diverse examples. `search_emails` also takes `mode="semantic"`,
+which ranks the query by meaning through the chat's hybrid retrieval and then applies the
+sender / recipient / date / tag filters in memory — for descriptions no tag captures. The
+system prompt keeps one generic sentence ("a kind of mail is a tag filter or a semantic
+search, never a keyword") in place of the PROSPECTS paragraph.
+
+**Context:** The prospects fix taught the prompt one concept. The next question ("emails
+where I ask a provider for a quote") would have needed its own paragraph, and so would every
+concept after it — a system prompt that grows per concept and still never covers what the
+user says next. The classifier already has a vocabulary; what was missing was its meaning
+in front of the model at the two points where it chooses filters. The first run also showed
+why the menu cannot be the Settings list alone: the production mailbox has ~1,000 emails
+tagged `newsletter` while its Settings list had dropped that intent, so a data-driven planner
+could not name the tag the old hard-coded prompt used to spell out.
+
+**Rejected:** *A concept → intent lookup table in code* — the same growth problem in a
+different file, and blind to paraphrase and language. *Putting the definitions in the
+static tool description* — the tag list is user-configurable, so the menu must be rendered
+from the DB. *Semantic mode as a separate tool* — one tool with one `mode` switch keeps the
+filters and output shape identical, so the model needs no second contract. *Feeding the
+definitions to the classifier prompt in the same change* — it would move classification
+results and needs its own eval run; the glossary is there for it when that lands.
+
+## 2026-09-11 — UI verification drives the real app through an embedded, dev-only WebDriver
+
+**Decision:** Agent-driven UI verification (`.claude/skills/verify-emailops`) drives the real
+desktop app through `tauri-plugin-wdio-webdriver`, an embedded W3C WebDriver server. It is
+behind the `webdriver` cargo feature (never in `default`, a `compile_error!` refuses release
+profiles) and only starts when `TAURI_WEBDRIVER_PORT` is set at launch; the skill launches its
+own instance on a separate Vite/Tauri port against the synthetic demo DB. cua-driver stays as
+the native layer (window screenshots, menus, focus-free checks).
+
+**Context:** Frontend fixes kept shipping on jsdom-only evidence and coming back as "still
+broken" screenshots; the driver that can see the running app (cua-driver, Accessibility)
+exposes nothing of a WKWebView whose window sits on another Space, which is the normal state
+when the terminal is full-screen. DOM-level driving inside the app does not depend on Spaces,
+focus or AX, and reaches the real IPC and data.
+
+**Rejected:** *Opening the frontend in a browser through a dev HTTP bridge* — a second
+dispatch path over 213 Tauri commands and 27 events that would drift from the real one, and a
+localhost surface on the mailbox reachable from any web page. *`tauri-driver`* — no macOS
+support. *CrabNebula's driver* — paid, external process. *Always-on plugin in debug builds* —
+`make dev` often holds the production mailbox; an unauthenticated automation port must be
+opt-in per launch.
+
+## 2026-09-14 — Chat routing is a retrieval hint, never a capability gate
+
+**Decision:** Every chat turn runs the tool loop with the full, feature-gated tool menu.
+The route (`RagFirst` / `ToolsFirst`) only decides whether RAG sources are pre-retrieved
+into the turn. Reaching a tool must never depend on the question matching a keyword; the
+routing keyword list is not grown to chase paraphrases.
+**Context:** `RagFirst` used to be sources-only, so any question the keyword heuristic
+missed ("¿qué tengo pasado mañana?", "which conversations are still open?") could never
+reach `list_calendar_events`, `list_open_threads` or `memory_search`. A fix that added
+more keywords was rejected by the developer as fragile and reverted. Measured on the
+embedded runtime: the system prefix is identical on both routes (~6.9k tokens, the tools
+section already lives in the system prompt), so exposing tools on `RagFirst` turns costs
+nothing in the KV-prefix cache.
+**Rejected:** more routing keywords (fragile, every paraphrase and language needs an
+entry, a miss silently removes capabilities); an LLM route classifier (a model round-trip
+on every turn, and still a gate that can be wrong); dropping pre-retrieval altogether
+(kept open: `chat.routing_mode=always_rag|always_tools` stay available to A/B it on the
+eval).
+
+## 2026-09-15 — The account name is the sender name on outgoing mail
+
+**Decision:** `accounts.name` is the display name EmailOps puts in the `From` header of
+mail it sends through Gmail and IMAP/SMTP (`"Name" <address>`), editable per account in
+Account settings. An account whose name is blank or equal to its own address (as older
+rows store it) has no sender name and sends the bare address. "No name" is stored as an
+empty name and every reader falls back to the address; the address is never written in
+its place. Gmail accounts take the name from Gmail's "Send mail as" setting
+(`users.settings.sendAs`, readable under the `gmail.modify` scope already granted) when
+connected, and once on the next sync for accounts connected earlier; a name the user set
+is never replaced. Outlook is unaffected: Graph takes the sender name from the mailbox.
+Drafts pushed to Gmail keep a bare address.
+**Context:** Mail sent from EmailOps went out as `From: address`, so recipients saw no
+name and the synced IMAP Sent copy had an empty sender. Gmail's profile endpoint carries
+no name, so Gmail accounts were stored with their address as the name. `accounts.name`
+already meant "your name on this account" (Outlook profile name, the IMAP setup display
+name, the sender of the optimistic Sent row); its only label use is the Dashboard
+account panel.
+**Rejected:** a separate sender-name field beside an account label, as Thunderbird and
+Apple Mail do — a second source of truth for the same identity, for a label shown in one
+panel. It pays off only with per-account aliases / send-as identities, which would bring a
+proper identity model (address + name + signature) anyway. Deriving the name from past
+Sent headers — implicit, and wrong for accounts that never sent with a name. Writing the
+address as the name when there is none — it invents data and hides the "no name" state;
+the fallback belongs to whoever reads the name.
+
+
+## 2026-09-15 — Chat search rows state their thread's size; reading the thread stays the model's call
+
+**Decision:** `search_emails` keeps returning one row per thread. A row whose thread
+holds more than one message carries `messages=N`, and the result opens with a
+conditional hint: call `get_thread` when the answer needs the whole conversation. The
+tool never inlines a thread on its own. The count uses `get_thread`'s own row filter,
+so the number the model sees is the number the follow-up call returns.
+**Context:** Asked to summarise an exchange with one person, the model answered from
+the single representative row of a six-message thread in 4 of 5 eval-harness runs;
+nothing in the row said it stood for more mail.
+**Rejected:** Auto-expanding threads inside `search_emails` when few threads match —
+deterministic, but it spends context on every small result, including listing and
+counting questions that never need the thread. A dedicated "exchange with a person"
+route — the narrowest fix, and it would lean on keyword detection. An unconditional
+"call `get_thread`" instruction — it would fetch threads for questions that don't need
+them.
+
+## 2026-09-15 — Nightly local verification; Markdown summaries in git, HTML reports local
+
+**Decision:** A launchd agent on the developer's Mac runs `make verify` every night at 03:00
+and commits one Markdown summary per run under `docs/verification/` on the checked-out
+branch (never `main`, never pushed). The full HTML report stays in the gitignored
+`src-tauri/reports/verify/`, pruned to the last 10 runs. Private (real-mailbox) verification
+is never summarised or committed.
+**Context:** The chat evals need the local 35B model on the Metal GPU, the demo DB and a
+WebDriver-driven dev app, so neither GitHub CI nor a cloud routine can run them. A full run
+is about 41 MB (results.json 4.6 MB, informe.html 4.1 MB, raw layers and app evidence),
+roughly 15 GB a year if committed nightly. A run while another EmailOps instance holds the
+demo DB fails every eval with Metal out-of-memory, so the job skips that night instead of
+recording false failures.
+**Rejected:** Committing the HTML report without screenshots — about 4 MB a run, 1.5 GB a
+year. Keeping full runs on a dedicated branch or in Git LFS — a second branch to maintain or
+a new dependency. Running in GitHub CI or a cloud routine — no GPU or local model there.
+
+## 2026-09-15 — Full verification runs at the start of each release, not on a schedule
+
+**Decision:** Phase 1b of the release skill runs `make verify-release`: a full `make verify`
+on the commit being released, whose Markdown summary under `docs/verification/` ships in the
+`chore: release vX.Y.Z` commit. Newly failing tests stop the release until the developer has
+triaged them. There is no scheduled run. This supersedes the nightly launchd entry above; the
+rest of that entry (summaries in git, HTML reports local and pruned to the last 10, private
+runs never summarised) still holds.
+**Context:** The developer does not want verification automated on a schedule. Tying the run
+to the release checks exactly the code that ships, and happens when the developer is present
+to triage the failures.
+**Rejected:** The nightly launchd agent at 03:00 (installed and removed the same day) — an
+unattended job committing onto whatever branch was checked out, and competing for the GPU with
+any EmailOps instance left open.

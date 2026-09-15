@@ -67,11 +67,11 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         // `from_str` would reject, dropping an otherwise-good call. A block
         // with no leading parseable value is malformed — skip and keep
         // scanning.
-        let Some(value) = serde_json::Deserializer::from_str(inner)
-            .into_iter::<serde_json::Value>()
-            .next()
-            .and_then(|r| r.ok())
-        else {
+        let Some(value) = first_json_value(inner).or_else(|| {
+            // Qwen 3.6 also drops the `,"arguments"` key, leaving the args
+            // object hanging off the name: `{"name":"x":{…}}`.
+            repair_missing_arguments_key(inner).and_then(|fixed| first_json_value(&fixed))
+        }) else {
             continue;
         };
         let Some(obj) = value.as_object() else { continue };
@@ -129,10 +129,95 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
     out
 }
 
+/// First complete JSON value in `s`, ignoring trailing garbage.
+fn first_json_value(s: &str) -> Option<serde_json::Value> {
+    serde_json::Deserializer::from_str(s)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(|r| r.ok())
+}
+
+/// Rewrite `{"name":"x":{…}}` (the `,"arguments"` key dropped) into the
+/// canonical `{"name":"x","arguments":{…}}`. `None` for any other shape.
+/// The turn loop's text salvager mirrors this (this module is feature-gated).
+fn repair_missing_arguments_key(inner: &str) -> Option<String> {
+    let rest = inner.trim_start().strip_prefix('{')?.trim_start();
+    let rest = rest
+        .strip_prefix("\"name\"")?
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let (name, after) = (&rest[..end], rest[end + 1..].trim_start().strip_prefix(':')?);
+    Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
+}
+
+/// True when the raw generation `text` has just completed a tool call that
+/// repeats (same name, same arguments) one already emitted earlier in it.
+///
+/// Called on every streamed piece, so it only does work at a block boundary:
+/// a closing `</tool_call>`, or an opening tag that implicitly closes the
+/// previous block in newline-batched output. Greedy decoding with no
+/// repetition penalty can otherwise loop on one call for minutes (observed on
+/// Qwen 3.6 35B: the same `search_emails` four times, 75 s, a 25k-token
+/// transcript); the runtime ends the round here instead. Pure.
+pub(super) fn ends_with_repeated_tool_call(text: &str) -> bool {
+    let tail = text.trim_end();
+    if !(tail.ends_with(CLOSE_TAG) || tail.ends_with(OPEN_TAG)) {
+        return false;
+    }
+    let calls = parse_qwen_tool_calls(text);
+    match calls.split_last() {
+        Some((last, earlier)) => earlier
+            .iter()
+            .any(|c| c.function.name == last.function.name && c.function.arguments == last.function.arguments),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // Greedy decoding with no repetition penalty can loop: Qwen 3.6 35B was
+    // observed emitting the same `search_emails` call four times in one round
+    // (75 s of generation, a 25k-token transcript). The runtime stops the
+    // round as soon as a block repeats one already emitted; these pin when.
+    const A: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"a@x.io","limit":1}}</tool_call>"#;
+    const B: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"b@x.io","limit":1}}</tool_call>"#;
+
+    #[test]
+    fn a_closed_block_repeating_an_earlier_one_is_detected() {
+        let reordered = r#"<tool_call>{"name":"search_emails","arguments":{"limit":1,"from":"a@x.io"}}</tool_call>"#;
+        assert!(
+            ends_with_repeated_tool_call(&format!("{A}\n{reordered}")),
+            "argument order does not matter"
+        );
+        assert!(ends_with_repeated_tool_call(&format!("{A}\n{B}\n{A}")));
+    }
+
+    #[test]
+    fn distinct_calls_are_not_a_repeat() {
+        assert!(!ends_with_repeated_tool_call(A));
+        assert!(!ends_with_repeated_tool_call(&format!("{A}\n{B}")));
+        assert!(!ends_with_repeated_tool_call(""));
+        assert!(!ends_with_repeated_tool_call("plain prose answer"));
+    }
+
+    #[test]
+    fn a_repeat_counts_only_once_the_block_is_complete() {
+        let half = &A[..A.len() - "</tool_call>".len() - 3];
+        assert!(!ends_with_repeated_tool_call(&format!("{A}\n{half}")));
+    }
+
+    #[test]
+    fn unclosed_newline_batches_repeat_when_the_next_block_opens() {
+        let line = r#"<tool_call>{"name":"list_open_threads","arguments":{}}"#;
+        assert!(ends_with_repeated_tool_call(&format!("{line}\n{line}\n<tool_call>")));
+        assert!(!ends_with_repeated_tool_call(&format!("{line}\n<tool_call>")));
+    }
 
     #[test]
     fn empty_input_returns_empty() {
@@ -316,6 +401,23 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].function.name, "search_emails");
         assert_eq!(calls[0].function.arguments, json!({"from":"sharique","limit":25}));
+    }
+
+    #[test]
+    fn missing_arguments_key_between_name_and_args_is_repaired() {
+        // Verbatim production emission (Qwen 3.6 35B): the `,"arguments"` key
+        // is dropped, so the args object hangs off the name string. Invalid
+        // JSON; before the repair the block vanished and the round reported
+        // zero tool calls.
+        let text =
+            "<tool_call>{\"name\":\"search_emails\":{\"unread\":true,\"order\":\"oldest\",\"limit\":1}}\n</tool_call>";
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            json!({"unread":true,"order":"oldest","limit":1})
+        );
     }
 
     #[test]

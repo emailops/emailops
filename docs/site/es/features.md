@@ -14,11 +14,25 @@ servidor IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, autoalojado). El
 sincroniza en una base de datos SQLite local, así que leer y buscar es rápido y funciona sin
 conexión.
 
+El nombre de cada cuenta es el remitente que ven los destinatarios en el correo que envías
+desde ella. Cámbialo en el campo **Nombre del remitente** de los ajustes de la cuenta, o déjalo
+vacío para enviar solo con la dirección. Las cuentas de Gmail empiezan con el nombre de su
+configuración «Enviar como» de Gmail, y las IMAP con el nombre visible que indicaste al
+conectarlas. El correo enviado por Outlook lleva el nombre que Microsoft tiene para el buzón.
+
 ## Bandeja unificada
 
 La vista **Todas las cuentas** fusiona cada buzón activo en una sola lista, junto a las vistas
 por cuenta. Las carpetas IMAP personalizadas también se sincronizan, y puedes crearlas,
 renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
+
+## Reenviar
+
+**Reenviar** está junto a **Responder** y **Responder a todos** en el panel de lectura. El
+borrador se abre sin destinatarios y lleva el mensaje original bajo una cabecera *Mensaje
+reenviado* con su remitente, fecha y destinatarios, junto con los adjuntos originales (hasta
+20 MB en total). Sale como un mensaje nuevo, así que no se une a las conversaciones que el
+destinatario ya tiene.
 
 ## Filtros inteligentes
 

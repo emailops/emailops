@@ -155,6 +155,20 @@ impl Database {
         Ok(tags)
     }
 
+    /// Every distinct value ever assigned for `tag_type`, alphabetical — the
+    /// vocabulary a filter can actually match, whatever Settings says today
+    /// (rules and older defaults leave tags the current list may not name).
+    /// One range scan of `idx_email_tags_type_value`.
+    pub fn distinct_tag_values(&self, tag_type: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT tag_value FROM email_tags WHERE tag_type = ?1 ORDER BY tag_value")?;
+        let values = stmt
+            .query_map(params![tag_type], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(values)
+    }
+
     /// Get tags for multiple emails as a flat list (batch load for email lists).
     pub fn get_email_tags_batch(&self, email_ids: &[String]) -> Result<Vec<EmailTag>> {
         if email_ids.is_empty() {
@@ -575,6 +589,22 @@ mod tests {
                 params![account_id],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn distinct_tag_values_lists_each_value_once_per_type() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        insert_email(&db, "e1", "acc1", "t1", 1_000);
+        insert_email(&db, "e2", "acc1", "t2", 1_000);
+        insert_email(&db, "e3", "acc1", "t3", 1_000);
+        tag_email(&db, "e1", "intent", "newsletter");
+        tag_email(&db, "e2", "intent", "newsletter");
+        tag_email(&db, "e3", "intent", "complaint");
+        tag_email(&db, "e3", "topic", "billing");
+        assert_eq!(db.distinct_tag_values("intent").unwrap(), ["complaint", "newsletter"]);
+        assert_eq!(db.distinct_tag_values("topic").unwrap(), ["billing"]);
+        assert!(db.distinct_tag_values("company").unwrap().is_empty());
     }
 
     /// The tag board's stats query must always drive from `email_tags`, never

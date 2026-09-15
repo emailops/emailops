@@ -270,6 +270,17 @@ pub async fn sync_account_with_provider(
     // is the first point at which applying it is safe — see the function docs.
     apply_pending_extra_mailbox_backfill_reset(db, account_id);
 
+    // Gmail accounts connected before the app read the "Send mail as" name
+    // have none; fill it in once so outgoing mail carries it.
+    if let Err(e) = crate::services::accounts::backfill_send_as_name(db, account, email_provider.as_ref()).await {
+        emit_account_log(
+            "error",
+            "sync",
+            &account.email,
+            &format!("Could not read the sender name from Gmail: {e}"),
+        );
+    }
+
     // Load account settings: Gmail category filter + attachment auto-download categories
     let (label_filter_for_list, skip_promotions, auto_download_attachment_categories) = {
         let key = format!("account_settings:{}", account_id);

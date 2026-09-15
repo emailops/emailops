@@ -13,11 +13,24 @@ Connect as many mailboxes as you like — Gmail, Outlook / Microsoft 365 (Graph 
 IMAP/SMTP server (iCloud, Yahoo, Fastmail, ProtonMail Bridge, self-hosted). Mail is synced
 into a local SQLite database, so reading and searching stay fast and work offline.
 
+The name on each account is the sender name recipients see on the mail you send from it.
+Set it in the **Sender name** field of the account's settings, or leave it empty to send with
+the address only. Gmail accounts start with the name from Gmail's send-as setting, and IMAP
+accounts with the display name you gave when connecting them. Mail sent through Outlook
+carries the name Microsoft has for the mailbox.
+
 ## Unified inbox
 
 An **All accounts** view merges every enabled mailbox into one list, alongside the
 per-account views. Custom IMAP folders are synced too, and you can create, rename, delete
 and drag messages between folders from inside the app.
+
+## Forwarding
+
+**Forward** sits next to **Reply** and **Reply all** in the reading pane. The draft opens with
+no recipients and carries the original message under a *Forwarded message* header with its
+sender, date and recipients, together with the original attachments (up to 20 MB in total).
+It goes out as a new message, so it does not join the recipient's existing conversations.
 
 ## Smart filters
 

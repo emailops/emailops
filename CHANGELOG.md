@@ -22,6 +22,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the reading pane gained a chat icon that opens a conversation with the
   shown thread as context.
 
+- **Forward an email.** A Forward button sits next to Reply and Reply All. The
+  draft opens with no recipients, a `Fwd:` subject that does not stack an
+  existing prefix, the usual forwarded-message header in your language, the
+  original text and the original attachments (up to 20 MB in total; anything
+  left out is named in the output panel). It goes out as a new message, so the
+  recipient's client does not file it into a conversation they were never in.
+- **Your name on the mail you send.** Mail sent through Gmail and IMAP/SMTP
+  carried a bare address, so recipients saw no sender name. The account name
+  now goes into the From header, and Account settings has an editable sender
+  name. Gmail accounts take their name from Gmail's send-as setting; accounts
+  connected earlier pick it up on their next sync, without replacing a name
+  you set. Outlook is unchanged: Microsoft sets the sender from the mailbox.
+
+### Changed
+
+- **Summaries of an exchange read the whole conversation.** Chat search returns
+  one row per thread, so "summarise my exchange with …" could be answered from
+  the latest message of a six-message thread. Each result now says how many
+  messages its thread holds, and the chat reads the thread when the answer
+  needs it.
+- **The chat knows which mail you have read.** Asked for the oldest unread
+  email, it answered from reply state and could name one you had read. Search
+  now filters by read state and marks unread mail.
+- **With an email open, the chat can still search your mailbox.** Every
+  question was grounded in the open thread with no search available, so "what
+  mail do I have today?" was refused. The open email now rides along as
+  context: questions about it are answered from it, and mailbox-wide questions
+  use the tools.
+- **Chat dates follow your local day, and its links point at the right email.**
+  "Today", date ranges and message dates are your local day; answers built from
+  retrieved mail link the email they cite; and a plain lookup can no longer
+  save a draft.
+- **Local models' malformed tool calls are repaired instead of rejected.** A
+  dropped arguments key, quoted values or arguments nested under an extra key
+  used to fail the search; a repeated call now ends the round instead of
+  looping.
+- The EmailOps link in the footer of sent mail carries `utm_source=email_footer`.
+
+### Fixed
+
+- **The sender shows when a message has no display name.** A From header with
+  only an address synced over IMAP with an empty name, leaving the inbox row,
+  the thread and the preview blank. They now show the address.
+- **Compose and reading pane.** A typed recipient that has not become a chip yet
+  counts in the tab composer; the inbox header shows one chat button instead of
+  two; the subject stays visible in the full-width reading pane.
+
+### Security
+
+- **rustls 0.23.45** fixes RUSTSEC-2026-0285 (TLS 1.3 handshake messages
+  accepted across encryption level boundaries) in the TLS library behind every
+  HTTPS connection the app makes.
+
 ## [0.6.7] — 2026-09-09
 
 ### Added

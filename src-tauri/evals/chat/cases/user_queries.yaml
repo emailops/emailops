@@ -23,7 +23,7 @@
   # path and grounding, independent of any specific sender.
   question: "summarize today's emails"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: period_summary
   tier: smoke
   # `as_of: latest` pins "today" to the newest primary-category email in this
   # account's inbox at run start, so the case is robust against demo-DB age.
@@ -47,6 +47,9 @@
   # so a real grounded link is the meaningful signal.
   expected_answer_contains:
     - "email://"
+  # The demo pref `chat.default_categories` is primary,updates (same scope the
+  # app and the CLI honour), so the day's Updates mail counts too.
+  expected_output: "Summary of the most recent day in the inbox: Nadia Brunner asked how to add a second email account (Fastmail IMAP plus a work mailbox) in EmailOps and whether there is a settings page for it; Fly.io reported a successful production deploy of lumen-api; Codeberg opened PR #58 (carrier rate API) on faro-logistics/dashboard. Each item links its email://."
   metrics:
     - answer_relevancy
     - faithfulness
@@ -62,14 +65,38 @@
 - id: demo_planner_self_sent
   question: "show me the latest emails I sent"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "The latest messages sent by Ulises: “Re: Production bug: orders stuck in 'processing'” to Marisol Vega (9 Sept, fix rolled out), “Re: Mobile nav overlapping the footer” (8 Sept), “Re: Sprint 5 demo recap + next milestone” (8 Sept), “Re: API latency on the /search endpoint” (7 Sept); each with an email:// link."
   metrics:
     - answer_relevancy
+    - faithfulness
+
+# A lookup must never end in a saved draft. Observed on the real mailbox with
+# Qwen 3.6 35B: "primer correo que envié a X" found the email and the model
+# then called generate_email_draft on its own, saving (and pushing) a reply
+# nobody asked for. The tool loop now refuses generate_email_draft on a turn
+# whose question does not ask to write/reply/draft (`draft_call_allowed`), so
+# this holds regardless of what the model attempts. Same demo anchor as
+# `demo_planner_oldest` (the oldest sent email is a deterministic hit).
+- id: demo_lookup_never_drafts
+  question: "muéstrame el primer correo que envié, solo quiero verlo"
+  account: "ulises@emailopslabs.dev"
+  category: counts_aggregates
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_not_contains:
+    - "](draft://"
+  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone» (5 de septiembre de 2026), mostrado con su enlace email://, sin crear ningún borrador."
+  metrics:
+    - answer_relevancy
+    - faithfulness
 
 # Exercises the planner's ORDER=oldest path — "primer correo / first email".
 # Regression for the bug where "first" returned recent mail: search_emails had
@@ -80,14 +107,16 @@
 - id: demo_planner_oldest
   question: "muéstrame el primer correo que envié"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: counts_aggregates
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone», del 5 de septiembre de 2026, con su enlace email://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Exercises the EMAIL LINKS prompt clause: a sender-anchored query that
 # reliably hits multiple demo emails, giving the model the chance to wrap
@@ -114,14 +143,16 @@
 - id: demo_email_links_emitted
   question: "show me the latest email from Marisol"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: smoke
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
+  expected_output: "The latest email from Marisol Vega is “Re: Production bug: orders stuck in 'processing'” (9 Sept 2026): she confirms the orders are moving again and thanks for the fast turnaround; linked as email://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Exercises the DRAFT LINKS clause: ask the chat to draft a reply, expect
 # the assistant's confirmation to contain a `draft://` link. Per CLAUDE.md
@@ -157,8 +188,10 @@
   expected_tools_called: ["search_emails", "generate_email_draft"]
   expected_answer_contains:
     - "](draft://"
+  expected_output: "Finds the production-bug thread from Marisol Vega (orders stuck in 'processing', now fixed) and produces a brief reply draft confirming the fix and offering follow-up, linked as draft://."
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # Regression case for the Qwen 3.5 4B failure where a user-requested table
 # format caused the model to skip every `email://` link. The strengthened
@@ -183,11 +216,13 @@
 - id: demo_email_links_in_table
   question: "list all emails from Marisol and show every result as a markdown table with columns | Sender | Subject |"
   account: "ulises@emailopslabs.dev"
-  category: summary
+  category: topic_retrieval
   tier: full
   expected_route: tools_first
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "](email://"
+  expected_output: "A markdown table with one row per email from Marisol Vega: “Re: Production bug: orders stuck in 'processing'” (9 Sept), “Production bug: orders stuck in 'processing'” (9 Sept), “Sprint 5 demo recap + next milestone” (7 Sept) and “Project inquiry: real-time logistics dashboard” (12 Mar 2025), each subject linked as email://."
   metrics:
     - answer_relevancy
+    - faithfulness

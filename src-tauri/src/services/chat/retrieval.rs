@@ -117,6 +117,45 @@ const FTS_GUARANTEED_SLOTS: usize = 3;
 /// from the chat input dropdown.
 pub const DEFAULT_RAG_CATEGORIES: &[&str] = &["primary"];
 
+/// Canonical set of Gmail-style categories a chat turn can search. Used to
+/// reject unknown values coming from the frontend dropdown or a stale pref.
+pub const VALID_CATEGORIES: &[&str] = &["primary", "updates", "promotions", "social", "forums"];
+
+/// The category scope of a turn that did not choose one explicitly: the
+/// persisted `chat.default_categories` preference, normalised. Every front
+/// end (Tauri commands, `emailops-cli`, the REPL, the eval harness) resolves
+/// through here so they all search the same mailbox slice.
+pub fn default_categories(db: &Database) -> Vec<String> {
+    let from_pref = db
+        .get_preference("chat.default_categories")
+        .ok()
+        .flatten()
+        .map(|s| s.split(',').map(|t| t.to_string()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    normalize_categories(from_pref)
+}
+
+/// Lower-case, drop unknown values, and fall back to the default scope (primary)
+/// when nothing valid remains. Pure so it is unit-testable.
+///
+/// The empty fallback is the important part: an empty category list must NEVER
+/// reach the tool layer, because `search_emails` treats empty scope as "no
+/// filter → ALL categories" (`tools/search_emails.rs`). Without this, a stray
+/// empty selection (a corrupt pref, a `[]` from the UI before the pref loads)
+/// silently widens a Primary-scoped chat to every category.
+pub fn normalize_categories(candidate: Vec<String>) -> Vec<String> {
+    let filtered: Vec<String> = candidate
+        .into_iter()
+        .map(|c| c.trim().to_lowercase())
+        .filter(|c| VALID_CATEGORIES.contains(&c.as_str()))
+        .collect();
+    if filtered.is_empty() {
+        DEFAULT_RAG_CATEGORIES.iter().map(|s| s.to_string()).collect()
+    } else {
+        filtered
+    }
+}
+
 /// Recency bonus parameters. The decayed bonus is added to the fused RRF
 /// score so that, among near-tied candidates, newer emails win. The weight
 /// is calibrated against the max RRF score (≈ 0.034 summed across vec+fts
@@ -909,6 +948,43 @@ pub(crate) fn mark_relevant_region(sliced: &SlicedBody) -> String {
     let region: String = chars[start..end].iter().collect();
     let after: String = chars[end..].iter().collect();
     format!("{before}\n>>> RELEVANT REGION (answer likely here) >>>\n{region}\n<<< END RELEVANT REGION <<<\n{after}")
+}
+
+#[cfg(test)]
+mod category_scope_tests {
+    use super::{default_categories, normalize_categories};
+    use crate::db::Database;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Every front end (Tauri, CLI, REPL, eval harness) must read the same
+    /// `chat.default_categories` preference: the CLI used to hardcode
+    /// Primary, so invoices filed under Updates were unreachable from it.
+    #[test]
+    fn default_categories_reads_the_chat_pref_and_normalises_it() {
+        let db = Database::new_for_testing().expect("db");
+        assert_eq!(default_categories(&db), v(&["primary"]), "no pref → service default");
+        db.set_preference("chat.default_categories", "Primary, updates,bogus")
+            .expect("pref");
+        assert_eq!(default_categories(&db), v(&["primary", "updates"]));
+        db.set_preference("chat.default_categories", "").expect("pref");
+        assert_eq!(
+            default_categories(&db),
+            v(&["primary"]),
+            "empty pref never widens to all categories"
+        );
+    }
+
+    #[test]
+    fn normalise_drops_unknown_values_and_falls_back_to_primary() {
+        assert_eq!(
+            normalize_categories(v(&["Updates", "PROMOTIONS", "nope"])),
+            v(&["updates", "promotions"])
+        );
+        assert_eq!(normalize_categories(v(&["bogus"])), v(&["primary"]));
+    }
 }
 
 #[cfg(test)]

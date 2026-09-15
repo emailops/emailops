@@ -53,6 +53,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import { isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
@@ -1503,10 +1504,24 @@ function AppInner() {
                     }
                     availableCategories={availableCategories ?? undefined}
                     onCollapse={inboxLayout === 'split' ? () => setIsInboxCollapsed(true) : undefined}
-                    onNewChat={aiEnabled ? () => void handleNewChat() : undefined}
+                    // One header button: re-dock the closed panel (keeping its
+                    // conversation), or start a fresh chat while it is open.
+                    onNewChat={
+                      aiEnabled
+                        ? isChatPanelOpen
+                          ? () => void handleNewChat()
+                          : () => setIsChatPanelOpen(true)
+                        : undefined
+                    }
                     onOpenInTab={openTab}
                     onChatAboutThread={aiEnabled ? handleChatAboutThread : undefined}
                     accountName={isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email}
+                    title={mailboxTitle(
+                      viewMode,
+                      isUnified ? t('sidebar:allAccounts') : activeAccount?.name || activeAccount?.email,
+                      (key) => t(key as 'sidebar:inbox'),
+                    )}
+                    isChatPanelOpen={isChatPanelOpen}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
                   />

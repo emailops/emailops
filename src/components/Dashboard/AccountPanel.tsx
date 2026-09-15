@@ -46,7 +46,8 @@ export function AccountPanel({ data, onRefreshed, onOpenSettings }: AccountPanel
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-white truncate">{data.account.name}</div>
+          {/* An account without a name stores an empty one; show the address. */}
+          <div className="text-sm font-semibold text-white truncate">{data.account.name || data.account.email}</div>
           <div className="text-xs text-gray-400 truncate">{data.account.email}</div>
         </div>
         <div className="flex items-start gap-2 shrink-0">

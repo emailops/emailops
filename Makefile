@@ -284,6 +284,20 @@ deploy:
 	npm run tauri build -- --bundles app
 	bash scripts/install_to_applications.sh src-tauri/target/release/bundle/macos/EmailOps.app
 
+# Full verification: every test layer, results per feature, HTML report under src-tauri/reports/verify/
+# (quick tier skips the UI, oracle and eval layers). See .claude/skills/verify-emailops/.
+verify:
+	bash scripts/verify_all.sh $(ARGS)
+
+# Private evals (real mailbox) against the `make eval-snapshot` copy; report stays local.
+verify-private:
+	bash scripts/verify_private.sh $(ARGS)
+
+# Release verification (release skill, Phase 1b): `make verify`, then a Markdown summary under
+# docs/verification/ that ships in the release commit; the HTML report stays local.
+verify-release:
+	bash scripts/verify_release.sh
+
 # Security audit
 audit:
 	cargo audit --file src-tauri/Cargo.lock

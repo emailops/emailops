@@ -236,7 +236,10 @@ fn footer_prefix(language: Language) -> &'static str {
 /// makes most email-client auto-linkers swallow the trailing `)` into the URL,
 /// producing a broken link like `https://getemailops.com)/`.
 pub fn email_footer_plain(language: Language) -> String {
-    format!("\n\n--\n{} EmailOps\nhttps://getemailops.com", footer_prefix(language))
+    format!(
+        "\n\n--\n{} EmailOps\nhttps://getemailops.com/?utm_source=email_footer",
+        footer_prefix(language)
+    )
 }
 
 /// HTML footer appended to every outgoing email, in the user's UI language.
@@ -244,7 +247,7 @@ pub fn email_footer_html(language: Language) -> String {
     format!(
         "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\">\
          <p style=\"color:#888;font-size:12px;margin:0\">{} \
-         <a href=\"https://getemailops.com\" style=\"color:#888\">EmailOps</a></p>",
+         <a href=\"https://getemailops.com/?utm_source=email_footer\" style=\"color:#888\">EmailOps</a></p>",
         footer_prefix(language)
     )
 }
@@ -319,9 +322,14 @@ pub trait EmailProvider: Send + Sync {
     ///
     /// Returns best-effort [`SentMessageMeta`] about the sent copy so the
     /// caller can store an optimistic local Sent row.
+    ///
+    /// `from_name` is the display name for the From header (`None` sends the
+    /// bare address). Outlook ignores it: Graph takes the sender name from the
+    /// mailbox itself.
     async fn send_reply(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         thread_id: &str,
@@ -342,6 +350,7 @@ pub trait EmailProvider: Send + Sync {
     async fn send_new_email(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,
@@ -622,6 +631,7 @@ struct FakeStoredMessage {
 #[derive(Debug, Clone)]
 pub struct FakeSentMessage {
     pub from_email: String,
+    pub from_name: Option<String>,
     pub to_emails: Vec<String>,
     pub cc_emails: Vec<String>,
     pub thread_id: Option<String>,
@@ -906,6 +916,7 @@ impl EmailProvider for FakeEmailProvider {
     async fn send_reply(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         thread_id: &str,
@@ -919,6 +930,7 @@ impl EmailProvider for FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .push(FakeSentMessage {
                 from_email: from_email.to_string(),
+                from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
                 thread_id: Some(thread_id.to_string()),
@@ -933,6 +945,7 @@ impl EmailProvider for FakeEmailProvider {
     async fn send_new_email(
         &self,
         from_email: &str,
+        from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
         subject: &str,
@@ -944,6 +957,7 @@ impl EmailProvider for FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .push(FakeSentMessage {
                 from_email: from_email.to_string(),
+                from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
                 thread_id: None,
@@ -1226,6 +1240,7 @@ mod tests {
         let p = FakeEmailProvider::new("me@example.com", "Me");
         p.send_new_email(
             "me@example.com",
+            None,
             &["x@y.com".to_string()],
             &[],
             "subj",
@@ -1253,9 +1268,17 @@ mod tests {
             content_id: Some("img1".into()),
             is_inline: true,
         });
-        p.send_new_email("me@example.com", &["x@y.com".to_string()], &[], "subj", &body, &[])
-            .await
-            .unwrap();
+        p.send_new_email(
+            "me@example.com",
+            None,
+            &["x@y.com".to_string()],
+            &[],
+            "subj",
+            &body,
+            &[],
+        )
+        .await
+        .unwrap();
         let sent = p.sent();
         assert_eq!(sent[0].body.html.as_deref(), Some("<p>hi</p><img src=\"cid:img1\">"));
         assert_eq!(sent[0].body.inline_images.len(), 1);
@@ -1269,6 +1292,7 @@ mod tests {
         let meta = p
             .send_new_email(
                 "me@example.com",
+                None,
                 &["x@y.com".to_string()],
                 &[],
                 "subj",
@@ -1290,6 +1314,7 @@ mod tests {
         let meta = p
             .send_reply(
                 "me@example.com",
+                None,
                 &["x@y.com".to_string()],
                 &[],
                 "thread-1",
@@ -1473,6 +1498,7 @@ mod tests {
         async fn send_reply(
             &self,
             _from_email: &str,
+            _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
             _thread_id: &str,
@@ -1486,6 +1512,7 @@ mod tests {
         async fn send_new_email(
             &self,
             _from_email: &str,
+            _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
             _subject: &str,
@@ -1655,7 +1682,7 @@ mod tests {
                 !footer.contains("Emailops"),
                 "{lang:?} footer must not lowercase the O: {footer}"
             );
-            assert!(footer.contains("https://getemailops.com"));
+            assert!(footer.contains("https://getemailops.com/?utm_source=email_footer"));
         }
         assert!(email_footer_plain(Language::En).contains("Sent with EmailOps"));
         assert!(email_footer_plain(Language::Es).contains("Enviado con EmailOps"));
@@ -1672,7 +1699,7 @@ mod tests {
                 "{lang:?} html footer must link EmailOps: {footer}"
             );
             assert!(!footer.contains(">Emailops</a>"));
-            assert!(footer.contains("href=\"https://getemailops.com\""));
+            assert!(footer.contains("href=\"https://getemailops.com/?utm_source=email_footer\""));
         }
         assert!(email_footer_html(Language::En).contains("Sent with <a"));
         assert!(email_footer_html(Language::Es).contains("Enviado con <a"));

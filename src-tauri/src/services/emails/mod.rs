@@ -61,6 +61,15 @@ pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Resu
     db.get_thread(account_id, thread_id)
 }
 
+/// Message count per `(account_id, thread_id)`. Backs the `messages=N` field
+/// on chat search rows.
+pub fn thread_sizes(
+    db: &Arc<Database>,
+    threads: &[(&str, &str)],
+) -> Result<std::collections::HashMap<(String, String), i64>> {
+    db.thread_sizes(threads)
+}
+
 /// Fetch the full body of one email by id. Backs the chat `get_email_body`
 /// tool and the redownload flow.
 pub fn get_email_body(db: &Arc<Database>, email_id: &str) -> Result<String> {
@@ -100,6 +109,8 @@ pub fn search_emails_filtered(
     // `true` returns oldest-first — needed to answer "first / primer correo".
     // Default callers pass `false` (newest-first, the historical behaviour).
     ascending: bool,
+    // `true` keeps only mail the user has not read (filtered in SQL).
+    unread_only: bool,
 ) -> Result<Vec<Email>> {
     db.search_emails_ordered(
         account_id,
@@ -113,5 +124,8 @@ pub fn search_emails_filtered(
         tag_filters,
         limit,
         ascending,
+        // Chat never wants spam or phishing in its results.
+        true,
+        unread_only,
     )
 }

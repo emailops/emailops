@@ -122,7 +122,12 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
       ) : (
         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
           {drafts.map((draft) => (
-            <div key={draft.id} className="px-6 py-4 hover:bg-gray-50 transition-colors flex items-start gap-4">
+            <div
+              key={draft.id}
+              data-testid="draft-row"
+              data-draft-id={draft.id}
+              className="px-6 py-4 hover:bg-gray-50 transition-colors flex items-start gap-4"
+            >
               <div
                 role="button"
                 tabIndex={0}

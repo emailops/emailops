@@ -5,7 +5,24 @@ import {
   sanitizeCssValue,
   sanitizeEmailHtml,
   sanitizeEmailHtmlFull,
+  senderName,
 } from './emailFormatting';
+
+// ---------------------------------------------------------------------------
+// senderName
+// ---------------------------------------------------------------------------
+
+describe('senderName', () => {
+  it('uses the display name when the From header carried one', () => {
+    expect(senderName({ sender: 'Ada Example', senderEmail: 'ada@example.com' })).toBe('Ada Example');
+  });
+
+  // Regression: a bare-address From header (`From: info@example.com`) syncs
+  // with an empty display name over IMAP, and the list rendered a blank name.
+  it('falls back to the address when the display name is empty', () => {
+    expect(senderName({ sender: '', senderEmail: 'info@example.com' })).toBe('info@example.com');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // sanitizeEmailHtmlFull — remote-content gating

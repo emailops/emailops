@@ -190,6 +190,7 @@ pub async fn send_reply_with_provider(
     let meta = provider
         .send_reply(
             &account.email,
+            crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
             &email.thread_id,
@@ -267,6 +268,7 @@ pub async fn send_reply(
     let meta = provider
         .send_reply(
             &account.email,
+            crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
             &email.thread_id,
@@ -349,7 +351,15 @@ pub async fn send_new_email_with_provider(
 
     let body = body.clone().with_language(footer_language(db)?);
     let meta = provider
-        .send_new_email(&account.email, &to_emails, &cc_emails, subject, &body, &attachments)
+        .send_new_email(
+            &account.email,
+            crate::services::accounts::sender_display_name(&account),
+            &to_emails,
+            &cc_emails,
+            subject,
+            &body,
+            &attachments,
+        )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
 
@@ -412,7 +422,15 @@ pub async fn send_new_email(
         .map_err(|e| map_send_error(e, &account.email))?;
     let body = body.clone().with_language(footer_language(db)?);
     let meta = provider
-        .send_new_email(&account.email, &to_emails, &cc_emails, subject, &body, &attachments)
+        .send_new_email(
+            &account.email,
+            crate::services::accounts::sender_display_name(&account),
+            &to_emails,
+            &cc_emails,
+            subject,
+            &body,
+            &attachments,
+        )
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
 

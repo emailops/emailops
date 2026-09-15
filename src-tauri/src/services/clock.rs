@@ -39,6 +39,13 @@ pub trait Clock: Send + Sync {
     /// it can fall back to `std::time::Instant` (monotonic, no wall-clock
     /// semantics needed).
     fn now_secs(&self) -> i64;
+
+    /// Seconds to add to a UTC timestamp to get the user's wall-clock time.
+    /// Every date the chat shows the model or parses from it ("today", a
+    /// `since` bound, a message's date) is a day in THIS zone, not UTC.
+    fn utc_offset_secs(&self) -> i32 {
+        0
+    }
 }
 
 /// Production clock: delegates to `chrono::Utc::now()`.
@@ -48,17 +55,29 @@ impl Clock for SystemClock {
     fn now_secs(&self) -> i64 {
         chrono::Utc::now().timestamp()
     }
+
+    fn utc_offset_secs(&self) -> i32 {
+        chrono::Local::now().offset().local_minus_utc()
+    }
 }
 
 /// Deterministic clock for tests. Mutate via `set_now_secs` / `advance_secs`.
 pub struct FixedClock {
     now: RwLock<i64>,
+    offset_secs: i32,
 }
 
 impl FixedClock {
     pub fn new(now_secs: i64) -> Self {
+        Self::with_offset(now_secs, 0)
+    }
+
+    /// A pinned clock in a pinned zone — the offset is what makes local-day
+    /// tests deterministic on any machine.
+    pub fn with_offset(now_secs: i64, offset_secs: i32) -> Self {
         Self {
             now: RwLock::new(now_secs),
+            offset_secs,
         }
     }
 
@@ -78,6 +97,10 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now_secs(&self) -> i64 {
         *self.now.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn utc_offset_secs(&self) -> i32 {
+        self.offset_secs
     }
 }
 
@@ -103,6 +126,11 @@ pub fn now_secs() -> i64 {
     current().now_secs()
 }
 
+/// The installed clock's UTC offset — see [`Clock::utc_offset_secs`].
+pub fn utc_offset_secs() -> i32 {
+    current().utc_offset_secs()
+}
+
 #[cfg(test)]
 pub fn install_for_testing(initial_now_secs: i64) -> Arc<FixedClock> {
     let clock = Arc::new(FixedClock::new(initial_now_secs));
@@ -117,6 +145,21 @@ mod tests {
     fn lock() -> std::sync::MutexGuard<'static, ()> {
         static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
         M.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[test]
+    fn system_clock_reports_the_machine_utc_offset() {
+        // The user's day, not UTC's: "today" at 01:00 in Madrid is still
+        // yesterday in UTC, and every date-shaped prompt value must follow
+        // the machine's zone.
+        let expected = chrono::Local::now().offset().local_minus_utc();
+        assert_eq!(SystemClock.utc_offset_secs(), expected);
+    }
+
+    #[test]
+    fn fixed_clock_offset_defaults_to_zero_and_can_be_set() {
+        assert_eq!(FixedClock::new(1_000).utc_offset_secs(), 0);
+        assert_eq!(FixedClock::with_offset(1_000, 7_200).utc_offset_secs(), 7_200);
     }
 
     #[test]

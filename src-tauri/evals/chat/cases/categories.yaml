@@ -1,0 +1,328 @@
+# One or more cases per `category` of ../README.md, following ../questions.md.
+# Every golden is a complete answer the judge can compare against, phrased the
+# way the assistant should answer (same language as the question, concrete
+# facts from the demo DB, email:// / draft:// links where the UI expects them).
+# Relative dates ("tomorrow", "this week") lean on the run-time anchoring of
+# the demo data (calendar re-anchored by ensure_demo_db.sh, `as_of: latest`).
+
+# ── single_fact ──────────────────────────────────────────────────────────────
+
+- id: sf_hetzner_may_servers
+  question: "¿qué servidores incluye la factura de Hetzner de mayo?"
+  account: "ulises@emailopslabs.dev"
+  category: single_fact
+  tier: smoke
+  expected_answer_contains: ["CPX31"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "La factura de Hetzner Cloud de mayo de 2026 incluye dos servidores CPX31 en Falkenstein (2 × CPX31); el desglose completo va en el PDF adjunto. Enlace al correo: email://demo_c9ce38a453e14d69."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: sf_marisol_first_contact_date
+  question: "when did Marisol first write to me about the logistics dashboard?"
+  account: "ulises@emailopslabs.dev"
+  category: single_fact
+  tier: full
+  expected_answer_contains_any: ["12 March 2025", "March 12, 2025", "2025-03-12", "12/03/2025"]
+  expected_output: "Marisol Vega first wrote on 12 March 2025, with the subject \"Project inquiry: real-time logistics dashboard\", asking for a real-time logistics dashboard for Faro Logistics. Link: email:// to that message."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: sf_bogota_flight_time
+  question: "¿a qué hora sale mi vuelo a Bogotá?"
+  account: "ulises@fastmail.com"
+  category: single_fact
+  tier: smoke
+  expected_answer_contains: ["16:10"]
+  expected_output: "Tu vuelo a Bogotá (Andean Air AN 214, reserva QX7K2M) sale de Madrid (MAD, Terminal 1) el 29 de octubre de 2026 a las 16:10 y llega a Bogotá a las 19:45 hora local. Enlace al billete electrónico: email://."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── topic_retrieval ──────────────────────────────────────────────────────────
+
+- id: tr_prospect_first_contacts_2025
+  question: "mails de primer contacto de potenciales clientes en 2025"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: smoke
+  expected_answer_contains: ["Marisol", "Tomás", "Carla", "Priya", "Janos", "Aiko"]
+  expected_answer_not_contains: ["](draft://"]
+  expected_output: "En 2025 recibiste seis primeros contactos de potenciales clientes, cada uno enlazado a su correo: Marisol Vega (Faro Logistics, 12/03/2025, dashboard logístico en tiempo real); Tomás Iglesias (Lumen Health, 20/05/2025, contractor Rust para una API de historiales de pacientes); Carla Méndez (Bahía Studio, 08/07/2025, RFP para rehacer el sitio de marketing); Priya Nair (Nimbus Notes, 15/09/2025, ayuda freelance con una función de IA en el dispositivo); Janos Kovacs (PrivacyHub, 03/11/2025, migrar analítica a self-hosted); Aiko Tanaka (09/12/2025, disponibilidad para un contrato)."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: tr_emails_from_tomas
+  question: "list the emails from Tomás Iglesias"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  expected_answer_contains: ["patient-records", "latency"]
+  expected_output: "Three emails from Tomás Iglesias (CTO, Lumen Health), each linked: \"Looking for a Rust contractor — patient-records API\" (20 May 2025, first contact asking for availability and an estimate); \"Proposal accepted — let's start the Rust API\" (2 September 2026, proposal approved, signed SOW attached, asks to kick off Monday); \"API latency on the /search endpoint\" (6 September 2026, p95 latency jumped to ~1.8 s after the last deploy, asks you to look this week)."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: tr_unread_from_borgbase
+  question: "¿qué correos de BorgBase tengo sin leer?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  # Read state is demo data: opening these invoices in the app changes the
+  # answer (`make demo-db` restores it). The March invoice is read.
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains: ["demo_dd0cc965e4744357", "demo_655eb6df75274de8"]
+  expected_answer_not_contains: ["demo_d5a5ed0055684212"]
+  expected_output: "Tienes dos correos de BorgBase sin leer: «BorgBase invoice for January 2026» (06/01/2026) y «BorgBase invoice for April 2026» (03/04/2026), cada uno enlazado con email://. El resto de facturas de BorgBase ya están leídas."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── email_summary ────────────────────────────────────────────────────────────
+
+- id: es_tomas_latest_ask
+  question: "explícame qué me pide Tomás en su último correo"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: full
+  expected_answer_contains: ["latenc"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "En su último correo (\"API latency on the /search endpoint\", 6 de septiembre) Tomás te cuenta que la latencia p95 del endpoint /search ha subido a unos 1,8 s tras el último despliegue, que el perfilado apunta a la consulta del índice de pacientes, y te pide que lo mires esta semana. Enlace: email://."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── thread_summary ───────────────────────────────────────────────────────────
+
+- id: ts_faro_production_bug
+  question: "resume el hilo del bug de producción de Faro"
+  account: "ulises@emailopslabs.dev"
+  category: thread_summary
+  tier: smoke
+  expected_answer_contains_any: ["webhook", "timeout", "rollback", "revert"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "Hilo de tres mensajes del 9 de septiembre. Marisol avisa de que desde esa mañana algunos pedidos se quedan en 'processing' y no pasan a 'shipped', con clientes escribiendo, y pide que lo mires cuanto antes. Tú respondes que el webhook del transportista agota el tiempo en los reintentos, que reviertes el cambio de la cola y añades un timeout más largo. Marisol confirma que los pedidos vuelven a avanzar y agradece la rapidez. Estado: resuelto. Enlaces email:// a los tres mensajes."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: ts_marisol_where_we_stand
+  question: "en qué quedamos con Marisol"
+  account: "ulises@emailopslabs.dev"
+  category: thread_summary
+  tier: full
+  expected_answer_contains_any: ["Sprint", "sprint", "processing", "bug"]
+  expected_output: "Con Marisol Vega (Faro Logistics), en orden: en marzo de 2025 pidió el dashboard logístico en tiempo real; el 7 de septiembre de 2026 envió el recap de la demo del sprint 5 con el siguiente hito; el 9 de septiembre reportó el bug de pedidos atascados en 'processing', que resolviste ese mismo día revirtiendo el cambio de la cola y ampliando el timeout del webhook, y ella confirmó que los pedidos volvían a moverse. Pendiente: el siguiente hito acordado en el recap del sprint 5. Enlaces email:// a los correos."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: ts_rafael_exchange
+  question: "summarise my exchange with Rafael this year"
+  account: "ulises@emailopslabs.dev"
+  category: thread_summary
+  tier: smoke
+  expected_answer_contains_any: ["0.5.0", "Lenses", "0.6"]
+  expected_answer_not_contains: ["](draft://"]
+  expected_output: "Six messages in the \"New EmailOps version\" thread. You sent Rafael Ortega the signed v0.5.0 with the new Lenses feature; about a month later he apologised for the silence, said he had installed v0.6 and offered to talk; you proposed Wednesday at 16:00; he asked for a few more days using the client at work before setting the call; you agreed to schedule it in the coming weeks; and four days ago you pinged him again, mentioning you shipped 0.6.7, that downloads and traffic are growing, and asking to set up the call. Open point: the call is still not scheduled. Links email:// to the messages."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── period_summary ───────────────────────────────────────────────────────────
+
+- id: ps_week_clients
+  question: "qué ha pasado esta semana con los clientes"
+  account: "ulises@emailopslabs.dev"
+  category: period_summary
+  tier: full
+  as_of: latest
+  expected_answer_contains_any: ["Marisol", "Tomás", "Carla"]
+  expected_output: "Esta semana, con clientes: Tomás Iglesias (Lumen Health) aprobó la propuesta de la API de historiales y luego reportó latencia p95 de ~1,8 s en /search; Marisol Vega (Faro Logistics) envió el recap de la demo del sprint 5 y reportó el bug de pedidos atascados en 'processing', ya resuelto; Carla Méndez (Bahía Studio) avisó de que el menú móvil se solapa con el pie de página. Cada punto enlazado a su correo con email://."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── pending_actions ──────────────────────────────────────────────────────────
+
+- id: pa_marisol_asks_in_thread
+  question: "¿qué me piden en este correo?"
+  account: "ulises@emailopslabs.dev"
+  category: pending_actions
+  tier: smoke
+  ambient_thread_id: "thread_129351fb1d33"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_contains_any: ["processing", "pedidos", "orders"]
+  expected_output: "Marisol te pide que mires cuanto antes por qué algunos pedidos se quedan en 'processing' y no pasan a 'shipped' desde esa mañana, porque los clientes están escribiendo. Según el resto del hilo ya lo hiciste: revertiste el cambio de la cola, ampliaste el timeout del webhook y Marisol confirmó que los pedidos vuelven a moverse, así que no queda nada pendiente."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: pa_owed_replies
+  question: "who am I still owing a reply to?"
+  account: "ulises@emailopslabs.dev"
+  category: pending_actions
+  tier: full
+  as_of: latest
+  expected_tools_called: ["list_open_threads"]
+  expected_answer_contains_any: ["Nadia", "Kwame", "email account", "Ollama"]
+  expected_answer_not_contains: ["](draft://"]
+  expected_output: "Inbound emails without a reply from you: Nadia Brunner (how to add a second email account), Kwame Boateng (can EmailOps use his own Ollama models), Hiroshi Tan (search does not find emails in an archived folder), Juan Ramírez (quote for the landing page illustrations), Diego Salas (EmailOps on the Lobsters front page) and Tomás Iglesias (proposal accepted, asks to kick off Monday). Each linked with email://."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── drafting ─────────────────────────────────────────────────────────────────
+
+- id: dr_new_email_kwame
+  question: "write an email to Kwame proposing a call next week about his Ollama question"
+  account: "ulises@emailopslabs.dev"
+  category: drafting
+  tier: full
+  expected_tools_called: ["generate_email_draft"]
+  expected_answer_contains: ["](draft://"]
+  expected_output: "Draft saved: a short email to Kwame Boateng (kwame@mailbox.org) thanking him for the question about using his own Ollama models and proposing a call next week to walk through it, linked as draft:// for you to review and send."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── calendar ─────────────────────────────────────────────────────────────────
+
+- id: cal_day_after_tomorrow
+  question: "¿qué tengo pasado mañana?"
+  account: "ulises.emailopslabs@gmail.com"
+  category: calendar
+  tier: full
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["PrivacyHub"]
+  expected_output: "Pasado mañana tienes una reunión: «PrivacyHub analytics migration — proposal walkthrough», de 09:30 a 10:15 por Zoom, organizada por ti, con Janos de PrivacyHub como asistente. No hay más eventos ese día."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: cal_sprint_demo_when
+  question: "cuándo es la demo del sprint"
+  account: "ulises.emailopslabs@gmail.com"
+  category: calendar
+  tier: full
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["Sprint 5"]
+  expected_output: "La demo del sprint 5 («Sprint 5 demo», con Marisol Vega, por Google Meet) fue hace tres días a las 15:00. Lo siguiente del sprint es «Sprint 6 planning — Faro Logistics», mañana a las 10:00."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── people_companies ─────────────────────────────────────────────────────────
+
+- id: pc_faro_contacts
+  question: "who do I know at Faro Logistics?"
+  account: "ulises@emailopslabs.dev"
+  category: people_companies
+  tier: smoke
+  expected_answer_contains: ["Marisol"]
+  expected_output: "At Faro Logistics your contact is Marisol Vega (marisol@farologistics.com), who leads the company; you built their real-time order-tracking dashboard and are in the middle of the sprint work with her (sprint 5 demo recap, production bug resolved on 9 September). Links email:// to her latest emails."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: pc_janos_who
+  question: "¿quién es Janos y de qué hemos hablado?"
+  account: "ulises@emailopslabs.dev"
+  category: people_companies
+  tier: full
+  expected_answer_contains: ["PrivacyHub"]
+  expected_output: "Janos Kovacs es de PrivacyHub (janos@privacyhub.eu). Te escribió el 3 de noviembre de 2025 pidiendo una propuesta y presupuesto para migrar su analítica de un SaaS de terceros a una instalación self-hosted centrada en la privacidad, con inicio ideal en el primer trimestre de 2026. Tienes pendiente enviarle la propuesta y una reunión de repaso de la propuesta en el calendario. Enlace: email://."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: pc_priya_address
+  question: "cuál es el correo de Priya"
+  account: "ulises@emailopslabs.dev"
+  category: people_companies
+  tier: full
+  expected_answer_contains: ["priya@nimbus-notes.app"]
+  expected_output: "El correo de Priya Nair es priya@nimbus-notes.app; te escribió el 15 de septiembre de 2025 sobre ayuda freelance con una función de IA en el dispositivo (email://)."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── counts_aggregates ────────────────────────────────────────────────────────
+
+- id: ca_invoices_q1
+  question: "how many invoices and receipts did I receive in Q1 2026?"
+  account: "ulises@emailopslabs.dev"
+  category: counts_aggregates
+  tier: full
+  expected_answer_contains: ["16"]
+  expected_output: "16 invoices and receipts between January and March 2026, from Fastmail, Fly.io, BorgBase, Hetzner, Plausible and Porkbun."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: ca_oldest_unread
+  question: "cuál es el correo más antiguo que tengo sin leer"
+  account: "ulises@emailopslabs.dev"
+  category: counts_aggregates
+  tier: full
+  expected_answer_contains: ["BorgBase"]
+  expected_answer_not_contains: ["](draft://"]
+  expected_output: "El correo sin leer más antiguo es «BorgBase invoice for January 2026», de BorgBase, del 6 de enero de 2026 (email://demo_dd0cc965e4744357)."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── attachments ──────────────────────────────────────────────────────────────
+
+- id: at_flyio_march_invoice
+  question: "mándame la factura de Fly.io de marzo"
+  account: "ulises@emailopslabs.dev"
+  category: attachments
+  tier: smoke
+  expected_answer_contains: ["flyio-invoice-mar.pdf"]
+  expected_answer_not_contains: ["](draft://"]
+  expected_output: "La factura de Fly.io de marzo de 2026 está adjunta al correo «Fly.io invoice for March 2026» como flyio-invoice-mar.pdf; aquí tienes el correo para abrirla: email://."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: at_fastmail_receipts
+  question: "which receipts did I get from Fastmail?"
+  account: "ulises@emailopslabs.dev"
+  category: attachments
+  tier: full
+  expected_answer_contains: ["February 2026", "May 2026"]
+  expected_output: "Five Fastmail receipts, one per month from January to May 2026 (Standard plan), each linked email://; the PDFs (fastmail-receipt-jan.pdf … fastmail-receipt-may.pdf) are attached to those emails."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: at_borgbase_april_storage
+  question: "how much storage was BorgBase billing me for in April?"
+  account: "ulises@emailopslabs.dev"
+  category: attachments
+  tier: full
+  expected_answer_contains: ["250"]
+  expected_output: "The BorgBase invoice for April 2026 covers 3 repositories and 250 GB of backups; the PDF is attached to that email (email://demo_655eb6df75274de8)."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── memory ───────────────────────────────────────────────────────────────────
+
+- id: mem_borgbase_customer_number
+  question: "¿cuál es mi número de cliente de BorgBase?"
+  account: "ulises@emailopslabs.dev"
+  category: memory
+  tier: smoke
+  expected_answer_contains: ["BB-48213"]
+  expected_output: "Tu número de cliente de BorgBase es BB-48213; las copias de seguridad se facturan mensualmente a la tarjeta de trabajo."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: mem_tomas_known_facts
+  question: "what do I know about Tomás?"
+  account: "ulises@emailopslabs.dev"
+  category: memory
+  tier: full
+  expected_answer_contains: ["Lumen Health"]
+  expected_output: "Tomás Iglesias is the CTO of Lumen Health. He engaged you for a privacy-focused rewrite of their patient-records API in Rust: first contact in May 2025, proposal approved with a signed SOW on 2 September 2026 asking to kick off on Monday, and on 6 September he reported p95 latency of ~1.8 s on the /search endpoint after the last deploy."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: mem_open_conversations
+  question: "which conversations are still open?"
+  account: "ulises@emailopslabs.dev"
+  category: memory
+  tier: lab
+  expected_tools_called: ["list_open_threads"]
+  expected_output: "The open conversations, each linked, are the threads still waiting on someone: Tomás Iglesias (kick-off of the Rust API and the /search latency), Marisol Vega (next milestone after the sprint 5 demo), Nadia Brunner (adding a second account), Kwame Boateng (own Ollama models), Hiroshi Tan (archived folder search), Juan Ramírez (illustrations quote) and Rafael Ortega (the call still to schedule)."
+  metrics: [answer_relevancy, faithfulness]
+
+# ── out_of_scope ─────────────────────────────────────────────────────────────
+
+- id: oos_juan_ambiguous
+  question: "resume el correo de Juan"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_answer_contains_any: ["Ramírez", "Pérez", "cuál", "qué Juan"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "Hay dos remitentes llamados Juan: Juan Ramírez (Ramírez Design, presupuesto para las ilustraciones de la landing de EmailOps: 900 EUR, dos rondas de revisión, entrega en dos semanas) y Juan Pérez (te pide dejar las llaves de repuesto al conserje el viernes). ¿Cuál de los dos quieres que resuma? Enlaces email:// a ambos."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: oos_capital_peru
+  question: "what is the capital of Peru?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_not_contains: ["search_emails", "list_open_threads"]
+  # The assistant is scoped to the mailbox: declining (with or without naming
+  # Lima) is the expected shape, inventing an email about it is not.
+  expected_output: "That is general knowledge, not something in your mailbox, so it is outside what I can answer here (the answer is Lima). Ask me about your emails, drafts or calendar if you need help there."
+  # Faithfulness is meaningless here: there is no mailbox context to be faithful to.
+  metrics: [answer_relevancy]
+
+- id: oos_hetzner_discount
+  question: "¿qué descuento me ha hecho Hetzner?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: full
+  expected_answer_not_contains: ["%", "](draft://"]
+  expected_output: "No encuentro ningún descuento de Hetzner en tu correo. Si te refieres a un correo concreto, dime cuál y lo reviso."
+  metrics: [answer_relevancy, faithfulness]

@@ -18,26 +18,26 @@
 # corpus — the layer where a prompt or model change could still send a calendar
 # question down the retrieval path.
 #
-# WHY THESE ASSERT THE ROUTE, NOT THE TOOL CALL
-# The synthetic demo DB has no calendars and no events — the generator creates
-# emails *about* calendars, not calendar entries. Asserting
-# `expected_tools_called: [list_calendar_events]` measured the model's judgement
-# on an empty calendar rather than the routing change, and failed even with the
-# fix in place. The route is what this change actually controls and is
-# deterministic: pre-fix these questions produced `rag_first` (which exposes no
-# tool definitions at all, so the calendar tool was unreachable), post-fix they
-# produce `tools_first`.
+# WHAT THESE ASSERT
+# The tool call and the answer, not the route: since 2026-09-14 the route is a
+# retrieval hint and every turn carries the calendar tool (docs/DECISIONS.md),
+# so pinning `tools_first` would test the keyword router, not the capability.
 #
-# To assert the tool call itself, the demo generator would need to seed calendar
-# rows; until then that end of the path is covered by a private case against a
-# real mailbox.
+# WHY THESE RUN AGAINST THE GMAIL DEMO ACCOUNT
+# `list_calendar_events` is only offered to Gmail/Outlook accounts with the
+# calendar integration enabled (`ListCalendarEventsTool::is_available`). The
+# demo persona's mail accounts are IMAP, so `scripts/generate_demo_db.py` adds a
+# credential-less Gmail account (`demo-acct-calendar`) that owns the demo
+# calendar `demo-cal-work` with six events anchored to "now": `ensure_demo_db.sh`
+# re-anchors them before every `make cli-*` / `make demo` run, so tomorrow 10:00
+# is always "Sprint 6 planning — Faro Logistics" however old the DB is. These
+# cases assert the route, the tool call and the golden answer end to end.
 
 - id: calendar_next_meeting_es
   question: "cual es la siguiente reunión en mi calendario?"
-  account: "ulises@emailopslabs.dev"
-  category: routing
+  account: "ulises.emailopslabs@gmail.com"
+  category: calendar
   tier: smoke
-  expected_route: tools_first
   # The pre-fix reply explained it could not call the tool and named it inline.
   # A leaked internal tool name in user-facing prose is a recurring failure in
   # this codebase (see thread_bound.yaml, which guards the same shape for
@@ -45,18 +45,25 @@
   expected_answer_not_contains:
     - "list_calendar_events"
     - "no puedo acceder"
+  expected_output: "La próxima reunión es «Sprint 6 planning — Faro Logistics», mañana a las 10:00 (una hora, por Google Meet, con Marisol Vega). Le sigue ese mismo día a las 16:30 la revisión del PR #131 de Proton Bridge."
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["Sprint 6"]
   metrics:
     - answer_relevancy
+    - faithfulness
 
 # English counterpart: the keyword list is bilingual, and a regression that
 # only restored one language would otherwise pass.
 - id: calendar_next_meeting_en
   question: "what is my next meeting?"
-  account: "ulises@emailopslabs.dev"
-  category: routing
+  account: "ulises.emailopslabs@gmail.com"
+  category: calendar
   tier: smoke
-  expected_route: tools_first
   expected_answer_not_contains:
     - "list_calendar_events"
+  expected_output: "The next meeting is “Sprint 6 planning — Faro Logistics”, tomorrow at 10:00 (one hour, Google Meet, with Marisol Vega). Later that day at 16:30 there is the Proton Bridge PR #131 review."
+  expected_tools_called: ["list_calendar_events"]
+  expected_answer_contains: ["Sprint 6"]
   metrics:
     - answer_relevancy
+    - faithfulness

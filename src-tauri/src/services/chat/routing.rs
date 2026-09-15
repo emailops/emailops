@@ -69,6 +69,23 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "recibí",
     "recibi",
     "me llegaron",
+    // First-person mail actions (the user asked / requested / wrote): a
+    // from=<me> filter. Accented forms only where the bare stem is a common
+    // unrelated word ("pedi" sits inside "pedido").
+    "pedí",
+    "solicité",
+    "solicite",
+    "mandé",
+    "mande",
+    "escribí",
+    "escribi",
+    "pregunté",
+    "pregunte",
+    "i asked",
+    "did i ask",
+    "i requested",
+    "i wrote",
+    "i emailed",
     // Listings / counts (EN)
     "how many",
     "count of",
@@ -125,14 +142,12 @@ const TOOLS_FIRST_KEYWORDS: &[&str] = &[
     "último trimestre",
     "ultimo trimestre",
     "trimestre pasado",
-    // Calendar / meetings (EN + ES). These MUST route tools-first: the
-    // RagFirst path exposes no tool definitions at all (see turn.rs, "RagFirst
-    // is strictly sources-only"), so `list_calendar_events` is unreachable
-    // there and the model can only answer from retrieved email chunks — it
-    // correctly refuses, which reads to the user as the calendar being broken.
-    // Before these entries a calendar question only reached the tool loop by
-    // accident, when it happened to carry an unrelated keyword ("¿qué tengo
-    // hoy?", "reuniones de marzo").
+    // Calendar / meetings (EN + ES). Routing them tools-first skips the RAG
+    // pre-retrieval of email chunks that cannot answer a calendar question.
+    // A miss is not fatal: RagFirst turns carry the full tool menu too (see
+    // turn.rs, "the route is a retrieval hint"), so `list_calendar_events`
+    // stays reachable. Do not grow this list to chase paraphrases — see
+    // docs/DECISIONS.md (2026-09-14).
     //
     // `calendar` is deliberately listed once: it is a substring of the Spanish
     // `calendario`, so it covers both languages. `reunion` (unaccented) covers
@@ -397,6 +412,24 @@ mod tests {
     }
 
     #[test]
+    fn heuristic_routes_first_person_mail_actions_to_tools() {
+        // "what I asked / requested / wrote to X" is a from=<me> filter, which
+        // only the tool loop can express; RAG over primary sources answered
+        // "no such request" for a quote the user had sent the week before.
+        for q in [
+            "emails en los que pedí un presupuesto a un proveedor",
+            "lo que solicité a la gestoría",
+            "what did I ask the supplier for",
+            "the quote I requested from the printer",
+            "correos donde escribí a soporte",
+        ] {
+            let res = heuristic_route(q);
+            assert!(res.is_some(), "expected ToolsFirst for: {}", q);
+            assert_eq!(res.unwrap().0, RouteMode::ToolsFirst, "query: {}", q);
+        }
+    }
+
+    #[test]
     fn heuristic_routes_year_mention_to_tools() {
         let (mode, matched) = heuristic_route("que entrevistas hice en 2018").unwrap();
         assert_eq!(mode, RouteMode::ToolsFirst);
@@ -440,11 +473,9 @@ mod tests {
 
     #[test]
     fn heuristic_routes_calendar_questions_to_tools() {
-        // Calendar questions must reach the tool loop: RagFirst exposes no tool
-        // definitions at all (see turn.rs "RagFirst is strictly sources-only"),
-        // so `list_calendar_events` is unreachable on that path and the model
-        // can only answer from email chunks. Without a calendar keyword the
-        // heuristic sent every one of these to RagFirst.
+        // Calendar questions skip RAG pre-retrieval: email chunks cannot answer
+        // them. (Tool reachability no longer depends on this: RagFirst turns
+        // carry every tool too.)
         for q in [
             // ES — the reported failure, plus accent/plural variants.
             "cual es la siguiente reunión en mi calendario?",

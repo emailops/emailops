@@ -39,6 +39,8 @@ pub mod runtime;
 pub mod services;
 pub mod sync;
 pub mod util;
+#[cfg(feature = "desktop")]
+mod webdriver;
 
 // Rust-native eval harness. Gated behind the `eval` feature so the production
 // binary does not carry Tera / tauri::test / YAML parsing code.
@@ -147,11 +149,15 @@ pub fn run() {
         fatal_startup_error("initialise the OS keychain", &e.to_string(), None);
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // Embedded WebDriver for UI verification runs; a no-op unless the build has
+    // the `webdriver` feature AND the launcher set `TAURI_WEBDRIVER_PORT`.
+    webdriver::register(builder)
         .setup(|app| {
             let setup_start = std::time::Instant::now();
 
@@ -468,6 +474,7 @@ pub fn run() {
             commands::accounts::reorder_accounts,
             commands::accounts::set_account_enabled,
             commands::accounts::update_account_sync_from,
+            commands::accounts::update_account_name,
             commands::accounts::get_account_settings,
             commands::accounts::set_account_settings,
             commands::accounts::get_available_categories,
