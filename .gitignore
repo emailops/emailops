@@ -128,3 +128,7 @@ src-tauri/gen/apple/build/
 src-tauri/gen/apple/Externals/
 src-tauri/gen/apple/assets/
 src-tauri/gen/apple/xcuserdata/
+
+# Local session notes and marketing drafts: stay on this machine, never committed
+/NEXT-SESSION.md
+/docs/marketing/
