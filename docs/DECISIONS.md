@@ -1004,3 +1004,20 @@ Sent headers — implicit, and wrong for accounts that never sent with a name. W
 address as the name when there is none — it invents data and hides the "no name" state;
 the fallback belongs to whoever reads the name.
 
+
+## 2026-09-15 — Chat search rows state their thread's size; reading the thread stays the model's call
+
+**Decision:** `search_emails` keeps returning one row per thread. A row whose thread
+holds more than one message carries `messages=N`, and the result opens with a
+conditional hint: call `get_thread` when the answer needs the whole conversation. The
+tool never inlines a thread on its own. The count uses `get_thread`'s own row filter,
+so the number the model sees is the number the follow-up call returns.
+**Context:** Asked to summarise an exchange with one person, the model answered from
+the single representative row of a six-message thread in 4 of 5 eval-harness runs;
+nothing in the row said it stood for more mail.
+**Rejected:** Auto-expanding threads inside `search_emails` when few threads match —
+deterministic, but it spends context on every small result, including listing and
+counting questions that never need the thread. A dedicated "exchange with a person"
+route — the narrowest fix, and it would lean on keyword detection. An unconditional
+"call `get_thread`" instruction — it would fetch threads for questions that don't need
+them.
