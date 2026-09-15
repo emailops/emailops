@@ -281,13 +281,13 @@ mod tests {
         let db = Database::new_for_testing().unwrap();
         db.seed_test_account("acc");
 
-        insert_email(&db, "e1", "acc", "t1", "Jorge@Logalty.com", "inbox");
-        insert_email(&db, "e2", "acc", "t1", "jorge@logalty.com", "inbox"); // same thread
-        insert_email(&db, "e3", "acc", "t2", "jorge@logalty.com", "inbox");
-        insert_email(&db, "e4", "acc", "t3", "jorge@logalty.com", "spam"); // out of scope
+        insert_email(&db, "e1", "acc", "t1", "Jorge@acme.com", "inbox");
+        insert_email(&db, "e2", "acc", "t1", "jorge@acme.com", "inbox"); // same thread
+        insert_email(&db, "e3", "acc", "t2", "jorge@acme.com", "inbox");
+        insert_email(&db, "e4", "acc", "t3", "jorge@acme.com", "spam"); // out of scope
 
         let count = db
-            .count_filter_threads(crate::db::AccountScope::Account("acc"), "sender", "jorge@logalty.com")
+            .count_filter_threads(crate::db::AccountScope::Account("acc"), "sender", "jorge@acme.com")
             .unwrap();
         assert_eq!(count, 2, "2 inbox threads regardless of casing; spam excluded");
     }
@@ -297,12 +297,12 @@ mod tests {
         let db = Database::new_for_testing().unwrap();
         db.seed_test_account("acc");
 
-        insert_email(&db, "e1", "acc", "t1", "a@aws.com", "inbox");
-        insert_email(&db, "e2", "acc", "t1", "b@aws.com", "inbox"); // same thread
-        insert_email(&db, "e3", "acc", "t2", "c@aws.com", "sent");
+        insert_email(&db, "e1", "acc", "t1", "a@acme.com", "inbox");
+        insert_email(&db, "e2", "acc", "t1", "b@acme.com", "inbox"); // same thread
+        insert_email(&db, "e3", "acc", "t2", "c@acme.com", "sent");
 
         let count = db
-            .count_filter_threads(crate::db::AccountScope::Account("acc"), "domain", "aws.com")
+            .count_filter_threads(crate::db::AccountScope::Account("acc"), "domain", "acme.com")
             .unwrap();
         assert_eq!(count, 2, "threads, not emails");
     }
@@ -347,14 +347,14 @@ mod tests {
         db.seed_test_account("acc3");
 
         // Same thread_id string in two accounts → 2 distinct (account, thread) pairs.
-        insert_email(&db, "e1", "acc1", "shared", "a@aws.com", "inbox");
-        insert_email(&db, "e2", "acc2", "shared", "b@aws.com", "inbox");
+        insert_email(&db, "e1", "acc1", "shared", "a@acme.com", "inbox");
+        insert_email(&db, "e2", "acc2", "shared", "b@acme.com", "inbox");
         // Disabled account must not count.
-        insert_email(&db, "e3", "acc3", "t3", "c@aws.com", "inbox");
+        insert_email(&db, "e3", "acc3", "t3", "c@acme.com", "inbox");
         set_enabled(&db, "acc3", false);
 
         let count = db
-            .count_filter_threads(crate::db::AccountScope::AllEnabled, "domain", "aws.com")
+            .count_filter_threads(crate::db::AccountScope::AllEnabled, "domain", "acme.com")
             .unwrap();
         assert_eq!(count, 2, "2 (account, thread) pairs; disabled account excluded");
     }

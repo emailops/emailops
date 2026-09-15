@@ -84,5 +84,14 @@
     "translating": "Traduciendo…",
     "undo": "Deshacer traducción",
     "failed": "Error al traducir: {{error}}"
+  },
+  "forwardTitle": "Reenviar este mensaje a otra persona",
+  "forwarded": {
+    "header": "Mensaje reenviado",
+    "from": "De",
+    "date": "Fecha",
+    "subject": "Asunto",
+    "to": "Para",
+    "cc": "Cc"
   }
 }
