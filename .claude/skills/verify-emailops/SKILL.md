@@ -224,15 +224,13 @@ perf budgets. Results are attributed to features through `features.json`.
   to the real models dir so the CLI never opens the production data dir). Report under
   `src-tauri/reports/verify-private/<stamp>-private/informe.html`: real senders, subjects and
   answers, so it stays on this machine and is never published as an artifact.
-- **Nightly run.** `make verify-nightly-install` installs a launchd agent
-  (`com.emailops.verify-nightly`, daily at 03:00, log `src-tauri/reports/verify/nightly.log`;
-  `make verify-nightly-uninstall` removes it) that runs `scripts/verify_schedule.sh run`. It
-  skips when an EmailOps process has the demo DB open (that instance's model holds the GPU and
-  every eval fails out of memory) or when the latest code commit already has a summary.
-  Otherwise it runs `make verify`, writes `docs/verification/<stamp>-<sha>.md` with
-  `summary_md.py` (totals, per-feature counts, what changed since the previous full run, what
-  fails), commits only that file (never on `main`, never pushed) and keeps the last 10 local
-  runs. Private runs are never summarised. Tests:
+- **Release run.** Phase 1b of the release skill runs `make verify-release`
+  (`scripts/verify_release.sh`). It refuses to start while an EmailOps process has the demo DB
+  open (that instance's model holds the GPU and every eval fails out of memory), runs
+  `make verify`, writes `docs/verification/<stamp>-<sha>.md` with `summary_md.py` (totals,
+  per-feature counts, what changed since the previous full run, what fails) for the release
+  commit to carry, and keeps the last 10 local runs. There is no scheduled run. Private runs
+  are never summarised. Tests:
   `cd .claude/skills/verify-emailops/scripts && python3 -m unittest test_summary_md`.
 - **Descriptions.** Hover hints per test come from `descriptions/*.json` (`rust`:
   `src-tauri/<file>::<fn>`, `vitest`: `<file>::<full test name>`), falling back to the doc

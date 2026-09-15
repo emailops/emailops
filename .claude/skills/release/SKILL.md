@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new EmailOps release across all three platforms — version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish) with a local install + launch smoke test, a doc-staleness check (app docs + public website) before tagging, commit, tag, (confirmation-gated) push, then the Linux/Windows CI build (triggered and watched, auto-published on success). The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
+description: Cut a new EmailOps release across all three platforms — full verification run first (`make verify-release`, its summary committed with the release), version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish) with a local install + launch smoke test, a doc-staleness check (app docs + public website) before tagging, commit, tag, (confirmation-gated) push, then the Linux/Windows CI build (triggered and watched, auto-published on success). The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep
@@ -54,6 +54,31 @@ proceed rather than fixing silently):
    from `$0`. Confirm the new version is strictly greater than the current one.
 
 State the resolved version (e.g. `0.5.0 → 0.6.0`) before continuing.
+
+## Phase 1b — Full verification
+
+Run this right after the pre-flight checks and before touching any file, so it
+verifies exactly the commit being released. Warn the user it takes about 15
+minutes (every layer, judged chat evals on the local model), then:
+
+```bash
+make verify-release
+```
+
+It runs `make verify`, writes `docs/verification/<stamp>-<sha>.md` (totals,
+per-feature counts, what changed since the previous full run, what fails) and
+keeps the full HTML report local at
+`src-tauri/reports/verify/current-full/informe.html`. It refuses to start while
+another EmailOps process has the demo DB open (that instance's model holds the
+GPU and every eval would fail out of memory): ask the user to close it, then
+rerun.
+
+Show the user the summary's "Since …" and "Failing" sections. A test that is
+**newly failing** since the previous full run stops the release: triage it
+(product bug, test drift, or model/judge flake — see the `maintain-verification`
+skill) and ask the user whether to fix it first or release anyway. Tests that
+were already failing in the previous run are reported, not blocking, unless the
+user says otherwise. The summary file stays uncommitted until Phase 6.
 
 ## Phase 2 — Version bump
 
@@ -275,7 +300,8 @@ each change first, since this is user-facing/marketing content:
 Once gates and build pass:
 
 ```bash
-git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md \
+  docs/verification/<stamp>-<sha>.md   # the summary written in Phase 1b
 git commit -m "chore: release vX.Y.Z"
 git tag vX.Y.Z
 ```
@@ -489,7 +515,7 @@ version. If an asset is bad, cut a new patch release instead.
 
 ## Done
 
-Report: the new version, that gates/build/verify passed, the local install
+Report: the new version, the Phase 1b verification result (summary path, newly failing tests and what the developer decided about them), that gates/build/verify passed, the local install
 smoke-test result (with screenshot), any doc-staleness findings from Phase 5d
 (app docs and website) and whether the developer acted on them, the commit +
 tag created, the push state (pushed or pending), the Linux/Windows CI result

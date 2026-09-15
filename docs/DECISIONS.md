@@ -1038,3 +1038,18 @@ recording false failures.
 **Rejected:** Committing the HTML report without screenshots — about 4 MB a run, 1.5 GB a
 year. Keeping full runs on a dedicated branch or in Git LFS — a second branch to maintain or
 a new dependency. Running in GitHub CI or a cloud routine — no GPU or local model there.
+
+## 2026-09-15 — Full verification runs at the start of each release, not on a schedule
+
+**Decision:** Phase 1b of the release skill runs `make verify-release`: a full `make verify`
+on the commit being released, whose Markdown summary under `docs/verification/` ships in the
+`chore: release vX.Y.Z` commit. Newly failing tests stop the release until the developer has
+triaged them. There is no scheduled run. This supersedes the nightly launchd entry above; the
+rest of that entry (summaries in git, HTML reports local and pruned to the last 10, private
+runs never summarised) still holds.
+**Context:** The developer does not want verification automated on a schedule. Tying the run
+to the release checks exactly the code that ships, and happens when the developer is present
+to triage the failures.
+**Rejected:** The nightly launchd agent at 03:00 (installed and removed the same day) — an
+unattended job committing onto whatever branch was checked out, and competing for the GPU with
+any EmailOps instance left open.

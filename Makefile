@@ -293,16 +293,10 @@ verify:
 verify-private:
 	bash scripts/verify_private.sh $(ARGS)
 
-# Nightly verification (launchd, daily 03:00): `make verify`, then a Markdown summary committed
-# under docs/verification/; the HTML report stays local. Install the agent once.
-verify-nightly:
-	bash scripts/verify_schedule.sh run
-
-verify-nightly-install:
-	bash scripts/verify_schedule.sh install
-
-verify-nightly-uninstall:
-	bash scripts/verify_schedule.sh uninstall
+# Release verification (release skill, Phase 1b): `make verify`, then a Markdown summary under
+# docs/verification/ that ships in the release commit; the HTML report stays local.
+verify-release:
+	bash scripts/verify_release.sh
 
 # Security audit
 audit:
