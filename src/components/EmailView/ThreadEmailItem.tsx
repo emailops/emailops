@@ -2,6 +2,7 @@ import { format } from 'date-fns';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
 import { useTranslationEnabledStore } from '@/stores/featureToggleStore';
 import { useTranslationStore } from '@/stores/translationStore';
@@ -92,11 +93,11 @@ export function ThreadEmailItem({
       >
         <div className="px-6 py-3 flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-            <span className="text-sm font-medium text-gray-600">{email.sender.charAt(0).toUpperCase()}</span>
+            <span className="text-sm font-medium text-gray-600">{senderName(email).charAt(0).toUpperCase()}</span>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm text-gray-900 truncate">{email.sender}</span>
+              <span className="font-medium text-sm text-gray-900 truncate">{senderName(email)}</span>
               <span className="text-xs text-gray-400">{shortDate}</span>
             </div>
             <p className="text-sm text-gray-500 truncate">{email.snippet || '(No preview)'}</p>
@@ -118,11 +119,11 @@ export function ThreadEmailItem({
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-              <span className="text-sm font-medium text-primary-700">{email.sender.charAt(0).toUpperCase()}</span>
+              <span className="text-sm font-medium text-primary-700">{senderName(email).charAt(0).toUpperCase()}</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-900">{email.sender}</span>
+                <span className="font-medium text-gray-900">{senderName(email)}</span>
                 <span className="text-gray-400 text-sm">&lt;{email.senderEmail}&gt;</span>
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{formattedDate}</div>

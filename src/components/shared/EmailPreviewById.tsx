@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
-import { sanitizeEmailHtml } from '@/lib/emailFormatting';
+import { sanitizeEmailHtml, senderName } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
 import type { Email } from '@/types';
 import { EmailHtmlFrame } from './EmailHtmlFrame';
@@ -110,7 +110,7 @@ export function EmailPreviewById({
       <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900 truncate">{email.subject || '(no subject)'}</h2>
         <div className="text-xs text-gray-500 mt-1">
-          <span className="font-medium text-gray-700">{email.sender}</span>
+          <span className="font-medium text-gray-700">{senderName(email)}</span>
           <span> &lt;{email.senderEmail}&gt;</span>
           <span> · {format(new Date(email.timestamp * 1000), 'MMM d, yyyy · h:mm a')}</span>
         </div>

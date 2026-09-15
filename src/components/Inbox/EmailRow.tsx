@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { writeEmailDragPayload } from '@/lib/emailDrag';
+import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
@@ -138,9 +139,9 @@ export function EmailRow({
             className={`text-sm truncate w-44 flex-shrink-0 ${
               email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
             }`}
-            title={email.sender}
+            title={senderName(email)}
           >
-            {email.sender}
+            {senderName(email)}
           </span>
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
           <div className="flex-1 min-w-0 flex items-baseline gap-2 text-sm">
@@ -217,7 +218,7 @@ export function EmailRow({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`text-sm truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>
-              {email.sender}
+              {senderName(email)}
             </span>
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
             <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>

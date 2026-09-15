@@ -1,4 +1,11 @@
 import DOMPurify from 'dompurify';
+import type { Email } from '@/types';
+
+/** Name to show for a message's sender. A bare-address From header (no
+ *  display name) syncs with an empty `sender`, so fall back to the address. */
+export function senderName(email: Pick<Email, 'sender' | 'senderEmail'>): string {
+  return email.sender || email.senderEmail;
+}
 
 // Inline CSS properties we explicitly refuse to honour. The rest of the CSS
 // surface is allowed because email HTML is rendered inside a sandboxed
