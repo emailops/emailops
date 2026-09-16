@@ -740,19 +740,27 @@ impl Database {
         Ok(count)
     }
 
-    /// Ids of one mailbox's emails timestamped at or after `since` (seconds),
-    /// excluding soft-deleted rows. The Gmail spam reconciliation diffs these
-    /// against the provider's Spam listing.
-    pub fn email_ids_in_mailbox_since(&self, account_id: &str, mailbox: &str, since: i64) -> Result<Vec<String>> {
+    /// `(id, message_id)` of one mailbox's emails timestamped at or after
+    /// `since` (seconds), excluding soft-deleted rows. The spam reconciliation
+    /// diffs these against the provider's Spam listing; the Message-ID header
+    /// is what finds a message again on providers that re-key a move.
+    pub fn emails_in_mailbox_since(
+        &self,
+        account_id: &str,
+        mailbox: &str,
+        since: i64,
+    ) -> Result<Vec<(String, Option<String>)>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
-            "SELECT id FROM emails
+            "SELECT id, message_id FROM emails
              WHERE account_id = ?1 AND mailbox = ?2 AND timestamp >= ?3 AND is_deleted = 0",
         )?;
-        let ids = stmt
-            .query_map(params![account_id, mailbox, since], |row| row.get::<_, String>(0))?
+        let rows = stmt
+            .query_map(params![account_id, mailbox, since], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(ids)
+        Ok(rows)
     }
 
     /// Minimum timestamp across a set of email IDs.
@@ -807,7 +815,7 @@ mod tests {
     use crate::db::{AccountScope, Database};
 
     #[test]
-    fn email_ids_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
+    fn emails_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
         let db = Database::new_for_testing().unwrap();
         for (id, account, ts) in [
             ("recent", "acc1", 2_000),
@@ -823,9 +831,9 @@ mod tests {
         }
         db.delete_email("deleted").unwrap();
 
-        let ids = db.email_ids_in_mailbox_since("acc1", "spam", 1_000).unwrap();
+        let rows = db.emails_in_mailbox_since("acc1", "spam", 1_000).unwrap();
 
-        assert_eq!(ids, vec!["recent".to_string()]);
+        assert_eq!(rows, vec![("recent".to_string(), None)]);
     }
 
     #[test]

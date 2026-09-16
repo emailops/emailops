@@ -1456,14 +1456,22 @@ impl EmailProvider for GmailClient {
     }
 
     /// Map the message's current labels to its mailbox (`format=minimal`, so
-    /// no body is transferred). A 404 means it was deleted forever ("Delete
-    /// forever", "Empty Spam now").
-    async fn message_mailbox(&self, message_id: &str) -> Result<Option<String>> {
+    /// no body is transferred). A Gmail id survives every label change, so the
+    /// header is not needed and the id comes back unchanged. A 404 means the
+    /// message was deleted forever ("Delete forever", "Empty Spam now").
+    async fn locate_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<Option<crate::sync::provider::MessageLocation>> {
         let url = format!("{}/users/me/messages/{}?format=minimal", self.base_url, message_id);
         match self.send_get_with_retry(&url, "read message labels").await {
             Ok(response) => {
                 let msg: GmailMessageLabels = response.json().await?;
-                Ok(Some(mailbox_from_labels(&msg.label_ids).to_string()))
+                Ok(Some(crate::sync::provider::MessageLocation {
+                    id: message_id.to_string(),
+                    mailbox: mailbox_from_labels(&msg.label_ids).to_string(),
+                }))
             }
             Err(AppError::NotFound(_)) => Ok(None),
             Err(e) => Err(e),
@@ -3442,7 +3450,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn message_mailbox_reads_the_current_labels() {
+    async fn locate_message_reads_the_current_labels() {
         use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3459,11 +3467,13 @@ mod tests {
 
         let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
 
-        assert_eq!(client.message_mailbox("m-1").await.unwrap().as_deref(), Some("inbox"));
+        let located = client.locate_message("m-1", None).await.unwrap().expect("located");
+        assert_eq!(located.mailbox, "inbox");
+        assert_eq!(located.id, "m-1", "a Gmail id survives a label change");
     }
 
     #[tokio::test]
-    async fn message_mailbox_is_none_for_a_message_deleted_forever() {
+    async fn locate_message_is_none_for_a_message_deleted_forever() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3479,6 +3489,6 @@ mod tests {
 
         let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
 
-        assert_eq!(client.message_mailbox("gone").await.unwrap(), None);
+        assert_eq!(client.locate_message("gone", None).await.unwrap(), None);
     }
 }
