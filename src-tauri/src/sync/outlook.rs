@@ -937,7 +937,14 @@ impl EmailProvider for OutlookClient {
         };
         // OData escapes a single quote inside a string literal by doubling it.
         let escaped = header.replace('\'', "''");
-        for (folder, mailbox) in [("inbox", "inbox"), ("deleteditems", "trash"), ("junkemail", "spam")] {
+        // `archive` maps to inbox: EmailOps has no archive mailbox, and Gmail's
+        // archived mail already lands there.
+        for (folder, mailbox) in [
+            ("inbox", "inbox"),
+            ("deleteditems", "trash"),
+            ("archive", "inbox"),
+            ("junkemail", "spam"),
+        ] {
             let filter = format!("internetMessageId eq '{escaped}'");
             let url = format!(
                 "{}/me/mailFolders/{}/messages?$top=1&$select=id,conversationId&$filter={}",
@@ -1760,5 +1767,43 @@ mod tests {
                 .expect("locate"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn locate_message_finds_a_message_moved_to_the_archive_folder() {
+        // Graph's `archive` well-known folder. EmailOps has no archive mailbox
+        // of its own, so an archived message is filed under inbox — the same
+        // place Gmail's archived mail already lands.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for empty in [
+            "/me/mailFolders/inbox/messages",
+            "/me/mailFolders/deleteditems/messages",
+        ] {
+            Mock::given(method("GET"))
+                .and(path(empty))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":[]}"#, "application/json"))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/archive/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"value":[{"id":"archived-id","conversationId":"c-1"}]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let located = EmailProvider::locate_message(&client, "old-id", Some("<m-1@example.com>"))
+            .await
+            .expect("locate")
+            .expect("found");
+
+        assert_eq!(located.id, "archived-id");
+        assert_eq!(located.mailbox, "inbox");
     }
 }

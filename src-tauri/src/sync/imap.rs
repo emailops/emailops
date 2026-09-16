@@ -15,6 +15,10 @@ use crate::sync::provider::{
 const SENT_ID_PREFIX: &str = "SENT::";
 /// Prefix for emails fetched from the Spam / Junk folder.
 const SPAM_ID_PREFIX: &str = "SPAM::";
+
+/// Custom folders searched when locating a message that left Spam. A mailbox
+/// can have dozens; each one costs a SELECT + SEARCH on the open session.
+const MAX_LOCATE_FOLDERS: usize = 25;
 /// Prefix for emails fetched from the Trash / Deleted Items folder.
 const TRASH_ID_PREFIX: &str = "TRASH::";
 /// Prefix for emails fetched from a custom (user-created) folder. The full id
@@ -1369,7 +1373,20 @@ impl EmailProvider for ImapClient {
 
                 let mut located = None;
                 if let Some(h) = header {
-                    for folder in [ImapFolder::Inbox, ImapFolder::Trash] {
+                    // Custom folders count too: "not spam any more" often means
+                    // "filed somewhere". Bounded so a mailbox with many folders
+                    // cannot turn one lookup into a hundred SELECTs.
+                    let mut candidates = vec![ImapFolder::Inbox, ImapFolder::Trash];
+                    if let Ok(entries) = Self::list_entries_blocking(&mut session) {
+                        candidates.extend(
+                            folder_plan::plan_folders(&entries)
+                                .custom
+                                .into_iter()
+                                .take(MAX_LOCATE_FOLDERS)
+                                .map(|f| ImapFolder::Custom(f.raw_name)),
+                        );
+                    }
+                    for folder in candidates {
                         if !Self::select_folder_blocking(&mut session, &folder) {
                             continue;
                         }

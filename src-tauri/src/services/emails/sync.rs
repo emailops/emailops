@@ -1590,6 +1590,29 @@ async fn ingest_mailbox_refs(
         }
     }
 
+    // The provider filing a message under Spam is news even when that id is
+    // already stored: Gmail keeps a message's id across the move, so dropping
+    // it as "known" left the row sitting in the inbox the user cleaned it out
+    // of. The re-keying providers are handled after the insert below.
+    if mailbox_name == ExtraMailbox::Spam.as_str() && !existing_ids.is_empty() {
+        let known: Vec<String> = existing_ids.iter().cloned().collect();
+        match db.file_emails_in_mailbox(&known, mailbox_name) {
+            Ok(0) => {}
+            Ok(n) => emit_account_log(
+                "success",
+                "sync",
+                account_email,
+                &format!("Moved {n} email(s) into Spam to match the provider"),
+            ),
+            Err(e) => emit_account_log(
+                "error",
+                "sync",
+                account_email,
+                &format!("Failed to file already-stored email(s) under Spam: {e}"),
+            ),
+        }
+    }
+
     let new_refs: Vec<_> = refs.into_iter().filter(|r| !existing_ids.contains(&r.id)).collect();
 
     if new_refs.is_empty() {
@@ -1674,6 +1697,32 @@ async fn ingest_mailbox_refs(
         // Replace optimistic locally-stored sent copies now that the
         // provider's real Sent rows are in (Outlook/IMAP arrive via this pass).
         super::reconcile::reconcile_pending_sent(db, account_id, account_email, &emails_only);
+
+        // IMAP and Graph re-key a move, so a message the user has just marked
+        // as spam arrives as a brand new row while the copy it was moved away
+        // from stays stored under its old id. Same message, same header.
+        if mailbox_name == ExtraMailbox::Spam.as_str() {
+            for email in &emails_only {
+                let Some(header) = email.message_id.as_deref() else {
+                    continue;
+                };
+                match db.hide_other_copies_of_message(account_id, header, &email.id, mailbox_name) {
+                    Ok(0) => {}
+                    Ok(n) => emit_account_log(
+                        "debug",
+                        "sync",
+                        account_email,
+                        &format!("Hid {n} older cop(ies) of a message the provider moved to Spam"),
+                    ),
+                    Err(e) => emit_account_log(
+                        "warn",
+                        "sync",
+                        account_email,
+                        &format!("Could not hide the older copy of a message moved to Spam: {e}"),
+                    ),
+                }
+            }
+        }
 
         let metas: Vec<_> = chunk_emails
             .iter()
@@ -1809,12 +1858,16 @@ async fn sync_extra_mailboxes(
     Ok(())
 }
 
-/// How far back the spam reconciliation looks. Gmail and Outlook purge Spam
-/// after 30 days, so an older local row is missing from the listing whether or
-/// not the user rescued it, and checking it would cost one request per row on
-/// every pass. IMAP servers may keep spam longer; there this is simply the
-/// bound on how much of the folder is reconciled.
-const SPAM_RECONCILE_WINDOW_SECS: i64 = 30 * 86_400;
+/// How far back the spam reconciliation looks, widest first. Gmail and Outlook
+/// purge Spam after 30 days, so an older local row is missing from the listing
+/// whether or not the user rescued it, and checking it would cost one request
+/// per row on every pass. IMAP servers may keep spam longer; there this is
+/// simply the bound on how much of the folder is reconciled.
+///
+/// The narrower windows are the fallback for a Spam folder too busy to list in
+/// one go (see [`MAX_SPAM_RECONCILE_LISTING`]): such an account reconciles a
+/// shorter stretch of history rather than nothing at all.
+const SPAM_RECONCILE_WINDOWS_SECS: [i64; 3] = [30 * 86_400, 7 * 86_400, 2 * 86_400];
 
 /// Minimum gap between two spam checks of one account. Gmail is polled every
 /// minute and a rescue from Spam is rare, so checking on every poll would
@@ -1822,9 +1875,9 @@ const SPAM_RECONCILE_WINDOW_SECS: i64 = 30 * 86_400;
 /// shows up within this delay instead.
 const SPAM_RECONCILE_INTERVAL_SECS: i64 = 15 * 60;
 
-/// Longest Spam listing the reconciliation diffs against. A longer one is
-/// skipped rather than truncated: every id cut off the listing would be
-/// re-checked one request at a time.
+/// Longest Spam listing the reconciliation diffs against. A truncated listing
+/// is unsound — every id cut off it looks like a message that left Spam — so
+/// the window narrows until the listing fits instead.
 const MAX_SPAM_RECONCILE_LISTING: u32 = 2_000;
 
 /// Move local Spam rows whose message the user has since taken out of Spam at
@@ -1861,9 +1914,9 @@ async fn reconcile_spam_moves(
         return;
     }
     let spam = ExtraMailbox::Spam.as_str();
-    let since = now - SPAM_RECONCILE_WINDOW_SECS;
+    let widest_since = now - SPAM_RECONCILE_WINDOWS_SECS[0];
 
-    let local_rows = match db.emails_in_mailbox_since(account_id, spam, since) {
+    let local_rows = match db.emails_in_mailbox_since(account_id, spam, widest_since) {
         Ok(rows) if rows.is_empty() => return,
         Ok(rows) => rows,
         Err(e) => {
@@ -1877,23 +1930,35 @@ async fn reconcile_spam_moves(
         }
     };
 
-    let listed = match email_provider
-        .list_mailbox_messages(ExtraMailbox::Spam, MAX_SPAM_RECONCILE_LISTING, Some(since), None)
-        .await
-    {
-        Ok(refs) => refs,
-        Err(e) => {
-            emit_account_log(
-                "warn",
-                "sync",
-                &account.email,
-                &format!("Could not list Spam to check for moved messages: {e}"),
-            );
-            return;
+    // Widest window whose listing fits in one go. A listing that hit the cap
+    // may be truncated, and the diff would then read the cut-off ids as
+    // messages that left Spam.
+    let mut fitted: Option<(i64, Vec<crate::sync::provider::MessageRef>)> = None;
+    for window in SPAM_RECONCILE_WINDOWS_SECS {
+        let since = now - window;
+        match email_provider
+            .list_mailbox_messages(ExtraMailbox::Spam, MAX_SPAM_RECONCILE_LISTING, Some(since), None)
+            .await
+        {
+            Ok(refs) if (refs.len() as u32) < MAX_SPAM_RECONCILE_LISTING => {
+                fitted = Some((since, refs));
+                break;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!("Could not list Spam to check for moved messages: {e}"),
+                );
+                return;
+            }
         }
-    };
-    // Stamped only once the listing succeeds, so a failed one is retried on the
-    // next sync rather than a whole interval later.
+    }
+    // Stamped once a listing call has succeeded, so a failed one is retried on
+    // the next sync rather than a whole interval later — but a Spam folder too
+    // busy for even the narrowest window is not re-listed every minute.
     if let Err(e) = db.set_preference(&last_check_key, &now.to_string()) {
         emit_account_log(
             "warn",
@@ -1902,17 +1967,36 @@ async fn reconcile_spam_moves(
             &format!("Could not record when Spam was last checked: {e}"),
         );
     }
-    if listed.len() as u32 >= MAX_SPAM_RECONCILE_LISTING {
+    let Some((since, listed)) = fitted else {
         emit_account_log(
             "warn",
             "sync",
             &account.email,
             &format!(
-                "Spam holds {MAX_SPAM_RECONCILE_LISTING}+ messages; skipping the check for messages moved out of it"
+                "Spam holds {MAX_SPAM_RECONCILE_LISTING}+ messages even over the last {} days; skipping the check for messages moved out of it",
+                SPAM_RECONCILE_WINDOWS_SECS[SPAM_RECONCILE_WINDOWS_SECS.len() - 1] / 86_400
             ),
         );
         return;
-    }
+    };
+    // Only rows the listing actually covers can be diffed against it.
+    let local_rows = if since == widest_since {
+        local_rows
+    } else {
+        match db.emails_in_mailbox_since(account_id, spam, since) {
+            Ok(rows) if rows.is_empty() => return,
+            Ok(rows) => rows,
+            Err(e) => {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!("Could not read local spam to check for moved messages: {e}"),
+                );
+                return;
+            }
+        }
+    };
     let still_spam: std::collections::HashSet<&str> = listed.iter().map(|r| r.id.as_str()).collect();
 
     // Rows whose message the provider no longer has ("Delete forever", "Empty
@@ -3507,6 +3591,48 @@ mod spam_reconcile_tests {
         assert_eq!(stored_mailbox(&db, "acc-1::SPAM::8"), "spam");
     }
 
+    #[tokio::test]
+    async fn a_message_marked_as_spam_upstream_moves_to_spam_locally() {
+        // The other direction: Gmail keeps the id, so the Spam pass lists a
+        // message the app already stores and dropped it as "known" — leaving
+        // the row sitting in the inbox the user just cleaned it out of.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        let received = crate::services::clock::now_secs() - DAY;
+        db.insert_emails_batch(&[email_in("m-1", "inbox", received)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("m-1", "spam", received), EmailCategory::Primary, vec![]);
+
+        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    #[tokio::test]
+    async fn a_message_marked_as_spam_under_a_new_id_hides_the_inbox_copy() {
+        // IMAP and Graph re-key the move, so the message arrives as a brand new
+        // Spam row and the inbox copy would otherwise stay listed beside it.
+        let account = account_on("imap");
+        let db = seeded_db(&account);
+        let received = crate::services::clock::now_secs() - DAY;
+        let mut inbox_row = email_in("acc-1::12", "inbox", received);
+        inbox_row.message_id = Some("<m-1@example.com>".to_string());
+        db.insert_emails_batch(&[inbox_row]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        let mut spam_copy = email_in("acc-1::SPAM::8", "spam", received);
+        spam_copy.message_id = Some("<m-1@example.com>".to_string());
+        provider.add_message(spam_copy, EmailCategory::Primary, vec![]);
+
+        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+            .await
+            .unwrap();
+
+        assert_eq!(listed_in(&db, "spam"), vec!["acc-1::SPAM::8".to_string()]);
+        assert!(listed_in(&db, "inbox").is_empty(), "the inbox copy is no longer listed");
+    }
+
     // ── The reconciliation pass itself ────────────────────────────────────
 
     #[tokio::test]
@@ -3591,6 +3717,33 @@ mod spam_reconcile_tests {
         reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
 
         assert_eq!(stored_mailbox(&db, "m-1"), "spam");
+    }
+
+    #[tokio::test]
+    async fn a_busy_spam_folder_reconciles_a_shorter_window_instead_of_being_skipped() {
+        // Past the listing cap the diff is unsound (an id cut off the listing
+        // looks like a message that left Spam), so the pass used to give up —
+        // and heavy-spam accounts reconciled nothing, ever. Narrowing the
+        // window until the listing fits keeps recent rescues working.
+        let account = account_on("gmail");
+        let db = seeded_db(&account);
+        db.insert_emails_batch(&[email_in("rescued", "spam", NOW - DAY)])
+            .unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email_in("rescued", "inbox", NOW - DAY), EmailCategory::Primary, vec![]);
+        // …sitting behind more spam than one listing can carry, all of it older
+        // than a week.
+        for i in 0..(MAX_SPAM_RECONCILE_LISTING as i64 + 10) {
+            provider.add_message(
+                email_in(&format!("bulk-{i}"), "spam", NOW - 10 * DAY - i),
+                EmailCategory::Primary,
+                vec![],
+            );
+        }
+
+        reconcile_spam_moves(&db, &account, &account.id, &provider, NOW).await;
+
+        assert_eq!(stored_mailbox(&db, "rescued"), "inbox");
     }
 
     #[tokio::test]

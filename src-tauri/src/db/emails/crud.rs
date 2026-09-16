@@ -740,6 +740,53 @@ impl Database {
         Ok(count)
     }
 
+    /// File already-stored emails under `mailbox`, skipping rows that are
+    /// already there. Returns how many moved. Used when the provider lists a
+    /// message the app already holds under a different mailbox — on Gmail the
+    /// id survives the move, so the listing is the only signal.
+    pub fn file_emails_in_mailbox(&self, ids: &[String], mailbox: &str) -> Result<u32> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.connection();
+        let mut moved = 0_u32;
+        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; chunk to stay safe.
+        for chunk in ids.chunks(900) {
+            let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{}", i)).collect();
+            let sql = format!(
+                "UPDATE emails SET mailbox = ?1 WHERE mailbox != ?1 AND id IN ({})",
+                placeholders.join(",")
+            );
+            let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+            bound.push(&mailbox);
+            for id in chunk {
+                bound.push(id);
+            }
+            moved += conn.execute(&sql, bound.as_slice())? as u32;
+        }
+        Ok(moved)
+    }
+
+    /// Soft-delete this account's other copies of the same message that are not
+    /// in `mailbox`. A provider that re-keys a move (IMAP, Graph) delivers the
+    /// moved message as a new row, and the copy it was moved away from would
+    /// otherwise stay listed beside it. Returns how many were hidden.
+    pub fn hide_other_copies_of_message(
+        &self,
+        account_id: &str,
+        message_id: &str,
+        keep_id: &str,
+        mailbox: &str,
+    ) -> Result<u32> {
+        let conn = self.connection();
+        let hidden = conn.execute(
+            "UPDATE emails SET is_deleted = 1
+             WHERE account_id = ?1 AND message_id = ?2 AND id != ?3 AND mailbox != ?4 AND is_deleted = 0",
+            params![account_id, message_id, keep_id, mailbox],
+        )?;
+        Ok(hidden as u32)
+    }
+
     /// `(id, message_id)` of one mailbox's emails timestamped at or after
     /// `since` (seconds), excluding soft-deleted rows. The spam reconciliation
     /// diffs these against the provider's Spam listing; the Message-ID header
