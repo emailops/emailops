@@ -1,0 +1,119 @@
+{
+ "font": "Helvetica Neue",
+ "size": [
+  1920,
+  1080
+ ],
+ "stage": [
+  0,
+  0,
+  1920,
+  1080
+ ],
+ "caption_size": 46,
+ "caption_margin": 46,
+ "burn_captions": false,
+ "segments": [
+  {
+   "image": "cards/card-open.png",
+   "seconds": 4.5
+  },
+  {
+   "image": "cards/card-attachview.png",
+   "seconds": 5.5,
+   "vo_at_end": true,
+   "vo": "Are you tired of searching your inbox for invoices?",
+   "caption": {
+    "en": "Are you tired of searching your inbox for invoices?",
+    "de": "Müde, im Postfach nach Rechnungen zu suchen?",
+    "fr": "Fatigué de chercher vos factures dans votre boîte mail ?",
+    "es": "¿Cansado de buscar facturas en tu correo?"
+   }
+  },
+  {
+   "image": "frames/a01-inbox-top.png",
+   "seconds": 2.2,
+   "cursor": [
+    900,
+    600
+   ],
+   "cursor_from": [
+    900,
+    380
+   ],
+   "caption": {
+    "en": "Scrolling, opening the email, downloading the PDF. One by one.",
+    "de": "Scrollen, E-Mail öffnen, PDF herunterladen. Eine nach der anderen.",
+    "fr": "Faire défiler, ouvrir l'e-mail, télécharger le PDF. Un par un.",
+    "es": "Bajar, abrir el correo, descargar el PDF. Uno a uno."
+   },
+   "vo": "Scrolling, opening the email, downloading the PDF. One by one.",
+   "crop": [
+    0,
+    10,
+    1800,
+    1080
+   ]
+  },
+  {
+   "image": "frames/a03-before-row-click.png",
+   "seconds": 2.4,
+   "cut": true,
+   "click": [
+    838,
+    693
+   ],
+   "cursor_from": [
+    900,
+    600
+   ],
+   "caption": {
+    "en": "Scrolling, opening the email, downloading the PDF. One by one.",
+    "de": "Scrollen, E-Mail öffnen, PDF herunterladen. Eine nach der anderen.",
+    "fr": "Faire défiler, ouvrir l'e-mail, télécharger le PDF. Un par un.",
+    "es": "Bajar, abrir el correo, descargar el PDF. Uno a uno."
+   },
+   "crop": [
+    0,
+    10,
+    1800,
+    1080
+   ]
+  },
+  {
+   "image": "frames/a04-invoice-email.png",
+   "seconds": 2.6,
+   "dissolve": true,
+   "caption": {
+    "en": "Scrolling, opening the email, downloading the PDF. One by one.",
+    "de": "Scrollen, E-Mail öffnen, PDF herunterladen. Eine nach der anderen.",
+    "fr": "Faire défiler, ouvrir l'e-mail, télécharger le PDF. Un par un.",
+    "es": "Bajar, abrir el correo, descargar el PDF. Uno a uno."
+   },
+   "crop": [
+    0,
+    10,
+    1800,
+    1080
+   ]
+  },
+  {
+   "image": "frames/p01-preview.png",
+   "seconds": 4.8,
+   "dissolve": true,
+   "vo": "Open any of them and read it without leaving EmailOps.",
+   "caption": {
+    "en": "Open any of them without leaving EmailOps",
+    "de": "Öffnen Sie jede davon, ohne EmailOps zu verlassen",
+    "fr": "Ouvrez n'importe laquelle sans quitter EmailOps",
+    "es": "Abre cualquiera sin salir de EmailOps"
+   },
+   "crop": [
+    0,
+    10,
+    1800,
+    1080
+   ]
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "font": "/System/Library/Fonts/HelveticaNeue.ttc",
+ "bg": "0x0f172a",
+ "cards": [
+  {"name": "card-open", "layout": "hero",
+   "title": "EmailOps", "subtitle": "The local AI email client"},
+
+  {"name": "card-ask", "layout": "section",
+   "title": "Ask your inbox", "subtitle": "A question in plain language"},
+  {"name": "card-draft", "layout": "section",
+   "title": "AI Draft", "subtitle": "The reply, written for you"},
+  {"name": "card-tagboard", "layout": "section",
+   "title": "Tag Board", "subtitle": "Your mail, grouped by tag"},
+  {"name": "card-attachview", "layout": "section",
+   "title": "Attachment view", "subtitle": "Every attachment, in one place"},
+  {"name": "card-translation", "layout": "section",
+   "title": "Translation", "subtitle": "Read and reply in any language"},
+
+  {"name": "card-end", "layout": "end",
+   "title": "EmailOps", "subtitle": "Free · Open source · Apache-2.0",
+   "lines": ["getemailops.com", "github.com/emailops/emailops", "macOS · Windows · Linux"],
+   "footnote": "Synthetic demo data · Music by Kevin MacLeod (CC BY 4.0)"}
+ ]
+}
