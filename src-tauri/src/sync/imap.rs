@@ -15,6 +15,10 @@ use crate::sync::provider::{
 const SENT_ID_PREFIX: &str = "SENT::";
 /// Prefix for emails fetched from the Spam / Junk folder.
 const SPAM_ID_PREFIX: &str = "SPAM::";
+
+/// Custom folders searched when locating a message that left Spam. A mailbox
+/// can have dozens; each one costs a SELECT + SEARCH on the open session.
+const MAX_LOCATE_FOLDERS: usize = 25;
 /// Prefix for emails fetched from the Trash / Deleted Items folder.
 const TRASH_ID_PREFIX: &str = "TRASH::";
 /// Prefix for emails fetched from a custom (user-created) folder. The full id
@@ -326,6 +330,19 @@ impl ImapClient {
             format!("{FOLDER_ID_PREFIX}{encoded}::{uid}")
         } else {
             format!("{}::{FOLDER_ID_PREFIX}{encoded}::{uid}", self.account_id)
+        }
+    }
+
+    /// The stable email id for a message found at `uid` in `folder` — the
+    /// inverse of [`ImapClient::parse_message_ref`]. A move gives the message a
+    /// new UID, so the row has to be re-keyed to the id this builds.
+    fn located_id(&self, folder: &ImapFolder, uid: u32) -> String {
+        match folder {
+            ImapFolder::Inbox => self.make_email_id(uid),
+            ImapFolder::Sent => self.make_prefixed_email_id(SENT_ID_PREFIX, uid),
+            ImapFolder::Spam => self.make_prefixed_email_id(SPAM_ID_PREFIX, uid),
+            ImapFolder::Trash => self.make_prefixed_email_id(TRASH_ID_PREFIX, uid),
+            ImapFolder::Custom(path) => self.make_folder_email_id(path, uid),
         }
     }
 
@@ -1319,6 +1336,80 @@ impl EmailProvider for ImapClient {
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
     }
 
+    /// Find a message the app already stores: still at its own UID, or — after
+    /// the user moved it in another client — under a new UID in INBOX or Trash,
+    /// which only its Message-ID header can find. One connection either way.
+    async fn locate_message(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
+        let (source, uid_str) = self.parse_message_ref(message_id);
+        let uid: u32 = uid_str
+            .parse()
+            .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
+        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
+        // don't occur in practice, so we just skip the header lookup for them.
+        let header = message_id_header
+            .map(str::trim)
+            .filter(|h| !h.is_empty() && !h.contains('"'))
+            .map(str::to_string);
+        let creds = self.credentials.clone();
+        let source = source.clone();
+
+        let found: Option<(ImapFolder, u32)> =
+            tokio::task::spawn_blocking(move || -> Result<Option<(ImapFolder, u32)>> {
+                let mut session =
+                    Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+
+                if Self::select_folder_blocking(&mut session, &source) {
+                    if let Ok(hits) = imap_search::uid_search(&mut session, &format!("UID {uid}")) {
+                        if hits.contains(&uid) {
+                            let _ = session.logout();
+                            return Ok(Some((source, uid)));
+                        }
+                    }
+                }
+
+                let mut located = None;
+                if let Some(h) = header {
+                    // Custom folders count too: "not spam any more" often means
+                    // "filed somewhere". Bounded so a mailbox with many folders
+                    // cannot turn one lookup into a hundred SELECTs.
+                    let mut candidates = vec![ImapFolder::Inbox, ImapFolder::Trash];
+                    if let Ok(entries) = Self::list_entries_blocking(&mut session) {
+                        candidates.extend(
+                            folder_plan::plan_folders(&entries)
+                                .custom
+                                .into_iter()
+                                .take(MAX_LOCATE_FOLDERS)
+                                .map(|f| ImapFolder::Custom(f.raw_name)),
+                        );
+                    }
+                    for folder in candidates {
+                        if !Self::select_folder_blocking(&mut session, &folder) {
+                            continue;
+                        }
+                        if let Ok(hits) = imap_search::uid_search(&mut session, &format!("HEADER Message-ID \"{h}\"")) {
+                            if let Some(new_uid) = hits.into_iter().max() {
+                                located = Some((folder, new_uid));
+                                break;
+                            }
+                        }
+                    }
+                }
+                let _ = session.logout();
+                Ok(located)
+            })
+            .await
+            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+
+        Ok(found.map(|(folder, uid)| provider::MessageLocation {
+            id: self.located_id(&folder, uid),
+            mailbox: folder.mailbox_value(),
+        }))
+    }
+
     async fn move_message(
         &self,
         message_id: &str,
@@ -1907,5 +1998,25 @@ mod tests {
         assert_eq!(folder, ImapFolder::Inbox);
         let (folder, _) = client.parse_message_ref("acc-1::FOLDER::noseparator");
         assert_eq!(folder, ImapFolder::Inbox);
+    }
+
+    #[test]
+    fn located_ids_round_trip_through_parse_message_ref() {
+        // `locate_message` hands the sync the id a moved message now has. It
+        // must be the shape the id parser expects, or the next sync can no
+        // longer tell which folder to SELECT for it.
+        let client = imap_client_synced_from(None);
+        for (folder, uid) in [
+            (ImapFolder::Inbox, 1_u32),
+            (ImapFolder::Sent, 7),
+            (ImapFolder::Spam, 8),
+            (ImapFolder::Trash, 9),
+            (ImapFolder::Custom("Archive/2026".to_string()), 12),
+        ] {
+            let id = client.located_id(&folder, uid);
+            let (parsed_folder, parsed_uid) = client.parse_message_ref(&id);
+            assert_eq!(parsed_folder, folder, "folder round-trip for {id}");
+            assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
+        }
     }
 }

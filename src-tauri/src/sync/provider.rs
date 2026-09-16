@@ -288,6 +288,15 @@ impl MoveTarget {
     }
 }
 
+/// Where a message sits at the provider right now: the id it is addressable
+/// by (unchanged on Gmail, re-keyed on IMAP/Graph) and its `emails.mailbox`
+/// value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageLocation {
+    pub id: String,
+    pub mailbox: String,
+}
+
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
 ///
 /// Services depend on this trait, never on concrete providers.
@@ -487,6 +496,26 @@ pub trait EmailProvider: Send + Sync {
     async fn trash_message(&self, _message_id: &str) -> Result<()> {
         Err(AppError::InvalidInput(
             "mailbox state writes are not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Where a message the app already stores lives at the provider right now.
+    /// Lets sync catch up with moves the user made in the provider's own
+    /// clients, which the insert-only fetch passes never see.
+    ///
+    /// `message_id_header` is the message's RFC 5322 Message-ID when known:
+    /// Gmail keeps a message's id across a move, but IMAP (new UID) and Graph
+    /// (new item id) re-key it, so there the header is the only way to find it
+    /// again — and the returned [`MessageLocation::id`] is then the new id the
+    /// local row must be re-keyed to. `Ok(None)` means the provider no longer
+    /// has the message at all (deleted forever).
+    async fn locate_message(
+        &self,
+        _message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<Option<MessageLocation>> {
+        Err(AppError::InvalidInput(
+            "locating a message is not supported by this provider".to_string(),
         ))
     }
 
@@ -1102,6 +1131,25 @@ impl EmailProvider for FakeEmailProvider {
                 message_id: message_id.to_string(),
             });
         Ok(())
+    }
+
+    /// Models both provider shapes: the message is found under its own id
+    /// (Gmail), or — when it was moved and re-keyed — under the same
+    /// Message-ID header at a new id (IMAP/Graph).
+    async fn locate_message(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<MessageLocation>> {
+        self.record_call("locate_message");
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        let found = guard.iter().find(|m| m.email.id == message_id).or_else(|| {
+            message_id_header.and_then(|header| guard.iter().find(|m| m.email.message_id.as_deref() == Some(header)))
+        });
+        Ok(found.map(|m| MessageLocation {
+            id: m.email.id.clone(),
+            mailbox: m.email.mailbox.clone(),
+        }))
     }
 
     async fn create_draft(

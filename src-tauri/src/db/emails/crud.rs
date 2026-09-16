@@ -740,6 +740,76 @@ impl Database {
         Ok(count)
     }
 
+    /// File already-stored emails under `mailbox`, skipping rows that are
+    /// already there. Returns how many moved. Used when the provider lists a
+    /// message the app already holds under a different mailbox — on Gmail the
+    /// id survives the move, so the listing is the only signal.
+    pub fn file_emails_in_mailbox(&self, ids: &[String], mailbox: &str) -> Result<u32> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.connection();
+        let mut moved = 0_u32;
+        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; chunk to stay safe.
+        for chunk in ids.chunks(900) {
+            let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{}", i)).collect();
+            let sql = format!(
+                "UPDATE emails SET mailbox = ?1 WHERE mailbox != ?1 AND id IN ({})",
+                placeholders.join(",")
+            );
+            let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+            bound.push(&mailbox);
+            for id in chunk {
+                bound.push(id);
+            }
+            moved += conn.execute(&sql, bound.as_slice())? as u32;
+        }
+        Ok(moved)
+    }
+
+    /// Soft-delete this account's other copies of the same message that are not
+    /// in `mailbox`. A provider that re-keys a move (IMAP, Graph) delivers the
+    /// moved message as a new row, and the copy it was moved away from would
+    /// otherwise stay listed beside it. Returns how many were hidden.
+    pub fn hide_other_copies_of_message(
+        &self,
+        account_id: &str,
+        message_id: &str,
+        keep_id: &str,
+        mailbox: &str,
+    ) -> Result<u32> {
+        let conn = self.connection();
+        let hidden = conn.execute(
+            "UPDATE emails SET is_deleted = 1
+             WHERE account_id = ?1 AND message_id = ?2 AND id != ?3 AND mailbox != ?4 AND is_deleted = 0",
+            params![account_id, message_id, keep_id, mailbox],
+        )?;
+        Ok(hidden as u32)
+    }
+
+    /// `(id, message_id)` of one mailbox's emails timestamped at or after
+    /// `since` (seconds), excluding soft-deleted rows. The spam reconciliation
+    /// diffs these against the provider's Spam listing; the Message-ID header
+    /// is what finds a message again on providers that re-key a move.
+    pub fn emails_in_mailbox_since(
+        &self,
+        account_id: &str,
+        mailbox: &str,
+        since: i64,
+    ) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, message_id FROM emails
+             WHERE account_id = ?1 AND mailbox = ?2 AND timestamp >= ?3 AND is_deleted = 0",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id, mailbox, since], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Minimum timestamp across a set of email IDs.
     ///
     /// The extra-mailbox backfill uses this to advance its cursor backward
@@ -790,6 +860,28 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    #[test]
+    fn emails_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
+        let db = Database::new_for_testing().unwrap();
+        for (id, account, ts) in [
+            ("recent", "acc1", 2_000),
+            ("old", "acc1", 999),
+            ("deleted", "acc1", 2_000),
+            ("other-account", "acc2", 2_000),
+            ("inbox-row", "acc1", 2_000),
+        ] {
+            insert_email(&db, id, account, &format!("t-{id}"), ts);
+            if id != "inbox-row" {
+                db.migrate_email_id(id, id, "spam").unwrap();
+            }
+        }
+        db.delete_email("deleted").unwrap();
+
+        let rows = db.emails_in_mailbox_since("acc1", "spam", 1_000).unwrap();
+
+        assert_eq!(rows, vec![("recent".to_string(), None)]);
+    }
 
     #[test]
     fn min_timestamp_ignores_undated_messages() {

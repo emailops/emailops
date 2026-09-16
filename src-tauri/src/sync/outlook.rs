@@ -923,6 +923,53 @@ impl EmailProvider for OutlookClient {
             .collect())
     }
 
+    /// Find a message the app already stores. Graph re-keys a message when it
+    /// is moved between folders, so the stored id stops resolving and the
+    /// Message-ID header is the only handle that survives the move. Checks the
+    /// folders a message can reach from Junk, and reports the id it now has.
+    async fn locate_message(
+        &self,
+        _message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
+        let Some(header) = message_id_header.map(str::trim).filter(|h| !h.is_empty()) else {
+            return Ok(None);
+        };
+        // OData escapes a single quote inside a string literal by doubling it.
+        let escaped = header.replace('\'', "''");
+        // `archive` maps to inbox: EmailOps has no archive mailbox, and Gmail's
+        // archived mail already lands there.
+        for (folder, mailbox) in [
+            ("inbox", "inbox"),
+            ("deleteditems", "trash"),
+            ("archive", "inbox"),
+            ("junkemail", "spam"),
+        ] {
+            let filter = format!("internetMessageId eq '{escaped}'");
+            let url = format!(
+                "{}/me/mailFolders/{}/messages?$top=1&$select=id,conversationId&$filter={}",
+                self.base_url,
+                folder,
+                urlencoding::encode(&filter)
+            );
+            let response = self.send_get_with_retry(&url, "locate message").await?;
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::SyncError(format!(
+                    "Failed to locate message in {folder}: {body}"
+                )));
+            }
+            let list: GraphMessageList = response.json().await?;
+            if let Some(found) = list.value.into_iter().next() {
+                return Ok(Some(provider::MessageLocation {
+                    id: found.id,
+                    mailbox: mailbox.to_string(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     async fn list_mailbox_messages(
         &self,
         mailbox: provider::ExtraMailbox,
@@ -1672,5 +1719,91 @@ mod tests {
         let msg = format_graph_error(StatusCode::BAD_GATEWAY, "nginx fail");
         assert!(msg.contains("502"));
         assert!(msg.contains("nginx fail"));
+    }
+
+    #[tokio::test]
+    async fn locate_message_finds_a_moved_message_by_its_internet_message_id() {
+        // Graph re-keys a message when it is moved, so the id stored locally
+        // 404s and only the Message-ID header can find it again.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/inbox/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"value":[{"id":"new-id","conversationId":"c-1"}]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let located = EmailProvider::locate_message(&client, "old-id", Some("<m-1@example.com>"))
+            .await
+            .expect("locate")
+            .expect("found");
+
+        assert_eq!(located.id, "new-id", "the row must be re-keyed to the new Graph id");
+        assert_eq!(located.mailbox, "inbox");
+    }
+
+    #[tokio::test]
+    async fn locate_message_is_none_when_no_folder_holds_the_message() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":[]}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(
+            EmailProvider::locate_message(&client, "old-id", Some("<m-1@example.com>"))
+                .await
+                .expect("locate"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn locate_message_finds_a_message_moved_to_the_archive_folder() {
+        // Graph's `archive` well-known folder. EmailOps has no archive mailbox
+        // of its own, so an archived message is filed under inbox — the same
+        // place Gmail's archived mail already lands.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for empty in [
+            "/me/mailFolders/inbox/messages",
+            "/me/mailFolders/deleteditems/messages",
+        ] {
+            Mock::given(method("GET"))
+                .and(path(empty))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":[]}"#, "application/json"))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/archive/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"value":[{"id":"archived-id","conversationId":"c-1"}]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let located = EmailProvider::locate_message(&client, "old-id", Some("<m-1@example.com>"))
+            .await
+            .expect("locate")
+            .expect("found");
+
+        assert_eq!(located.id, "archived-id");
+        assert_eq!(located.mailbox, "inbox");
     }
 }
