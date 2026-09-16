@@ -723,7 +723,7 @@ pub async fn sync_account_with_provider(
                         if !attachment_infos.is_empty() && !attachment_rules.is_empty() {
                             if let Err(e) = crate::services::attachments::process_attachments_for_email(
                                 db,
-                                email_provider.as_ref(),
+                                Some(email_provider.as_ref()),
                                 email,
                                 attachment_infos,
                                 &attachment_rules,
@@ -846,7 +846,7 @@ pub async fn sync_account_with_provider(
                                                 if let Err(e) =
                                                     crate::services::attachments::process_attachments_for_email(
                                                         db,
-                                                        email_provider.as_ref(),
+                                                        Some(email_provider.as_ref()),
                                                         &email,
                                                         &attachment_infos,
                                                         &attachment_rules,

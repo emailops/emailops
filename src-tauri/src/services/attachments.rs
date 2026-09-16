@@ -427,7 +427,7 @@ pub(crate) async fn reextract_with_provider(
 
 pub async fn process_attachments_for_email(
     db: &Arc<Database>,
-    provider: &dyn EmailProvider,
+    provider: Option<&dyn EmailProvider>,
     email: &crate::models::Email,
     attachment_infos: &[AttachmentInfo],
     rules: &[AttachmentRule],
@@ -467,7 +467,11 @@ pub async fn process_attachments_for_email(
                     }
                 }
             } else {
-                match provider.fetch_attachment_bytes(&email.id, &info.attachment_id).await {
+                let fetched = match provider {
+                    Some(provider) => provider.fetch_attachment_bytes(&email.id, &info.attachment_id).await,
+                    None => Err(AppError::SyncError("no provider available to download it".into())),
+                };
+                match fetched {
                     Ok(b) => b,
                     Err(e) => {
                         emit_log(
@@ -772,6 +776,46 @@ pub fn list_for_email(
 
 // --- Retroactive rule application ---
 
+/// Attachments of `email_id` that are already stored on disk (auto-download
+/// or an on-demand save), read back as inline data so a rule can collect them
+/// without asking the provider. `None` when the email has no stored
+/// attachment metadata or any of it has no local file: the provider has to be
+/// asked then.
+async fn stored_attachment_infos(
+    db: &Database,
+    email_id: &str,
+    app_data_dir: &Path,
+) -> Result<Option<Vec<AttachmentInfo>>> {
+    use base64::Engine;
+
+    let metas = db.get_email_attachment_metas(email_id)?;
+    if metas.is_empty() {
+        return Ok(None);
+    }
+    let mut infos = Vec::with_capacity(metas.len());
+    for meta in metas {
+        let Some(relative_path) = meta.file_path.as_deref() else {
+            return Ok(None);
+        };
+        let path = match safe_attachment_path(app_data_dir, relative_path) {
+            Ok(path) => path,
+            Err(AppError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|e| AppError::IoError(format!("Failed to read stored attachment '{}': {e}", meta.filename)))?;
+        infos.push(AttachmentInfo {
+            attachment_id: meta.provider_attachment_id,
+            filename: meta.filename,
+            mime_type: meta.mime_type,
+            size: bytes.len() as i64,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        });
+    }
+    Ok(Some(infos))
+}
+
 pub async fn apply_rule_retroactively(
     db: &Arc<Database>,
     rule_id: &str,
@@ -787,25 +831,49 @@ pub async fn apply_rule_retroactively(
         .get_account(account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
 
-    // Delegate provider construction to the canonical helper. Previously this
-    // function had a hand-rolled `match account.provider.as_str()` that only
-    // supported `"gmail"` and returned `Err(SyncError("Unsupported provider: ..."))`
-    // for Outlook and IMAP accounts — so clicking "Sync now" on a rule attached
-    // to a non-Gmail account always failed. `build_provider` dispatches on
+    // Attachments already stored on disk need no provider, so it is only built
+    // (and, for OAuth, its token refreshed) when some matching email is
+    // missing locally. An account without usable credentials, or offline,
+    // still collects what it already has. `build_provider` dispatches on
     // provider and handles OAuth refresh consistently with the rest of the app.
-    let provider = build_provider(&account, app.cloned()).await?;
+    let provider = if rule_needs_provider(db, &rule, account_id, app_data_dir).await? {
+        Some(build_provider(&account, app.cloned()).await?)
+    } else {
+        None
+    };
 
-    apply_rule_with_provider(db, &rule, account_id, provider.as_ref(), app_data_dir, app).await
+    apply_rule_with_provider(db, &rule, account_id, provider.as_deref(), app_data_dir, app).await
+}
+
+/// Whether applying `rule` to the account's existing emails has to ask the
+/// provider: true when some email matching the rule does not have all its
+/// attachments stored on disk.
+async fn rule_needs_provider(
+    db: &Database,
+    rule: &AttachmentRule,
+    account_id: &str,
+    app_data_dir: &Path,
+) -> Result<bool> {
+    for (email_id, sender_email, subject) in db.get_emails_matching_rule(account_id)? {
+        if matches_rule(rule, &sender_email, &subject)
+            && stored_attachment_infos(db, &email_id, app_data_dir).await?.is_none()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Apply a rule retroactively using a caller-supplied provider. Extracted from
 /// `apply_rule_retroactively` so unit tests can drive the loop with
 /// `FakeEmailProvider` without a Tauri runtime or live OAuth tokens.
+/// `provider` is `None` when every matching email has its attachments stored
+/// on disk; an email that still needs a fetch is then skipped with a warning.
 pub async fn apply_rule_with_provider(
     db: &Arc<Database>,
     rule: &AttachmentRule,
     account_id: &str,
-    provider: &dyn EmailProvider,
+    provider: Option<&dyn EmailProvider>,
     app_data_dir: &Path,
     app: Option<&AppHandle>,
 ) -> Result<u32> {
@@ -831,18 +899,35 @@ pub async fn apply_rule_with_provider(
         }
         emails_matching_criteria += 1;
 
-        // Fetch full message to get attachment info
-        let result = provider.get_message(email_id).await;
-        let (email, _category, attachment_infos) = match result {
-            Ok(r) => r,
-            Err(e) => {
-                emit_log(
-                    app,
-                    "warn",
-                    "attachments",
-                    format!("Skipping email {}: {}", email_id, e),
-                );
-                continue;
+        // Attachments already on disk are collected from there; the full
+        // message is only fetched when something is missing locally.
+        let (email, attachment_infos) = match stored_attachment_infos(db, email_id, app_data_dir).await? {
+            Some(infos) => match db.get_email(email_id)? {
+                Some(email) => (email, infos),
+                None => continue,
+            },
+            None => {
+                let Some(provider) = provider else {
+                    emit_log(
+                        app,
+                        "warn",
+                        "attachments",
+                        format!("Skipping email {email_id}: its attachments are not stored locally"),
+                    );
+                    continue;
+                };
+                match provider.get_message(email_id).await {
+                    Ok((email, _category, infos)) => (email, infos),
+                    Err(e) => {
+                        emit_log(
+                            app,
+                            "warn",
+                            "attachments",
+                            format!("Skipping email {}: {}", email_id, e),
+                        );
+                        continue;
+                    }
+                }
             }
         };
 
@@ -1250,7 +1335,7 @@ mod tests {
         let fake = FakeEmailProvider::new("me@outlook.example", "Me");
         let saved = process_attachments_for_email(
             &db,
-            &fake,
+            Some(&fake),
             &email,
             &infos,
             std::slice::from_ref(&rule),
@@ -1314,7 +1399,7 @@ mod tests {
         let fake = FakeEmailProvider::new("me@example.com", "Me");
         process_attachments_for_email(
             &db,
-            &fake,
+            Some(&fake),
             &email,
             &infos,
             std::slice::from_ref(&rule),
@@ -1474,7 +1559,7 @@ mod tests {
             )],
         );
 
-        let saved = apply_rule_with_provider(&db, &rule, account_id, &fake, tmp.path(), None)
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None)
             .await
             .expect("apply_rule_with_provider should succeed");
 
@@ -1513,7 +1598,7 @@ mod tests {
 
         let fake = FakeEmailProvider::new("me@outlook.example", "Me");
 
-        let saved = apply_rule_with_provider(&db, &rule, account_id, &fake, tmp.path(), None)
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None)
             .await
             .expect("apply_rule_with_provider must not error when nothing matches");
 
@@ -1521,6 +1606,147 @@ mod tests {
         assert_eq!(
             db.get_attachments_for_rule(&rule.id).expect("query attachments").len(),
             0
+        );
+    }
+
+    /// Record `filename` on `email` as already downloaded to `data_dir`: the
+    /// state auto-download (or an on-demand save) leaves behind.
+    fn store_local_attachment(db: &Database, data_dir: &Path, email: &Email, filename: &str, content: &[u8]) {
+        let relative = format!("attachments/{}/auto/{}", email.account_id, filename);
+        let absolute = data_dir.join(&relative);
+        std::fs::create_dir_all(absolute.parent().expect("parent dir")).expect("mkdir");
+        std::fs::write(&absolute, content).expect("write local file");
+        db.insert_email_attachment_metas_batch(&[(
+            email.id.clone(),
+            email.account_id.clone(),
+            String::new(),
+            filename.into(),
+            "application/pdf".into(),
+            content.len() as i64,
+            None,
+        )])
+        .expect("insert meta");
+        db.set_email_attachment_file_path(&email.id, filename, &relative)
+            .expect("set file path");
+    }
+
+    /// An attachment already stored on disk is collected from the local file.
+    /// The provider knows nothing about the message here, so the old
+    /// fetch-first path skipped the email and saved nothing.
+    #[tokio::test]
+    async fn apply_rule_with_provider_collects_locally_stored_attachments() {
+        use crate::sync::provider::FakeEmailProvider;
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let account_id = "acc-imap";
+        make_account(&db, account_id, "imap", "me@example.com");
+        let email = make_email(
+            account_id,
+            "msg-local",
+            "billing@vendor.example",
+            "Your invoice for March",
+        );
+        db.insert_email(&email).expect("insert email");
+        store_local_attachment(&db, tmp.path(), &email, "invoice-mar.pdf", b"%PDF-1.4 local");
+
+        let rule = create_rule(
+            &db,
+            account_id,
+            "Vendor invoices",
+            Some("billing@vendor.example"),
+            Some("*invoice*"),
+            Some("*.pdf"),
+            vec!["facturas".into()],
+        )
+        .expect("create rule");
+
+        let fake = FakeEmailProvider::new("me@example.com", "Me");
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None)
+            .await
+            .expect("apply_rule_with_provider should succeed");
+
+        assert_eq!(saved, 1, "the locally stored attachment should be collected");
+        let stored = db.get_attachments_for_rule(&rule.id).expect("query attachments");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].filename, "invoice-mar.pdf");
+        assert_eq!(stored[0].tags, vec!["facturas".to_string()]);
+        let bytes = std::fs::read(tmp.path().join(&stored[0].file_path)).expect("collected file");
+        assert_eq!(bytes, b"%PDF-1.4 local");
+    }
+
+    /// A rule whose matching emails all have their attachments stored on
+    /// disk collects them without asking the provider, so an account with no
+    /// usable credentials (or offline) still gets its attachments.
+    #[tokio::test]
+    async fn apply_rule_retroactively_collects_stored_attachments_without_credentials() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let account_id = "acc-imap-no-creds";
+        make_account(&db, account_id, "imap", "me@example.com");
+        for (id, month) in [("msg-jan", "January"), ("msg-feb", "February")] {
+            let email = make_email(
+                account_id,
+                id,
+                "billing@vendor.example",
+                &format!("Your invoice for {month}"),
+            );
+            db.insert_email(&email).expect("insert email");
+            store_local_attachment(&db, tmp.path(), &email, &format!("invoice-{id}.pdf"), b"%PDF-1.4 local");
+        }
+        let rule = create_rule(
+            &db,
+            account_id,
+            "Vendor invoices",
+            Some("billing@vendor.example"),
+            Some("*invoice*"),
+            Some("*.pdf"),
+            vec!["facturas".into()],
+        )
+        .expect("create rule");
+
+        let saved = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None)
+            .await
+            .expect("stored attachments must not need credentials");
+
+        assert_eq!(saved, 2);
+        assert_eq!(
+            db.get_attachments_for_rule(&rule.id).expect("query attachments").len(),
+            2
+        );
+    }
+
+    /// When a matching email has no local copy the provider is still needed,
+    /// and an account without credentials still reports that error.
+    #[tokio::test]
+    async fn apply_rule_retroactively_still_needs_credentials_for_attachments_not_stored() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let account_id = "acc-imap-no-creds-remote";
+        make_account(&db, account_id, "imap", "me@example.com");
+        let email = make_email(
+            account_id,
+            "msg-remote",
+            "billing@vendor.example",
+            "Your invoice for March",
+        );
+        db.insert_email(&email).expect("insert email");
+        let rule = create_rule(
+            &db,
+            account_id,
+            "Vendor invoices",
+            Some("billing@vendor.example"),
+            None,
+            None,
+            vec![],
+        )
+        .expect("create rule");
+
+        let result = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None).await;
+
+        assert!(
+            result.is_err(),
+            "a fetch is needed, so missing credentials must surface: {result:?}"
         );
     }
 
