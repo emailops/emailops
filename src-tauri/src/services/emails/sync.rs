@@ -1873,7 +1873,7 @@ const SPAM_RECONCILE_WINDOWS_SECS: [i64; 3] = [30 * 86_400, 7 * 86_400, 2 * 86_4
 /// minute and a rescue from Spam is rare, so checking on every poll would
 /// repeat the Spam listing ~60 times an hour for nothing; a rescued message
 /// shows up within this delay instead.
-const SPAM_RECONCILE_INTERVAL_SECS: i64 = 15 * 60;
+const SPAM_RECONCILE_INTERVAL_SECS: i64 = 7 * 60;
 
 /// Longest Spam listing the reconciliation diffs against. A truncated listing
 /// is unsound — every id cut off it looks like a message that left Spam — so

@@ -9,7 +9,7 @@ the fakes: the IMAP and Graph network paths are only exercised here.
 - Run against the dev data dir (`.emailops-data/`): `make dev`, or drive the same install
   headless with `make cli-fast ARGS="…"`. Close the app before any `sync`.
 - Get the account id: `make cli-fast ARGS="accounts --json"`.
-- The check runs **at most once every 15 minutes per account**. Force it between attempts:
+- The check runs **at most once every 7 minutes per account**. Force it between attempts:
 
   ```bash
   sqlite3 .emailops-data/emailops.db \
