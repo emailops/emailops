@@ -125,10 +125,10 @@ prev = sorted(S.glob("eval-run*.json"))
 if prev:
     blocks = []
     for pth in prev:
-        run = load(pth)
-        if not run or not run.get("ok"):
+        prev_run = load(pth)
+        if not prev_run or not prev_run.get("ok"):
             continue
-        rr = run["data"]
+        rr = prev_run["data"]
         rows = "".join(
             f"<tr><td class='mono'>{esc(c['id'])}</td><td><span class='pill {'pass' if c['passed'] else 'fail'}'>{'PASA' if c['passed'] else 'FALLA'}</span></td>"
             f"<td class='mono'>{round(((c.get('trace') or {}).get('help') or {}).get('topSimilarity') or 0, 2)}</td>"
