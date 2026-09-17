@@ -155,7 +155,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
             <div className="col-span-2">
               <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.emailLabel')}</label>
               <input
-                type="email"
+                type="text"
                 value={username}
                 onChange={credentialField(setUsername)}
                 required
