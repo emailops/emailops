@@ -1053,3 +1053,16 @@ to triage the failures.
 **Rejected:** The nightly launchd agent at 03:00 (installed and removed the same day) — an
 unattended job committing onto whatever branch was checked out, and competing for the GPU with
 any EmailOps instance left open.
+
+## 2026-09-17 — AI processing limit: whole small accounts, day cutoff for large ones
+
+**Decision:** Embeddings and classification cover every email of an account with at most
+`ai_max_email_count` live emails (default 1000). Accounts above that only process emails
+newer than `ai_max_email_age_days` (default 365). The count is evaluated per account; a
+count limit of 0 always applies the day cutoff, a day limit of 0 removes the cutoff.
+**Context:** The day cutoff alone was global, so a small account with a long history kept
+most of its mail unclassified. Intent/topic search filters then silently missed it (a
+chat search for contact-form requests found 4 of 31).
+**Rejected:** Union semantics (always the newest N emails plus anything within D days) —
+the developer preferred the simpler switch. A per-account settings UI — the global pair of
+limits already makes small accounts whole without extra configuration.

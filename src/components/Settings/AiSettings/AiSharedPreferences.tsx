@@ -13,6 +13,8 @@ interface AiSharedPreferencesProps {
   onRoutingModeChange: (mode: RoutingMode) => void;
   keepAliveMinutes: number;
   onKeepAliveChange: (minutes: number) => void;
+  aiMaxEmailCount: number;
+  onMaxEmailCountChange: (count: number) => void;
   aiMaxEmailAgeDays: number;
   onMaxEmailAgeDaysChange: (days: number) => void;
   /**
@@ -44,6 +46,8 @@ export function AiSharedPreferences({
   onRoutingModeChange,
   keepAliveMinutes,
   onKeepAliveChange,
+  aiMaxEmailCount,
+  onMaxEmailCountChange,
   aiMaxEmailAgeDays,
   onMaxEmailAgeDaysChange,
   nCtx,
@@ -112,21 +116,42 @@ export function AiSharedPreferences({
         </div>
       )}
 
-      {/* AI processing age cutoff */}
+      {/* AI processing limits: whole account up to N emails, else a day cutoff */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.ageCutoff')}</label>
+        <span className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.ageCutoff')}</span>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.ageCutoffHelp')}</p>
-        <input
-          type="number"
-          min={0}
-          step={1}
-          value={aiMaxEmailAgeDays}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (Number.isFinite(v)) onMaxEmailAgeDaysChange(Math.max(0, v));
-          }}
-          className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        />
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">{t('settings:ai.emailCountCutoff')}</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={aiMaxEmailCount}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (Number.isFinite(v)) onMaxEmailCountChange(Math.max(0, v));
+              }}
+              className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">
+              {t('settings:ai.ageCutoffDays', { n: aiMaxEmailCount })}
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={aiMaxEmailAgeDays}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (Number.isFinite(v)) onMaxEmailAgeDaysChange(Math.max(0, v));
+              }}
+              className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+            />
+          </label>
+        </div>
       </div>
 
       {/* Output language */}
