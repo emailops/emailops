@@ -144,7 +144,18 @@ impl Database {
     /// goes through the same escaper as mailbox search so punctuation never
     /// reaches the FTS parser.
     pub fn fts_search_help_docs(&self, query: &str, limit: i32) -> Result<Vec<(i64, f64)>> {
-        let fts_query = super::embeddings::escape_fts_query(query);
+        // The whole corpus is about EmailOps: the name is in every question
+        // and most sections, so as an FTS term it only ranks sections by how
+        // often they repeat it. Drop it before the escaper sees it.
+        let stripped: String = query
+            .split_whitespace()
+            .filter(|w| {
+                !w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .eq_ignore_ascii_case("emailops")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let fts_query = super::embeddings::escape_fts_query(&stripped);
         if fts_query.is_empty() {
             return Ok(Vec::new());
         }
@@ -293,6 +304,37 @@ mod tests {
         let hits = db.fts_search_help_docs("catalog", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(db.fts_search_help_docs("?!", 10).unwrap().is_empty());
+    }
+
+    /// The whole corpus is about EmailOps, so the app's name carries no
+    /// signal and, left in, ranks sections by how often they repeat it.
+    #[test]
+    fn fts_ignores_the_app_name() {
+        let db = Database::new_for_testing().expect("db");
+        db.replace_help_doc_chunks(&[
+            chunk(
+                "en/privacy-security#0.0",
+                "en",
+                "privacy-security",
+                0,
+                "Privacy",
+                "EmailOps keeps your mail on your machine. EmailOps never uploads it.",
+            ),
+            chunk(
+                "en/ai-features#1.0",
+                "en",
+                "ai-features",
+                1,
+                "Choosing a backend",
+                "Ollama runs at localhost:11434.",
+            ),
+        ])
+        .expect("seed");
+        assert!(db.fts_search_help_docs("EmailOps", 10).unwrap().is_empty());
+        assert!(db.fts_search_help_docs("emailops?", 10).unwrap().is_empty());
+        let with = db.fts_search_help_docs("Ollama in EmailOps", 10).unwrap();
+        let without = db.fts_search_help_docs("Ollama", 10).unwrap();
+        assert_eq!(with, without);
     }
 
     #[test]
