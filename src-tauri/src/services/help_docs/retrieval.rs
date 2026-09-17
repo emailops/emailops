@@ -578,3 +578,65 @@ mod tests {
         assert_eq!(min_similarity(&db), HELP_MIN_SIMILARITY);
     }
 }
+
+/// Dev-only ranking probe: how well does the active embedding model rank
+/// the guide sections for the app_help eval questions, with and without
+/// nomic's task prefixes? Reads the demo data dir in `EMAILOPS_DATA_DIR`,
+/// embeds the corpus twice in memory (no DB writes) and prints the top 3
+/// per question. Run with:
+///   EMAILOPS_DATA_DIR=$PWD/.emailops-demo-data cargo test --features cli,eval \
+///     -- --ignored help_docs_rank_probe --nocapture
+#[cfg(test)]
+mod rank_probe {
+    #[tokio::test]
+    #[ignore = "needs the demo data dir with local models; run by hand"]
+    async fn help_docs_rank_probe() {
+        use crate::services::help_docs::corpus::{corpus, embedding_text};
+        use std::sync::Arc;
+        let Ok(dir) = std::env::var("EMAILOPS_DATA_DIR") else {
+            eprintln!("EMAILOPS_DATA_DIR not set — skipping");
+            return;
+        };
+        let db = Arc::new(crate::db::Database::new(std::path::PathBuf::from(dir)).unwrap());
+        let provider = crate::services::ai::AiService::load_provider(&db).unwrap();
+        let questions = [
+            "how do I make EmailOps use my local Ollama instead of the built-in model?",
+            "¿cómo cambio el modelo de IA que usa EmailOps?",
+            "Wo speichert EmailOps meine Daten auf dem Rechner?",
+            "pourquoi le chat d'EmailOps est-il si lent, et comment l'accélérer ?",
+            "how do I turn on Lenses in EmailOps?",
+            "what did Marisol say about the production bug?",
+        ];
+        let en: Vec<&crate::models::HelpChunk> = corpus().iter().filter(|c| c.lang == "en").collect();
+        fn cos(a: &[f32], b: &[f32]) -> f32 {
+            let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+            let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            dot / (na * nb)
+        }
+        for (doc_prefix, query_prefix) in [("", ""), ("search_document: ", "search_query: ")] {
+            let texts: Vec<String> = en
+                .iter()
+                .map(|c| format!("{doc_prefix}{}", embedding_text(c)))
+                .collect();
+            let mut vecs = Vec::with_capacity(texts.len());
+            for batch in texts.chunks(8) {
+                for r in provider.embed_batch(batch).await.unwrap() {
+                    vecs.push(r.embedding);
+                }
+            }
+            println!("\n=== prefixes: doc={doc_prefix:?} query={query_prefix:?}");
+            for q in questions {
+                let qe = provider.embed(&format!("{query_prefix}{q}")).await.unwrap().embedding;
+                let mut scored: Vec<(f32, &str)> = vecs
+                    .iter()
+                    .zip(en.iter())
+                    .map(|(v, c)| (cos(&qe, v), c.chunk_id.as_str()))
+                    .collect();
+                scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+                let top: Vec<String> = scored.iter().take(3).map(|(s, id)| format!("{id} {s:.2}")).collect();
+                println!("{q}\n    {}", top.join(" | "));
+            }
+        }
+    }
+}
