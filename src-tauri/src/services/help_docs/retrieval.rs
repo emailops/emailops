@@ -152,8 +152,9 @@ struct SectionGroup {
 ///     candidate decides for the turn), never per section.
 ///   - **BM25 says which section.** The guides are small and curated, with a
 ///     heading per topic, and once the app's own name is dropped bm25 puts
-///     the right section first or second. The fused RRF order therefore
-///     weights FTS above vectors (`FTS_FUSION_WEIGHT`).
+///     the right section first or second. Sections are served in bm25
+///     order; the fused RRF score (FTS weighted 2:1) only breaks ties and
+///     orders sections FTS never matched.
 ///
 /// Without vectors (corpus not embedded yet) only the top FTS hit passes,
 /// because bm25 alone cannot tell "how do I connect Ollama" from a mail
@@ -199,7 +200,16 @@ pub fn plan_help_sources(input: HelpPlanInput<'_>) -> Vec<HelpSource> {
         .into_values()
         .filter(|g| input.vector_available || g.best_fts_rank == Some(0))
         .collect();
-    kept.sort_by(|a, b| b.best_fused.total_cmp(&a.best_fused));
+    // BM25 order first (rank 0 best; sections FTS never matched go last),
+    // fused RRF as the tie-break. Fusion alone rewards agreement between
+    // rankers, and with vectors this weak that promoted "present in both"
+    // sections over the one bm25 had first (Lenses lost to "Turning it all
+    // off" on the eval).
+    kept.sort_by(|a, b| {
+        let fa = a.best_fts_rank.unwrap_or(usize::MAX);
+        let fb = b.best_fts_rank.unwrap_or(usize::MAX);
+        fa.cmp(&fb).then_with(|| b.best_fused.total_cmp(&a.best_fused))
+    });
     kept.truncate(input.k);
 
     kept.into_iter()
@@ -521,6 +531,31 @@ mod tests {
         let cands = vec![cand(chunk("fr", "cli", 1, 0, "Installer"), Some(0.9), None, 0.03)];
         let out = plan(&cands, &[], "de", true);
         assert_eq!(out[0].lang, "fr");
+    }
+
+    /// Fusion rewards agreement: a section on both lists outscores the one
+    /// bm25 ranked first when that one is missing from the vector list. The
+    /// bm25 order wins; fusion only breaks ties.
+    #[test]
+    fn bm25_order_beats_fused_agreement() {
+        let cands = vec![
+            cand(
+                chunk("en", "ai-features", 13, 0, "Turning it all off"),
+                Some(0.66),
+                Some(1),
+                0.048,
+            ),
+            cand(chunk("en", "ai-features", 12, 0, "Lenses"), None, Some(0), 0.033),
+            cand(
+                chunk("en", "getting-started", 1, 0, "AI on or off"),
+                Some(0.63),
+                Some(2),
+                0.045,
+            ),
+        ];
+        let out = plan(&cands, &[], "en", true);
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["en/ai-features#12.0", "en/ai-features#13.0"]);
     }
 
     #[test]
