@@ -184,6 +184,15 @@ cli-eval:
 # Multi-turn chat prefill/latency bench against the demo DB (model stays loaded
 # across turns). Logic lives in scripts/cli_bench.sh; questions overridable via
 # env: BENCH_Q2="..." make cli-bench
+# "EmailOps help" (chat answers about the app from the bundled guides): the
+# before/after turn, the app_help eval cases and the HTML report, on the demo DB.
+# Runs the local model — minutes on Apple Silicon. See scripts/help_docs_eval.sh.
+help-docs-eval:
+	scripts/help_docs_eval.sh
+
+help-docs-report:
+	uv run scripts/help_docs_report.py
+
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
 
