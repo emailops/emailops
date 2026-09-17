@@ -953,6 +953,7 @@ mod tests {
                             accounts::AddProvider::Imap {
                                 host,
                                 port,
+                                email,
                                 username,
                                 password,
                                 smtp_host,
@@ -964,7 +965,8 @@ mod tests {
             }) => {
                 assert_eq!(host, "imap.fastmail.com");
                 assert_eq!(port, 993);
-                assert_eq!(username, "me@fastmail.com");
+                assert!(email.is_none(), "no --email given");
+                assert_eq!(username.as_deref(), Some("me@fastmail.com"));
                 assert_eq!(password.as_deref(), Some("secret"));
                 assert!(smtp_host.is_none());
                 assert_eq!(smtp_port, 587);

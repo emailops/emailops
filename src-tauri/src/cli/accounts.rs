@@ -57,9 +57,14 @@ pub enum AddProvider {
         /// IMAP port (TLS).
         #[arg(long, default_value_t = 993)]
         port: u16,
-        /// Login username — usually the full email address.
+        /// The account's own email address — what people write to, and the
+        /// `From` address on outgoing mail. Defaults to --username.
         #[arg(long)]
-        username: String,
+        email: Option<String>,
+        /// Server login, when it differs from the address (some servers sign
+        /// you in with a bare name). Defaults to --email.
+        #[arg(long)]
+        username: Option<String>,
         /// Password / app password. Omit to be prompted securely (no echo);
         /// required when running with `--json` (which cannot prompt).
         #[arg(long)]
@@ -105,6 +110,7 @@ async fn add_account(session: &CliSession, provider: AddProvider) -> Result<()> 
         AddProvider::Imap {
             host,
             port,
+            email,
             username,
             password,
             smtp_host,
@@ -112,17 +118,20 @@ async fn add_account(session: &CliSession, provider: AddProvider) -> Result<()> 
             name,
             sync_from,
         } => {
+            // Resolved before the password prompt, so a bad address fails
+            // immediately instead of after the user has typed a secret.
+            let identity = crate::services::accounts::resolve_imap_identity(email.as_deref(), username.as_deref())?;
             let ts = parse_sync_from(sync_from.as_deref())?;
             let password = resolve_password(session.mode, password)?;
             let credentials = ImapCredentials {
                 smtp_host: smtp_host.unwrap_or_else(|| host.clone()),
                 host,
                 port,
-                username,
+                username: identity.username,
                 password,
                 smtp_port,
             };
-            crate::services::accounts::add_imap_account(&session.db, credentials, name, ts).await?
+            crate::services::accounts::add_imap_account(&session.db, &identity.email, credentials, name, ts).await?
         }
     };
 
@@ -222,5 +231,58 @@ mod tests {
     fn password_required_in_json_mode_when_omitted() {
         let err = resolve_password(OutputMode::Json, None).expect_err("must require flag");
         assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    /// Parse an `accounts add imap` line and hand back its `(email, username)`.
+    fn parse_imap_identity_flags(args: &[&str]) -> (Option<String>, Option<String>) {
+        use clap::Parser as _;
+
+        let cli = crate::cli::Cli::parse_from(args);
+        match cli.command {
+            Some(crate::cli::Command::Accounts {
+                action:
+                    Some(AccountAction::Add {
+                        provider: AddProvider::Imap { email, username, .. },
+                    }),
+            }) => (email, username),
+            other => panic!("expected accounts add imap, got {other:?}"),
+        }
+    }
+
+    // The new case: the address and the server login are different values.
+    #[test]
+    fn imap_add_accepts_separate_email_and_username() {
+        let (email, username) = parse_imap_identity_flags(&[
+            "emailops-cli",
+            "accounts",
+            "add",
+            "imap",
+            "--host",
+            "imap.example.com",
+            "--email",
+            "alex@example.de",
+            "--username",
+            "alex",
+        ]);
+        assert_eq!(email.as_deref(), Some("alex@example.de"));
+        assert_eq!(username.as_deref(), Some("alex"));
+    }
+
+    // The legacy invocation: `--username me@host` alone still parses, because
+    // `--email` is optional and the resolver falls back to the username.
+    #[test]
+    fn imap_add_without_email_is_still_valid() {
+        let (email, username) = parse_imap_identity_flags(&[
+            "emailops-cli",
+            "accounts",
+            "add",
+            "imap",
+            "--host",
+            "imap.example.com",
+            "--username",
+            "me@example.com",
+        ]);
+        assert!(email.is_none());
+        assert_eq!(username.as_deref(), Some("me@example.com"));
     }
 }

@@ -150,6 +150,44 @@ fn account_exists_by_email_true_after_insert() {
     assert!(db.account_exists_by_email("chk@example.com").expect("check"));
 }
 
+// A server login is not unique to one address: two accounts on the same server
+// can share it (and one mailbox can have several addresses behind one login).
+// The address lives on the account row and the login in the IMAP settings
+// mirror, so the two never collide.
+#[test]
+fn two_imap_accounts_can_share_a_login_username() {
+    let db = test_db();
+    let first = Account {
+        provider: "imap".to_string(),
+        ..make_account("imap-1", "alex@example.de")
+    };
+    let second = Account {
+        provider: "imap".to_string(),
+        ..make_account("imap-2", "sales@example.de")
+    };
+    db.insert_account(&first).expect("insert first");
+    db.insert_account(&second).expect("insert second");
+
+    db.upsert_imap_settings("imap-1", "imap.example.com", 993, "alex", "smtp.example.com", 465)
+        .expect("settings for first");
+    db.upsert_imap_settings("imap-2", "imap.example.com", 993, "alex", "smtp.example.com", 465)
+        .expect("settings for second");
+
+    let list = db.list_accounts().expect("list");
+    assert_eq!(list.len(), 2, "both accounts must survive");
+    let emails: Vec<&str> = list.iter().map(|a| a.email.as_str()).collect();
+    assert!(emails.contains(&"alex@example.de"));
+    assert!(emails.contains(&"sales@example.de"));
+
+    for id in ["imap-1", "imap-2"] {
+        let (_, _, username, _, _) = db
+            .get_imap_settings(id)
+            .expect("get_imap_settings")
+            .expect("settings row");
+        assert_eq!(username, "alex", "each account keeps the shared login");
+    }
+}
+
 #[test]
 fn get_account_returns_correct_record() {
     let db = test_db();
