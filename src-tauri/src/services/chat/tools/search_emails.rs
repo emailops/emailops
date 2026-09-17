@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::{Tool, ToolCtx, ToolError, ToolOutput};
+use super::{SearchPage, Tool, ToolCtx, ToolError, ToolOutput};
 use crate::db::Database;
 use crate::models::Email;
 use crate::services::chat::{
@@ -15,12 +15,14 @@ use crate::services::{emails, thread_clean};
 /// scan for a number nobody needs exactly.
 const COUNT_PROBE_LIMIT: i32 = 500;
 
-/// The line that leads a full page of results so the model never presents
-/// the page size as the total ("¿cuántos correos de X hay?" → "25" on a
-/// sender with 156). `None` when the page was not full — the rows shown are
-/// all there is.
-fn total_count_note(shown: usize, limit: i32, total: i32) -> Option<String> {
-    if (shown as i32) < limit {
+/// The line that leads a paged result so the model never presents the page
+/// size as the total ("¿cuántos correos de X hay?" → "25" on a sender with
+/// 156), and knows whether another page exists. `None` when this page holds
+/// every match — there is nothing more to say.
+fn total_count_note(shown: usize, offset: i32, total: i32) -> Option<String> {
+    let first = offset + 1;
+    let last = offset + shown as i32;
+    if offset == 0 && last >= total {
         return None;
     }
     let total_text = if total >= COUNT_PROBE_LIMIT {
@@ -28,8 +30,13 @@ fn total_count_note(shown: usize, limit: i32, total: i32) -> Option<String> {
     } else {
         total.to_string()
     };
+    let tail = if last < total {
+        "call next_page for the next ones, or narrow with since/until, from, or a keyword"
+    } else {
+        "this is the last page"
+    };
     Some(format!(
-        "(showing {shown} of {total_text} matching threads — narrow with since/until, from, or a keyword to see the rest)"
+        "(showing {first}-{last} of {total_text} matching threads — {tail})"
     ))
 }
 
@@ -118,6 +125,7 @@ fn parameters_schema_with(glossary: &TagGlossary) -> Value {
             "since": { "type": "string", "description": "Only return emails on or after this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: '2026-04-17' for today." },
             "until": { "type": "string", "description": "Only return emails strictly before this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: use until='2026-04-18' together with since='2026-04-17' to get today's emails only." },
             "limit": { "type": "integer", "description": "Max number of results to return. Default 20, max 25. Use 25 for 'all X' / 'todas' queries, 5 for 'latest X' / 'última'." },
+            "offset": { "type": "integer", "description": "Skip this many matches before the page starts. Default 0 (the newest matches). To walk further into a long result set call `next_page` instead of setting this by hand." },
             "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." },
             "intent": { "type": "string", "enum": glossary.intent_names(), "description": intent_desc },
             "topic": { "type": "string", "enum": glossary.topic_names(), "description": topic_desc },
@@ -242,6 +250,13 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
         };
 
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 25) as i32;
+        // Paging is applied after the DB call: the search is thread-deduped and
+        // ordered, so the page is a slice of the first `offset + limit` rows.
+        let offset = args
+            .get("offset")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .clamp(0, COUNT_PROBE_LIMIT as i64) as i32;
 
         // An explicit sender / recipient / subject lookup must not be silently
         // narrowed by the chat turn's category scope (default ["primary"]). That
@@ -309,7 +324,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             since_ts,
             until_ts,
             tag_filter_arg,
-            limit,
+            offset + limit,
             ascending,
             unread_only,
         );
@@ -350,16 +365,23 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
 
         match primary {
             Err(e) => Ok(ToolOutput::text(format!("Search error: {}", e))),
-            Ok(emails) if !emails.is_empty() => {
+            Ok(matches) if !matches.is_empty() => {
+                let emails: Vec<crate::models::Email> = matches.into_iter().skip(offset as usize).collect();
+                if emails.is_empty() {
+                    return Ok(ToolOutput::text(
+                        "No more results — the previous page already showed every match.",
+                    ));
+                }
                 let mut body = if include_bodies {
                     render_rows(ctx, &emails, Some(&fetch_bodies(&emails)))
                 } else {
                     render_rows(ctx, &emails, None)
                 };
                 // A full page is only a slice: probe how many threads match
-                // in total so the model can say "at least 156", not "25".
-                if emails.len() as i32 >= limit {
-                    let total = emails::search_emails_filtered(
+                // in total so the model can say "at least 156", not "25", and
+                // knows whether a next page exists.
+                let total = if emails.len() as i32 >= limit {
+                    emails::search_emails_filtered(
                         ctx.db,
                         ctx.account_id,
                         query,
@@ -375,13 +397,24 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         unread_only,
                     )
                     .map(|all| all.len() as i32)
-                    .unwrap_or(emails.len() as i32);
-                    if let Some(note) = total_count_note(emails.len(), limit, total) {
-                        body = format!("{note}\n{body}");
-                    }
+                    .unwrap_or(offset + emails.len() as i32)
+                } else {
+                    offset + emails.len() as i32
+                };
+                if let Some(note) = total_count_note(emails.len(), offset, total) {
+                    body = format!("{note}\n{body}");
                 }
                 if let Some(note) = mode_note {
                     body = format!("{note}{body}");
+                }
+                // Remember this page so `next_page` can continue it, including
+                // from a later turn (the turn seeds the cell from history).
+                if let Some(state) = ctx.page {
+                    state.remember(SearchPage {
+                        args: args.clone(),
+                        next_offset: offset + emails.len() as i32,
+                        total,
+                    });
                 }
                 Ok(ToolOutput::text_with_email_refs(body, ids(&emails)))
             }
@@ -562,18 +595,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn total_note_only_when_the_page_is_full() {
-        assert_eq!(total_count_note(10, 25, 10), None);
+    fn no_note_when_the_page_is_the_whole_result() {
+        // Everything matched fits on this page — the old note claimed
+        // "5 of 5 … to see the rest", which sent the model looking for more.
+        assert_eq!(total_count_note(10, 0, 10), None);
+        assert_eq!(total_count_note(25, 0, 25), None);
+    }
+
+    #[test]
+    fn the_note_states_the_range_the_total_and_the_next_page() {
+        assert_eq!(
+            total_count_note(25, 0, 156).as_deref(),
+            Some(
+                "(showing 1-25 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+            )
+        );
+    }
+
+    #[test]
+    fn a_later_page_counts_from_its_offset() {
         assert_eq!(
             total_count_note(25, 25, 156).as_deref(),
-            Some("(showing 25 of 156 matching threads — narrow with since/until, from, or a keyword to see the rest)")
+            Some(
+                "(showing 26-50 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+            )
+        );
+    }
+
+    #[test]
+    fn the_last_page_says_so_instead_of_offering_more() {
+        assert_eq!(
+            total_count_note(4, 50, 54).as_deref(),
+            Some("(showing 51-54 of 54 matching threads — this is the last page)")
         );
     }
 
     #[test]
     fn total_note_marks_a_capped_probe() {
         // The probe itself stops at COUNT_PROBE_LIMIT; past it the total is a floor.
-        let note = total_count_note(25, 25, COUNT_PROBE_LIMIT).unwrap();
+        let note = total_count_note(25, 0, COUNT_PROBE_LIMIT).unwrap();
         assert!(note.contains(&format!("of {COUNT_PROBE_LIMIT}+ matching")), "{note}");
     }
 
@@ -592,6 +652,7 @@ mod tests {
             db: &db,
             account_id: "acct",
             categories: &categories,
+            page: None,
         };
         let out = SearchEmailsTool.execute(&ctx, json!({})).await.expect("tool ran");
         assert!(
@@ -772,6 +833,7 @@ mod tests {
             db: &db,
             account_id: "acct",
             categories: &categories,
+            page: None,
         };
         let out = SearchEmailsTool
             .execute(&ctx, json!({"query": "presupuesto proveedor", "mode": "semantic"}))

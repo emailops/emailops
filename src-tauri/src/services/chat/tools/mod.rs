@@ -33,6 +33,7 @@ pub mod list_lenses;
 pub mod list_open_threads;
 pub mod list_pending_tasks;
 pub mod memory_search;
+pub mod next_page;
 pub mod recall_entity;
 pub mod remember;
 pub mod search_contacts;
@@ -55,6 +56,47 @@ pub struct ToolCtx<'a> {
     /// Active category filter for this chat turn. Empty = all categories.
     /// Today only `search_emails` consults it.
     pub categories: &'a [String],
+    /// Where `search_emails` leaves the page it just returned so `next_page`
+    /// can continue it. `None` in tests that never paginate.
+    pub page: Option<&'a PageState>,
+}
+
+/// One page of `search_emails` results: the call that produced it and where
+/// the next page starts. `args` is the original argument object, so the
+/// continuation re-runs the very same filters.
+#[derive(Debug, Clone)]
+pub struct SearchPage {
+    pub args: serde_json::Value,
+    pub next_offset: i32,
+    pub total: i32,
+}
+
+/// The conversation's current search page. Interior-mutable because tools
+/// run behind a shared `&ToolCtx`. A chat turn seeds it from the previous
+/// assistant message's trace, so "show me the next ones" works across turns.
+#[derive(Debug, Default)]
+pub struct PageState(std::sync::Mutex<Option<SearchPage>>);
+
+impl PageState {
+    pub fn seeded(page: Option<SearchPage>) -> Self {
+        Self(std::sync::Mutex::new(page))
+    }
+
+    pub fn remember(&self, page: SearchPage) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(page);
+        }
+    }
+
+    /// The page to continue, or `None` when the last search had no more
+    /// results (or no search ran in this conversation).
+    pub fn pending(&self) -> Option<SearchPage> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .filter(|p| p.next_offset < p.total)
+    }
 }
 
 /// What a tool returns to the chat loop.
@@ -488,6 +530,7 @@ pub fn default_registry() -> ToolRegistry {
         Arc::new(list_drafts::ListDraftsTool),
         Arc::new(list_lenses::ListLensesTool),
         Arc::new(get_lens_data::GetLensDataTool),
+        Arc::new(next_page::NextPageTool),
     ])
 }
 
@@ -687,6 +730,7 @@ mod tests {
             db: &db,
             account_id: "acct",
             categories: &categories,
+            page: None,
         };
         let out = tool.execute(&ctx, serde_json::json!({})).await.expect("ok");
         assert_eq!(out.text, "alpha ran");
@@ -1819,9 +1863,88 @@ mod tests {
             &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
         );
         assert!(
-            out.starts_with("(showing 25 of 30 matching threads"),
-            "full page must lead with the total; out:\n{out}"
+            out.starts_with("(showing 1-25 of 30 matching threads"),
+            "full page must lead with the range and the total; out:\n{out}"
         );
+    }
+
+    #[tokio::test]
+    async fn next_page_continues_the_previous_search_without_repeating_rows() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..30 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Newsletter",
+                "news@example.com",
+                &format!("Issue {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        let categories: Vec<String> = Vec::new();
+        let page = PageState::default();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc",
+            categories: &categories,
+            page: Some(&page),
+        };
+
+        let first = search_emails::SearchEmailsTool
+            .execute(&ctx, serde_json::json!({ "from": "news@example.com", "limit": 25 }))
+            .await
+            .expect("first page");
+        let second = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("second page");
+
+        assert!(
+            second
+                .text
+                .starts_with("(showing 26-30 of 30 matching threads — this is the last page)"),
+            "second page must continue the first and say it is the last; out:\n{}",
+            second.text
+        );
+        assert_eq!(second.email_refs.len(), 5, "30 matches, 25 already shown");
+        assert!(
+            second.email_refs.iter().all(|id| !first.email_refs.contains(id)),
+            "a continuation must not repeat rows from the page before it"
+        );
+
+        let exhausted = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("third call");
+        assert!(
+            exhausted.text.starts_with("No further results"),
+            "nothing left to continue; out:\n{}",
+            exhausted.text
+        );
+    }
+
+    #[tokio::test]
+    async fn next_page_without_a_previous_search_says_so() {
+        let db = tools_test_db();
+        let categories: Vec<String> = Vec::new();
+        let page = PageState::default();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc",
+            categories: &categories,
+            page: Some(&page),
+        };
+
+        let out = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("tool ran");
+
+        assert!(out.text.starts_with("No further results"), "{}", out.text);
     }
 
     #[test]

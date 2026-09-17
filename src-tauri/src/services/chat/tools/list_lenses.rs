@@ -83,6 +83,7 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
+            page: None,
         };
         let out = ListLensesTool.execute(&ctx, serde_json::json!({})).await.unwrap();
         assert_eq!(out.text, "No lenses defined.");

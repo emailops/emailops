@@ -465,11 +465,13 @@ fn describe_search_filters(args: &serde_json::Value) -> String {
 /// [`correct_mangled_address_args`]), the search is re-run once with the
 /// verbatim address and the corrected result is returned, with
 /// `corrected_args` set so callers trace what actually ran.
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_tool(
     registry: &tools::ToolRegistry,
     db: &Arc<Database>,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     name: &str,
     args: serde_json::Value,
@@ -484,6 +486,7 @@ async fn dispatch_tool(
                 db,
                 account_id,
                 categories,
+                page,
             };
             match tool.execute(&ctx, args.clone()).await {
                 Ok(mut out) => {
@@ -601,6 +604,7 @@ pub(in crate::services::chat) fn execute_tool(
     name: &str,
     arguments: &serde_json::Value,
 ) -> String {
+    let page = None;
     // The tests assume every tool is available, including gated ones, because
     // the old `execute_tool` had no gating. Enable each feature on a fresh
     // test DB so lookups succeed. Production code path goes through real
@@ -617,8 +621,10 @@ pub(in crate::services::chat) fn execute_tool(
         .build()
         .expect("test runtime");
     // Existing tests only assert on text — drop the refs after dispatch.
-    rt.block_on(dispatch_tool(&registry, db, account_id, categories, "", name, args))
-        .text
+    rt.block_on(dispatch_tool(
+        &registry, db, account_id, categories, page, "", name, args,
+    ))
+    .text
 }
 
 /// Salvage XML-style tool calls embedded in plain assistant text.
@@ -1933,6 +1939,7 @@ async fn run_tool_loop(
     message_id: &str,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     initial_messages: Vec<(String, String)>,
     preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
@@ -2046,7 +2053,17 @@ async fn run_tool_loop(
                         }
                     }
                     None => {
-                        dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await
+                        dispatch_tool(
+                            registry,
+                            db,
+                            account_id,
+                            categories,
+                            page,
+                            user_question,
+                            name,
+                            args.clone(),
+                        )
+                        .await
                     }
                 };
                 let elapsed_ms = t_tool.elapsed().as_millis() as i64;
@@ -2414,7 +2431,19 @@ async fn run_tool_loop(
                         corrected_args: None,
                     }
                 }
-                None => dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await,
+                None => {
+                    dispatch_tool(
+                        registry,
+                        db,
+                        account_id,
+                        categories,
+                        page,
+                        user_question,
+                        name,
+                        args.clone(),
+                    )
+                    .await
+                }
             };
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
             let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
@@ -2772,6 +2801,12 @@ async fn run_thread_bound_turn(
     );
     let system = build_thread_bound_system(&base_system, &system_messages, drafts_available);
 
+    // A paged `search_emails` result can be continued by `next_page` in a
+    // LATER turn, but the history the model replays carries no tool arguments
+    // — so the page to continue is recovered from the previous assistant
+    // message's persisted trace.
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
+
     // Build the message list as (role, content) pairs for the tool loop:
     // system + last N user/assistant turns + the current question.
     let mut initial_messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
@@ -2800,6 +2835,7 @@ async fn run_thread_bound_turn(
         &assistant_message_id,
         &account_id,
         &[],
+        Some(&page_state),
         &user_question,
         initial_messages,
         None,
@@ -3169,6 +3205,7 @@ async fn synthesize_with_recovery(
     db: &Arc<Database>,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     synthesis_messages: Vec<AiMessage>,
     conversation_id: &str,
@@ -3253,6 +3290,7 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
                     db,
                     account_id,
                     categories,
+                    page,
                     user_question,
                     &tc.function.name,
                     tc.function.arguments.clone(),
@@ -3466,6 +3504,12 @@ pub async fn run_chat_turn(
     } else {
         classify_route(&db, &user_question, &history)
     };
+
+    // A paged `search_emails` result can be continued by `next_page` in a
+    // LATER turn, but the history the model replays carries no tool arguments
+    // — so the page to continue is recovered from the previous assistant
+    // message's persisted trace.
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
     emit_log(
         "info",
         &format!(
@@ -3713,6 +3757,7 @@ pub async fn run_chat_turn(
             &assistant_message_id,
             &account_id,
             &categories,
+            Some(&page_state),
             &user_question,
             initial_messages,
             preseeded_tool_calls,
@@ -3861,6 +3906,7 @@ pub async fn run_chat_turn(
                         &db,
                         &account_id,
                         &categories,
+                        Some(&page_state),
                         &user_question,
                         retry_messages,
                         &conversation_id,
@@ -3983,6 +4029,7 @@ pub async fn run_chat_turn(
                     &db,
                     &account_id,
                     &categories,
+                    Some(&page_state),
                     &user_question,
                     synthesis_messages,
                     &conversation_id,
@@ -4854,6 +4901,7 @@ mod tests {
             "msg-1",
             "acct-1",
             &[],
+            None,
             "analiza los correos de esa newsletter",
             vec![
                 ("system".to_string(), "SYS".to_string()),
@@ -5024,6 +5072,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5107,6 +5156,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5179,6 +5229,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5242,6 +5293,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5280,6 +5332,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5322,6 +5375,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5415,6 +5469,7 @@ mod tests {
             "msg-1",
             "acct-1",
             &[],
+            None,
             "summarise today's emails",
             vec![
                 ("system".to_string(), "SYS".to_string()),
