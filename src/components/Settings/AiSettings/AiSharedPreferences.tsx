@@ -29,6 +29,10 @@ interface AiSharedPreferencesProps {
    */
   aiOutputLanguage: string;
   onOutputLanguageChange: (lang: string) => void;
+  /** `help_docs_enabled`: let the chat answer questions about EmailOps
+   *  itself from the bundled guides (and navigate to the cited section). */
+  helpDocsEnabled: boolean;
+  onHelpDocsEnabledChange: (enabled: boolean) => void;
 }
 
 /**
@@ -51,6 +55,8 @@ export function AiSharedPreferences({
   showContextWindow,
   aiOutputLanguage,
   onOutputLanguageChange,
+  helpDocsEnabled,
+  onHelpDocsEnabledChange,
 }: AiSharedPreferencesProps) {
   const { t } = useTranslation(['common', 'settings']);
 
@@ -142,6 +148,23 @@ export function AiSharedPreferences({
           onChange={onOutputLanguageChange}
           ariaLabel={t('settings:ai.outputLanguage')}
         />
+      </div>
+
+      {/* Answer questions about EmailOps from the bundled guides */}
+      <div>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={helpDocsEnabled}
+            onChange={(e) => onHelpDocsEnabledChange(e.target.checked)}
+            className="mt-0.5"
+            aria-label={t('settings:ai.helpDocs')}
+          />
+          <span>
+            <span className="block text-sm font-medium text-gray-300">{t('settings:ai.helpDocs')}</span>
+            <span className="block text-xs text-gray-500">{t('settings:ai.helpDocsHelp')}</span>
+          </span>
+        </label>
       </div>
     </>
   );

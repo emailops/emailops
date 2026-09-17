@@ -1053,3 +1053,29 @@ to triage the failures.
 **Rejected:** The nightly launchd agent at 03:00 (installed and removed the same day) — an
 unattended job committing onto whatever branch was checked out, and competing for the GPU with
 any EmailOps instance left open.
+
+## 2026-09-17 — The chat answers questions about EmailOps itself from the bundled guides, via RAG
+
+**Decision:** The published user guides (`docs/site/<lang>/*.md`, all four languages) are
+compiled into the binary and indexed — FTS5 plus sqlite-vec, in the same shape as the
+mailbox and memory corpora — so an ordinary chat turn can answer "how do I…" questions about
+the app from them. The guides are a second, separate retrieval source: they never mix with
+mailbox ranking, enter the prompt only past a vector-similarity gate, are served in the
+answer's language (a hit on any language swaps for its sibling section), and are cited with
+a `help://<lang>/<page>#<anchor>` link that opens the public docs page. When the answer cites
+a section whose front matter carries a `nav:` target, the app opens that Settings tab or view
+(`ToolEffect::NavigateTo`, from the model's citation, never from the lookup alone).
+**Context:** The chat knew nothing about the app: "how do I connect Ollama?" went through
+mailbox retrieval and ended in "not found" or an invented menu. The guides already existed
+in four languages with stable heading anchors, so they are the single source of truth — a
+stale guide is now a wrong chat answer, and the docs README says so. Per-turn content stays
+out of the system prompt (KV-prefix cache); the block rides in the final user message like
+the memory header. The `nav:` map is keyed on the language-invariant anchor ids and checked
+for parity across languages by `scripts/check-docs-parity.sh` and a unit test.
+**Rejected:** A keyword router plus a lexical `app_help` tool — a keyword list in four
+languages is brittle, and a tool adds prompt cost on every turn while RAG reuses the query
+embedding the mailbox retrieval already computes. Putting the guides in the system prompt —
+about 9k tokens per turn on an 8k-token local context. Indexing only the UI language —
+the developer chose all four so a question in one language finds the section whatever
+language it is asked in. Navigating whenever the lookup matched — a false positive of the
+gate would move the user's screen; the answer's own citation is the safer signal.

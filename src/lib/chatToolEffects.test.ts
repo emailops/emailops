@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type ChatToolEffectPayload, handleChatToolEffect } from './chatToolEffects';
+import { type ChatToolEffectPayload, handleChatToolEffect, parseNavTarget } from './chatToolEffects';
 
 describe('handleChatToolEffect', () => {
   it('calls openComposeTab with the payload fields for new-mail openComposer (no emailId)', () => {
@@ -164,5 +164,75 @@ describe('handleChatToolEffect', () => {
       { openComposeTab, openThreadReply, navigateToInbox },
     );
     expect(openComposeTab.mock.calls[0][1]).toEqual([]);
+  });
+
+  it('navigateTo settings/<tab> opens that settings tab', () => {
+    const openSettingsTab = vi.fn();
+    const navigateToView = vi.fn();
+    const log = vi.fn();
+    handleChatToolEffect(
+      { kind: 'navigateTo', target: 'settings/ai', title: 'AI features › Choosing a backend' },
+      {
+        openComposeTab: vi.fn(),
+        openThreadReply: vi.fn(),
+        navigateToInbox: vi.fn(),
+        openSettingsTab,
+        navigateToView,
+        log,
+      },
+    );
+    expect(openSettingsTab).toHaveBeenCalledWith('ai');
+    expect(navigateToView).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('success', 'ai', expect.stringContaining('Choosing a backend'));
+  });
+
+  it('navigateTo view/<mode> switches the main view', () => {
+    const openSettingsTab = vi.fn();
+    const navigateToView = vi.fn();
+    handleChatToolEffect(
+      { kind: 'navigateTo', target: 'view/tagboard', title: 'AI features › Tag Board' },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), openSettingsTab, navigateToView },
+    );
+    expect(navigateToView).toHaveBeenCalledWith('tagboard');
+    expect(openSettingsTab).not.toHaveBeenCalled();
+  });
+
+  it('navigateTo ignores targets outside the allowlists and logs a warning', () => {
+    const openSettingsTab = vi.fn();
+    const navigateToView = vi.fn();
+    const log = vi.fn();
+    for (const target of ['settings/nope', 'view/folder:abc', 'dialog/ai', 'settings']) {
+      handleChatToolEffect(
+        { kind: 'navigateTo', target, title: 'x' },
+        {
+          openComposeTab: vi.fn(),
+          openThreadReply: vi.fn(),
+          navigateToInbox: vi.fn(),
+          openSettingsTab,
+          navigateToView,
+          log,
+        },
+      );
+    }
+    expect(openSettingsTab).not.toHaveBeenCalled();
+    expect(navigateToView).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(4);
+    expect(log).toHaveBeenCalledWith('error', 'ai', expect.stringContaining('unknown target'));
+  });
+
+  it('navigateTo without wired handlers is a logged no-op', () => {
+    const log = vi.fn();
+    handleChatToolEffect(
+      { kind: 'navigateTo', target: 'settings/ai', title: 'x' },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), log },
+    );
+    expect(log).toHaveBeenCalledWith('debug', 'ai', expect.stringContaining('no settings handler'));
+  });
+
+  it('parseNavTarget mirrors the backend allowlists', () => {
+    expect(parseNavTarget('settings/privacy')).toEqual({ kind: 'settings', tab: 'privacy' });
+    expect(parseNavTarget('view/calendar')).toEqual({ kind: 'view', view: 'calendar' });
+    expect(parseNavTarget('view/')).toBeNull();
+    expect(parseNavTarget('')).toBeNull();
   });
 });

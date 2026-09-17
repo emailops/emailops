@@ -1,6 +1,7 @@
 import { Children, isValidElement, type ReactNode, useEffect, useRef } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { helpLinkToDocsUrl } from '@/lib/helpLinks';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessageSource } from '@/types';
 import { CitationPill } from './CitationPill';
@@ -14,7 +15,7 @@ import { EmailRefPill } from './EmailRefPill';
  *  ever sees it, so all four chip types render as plain text. We override
  *  it to pass our schemes through verbatim and delegate everything else to
  *  the upstream default (which still strips `javascript:` and friends). */
-const CHAT_URI_SCHEMES = ['citation://', 'attachment://', 'email://', 'draft://'] as const;
+const CHAT_URI_SCHEMES = ['citation://', 'attachment://', 'email://', 'draft://', 'help://'] as const;
 function chatUrlTransform(url: string): string {
   if (CHAT_URI_SCHEMES.some((s) => url.startsWith(s))) return url;
   return defaultUrlTransform(url);
@@ -181,6 +182,28 @@ export function MarkdownContent({
               return <>{children}</>;
             }
             return <DraftRefPill draftId={draftId} accountId={accountId} label={label} onOpenEmail={onOpenEmail} />;
+          }
+          if (href?.startsWith('help://')) {
+            // A guide section cited by the "EmailOps help" block. No
+            // allowlist needed: the link is validated by shape and only ever
+            // opens the public docs site, so an invented anchor lands on the
+            // page top instead of anywhere harmful.
+            const docsUrl = helpLinkToDocsUrl(href);
+            if (!docsUrl) {
+              pendingWarnings.current.push(`Dropping malformed help link ${href}.`);
+              return <>{children}</>;
+            }
+            return (
+              <a
+                href={docsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={docsUrl}
+                className="text-primary-600 underline hover:text-primary-800"
+              >
+                {children}
+              </a>
+            );
           }
           // Any remaining non-http(s)/mailto scheme is treated as a stray
           // model invention and rendered as plain text — keeps the bubble

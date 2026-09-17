@@ -99,7 +99,8 @@
         "vectorSearch": "Vektorsuche",
         "ftsSearch": "FTS-Suche",
         "fetchMetadata": "Metadaten abrufen",
-        "threadExpansion": "Thread-Erweiterung"
+        "threadExpansion": "Thread-Erweiterung",
+        "helpDocs": "EmailOps-Hilfe"
       },
       "noCalls": "keine Aufrufe",
       "fallbackSkipped": "Fallback (übersprungen)",
@@ -118,7 +119,8 @@
       "toolCallsRequested": "{{n}} Tool-Aufrufe",
       "prefill": "Prefill {{latency}}",
       "kvCacheHit": "KV-Cache {{cached}}/{{total}} Tok ({{pct}} %)",
-      "kvCacheMiss": "KV-Cache 0/{{total}} Tok (kalt)"
+      "kvCacheMiss": "KV-Cache 0/{{total}} Tok (kalt)",
+      "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten"
     }
   },
   "sources": {

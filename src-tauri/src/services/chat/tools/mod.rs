@@ -160,6 +160,14 @@ pub enum ToolEffect {
         subject: String,
         body: String,
     },
+    /// Open a part of the app. Fired by `run_chat_turn` (not a tool) when
+    /// the final answer cites a guide section that carries a `nav:` target —
+    /// "how do I enable lenses?" answers and opens Settings › Lenses.
+    /// `target` is `settings/<tab>` or `view/<mode>` (validated on both
+    /// sides, see `services::help_docs::nav`); `title` names the section so
+    /// the UI can say what it opened.
+    #[serde(rename_all = "camelCase")]
+    NavigateTo { target: String, title: String },
 }
 
 /// Errors the registry surfaces to the chat loop.

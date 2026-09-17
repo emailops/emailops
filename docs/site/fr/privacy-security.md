@@ -2,6 +2,10 @@
 title: 'Confidentialité et sécurité'
 description: "Où votre courrier est stocké, ce qui quitte votre machine, et les protections contre le courrier lui-même."
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 EmailOps repose sur une règle : votre courrier reste sur votre machine. Cette page décrit ce
@@ -91,7 +95,7 @@ Passer à Ollama garde également l'inférence en local, simplement dans un proc
 votre machine. Seul OpenRouter envoie du contenu hors de l'appareil. Voir
 [choisir un backend](../ai-features/#choosing-a-backend).
 
-## Protection contre le courrier lui-même
+## Protection contre le courrier lui-même {#protection-from-the-mail-itself}
 
 L'e-mail est une surface d'attaque. Les défenses côté client :
 
@@ -110,7 +114,7 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
   d'événements et objets embarqués avant affichage, des deux côtés de l'application. Les
   pièces jointes ne sont jamais ouvertes à votre place.
 
-## Verrouiller l'application
+## Verrouiller l'application {#locking-the-app}
 
 Définissez un **mot de passe principal** dans **Paramètres → Confidentialité et sécurité** et
 EmailOps reste verrouillé au démarrage jusqu'à sa saisie. Il n'existe aucune récupération — si

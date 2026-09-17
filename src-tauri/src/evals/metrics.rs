@@ -408,6 +408,7 @@ mod tests {
             total_elapsed_ms: 0,
             tool_loop_ms: 0,
             llm_streaming_ms: None,
+            help: None,
             llm_calls: vec![],
         }
     }

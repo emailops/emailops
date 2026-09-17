@@ -37,6 +37,12 @@ pub async fn prewarm_chat(state: State<'_, AppState>, account_id: String) -> Res
                     return;
                 }
             };
+            // The guides index shares the idle slot: text index is instant,
+            // and the vectors (a few hundred short chunks) get embedded here
+            // rather than on the user's first "how do I…" turn.
+            if let Err(e) = crate::services::help_docs::ensure_index(&db, provider.as_ref()).await {
+                crate::services::logger::log("warn", "ai", format!("help index failed: {e}"));
+            }
             if let Err(e) = chat::prewarm_chat(&db, &registry, provider.as_ref(), &account_id).await {
                 crate::services::logger::log("debug", "chat", format!("prewarm failed: {e}"));
             }

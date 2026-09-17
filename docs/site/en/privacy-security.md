@@ -2,6 +2,10 @@
 title: 'Privacy & security'
 description: 'Where your mail is stored, what leaves your machine, and the controls that protect you from the mail itself.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 EmailOps is built around one rule: your mail stays on your machine. This page describes what
@@ -87,7 +91,7 @@ Switching to Ollama keeps inference local too, just in a separate process on you
 Only OpenRouter sends content off the device. See
 [choosing a backend](../ai-features/#choosing-a-backend).
 
-## Protection from the mail itself
+## Protection from the mail itself {#protection-from-the-mail-itself}
 
 Email is an attack surface. The client-side defences:
 
@@ -105,7 +109,7 @@ Email is an attack surface. The client-side defences:
   objects before it is displayed, on both sides of the app. Attachments are never opened on
   your behalf.
 
-## Locking the app
+## Locking the app {#locking-the-app}
 
 Set a **main password** in **Settings → Privacy & Security** and EmailOps stays locked on
 startup until you enter it. There is no recovery path — if you forget it, you reinstall

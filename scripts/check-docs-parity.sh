@@ -52,6 +52,31 @@ def front_matter(p):
 def anchors(p):
     return set(re.findall(r"\{#([a-z0-9-]+)\}", p.read_text(encoding="utf-8")))
 
+# `nav:` maps a heading anchor to where the app opens when the chat answers
+# from that section (`settings/<tab>` or `view/<mode>`; see
+# src-tauri/src/services/help_docs/nav.rs for the allowed values). Anchors are
+# language-invariant, so the map must be identical in every language — a
+# section that navigates to Settings in English but nowhere in French is a
+# parity bug, the same as a missing anchor.
+NAV_TARGET = re.compile(r"^(settings|view)/[a-z]+$")
+
+def nav_map(p):
+    text = p.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return {}
+    fm = text.split("---", 2)[1]
+    out, in_nav = {}, False
+    for line in fm.splitlines():
+        if line.startswith("nav:"):
+            in_nav = True
+            continue
+        if in_nav and line.startswith("  ") and ":" in line:
+            k, v = line.strip().split(":", 1)
+            out[k.strip()] = v.strip()
+            continue
+        in_nav = False
+    return out
+
 for lang in langs:
     if lang == ref_lang:
         continue
@@ -79,6 +104,15 @@ for lang in langs:
             problems.append(f"{lang}/{name}: missing anchor {{#{missing}}}")
         for extra in sorted(ga - ra):
             problems.append(f"{lang}/{name}: anchor {{#{extra}}} not present in {ref_lang}")
+
+        rn, gn = nav_map(ref[name]), nav_map(got[name])
+        if rn != gn:
+            problems.append(f"{lang}/{name}: nav: map differs from {ref_lang} ({gn} vs {rn})")
+        for anchor, target in gn.items():
+            if anchor not in ga:
+                problems.append(f"{lang}/{name}: nav: key {anchor} is not a heading anchor on the page")
+            if not NAV_TARGET.match(target):
+                problems.append(f"{lang}/{name}: nav: target {target!r} is not settings/<tab> or view/<mode>")
 
 if problems:
     print("\ndocs parity FAILED:", file=sys.stderr)

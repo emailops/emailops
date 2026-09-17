@@ -2,6 +2,20 @@
 title: 'AI features'
 description: 'Chat with your mailbox, generate replies, classify mail, extract tasks — all running on a model you control.'
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 Every AI feature below runs through whichever backend you selected, and each one can be
@@ -55,7 +69,7 @@ that fits comfortably. A laptop and a workstation will therefore see different s
 Bigger models answer better and run slower, so the badge is a starting point rather than a
 rule. Full requirements are in [Installation](../installation/#with-local-ai).
 
-### Performance knobs
+### Performance knobs {#performance-knobs}
 
 - **Keep model loaded** — how long the model stays resident between turns (default 30
   minutes). Higher values skip the slow reload; `0` evicts it immediately and frees the
@@ -68,7 +82,7 @@ rule. Full requirements are in [Installation](../installation/#with-local-ai).
 - **Limit AI processing to recent emails** — skip embedding and classification for mail
   older than N days.
 
-## Chat with your mailbox
+## Chat with your mailbox {#chat-with-your-mailbox}
 
 Ask questions in natural language — *"what did the lawyer say about the contract?"*,
 *"summarise this thread"*, *"who still owes me an answer?"* — and get an answer with the
@@ -99,7 +113,7 @@ the answer.
 Advanced users can edit the system prompt and the retrieval prompts (query rewriting,
 reranking) in **Settings → AI Backend & Models → Chat prompts**.
 
-## AI drafts
+## AI drafts {#ai-drafts}
 
 An **AI Draft** button next to Reply All writes a reply grounded in the thread you are
 looking at. Configure a **persona** (one sentence on who the AI writes as), a **writing
@@ -145,19 +159,19 @@ pane starts a conversation with that thread as context.
 The board needs classification: it is empty until mail has been tagged, and it is not shown
 while AI features are off.
 
-## Semantic search
+## Semantic search {#semantic-search}
 
 Emails are embedded locally so search can match meaning, not just keywords — describe what
 you remember and EmailOps finds it. This also powers "find similar" and the retrieval step
 in chat. Pick which categories get embedded, and rebuild the index from scratch after
 changing the embedding model, in **Settings → AI Search**.
 
-## Translation
+## Translation {#translation}
 
 Translate buttons appear on emails written in another language and in the compose window.
 The translation prompt is editable like the others.
 
-## Tasks
+## Tasks {#tasks}
 
 *Experimental.* EmailOps scans mail for action items, commitments and deadlines and collects
 them in a Tasks panel. Because real commitments usually live in what **you** wrote, there is
@@ -165,20 +179,20 @@ a "learn only from emails I wrote" mode. You can exclude senders and tags (newsl
 excluded by default), cap tasks per email, limit how far back extraction goes, and backfill
 older mail on demand.
 
-## Memory
+## Memory {#memory}
 
 *Experimental.* Facts the assistant learns about your contacts, domains and projects are
 stored as long-term context so chat does not start from zero every time. Candidate facts are
 scored and promoted past a threshold; low-scoring ones expire. Everything it has learned is
 inspectable, and the whole subsystem has a master off switch.
 
-## Lenses
+## Lenses {#lenses}
 
 *Experimental.* Schema-typed views over your mailbox — saved, AI-extracted structured
 projections (think "all invoices with amount and due date") that you create and run from the
 sidebar.
 
-## Turning it all off
+## Turning it all off {#turning-it-all-off}
 
 **Settings → AI Backend & Models → AI Features** is a master switch. Turn it off and
 EmailOps runs as a plain email client: no chat, no classification, no embeddings, no model

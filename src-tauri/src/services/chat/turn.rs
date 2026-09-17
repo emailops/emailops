@@ -14,14 +14,14 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
     ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace,
-    ChatTraceEvent, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
+    ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
 
 use super::conversations::{derive_title, title_is_default};
 use super::retrieval::{
-    mark_relevant_region, retrieve_context_with_trace, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
+    mark_relevant_region, retrieve_context_full, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
     MAX_SOURCE_BODY_CHARS, TOP_K_SOURCES,
 };
 use super::routing::classify_route;
@@ -2980,6 +2980,7 @@ async fn run_thread_bound_turn(
                 tool_loop_ms,
                 llm_streaming_ms: None,
                 llm_calls: llm_calls.clone(),
+                help: None,
             };
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -3556,20 +3557,69 @@ pub async fn run_chat_turn(
     // final ChatTrace.
     let t_retrieve = std::time::Instant::now();
     emit_log("info", "stage: retrieve");
-    let (sources, retrieval_trace): (Vec<ScoredEmail>, Option<RetrievalTrace>) = match &route.mode {
-        RouteMode::ToolsFirst => {
-            emit_log("info", "retrieve: skipped (ToolsFirst route)");
-            (Vec::new(), None)
-        }
-        RouteMode::RagFirst => {
-            emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Retrieving);
-            match retrieve_context_with_trace(
+    let (sources, retrieval_trace, query_embedding): (Vec<ScoredEmail>, Option<RetrievalTrace>, Option<Vec<f32>>) =
+        match &route.mode {
+            RouteMode::ToolsFirst => {
+                emit_log("info", "retrieve: skipped (ToolsFirst route)");
+                (Vec::new(), None, None)
+            }
+            RouteMode::RagFirst => {
+                emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Retrieving);
+                match retrieve_context_full(
+                    &db,
+                    provider.as_ref(),
+                    &account_id,
+                    &user_question,
+                    &categories,
+                    TOP_K_SOURCES,
+                )
+                .await
+                {
+                    Ok((srcs, trace, embedding)) => {
+                        emit_log(
+                            "info",
+                            &format!(
+                                "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
+                                srcs.len(),
+                                trace.vector_hits,
+                                trace.fts_hits,
+                                trace.fused_top_k,
+                                t_retrieve.elapsed().as_millis()
+                            ),
+                        );
+                        (srcs, Some(trace), embedding)
+                    }
+                    Err(e) => {
+                        emit_log("error", &format!("retrieval error: {}", e));
+                        (Vec::new(), None, None)
+                    }
+                }
+            }
+        };
+
+    // ── 2b. EmailOps help lookup ─────────────────────────────────────────
+    // The bundled guides are a second, separate corpus: a question about the
+    // app itself ("how do I connect Ollama?") is answered from them, in the
+    // answer's language, and cited with a `help://` link. Runs on every route
+    // (the keyword router knows nothing about app questions) and reuses the
+    // query embedding when mailbox retrieval already computed it. Gated on
+    // vector similarity inside, so a mailbox question adds nothing to the
+    // prompt. Best-effort: any failure degrades to "no help block".
+    let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
+    let (help_sources, help_trace): (Vec<crate::services::help_docs::HelpSource>, Option<HelpTrace>) =
+        if db.is_help_docs_enabled().unwrap_or(true) {
+            // Text index on demand (one hash + one COUNT when up to date), so
+            // FTS works even before the prewarm has embedded the vectors.
+            if let Err(e) = crate::services::help_docs::ensure_text_index(&db) {
+                emit_log("warn", &format!("help index (text) failed: {e}"));
+            }
+            match crate::services::help_docs::lookup_help(
                 &db,
                 provider.as_ref(),
-                &account_id,
                 &user_question,
-                &categories,
-                TOP_K_SOURCES,
+                query_embedding.as_deref(),
+                ai_language.as_code(),
+                crate::services::help_docs::HELP_TOP_K,
             )
             .await
             {
@@ -3577,23 +3627,27 @@ pub async fn run_chat_turn(
                     emit_log(
                         "info",
                         &format!(
-                            "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
-                            srcs.len(),
-                            trace.vector_hits,
-                            trace.fts_hits,
-                            trace.fused_top_k,
-                            t_retrieve.elapsed().as_millis()
+                            "help: {} of {} guide sections pass the gate (top similarity {}, vectors={}) [{}ms]",
+                            trace.included,
+                            trace.candidates,
+                            trace
+                                .top_similarity
+                                .map(|s| format!("{s:.2}"))
+                                .unwrap_or_else(|| "n/a".to_string()),
+                            trace.vector_available,
+                            trace.elapsed_ms
                         ),
                     );
                     (srcs, Some(trace))
                 }
                 Err(e) => {
-                    emit_log("error", &format!("retrieval error: {}", e));
+                    emit_log("warn", &format!("help lookup failed: {e}"));
                     (Vec::new(), None)
                 }
             }
-        }
-    };
+        } else {
+            (Vec::new(), None)
+        };
 
     // ── 3. Persist citations + notify frontend ───────────────────────────
     // Include denormalized email metadata so the UI can render source details
@@ -3633,7 +3687,6 @@ pub async fn run_chat_turn(
     );
 
     // ── 4. Tool-call loop + streaming reply ─────────────────────────────
-    let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
     let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
     // Tools section is rendered from the registry so it stays in lockstep
     // with what `definitions(&db)` advertises to the LLM via the
@@ -3652,6 +3705,13 @@ pub async fn run_chat_turn(
         &tools_section,
         ambient_context.as_deref(),
     );
+
+    // The EmailOps-help block rides in the final user message for the same
+    // reason as the memory header below: it varies per turn, and any per-turn
+    // byte in the system message would invalidate the KV prefix.
+    if let Some(block) = crate::services::help_docs::render_help_block(&help_sources) {
+        prepend_to_final_user_message(&mut initial_messages, &block);
+    }
 
     // Inject the memory header into the final user message — but only when
     // the user has the Memory feature enabled. Disabling it in Settings
@@ -4080,6 +4140,24 @@ pub async fn run_chat_turn(
             if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
                 emit_log("error", &format!("failed to persist draft refs: {}", e));
             }
+            // An answer that cites a guide section with a `nav:` target opens
+            // that part of the app — the model's own citation is the signal,
+            // so a help block the answer ignored never moves the UI.
+            if let Some((target, src)) =
+                crate::services::help_docs::plan_help_navigation(&result.content, &help_sources)
+            {
+                emit_log(
+                    "info",
+                    &format!("help: answer cites {} — opening {}", src.link, target.as_wire()),
+                );
+                crate::services::events::emit(
+                    "chat-tool-effect",
+                    tools::ToolEffect::NavigateTo {
+                        target: target.as_wire(),
+                        title: src.title(),
+                    },
+                );
+            }
             #[cfg(feature = "tracing")]
             crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
                 model: provider.model_name().to_string(),
@@ -4188,6 +4266,7 @@ pub async fn run_chat_turn(
                 tool_loop_ms,
                 llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
                 llm_calls: llm_calls.clone(),
+                help: help_trace.clone(),
             };
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));

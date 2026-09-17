@@ -1,4 +1,63 @@
+import type { SettingsTab } from '@/components/Settings/SettingsDialog';
+import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { plainTextToHtml } from '@/lib/composeHtml';
+
+/** Settings tabs a guide section may open. Mirrors `SETTINGS_TABS` in
+ *  `src-tauri/src/services/help_docs/nav.rs`; typed against `SettingsTab` so
+ *  a tab that stops existing fails `tsc`, not the user. */
+export const NAVIGABLE_SETTINGS_TABS: readonly SettingsTab[] = [
+  'appearance',
+  'calendar',
+  'ai',
+  'classification',
+  'junk',
+  'tasks',
+  'memory',
+  'lenses',
+  'aidrafts',
+  'aitranslation',
+  'aisearch',
+  'privacy',
+];
+
+/** Main views a guide section may open. Mirrors `VIEWS` in `nav.rs`. */
+export const NAVIGABLE_VIEWS: readonly ViewMode[] = [
+  'inbox',
+  'attachments',
+  'contacts',
+  'drafts',
+  'sent',
+  'spam',
+  'deleted',
+  'calendar',
+  'chat',
+  'tasks',
+  'memory',
+  'lenses',
+  'tagboard',
+  'dashboard',
+];
+
+export type NavTarget = { kind: 'settings'; tab: SettingsTab } | { kind: 'view'; view: ViewMode };
+
+/** Parse a `navigateTo` target (`settings/<tab>` | `view/<mode>`). `null`
+ *  for anything outside the allowlists — the backend validates too, but a
+ *  version skew must never open something that does not exist. */
+export function parseNavTarget(target: string): NavTarget | null {
+  const slash = target.indexOf('/');
+  if (slash === -1) return null;
+  const kind = target.slice(0, slash);
+  const name = target.slice(slash + 1);
+  if (kind === 'settings') {
+    const tab = NAVIGABLE_SETTINGS_TABS.find((t) => t === name);
+    return tab ? { kind: 'settings', tab } : null;
+  }
+  if (kind === 'view') {
+    const view = NAVIGABLE_VIEWS.find((v) => v === name);
+    return view ? { kind: 'view', view } : null;
+  }
+  return null;
+}
 
 /**
  * Side-effect a chat tool can ask the frontend to perform after a
@@ -20,6 +79,15 @@ export type ChatToolEffectPayload =
       subject: string;
       body: string;
     }
+  | {
+      /** Open a part of the app after an answer that cites a guide section
+       *  carrying a `nav:` target (see `services::help_docs::nav`). */
+      kind: 'navigateTo';
+      /** `settings/<tab>` or `view/<mode>`. */
+      target: string;
+      /** The cited section, e.g. "AI features › Choosing a backend". */
+      title: string;
+    }
   // Unknown kinds are passed through so the handler can log them without
   // throwing — future variants on the backend shouldn't crash an older UI.
   | { kind: string; [field: string]: unknown };
@@ -40,6 +108,11 @@ export interface ChatToolEffectHandlers {
    *  visible. Without this the tab is created but stays hidden behind the
    *  chat view (the email tab bar only renders for the inbox-family views). */
   navigateToInbox: () => void;
+  /** Open the Settings dialog on `tab`. Optional so older call sites and
+   *  tests that never navigate keep compiling. */
+  openSettingsTab?: (tab: SettingsTab) => void;
+  /** Switch the main view. Same optionality as `openSettingsTab`. */
+  navigateToView?: (view: ViewMode) => void;
   /** Optional logger — info/success/error/debug. Matches `useLogStore.addLog`. */
   log?: (level: 'info' | 'success' | 'error' | 'debug', source: 'ai', message: string) => void;
 }
@@ -82,6 +155,35 @@ export function handleChatToolEffect(payload: ChatToolEffectPayload, handlers: C
       handlers.navigateToInbox();
       handlers.openComposeTab(p.accountId, p.toAddresses ?? [], p.subject, plainTextToHtml(p.body));
       log('success', 'ai', `Composer opened from chat (draft ${p.draftId ?? '?'})`);
+      return;
+    }
+    case 'navigateTo': {
+      const p = payload as Extract<ChatToolEffectPayload, { kind: 'navigateTo' }>;
+      if (typeof p.target !== 'string') {
+        log('error', 'ai', `navigateTo effect missing target: ${JSON.stringify(payload)}`);
+        return;
+      }
+      const target = parseNavTarget(p.target);
+      if (!target) {
+        log('error', 'ai', `navigateTo effect ignored — unknown target "${p.target}"`);
+        return;
+      }
+      const title = typeof p.title === 'string' && p.title.length > 0 ? p.title : p.target;
+      if (target.kind === 'settings') {
+        if (!handlers.openSettingsTab) {
+          log('debug', 'ai', 'navigateTo effect ignored — no settings handler wired');
+          return;
+        }
+        handlers.openSettingsTab(target.tab);
+        log('success', 'ai', `Opened Settings › ${target.tab} from chat (${title})`);
+        return;
+      }
+      if (!handlers.navigateToView) {
+        log('debug', 'ai', 'navigateTo effect ignored — no view handler wired');
+        return;
+      }
+      handlers.navigateToView(target.view);
+      log('success', 'ai', `Opened ${target.view} from chat (${title})`);
       return;
     }
     default:

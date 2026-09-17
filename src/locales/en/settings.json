@@ -86,6 +86,8 @@
     "routingAlwaysRag": "Always RAG first (default)",
     "routingAuto": "Auto (heuristic-routed)",
     "routingAlwaysTools": "Always tools first",
+    "helpDocs": "Answer questions about EmailOps",
+    "helpDocsHelp": "The chat answers “how do I…” questions about the app from the built-in guides, links the section and opens the matching setting or view. Off: the chat only knows your mailbox.",
     "keepAlive": "Keep model loaded (minutes)",
     "keepAliveHelpStart": "How long to keep the local model in RAM between chat turns. Higher values skip the slow GGUF reload — at the cost of memory. Use",
     "keepAliveHelpMiddle": "to pin forever, or",

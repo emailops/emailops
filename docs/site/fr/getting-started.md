@@ -2,12 +2,16 @@
 title: 'Premiers pas'
 description: "L'assistant de premier lancement : choisir un backend d'IA, télécharger un modèle et connecter votre première boîte."
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 Au premier lancement d'EmailOps, un assistant en quatre étapes se déclenche. Comptez quelques
 minutes, dont l'essentiel est le téléchargement d'un modèle en arrière-plan.
 
-## 1. IA activée ou non
+## 1. IA activée ou non {#ai-on-or-off}
 
 EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Choisissez :
 
@@ -17,7 +21,7 @@ EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Ch
   effectué. Vous pourrez activer l'IA plus tard dans **Paramètres → IA : backend et modèles**,
   et la désactiver tout aussi facilement.
 
-## 2. Backend et modèle d'IA
+## 2. Backend et modèle d'IA {#ai-backend-and-model}
 
 Si vous avez activé l'IA, choisissez où se déroule l'inférence :
 
@@ -42,7 +46,7 @@ Le modèle d'embeddings qui alimente la recherche sémantique (**Nomic Embed Tex
 ~80 Mo) est livré dans l'application sur macOS : il n'y a rien à télécharger pour la
 recherche.
 
-## 3. Disposition de la boîte
+## 3. Disposition de la boîte {#inbox-layout}
 
 Choisissez la disposition — **divisée** (liste à gauche, message à droite) ou **pleine
 largeur** (un panneau à la fois). Modifiable à tout moment dans **Paramètres → Apparence**, avec

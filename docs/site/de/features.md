@@ -2,6 +2,13 @@
 title: 'Standardfunktionen'
 description: 'Der E-Mail-Client selbst: Konten, vereinter Posteingang, Kalender, Anhänge, Suche und Junk-Filterung.'
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 Alles auf dieser Seite funktioniert auch mit ausgeschalteter KI. Die KI-Ebene wird separat
@@ -21,7 +28,7 @@ aus der Gmail-Einstellung „Senden als“, IMAP-Konten den Anzeigenamen, den Si
 angegeben haben. Über Outlook gesendete E-Mails tragen den Namen, den Microsoft für das
 Postfach hinterlegt hat.
 
-## Vereinter Posteingang
+## Vereinter Posteingang {#unified-inbox}
 
 Die Ansicht **Alle Konten** führt jedes aktivierte Postfach in einer Liste zusammen, neben den
 Ansichten je Konto. Eigene IMAP-Ordner werden ebenfalls synchronisiert, und Sie können sie
@@ -42,7 +49,7 @@ praktisch, um einen Kunden, ein Projekt oder eine Newsletter-Flut am Stück abzu
 aktivierter KI speisen dieselben Kennzeichnungen auch das [Tag-Board](../ai-features/#tag-board),
 das sie als Raster aus Blöcken darstellt.
 
-## Kalender
+## Kalender {#calendar}
 
 Monats-, Wochen- und Tagesansichten je Konto für Google Kalender und Outlook. Sie erhalten vor
 jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Teilnehmen** für Meet-, Teams-, Webex-
@@ -56,7 +63,7 @@ Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Ra
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 **Einstellungen → Kalender**.
 
-## Anhänge-Ansicht
+## Anhänge-Ansicht {#attachments-view}
 
 Ein Ort mit allen Anhängen aus Ihrem Postfach — Rechnungen, Verträge, Bilder — mit Vorschau
 und Export, statt sich erneut durch Threads zu graben.
@@ -66,7 +73,7 @@ und Export, statt sich erneut durch Threads zu graben.
 Volltextsuche über Betreff, Inhalt, Absender und Anhänge. Mit aktivierter KI kommt die
 semantische Suche hinzu, die nach Bedeutung statt nach exakten Wörtern sucht.
 
-## Junk und Massen-E-Mails
+## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 
 EmailOps bewertet jede eingehende Nachricht lokal auf Spam und unerwünschte Massen-E-Mails.
 Dabei ist kein Modell und kein Netzwerkaufruf beteiligt, und Ihre Korrekturen („Junk“ / „kein
@@ -81,13 +88,13 @@ Keine der beiden Optionen verschiebt oder löscht etwas auf dem Server; das tut 
 ausdrückliches **Als Spam bestätigen**. Eine optionale Warnung vor Identitätsmissbrauch/Phishing
 ist verfügbar und standardmäßig aus.
 
-## Datenschutz- und Sicherheitseinstellungen
+## Datenschutz- und Sicherheitseinstellungen {#privacy-and-security-controls}
 
 Ein Hauptpasswort sperrt die App beim Start, entfernte Bilder und Tracking-Pixel werden
 blockiert, bis Sie sie erlauben, und Zugangsdaten liegen im Schlüsselbund des Systems. Alles
 davon steht unter [Datenschutz und Sicherheit](../privacy-security/).
 
-## Oberfläche
+## Oberfläche {#interface}
 
 Posteingang in geteilter Ansicht oder in voller Breite, und eine Oberfläche auf Deutsch,
 Englisch, Spanisch und Französisch. Die Ausgabesprache der KI wird separat eingestellt — Sie

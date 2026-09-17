@@ -43,8 +43,30 @@ different fragment spellings. When you add a link to a heading, give that headin
 id first — in all four files.
 
 Current ids: `with-local-ai`, `direct-download`, `linux` (installation);
-`choosing-a-backend`, `the-model-catalog`, `classification`, `tag-board` (ai-features);
-`where-your-data-is-stored` (privacy-security).
+`choosing-a-backend`, `the-model-catalog`, `performance-knobs`, `chat-with-your-mailbox`,
+`ai-drafts`, `classification`, `tag-board`, `semantic-search`, `translation`, `tasks`,
+`memory`, `lenses`, `turning-it-all-off` (ai-features); `unified-inbox`, `calendar`,
+`attachments-view`, `junk-and-bulk-mail`, `privacy-and-security-controls`, `interface`
+(features); `ai-on-or-off`, `ai-backend-and-model`, `inbox-layout` (getting-started);
+`where-your-data-is-stored`, `protection-from-the-mail-itself`, `locking-the-app`
+(privacy-security); `ai-features-are-unavailable`, `chat-is-slow`, `gpu-not-used`,
+`search-returns-keyword-results-only`, `classification-is-not-tagging-anything`
+(troubleshooting).
+
+## The pages are also the chat's help corpus
+
+The app embeds every page here (`include_str!` in
+`src-tauri/src/services/help_docs/corpus.rs`) and indexes it, section by section, so the
+chat can answer "how do I…" questions about EmailOps from the guides and link the section.
+Two consequences:
+
+- **A stale guide is a wrong chat answer.** Treat these pages as code: a settings path or
+  feature name that no longer matches the app misleads the assistant with full confidence.
+- **`nav:` in the front matter says where the app opens** when an answer cites a section
+  (`settings/<tab>` or `view/<mode>`, keyed on the heading's stable id). Give the heading an
+  id first, then add the same `nav:` line in all four languages — the parity check fails on
+  a map that differs between languages, and `src-tauri/src/services/help_docs/nav.rs` lists
+  the tabs and views that exist.
 
 ## How it reaches the site
 
