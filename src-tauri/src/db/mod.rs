@@ -295,8 +295,8 @@ impl Database {
         Ok(())
     }
 
-    /// Re-create the vec0 virtual tables (`vec_emails`, `vec_memory_facts`)
-    /// idempotently. Required because the demo bootstrap copies prod schema
+    /// Re-create the vec0 virtual tables (`vec_emails`, `vec_memory_facts`,
+    /// `vec_help_docs`) idempotently. Required because the demo bootstrap copies prod schema
     /// but skips vec0 tables (sqlite-vec isn't loaded in stock Python sqlite3)
     /// and also copies `refinery_schema_history`, which makes refinery skip
     /// V001 on subsequent opens. Without this step the demo DB starts up
@@ -308,6 +308,9 @@ impl Database {
                  embedding float[768] distance_metric=cosine
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory_facts USING vec0(
+                 embedding float[768] distance_metric=cosine
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS vec_help_docs USING vec0(
                  embedding float[768] distance_metric=cosine
              );",
         )?;
@@ -1059,16 +1062,20 @@ mod schema_parity_tests {
         // idempotently on every startup.
         let db = Database::new_for_testing().expect("create test db");
         db.connection()
-            .execute_batch("DROP TABLE vec_emails; DROP TABLE vec_memory_facts;")
+            .execute_batch("DROP TABLE vec_emails; DROP TABLE vec_memory_facts; DROP TABLE vec_help_docs;")
             .expect("drop vec tables");
         let before = names_of_kind(&db, "table");
         assert!(!before.iter().any(|t| t == "vec_emails"));
         assert!(!before.iter().any(|t| t == "vec_memory_facts"));
+        assert!(!before.iter().any(|t| t == "vec_help_docs"));
 
         db.ensure_virtual_tables().expect("ensure virtual tables");
 
         let after = names_of_kind(&db, "table");
         assert!(after.iter().any(|t| t == "vec_emails"));
         assert!(after.iter().any(|t| t == "vec_memory_facts"));
+        // The guides index (V023) is a vec0 table too: a demo DB that lacks
+        // it fails every help lookup with "no such table: vec_help_docs".
+        assert!(after.iter().any(|t| t == "vec_help_docs"));
     }
 }
