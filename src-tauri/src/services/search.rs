@@ -449,6 +449,22 @@ async fn structured_search(
         );
     }
 
+    if !parsed.id_filters.is_empty() {
+        let mut results = Vec::new();
+        for account in target_accounts {
+            results.extend(db.get_account_emails_by_ids(account, &parsed.id_filters, categories)?);
+        }
+        results.retain(|email| matches_parsed_filters(email, parsed));
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+        emit_log(
+            app,
+            "debug",
+            "search",
+            &format!("Structured: id lookup returned {} results", results.len()),
+        );
+        return Ok(emails_to_scored(results, Some(&filter_reason)));
+    }
+
     let t_db = std::time::Instant::now();
     emit_log(
         app,
@@ -1332,6 +1348,53 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
         assert_eq!(ids, vec!["e1"], "single-account search must not leak other accounts");
+    }
+
+    // The `id:` operator (chat "show in list") returns exactly the cited
+    // emails — even two from the same thread — and nothing else.
+    #[tokio::test]
+    async fn search_by_ids_returns_exactly_those_emails() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc1", "t1", "Re: Invoice January", 200);
+        seed_searchable_email(&db, "e3", "acc1", "t2", "Lunch plans", 300);
+
+        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["e2", "e1"]);
+    }
+
+    #[tokio::test]
+    async fn search_by_ids_in_unified_mode_spans_enabled_accounts() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_account(&db, "acc2", "a2@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "acc2::7", "acc2", "t2", "Invoice February", 200);
+        seed_searchable_email(&db, "acc2::8", "acc2", "t3", "Invoice March", 300);
+
+        let result = search_emails(&db, None, "id:e1 id:acc2::7", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["acc2::7", "e1"]);
+    }
+
+    #[tokio::test]
+    async fn search_by_ids_still_applies_other_operators() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc1", "t2", "Lunch plans", 200);
+
+        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2 subject:invoice", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"]);
     }
 
     fn open_prod_db() -> Option<(Arc<Database>, String)> {

@@ -656,6 +656,44 @@ impl Database {
         Ok(result)
     }
 
+    /// The `id:` search operator: the requested emails that belong to
+    /// `account_id` and would be visible in search (not deleted, not in
+    /// spam/trash, in one of `categories` when given), newest first. No thread
+    /// dedup — the caller asked for these exact emails.
+    pub fn get_account_emails_by_ids(
+        &self,
+        account_id: &str,
+        email_ids: &[String],
+        categories: Option<&[String]>,
+    ) -> Result<Vec<Email>> {
+        if email_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let categories = categories.filter(|c| !c.is_empty()).unwrap_or(&[]);
+
+        let id_placeholders = vec!["?"; email_ids.len()].join(", ");
+        let category_clause = if categories.is_empty() {
+            String::new()
+        } else {
+            format!(" AND category IN ({})", vec!["?"; categories.len()].join(", "))
+        };
+        let sql = format!(
+            "SELECT {EMAIL_COLUMNS}
+             FROM emails
+             WHERE account_id = ? AND is_deleted = 0 AND mailbox NOT IN ('spam', 'trash')
+               AND id IN ({id_placeholders}){category_clause}
+             ORDER BY timestamp DESC, id DESC"
+        );
+
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let params = std::iter::once(account_id)
+            .chain(email_ids.iter().map(String::as_str))
+            .chain(categories.iter().map(String::as_str));
+        let emails = stmt.query_map(rusqlite::params_from_iter(params), row_to_email)?;
+        Ok(emails.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Get the most recent email timestamp for an account (seconds since epoch)
     pub fn get_latest_email_timestamp(&self, account_id: &str) -> Result<Option<i64>> {
         let conn = self.reader();
@@ -860,6 +898,52 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    #[test]
+    fn account_emails_by_ids_returns_only_live_visible_rows_of_that_account_newest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email_with_category(&db, "old", "acc1", "t1", 100, "primary");
+        insert_email_with_category(&db, "new", "acc1", "t1", 200, "updates");
+        insert_email_with_category(&db, "other-account", "acc2", "t2", 300, "primary");
+        insert_email_with_category(&db, "deleted", "acc1", "t3", 300, "primary");
+        insert_email_with_category(&db, "spam", "acc1", "t4", 300, "primary");
+        insert_email_with_category(&db, "trash", "acc1", "t5", 300, "primary");
+        insert_email_with_category(&db, "not-asked", "acc1", "t6", 300, "primary");
+        db.delete_email("deleted").unwrap();
+        db.connection()
+            .execute("UPDATE emails SET mailbox = id WHERE id IN ('spam', 'trash')", [])
+            .unwrap();
+        let ids: Vec<String> = ["old", "new", "other-account", "deleted", "spam", "trash", "missing"]
+            .map(String::from)
+            .to_vec();
+
+        let found: Vec<String> = db
+            .get_account_emails_by_ids("acc1", &ids, None)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+
+        assert_eq!(found, vec!["new", "old"]);
+    }
+
+    #[test]
+    fn account_emails_by_ids_honours_categories() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email_with_category(&db, "p", "acc1", "t1", 100, "primary");
+        insert_email_with_category(&db, "u", "acc1", "t2", 200, "updates");
+        let ids = vec!["p".to_string(), "u".to_string()];
+        let categories = vec!["primary".to_string()];
+
+        let found: Vec<String> = db
+            .get_account_emails_by_ids("acc1", &ids, Some(&categories))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+
+        assert_eq!(found, vec!["p"]);
+    }
 
     #[test]
     fn emails_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
