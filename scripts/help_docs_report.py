@@ -25,7 +25,9 @@ def load(p):
         return None
 
 def esc(s):
-    return html.escape(str(s if s is not None else ""))
+    # Small local models occasionally emit a broken code point (U+FFFD); it
+    # carries no information and the artifact host rejects it.
+    return html.escape(str(s if s is not None else "").replace("\ufffd", ""))
 
 DOCS = "https://getemailops.com"
 def md_to_html(text):
@@ -38,8 +40,20 @@ def md_to_html(text):
     t = re.sub(r"\[([^\]]+)\]\(help://([a-z]{2})/([a-z0-9-]+)(?:#([^)\s]+))?\)", help_link, t)
     t = re.sub(r"\[([^\]]+)\]\(email://[^)]+\)", r'<span class="chip">\1</span>', t)
     t = re.sub(r"\[([^\]]+)\]\(draft://[^)]+\)", r'<span class="chip">\1</span>', t)
-    paras = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
-    return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paras)
+    # Fenced code → <pre>; then bold and inline code in the prose.
+    t = re.sub(r"```[a-z]*\n(.*?)```", lambda m: "<pre>" + m.group(1).strip() + "</pre>", t, flags=re.S)
+    t = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", t)
+    t = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", t)
+    out = []
+    for block in re.split(r"\n\s*\n", t):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith("<pre>"):
+            out.append(block)
+        else:
+            out.append(f"<p>{block.replace(chr(10), '<br>')}</p>")
+    return "".join(out)
 
 def turn_of(envelope):
     if not envelope or not envelope.get("ok"):
@@ -82,7 +96,8 @@ def trace_line(tr):
     route = (tr.get("route") or {}).get("mode", "—")
     tools = [c.get("name") for c in tr.get("toolCalls") or []]
     h = tr.get("help")
-    hs = "sin bloque de ayuda" if not h else f"ayuda: {h.get('included')}/{h.get('candidates')} secciones, sim {h.get('topSimilarity') if h.get('topSimilarity') is not None else '—'}"
+    sim = h.get("topSimilarity") if h else None
+    hs = "sin bloque de ayuda" if not h else f"ayuda: {h.get('included')}/{h.get('candidates')} secciones, sim {f'{sim:.2f}' if sim is not None else '—'}"
     return f"ruta {route} · tools {', '.join(tools) if tools else 'ninguna'} · {hs} · {fmt_ms(tr.get('totalElapsedMs'))}"
 
 # ── eval table ────────────────────────────────────────────────────────────
@@ -209,7 +224,7 @@ ul.checks li {{ padding:3px 0 3px 18px; position:relative; }}
 ul.checks li::before {{ content:"✓"; position:absolute; left:0; color:var(--good); }}
 ul.checks li.ko::before {{ content:"✗"; color:var(--bad); }}
 ol.flow {{ padding-left:22px; }} ol.flow li {{ margin:6px 0; }}
-pre {{ background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:12px 14px; font-family:var(--mono); font-size:12.5px; overflow-x:auto; }}
+pre {{ background:var(--ground); border:1px solid var(--line); border-radius:6px; padding:10px 12px; font-family:var(--mono); font-size:12.5px; overflow-x:auto; margin:6px 0 10px; white-space:pre-wrap; }}
 code {{ font-family:var(--mono); font-size:13px; background:var(--accent-soft); padding:0 4px; border-radius:3px; }}
 .note {{ border-left:3px solid var(--warn); padding:6px 12px; background:var(--surface); margin:12px 0; }}
 </style>
