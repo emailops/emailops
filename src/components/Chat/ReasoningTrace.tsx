@@ -175,6 +175,30 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
   );
 }
 
+/** The guides lookup of the turn: how many sections matched, how many passed
+ *  the similarity gate, and the best similarity — the numbers to read when a
+ *  question about the app got no help block (gate too high) or a mailbox
+ *  question got one (gate too low). */
+function HelpDetail({ trace }: { trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  const h = trace.help;
+  if (!h || h.candidates === 0) {
+    return null;
+  }
+  const sim = h.topSimilarity != null ? ` · sim ${h.topSimilarity.toFixed(2)}` : '';
+  return (
+    <div>
+      <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
+        {t('chat:reasoning.trace.step.helpDocs')}
+      </div>
+      <div className="text-xs text-gray-700">
+        {t('chat:reasoning.trace.helpSections', { included: h.included, candidates: h.candidates })}
+        {sim} · {formatLatency(h.elapsedMs)}
+      </div>
+    </div>
+  );
+}
+
 /** Per-step retrieval timings + counts — the granular detail a developer wants
  *  when the retrieval step in the flow looks slow. */
 function RetrievalDetail({ trace }: { trace: ChatTrace }) {
@@ -307,6 +331,7 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
 
           {/* Per-step retrieval breakdown */}
           <RetrievalDetail trace={trace} />
+          <HelpDetail trace={trace} />
 
           {/* Flow — every LLM call and tool call in true execution order so the
               turn reads top to bottom: preseeded shortcut tools → tool_round 0

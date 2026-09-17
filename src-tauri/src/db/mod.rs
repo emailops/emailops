@@ -20,6 +20,7 @@ pub mod emails;
 pub mod embeddings;
 pub mod filters;
 pub mod folders;
+pub mod help_docs;
 pub mod lenses;
 pub mod memory;
 pub mod tags;
@@ -955,6 +956,7 @@ mod schema_parity_tests {
             "calendar_events",
             "calendar_sync_state",
             "calendars",
+            "help_doc_chunks",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),
@@ -969,7 +971,14 @@ mod schema_parity_tests {
         // queries silently return zero rows and tests pass for the wrong reason.
         let db = Database::new_for_testing().expect("create test db");
         let tables = names_of_kind(&db, "table");
-        for required in ["emails_fts", "memory_facts_fts", "vec_emails", "vec_memory_facts"] {
+        for required in [
+            "emails_fts",
+            "memory_facts_fts",
+            "vec_emails",
+            "vec_memory_facts",
+            "help_docs_fts",
+            "vec_help_docs",
+        ] {
             assert!(
                 tables.iter().any(|t| t == required),
                 "test DB missing required virtual table `{required}`. Tables present: {tables:?}"

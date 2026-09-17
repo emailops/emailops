@@ -554,7 +554,7 @@ fn normalize_fts_word(w: &str) -> Option<String> {
 ///
 /// Falls back to a 2-char / no-stopword-filter pass if the aggressive filter
 /// leaves us with nothing (e.g. the user asked a very short one-word query).
-fn escape_fts_query(query: &str) -> String {
+pub(crate) fn escape_fts_query(query: &str) -> String {
     let (phrases, remainder) = extract_quoted_phrases(query);
 
     let mut parts: Vec<String> = Vec::new();

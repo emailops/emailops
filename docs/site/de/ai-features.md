@@ -2,6 +2,20 @@
 title: 'KI-Funktionen'
 description: 'Mit dem Postfach chatten, Antworten erzeugen, E-Mails klassifizieren, Aufgaben extrahieren — alles auf einem Modell, das Sie kontrollieren.'
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 Alle KI-Funktionen unten laufen über das von Ihnen gewählte Backend, und jede lässt sich
@@ -58,7 +72,7 @@ Laptop und eine Workstation sehen deshalb unterschiedliche Vorschläge. Größer
 antworten besser und laufen langsamer — die Markierung ist ein Ausgangspunkt, keine Regel.
 Die vollständigen Anforderungen stehen unter [Installation](../installation/#with-local-ai).
 
-### Leistungsstellschrauben
+### Leistungsstellschrauben {#performance-knobs}
 
 - **Modell geladen halten** — wie lange das Modell zwischen zwei Anfragen im Speicher bleibt
   (Standard 30 Minuten). Höhere Werte ersparen das langsame Nachladen; `0` entlädt es sofort
@@ -71,7 +85,7 @@ Die vollständigen Anforderungen stehen unter [Installation](../installation/#wi
 - **KI-Verarbeitung auf neuere E-Mails beschränken** — überspringt Embeddings und
   Klassifizierung für E-Mails, die älter als N Tage sind.
 
-## Mit dem Postfach chatten
+## Mit dem Postfach chatten {#chat-with-your-mailbox}
 
 Fragen Sie in natürlicher Sprache — *„Was hat der Anwalt zum Vertrag gesagt?“*, *„Fasse diesen
 Thread zusammen“*, *„Wer schuldet mir noch eine Antwort?“* — und erhalten Sie eine Antwort mit
@@ -104,7 +118,7 @@ Kontext abgerufen wird.
 Fortgeschrittene können den System-Prompt und die Retrieval-Prompts (Query-Umschreibung,
 Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** bearbeiten.
 
-## KI-Entwürfe
+## KI-Entwürfe {#ai-drafts}
 
 Ein Button **KI-Entwurf** neben „Allen antworten“ schreibt eine Antwort, die im gerade
 geöffneten Thread verankert ist. Konfigurieren Sie eine **Persona** (ein Satz dazu, als wer
@@ -154,7 +168,7 @@ startet eine Unterhaltung mit diesem Thread als Kontext.
 Das Board braucht die Klassifizierung: Es bleibt leer, bis E-Mails gekennzeichnet sind, und
 wird bei ausgeschalteten KI-Funktionen nicht angezeigt.
 
-## Semantische Suche
+## Semantische Suche {#semantic-search}
 
 E-Mails werden lokal eingebettet, damit die Suche nach Bedeutung statt nur nach Stichwörtern
 trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das treibt auch
@@ -162,12 +176,12 @@ trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das
 **Einstellungen → KI-Suche**, welche Kategorien eingebettet werden, und bauen Sie den Index
 nach einem Wechsel des Embedding-Modells von Grund auf neu.
 
-## Übersetzung
+## Übersetzung {#translation}
 
 Bei E-Mails in einer anderen Sprache und im Verfassen-Fenster erscheinen
 Übersetzen-Schaltflächen. Der Übersetzungs-Prompt ist wie die anderen bearbeitbar.
 
-## Aufgaben
+## Aufgaben {#tasks}
 
 *Experimentell.* EmailOps durchsucht E-Mails nach Handlungspunkten, Zusagen und Fristen und
 sammelt sie in einem Aufgaben-Bereich. Da echte Zusagen meist in dem stehen, was **Sie**
@@ -176,20 +190,20 @@ können Absender und Kennzeichnungen ausschließen (Newsletter sind standardmä�
 ausgeschlossen), Aufgaben pro E-Mail begrenzen, den Rückblickzeitraum einschränken und ältere
 E-Mails bei Bedarf nacharbeiten lassen.
 
-## Gedächtnis
+## Gedächtnis {#memory}
 
 *Experimentell.* Fakten, die der Assistent über Ihre Kontakte, Domains und Projekte lernt,
 werden als Langzeitkontext gespeichert, damit der Chat nicht jedes Mal bei null beginnt.
 Kandidaten-Fakten werden bewertet und ab einem Schwellenwert übernommen; schlecht bewertete
 laufen aus. Alles Gelernte ist einsehbar, und das gesamte Teilsystem hat einen Hauptschalter.
 
-## Linsen
+## Linsen {#lenses}
 
 *Experimentell.* Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
 strukturierte Projektionen (etwa „alle Rechnungen mit Betrag und Fälligkeit“), die Sie in der
 Seitenleiste anlegen und ausführen.
 
-## Alles abschalten
+## Alles abschalten {#turning-it-all-off}
 
 **Einstellungen → KI: Backend & Modelle → KI-Funktionen** ist ein Hauptschalter. Schalten Sie
 ihn aus, und EmailOps läuft als reiner E-Mail-Client: kein Chat, keine Klassifizierung, keine

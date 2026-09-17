@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useAiStore } from '@/stores/aiStore';
+import { useHelpDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
 import type { CatalogModel, ModelDownloadProgress } from '@/types';
 import { AiSharedPreferences } from './AiSettings/AiSharedPreferences';
@@ -82,6 +83,7 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   const [apiKey, setApiKey] = useState('');
   const [routingMode, setRoutingMode] = useState<RoutingMode>(DEFAULT_ROUTING_MODE);
   const [aiOutputLanguage, setAiOutputLanguage] = useState<string>('Spanish');
+  const { enabled: helpDocsEnabled, setEnabled: setHelpDocsEnabled } = useHelpDocsEnabledStore();
   // Minutes the local model is kept in RAM between chat turns. 0 = evict
   // immediately after use, -1 / empty-input = pin forever. Stored as seconds
   // in the `chat.keep_alive_seconds` preference.
@@ -613,6 +615,12 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
                 showContextWindow={config.provider === 'llamacpp'}
                 aiOutputLanguage={aiOutputLanguage}
                 onOutputLanguageChange={setAiOutputLanguage}
+                helpDocsEnabled={helpDocsEnabled}
+                onHelpDocsEnabledChange={(v) => {
+                  setHelpDocsEnabled(v).catch((err) =>
+                    addLog('error', 'ai', `Failed to save help_docs_enabled: ${err}`),
+                  );
+                }}
               />
 
               {/* ── Chat prompts (system + advanced retrieval prompts) ──────────── */}

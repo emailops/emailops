@@ -672,6 +672,20 @@ export interface LlmCallTrace {
   output?: string | null;
 }
 
+/** Mirrors `HelpTrace` on the Rust side: the guides lookup of one turn. */
+export interface HelpTrace {
+  /** Language the sections were served in. */
+  lang: string;
+  /** Distinct sections FTS + vector search returned before the gate. */
+  candidates: number;
+  /** Sections that passed the similarity gate and rode in the prompt. */
+  included: number;
+  topSimilarity?: number | null;
+  vectorAvailable: boolean;
+  elapsedMs: number;
+  chunkIds?: string[];
+}
+
 export interface ChatTrace {
   route: RouteDecision;
   retrieval?: RetrievalTrace | null;
@@ -685,6 +699,8 @@ export interface ChatTrace {
   llmStreamingMs?: number | null;
   /** Per-LLM-call latency breakdown — each tool round + the final stream. */
   llmCalls?: LlmCallTrace[];
+  /** What the EmailOps-help lookup (bundled guides) did this turn. */
+  help?: HelpTrace | null;
 }
 
 export interface ChatRenamedEvent {

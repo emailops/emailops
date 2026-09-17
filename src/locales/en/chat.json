@@ -99,7 +99,8 @@
         "vectorSearch": "Vector search",
         "ftsSearch": "FTS search",
         "fetchMetadata": "Fetch metadata",
-        "threadExpansion": "Thread expansion"
+        "threadExpansion": "Thread expansion",
+        "helpDocs": "EmailOps help"
       },
       "noCalls": "no calls",
       "fallbackSkipped": "fallback (skipped)",
@@ -118,7 +119,8 @@
       "toolCallsRequested": "{{n}} tool calls",
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "KV cache {{cached}}/{{total}} tok ({{pct}}%)",
-      "kvCacheMiss": "KV cache 0/{{total}} tok (cold)"
+      "kvCacheMiss": "KV cache 0/{{total}} tok (cold)",
+      "helpSections": "{{included}} of {{candidates}} guide sections"
     }
   },
   "sources": {

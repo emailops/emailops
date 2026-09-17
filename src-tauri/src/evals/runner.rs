@@ -100,6 +100,14 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     // ── 4. Resolve model ────────────────────────────────────────────────────
     let default_model = resolve_default_model(&db);
     eprintln!("[eval] default model = {}", default_model);
+    // The guides index the app builds at prewarm; app-help cases need it.
+    {
+        let provider = crate::services::ai::AiService::load_provider_with_model(&db, Some(&default_model))
+            .map_err(|e| EvalError::Config(format!("provider for help index: {e}")))?;
+        crate::services::help_docs::ensure_index(&db, provider.as_ref())
+            .await
+            .map_err(|e| EvalError::Config(format!("help index: {e}")))?;
+    }
 
     // ── 5. Load cases ───────────────────────────────────────────────────────
     let mut cases = load_cases(&cfg.cases_dir)?;

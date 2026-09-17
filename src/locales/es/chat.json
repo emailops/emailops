@@ -99,7 +99,8 @@
         "vectorSearch": "Búsqueda vectorial",
         "ftsSearch": "Búsqueda FTS",
         "fetchMetadata": "Obtener metadatos",
-        "threadExpansion": "Expansión del hilo"
+        "threadExpansion": "Expansión del hilo",
+        "helpDocs": "Ayuda de EmailOps"
       },
       "noCalls": "sin llamadas",
       "fallbackSkipped": "reserva (omitida)",
@@ -118,7 +119,8 @@
       "toolCallsRequested": "{{n}} llamadas a herramientas",
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "caché KV {{cached}}/{{total}} tok ({{pct}}%)",
-      "kvCacheMiss": "caché KV 0/{{total}} tok (fría)"
+      "kvCacheMiss": "caché KV 0/{{total}} tok (fría)",
+      "helpSections": "{{included}} de {{candidates}} secciones de las guías"
     }
   },
   "sources": {
