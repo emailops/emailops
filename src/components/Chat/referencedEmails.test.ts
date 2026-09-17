@@ -15,14 +15,22 @@ function source(emailId: string, citationNumber: number): ChatMessageSource {
 }
 
 describe('collectReferencedEmailIds', () => {
-  it('returns source ids in citation order', () => {
-    const ids = collectReferencedEmailIds({ content: 'answer', sources: [source('a', 1), source('b', 2)] });
-    expect(ids).toEqual(['a', 'b']);
+  it('returns the sources the answer cites, in order of appearance', () => {
+    const ids = collectReferencedEmailIds({
+      content: 'Second [2], then first [1] and [2] again.',
+      sources: [source('a', 1), source('b', 2), source('retrieved-only', 3)],
+    });
+    expect(ids).toEqual(['b', 'a']);
+  });
+
+  it('ignores retrieved sources the answer never cites', () => {
+    const ids = collectReferencedEmailIds({ content: 'No markers here.', sources: [source('a', 1)] });
+    expect(ids).toEqual([]);
   });
 
   it('adds allowlisted email:// links from the answer, without duplicates', () => {
     const ids = collectReferencedEmailIds({
-      content: 'See [one](email://a) and **[two](email://acc-1::42)**.',
+      content: 'Cited [1]. See [one](email://a) and **[two](email://acc-1::42)**.',
       sources: [source('a', 1)],
       referencedEmailIds: ['a', 'acc-1::42', 'not-mentioned'],
     });

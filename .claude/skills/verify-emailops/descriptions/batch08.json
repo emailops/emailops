@@ -142,7 +142,17 @@
     "src-tauri/src/services/chat/tools/get_lens_data.rs::gated_off_when_lenses_disabled": "Comprueba que la herramienta get_lens_data no está disponible cuando la funcionalidad de Lenses está desactivada.",
     "src-tauri/src/services/emails/events.rs::emit_progress_routes_to_event_sink_not_log_seam": "Comprueba que el progreso de sincronización se emite solo al canal de eventos de la UI y nunca al panel de logs, para no inundarlo por cada correo.",
     "src-tauri/src/services/sync_error_dedup.rs::clear_removes_only_the_named_account": "Comprueba que limpiar la deduplicación de errores de sincronización de una cuenta no afecta al estado guardado de otra cuenta.",
-    "src-tauri/src/services/sync_error_dedup.rs::clear_is_a_no_op_for_an_unknown_account": "Comprueba que limpiar la deduplicación de errores para una cuenta que nunca tuvo errores no falla, simplemente no hace nada."
+    "src-tauri/src/services/sync_error_dedup.rs::clear_is_a_no_op_for_an_unknown_account": "Comprueba que limpiar la deduplicación de errores para una cuenta que nunca tuvo errores no falla, simplemente no hace nada.",
+    "src-tauri/src/ai/ollama.rs::collects_every_id_operator": "Comprueba que cada operador id: de la búsqueda se recoge como filtro y no queda como palabra clave.",
+    "src-tauri/src/ai/ollama.rs::keeps_imap_ids_verbatim": "Garantiza que un id IMAP con :: y mayúsculas se conserva tal cual en el filtro id:.",
+    "src-tauri/src/ai/ollama.rs::an_id_ending_in_an_operator_name_does_not_leak_into_other_filters": "Evita que un id terminado en 'de' active por error el operador de: (remitente).",
+    "src-tauri/src/ai/ollama.rs::id_combines_with_other_operators": "Comprueba que id: convive con otros operadores como from:.",
+    "src-tauri/src/ai/ollama.rs::a_word_containing_id_is_not_an_id_operator": "Garantiza que una palabra que contiene 'id:' en medio no se toma como operador id:.",
+    "src-tauri/src/db/emails/crud.rs::account_emails_by_ids_returns_only_live_visible_rows_of_that_account_newest_first": "Comprueba que la búsqueda por ids solo devuelve correos visibles de la cuenta (sin borrados, spam ni papelera), del más nuevo al más antiguo.",
+    "src-tauri/src/db/emails/crud.rs::account_emails_by_ids_honours_categories": "Comprueba que la búsqueda por ids respeta las categorías seleccionadas.",
+    "src-tauri/src/services/search.rs::search_by_ids_returns_exactly_those_emails": "Garantiza que buscar id:A id:B devuelve exactamente esos correos, aunque sean del mismo hilo.",
+    "src-tauri/src/services/search.rs::search_by_ids_in_unified_mode_spans_enabled_accounts": "Comprueba que id: en la bandeja unificada encuentra correos de varias cuentas y nada más.",
+    "src-tauri/src/services/search.rs::search_by_ids_still_applies_other_operators": "Comprueba que id: combinado con subject: filtra por ambos."
   },
   "vitest": {
     "src/components/Settings/JunkSettings.test.tsx::publishes the chosen action to the store so the inbox stops showing junk": "Comprueba que elegir 'ocultar' en el ajuste de correo junk se guarda en el store que lee la bandeja, no solo en el backend.",
@@ -183,6 +193,14 @@
     "src/lib/privacyPolicy.test.ts::maps en to its localized policy page": "Comprueba que el idioma inglés enlaza a la página de política de privacidad en inglés, con prefijo /en/.",
     "src/lib/privacyPolicy.test.ts::maps es to its localized policy page": "Comprueba que el idioma español enlaza a la página de política de privacidad en español, ruta sin prefijo de idioma.",
     "src/lib/privacyPolicy.test.ts::maps fr to its localized policy page": "Comprueba que el idioma francés enlaza a la página de política de privacidad en francés, con prefijo /fr/.",
-    "src/lib/privacyPolicy.test.ts::maps de to its localized policy page": "Comprueba que el idioma alemán enlaza a la página de política de privacidad en alemán, con prefijo /de/."
+    "src/lib/privacyPolicy.test.ts::maps de to its localized policy page": "Comprueba que el idioma alemán enlaza a la página de política de privacidad en alemán, con prefijo /de/.",
+    "src/components/Chat/referencedEmails.test.ts::collectReferencedEmailIds returns the sources the answer cites, in order of appearance": "Comprueba que el botón usa las fuentes citadas con [n] en el orden en que aparecen.",
+    "src/components/Chat/referencedEmails.test.ts::collectReferencedEmailIds ignores retrieved sources the answer never cites": "Garantiza que las fuentes recuperadas pero no citadas no entran en la lista.",
+    "src/components/Chat/referencedEmails.test.ts::collectReferencedEmailIds adds allowlisted email:// links from the answer, without duplicates": "Comprueba que los enlaces email:// válidos se añaden sin duplicados.",
+    "src/components/Chat/referencedEmails.test.ts::collectReferencedEmailIds ignores email:// links outside the allowlist (hallucinated ids)": "Evita que ids inventados por el modelo acaben en la búsqueda.",
+    "src/components/Chat/referencedEmails.test.ts::buildIdSearchQuery joins one id: operator per email": "Comprueba el formato de la consulta id: que se escribe en el buscador.",
+    "src/components/Chat/MessageBubble.showInList.test.tsx::MessageBubble — show referenced emails in list searches the list for the cited emails when clicked": "Comprueba que pulsar «Ver en la lista» lanza la búsqueda id: con los correos citados.",
+    "src/components/Chat/MessageBubble.showInList.test.tsx::MessageBubble — show referenced emails in list is hidden when the answer references no emails": "Garantiza que el botón no aparece si la respuesta no cita correos.",
+    "src/components/Chat/MessageBubble.showInList.test.tsx::MessageBubble — show referenced emails in list is hidden while the answer is still streaming": "Garantiza que el botón no aparece mientras la respuesta se está generando."
   }
 }
