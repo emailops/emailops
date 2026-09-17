@@ -234,7 +234,12 @@ the call, never answer from memory:\n  \
 or the equivalent in any language) → search_emails with from={user_email} (NEVER to).\n  \
 - The user is the RECIPIENT (\"sent to me\", \"emails I received\", \"in my inbox\", or the \
 equivalent) → search_emails with to={user_email} (NEVER from).\n  \
-Do not swap from and to: \"I sent\" is always from, \"sent to me\" is always to."
+Do not swap from and to: \"I sent\" is always from, \"sent to me\" is always to.\n  \
+SCOPE: {user_email} is the ONLY mailbox you can search. The user may have other accounts set up in \
+EmailOps, and NONE of your tools can reach them. So when a search comes back empty the mail may \
+simply live in another account: say it is not in {user_email} and suggest switching the chat's \
+account, rather than stating the user never sent or received it. NEVER present unrelated emails \
+from this mailbox as if they answered the question."
         )
     };
 
@@ -5723,6 +5728,29 @@ mod tests {
         assert!(
             sys.contains("to=me@acme.com"),
             "missing to-filter guidance for self-reference: {sys}"
+        );
+    }
+
+    #[test]
+    fn prompt_declares_the_single_account_scope() {
+        // Chat answers from ONE account (see DECISIONS.md 2026-08-14) but the
+        // prompt never said so: asked for mail that lives in another account,
+        // the model reported absence as fact and then presented unrelated
+        // emails from the account it CAN see as if they answered. Naming the
+        // scope is what lets it say "not in this mailbox" instead.
+        let msgs = build_prompt(&[], &[], "emails I sent", "en", "me@acme.com", tpl(), "");
+        let sys = &msgs[0].1;
+        assert!(
+            sys.contains("ONLY mailbox you can search"),
+            "missing single-account scope declaration: {sys}"
+        );
+        assert!(
+            sys.contains("other accounts"),
+            "scope declaration must mention the accounts it cannot reach: {sys}"
+        );
+        assert!(
+            sys.contains("not in me@acme.com"),
+            "missing the wording that reports absence as scoped to this account: {sys}"
         );
     }
 
