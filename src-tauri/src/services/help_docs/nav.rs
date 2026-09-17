@@ -91,6 +91,56 @@ pub fn plan_help_navigation<'a>(answer: &str, sources: &'a [HelpSource]) -> Opti
     })
 }
 
+/// Deterministic citation fallback for an answer that came from the help
+/// block but forgot the link. Small local models drop the trailing
+/// `[title](help://…)` link on some runs (seen on 2 of 6 eval cases), and
+/// without it neither the docs chip nor the navigation can fire.
+///
+/// The rule is conservative: the turn offered help sources, ran no tool,
+/// and the answer cites nothing else — no `help://`, no `email://`, no
+/// `[n]` marker. An answer with any mailbox grounding is left alone, so a
+/// gate false positive can never make a mailbox answer navigate.
+pub fn plan_help_link_fallback<'a>(
+    answer: &str,
+    sources: &'a [HelpSource],
+    tool_calls: usize,
+) -> Option<&'a HelpSource> {
+    let top = sources.first()?;
+    if tool_calls > 0 || answer.trim().is_empty() {
+        return None;
+    }
+    if answer.contains("help://") || answer.contains("email://") || answer.contains("draft://") {
+        return None;
+    }
+    if has_numeric_citation(answer) {
+        return None;
+    }
+    Some(top)
+}
+
+fn has_numeric_citation(answer: &str) -> bool {
+    let b = answer.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'[' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 && j < b.len() && b[j] == b']' {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// The line appended by the fallback: the same shape the prompt asks for.
+pub fn help_link_line(source: &HelpSource) -> String {
+    format!("[{}]({})", source.title(), source.link)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +237,35 @@ mod tests {
         )];
         let answer = "See [x](help://en/ai-features#choosing-a-backend).";
         assert!(plan_help_navigation(answer, &sources).is_none());
+    }
+
+    #[test]
+    fn fallback_links_the_top_source_when_nothing_is_cited() {
+        let sources = vec![
+            source("help://en/ai-features#choosing-a-backend", Some("settings/ai")),
+            source("help://en/troubleshooting#chat-is-slow", None),
+        ];
+        let picked = plan_help_link_fallback("Open Settings → AI Backend & Models and pick Ollama.", &sources, 0)
+            .expect("fallback");
+        assert_eq!(picked.link, "help://en/ai-features#choosing-a-backend");
+        assert_eq!(
+            help_link_line(picked),
+            "[AI features › Choosing a backend](help://en/ai-features#choosing-a-backend)"
+        );
+    }
+
+    #[test]
+    fn fallback_stays_out_when_the_answer_is_grounded_elsewhere() {
+        let sources = vec![source("help://en/ai-features#choosing-a-backend", Some("settings/ai"))];
+        assert!(plan_help_link_fallback("Marisol wrote on Tuesday [1].", &sources, 0).is_none());
+        assert!(plan_help_link_fallback("See [her mail](email://eml-1).", &sources, 0).is_none());
+        assert!(plan_help_link_fallback("Draft saved [Re: x](draft://d-1).", &sources, 0).is_none());
+        assert!(plan_help_link_fallback("Already [linked](help://en/cli).", &sources, 0).is_none());
+        assert!(
+            plan_help_link_fallback("Found 3 emails.", &sources, 1).is_none(),
+            "a tool ran"
+        );
+        assert!(plan_help_link_fallback("   ", &sources, 0).is_none());
+        assert!(plan_help_link_fallback("anything", &[], 0).is_none(), "no help offered");
     }
 }

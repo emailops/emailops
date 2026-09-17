@@ -4098,6 +4098,33 @@ pub async fn run_chat_turn(
             // the live-streaming path (and is a cheap no-op when nothing leaked).
             result.content = strip_tool_call_markup(&result.content);
             result.content = strip_invalid_citations(&result.content, sources.len());
+            // A guide-grounded answer that forgot its `help://` link gets the
+            // top section appended (pure rule in `help_docs::nav`), streamed
+            // as one more token so the live bubble matches what is persisted.
+            if let Some(src) =
+                crate::services::help_docs::plan_help_link_fallback(&result.content, &help_sources, tool_traces.len())
+            {
+                let line = crate::services::help_docs::help_link_line(src);
+                emit_log(
+                    "info",
+                    &format!("help: answer used the guides without citing — appending {}", src.link),
+                );
+                let suffix = format!("\n\n{line}");
+                result.content = format!("{}{suffix}", result.content.trim_end());
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: suffix,
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                        replace: None,
+                    },
+                );
+            }
             // Robustness net: still no answer text after the synthesis retry
             // (or a direct answer that stripped to nothing). Ship a localized
             // rephrase hint instead of a silently blank bubble, and emit it as
