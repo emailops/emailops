@@ -118,6 +118,28 @@ else:
     eval_ok = False
     cases_html = f"<p class='muted'>La eval no llegó a ejecutarse: {esc((evalrun or {}).get('error') or 'sin salida')}</p>"
 
+# Earlier eval runs (eval-run1.json, eval-run2.json…) become an iteration log:
+# what changed between runs is the story of calibrating the gate.
+iterations_html = ""
+prev = sorted(S.glob("eval-run*.json"))
+if prev:
+    blocks = []
+    for pth in prev:
+        run = load(pth)
+        if not run or not run.get("ok"):
+            continue
+        rr = run["data"]
+        rows = "".join(
+            f"<tr><td class='mono'>{esc(c['id'])}</td><td><span class='pill {'pass' if c['passed'] else 'fail'}'>{'PASA' if c['passed'] else 'FALLA'}</span></td>"
+            f"<td class='mono'>{round(((c.get('trace') or {}).get('help') or {}).get('topSimilarity') or 0, 2)}</td>"
+            f"<td class='mono'>{esc(', '.join(((c.get('trace') or {}).get('help') or {}).get('chunkIds') or []))}</td></tr>"
+            for c in rr["cases"])
+        blocks.append(f"<h3>{esc(pth.stem)} — {rr['casesPassed']} de {rr['casesTotal']}</h3><div class='tablewrap'><table><thead><tr><th>caso</th><th></th><th>sim</th><th>secciones servidas</th></tr></thead><tbody>{rows}</tbody></table></div>")
+    if blocks:
+        iterations_html = ("<h2>Iteraciones previas</h2>"
+            "<p>La primera ejecución dio 4 de 6 y enseñó dos cosas: el orden final lo decidía la fusión RRF, así que un acierto solo de FTS en una sección que repetía «EmailOps» desplazaba a la sección correcta (Elegir un backend, El chat es lento, Lenses); y el caso espejo pasaba la puerta con 0.57. Cambios: ordenar por similitud vectorial, quitar «emailops» del FTS de ayuda y subir el umbral a 0.60.</p>"
+            + "".join(blocks))
+
 gate_rows = "".join(
     f"<tr><td>{esc(name)}</td><td><span class='pill {'pass' if g.get('ok') else 'fail'}'>{'OK' if g.get('ok') else 'FALLA'}</span></td><td>{esc(g.get('detail',''))}</td></tr>"
     for name, g in gates.items())
@@ -222,6 +244,8 @@ code {{ font-family:var(--mono); font-size:13px; background:var(--accent-soft); 
 <h2>Ejecución de evals</h2>
 <p>Casos sintéticos nuevos en <span class="mono">src-tauri/evals/chat/cases/app_help.yaml</span>, ejecutados con <span class="mono">emailops-cli eval --json</span> contra la base de demo. Comprobaciones heurísticas, sin juez: cada caso exige un enlace <span class="mono">help://</span>, un dato que solo está en la guía, y que no se haya buscado en el buzón; el caso espejo exige lo contrario. Resultado: <b>{esc(eval_summary)}</b>.</p>
 {cases_html}
+
+{iterations_html}
 
 <h2>Cómo funciona</h2>
 <ol class="flow">

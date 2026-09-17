@@ -24,8 +24,11 @@ use super::index::embedding_model_label;
 
 /// Cosine similarity a section must reach (against the question) to ride in
 /// the prompt. Below it the question is about the mailbox, not the app.
-/// Overridable with the `chat.help_min_similarity` preference.
-pub const HELP_MIN_SIMILARITY: f32 = 0.55;
+/// Calibrated on the app_help eval with nomic-embed-text v1.5: questions
+/// about the app scored 0.67–0.83 on their best section, a mailbox question
+/// about a demo thread scored 0.57. Overridable with the
+/// `chat.help_min_similarity` preference.
+pub const HELP_MIN_SIMILARITY: f32 = 0.60;
 /// Sections handed to the model per turn. Two keep the block under ~900
 /// tokens next to the mailbox sources.
 pub const HELP_TOP_K: usize = 2;
@@ -127,7 +130,8 @@ struct SectionGroup {
     best: usize,
 }
 
-/// Pure: which sections ride in the prompt, in which language, in what order.
+/// Pure: which sections ride in the prompt, in which language, in what order
+/// (best vector similarity first).
 ///
 /// Gate: with vectors, a section needs `max_similarity ≥ min_similarity`.
 /// Without vectors (corpus not embedded yet) only the top FTS hit passes,
@@ -169,7 +173,12 @@ pub fn plan_help_sources(input: HelpPlanInput<'_>) -> Vec<HelpSource> {
             }
         })
         .collect();
-    kept.sort_by(|a, b| b.best_fused.total_cmp(&a.best_fused));
+    // Order by the semantic signal. RRF fusion decides which sections are
+    // candidates at all, but ranking by it let an FTS-only hit on a section
+    // that merely repeats a query word outrank the section the question is
+    // about; vector similarity is what the gate trusts, so it orders too.
+    let rank = |g: &SectionGroup| g.max_similarity.unwrap_or(g.best_fused);
+    kept.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
     kept.truncate(input.k);
 
     kept.into_iter()
@@ -486,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_at_most_k_sections_ordered_by_fusion() {
+    fn keeps_at_most_k_sections() {
         let cands = vec![
             cand(chunk("en", "ai-features", 1, 0, "A"), Some(0.6), None, 0.01),
             cand(chunk("en", "ai-features", 2, 0, "B"), Some(0.9), Some(0), 0.05),
@@ -495,6 +504,37 @@ mod tests {
         let out = plan(&cands, &[], "en", true);
         let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
         assert_eq!(ids, ["en/ai-features#2.0", "en/ai-features#3.0"]);
+    }
+
+    /// Regression from the first eval run: with the sections ordered by the
+    /// fused RRF score, an FTS-only hit on a section that merely repeats the
+    /// app's name outranked the section the question was about (0.9 cosine).
+    /// Vector similarity is the semantic signal; FTS only supplies candidates.
+    #[test]
+    fn sections_are_ordered_by_similarity_not_fusion() {
+        let cands = vec![
+            cand(
+                chunk("en", "privacy-security", 5, 0, "Local AI by default"),
+                Some(0.62),
+                Some(0),
+                0.05,
+            ),
+            cand(
+                chunk("en", "ai-features", 1, 0, "Choosing a backend"),
+                Some(0.90),
+                None,
+                0.01,
+            ),
+            cand(
+                chunk("en", "troubleshooting", 1, 0, "AI features are unavailable"),
+                Some(0.75),
+                Some(1),
+                0.04,
+            ),
+        ];
+        let out = plan(&cands, &[], "en", true);
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["en/ai-features#1.0", "en/troubleshooting#1.0"]);
     }
 
     #[test]
