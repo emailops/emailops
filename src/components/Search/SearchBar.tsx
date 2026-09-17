@@ -363,7 +363,7 @@ export function SearchBar({
               // limited to operators that actually work today. If you re-enable
               // RAG, swap this back to the NL hint variant.
               placeholder={t('inbox:searchBox.fullPlaceholder', {
-                operators: 'from:, to:, subject:, before:YYYY-MM-DD, after:YYYY-MM-DD',
+                operators: 'from:, to:, subject:, before:YYYY-MM-DD, after:YYYY-MM-DD, id:',
               })}
               className="flex-1 px-4 py-4 text-lg outline-none"
             />

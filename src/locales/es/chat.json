@@ -125,7 +125,10 @@
     "title": "Fuentes",
     "openEmail": "Abrir correo",
     "emailCount": "{{count}} fuentes",
-    "emailCountOne": "1 fuente"
+    "emailCountOne": "1 fuente",
+    "showInList_other": "Ver {{count}} correos en la lista",
+    "showInList_many": "Ver {{count}} correos en la lista",
+    "showInList_one": "Ver en la lista de correos"
   },
   "citation": {
     "label": "Cita {{n}}"
