@@ -104,7 +104,7 @@ export function EmailRow({
       <div
         role="button"
         tabIndex={0}
-        className={`group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
+        className={`@container group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
           isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
         } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
         onClick={onClick}
@@ -127,6 +127,10 @@ export function EmailRow({
         {/* Reserve a stable min-height so async tag/triage loading doesn't grow
             the row after measureElement has run — same fix as the non-compact
             branch, which prevents virtualizer translateY desync / overlap. */}
+        {/* Width priority when the list is narrow (container queries, so the
+            docked chat panel counts too): the subject keeps its space longest,
+            the snippet gives way first, and the sender column and tag strip
+            shrink to make room. */}
         <div className="flex items-center gap-3 min-w-0 min-h-[1.75rem]">
           <span
             className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${
@@ -136,7 +140,7 @@ export function EmailRow({
           />
           <Avatar name={email.sender} email={email.senderEmail} size="sm" />
           <span
-            className={`text-sm truncate w-44 flex-shrink-0 ${
+            className={`text-sm truncate w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
               email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
             }`}
             title={senderName(email)}
@@ -145,22 +149,22 @@ export function EmailRow({
           </span>
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
           <div className="flex-1 min-w-0 flex items-baseline gap-2 text-sm">
+            {/* Its own flex item, so truncating the subject never swallows the chip
+                and the chip never swallows the subject. */}
+            {companyTag && (
+              <span className="flex-shrink-0 max-w-[30%] truncate self-center rounded-full font-medium text-[11px] px-1.5 py-0 bg-slate-100 text-slate-700">
+                {companyTag}
+              </span>
+            )}
             <span
-              className={`truncate flex-shrink-0 max-w-[50%] ${
-                email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'
-              }`}
+              className={`truncate min-w-0 ${email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'}`}
               title={
                 companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : email.subject || '(No subject)'
               }
             >
-              {companyTag && (
-                <span className="inline-block rounded-full font-medium text-[11px] px-1.5 py-0 bg-slate-100 text-slate-700 mr-1.5 align-middle">
-                  {companyTag}
-                </span>
-              )}
               {email.subject || '(No subject)'}
             </span>
-            <span className="text-gray-500 truncate" title={email.snippet}>
+            <span className="text-gray-500 truncate min-w-0 flex-1" title={email.snippet}>
               — {email.snippet}
             </span>
           </div>
@@ -168,11 +172,13 @@ export function EmailRow({
               row past its measured height (virtualizer would lay subsequent
               rows on top of this one until ResizeObserver caught up). Excess
               chips are clipped horizontally — same trade-off Gmail makes. */}
-          <div className="flex items-center gap-1 flex-shrink-0 h-6 max-w-[35%] overflow-hidden">
+          <div className="hidden @3xl:flex items-center gap-1 flex-shrink-0 h-6 max-w-[20%] @4xl:max-w-[35%] overflow-hidden">
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
             {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
           </div>
-          <span className="text-xs text-gray-500 flex-shrink-0 w-24 text-right tabular-nums">{receivedTime}</span>
+          <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">
+            {receivedTime}
+          </span>
           <EmailActionsMenu
             email={email}
             onAddSenderFilter={onAddSenderFilter}
