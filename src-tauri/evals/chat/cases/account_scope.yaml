@@ -1,0 +1,45 @@
+# Chat answers from ONE account, and must say so when the mail is elsewhere.
+#
+# WHAT BROKE
+# `search_emails` and the other 11 account-scoped tools take a single
+# `ctx.account_id` (docs/DECISIONS.md, 2026-08-14). Nothing told the model that,
+# so a question about mail living in ANOTHER enabled account came back "No
+# matching emails found." — which the model reported as fact ("you never
+# received that") and then papered over by offering unrelated mail from the
+# account it *could* see as if it answered. The 2026-08-14 entry predicted this
+# ("indistinguishable from having none"); 2026-09-17 fixed it by naming the
+# scope in the identity block and in every empty search result.
+#
+# WHY THIS CASE WORKS ON THE DEMO DB
+# Sara (sara@proton.me, "Coffee Saturday?") writes only to the PERSONAL account,
+# `ulises@fastmail.com` — zero hits in the work mailbox. This is the
+# cross-account twin of `demo_email_links_emitted` ("show me the latest email
+# from Marisol"), which asks the same shape about a sender who DOES live in the
+# work account. The phrasing carries "show me the" and "latest" so it routes
+# tools-first and actually reaches `search_emails`; an earlier draft of this
+# case asked about the Bogotá flight and was silently answered by
+# `list_calendar_events` instead, testing nothing.
+#
+# WHAT THIS ASSERTS
+# The absence is reported as SCOPED — it names the mailbox searched or points at
+# the user's other accounts — and nothing is fabricated: no subject the work
+# account cannot see, and no `email://` link, since any link here would be an
+# unrelated email dressed up as the answer. Deliberately not pinned: the route,
+# and how many times the model retries its search terms first.
+
+- id: demo_account_scope_absence_sender
+  question: "show me the latest email from Sara"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains_any:
+    - "ulises@emailopslabs.dev"
+    - "another account"
+    - "otra cuenta"
+    - "otras cuentas"
+  expected_answer_not_contains:
+    - "Coffee Saturday"
+    - "](email://"
+  expected_output: "I could not find any email from Sara in ulises@emailopslabs.dev, which is the only mailbox this chat can search. It may be in one of your other EmailOps accounts — switch the chat's account to look there."
+  metrics: [answer_relevancy, faithfulness]
