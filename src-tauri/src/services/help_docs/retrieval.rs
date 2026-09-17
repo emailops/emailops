@@ -24,9 +24,9 @@ use super::index::embedding_model_label;
 
 /// Cosine similarity a section must reach (against the question) to ride in
 /// the prompt. Below it the question is about the mailbox, not the app.
-/// Calibrated on the app_help eval with nomic-embed-text v1.5: questions
-/// about the app scored 0.67–0.83 on their best section, a mailbox question
-/// about a demo thread scored 0.57. Overridable with the
+/// Calibrated on the app_help eval and `help_docs_rank_probe` with
+/// nomic-embed-text v1.5 (see [`plan_help_sources`] for the numbers and
+/// the recall-over-precision trade-off). Overridable with the
 /// `chat.help_min_similarity` preference.
 pub const HELP_MIN_SIMILARITY: f32 = 0.60;
 /// Sections handed to the model per turn. Two keep the block under ~900
@@ -34,6 +34,10 @@ pub const HELP_MIN_SIMILARITY: f32 = 0.60;
 pub const HELP_TOP_K: usize = 2;
 /// Candidates fetched from each ranker before fusion.
 const HELP_CANDIDATES: usize = 12;
+/// RRF weights. FTS decides the order (see [`plan_help_sources`]); vectors
+/// still break ties and keep a section both rankers agree on ahead.
+const FTS_FUSION_WEIGHT: f32 = 2.0;
+const VECTOR_FUSION_WEIGHT: f32 = 1.0;
 /// Wall-clock cap for the whole lookup (embedding the query included). The
 /// help block is optional: past this the turn proceeds without it.
 const HELP_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
@@ -130,10 +134,27 @@ struct SectionGroup {
     best: usize,
 }
 
-/// Pure: which sections ride in the prompt, in which language, in what order
-/// (best vector similarity first).
+/// Pure: which sections ride in the prompt, in which language, in what order.
 ///
-/// Gate: with vectors, a section needs `max_similarity ≥ min_similarity`.
+/// Two signals with two jobs, measured on the app_help eval against the
+/// bundled nomic model (`help_docs_rank_probe`):
+///   - **Vector similarity says whether the question is about the app.**
+///     The best cosine over all candidates is 0.67–0.83 for questions about
+///     EmailOps; mailbox questions score 0.47–0.57, with two overlaps
+///     ("summarize today's emails" 0.66, "list all my pending tasks" 0.60).
+///     The gate at 0.60 chooses recall: a false positive only rides the
+///     block into a turn whose prompt tells the model to ignore it (the
+///     mirror eval case shows it does) and can never move the UI, because
+///     navigation follows the answer's citation, not the gate; a false
+///     negative is an app question answered from the mailbox. Similarity
+///     does not rank the sections either — the section a human would point
+///     at landed between rank 16 and 57 — so the gate is global (the best
+///     candidate decides for the turn), never per section.
+///   - **BM25 says which section.** The guides are small and curated, with a
+///     heading per topic, and once the app's own name is dropped bm25 puts
+///     the right section first or second. The fused RRF order therefore
+///     weights FTS above vectors (`FTS_FUSION_WEIGHT`).
+///
 /// Without vectors (corpus not embedded yet) only the top FTS hit passes,
 /// because bm25 alone cannot tell "how do I connect Ollama" from a mail
 /// that mentions Ollama.
@@ -163,22 +184,22 @@ pub fn plan_help_sources(input: HelpPlanInput<'_>) -> Vec<HelpSource> {
         };
     }
 
+    let about_the_app = if input.vector_available {
+        groups
+            .values()
+            .filter_map(|g| g.max_similarity)
+            .any(|s| s >= input.min_similarity)
+    } else {
+        groups.values().any(|g| g.best_fts_rank == Some(0))
+    };
+    if !about_the_app {
+        return Vec::new();
+    }
     let mut kept: Vec<SectionGroup> = groups
         .into_values()
-        .filter(|g| {
-            if input.vector_available {
-                g.max_similarity.is_some_and(|s| s >= input.min_similarity)
-            } else {
-                g.best_fts_rank == Some(0)
-            }
-        })
+        .filter(|g| input.vector_available || g.best_fts_rank == Some(0))
         .collect();
-    // Order by the semantic signal. RRF fusion decides which sections are
-    // candidates at all, but ranking by it let an FTS-only hit on a section
-    // that merely repeats a query word outrank the section the question is
-    // about; vector similarity is what the gate trusts, so it orders too.
-    let rank = |g: &SectionGroup| g.max_similarity.unwrap_or(g.best_fused);
-    kept.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
+    kept.sort_by(|a, b| b.best_fused.total_cmp(&a.best_fused));
     kept.truncate(input.k);
 
     kept.into_iter()
@@ -293,11 +314,11 @@ pub async fn lookup_help(
         &[
             Ranking {
                 ids_in_order: &vec_ids,
-                weight: 1.0,
+                weight: VECTOR_FUSION_WEIGHT,
             },
             Ranking {
                 ids_in_order: &fts_ids,
-                weight: 1.0,
+                weight: FTS_FUSION_WEIGHT,
             },
         ],
         DEFAULT_RRF_K,
@@ -386,26 +407,34 @@ mod tests {
         })
     }
 
+    /// The gate is global: one candidate above the threshold means the
+    /// question is about the app, and then the fused order decides which
+    /// sections ride — a section's own similarity is not a filter (the right
+    /// section often scores below the threshold, see the probe).
     #[test]
-    fn gate_drops_sections_below_similarity() {
+    fn gate_is_global_and_order_is_fused() {
         let cands = vec![
             cand(
                 chunk("en", "ai-features", 1, 0, "Choosing a backend"),
                 Some(0.71),
-                Some(0),
+                Some(1),
                 0.03,
             ),
             cand(
                 chunk("en", "ai-features", 2, 0, "The model catalog"),
                 Some(0.40),
-                Some(1),
-                0.02,
+                Some(0),
+                0.05,
             ),
         ];
         let out = plan(&cands, &[], "en", true);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].chunk_id, "en/ai-features#1.0");
-        assert!((out[0].score - 0.71).abs() < 1e-6);
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["en/ai-features#2.0", "en/ai-features#1.0"]);
+        assert!((out[1].score - 0.71).abs() < 1e-6);
+        assert!(
+            (out[0].score - 0.40).abs() < 1e-6,
+            "score reports the section's own similarity"
+        );
     }
 
     #[test]
@@ -495,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_at_most_k_sections() {
+    fn keeps_at_most_k_sections_by_fused_score() {
         let cands = vec![
             cand(chunk("en", "ai-features", 1, 0, "A"), Some(0.6), None, 0.01),
             cand(chunk("en", "ai-features", 2, 0, "B"), Some(0.9), Some(0), 0.05),
@@ -506,35 +535,30 @@ mod tests {
         assert_eq!(ids, ["en/ai-features#2.0", "en/ai-features#3.0"]);
     }
 
-    /// Regression from the first eval run: with the sections ordered by the
-    /// fused RRF score, an FTS-only hit on a section that merely repeats the
-    /// app's name outranked the section the question was about (0.9 cosine).
-    /// Vector similarity is the semantic signal; FTS only supplies candidates.
+    /// From the ranking probe: "how do I turn on Lenses" scores 0.59 on the
+    /// Lenses section (rank 16 by vector) and 0.66 on "Turning it all off";
+    /// bm25 has Lenses first. The turn is about the app (0.66 ≥ 0.60), and
+    /// the fused order — FTS weighted up — serves Lenses first.
     #[test]
-    fn sections_are_ordered_by_similarity_not_fusion() {
+    fn a_low_similarity_section_that_fts_ranks_first_is_served_first() {
         let cands = vec![
             cand(
-                chunk("en", "privacy-security", 5, 0, "Local AI by default"),
-                Some(0.62),
-                Some(0),
-                0.05,
-            ),
-            cand(
-                chunk("en", "ai-features", 1, 0, "Choosing a backend"),
-                Some(0.90),
-                None,
-                0.01,
-            ),
-            cand(
-                chunk("en", "troubleshooting", 1, 0, "AI features are unavailable"),
-                Some(0.75),
+                chunk("en", "ai-features", 13, 0, "Turning it all off"),
+                Some(0.66),
                 Some(1),
-                0.04,
+                0.030,
+            ),
+            cand(chunk("en", "ai-features", 12, 0, "Lenses"), Some(0.59), Some(0), 0.033),
+            cand(
+                chunk("en", "installation", 8, 0, "Direct download"),
+                Some(0.67),
+                None,
+                0.016,
             ),
         ];
         let out = plan(&cands, &[], "en", true);
         let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
-        assert_eq!(ids, ["en/ai-features#1.0", "en/troubleshooting#1.0"]);
+        assert_eq!(ids, ["en/ai-features#12.0", "en/ai-features#13.0"]);
     }
 
     #[test]
@@ -606,6 +630,11 @@ mod rank_probe {
             "pourquoi le chat d'EmailOps est-il si lent, et comment l'accélérer ?",
             "how do I turn on Lenses in EmailOps?",
             "what did Marisol say about the production bug?",
+            "summarize today's emails",
+            "who do I know at Faro Logistics?",
+            "send me Bahía Studio's May invoice",
+            "list all my pending tasks",
+            "what is my next meeting?",
         ];
         let en: Vec<&crate::models::HelpChunk> = corpus().iter().filter(|c| c.lang == "en").collect();
         fn cos(a: &[f32], b: &[f32]) -> f32 {
@@ -635,7 +664,23 @@ mod rank_probe {
                     .collect();
                 scored.sort_by(|a, b| b.0.total_cmp(&a.0));
                 let top: Vec<String> = scored.iter().take(3).map(|(s, id)| format!("{id} {s:.2}")).collect();
-                println!("{q}\n    {}", top.join(" | "));
+                // Where the section a human would point at actually lands.
+                let expected: Vec<String> = [
+                    "en/ai-features#1.0",
+                    "en/ai-features#2.0",
+                    "en/privacy-security#1.0",
+                    "en/troubleshooting#2.0",
+                    "en/ai-features#12.0",
+                ]
+                .iter()
+                .filter_map(|want| {
+                    scored
+                        .iter()
+                        .position(|(_, id)| id == want)
+                        .map(|pos| format!("{want}@{} {:.2}", pos + 1, scored[pos].0))
+                })
+                .collect();
+                println!("{q}\n    {}\n    expected: {}", top.join(" | "), expected.join(" | "));
             }
         }
     }
