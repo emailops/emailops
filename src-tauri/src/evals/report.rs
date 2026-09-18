@@ -36,9 +36,6 @@ struct CaseView {
     latency_ms: i64,
     wall_elapsed_ms: i64,
     token_count: Option<i32>,
-    route_mode: Option<String>,
-    route_reason: Option<String>,
-    route_classifier: Option<String>,
     /// Execution path of the turn on one line — see [`flow_line`].
     flow: Option<String>,
     retrieval: Option<RetrievalView>,
@@ -182,9 +179,6 @@ fn avg_pct(vals: &[f64]) -> Option<i32> {
 
 fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
     let trace = rc.outcome.assistant_trace.as_ref();
-    let route_mode = trace.map(|t| format!("{:?}", t.route.mode));
-    let route_reason = trace.map(|t| t.route.reason.clone());
-    let route_classifier = trace.map(|t| t.route.classifier.clone());
     let flow = trace.map(flow_line);
 
     let retrieval = trace.and_then(|t| t.retrieval.as_ref()).map(|r| RetrievalView {
@@ -255,9 +249,6 @@ fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
         latency_ms: rc.outcome.assistant_latency_ms.unwrap_or(0),
         wall_elapsed_ms: rc.outcome.wall_elapsed_ms,
         token_count: rc.outcome.assistant_token_count,
-        route_mode,
-        route_reason,
-        route_classifier,
         flow,
         retrieval,
         tool_calls,
@@ -432,16 +423,6 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
   </div>
   <div class="tc-body">
 
-    <div class="section">
-      <div class="section-label">Route</div>
-      <div class="content-box mono">
-        mode: {{ c.route_mode | default(value="?") }} · classifier: {{ c.route_classifier | default(value="?") }}
-        {% if c.route_reason %}
-        reason: {{ c.route_reason }}
-        {% endif %}
-      </div>
-    </div>
-
     {% if c.retrieval %}
     <div class="section">
       <div class="section-label">Retrieval</div>
@@ -548,7 +529,18 @@ pub(crate) fn flow_line(trace: &ChatTrace) -> String {
     // Round numbers order the timeline: the planner is -2, pre-seeded shortcut
     // tools -1, the tool loop 0.., and the final stream is emitted last.
     let mut steps: Vec<(i32, u8, String)> = Vec::new();
-    steps.push((i32::MIN, 0, trace.route.classifier.clone()));
+    // The classifier carries the signal it fired on, so the line answers
+    // "why this route?" without a separate block.
+    let classifier = if trace.route.matched_keywords.is_empty() {
+        trace.route.classifier.clone()
+    } else {
+        format!(
+            "{} (matched: {})",
+            trace.route.classifier,
+            trace.route.matched_keywords.join(", ")
+        )
+    };
+    steps.push((i32::MIN, 0, classifier));
     if trace.retrieval.is_some() {
         steps.push((-3, 1, "retrieval".to_string()));
     }
@@ -621,6 +613,28 @@ mod flow_line_tests {
             });
         }
         serde_json::from_value(value).expect("trace fixture")
+    }
+
+    #[test]
+    fn the_classifier_carries_what_the_heuristic_matched() {
+        // The route block used to spell this out in its own section; the line
+        // has to say which signal fired or it loses that.
+        let mut t = trace("heuristic", false, vec![("tool_round", 0)], vec![]);
+        t.route.matched_keywords = vec!["recibi".to_string()];
+        assert_eq!(flow_line(&t), "heuristic (matched: recibi) → llm round 0");
+
+        t.route.matched_keywords = vec!["hoy".to_string(), "2026".to_string()];
+        assert!(
+            flow_line(&t).starts_with("heuristic (matched: hoy, 2026)"),
+            "{}",
+            flow_line(&t)
+        );
+    }
+
+    #[test]
+    fn a_classifier_with_nothing_matched_stays_bare() {
+        let t = trace("planner", false, vec![("planner", -2)], vec![]);
+        assert_eq!(flow_line(&t), "planner → planner");
     }
 
     #[test]
