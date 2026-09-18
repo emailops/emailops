@@ -73,6 +73,80 @@ pub fn pin_eval_provider(db: &Database, case_model: &str) -> EvalResult<()> {
     Ok(())
 }
 
+/// What a preflight concluded about the model a run is about to use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPreflight {
+    /// The local GGUF is on disk (or the provider needs no local file).
+    Ready,
+    /// A served provider (Ollama, OpenRouter) — nothing local to check.
+    NotLocal,
+    /// Local provider, but the file is missing.
+    Missing { path: std::path::PathBuf },
+    /// Local provider, but no `app_data_dir` preference to resolve a path from.
+    Unresolvable,
+}
+
+/// Pure: decide whether a run can proceed, given the provider and whether the
+/// model file is on disk. `exists` is injected so this is testable without
+/// touching a filesystem.
+pub fn plan_model_preflight(provider: &str, model_path: Option<&std::path::Path>, exists: bool) -> ModelPreflight {
+    if provider != "llamacpp" {
+        return ModelPreflight::NotLocal;
+    }
+    match model_path {
+        None => ModelPreflight::Unresolvable,
+        Some(_) if exists => ModelPreflight::Ready,
+        Some(path) => ModelPreflight::Missing {
+            path: path.to_path_buf(),
+        },
+    }
+}
+
+/// Fail before the first case when the run's model cannot possibly answer.
+///
+/// Without this, a missing GGUF is discovered once per case, at turn time: a
+/// 46-case suite spent ~90 minutes reporting the same "model file not found"
+/// 46 times, and the report attributed each one to the feature the case
+/// belonged to, as if the cases had failed on their merits.
+///
+/// `models` is every distinct model the run will use — the suite default plus
+/// any per-case `model:` pins — so a run cannot get halfway in and then die on
+/// a model only one case asked for.
+pub fn preflight_models<'a>(db: &Database, models: impl IntoIterator<Item = &'a str>) -> EvalResult<()> {
+    use crate::ai::{model_catalog::ModelKind, model_manager};
+
+    let provider = db
+        .get_preference("ai_provider")?
+        .unwrap_or_else(|| "llamacpp".to_string());
+    let app_data_dir = db.get_preference("app_data_dir")?.map(std::path::PathBuf::from);
+
+    let mut missing: Vec<String> = Vec::new();
+    for model in models {
+        let path = app_data_dir
+            .as_ref()
+            .map(|dir| model_manager::model_path(dir, ModelKind::Chat, model));
+        match plan_model_preflight(&provider, path.as_deref(), path.as_deref().is_some_and(|p| p.exists())) {
+            ModelPreflight::Ready | ModelPreflight::NotLocal => {}
+            ModelPreflight::Missing { path } => missing.push(format!("{model} → {}", path.display())),
+            ModelPreflight::Unresolvable => {
+                return Err(EvalError::Config(format!(
+                    "provider is '{provider}' but the eval DB has no `app_data_dir` preference, \
+                     so '{model}' cannot be located"
+                )))
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(EvalError::Config(format!(
+        "model file(s) not found — download them, or pick an installed model with \
+         {EVAL_MODEL_ENV}=<id> / --model <id>:\n  {}",
+        missing.join("\n  ")
+    )))
+}
+
 fn read_non_empty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().and_then(|v| {
         let t = v.trim();
@@ -193,6 +267,50 @@ mod tests {
             Some("llama3.1:8b".to_string())
         );
         clear_eval_env();
+    }
+
+    // ── plan_model_preflight ──────────────────────────────────────────────────
+
+    #[test]
+    fn a_present_local_model_is_ready() {
+        assert_eq!(
+            plan_model_preflight("llamacpp", Some(std::path::Path::new("/m/x.gguf")), true),
+            ModelPreflight::Ready
+        );
+    }
+
+    #[test]
+    fn a_missing_local_model_is_reported_before_anything_runs() {
+        // The whole point: 46 cases each failed at turn time with the same
+        // "model file not found", 90 minutes in. One check up front says it once.
+        let path = std::path::PathBuf::from("/m/x.gguf");
+        assert_eq!(
+            plan_model_preflight("llamacpp", Some(&path), false),
+            ModelPreflight::Missing { path }
+        );
+    }
+
+    #[test]
+    fn a_local_model_with_no_resolvable_path_is_reported_too() {
+        // No `app_data_dir` preference: the provider would fail with "no chat
+        // model configured", which is just as fatal and just as worth saying early.
+        assert_eq!(
+            plan_model_preflight("llamacpp", None, false),
+            ModelPreflight::Unresolvable
+        );
+    }
+
+    #[test]
+    fn a_served_provider_has_no_local_file_to_check() {
+        // Ollama and OpenRouter answer over HTTP; a missing local GGUF says
+        // nothing about them, so the preflight must not block the run.
+        for provider in ["ollama", "openrouter"] {
+            assert_eq!(
+                plan_model_preflight(provider, None, false),
+                ModelPreflight::NotLocal,
+                "{provider} must not be preflighted for a local file"
+            );
+        }
     }
 
     #[test]

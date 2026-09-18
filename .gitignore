@@ -132,3 +132,7 @@ src-tauri/gen/apple/xcuserdata/
 # Local session notes and marketing drafts: stay on this machine, never committed
 /NEXT-SESSION.md
 /docs/marketing/
+
+# ts-rs output when the `ts` feature runs from inside src-tauri/ — the
+# committed frontend types live in src/types/index.ts and are hand-maintained.
+src-tauri/src/types/generated/

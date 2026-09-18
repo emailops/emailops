@@ -205,6 +205,9 @@ pub async fn send_reply(
         from_account_id.as_deref(),
         to_emails,
         cc_emails,
+        // The composer replies to the parent's subject; only a saved draft
+        // carries an edited one of its own.
+        None,
         attachments.unwrap_or_default(),
         app.clone(),
     )

@@ -12,17 +12,19 @@
 # text anchor cannot distinguish "translated the email" from "wrote a draft
 # that happens to contain those words".
 #
-# Thread `thread_30bb61af7512` is the demo DB's "How do I add a new email
-# account in EmailOps?" enquiry from a synthetic sender. The generator draws
-# thread ids at random, so this id changes every `make demo-db`; re-key it
-# from the subject with:
-#   sqlite3 .emailops-demo-data/emailops.db \
-#     "SELECT DISTINCT thread_id FROM emails WHERE subject LIKE 'How do I add%'"
+# These cases bind to the demo DB's "How do I add a new email account in
+# EmailOps?" enquiry from a synthetic sender.
+#
+# They name it by `thread_subject`, not `thread_id`: the generator draws thread
+# ids at random, so a literal id stops matching on the next `make demo-db` and
+# every case bound to it dies with "thread not found" — which is what happened
+# to all five of these. The harness resolves the subject against the account's
+# mailbox and fails loudly if it matches no thread or several.
 
 - id: demo_thread_translate_answers_inline
   question: "traduceme este email al español"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_30bb61af7512"
+  thread_subject: "How do I add a new email account in EmailOps?"
   category: email_summary
   tier: smoke
   expected_tools_not_called: ["generate_email_draft"]
@@ -45,7 +47,7 @@
 - id: demo_thread_explicit_draft_still_works
   question: "escribe una respuesta a este correo"
   account: "ulises@emailopslabs.dev"
-  thread_id: "thread_30bb61af7512"
+  thread_subject: "How do I add a new email account in EmailOps?"
   category: drafting
   tier: smoke
   expected_tools_called: ["generate_email_draft"]
@@ -69,7 +71,7 @@
   # `ambient_*`, not `thread_id`: the panel hands the OPEN email as ambient
   # context for one turn. A conversation seeded with `thread_id` ("chat about
   # this thread") is an explicit binding and deliberately stays thread-bound.
-  ambient_thread_id: "thread_30bb61af7512"
+  ambient_thread_subject: "How do I add a new email account in EmailOps?"
   ambient_account: "ulises@emailopslabs.dev"
   as_of: latest
   expected_tools_called: ["search_emails"]
@@ -91,7 +93,7 @@
   account: "ulises@emailopslabs.dev"
   category: email_summary
   tier: smoke
-  ambient_thread_id: "thread_30bb61af7512"
+  ambient_thread_subject: "How do I add a new email account in EmailOps?"
   ambient_account: "ulises@emailopslabs.dev"
   expected_tools_not_called: ["generate_email_draft", "search_emails"]
   expected_answer_contains_any: ["cuenta", "account"]
@@ -111,7 +113,7 @@
   account: "ulises@emailopslabs.dev"
   category: email_summary
   tier: smoke
-  ambient_thread_id: "thread_30bb61af7512"
+  ambient_thread_subject: "How do I add a new email account in EmailOps?"
   ambient_account: "ulises@emailopslabs.dev"
   expected_tools_not_called: ["generate_email_draft"]
   expected_answer_not_contains:

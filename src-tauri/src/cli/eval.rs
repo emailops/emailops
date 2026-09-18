@@ -155,6 +155,17 @@ pub async fn run_eval(
         )));
     }
 
+    // Fail before the first case rather than once per case at turn time: a
+    // missing GGUF used to surface as N identical "model file not found"
+    // failures, attributed to the feature each case belonged to.
+    let mut models: Vec<&str> = selected
+        .iter()
+        .map(|c| c.model.as_deref().unwrap_or(&session.model))
+        .collect();
+    models.sort_unstable();
+    models.dedup();
+    crate::evals::shared::preflight_models(&session.db, models).map_err(map_eval_err)?;
+
     let session_account = session.require_account()?;
     let mut case_reports: Vec<CaseReport> = Vec::with_capacity(selected.len());
 

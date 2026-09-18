@@ -297,6 +297,37 @@ pub struct MessageLocation {
     pub mailbox: String,
 }
 
+/// Everything a reply needs to know about the message it answers.
+///
+/// Grouped rather than passed loose because the fields are easy to confuse and
+/// each provider threads on a different one — picking the wrong field fails
+/// silently (a split thread) or addresses the wrong resource:
+///
+/// - Gmail: `thread_id` (its `threadId`) plus the RFC headers.
+/// - IMAP: the RFC headers alone; the server does no threading of its own.
+/// - Outlook: `provider_message_id`, because Graph's `/reply` addresses the
+///   parent by item id and writes the RFC headers itself.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplyTarget<'a> {
+    /// Provider-side id of the parent — the `emails.id` we stored: a Gmail or
+    /// Graph message id, or the IMAP UID key.
+    ///
+    /// Distinct from `message_id`: for Outlook this is the opaque Graph item
+    /// id (`AQMkAD…`) while `message_id` is `internetMessageId` (`<abc@host>`).
+    /// `/me/messages/{id}/reply` only accepts the former, and
+    /// `internetMessageId` is frequently absent besides.
+    pub provider_message_id: &'a str,
+    /// Provider thread id. Gmail sends it back as `threadId`; IMAP has none.
+    pub thread_id: &'a str,
+    /// The parent's RFC 5322 `Message-ID`, for `In-Reply-To`.
+    pub message_id: Option<&'a str>,
+    /// The parent's RFC 5322 `References`. Goes out with the parent's
+    /// Message-ID appended (§3.6.4) so the reply continues the thread instead
+    /// of rooting a new one. `None` when the parent carried no chain, or
+    /// predates us storing it.
+    pub references: Option<&'a str>,
+}
+
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
 ///
 /// Services depend on this trait, never on concrete providers.
@@ -335,14 +366,17 @@ pub trait EmailProvider: Send + Sync {
     /// `from_name` is the display name for the From header (`None` sends the
     /// bare address). Outlook ignores it: Graph takes the sender name from the
     /// mailbox itself.
+    ///
+    /// `target` describes the message being answered — see [`ReplyTarget`],
+    /// which exists because the three providers each need a *different* one of
+    /// its fields to thread a reply correctly.
     async fn send_reply(
         &self,
         from_email: &str,
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
+        target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -659,12 +693,18 @@ struct FakeStoredMessage {
 /// for new mail.
 #[derive(Debug, Clone)]
 pub struct FakeSentMessage {
+    /// Provider-side id of the message replied to (`ReplyTarget::provider_message_id`).
+    /// `None` for a fresh send. Outlook threads on exactly this.
+    pub provider_message_id: Option<String>,
     pub from_email: String,
     pub from_name: Option<String>,
     pub to_emails: Vec<String>,
     pub cc_emails: Vec<String>,
     pub thread_id: Option<String>,
     pub original_message_id: Option<String>,
+    /// The parent's `References` chain as handed to the provider, so tests can
+    /// assert a reply continues its thread instead of rooting a new one.
+    pub original_references: Option<String>,
     pub subject: String,
     pub body: EmailBody,
     pub attachments: Vec<EmailAttachment>,
@@ -948,8 +988,7 @@ impl EmailProvider for FakeEmailProvider {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
+        target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -962,8 +1001,10 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
-                thread_id: Some(thread_id.to_string()),
-                original_message_id: original_message_id.map(str::to_string),
+                provider_message_id: Some(target.provider_message_id.to_string()),
+                thread_id: Some(target.thread_id.to_string()),
+                original_message_id: target.message_id.map(str::to_string),
+                original_references: target.references.map(str::to_string),
                 subject: subject.to_string(),
                 body: body.clone(),
                 attachments: attachments.to_vec(),
@@ -989,8 +1030,10 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
+                provider_message_id: None,
                 thread_id: None,
                 original_message_id: None,
+                original_references: None,
                 subject: subject.to_string(),
                 body: body.clone(),
                 attachments: attachments.to_vec(),
@@ -1253,6 +1296,7 @@ mod tests {
             account_id: "acc".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: "hi".to_string(),
             sender: "Test".to_string(),
             sender_email: "test@example.com".to_string(),
@@ -1365,8 +1409,12 @@ mod tests {
                 None,
                 &["x@y.com".to_string()],
                 &[],
-                "thread-1",
-                Some("<orig@remote>"),
+                &ReplyTarget {
+                    provider_message_id: "prov-1",
+                    thread_id: "thread-1",
+                    message_id: Some("<orig@remote>"),
+                    references: None,
+                },
                 "Re: subj",
                 &EmailBody::plain("body"),
                 &[],
@@ -1549,8 +1597,7 @@ mod tests {
             _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
-            _thread_id: &str,
-            _original_message_id: Option<&str>,
+            _target: &ReplyTarget<'_>,
             _subject: &str,
             _body: &EmailBody,
             _attachments: &[EmailAttachment],

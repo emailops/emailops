@@ -12,10 +12,14 @@ pub async fn add_account(
     provider: String,
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account, AppError> {
-    match provider.as_str() {
-        "gmail" | "outlook" => services::accounts::add_account(&state.db, &provider, sync_from_timestamp).await,
-        _ => Err(AppError::InvalidInput(format!("Unknown provider: {}", provider))),
-    }
+    let account = match provider.as_str() {
+        "gmail" | "outlook" => services::accounts::add_account(&state.db, &provider, sync_from_timestamp).await?,
+        _ => return Err(AppError::InvalidInput(format!("Unknown provider: {}", provider))),
+    };
+    // The scheduler only enumerates accounts at startup, so without this the
+    // account just added would have no poll loop for the rest of the session.
+    state.scheduler.watch_account(&account);
+    Ok(account)
 }
 
 #[tauri::command]
@@ -27,7 +31,13 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, A
 pub async fn remove_account(state: State<'_, AppState>, account_id: String) -> Result<(), AppError> {
     // Signal any in-progress sync for this account to abort at the next batch boundary.
     services::emails::request_sync_abort(&state.sync_abort_flags, &account_id);
-    services::accounts::remove_account(&state.db, &account_id, &state.app_data_dir)
+    // Stop the background loops before the data goes away, so no IDLE watcher
+    // or poll tick keeps running against an account that no longer exists.
+    state.scheduler.unwatch_account(&account_id);
+    services::accounts::remove_account(&state.db, &account_id, &state.app_data_dir)?;
+    // Drop the per-account queue/lock/abort-flag entries the sync paths created.
+    state.forget_account(&account_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -46,7 +56,27 @@ pub async fn set_account_enabled(
     account_id: String,
     enabled: bool,
 ) -> Result<(), AppError> {
-    services::accounts::set_account_enabled(&state.db, &account_id, enabled)
+    services::accounts::set_account_enabled(&state.db, &account_id, enabled)?;
+    // Keep the watched set in step with the `enabled` filter `start()` applies,
+    // so toggling an account takes effect without restarting the app.
+    if enabled {
+        match state.db.get_account(&account_id) {
+            Ok(Some(account)) => state.scheduler.watch_account(&account),
+            Ok(None) => services::logger::log(
+                "error",
+                "account",
+                format!("enabled {account_id} but it no longer exists — background sync not started"),
+            ),
+            Err(e) => services::logger::log(
+                "error",
+                "account",
+                format!("enabled {account_id} but could not start its background sync: {e}"),
+            ),
+        }
+    } else {
+        state.scheduler.unwatch_account(&account_id);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -145,14 +175,18 @@ pub async fn add_imap_account(
         smtp_host,
         smtp_port,
     };
-    services::accounts::add_imap_account(
+    let account = services::accounts::add_imap_account(
         &state.db,
         &identity.email,
         credentials,
         display_name,
         sync_from_timestamp,
     )
-    .await
+    .await?;
+    // Start this account's IMAP IDLE watcher now; the scheduler's own account
+    // enumeration only ever runs at startup.
+    state.scheduler.watch_account(&account);
+    Ok(account)
 }
 
 /// Persist a new sync range and make it take effect *now*.

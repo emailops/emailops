@@ -238,17 +238,44 @@ pub async fn send_draft(
         None => EmailBody::plain(&draft.body),
     };
 
-    super::send::send_new_email_with_provider(
-        db,
-        &account.id,
-        draft.to_addresses.clone(),
-        draft.cc_addresses.clone(),
-        &draft.subject,
-        &body,
-        attachments,
-        provider,
-    )
-    .await?;
+    // A draft started from a message is a reply, and has to be sent as one.
+    // Routing every draft through `send_new_email_with_provider` dropped
+    // In-Reply-To, References and Gmail's `threadId` entirely, so saving a
+    // reply as a draft and sending it later silently started a new thread —
+    // the same broken-threading symptom as a directly-sent reply, only total.
+    //
+    // The draft's own subject wins: the user may have edited it, and
+    // `drafts.email_id` has a foreign key to `emails(id)`, so it always points
+    // at a row that still exists.
+    match draft.email_id.as_deref() {
+        Some(email_id) => {
+            super::send::send_reply_with_provider(
+                db,
+                email_id,
+                &body,
+                Some(&account.id),
+                Some(draft.to_addresses.clone()),
+                Some(draft.cc_addresses.clone()),
+                Some(&draft.subject),
+                attachments,
+                provider,
+            )
+            .await?;
+        }
+        None => {
+            super::send::send_new_email_with_provider(
+                db,
+                &account.id,
+                draft.to_addresses.clone(),
+                draft.cc_addresses.clone(),
+                &draft.subject,
+                &body,
+                attachments,
+                provider,
+            )
+            .await?;
+        }
+    }
 
     // Best-effort cleanup of the provider-side draft; a failure here must not
     // make a successful send look failed.

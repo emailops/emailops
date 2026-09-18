@@ -29,7 +29,8 @@ pub(super) use crate::util::html::strip_html_for_fts;
 
 // Body lives in email_bodies — all queries on the emails table use this column list.
 pub(super) const EMAIL_COLUMNS: &str = "id, account_id, thread_id, message_id, subject, sender, sender_email, \
-     recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent";
+     recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, \
+     references_header";
 
 pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
     let recipients_json: String = row.get(7)?;
@@ -55,6 +56,9 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         category: row.get::<_, String>(13).unwrap_or_else(|_| "primary".to_string()),
         mailbox: row.get::<_, String>(14).unwrap_or_else(|_| "inbox".to_string()),
         is_sent: row.get::<_, i32>(15).unwrap_or(0) != 0,
+        // NULL for everything ingested before V023 — the header was parsed for
+        // the thread hash and then dropped.
+        references: row.get(16).unwrap_or(None),
         // Write-only transport field. Headers live in their own table and are
         // read via `get_email_headers_batch`, not hydrated onto every Email —
         // the vast majority of reads (list views, search) never need them.

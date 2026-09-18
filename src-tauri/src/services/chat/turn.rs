@@ -4343,6 +4343,7 @@ mod tests {
             account_id: "acc1".into(),
             thread_id: format!("t{}", citation_number),
             message_id: None,
+            references: None,
             subject: subject.into(),
             sender: "Alice".into(),
             sender_email: "alice@example.com".into(),

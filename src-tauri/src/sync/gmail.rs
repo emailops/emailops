@@ -468,8 +468,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
+        target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -481,14 +480,15 @@ impl GmailClient {
             to_emails,
             cc_emails,
             subject: &normalized_subject,
-            in_reply_to: original_message_id.filter(|v| !v.trim().is_empty()),
+            in_reply_to: target.message_id.filter(|v| !v.trim().is_empty()),
+            references: target.references.filter(|v| !v.trim().is_empty()),
             body,
             attachments,
         })?;
         let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
         let raw = base64_url_encode(&message.formatted());
         let payload = serde_json::json!({
-            "threadId": thread_id,
+            "threadId": target.thread_id,
             "raw": raw,
         });
         let url = format!("{}/users/me/messages/send", self.base_url);
@@ -519,6 +519,7 @@ impl GmailClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;
@@ -554,6 +555,7 @@ impl GmailClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;
@@ -718,6 +720,13 @@ impl GmailClient {
             .find(|h| h.name.eq_ignore_ascii_case("Message-ID"))
             .map(|h| h.value.clone());
 
+        // Kept so a reply can continue this message's chain (RFC 5322 §3.6.4)
+        // instead of declaring itself a new thread root.
+        let references = headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("References"))
+            .map(|h| h.value.clone());
+
         let from = headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("From"))
@@ -785,6 +794,7 @@ impl GmailClient {
             account_id: String::new(), // Will be set by caller
             thread_id: msg.thread_id,
             message_id,
+            references,
             subject,
             sender: sender_name,
             sender_email,
@@ -1560,8 +1570,7 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
+        target: &provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1571,8 +1580,7 @@ impl EmailProvider for GmailClient {
             from_name,
             to_emails,
             cc_emails,
-            thread_id,
-            original_message_id,
+            target,
             subject,
             body,
             attachments,

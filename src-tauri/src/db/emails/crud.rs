@@ -89,8 +89,9 @@ impl Database {
         conn.execute(
             r#"INSERT OR REPLACE INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
+                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
+                references_header)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
             params![
                 email.id,
                 email.account_id,
@@ -110,6 +111,7 @@ impl Database {
                 mailbox,
                 is_sent_flag(email, mailbox) as i32,
                 now,
+                email.references,
             ],
         )?;
         conn.execute(
@@ -140,8 +142,9 @@ impl Database {
             r#"INSERT OR REPLACE INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
                 sender_domain, recipients_json, cc_json, snippet, timestamp, is_read,
-                triage_status, category, mailbox, is_sent, pending_sync, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
+                triage_status, category, mailbox, is_sent, pending_sync, created_at,
+                references_header)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"#,
             params![
                 email.id,
                 email.account_id,
@@ -162,6 +165,7 @@ impl Database {
                 is_sent_flag(email, mailbox) as i32,
                 pending_sync as i32,
                 now,
+                email.references,
             ],
         )?;
         tx.execute(
@@ -1307,6 +1311,7 @@ mod tests {
             account_id: account_id.to_string(),
             thread_id: thread_id.to_string(),
             message_id: Some(format!("<{}@local>", id)),
+            references: None,
             subject: "Quarterly report".to_string(),
             sender: "Me".to_string(),
             sender_email: "me@example.com".to_string(),
