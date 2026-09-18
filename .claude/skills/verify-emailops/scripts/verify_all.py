@@ -167,6 +167,7 @@ def layer_static():
         ("claves i18n usadas vs catálogos", "npm run -s i18n:check", "fail"),
         ("cargo fmt --check", "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check", "fail"),
         ("clippy (flags de CI)", "cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings", "fail"),
+        ("ids deterministas de la BD demo", "cd scripts && python3 -m unittest -q test_generate_demo_db", "fail"),
         ("cargo audit", "cargo audit --file src-tauri/Cargo.lock", "info"),
         ("npm audit (high/critical)", "npm audit --audit-level=high", "info"),
     ]
