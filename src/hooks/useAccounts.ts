@@ -4,6 +4,7 @@ import {
   isUnifiedMode,
   type SyncProgress,
   selectEffectiveAccountId,
+  selectIsSyncing,
   toQueryAccountId,
   useAccountStore,
 } from '@/stores/accountStore';
@@ -14,7 +15,7 @@ export function useAccounts() {
     accounts,
     activeAccountId,
     isLoading,
-    isSyncing,
+    syncingAccountIds,
     syncProgress,
     error,
     errorAccountId,
@@ -79,7 +80,15 @@ export function useAccounts() {
     /** Concrete account for surfaces that need exactly one (compose, chat…). */
     effectiveAccountId: selectEffectiveAccountId(accounts, activeAccountId),
     isLoading,
-    isSyncing,
+    /**
+     * Is the mailbox currently on screen syncing? Scoped to `activeAccountId`
+     * (any account in unified mode) rather than "is anything syncing anywhere",
+     * so one account's multi-hour backfill can't disable another account's
+     * refresh button or paint a spinner over its empty inbox.
+     */
+    isSyncing: selectIsSyncing(syncingAccountIds, activeAccountId),
+    /** Every account with a sync enqueued or in flight, for per-account badges. */
+    syncingAccountIds,
     syncProgress,
     error,
     errorAccountId,
