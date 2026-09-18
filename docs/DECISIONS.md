@@ -1054,6 +1054,27 @@ to triage the failures.
 unattended job committing onto whatever branch was checked out, and competing for the GPU with
 any EmailOps instance left open.
 
+## 2026-09-17 — Chat states its single-account scope instead of searching every account
+
+**Decision:** The chat system prompt names the one mailbox the turn can search, tells the
+model that other accounts exist and are unreachable, and requires it to report absence as
+scoped ("not in <address>") and suggest switching the chat's account rather than declaring
+the mail was never sent. Every empty `search_emails` result names that mailbox too. Chat
+stays structurally single-account; `AccountScope::AllEnabled` remains deferred.
+**Context:** Asked for a message that lived in another enabled account, the model reported
+it absent as fact and then presented unrelated years-old mail from the account it could see
+as if it answered — the exact ambiguity the 2026-08-14 entry predicted ("indistinguishable
+from having none"). Naming the scope costs one static block: it varies per account, not per
+turn, so it rides inside the existing `user_identity` text in the KV-cached system prefix
+without busting the anchor, and `prewarm_chat` inherits it by construction because both
+paths call the same `build_prompt`. Keeping it out of the user-editable `chat.system`
+template avoids a new placeholder the thread-bound path would have to bind.
+**Rejected:** Threading `AccountScope::AllEnabled` through retrieval and the 12
+account-scoped tools — still the real fix and still deferred, since it means deciding how
+citations and drafts behave across accounts. Probing sibling accounts on an empty result to
+offer a one-click switch — more machinery than the wording needs, worth revisiting only if
+the prompt fix proves insufficient in practice.
+
 ## 2026-09-17 — AI processing limit: whole small accounts, day cutoff for large ones
 
 **Decision:** Embeddings and classification cover every email of an account with at most

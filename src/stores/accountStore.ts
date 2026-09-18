@@ -96,44 +96,84 @@ export interface SyncProgress {
 /**
  * Pure reducer for sync-progress events.
  *
- * `pendingSyncAccountIds` tracks the accounts a `syncAllAccounts` batch is
- * still waiting on; a terminal event (`complete`/`error`) removes its account
- * from the set, and `isSyncing` stays true until the set drains. For
- * single-account syncs the set is empty and the behavior is unchanged
- * (`isSyncing` follows the latest event's terminality).
+ * `syncingAccountIds` is the single source of truth for who is syncing: a
+ * non-terminal event adds its account, a terminal one (`complete`/`error`)
+ * removes it, and `isSyncing` is simply "the set is non-empty".
+ *
+ * It is deliberately keyed by account. A single global flag conflated every
+ * account's progress, so one account working through a months-long backfill
+ * made the whole app look busy — which starved a newly added account of its
+ * first sync and painted a spinner over its empty inbox. See
+ * `selectIsSyncing` for reading it back with the right scope.
  */
 export function reduceSyncProgress(
-  state: Pick<AccountStore, 'error' | 'errorAccountId' | 'pendingSyncAccountIds'>,
+  state: Pick<AccountStore, 'error' | 'errorAccountId' | 'syncingAccountIds'>,
   progress: SyncProgress | null,
-): Pick<AccountStore, 'syncProgress' | 'isSyncing' | 'error' | 'errorAccountId' | 'pendingSyncAccountIds'> {
+): Pick<AccountStore, 'syncProgress' | 'isSyncing' | 'error' | 'errorAccountId' | 'syncingAccountIds'> {
   if (!progress) {
     return {
       syncProgress: null,
       isSyncing: false,
       error: state.error,
       errorAccountId: state.errorAccountId,
-      pendingSyncAccountIds: new Set<string>(),
+      syncingAccountIds: new Set<string>(),
     };
   }
 
   const isTerminal = progress.status === 'complete' || progress.status === 'error';
   const isError = progress.status === 'error';
 
-  let pending = state.pendingSyncAccountIds;
-  if (isTerminal && pending.has(progress.accountId)) {
-    pending = new Set(pending);
-    pending.delete(progress.accountId);
+  const syncing = new Set(state.syncingAccountIds);
+  if (isTerminal) {
+    syncing.delete(progress.accountId);
+  } else {
+    syncing.add(progress.accountId);
   }
 
   return {
     syncProgress: progress,
-    isSyncing: !isTerminal || pending.size > 0,
+    isSyncing: syncing.size > 0,
     error: isError ? progress.message : state.error,
     // Tag the error with the account it came from so the UI can decide
     // whether to show the banner (only when this account is active).
     errorAccountId: isError ? progress.accountId : state.errorAccountId,
-    pendingSyncAccountIds: pending,
+    syncingAccountIds: syncing,
   };
+}
+
+/**
+ * Is the mailbox scope the user is looking at syncing?
+ *
+ * `scopeId` is an `activeAccountId`: a concrete account asks only about
+ * itself, while "All accounts" (and a not-yet-resolved `null`) asks about any.
+ * Surfaces that describe one account — the sidebar refresh button, the inbox
+ * empty state — must use this rather than a global flag, so one account's
+ * backfill never disables another account's controls, nor claims it is syncing
+ * when nothing was ever enqueued for it.
+ */
+export function selectIsSyncing(syncingAccountIds: Set<string>, scopeId: string | null): boolean {
+  if (scopeId === null || isUnifiedMode(scopeId)) return syncingAccountIds.size > 0;
+  return syncingAccountIds.has(scopeId);
+}
+
+/** `syncingAccountIds` with `accountId` added — a copy, never a mutation. */
+function withAccount(syncingAccountIds: Set<string>, accountId: string): Set<string> {
+  return new Set(syncingAccountIds).add(accountId);
+}
+
+/**
+ * Stop tracking `accountId` and record why, leaving every other account's sync
+ * untouched. Used when *enqueuing* fails: no sync-progress event will ever
+ * arrive for it, so nothing else would clear it from the set.
+ */
+function dropAccount(
+  state: Pick<AccountStore, 'syncingAccountIds'>,
+  accountId: string,
+  error: string,
+): Pick<AccountStore, 'syncingAccountIds' | 'isSyncing' | 'error' | 'errorAccountId'> {
+  const syncing = new Set(state.syncingAccountIds);
+  syncing.delete(accountId);
+  return { syncingAccountIds: syncing, isSyncing: syncing.size > 0, error, errorAccountId: accountId };
 }
 
 interface AccountStore {
@@ -167,10 +207,11 @@ interface AccountStore {
   /// invisible, and the strip stuck on Primary for the whole session.
   accountSettingsVersion: number;
   bumpAccountSettingsVersion: () => void;
-  /// Accounts a `syncAllAccounts` batch is still waiting on. See
-  /// `reduceSyncProgress` — terminal progress events drain this set and
-  /// `isSyncing` stays true until it empties.
-  pendingSyncAccountIds: Set<string>;
+  /// Accounts with a sync enqueued or in flight — the source of truth behind
+  /// `isSyncing`. Populated optimistically when a sync is enqueued and drained
+  /// by terminal progress events; see `reduceSyncProgress` and
+  /// `selectIsSyncing`.
+  syncingAccountIds: Set<string>;
   setActiveAccount: (id: string | null) => void;
   fetchAccounts: () => Promise<void>;
   addAccount: (
@@ -206,7 +247,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   errorAccountId: null,
   currentSyncId: 0,
   setupPendingAccountId: null,
-  pendingSyncAccountIds: new Set<string>(),
+  syncingAccountIds: new Set<string>(),
 
   setActiveAccount: (id) => set({ activeAccountId: id, error: null, errorAccountId: null }),
 
@@ -297,12 +338,24 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   },
 
   syncAccount: async (accountId) => {
-    // Only one sync at a time — ignore if already running
-    if (get().isSyncing) return;
+    // De-duplicate per account, never globally. The account's own queue is
+    // FIFO with concurrency 1, so a second request would not run alongside the
+    // first — it would run *after* it, repeating the whole backfill. Scoping
+    // the check to `accountId` is what keeps this from becoming the starvation
+    // bug it replaced: one account's multi-hour backfill used to hold a single
+    // global flag true, so a newly added account's only sync attempt returned
+    // without invoking anything and nothing ever retried it.
+    if (get().syncingAccountIds.has(accountId)) return;
 
-    // Increment sync ID to track this operation and cancel stale ones
     const syncId = get().currentSyncId + 1;
-    set({ isSyncing: true, error: null, errorAccountId: null, syncProgress: null, currentSyncId: syncId });
+    set((state) => ({
+      syncingAccountIds: withAccount(state.syncingAccountIds, accountId),
+      isSyncing: true,
+      error: null,
+      errorAccountId: null,
+      syncProgress: null,
+      currentSyncId: syncId,
+    }));
 
     try {
       await api.syncAccount(accountId);
@@ -311,45 +364,39 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       if (get().currentSyncId === syncId) {
         // Scope this manual-sync error to the account that initiated it so
         // the banner is account-aware (consistent with sync-progress events).
-        set({ error: errorText(error), errorAccountId: accountId, isSyncing: false, syncProgress: null });
+        set((state) => dropAccount(state, accountId, errorText(error)));
       }
       throw error;
     }
   },
 
   syncAllAccounts: async (accountIds) => {
-    // Only one sync batch at a time — same rule as single-account syncs.
-    if (get().isSyncing || accountIds.length === 0) return;
+    // Same per-account rule as `syncAccount`: skip the ones already in flight,
+    // enqueue the rest. A batch that bailed out wholesale because *something*
+    // was syncing is what left newly added accounts empty.
+    const toSync = accountIds.filter((id) => !get().syncingAccountIds.has(id));
+    if (toSync.length === 0) return;
 
     const syncId = get().currentSyncId + 1;
-    set({
+    set((state) => ({
       isSyncing: true,
       error: null,
       errorAccountId: null,
       syncProgress: null,
       currentSyncId: syncId,
-      pendingSyncAccountIds: new Set(accountIds),
-    });
+      syncingAccountIds: toSync.reduce(withAccount, state.syncingAccountIds),
+    }));
 
-    for (const accountId of accountIds) {
+    for (const accountId of toSync) {
       try {
         // Enqueue-only: the backend command submits to the account's own sync
         // queue and returns; completion arrives via sync-progress events.
         await api.syncAccount(accountId);
       } catch (error) {
         if (get().currentSyncId !== syncId) return;
-        // Enqueue failed for this account — drop it from pending so the batch
-        // can still finish, and surface the error scoped to the account.
-        set((state) => {
-          const pending = new Set(state.pendingSyncAccountIds);
-          pending.delete(accountId);
-          return {
-            pendingSyncAccountIds: pending,
-            isSyncing: pending.size > 0,
-            error: errorText(error),
-            errorAccountId: accountId,
-          };
-        });
+        // Enqueue failed for this account — stop tracking it so the batch can
+        // still finish, and surface the error scoped to the account.
+        set((state) => dropAccount(state, accountId, errorText(error)));
       }
     }
   },

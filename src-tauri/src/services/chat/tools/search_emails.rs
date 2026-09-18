@@ -68,6 +68,35 @@ so count only the first {tagged} when asked how many)"
     ))
 }
 
+/// The address of the mailbox a tool call is scoped to, for the zero-result
+/// line. A lookup failure degrades to an empty string — the message then keeps
+/// its original wording rather than leaking an account id.
+fn scoped_account_email(ctx: &ToolCtx<'_>) -> String {
+    ctx.db
+        .get_account(ctx.account_id)
+        .ok()
+        .flatten()
+        .map(|a| a.email)
+        .unwrap_or_default()
+}
+
+/// The zero-result line, naming the mailbox actually searched. Chat answers
+/// from ONE account (see `docs/DECISIONS.md`, 2026-08-14), so a bare "No
+/// matching emails found." reads as "you have no such email" when it only ever
+/// meant "not in this account" — and the model reported that absence as fact.
+/// Pure so every empty branch renders the same shape.
+fn no_match_message(account_email: &str, prefix: &str, parenthetical: Option<&str>) -> String {
+    let scope = if account_email.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" in {account_email}")
+    };
+    match parenthetical {
+        Some(note) => format!("{prefix}No matching emails found{scope} ({note})."),
+        None => format!("{prefix}No matching emails found{scope}."),
+    }
+}
+
 /// How many candidates the semantic ranker is asked for when other filters
 /// still have to be applied on top of it: meaning-ranked hits are cheap to
 /// over-fetch and a sender or date filter can discard most of them.
@@ -571,9 +600,11 @@ showing recent matches without since/until instead)\n",
                             return Ok(ToolOutput::text_with_email_refs(out, ids(emails)));
                         }
                         Ok(_) => {
-                            return Ok(ToolOutput::text(
-                                "No matching emails found (also tried without the date window).",
-                            ));
+                            return Ok(ToolOutput::text(no_match_message(
+                                &scoped_account_email(ctx),
+                                "",
+                                Some("also tried without the date window"),
+                            )));
                         }
                         Err(e) => {
                             return Ok(ToolOutput::text(format!("Search error on retry: {}", e)));
@@ -598,9 +629,10 @@ showing recent matches without since/until instead)\n",
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
-                Ok(ToolOutput::text(format!(
-                    "{}No matching emails found.",
-                    mode_note.unwrap_or_default()
+                Ok(ToolOutput::text(no_match_message(
+                    &scoped_account_email(ctx),
+                    mode_note.unwrap_or_default(),
+                    None,
                 )))
             }
         }
@@ -672,9 +704,11 @@ impl SearchEmailsTool {
         kept.extend(rest);
         kept.truncate(limit as usize);
         if kept.is_empty() {
-            return Ok(ToolOutput::text(
-                "No matching emails found (semantic search; try other words, or drop a filter).",
-            ));
+            return Ok(ToolOutput::text(no_match_message(
+                &scoped_account_email(ctx),
+                "",
+                Some("semantic search; try other words, or drop a filter"),
+            )));
         }
         let per_email = thread_clean::summary_chars_per_email(kept.len());
         let mut out = String::from("(semantic search — ranked by relevance to the query, not by date)\n");
@@ -870,6 +904,7 @@ different one)"
             account_id: "acct".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: String::new(),
             sender: format!("{sender} <{sender}@example.com>"),
             sender_email: format!("{sender}@example.com"),
@@ -1057,5 +1092,58 @@ different one)"
             .expect("tool ran");
         assert!(!out.text.starts_with("Search error"), "{}", out.text);
         assert!(out.text.contains("No matching emails found"), "{}", out.text);
+    }
+
+    #[tokio::test]
+    async fn zero_results_name_the_account_the_search_was_scoped_to() {
+        // "No matching emails found." reads as "you have no such email" when it
+        // really means "not in the ONE account this chat can search" — the
+        // ambiguity DECISIONS.md (2026-08-14) calls out. Naming the mailbox is
+        // what lets the model report a scoped absence instead of an absolute
+        // one.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@acme.com', 'Test', 0)",
+                [],
+            )
+            .unwrap();
+        let categories: Vec<String> = Vec::new();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acct",
+            categories: &categories,
+            page: None,
+        };
+        let out = SearchEmailsTool
+            .execute(&ctx, json!({"from": "nobody@example.com", "limit": 5}))
+            .await
+            .expect("tool ran");
+        assert!(
+            out.text.contains("in me@acme.com"),
+            "empty result must name the mailbox it searched: {}",
+            out.text
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_results_keep_the_bare_contract_when_the_account_is_unknown() {
+        // A lookup failure must degrade to the original wording rather than
+        // leak an id or an empty "in ." — same graceful-degradation rule the
+        // identity line follows.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let categories: Vec<String> = Vec::new();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acct",
+            categories: &categories,
+            page: None,
+        };
+        let out = SearchEmailsTool
+            .execute(&ctx, json!({"from": "nobody@example.com", "limit": 5}))
+            .await
+            .expect("tool ran");
+        assert_eq!(out.text, "No matching emails found.");
     }
 }

@@ -155,6 +155,7 @@ mod tests {
             account_id: account.to_string(),
             thread_id: format!("t-{id}"),
             message_id: Some(format!("<{id}@example.com>")),
+            references: None,
             subject: "s".to_string(),
             sender: "Sender".to_string(),
             sender_email: "sender@example.com".to_string(),

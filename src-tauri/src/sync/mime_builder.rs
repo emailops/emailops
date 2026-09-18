@@ -46,6 +46,11 @@ pub struct SendMimeParams<'a> {
     pub cc_emails: &'a [String],
     pub subject: &'a str,
     pub in_reply_to: Option<&'a str>,
+    /// The parent's own `References` header, so this reply can continue the
+    /// chain instead of starting a new one. `None` for fresh mail, and for a
+    /// parent that carried no chain (it was the thread root, or it was synced
+    /// before we started storing the header).
+    pub references: Option<&'a str>,
     pub body: &'a EmailBody,
     /// Regular file attachments (rendered as `Content-Disposition: attachment`).
     /// Inline images live in `body.inline_images`, never here.
@@ -179,9 +184,29 @@ fn base_builder(params: &SendMimeParams<'_>) -> Result<lettre::message::MessageB
     }
     if let Some(mid) = params.in_reply_to {
         builder = builder.in_reply_to(mid.to_string());
-        builder = builder.references(mid.to_string());
+        builder = builder.references(reply_references(params.references, mid));
     }
     Ok(builder)
+}
+
+/// The `References` header for a reply: RFC 5322 §3.6.4 — the parent's own
+/// `References` followed by the parent's `Message-ID`.
+///
+/// Sending only the parent's Message-ID (what this used to do) declares the
+/// reply a new thread root. Worse, it is contagious: the recipient's client
+/// builds its next reply's chain from ours, so the broken root propagates back
+/// and one conversation fragments into pairs of messages.
+fn reply_references(parent_references: Option<&str>, parent_message_id: &str) -> String {
+    let parent_chain = parent_references.map(str::trim).unwrap_or_default();
+    if parent_chain.is_empty() {
+        return parent_message_id.to_string();
+    }
+    // Some clients already append their own Message-ID to References; don't
+    // repeat it.
+    if parent_chain.split_whitespace().last() == Some(parent_message_id) {
+        return parent_chain.to_string();
+    }
+    format!("{parent_chain} {parent_message_id}")
 }
 
 fn build_attachment_part(att: &EmailAttachment) -> Result<SinglePart> {
@@ -246,6 +271,7 @@ mod tests {
             cc_emails: &cc,
             subject: "hello",
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })
@@ -261,6 +287,7 @@ mod tests {
             cc_emails: &[],
             subject: "hello",
             in_reply_to: None,
+            references: None,
             body: &EmailBody::plain("hi"),
             attachments: &[],
         })
@@ -453,6 +480,7 @@ mod tests {
             cc_emails: &[],
             subject: "Re: hi",
             in_reply_to: Some("<abc-123@gmail.com>"),
+            references: None,
             body: &EmailBody::plain("yep"),
             attachments: &[],
         })
@@ -467,6 +495,104 @@ mod tests {
         );
     }
 
+    // ── References chain (RFC 5322 §3.6.4) ────────────────────────────────────
+
+    #[test]
+    fn a_reply_carries_the_parents_whole_reference_chain() {
+        // Regression: References used to be set to the parent's Message-ID
+        // alone, discarding the chain the parent carried. Every reply then
+        // declared itself a new thread root — and because the recipient's
+        // client faithfully copies our References, their next reply inherited
+        // the wrong root too, so one conversation split into pairs.
+        let to = vec!["you@example.com".to_string()];
+        let mime = build_send_mime(&SendMimeParams {
+            from_email: "me@example.com",
+            from_name: None,
+            to_emails: &to,
+            cc_emails: &[],
+            subject: "Re: hi",
+            in_reply_to: Some("<parent@example.com>"),
+            references: Some("<root@example.com> <middle@example.com>"),
+            body: &EmailBody::plain("yep"),
+            attachments: &[],
+        })
+        .unwrap();
+
+        assert!(
+            mime.contains("References: <root@example.com> <middle@example.com> <parent@example.com>"),
+            "References must be the parent's chain plus the parent's Message-ID, got:\n{mime}"
+        );
+        assert!(
+            mime.contains("In-Reply-To: <parent@example.com>"),
+            "In-Reply-To stays the immediate parent:\n{mime}"
+        );
+    }
+
+    #[test]
+    fn reply_references_falls_back_to_the_parent_when_it_had_no_chain() {
+        assert_eq!(reply_references(None, "<parent@example.com>"), "<parent@example.com>");
+        assert_eq!(
+            reply_references(Some("   "), "<parent@example.com>"),
+            "<parent@example.com>"
+        );
+    }
+
+    #[test]
+    fn reply_references_appends_the_parent_to_its_chain() {
+        assert_eq!(
+            reply_references(Some("<root@example.com>"), "<parent@example.com>"),
+            "<root@example.com> <parent@example.com>"
+        );
+    }
+
+    #[test]
+    fn reply_references_does_not_repeat_a_parent_already_ending_the_chain() {
+        // Some clients already include their own Message-ID in References.
+        assert_eq!(
+            reply_references(Some("<root@example.com> <parent@example.com>"), "<parent@example.com>"),
+            "<root@example.com> <parent@example.com>"
+        );
+    }
+
+    // What makes "no account can be created that the send path will reject" a
+    // checked fact rather than a claim: the validator guarding account creation
+    // and the parser building the From header must agree, in both directions.
+    #[test]
+    fn every_accepted_account_address_builds_a_valid_from_header() {
+        use crate::util::email_addr::parse_account_address;
+
+        let to = vec!["you@example.com".to_string()];
+        let build = |from: &str| {
+            build_send_mime(&SendMimeParams {
+                from_email: from,
+                from_name: None,
+                to_emails: &to,
+                cc_emails: &[],
+                subject: "hello",
+                in_reply_to: None,
+                references: None,
+                body: &EmailBody::plain("hi"),
+                attachments: &[],
+            })
+        };
+
+        for raw in [
+            "alex@example.de",
+            "alex.doe+tag@mail.example.co.uk",
+            "Alex.Doe@Example.de",
+        ] {
+            let accepted = parse_account_address(raw).unwrap_or_else(|| panic!("validator must accept {raw}"));
+            assert!(
+                build(&accepted).is_ok(),
+                "send path rejected an address account creation accepts: {raw}"
+            );
+        }
+
+        // The bug itself, rejected at both ends: a bare login name is no address.
+        assert!(parse_account_address("alex").is_none());
+        assert!(build("alex").is_err());
+    }
+
     #[test]
     fn invalid_from_address_returns_error() {
         let to = vec!["you@example.com".to_string()];
@@ -477,6 +603,7 @@ mod tests {
             cc_emails: &[],
             subject: "x",
             in_reply_to: None,
+            references: None,
             body: &EmailBody::plain("hi"),
             attachments: &[],
         });
@@ -501,6 +628,7 @@ mod tests {
             cc_emails: &[],
             subject: "x",
             in_reply_to: None,
+            references: None,
             body: &body,
             attachments: &[],
         });
@@ -523,6 +651,7 @@ mod tests {
             cc_emails: &[],
             subject: "Facturas T1 subidas y nuevo número de IVA",
             in_reply_to: None,
+            references: None,
             body: &EmailBody::plain("hi"),
             attachments: &[],
         })
@@ -552,6 +681,7 @@ mod tests {
             cc_emails: &[],
             subject: "Hello World",
             in_reply_to: None,
+            references: None,
             body: &EmailBody::plain("hi"),
             attachments: &[],
         })
@@ -572,6 +702,7 @@ mod tests {
             cc_emails: &[],
             subject: "hello",
             in_reply_to: None,
+            references: None,
             body: &EmailBody::plain("hi"),
             attachments: &[],
         })

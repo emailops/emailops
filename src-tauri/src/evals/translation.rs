@@ -89,6 +89,7 @@ fn seed_email(db: &Database, id: &str, body: &str) -> EvalResult<()> {
         account_id: "eval-acct".to_string(),
         thread_id: format!("thread-{id}"),
         message_id: None,
+        references: None,
         subject: "Translation eval".to_string(),
         sender: "Eval Sender".to_string(),
         sender_email: "sender@translation.test".to_string(),

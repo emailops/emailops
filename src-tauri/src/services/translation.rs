@@ -575,6 +575,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             thread_id: format!("thread-{id}"),
             message_id: None,
+            references: None,
             subject: "Test subject".to_string(),
             sender: "Sender".to_string(),
             sender_email: "sender@example.com".to_string(),

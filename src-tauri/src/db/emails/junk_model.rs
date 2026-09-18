@@ -300,6 +300,7 @@ mod tests {
             account_id: "a1".into(),
             thread_id: thread.into(),
             message_id: None,
+            references: None,
             subject: format!("Subject {id}"),
             sender: "S".into(),
             sender_email: format!("{id}@other.example"),

@@ -14,7 +14,7 @@
   tier: smoke
   expected_answer_contains: ["CPX31"]
   expected_tools_not_called: ["generate_email_draft"]
-  expected_output: "La factura de Hetzner Cloud de mayo de 2026 incluye dos servidores CPX31 en Falkenstein (2 × CPX31); el desglose completo va en el PDF adjunto. Enlace al correo: email://demo_11e9c4d80c0aeec6."
+  expected_output: "La factura de Hetzner Cloud de mayo de 2026 incluye dos servidores CPX31 en Falkenstein (2 × CPX31); el desglose completo va en el PDF adjunto. Enlace al correo: email://demo_ddf50b8bd4ef015b."
   metrics: [answer_relevancy, faithfulness]
 
 - id: sf_marisol_first_contact_date
@@ -72,8 +72,8 @@
   # Read state is demo data: opening these invoices in the app changes the
   # answer (`make demo-db` restores it). The March invoice is read.
   expected_tools_called: ["search_emails"]
-  expected_answer_contains: ["demo_3baa1bc9a7dfee8a", "demo_de715ea06a39df99"]
-  expected_answer_not_contains: ["demo_c0678742c78e11b0"]
+  expected_answer_contains: ["demo_e359da93647fcd4c", "demo_66b00a9a6a9894d5"]
+  expected_answer_not_contains: ["demo_39c574899d0e4959"]
   expected_output: "Tienes dos correos de BorgBase sin leer: «BorgBase invoice for January 2026» (06/01/2026) y «BorgBase invoice for April 2026» (03/04/2026), cada uno enlazado con email://. El resto de facturas de BorgBase ya están leídas."
   metrics: [answer_relevancy, faithfulness]
 
@@ -139,7 +139,8 @@
   account: "ulises@emailopslabs.dev"
   category: pending_actions
   tier: smoke
-  ambient_thread_id: "thread_bd86f13cc9a7"
+  # By subject, not id: the generator redraws thread ids on every demo-db build.
+  ambient_thread_subject: "Production bug: orders stuck in 'processing'"
   ambient_account: "ulises@emailopslabs.dev"
   expected_tools_not_called: ["generate_email_draft"]
   expected_answer_contains_any: ["processing", "pedidos", "orders"]
@@ -239,7 +240,7 @@
   tier: full
   expected_answer_contains: ["BorgBase"]
   expected_answer_not_contains: ["](draft://"]
-  expected_output: "El correo sin leer más antiguo es «BorgBase invoice for January 2026», de BorgBase, del 6 de enero de 2026 (email://demo_3baa1bc9a7dfee8a)."
+  expected_output: "El correo sin leer más antiguo es «BorgBase invoice for January 2026», de BorgBase, del 6 de enero de 2026 (email://demo_e359da93647fcd4c)."
   metrics: [answer_relevancy, faithfulness]
 
 # ── attachments ──────────────────────────────────────────────────────────────
@@ -271,7 +272,7 @@
   category: attachments
   tier: full
   expected_answer_contains: ["250"]
-  expected_output: "The BorgBase invoice for April 2026 covers 3 repositories and 250 GB of backups; the PDF is attached to that email (email://demo_de715ea06a39df99)."
+  expected_output: "The BorgBase invoice for April 2026 covers 3 repositories and 250 GB of backups; the PDF is attached to that email (email://demo_66b00a9a6a9894d5)."
   metrics: [answer_relevancy, faithfulness]
 
 # ── memory ───────────────────────────────────────────────────────────────────

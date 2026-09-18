@@ -94,6 +94,11 @@ pub async fn sync_account_with_contention(
                 "sync",
                 format!("sync already in progress for {account_id}, skipping"),
             );
+            // Close the progress stream even though this call does no work: a
+            // caller watching `sync-progress` to know when the account it asked
+            // about is finished would otherwise wait forever. The run holding
+            // the lock reports the real outcome.
+            emit_progress(account_id, "complete", 0, 0, "Sync already in progress");
             return Ok(());
         }
         (Err(_), SyncContention::Wait) => {
@@ -117,6 +122,9 @@ pub async fn sync_account_with_contention(
                              the new sync settings apply from the next sync"
                         ),
                     );
+                    // Same contract as the `Skip` branch above: a caller that
+                    // asked for a sync must always see the stream close.
+                    emit_progress(account_id, "complete", 0, 0, "Sync already in progress");
                     return Ok(());
                 }
             }
@@ -2460,6 +2468,70 @@ pub(super) struct SyncPlan {
 }
 
 #[cfg(test)]
+mod contention_progress_tests {
+    use super::*;
+    use crate::services::events::seam_test_lock;
+
+    /// Every sync that is asked for must close its progress stream, including
+    /// the ones that decline to run.
+    ///
+    /// A caller (the UI, or a queued task) watches `sync-progress` to know when
+    /// the account it asked about is done. `Skip` used to return `Ok(())`
+    /// silently, so a caller tracking "this account is syncing" from those
+    /// events had nothing to clear it with — the account stayed marked busy for
+    /// the rest of the session and could never be synced again.
+    // Synchronous on purpose: `seam_test_lock` is a `std::sync::MutexGuard`,
+    // which must not be held across an `.await`. The call under test is driven
+    // on a local runtime instead.
+    #[test]
+    fn a_skipped_sync_still_emits_a_terminal_progress_event() {
+        let _seam = seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        crate::services::logger::install_for_testing();
+
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+            Arc::new(Mutex::new(HashMap::from([("acc-skip".to_string(), lock.clone())])));
+        // Uncontended here — holding it is what makes the call under test skip.
+        let _held = lock.try_lock().unwrap();
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(sync_account_with_contention(
+                &db,
+                "acc-skip",
+                std::path::Path::new("/tmp"),
+                None,
+                crate::services::task_queue::TaskQueue::new(1, "test"),
+                Arc::new(Mutex::new(HashMap::new())),
+                sync_locks,
+                SyncContention::Skip,
+            ))
+            .expect("a skipped sync is not an error");
+
+        // Scoped to this account: the event sink is a process-global seam, so
+        // tests running in parallel emit their own `sync-progress` into it.
+        let statuses: Vec<String> = sink
+            .payloads_for("sync-progress")
+            .into_iter()
+            .filter(|p| p.get("accountId").and_then(|v| v.as_str()) == Some("acc-skip"))
+            .filter_map(|p| p.get("status")?.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            statuses,
+            vec!["complete".to_string()],
+            "a skipped sync must report completion so watchers stop waiting on it"
+        );
+
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+        crate::services::logger::install(Arc::new(crate::services::logger::NoopLogger));
+    }
+}
+
+#[cfg(test)]
 mod inter_batch_pacing_tests {
     use super::*;
 
@@ -2689,6 +2761,7 @@ mod extra_mailbox_window_tests {
             account_id: "acc-1".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: format!("subject {id}"),
             sender: "Me".to_string(),
             sender_email: "me@example.com".to_string(),
@@ -3207,6 +3280,7 @@ mod sync_anchor_tests {
             account_id: "acc-anchor".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: format!("subject {id}"),
             sender: "Someone".to_string(),
             sender_email: "someone@example.com".to_string(),
@@ -3315,6 +3389,7 @@ mod backfill_watermark_persistence_tests {
             account_id: account.id.clone(),
             thread_id: "t-1".to_string(),
             message_id: None,
+            references: None,
             subject: "subject".to_string(),
             sender: "Someone".to_string(),
             sender_email: "someone@example.com".to_string(),
@@ -3455,6 +3530,7 @@ mod spam_reconcile_tests {
             account_id: "acc-1".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: format!("subject {id}"),
             sender: "Sender".to_string(),
             sender_email: "sender@example.com".to_string(),

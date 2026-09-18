@@ -382,6 +382,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: "S".into(),
             sender: "Sender".into(),
             sender_email: "s@other.example".into(),

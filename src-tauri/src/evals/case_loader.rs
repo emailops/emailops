@@ -98,6 +98,15 @@ pub struct EvalCase {
     #[serde(default)]
     pub thread_id: Option<String>,
 
+    /// The thread's *subject*, resolved to an id against the DB at run time.
+    ///
+    /// Prefer this over `thread_id` for demo-DB fixtures: the generator draws
+    /// thread ids at random, so a literal id silently stops matching on the
+    /// next `make demo-db` and every case bound to it dies. Subjects are
+    /// authored content and survive regeneration. Setting both is rejected.
+    #[serde(default)]
+    pub thread_subject: Option<String>,
+
     /// Thread the "main view" has open, passed as *ambient* context for this
     /// turn — the chat panel's removable context chip, not a seeded
     /// conversation. Distinct from `thread_id`: that one binds the whole
@@ -106,6 +115,11 @@ pub struct EvalCase {
     /// never persisted.
     #[serde(default)]
     pub ambient_thread_id: Option<String>,
+
+    /// `ambient_thread_id` by subject — same rationale as `thread_subject`,
+    /// resolved against `ambient_account` when set, else the case's account.
+    #[serde(default)]
+    pub ambient_thread_subject: Option<String>,
 
     /// Account owning `ambient_thread_id`. Set it when the thread belongs to a
     /// *different* account than `account` — that is the interesting case, since

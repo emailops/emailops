@@ -86,6 +86,10 @@ pub fn build_optimistic_sent_email(input: &OptimisticSendInput<'_>) -> Optimisti
             account_id: input.account.id.clone(),
             thread_id,
             message_id: input.meta.message_id_header.clone(),
+            // The chain this reply actually carried is filled in when the sync
+            // reconciler replaces this optimistic row with the provider's Sent
+            // copy; until then nothing reads it.
+            references: None,
             subject,
             // Same name the From header carries; an account without one
             // sends as its address.
