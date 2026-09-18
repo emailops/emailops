@@ -1204,6 +1204,7 @@ mod tests {
             account_id: account_id.into(),
             thread_id: id.into(),
             message_id: None,
+            references: None,
             subject: subject.into(),
             sender: "Sender".into(),
             sender_email: sender_email.into(),

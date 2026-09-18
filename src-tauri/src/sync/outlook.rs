@@ -1053,6 +1053,9 @@ impl EmailProvider for OutlookClient {
         cc_emails: &[String],
         thread_id: &str,
         original_message_id: Option<&str>,
+        // Graph builds In-Reply-To/References itself from the message being
+        // replied to, so the parent's chain is not ours to send.
+        _original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1167,11 +1170,21 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         crate::sync::header_capture::capture(&pairs)
     });
 
+    // Only present when `internetMessageHeaders` was selected. Graph writes the
+    // threading headers itself on `/reply`, so this is stored for completeness
+    // (and for any future non-Graph send path) rather than read back today.
+    let references = msg.internet_message_headers.as_ref().and_then(|list| {
+        list.iter()
+            .find(|h| h.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("References")))
+            .and_then(|h| h.value.clone())
+    });
+
     let email = Email {
         id: msg.id.clone(),
         account_id: String::new(), // set by caller
         thread_id: msg.conversation_id.unwrap_or_else(|| msg.id.clone()),
         message_id: msg.internet_message_id,
+        references,
         subject: msg.subject.unwrap_or_default(),
         sender: sender_name,
         sender_email,

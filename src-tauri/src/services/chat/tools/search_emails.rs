@@ -681,6 +681,7 @@ mod tests {
             account_id: "acct".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: String::new(),
             sender: format!("{sender} <{sender}@example.com>"),
             sender_email: format!("{sender}@example.com"),

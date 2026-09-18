@@ -51,6 +51,7 @@ fn make_email(id: &str, account_id: &str, timestamp: i64) -> Email {
         account_id: account_id.to_string(),
         thread_id: format!("thread-{id}"),
         message_id: None,
+        references: None,
         subject: format!("Subject {id}"),
         sender: "Test Sender".to_string(),
         sender_email: "sender@example.com".to_string(),
@@ -604,6 +605,7 @@ fn make_email_with(id: &str, account_id: &str, timestamp: i64, sender_email: &st
         account_id: account_id.to_string(),
         thread_id: format!("thread-{id}"),
         message_id: None,
+        references: None,
         subject: format!("Subject {id}"),
         sender: "Test Sender".to_string(),
         sender_email: sender_email.to_string(),
@@ -792,6 +794,7 @@ async fn fake_provider_send_reply_records_all_fields() {
             &["cc@example.com".to_string()],
             "thread-xyz",
             Some("orig-msg-id"),
+            Some("<root@example.com>"),
             "Re: Hello",
             &EmailBody::plain("reply body"),
             &[],
@@ -807,9 +810,71 @@ async fn fake_provider_send_reply_records_all_fields() {
     assert_eq!(msg.cc_emails, vec!["cc@example.com"]);
     assert_eq!(msg.thread_id.as_deref(), Some("thread-xyz"));
     assert_eq!(msg.original_message_id.as_deref(), Some("orig-msg-id"));
+    assert_eq!(msg.original_references.as_deref(), Some("<root@example.com>"));
     assert_eq!(msg.subject, "Re: Hello");
     assert_eq!(msg.body.text, "reply body");
     assert!(msg.body.html.is_none());
+}
+
+/// Regression: a reply must hand the provider the parent's whole `References`
+/// chain, so the outgoing message continues the thread.
+///
+/// Sending only the parent's Message-ID makes every reply declare itself a new
+/// thread root — and the break is contagious, because the recipient's client
+/// builds its next reply's chain from ours. The reported symptom was one
+/// conversation showing up as separate rows, splitting into pairs of messages.
+#[tokio::test]
+async fn a_reply_hands_the_provider_the_parents_reference_chain() {
+    use emailops_lib::sync::provider::EmailBody;
+    let db = test_db();
+    db.insert_account(&make_account("acc-ref", "me@example.com")).unwrap();
+
+    let mut parent = make_email_with("parent", "acc-ref", 1_700_000_000, "them@example.com", "inbox");
+    parent.message_id = Some("<parent@example.com>".to_string());
+    parent.references = Some("<root@example.com> <middle@example.com>".to_string());
+    db.insert_email(&parent).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "parent",
+        &EmailBody::plain("ok"),
+        None,
+        None,
+        None,
+        Vec::new(),
+        &provider,
+    )
+    .await
+    .unwrap();
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].original_references.as_deref(),
+        Some("<root@example.com> <middle@example.com>"),
+        "the parent's chain must reach the provider, not just its Message-ID"
+    );
+    assert_eq!(sent[0].original_message_id.as_deref(), Some("<parent@example.com>"));
+}
+
+/// The chain has to survive a round trip through SQLite, not just live on the
+/// struct: it was parsed on ingest and dropped before V023, which is why there
+/// was nothing to carry forward.
+#[test]
+fn a_stored_email_keeps_its_reference_chain() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-rt", "me@example.com")).unwrap();
+
+    let mut email = make_email_with("round-trip", "acc-rt", 1_700_000_000, "them@example.com", "inbox");
+    email.references = Some("<root@example.com> <middle@example.com>".to_string());
+    db.insert_email(&email).unwrap();
+
+    let stored = db.get_email("round-trip").unwrap().expect("email must be stored");
+    assert_eq!(
+        stored.references.as_deref(),
+        Some("<root@example.com> <middle@example.com>")
+    );
 }
 
 #[tokio::test]
@@ -2828,6 +2893,7 @@ impl EmailProvider for FailingEmailProvider {
         _cc_emails: &[String],
         _thread_id: &str,
         _original_message_id: Option<&str>,
+        _original_references: Option<&str>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
@@ -3194,6 +3260,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _cc_emails: &[String],
         _thread_id: &str,
         _original_message_id: Option<&str>,
+        _original_references: Option<&str>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],

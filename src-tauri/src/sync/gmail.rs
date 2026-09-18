@@ -470,6 +470,7 @@ impl GmailClient {
         cc_emails: &[String],
         thread_id: &str,
         original_message_id: Option<&str>,
+        original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -482,6 +483,7 @@ impl GmailClient {
             cc_emails,
             subject: &normalized_subject,
             in_reply_to: original_message_id.filter(|v| !v.trim().is_empty()),
+            references: original_references.filter(|v| !v.trim().is_empty()),
             body,
             attachments,
         })?;
@@ -519,6 +521,7 @@ impl GmailClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;
@@ -554,6 +557,7 @@ impl GmailClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;
@@ -718,6 +722,13 @@ impl GmailClient {
             .find(|h| h.name.eq_ignore_ascii_case("Message-ID"))
             .map(|h| h.value.clone());
 
+        // Kept so a reply can continue this message's chain (RFC 5322 §3.6.4)
+        // instead of declaring itself a new thread root.
+        let references = headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("References"))
+            .map(|h| h.value.clone());
+
         let from = headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("From"))
@@ -785,6 +796,7 @@ impl GmailClient {
             account_id: String::new(), // Will be set by caller
             thread_id: msg.thread_id,
             message_id,
+            references,
             subject,
             sender: sender_name,
             sender_email,
@@ -1562,6 +1574,7 @@ impl EmailProvider for GmailClient {
         cc_emails: &[String],
         thread_id: &str,
         original_message_id: Option<&str>,
+        original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1573,6 +1586,7 @@ impl EmailProvider for GmailClient {
             cc_emails,
             thread_id,
             original_message_id,
+            original_references,
             subject,
             body,
             attachments,

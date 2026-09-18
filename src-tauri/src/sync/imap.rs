@@ -635,6 +635,7 @@ impl ImapClient {
             account_id: String::new(),
             thread_id,
             message_id,
+            references,
             subject,
             sender: sender_name,
             sender_email: sender_email_addr,
@@ -1225,6 +1226,7 @@ impl EmailProvider for ImapClient {
         cc_emails: &[String],
         _thread_id: &str,
         original_message_id: Option<&str>,
+        original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1236,6 +1238,7 @@ impl EmailProvider for ImapClient {
             cc_emails,
             subject,
             in_reply_to: original_message_id.filter(|s| !s.trim().is_empty()),
+            references: original_references.filter(|s| !s.trim().is_empty()),
             body,
             attachments,
         })?;
@@ -1268,6 +1271,7 @@ impl EmailProvider for ImapClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;

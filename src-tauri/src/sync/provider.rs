@@ -335,6 +335,11 @@ pub trait EmailProvider: Send + Sync {
     /// `from_name` is the display name for the From header (`None` sends the
     /// bare address). Outlook ignores it: Graph takes the sender name from the
     /// mailbox itself.
+    ///
+    /// `original_references` is the parent's `References` header. It goes out
+    /// with the parent's Message-ID appended (RFC 5322 §3.6.4) so the reply
+    /// continues the thread instead of rooting a new one; pass `None` when the
+    /// parent carried no chain, or predates us storing it.
     async fn send_reply(
         &self,
         from_email: &str,
@@ -343,6 +348,7 @@ pub trait EmailProvider: Send + Sync {
         cc_emails: &[String],
         thread_id: &str,
         original_message_id: Option<&str>,
+        original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -665,6 +671,9 @@ pub struct FakeSentMessage {
     pub cc_emails: Vec<String>,
     pub thread_id: Option<String>,
     pub original_message_id: Option<String>,
+    /// The parent's `References` chain as handed to the provider, so tests can
+    /// assert a reply continues its thread instead of rooting a new one.
+    pub original_references: Option<String>,
     pub subject: String,
     pub body: EmailBody,
     pub attachments: Vec<EmailAttachment>,
@@ -950,6 +959,7 @@ impl EmailProvider for FakeEmailProvider {
         cc_emails: &[String],
         thread_id: &str,
         original_message_id: Option<&str>,
+        original_references: Option<&str>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -964,6 +974,7 @@ impl EmailProvider for FakeEmailProvider {
                 cc_emails: cc_emails.to_vec(),
                 thread_id: Some(thread_id.to_string()),
                 original_message_id: original_message_id.map(str::to_string),
+                original_references: original_references.map(str::to_string),
                 subject: subject.to_string(),
                 body: body.clone(),
                 attachments: attachments.to_vec(),
@@ -991,6 +1002,7 @@ impl EmailProvider for FakeEmailProvider {
                 cc_emails: cc_emails.to_vec(),
                 thread_id: None,
                 original_message_id: None,
+                original_references: None,
                 subject: subject.to_string(),
                 body: body.clone(),
                 attachments: attachments.to_vec(),
@@ -1253,6 +1265,7 @@ mod tests {
             account_id: "acc".to_string(),
             thread_id: format!("t-{id}"),
             message_id: None,
+            references: None,
             subject: "hi".to_string(),
             sender: "Test".to_string(),
             sender_email: "test@example.com".to_string(),
@@ -1367,6 +1380,7 @@ mod tests {
                 &[],
                 "thread-1",
                 Some("<orig@remote>"),
+                None,
                 "Re: subj",
                 &EmailBody::plain("body"),
                 &[],
@@ -1551,6 +1565,7 @@ mod tests {
             _cc_emails: &[String],
             _thread_id: &str,
             _original_message_id: Option<&str>,
+            _original_references: Option<&str>,
             _subject: &str,
             _body: &EmailBody,
             _attachments: &[EmailAttachment],
