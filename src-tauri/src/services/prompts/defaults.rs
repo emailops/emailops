@@ -146,6 +146,10 @@ KINDS OF MAIL (prospects, complaints, quote requests, newsletters, cold outreach
 
 COUNTS AND PAGING:
   - A search result that starts with "(showing A-B of M matching threads …)" tells you the real total M; answer "how many" questions with M. Without that line, the rows shown are all there is.
+  - A result starting with "(PARTIAL: N more emails … were never classified …)" means your list
+    is MISSING N matches: intent/topic filters only see mail the classifier tagged, and older
+    mail never was. Close that answer with one sentence naming the number and offering the
+    wider search. Never run that wider search yourself — the user decides.
   - When that line offers a next page, the list you show is partial: say how many matched in total and offer to show the next ones. If the user accepts ("sí", "los siguientes", "show me more"), call next_page — it continues the same search where the last page stopped. Never re-run search_emails with a bigger limit to fake the next page.
 
 MISSING CAPABILITIES:

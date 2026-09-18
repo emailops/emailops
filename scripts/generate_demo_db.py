@@ -43,6 +43,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -952,6 +953,34 @@ PERSONAL_THREADS_EN: list[Thread] = [
 ]
 
 
+# First contacts too old for the AI window. Classification only runs over
+# emails inside `ai_max_email_count` / `ai_max_email_age_days`, so a mailbox
+# with history always has mail the classifier never tagged — and an
+# intent/topic filter cannot see it. These carry no tags on purpose, so the
+# demo shows what a partially classified mailbox looks like.
+# (sender_name, sender_email, subject, body, (year, month, day))
+UNCLASSIFIED_LEADS_EN: list[tuple[str, str, str, str, tuple[int, int, int]]] = [
+    ("Robin Achterberg", "robin@kaaidesign.nl",
+     "Freelance Rust work for a booking widget",
+     "Hello Ulises,\n\nWe build booking widgets for small hotels and are "
+     "looking for someone to take our sync service off PHP. Do you take "
+     "contracts of two or three months?\n\nRobin Achterberg, Kaai Design",
+     (2023, 11, 6)),
+    ("Sofia Marchetti", "sofia@borgotools.it",
+     "Introduction — offline-first inventory app",
+     "Hi,\n\nA colleague pointed me at your writing on local-first software. "
+     "We are starting an offline-first inventory app and would like to talk "
+     "about an architecture review before we commit to a stack.\n\nSofia "
+     "Marchetti, Borgo Tools",
+     (2024, 2, 19)),
+    ("Kofi Mensah", "kofi@adinkralabs.dev",
+     "Quick question about your consulting rates",
+     "Good morning,\n\nWe are a four-person team building payment tooling and "
+     "need a fractional CTO one day a week. Could you share your rates and "
+     "availability?\n\nKofi Mensah, Adinkra Labs",
+     (2024, 8, 27)),
+]
+
 # Prospect / lead inquiries, dated with ABSOLUTE (year, month, day) so the demo
 # query "which requests from prospects did I receive in 2025?" is answerable.
 # A couple of 2026 leads keep the year filter selective. Faro/Lumen/Bahía are
@@ -1059,7 +1088,7 @@ def _insert_thread(conn: sqlite3.Connection, account: Account, thread: Thread) -
     """Insert one Thread as a single conversation: all messages share one
     thread_id, replies are Re:-prefixed with ascending timestamps, and the
     sender alternates between the counterparty ('them') and the owner ('me')."""
-    thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+    thread_id = demo_id("thread_", account.id, thread.sender_email, thread.subject, width=12)
     # Accumulate a strictly-increasing timestamp so messages stay in
     # chronological order — a fresh random per message (base + i*rand) could
     # otherwise place a later reply before an earlier one, scrambling the thread
@@ -1121,6 +1150,28 @@ def populate_prospect_requests(conn: sqlite3.Connection, locale: Locale) -> None
         # A prospect's inquiry is a first contact by construction: label it with
         # the classifier's `introduction` intent, as real mailboxes carry it.
         insert_tags(conn, email_id, subject, body, email, intent="introduction")
+
+
+def populate_unclassified_leads(conn: sqlite3.Connection, locale: Locale) -> None:
+    """Insert the pre-AI-window first contacts WITHOUT tags.
+
+    Deliberately skips `insert_tags`: these are the emails the classifier never
+    reached, the ones an `intent`/`topic` search cannot return. `search_emails`
+    counts them so the assistant can say its tag-filtered list is partial.
+    """
+    for name, email, subject, body, (year, month, day) in locale.unclassified_leads:
+        insert_email(
+            conn,
+            account=locale.work,
+            sender_name=name,
+            sender_email=email,
+            subject=subject,
+            body=body,
+            timestamp=epoch_for(year, month, day),
+            is_read=True,
+            mailbox="inbox",
+            category="primary",
+        )
 
 
 def populate_support_emails(conn: sqlite3.Connection, locale: Locale) -> None:
@@ -1229,6 +1280,8 @@ class Locale:
     work_threads: list[Thread] | None = None
     personal_threads: list[Thread] = field(default_factory=list)
     prospects: list = field(default_factory=list)
+    # First contacts predating the AI window — inserted untagged on purpose.
+    unclassified_leads: list = field(default_factory=list)
     support: list = field(default_factory=list)
     stats: dict | None = None
     # Extra Gmail account that owns the demo calendar when `work` is IMAP (which
@@ -1496,6 +1549,7 @@ LOCALE_EN = Locale(
     work_threads=WORK_THREADS_EN,
     personal_threads=PERSONAL_THREADS_EN,
     prospects=PROSPECTS_EN,
+    unclassified_leads=UNCLASSIFIED_LEADS_EN,
     support=SUPPORT_EN,
     stats=STATS_EN,
 )
@@ -1765,6 +1819,11 @@ PREFS: dict[str, str] = {
 def insert_preferences(conn: sqlite3.Connection, locale: Locale) -> None:
     prefs = dict(PREFS)
     prefs["ai_output_language"] = locale.ai_output_language
+    # The CLI (and the eval harness through it) refuses to pick between several
+    # enabled accounts. The demo has three, so name the work account here —
+    # otherwise every `make cli-*` run on a freshly generated DB needs
+    # `--account`.
+    prefs["cli_default_account"] = locale.work.id
     for k, v in prefs.items():
         conn.execute(
             "INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)",
@@ -1786,6 +1845,20 @@ def make_email_html(plain_body: str, sender_name: str) -> str:
     )
 
 
+def demo_id(prefix: str, *parts: object, width: int = 16) -> str:
+    """Content-derived id, stable across regenerations.
+
+    Ids used to be random uuid4s, so every `make demo-db` invalidated the eval
+    cases that name a thread or an `email://` id — the suite went red for a
+    reason that had nothing to do with the code. Hashing the content instead
+    keeps an email's id the same as long as its text does. Timestamps are
+    deliberately NOT part of the key: much of the demo is anchored to "now", so
+    including them would put us back where we started.
+    """
+    key = "\u241f".join(str(p) for p in parts)
+    return f"{prefix}{hashlib.sha256(key.encode()).hexdigest()[:width]}"
+
+
 def insert_email(
     conn: sqlite3.Connection,
     *,
@@ -1800,8 +1873,8 @@ def insert_email(
     category: str,
     thread_id: str | None = None,
 ) -> str:
-    email_id = f"demo_{uuid.uuid4().hex[:16]}"
-    thread_id = thread_id or f"thread_{uuid.uuid4().hex[:12]}"
+    email_id = demo_id("demo_", account.id, sender_email, subject, body)
+    thread_id = thread_id or demo_id("thread_", account.id, sender_email, subject, width=12)
     sender_domain = sender_email.split("@")[-1].lower()
 
     snippet = body.replace("\n", " ").strip()[:180]
@@ -2687,6 +2760,7 @@ def main() -> int:
                 # English: curated, coherent threads + date-anchored content.
                 populate_conversations(conn, locale)
                 populate_prospect_requests(conn, locale)
+                populate_unclassified_leads(conn, locale)
                 populate_support_emails(conn, locale)
                 populate_stats_digests(conn, locale)
             else:

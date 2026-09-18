@@ -40,6 +40,21 @@ fn total_count_note(shown: usize, offset: i32, total: i32) -> Option<String> {
     ))
 }
 
+/// What an `intent` / `topic` filter structurally cannot return: mail the
+/// classifier never tagged. Classification only covers emails inside the
+/// user's AI window (`ai_max_email_count` / `ai_max_email_age_days`), so a
+/// partially-classified mailbox is the normal case, and a tag-filtered answer
+/// there is partial without saying so. `None` when nothing is uncovered.
+fn unclassified_coverage_note(uncovered: usize) -> Option<String> {
+    if uncovered == 0 {
+        return None;
+    }
+    Some(format!(
+        "(PARTIAL: {uncovered} more emails match the other filters but were never classified, \
+so this intent/topic filter cannot reach them)"
+    ))
+}
+
 /// How many candidates the semantic ranker is asked for when other filters
 /// still have to be applied on top of it: meaning-ranked hits are cheap to
 /// over-fetch and a sender or date filter can discard most of them.
@@ -404,6 +419,31 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                 if let Some(note) = total_count_note(emails.len(), offset, total) {
                     body = format!("{note}\n{body}");
                 }
+                // A tag filter can only match what the classifier tagged. Count
+                // the matches it structurally cannot see, so the model can say
+                // the list is partial instead of presenting it as complete.
+                if tag_filter_arg.is_some() {
+                    let uncovered = emails::search_emails_filtered(
+                        ctx.db,
+                        ctx.account_id,
+                        query,
+                        cat_filter,
+                        from_filter,
+                        to_filter,
+                        subject_filter,
+                        since_ts,
+                        until_ts,
+                        None,
+                        COUNT_PROBE_LIMIT,
+                        ascending,
+                        unread_only,
+                    )
+                    .map(|candidates| count_unclassified(ctx.db, &candidates))
+                    .unwrap_or(0);
+                    if let Some(note) = unclassified_coverage_note(uncovered) {
+                        body = format!("{note}\n{body}");
+                    }
+                }
                 if let Some(note) = mode_note {
                     body = format!("{note}{body}");
                 }
@@ -568,6 +608,25 @@ impl SearchEmailsTool {
     }
 }
 
+/// How many of `candidates` carry no `intent` tag — the rows a tag filter can
+/// never return. One batched tag read; a failure counts as "all classified"
+/// so a DB hiccup adds no note rather than a wrong one.
+fn count_unclassified(db: &std::sync::Arc<Database>, candidates: &[crate::models::Email]) -> usize {
+    if candidates.is_empty() {
+        return 0;
+    }
+    let ids: Vec<String> = candidates.iter().map(|e| e.id.clone()).collect();
+    let Ok(tags) = db.get_email_tags_batch(&ids) else {
+        return 0;
+    };
+    let classified: std::collections::HashSet<&str> = tags
+        .iter()
+        .filter(|t| t.tag_type == "intent")
+        .map(|t| t.email_id.as_str())
+        .collect();
+    ids.iter().filter(|id| !classified.contains(id.as_str())).count()
+}
+
 /// Formats result rows with each thread's message count, so the model can
 /// tell a lone email from the latest message of a longer exchange. A failed
 /// count only drops the `messages=` field; the results still go out.
@@ -627,6 +686,21 @@ mod tests {
         assert_eq!(
             total_count_note(4, 50, 54).as_deref(),
             Some("(showing 51-54 of 54 matching threads — this is the last page)")
+        );
+    }
+
+    #[test]
+    fn no_coverage_note_when_every_match_is_classified() {
+        assert_eq!(unclassified_coverage_note(0), None);
+    }
+
+    #[test]
+    fn the_coverage_note_names_what_the_tag_filter_cannot_see() {
+        assert_eq!(
+            unclassified_coverage_note(26).as_deref(),
+            Some(
+                "(PARTIAL: 26 more emails match the other filters but were never classified, so this intent/topic filter cannot reach them)"
+            )
         );
     }
 

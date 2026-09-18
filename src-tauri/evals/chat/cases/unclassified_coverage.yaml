@@ -1,0 +1,48 @@
+# A tag-filtered list must not pass for a complete one.
+#
+# `intent` / `topic` filters read the classifier's tags, and classification only
+# covers emails inside the user's AI window (`ai_max_email_count` /
+# `ai_max_email_age_days`). Older mail is never tagged, so a tag-filtered search
+# silently skips it: a real mailbox answered "5 contact requests" when 31
+# matched, because only 4 were classified. `search_emails` now counts the
+# matches the filter structurally cannot reach and says so, and the assistant
+# passes that on instead of re-running the search by itself — the user decides
+# whether to widen.
+#
+# The demo mailbox carries three first contacts from 2023-2024 that
+# `generate_demo_db.py` inserts WITHOUT tags (`populate_unclassified_leads`),
+# which is what makes this reproducible.
+
+- id: tag_search_admits_what_it_cannot_see_es
+  question: "qué correos de primer contacto he recibido?"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  # The answer must own the gap. Any of these phrasings carries it; the model
+  # words it freely, so anchor on the fact (unclassified / not classified),
+  # not on one sentence.
+  expected_answer_contains_any:
+    - "sin clasificar"
+    - "no clasificad"
+    - "no fueron clasificad"
+    - "nunca fueron clasificad"
+    - "no están clasificad"
+    - "no tienen etiqueta"
+    - "sin etiqueta"
+  expected_output: "Tienes varios primeros contactos clasificados como introduction. Además hay 3 correos que coinciden con los mismos filtros pero nunca se clasificaron, así que el filtro por tipo no los alcanza: dime si quieres que busque sin ese filtro."
+  metrics:
+    - answer_relevancy
+
+# The over-trigger guard: an ordinary search carries no tag filter, so nothing
+# is structurally hidden and the answer must not talk about classification.
+- id: plain_search_says_nothing_about_classification_es
+  question: "muéstrame los correos de metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_answer_not_contains:
+    - "sin clasificar"
+    - "clasificad"
+  metrics: []

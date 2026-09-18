@@ -1927,6 +1927,104 @@ mod tests {
         );
     }
 
+    #[test]
+    fn search_emails_reports_matches_the_intent_filter_cannot_see() {
+        // A partially classified mailbox: the tag filter returns 2 rows, but 4
+        // more emails from the same sender were never classified. Answering
+        // from the 2 alone reads as complete and is not.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..6 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        tag_email(&db, "p0", "intent", "introduction");
+        tag_email(&db, "p1", "intent", "introduction");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com", "intent": "introduction" })),
+        );
+
+        assert!(
+            out.starts_with("(PARTIAL: 4 more emails match the other filters but were never classified"),
+            "the uncovered matches must lead the result; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn search_emails_says_nothing_about_coverage_when_everything_is_classified() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+            tag_email(&db, &format!("p{i}"), "intent", "introduction");
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com", "intent": "introduction" })),
+        );
+
+        assert!(!out.contains("never classified"), "out:\n{out}");
+    }
+
+    #[test]
+    fn search_emails_without_a_tag_filter_says_nothing_about_coverage() {
+        // No intent/topic filter → nothing is structurally hidden, so the note
+        // would be noise on every ordinary search.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com" })),
+        );
+
+        assert!(!out.contains("never classified"), "out:\n{out}");
+    }
+
     #[tokio::test]
     async fn next_page_without_a_previous_search_says_so() {
         let db = tools_test_db();
