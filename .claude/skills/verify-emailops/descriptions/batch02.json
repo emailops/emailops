@@ -2,7 +2,8 @@
  "rust": {
   "src-tauri/src/cli/mod.rs::account_is_global_and_works_after_subcommand": "Comprueba que --account funciona como flag global tras el subcomando emails.",
   "src-tauri/src/cli/mod.rs::accounts_add_gmail_parses_with_sync_from": "Verifica que accounts add gmail --sync-from <fecha> fija la fecha desde la que sincronizar.",
-  "src-tauri/src/cli/mod.rs::accounts_add_imap_parses_fields_and_defaults": "Verifica que accounts add imap parsea host/usuario/contraseña y aplica los puertos por defecto (993/587).",
+  "src-tauri/src/cli/mod.rs::accounts_add_imap_parses_fields_and_defaults": "Verifica que accounts add imap parsea host/email/contraseña, deja el login por defecto en la dirección y aplica los puertos por defecto (993/587).",
+  "src-tauri/src/cli/mod.rs::accounts_add_imap_requires_host_and_email": "Garantiza que añadir una cuenta IMAP sin host ni email falla el parseo en vez de crear una cuenta incompleta.",
   "src-tauri/src/cli/mod.rs::accounts_add_imap_requires_host_and_username": "Garantiza que añadir una cuenta IMAP sin host ni usuario falla el parseo en vez de crear una cuenta incompleta.",
   "src-tauri/src/cli/mod.rs::accounts_add_outlook_parses": "Comprueba que accounts add outlook se parsea sin --sync-from.",
   "src-tauri/src/cli/mod.rs::accounts_list_parses": "Comprueba que accounts list se parsea correctamente.",

@@ -156,25 +156,33 @@ pub async fn update_imap_credentials(
 #[tauri::command]
 pub async fn add_imap_account(
     state: State<'_, AppState>,
+    email: String,
     host: String,
     port: u16,
-    username: String,
+    username: Option<String>,
     password: String,
     smtp_host: String,
     smtp_port: u16,
     display_name: Option<String>,
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account, AppError> {
+    let identity = services::accounts::resolve_imap_identity(&email, username.as_deref())?;
     let credentials = ImapCredentials {
         host,
         port,
-        username,
+        username: identity.username,
         password,
         smtp_host,
         smtp_port,
     };
-    let account =
-        services::accounts::add_imap_account(&state.db, credentials, display_name, sync_from_timestamp).await?;
+    let account = services::accounts::add_imap_account(
+        &state.db,
+        &identity.email,
+        credentials,
+        display_name,
+        sync_from_timestamp,
+    )
+    .await?;
     // Start this account's IMAP IDLE watcher now; the scheduler's own account
     // enumeration only ever runs at startup.
     state.scheduler.watch_account(&account);

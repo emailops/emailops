@@ -139,6 +139,28 @@ pub fn extract_domain(addr: &str) -> Option<String> {
         .map(|d| d.to_ascii_lowercase())
 }
 
+/// Validate and normalise an address that will be stored as `accounts.email`.
+///
+/// Parses with `lettre::Address` — the same parser `sync/mime_builder.rs`
+/// applies to `from_email` at send time, so anything this accepts, the send
+/// path accepts. That is what stops an account being created that syncs fine
+/// but can never send.
+///
+/// - **Trims** surrounding whitespace: a stray space makes `Address::from_str`
+///   fail with a message a user cannot act on, and the CLI does not trim.
+/// - **Does not lowercase.** RFC 5321 makes the local-part case-sensitive, all
+///   the self-address comparison sites already normalise at comparison time,
+///   and lowercasing only new rows against a binary-collation `UNIQUE` index
+///   would create duplicates for rows that already exist.
+///
+/// Returns `None` rather than a `Result` to keep `AppError` out of `util/`
+/// (same shape as [`extract_domain`]); the caller writes the user-facing
+/// message, since `lettre`'s own parse errors name no field.
+pub fn parse_account_address(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    trimmed.parse::<lettre::Address>().ok().map(|_| trimmed.to_string())
+}
+
 /// Parse a JSON array stored in `recipients_json`/`cc_json` into the raw
 /// recipient strings (which may include `Name <email@host>` formatting). Best
 /// effort: a malformed payload yields an empty vec rather than failing the
@@ -394,6 +416,58 @@ mod tests {
             company_label_for("yahoo.co.uk", Some("bob@yahoo.co.uk")),
             "bob@yahoo.co.uk"
         );
+    }
+
+    // The bug: an IMAP server whose login is a bare name (`alex`) is not an
+    // address. Storing it as `accounts.email` produces an account that syncs
+    // but can never send — `mime_builder` rejects it as a From address — and
+    // silently breaks every self-address comparison.
+    #[test]
+    fn account_address_rejects_a_bare_login_name() {
+        assert_eq!(parse_account_address("alex"), None);
+    }
+
+    #[test]
+    fn account_address_accepts_a_plain_address() {
+        assert_eq!(
+            parse_account_address("alex@example.de"),
+            Some("alex@example.de".to_string())
+        );
+    }
+
+    #[test]
+    fn account_address_trims_surrounding_whitespace() {
+        // `Address::from_str` fails on a stray space with a message no user can
+        // act on, and the CLI does not trim before handing the value over.
+        assert_eq!(
+            parse_account_address("  alex@example.de\n"),
+            Some("alex@example.de".to_string())
+        );
+    }
+
+    #[test]
+    fn account_address_rejects_display_name_form() {
+        // `accounts.email` is a bare address; the display name is a separate
+        // field. `Name <addr>` parses as a Mailbox, never as an Address.
+        assert_eq!(parse_account_address("Alex <alex@example.de>"), None);
+    }
+
+    // Documents the deliberate no-lowercase decision: RFC 5321 makes the
+    // local-part case-sensitive, all comparison sites already normalise at
+    // comparison time, and lowercasing only new rows against a binary-collation
+    // UNIQUE index would create duplicates for rows that already exist.
+    #[test]
+    fn account_address_preserves_case() {
+        assert_eq!(
+            parse_account_address("Alex.Doe@Example.de"),
+            Some("Alex.Doe@Example.de".to_string())
+        );
+    }
+
+    #[test]
+    fn account_address_rejects_empty_and_whitespace() {
+        assert_eq!(parse_account_address(""), None);
+        assert_eq!(parse_account_address("   "), None);
     }
 
     #[test]

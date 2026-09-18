@@ -554,6 +554,45 @@ mod tests {
         );
     }
 
+    // What makes "no account can be created that the send path will reject" a
+    // checked fact rather than a claim: the validator guarding account creation
+    // and the parser building the From header must agree, in both directions.
+    #[test]
+    fn every_accepted_account_address_builds_a_valid_from_header() {
+        use crate::util::email_addr::parse_account_address;
+
+        let to = vec!["you@example.com".to_string()];
+        let build = |from: &str| {
+            build_send_mime(&SendMimeParams {
+                from_email: from,
+                from_name: None,
+                to_emails: &to,
+                cc_emails: &[],
+                subject: "hello",
+                in_reply_to: None,
+                references: None,
+                body: &EmailBody::plain("hi"),
+                attachments: &[],
+            })
+        };
+
+        for raw in [
+            "alex@example.de",
+            "alex.doe+tag@mail.example.co.uk",
+            "Alex.Doe@Example.de",
+        ] {
+            let accepted = parse_account_address(raw).unwrap_or_else(|| panic!("validator must accept {raw}"));
+            assert!(
+                build(&accepted).is_ok(),
+                "send path rejected an address account creation accepts: {raw}"
+            );
+        }
+
+        // The bug itself, rejected at both ends: a bare login name is no address.
+        assert!(parse_account_address("alex").is_none());
+        assert!(build("alex").is_err());
+    }
+
     #[test]
     fn invalid_from_address_returns_error() {
         let to = vec!["you@example.com".to_string()];

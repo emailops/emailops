@@ -12,6 +12,7 @@ use crate::sync::imap::{ImapClient, ImapCredentials};
 use crate::sync::oauth::{self, OAuthConfig};
 use crate::sync::outlook::OutlookClient;
 use crate::sync::provider::EmailProvider;
+use crate::util::email_addr::parse_account_address;
 
 /// Build an OAuth-based email provider for the given provider name.
 /// Returns an error for unsupported providers (e.g. "imap" — use ImapClient directly).
@@ -728,23 +729,69 @@ fn delete_imap_credentials(account_id: &str) -> Result<()> {
 /// Test IMAP + SMTP credentials without saving anything.
 /// Returns `Ok(())` if both succeed, or an `Err` describing the first failure.
 pub async fn test_imap_connection(credentials: ImapCredentials) -> Result<()> {
-    let client = ImapClient::new(
-        credentials.clone(),
-        credentials.username.clone(),
-        String::new(),
-        String::new(),
-    );
+    // The connection test never sends mail, so the account address is unused here.
+    let client = ImapClient::new(credentials, String::new(), String::new(), String::new());
     client.test_connection().await
 }
 
+/// The two identities an IMAP account carries. They coincide for most
+/// providers; for a server whose login is a bare name they do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImapIdentity {
+    /// The account's own address — stored as `accounts.email`, sent as the
+    /// `From` address, and compared against on every "is this me?" check.
+    pub email: String,
+    /// The SASL login sent to the IMAP and SMTP servers.
+    pub username: String,
+}
+
+/// The single user-facing wording for "that is not an address". `lettre`'s own
+/// parse errors name no field, and this message lands verbatim in the Add
+/// Account modal's error banner and on the CLI's stderr, so it has to say
+/// which box to fix.
+fn invalid_address_error(raw: &str) -> AppError {
+    AppError::InvalidInput(format!(
+        "\"{}\" is not a valid email address. Enter the address people write to; if your server's login is different, put that in Username.",
+        raw.trim()
+    ))
+}
+
+/// Decide the address/login pair for a new IMAP account.
+///
+/// The address is required: it is the account's identity — the `From` on
+/// everything it sends and the key every "is this me?" check compares against —
+/// so it is never derived from the login. A blank or absent `username` means
+/// "the login is the address", the same defaulting the Add Account modal
+/// applies, and the defaulting only ever runs in that direction.
+pub fn resolve_imap_identity(email: &str, username: Option<&str>) -> Result<ImapIdentity> {
+    let username = username.map(str::trim).filter(|u| !u.is_empty());
+    let address = email.trim();
+    if address.is_empty() {
+        return Err(AppError::InvalidInput(
+            "An email address is required. Enter the address people write to; if your server's login is different, put that in Username."
+                .to_string(),
+        ));
+    }
+
+    let email = parse_account_address(address).ok_or_else(|| invalid_address_error(address))?;
+    let username = username.unwrap_or(email.as_str()).to_string();
+    Ok(ImapIdentity { email, username })
+}
+
 /// Add an IMAP account. Verifies credentials by logging in before saving.
+///
+/// `email` is the account's own address; `credentials.username` is the server
+/// login. They are separate values — see [`resolve_imap_identity`].
 pub async fn add_imap_account(
     db: &Arc<Database>,
+    email: &str,
     credentials: ImapCredentials,
     display_name: Option<String>,
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account> {
-    let email = credentials.username.clone();
+    // Validated before the login round-trip, so a typo costs no network call —
+    // and no caller can reach the DB with an address the send path would reject.
+    let email = parse_account_address(email).ok_or_else(|| invalid_address_error(email))?;
     // No display name is stored as none; readers fall back to the address.
     let display = display_name.unwrap_or_default();
 
@@ -872,6 +919,65 @@ mod tests {
             smtp_host: "smtp.example.com".into(),
             smtp_port: 465,
         }
+    }
+
+    // The feature: a server whose login is a bare name (`alex`) keeps that
+    // login, while the account's own address stays a real address.
+    #[test]
+    fn imap_identity_keeps_a_separate_login_username() {
+        let identity = resolve_imap_identity("alex@example.de", Some("alex")).expect("valid address");
+        assert_eq!(identity.email, "alex@example.de");
+        assert_eq!(identity.username, "alex");
+    }
+
+    #[test]
+    fn imap_identity_defaults_username_to_the_address() {
+        let identity = resolve_imap_identity("alex@example.de", None).expect("valid address");
+        assert_eq!(identity.email, "alex@example.de");
+        assert_eq!(identity.username, "alex@example.de");
+    }
+
+    // The modal sends "" for an optional field the user never touched.
+    #[test]
+    fn imap_identity_treats_a_blank_username_as_absent() {
+        let identity = resolve_imap_identity("alex@example.de", Some("   ")).expect("valid address");
+        assert_eq!(identity.username, "alex@example.de");
+    }
+
+    // The bug: a login name is not an address, and storing it as one produces
+    // an account that can never send.
+    #[test]
+    fn imap_identity_rejects_a_login_name_as_the_address() {
+        let err = resolve_imap_identity("alex", None).expect_err("a bare login is not an address");
+        assert!(
+            matches!(err, AppError::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+    }
+
+    // A login is never promoted to an address, so the only thing left to reject
+    // is an empty address -- with the "required" wording, not "not valid".
+    #[test]
+    fn imap_identity_rejects_a_blank_address() {
+        for blank in ["", "   "] {
+            let err = resolve_imap_identity(blank, Some("alex")).expect_err("an address is required");
+            match err {
+                AppError::InvalidInput(msg) => assert!(
+                    msg.contains("is required"),
+                    "expected the required-address wording, got {msg:?}"
+                ),
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+        }
+    }
+
+    // RFC 5321 makes the local-part case-sensitive; some servers' logins are
+    // case-sensitive too. Neither value may be folded on the way in.
+    #[test]
+    fn imap_identity_does_not_lowercase_the_login() {
+        let identity = resolve_imap_identity("Alex.Doe@Example.de", Some("Alex")).expect("valid address");
+        assert_eq!(identity.email, "Alex.Doe@Example.de");
+        assert_eq!(identity.username, "Alex");
     }
 
     #[test]
@@ -1335,6 +1441,45 @@ mod tests {
         let creds = get_imap_credentials("cli-1").expect("credentials must resolve after binding");
         assert_eq!(creds.host, "imap.example.com");
         assert_eq!(creds.username, "hello@example.com");
+    }
+
+    // The storage guarantee behind the address/login split: the address lands on
+    // the account row, the login in the credential store and its DB mirror, and
+    // neither overwrites the other. Both used to be `credentials.username`.
+    #[test]
+    fn persist_imap_account_stores_address_and_login_separately() {
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let account = imap_account("imap-split", "alex@example.de");
+        let creds = ImapCredentials {
+            username: "alex".into(),
+            ..imap_creds()
+        };
+
+        persist_imap_account(&db, &account, &creds).expect("persist should succeed");
+
+        let stored = db
+            .get_account("imap-split")
+            .expect("get_account")
+            .expect("account row must exist");
+        assert_eq!(
+            stored.email, "alex@example.de",
+            "the address belongs on the account row"
+        );
+
+        let resolved = get_imap_credentials("imap-split").expect("credentials must resolve");
+        assert_eq!(resolved.username, "alex", "the login belongs in the credential store");
+
+        let (_, _, mirrored_username, _, _) = db
+            .get_imap_settings("imap-split")
+            .expect("get_imap_settings")
+            .expect("settings row must exist");
+        assert_eq!(
+            mirrored_username, "alex",
+            "the DB mirror must keep the login, not the address"
+        );
     }
 
     // Consistency with the IMAP path: the account row must be inserted before
