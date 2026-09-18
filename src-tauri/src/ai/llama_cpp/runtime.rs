@@ -69,7 +69,7 @@ use llama_cpp_2::{
     model::{params::LlamaModelParams, AddBos, LlamaChatMessage, LlamaModel},
 };
 
-use super::actor::{InferenceActorHandle, OnToken};
+use super::actor::{GenOutcome, InferenceActorHandle, OnToken};
 use super::tool_parser::parse_qwen_tool_calls;
 use crate::ai::provider::{AiMessage, AiToolCall, ChatStreamResult, CompletionOptions, ToolStreamResult};
 use crate::ai::stream_gate::StreamGate;
@@ -866,7 +866,9 @@ impl LlamaCppRuntime {
     // ── Public inference API ──────────────────────────────────────────────────
 
     /// Non-streaming single-turn completion.
-    pub async fn generate(&self, prompt: &str, opts: &CompletionOptions) -> Result<String> {
+    /// One-shot completion. Returns the actor's full outcome so the caller
+    /// can report prefill time and cache hits, not just the text.
+    pub(crate) async fn generate(&self, prompt: &str, opts: &CompletionOptions) -> Result<GenOutcome> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
@@ -903,7 +905,9 @@ impl LlamaCppRuntime {
 
         // Strip any reasoning/thinking markers (Gemma 4 `<|channel>…<channel|>`,
         // Qwen `<think>…</think>`) the model leaked into the visible answer.
-        Ok(strip_reasoning(&outcome.text))
+        let mut outcome = outcome;
+        outcome.text = strip_reasoning(&outcome.text);
+        Ok(outcome)
     }
 
     /// Streaming generation.  `on_token` is called for each piece; returning

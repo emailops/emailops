@@ -147,6 +147,12 @@ pub struct CompletionResult {
     pub completion_tokens: u32,
     pub cost_usd: f64,
     pub model: String,
+    /// Milliseconds spent processing the prompt before the first sampled
+    /// token. `None` from providers that don't report it (Ollama,
+    /// OpenRouter) — the same convention `ToolStreamResult` uses.
+    pub prefill_ms: Option<i64>,
+    /// Prompt tokens served from the KV cache rather than re-processed.
+    pub cached_prompt_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -325,6 +331,8 @@ impl FakeAiProvider {
                 completion_tokens: 0,
                 cost_usd: 0.0,
                 model: "fake-model".to_string(),
+                prefill_ms: None,
+                cached_prompt_tokens: None,
             }),
             chats: RwLock::new(std::collections::VecDeque::new()),
             completion_calls: RwLock::new(Vec::new()),
@@ -354,6 +362,8 @@ impl FakeAiProvider {
                 completion_tokens: 0,
                 cost_usd: 0.0,
                 model: self.model.clone(),
+                prefill_ms: None,
+                cached_prompt_tokens: None,
             });
     }
 
