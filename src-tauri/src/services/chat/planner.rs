@@ -76,6 +76,25 @@ impl SearchPlan {
             && self.unread.is_none()
     }
 
+    /// Whether the plan names a FILTER (sender, recipient, subject, date
+    /// window, classifier tag, unread) rather than just words to match.
+    ///
+    /// This is the line between the two retrieval mechanisms. A filter is
+    /// something only `search_emails` can express, so a plan that carries one
+    /// is worth taking off the RAG route. A keyword-only plan ("qué opina el
+    /// equipo sobre el proyecto" → `query: "proyecto"`) is exactly what the
+    /// embeddings index ranks better, so it stays on RAG.
+    pub fn has_structural_filter(&self) -> bool {
+        self.from.is_some()
+            || self.to.is_some()
+            || self.subject.is_some()
+            || self.since.is_some()
+            || self.until.is_some()
+            || self.intent.is_some()
+            || self.topic.is_some()
+            || self.unread == Some(true)
+    }
+
     /// Convert the plan into the `search_emails` tool call fed into the loop as
     /// the virtual round-0. `include_bodies` is set so the synthesis pass has the
     /// content in one shot and never needs a follow-up `get_email_body` round
@@ -420,6 +439,40 @@ mod tests {
         assert_eq!(p.to.as_deref(), Some("alex"));
         assert_eq!(p.query.as_deref(), Some("budget"));
         assert_eq!(p.subject.as_deref(), Some("Q3"));
+    }
+
+    #[test]
+    fn a_plan_with_a_real_filter_is_structural() {
+        for json in [
+            r#"{"from": "nadia"}"#,
+            r#"{"to": "billing@acme.com"}"#,
+            r#"{"subject": "invoice"}"#,
+            r#"{"since": "2026-03-01"}"#,
+            r#"{"intent": "introduction"}"#,
+            r#"{"topic": "billing"}"#,
+            r#"{"unread": true}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(p.has_structural_filter(), "expected structural: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_keyword_only_plan_is_not_structural() {
+        // "qué opina el equipo sobre el proyecto" plans as a bare keyword
+        // search. Retrieval ranks that kind of question better than an FTS
+        // filter does, so it must not pull the turn off the RAG route.
+        for json in [
+            r#"{"query": "proyecto"}"#,
+            r#"{"query": "proyecto", "mode": "semantic"}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(!p.has_structural_filter(), "expected keyword-only: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
     }
 
     #[test]

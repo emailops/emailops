@@ -1066,3 +1066,23 @@ chat search for contact-form requests found 4 of 31).
 **Rejected:** Union semantics (always the newest N emails plus anything within D days) —
 the developer preferred the simpler switch. A per-account settings UI — the global pair of
 limits already makes small accounts whole without extra configuration.
+
+## 2026-09-18 — The routing keyword list accelerates, the query planner decides
+
+**Decision:** In `chat.routing_mode = auto` a keyword or date hit still settles the route for
+free (and skips nothing else). A miss no longer falls to `RagFirst`: the query planner runs,
+and its verdict sets the route — a plan carrying a real filter (from/to/subject/date/tag/unread)
+becomes `ToolsFirst` with that call pre-seeded, a `defer` or a keyword-only plan stays
+`RagFirst`. Forced modes and follow-up inheritance are unchanged.
+**Context:** `TOOLS_FIRST_KEYWORDS` is an EN/ES substring list, so "que emails tengo de X" and
+every German or French question fell to RAG: retrieval it did not need, and no pre-seeded
+search. Growing the list was already rejected (14/09/2026). The planner reads any language and
+already turns a question into a filter, so its Search/Defer verdict IS the routing signal.
+Measured: the planner prompt is ~1.5k tokens, capped at 128 generated, and runs on the scratch
+sequence with `cache_prompt=false`, so it never touches the chat KV prefix; warm latency
+997-1466 ms on an M5 Pro with qwen3.5-4b-q4.
+**Rejected:** the planner deciding every turn including keyword hits (pays a model call where a
+substring already answers, and on a 16 GB M1 that lands on every open question); adding de/fr
+keywords (the 14/09 rejection, one entry per paraphrase per language); a trained router model
+(worth revisiting only if the planner call proves to be the bottleneck on older machines —
+the route classifier could ride on the embedding already computed for RAG).

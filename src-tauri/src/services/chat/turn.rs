@@ -3492,17 +3492,25 @@ pub async fn run_chat_turn(
     let t_route = std::time::Instant::now();
     emit_log("info", "stage: route");
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Routing);
-    let route = if ambient_context.is_some() {
+    // A keyword hit (or a forced mode) settles the route here; anything else
+    // comes back as `AskPlanner` and is settled below by the planner's own
+    // verdict, so a question the EN/ES keyword list never covered still reaches
+    // the tool path.
+    let route_plan = if ambient_context.is_some() {
         // No retrieval and no planner: the thread is the context, and the
         // model keeps every tool for questions that are not about it.
-        RouteDecision {
+        super::routing::RoutePlan::Decided(RouteDecision {
             mode: RouteMode::ToolsFirst,
             reason: "open email as context; all tools available".to_string(),
             matched_keywords: Vec::new(),
             classifier: "ambient".to_string(),
-        }
+        })
     } else {
         classify_route(&db, &user_question, &history)
+    };
+    let mut route = match &route_plan {
+        super::routing::RoutePlan::Decided(decision) => decision.clone(),
+        super::routing::RoutePlan::AskPlanner { fallback } => fallback.clone(),
     };
 
     // A paged `search_emails` result can be continued by `next_page` in a
@@ -3510,15 +3518,25 @@ pub async fn run_chat_turn(
     // — so the page to continue is recovered from the previous assistant
     // message's persisted trace.
     let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
-    emit_log(
-        "info",
-        &format!(
-            "route: {:?} ({}) [{}ms]",
-            route.mode,
-            route.reason,
-            t_route.elapsed().as_millis()
-        ),
-    );
+    if matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. }) {
+        emit_log(
+            "info",
+            &format!(
+                "route: pending — no cheap signal, asking the planner [{}ms]",
+                t_route.elapsed().as_millis()
+            ),
+        );
+    } else {
+        emit_log(
+            "info",
+            &format!(
+                "route: {:?} ({}) [{}ms]",
+                route.mode,
+                route.reason,
+                t_route.elapsed().as_millis()
+            ),
+        );
+    }
 
     // Heuristic shortcut: recognise common phrasings and pre-seed the tool
     // call so we can skip the LLM's tool-choice round entirely. Returns None
@@ -3552,20 +3570,25 @@ pub async fn run_chat_turn(
         .map(|a| a.email)
         .unwrap_or_default();
 
-    // Query planner (tools-first fast path): when no heuristic matched and the
-    // route is tools-first, ask the model — in ONE small completion on the
-    // already-loaded chat provider, so no model swap — to turn the question into
-    // a single search_emails filter. A concrete filter is pre-seeded as round-0
-    // (the chat model then goes straight to synthesis, skipping the slow
-    // tool-choice round); anything else (a write/draft/multi-step ask, an
-    // unparseable reply, a provider error) defers to the normal loop. Gated by
-    // the `chat.planner_enabled` preference (default on).
+    // Query planner: ONE small completion on the already-loaded chat provider
+    // (so no model swap, and it runs on the scratch sequence — the chat KV
+    // prefix is untouched) that turns the question into a single search_emails
+    // filter. A concrete filter is pre-seeded as round-0, so the chat model goes
+    // straight to synthesis and skips the slow tool-choice round; anything else
+    // (a write/draft/multi-step ask, an unparseable reply, a provider error)
+    // defers to the normal loop. Gated by `chat.planner_enabled` (default on).
+    //
+    // It runs on two kinds of turn: the ones a keyword already routed
+    // tools-first, and the ones with no cheap signal at all (`AskPlanner`) —
+    // there its verdict also SETS the route, which is how a question in a
+    // language the keyword list never covered still avoids pointless retrieval.
+    let asked_planner = matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. });
     // Trace entry for the planner LLM call, prepended to `llm_calls` below so it
     // shows in the flow timeline ahead of the tool rounds.
     let mut planner_trace: Option<LlmCallTrace> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
-        && route.mode == RouteMode::ToolsFirst
+        && (route.mode == RouteMode::ToolsFirst || asked_planner)
         && planner_enabled(&db)
     {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
@@ -3584,13 +3607,36 @@ pub async fn run_chat_turn(
         let plan_ms = t_plan.elapsed().as_millis() as i64;
         match plan {
             super::planner::Plan::Search(plan) => {
-                emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
-                planner_trace = Some(build_planner_trace(plan_ms, "search"));
-                preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
+                // On an `AskPlanner` turn the plan also settles the route — but
+                // only a plan with a real filter earns the tools route. A
+                // keyword-only plan is what retrieval ranks better, so that turn
+                // stays on RAG and the plan is dropped rather than pre-seeded.
+                let structural = plan.has_structural_filter();
+                if asked_planner && !structural {
+                    emit_log(
+                        "debug",
+                        &format!("planner: keyword-only plan, keeping RAG [{plan_ms}ms]"),
+                    );
+                    planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                    route = super::routing::planner_route(false);
+                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                } else {
+                    emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
+                    planner_trace = Some(build_planner_trace(plan_ms, "search"));
+                    preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
+                    if asked_planner {
+                        route = super::routing::planner_route(true);
+                        emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                    }
+                }
             }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                if asked_planner {
+                    route = super::routing::planner_route(false);
+                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                }
             }
         }
     }
