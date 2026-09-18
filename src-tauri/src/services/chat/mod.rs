@@ -19,7 +19,9 @@
 pub mod tools;
 
 mod conversations;
-mod planner;
+// `pub(crate)` for the query-planner eval harness, which scores it directly
+// instead of inferring its quality from chat answers.
+pub(crate) mod planner;
 mod prewarm;
 pub(crate) mod retrieval;
 mod routing;

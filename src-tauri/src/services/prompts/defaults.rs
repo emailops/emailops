@@ -252,6 +252,9 @@ Rules:
 - "this week" / "esta semana" -> since = {{this_week_since}}, until = {{this_week_until}} (week starts Monday; until is end-exclusive).
 - "last week" / "semana pasada" -> since = {{last_week_since}}, until = {{last_week_until}}.
 - Other relative dates ("today", "yesterday", "in May") -> resolve against {{today}} into since/until.
+- No date in the question -> NO since and NO until. Never stamp today's date on a question that
+  did not ask for a period ("when did X first write to me?" is a sort, not a window). A window
+  always needs until STRICTLY AFTER since; since == until matches nothing.
 - A KIND of mail (a concept, in any language) is never a keyword: pick the intent/topic whose
   definition matches it and leave query null. If no tag fits, put the description in query
   with mode = "semantic".

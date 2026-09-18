@@ -31,7 +31,7 @@ pub enum Plan {
 /// The subset of `search_emails` arguments the planner can fill. All optional;
 /// at least one selective field must be present for the plan to be a `Search`
 /// (the tool rejects a filter-less call).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct SearchPlan {
     pub query: Option<String>,
     pub from: Option<String>,
@@ -189,6 +189,17 @@ impl SearchPlan {
         if bare_name && !self.wants_oldest() && self.limit.unwrap_or(25) < 5 {
             self.limit = Some(5);
         }
+        // 3. A window that cannot contain anything is dropped rather than run.
+        //    The model stamps `since = until = {{today}}` on questions that
+        //    name no date at all ("when did X first write to me?"), and
+        //    `until` is end-exclusive, so the search matches nothing and the
+        //    turn burns rounds widening it by hand.
+        if let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) {
+            if until <= since {
+                self.since = None;
+                self.until = None;
+            }
+        }
         self
     }
 }
@@ -335,7 +346,7 @@ pub(crate) fn render_planner_prompt(
 /// Thin executor: render the prompt, run ONE completion on the (already-loaded)
 /// chat provider, and parse the reply into a [`Plan`]. Never errors — a provider
 /// failure degrades to [`Plan::Defer`] so the turn proceeds normally.
-pub(crate) async fn plan_search(
+pub async fn plan_search(
     provider: &dyn AIProvider,
     template: &str,
     user_email: &str,
@@ -519,6 +530,51 @@ mod tests {
         let plan = plan.without_classifier_tags();
         assert!(!plan.has_structural_filter());
         assert_eq!(plan.query.as_deref(), Some("Janos"));
+    }
+
+    #[test]
+    fn a_zero_width_date_window_is_dropped() {
+        // "when did Marisol first write to me about the logistics dashboard?"
+        // carries no date, yet the planner stamped since = until = today. The
+        // tool then matched nothing and the model spent two more rounds
+        // widening it by hand. A window that starts and ends on the same day
+        // can never be what the user asked for: the prompt's own rule for a
+        // single day ("today") is since=today, until=tomorrow.
+        let Plan::Search(plan) =
+            parse_plan(r#"{"from": "Marisol", "order": "oldest", "since": "2026-09-18", "until": "2026-09-18"}"#)
+        else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+        assert_eq!(plan.from.as_deref(), Some("Marisol"));
+    }
+
+    #[test]
+    fn an_inverted_date_window_is_dropped() {
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "since": "2026-09-18", "until": "2026-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+    }
+
+    #[test]
+    fn a_real_date_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2026-09-18", "until": "2026-09-19"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2026-09-18"));
+        assert_eq!(plan.until.as_deref(), Some("2026-09-19"));
+    }
+
+    #[test]
+    fn an_open_ended_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2025-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2025-01-01"));
+        assert_eq!(plan.until, None);
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub mod json_report;
 pub mod judge;
 pub mod junk;
 pub mod metrics;
+pub mod query_plan;
 pub mod report;
 pub mod runner;
 pub mod shared;

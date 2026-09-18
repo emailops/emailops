@@ -1,0 +1,81 @@
+# What the query planner must (and must not) put in a search_emails filter.
+#
+# Every case here is a mistake seen in a real trace this session. The planner
+# is one small completion, so these run in seconds — the point is to catch a
+# prompt or model regression before it shows up as a wrong chat answer.
+#
+# `today` is pinned per case so date expectations do not rot as the calendar
+# moves. The demo persona is the account the prompt resolves "me" against.
+
+- id: no_date_window_on_a_dateless_question
+  question: "when did Marisol first write to me about the logistics dashboard?"
+  note: "planned since = until = today on a question with no date; the search matched nothing and the turn spent two rounds widening it"
+  today: "2026-09-18"
+  expect:
+    from: "marisol"
+    order: "oldest"
+  absent: [since, until]
+
+- id: a_kind_of_mail_keeps_the_default_page
+  question: "qué peticiones de contacto he recibido?"
+  note: "copied limit: 5 from the prompt's own example, so 5 of 31 matches were answered as if they were all of them"
+  today: "2026-09-18"
+  expect:
+    intent: "introduction"
+  absent: [limit]
+
+- id: a_named_count_is_honoured
+  question: "muéstrame los últimos 3 correos de metrics@emailopslabs.dev"
+  note: "the opposite guard: when the question names a count, the planner must keep it"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    limit: 3
+  absent: [since, until]
+
+- id: received_mail_filters_the_recipient
+  question: "qué correos me enviaron ayer"
+  note: "\"me enviaron\" is a recipient filter; the planner has put the user's own address in `from` instead"
+  today: "2026-09-18"
+  expect:
+    to: "ulises@emailopslabs.dev"
+    since: "2026-09-17"
+    until: "2026-09-18"
+  absent: [from]
+
+- id: a_sender_question_needs_no_tag
+  question: "que emails tengo de metrics@emailopslabs.dev"
+  note: "a plain sender lookup; a guessed intent/topic here returns zero rows on a partially classified mailbox"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+  absent: [intent, topic, since, until]
+
+- id: german_sender_question_plans_the_same
+  question: "welche E-Mails habe ich von metrics@emailopslabs.dev"
+  note: "the keyword router never covered German; the planner is what makes those questions work"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+  absent: [since, until]
+
+- id: the_first_email_is_a_sort_not_a_window
+  question: "cuál es el primer correo que recibí de metrics@emailopslabs.dev"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    order: "oldest"
+    limit: 1
+  absent: [since, until]
+
+- id: writing_a_reply_is_not_a_search
+  question: "redacta una respuesta para Marisol sobre el dashboard"
+  note: "a draft request must reach the tool loop, not a search filter"
+  today: "2026-09-18"
+  expect_defer: true
+
+- id: a_calendar_question_is_not_a_search
+  question: "qué reuniones tengo mañana?"
+  note: "the calendar tool answers this; the planner must defer"
+  today: "2026-09-18"
+  expect_defer: true
