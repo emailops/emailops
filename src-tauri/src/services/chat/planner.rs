@@ -28,6 +28,49 @@ pub enum Plan {
     Defer,
 }
 
+/// Why the planner did or did not produce a filter.
+///
+/// Production treats every non-`Search` outcome identically — fall through to
+/// the tool loop — but they are not the same event: a model that answered
+/// `{"defer": true}` did its job, one that answered prose did not. The eval
+/// harness reports them apart so a decoding regression can't hide behind a
+/// legitimate defer rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanOutcome {
+    /// A filter with at least one selective field.
+    Search,
+    /// The model explicitly asked to defer.
+    Deferred,
+    /// Valid JSON, but nothing to search on.
+    EmptyFilter,
+    /// No JSON object in the reply.
+    Unparseable,
+    /// The provider call failed.
+    ProviderError,
+}
+
+impl PlanOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlanOutcome::Search => "search",
+            PlanOutcome::Deferred => "defer",
+            PlanOutcome::EmptyFilter => "empty_filter",
+            PlanOutcome::Unparseable => "unparseable",
+            PlanOutcome::ProviderError => "provider_error",
+        }
+    }
+}
+
+/// One planner call: the decision, why, and what the provider charged.
+#[derive(Debug)]
+pub struct PlanRun {
+    pub plan: Plan,
+    pub outcome: PlanOutcome,
+    pub prompt_tokens: u32,
+    pub prefill_ms: Option<i64>,
+    pub cached_prompt_tokens: Option<u32>,
+}
+
 /// The subset of `search_emails` arguments the planner can fill. All optional;
 /// at least one selective field must be present for the plan to be a `Search`
 /// (the tool rejects a filter-less call).
@@ -204,12 +247,13 @@ impl SearchPlan {
     }
 }
 
-pub fn parse_plan(text: &str) -> Plan {
+/// Turn the model's reply into a [`Plan`], and say why it landed there.
+pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
     let Some(obj) = extract_json_object(text) else {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::Unparseable);
     };
     if obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::Deferred);
     }
     let str_field = |key: &str| {
         obj.get(key)
@@ -248,9 +292,9 @@ pub fn parse_plan(text: &str) -> Plan {
         unread: obj.get("unread").and_then(|v| v.as_bool()).filter(|u| *u),
     };
     if plan.is_empty() {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::EmptyFilter);
     }
-    Plan::Search(Box::new(plan.normalised()))
+    (Plan::Search(Box::new(plan.normalised())), PlanOutcome::Search)
 }
 
 /// Lenient JSON-object extraction: drop ``` fences, then parse the first
@@ -353,7 +397,7 @@ pub async fn plan_search(
     today: &str,
     query: &str,
     glossary: &TagGlossary,
-) -> Plan {
+) -> PlanRun {
     let prompt = render_planner_prompt(template, user_email, today, query, glossary);
     let opts = CompletionOptions {
         temperature: Some(0.0),
@@ -361,13 +405,33 @@ pub async fn plan_search(
         think: Some(false),
     };
     match provider.complete(&prompt, opts).await {
-        Ok(result) => parse_plan(&result.text),
-        Err(_) => Plan::Defer,
+        Ok(result) => {
+            let (plan, outcome) = parse_plan_detailed(&result.text);
+            PlanRun {
+                plan,
+                outcome,
+                prompt_tokens: result.prompt_tokens,
+                prefill_ms: result.prefill_ms,
+                cached_prompt_tokens: result.cached_prompt_tokens,
+            }
+        }
+        Err(_) => PlanRun {
+            plan: Plan::Defer,
+            outcome: PlanOutcome::ProviderError,
+            prompt_tokens: 0,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// The plan alone — every assertion below predates the outcome split.
+    fn parse_plan(text: &str) -> Plan {
+        parse_plan_detailed(text).0
+    }
+
     use super::*;
     use crate::services::classification::ClassificationConfig;
 
@@ -786,5 +850,84 @@ mod tests {
             &TagGlossary::defaults(),
         );
         assert_eq!(out, "addr=me@x.com day=2026-06-17 q=emails I sent");
+    }
+
+    // ── Why the planner did not search ──────────────────────────────────
+    //
+    // Production treats every one of these the same (fall through to the tool
+    // loop), but the eval has to tell a model that asked to defer apart from
+    // one that produced noise.
+
+    #[test]
+    fn a_filled_filter_reports_search() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"from": "marisol"}"#);
+        assert!(matches!(plan, Plan::Search(_)));
+        assert_eq!(outcome, PlanOutcome::Search);
+    }
+
+    #[test]
+    fn an_explicit_defer_is_not_a_parse_failure() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"defer": true}"#);
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::Deferred);
+    }
+
+    #[test]
+    fn a_parsed_but_empty_filter_is_its_own_outcome() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"mode": "semantic"}"#);
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::EmptyFilter);
+    }
+
+    #[test]
+    fn prose_without_json_is_unparseable() {
+        let (plan, outcome) = parse_plan_detailed("I think you want emails from Marisol.");
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::Unparseable);
+    }
+
+    #[test]
+    fn parse_plan_still_returns_just_the_plan() {
+        assert_eq!(parse_plan("not json"), Plan::Defer);
+        assert!(matches!(parse_plan(r#"{"from": "ana"}"#), Plan::Search(_)));
+    }
+
+    #[tokio::test]
+    async fn plan_search_reports_the_provider_counters() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "marisol", "limit": 3}"#);
+
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "mail from marisol",
+            &TagGlossary::defaults(),
+        )
+        .await;
+
+        assert_eq!(run.outcome, PlanOutcome::Search);
+        assert!(matches!(run.plan, Plan::Search(_)));
+        assert_eq!(run.prefill_ms, None, "the fake reports no llama.cpp timing");
+    }
+
+    #[tokio::test]
+    async fn a_provider_failure_defers_and_says_so() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.fail_completions(Some("model is not loaded"));
+
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "mail from marisol",
+            &TagGlossary::defaults(),
+        )
+        .await;
+
+        assert_eq!(run.plan, Plan::Defer);
+        assert_eq!(run.outcome, PlanOutcome::ProviderError);
     }
 }

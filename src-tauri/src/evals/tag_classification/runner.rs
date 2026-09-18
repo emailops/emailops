@@ -14,8 +14,9 @@ use serde::Serialize;
 use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
 use crate::evals::json_report::{ItemResult, JsonRunReport};
+use crate::evals::shared::percentile;
 use crate::evals::tag_classification::case_loader::{load_tag_cases, TagCase};
-use crate::evals::tag_classification::metrics::{percentile, score_field, FieldOutcome, FieldScore};
+use crate::evals::tag_classification::metrics::{score_field, FieldOutcome, FieldScore};
 use crate::evals::tag_classification::report;
 use crate::evals::{EvalError, EvalResult};
 use crate::services::classification::{

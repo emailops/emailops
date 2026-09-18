@@ -307,6 +307,9 @@ pub struct FakeAiProvider {
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
     completions: RwLock<std::collections::VecDeque<CompletionResult>>,
+    /// When set, `complete` returns this as an `AiError` instead of a canned
+    /// reply, so callers' provider-failure branches are reachable in tests.
+    completion_failure: RwLock<Option<String>>,
     default_completion: RwLock<CompletionResult>,
     /// FIFO of canned chat responses. When empty, falls back to an empty
     /// assistant message.
@@ -325,6 +328,7 @@ impl FakeAiProvider {
             embedding_model: "fake-embed-model".to_string(),
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
+            completion_failure: RwLock::new(None),
             default_completion: RwLock::new(CompletionResult {
                 text: String::new(),
                 prompt_tokens: 0,
@@ -349,6 +353,11 @@ impl FakeAiProvider {
 
     pub fn set_available(&self, available: bool) {
         *self.available.write().unwrap_or_else(PoisonError::into_inner) = available;
+    }
+
+    /// Make every `complete` call fail with this message until cleared.
+    pub fn fail_completions(&self, message: Option<&str>) {
+        *self.completion_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
     }
 
     /// Queue a canned completion. Returned in FIFO order from `complete`.
@@ -497,6 +506,14 @@ impl AIProvider for FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(prompt.to_string());
+        if let Some(message) = self
+            .completion_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(crate::models::error::AppError::AiError(message));
+        }
         let popped = self
             .completions
             .write()

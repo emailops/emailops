@@ -324,3 +324,27 @@ mod tests {
         clear_eval_env();
     }
 }
+
+/// Nearest-rank percentile of an already-sorted sample. `None` when empty.
+/// Shared by the harnesses that report latency distributions.
+pub fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let rank = (p * sorted.len() as f64).ceil().max(1.0) as usize;
+    sorted.get(rank.min(sorted.len()) - 1).copied()
+}
+
+#[cfg(test)]
+mod percentile_tests {
+    use super::percentile;
+
+    #[test]
+    fn percentile_picks_the_nearest_rank() {
+        let samples = [10u64, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        assert_eq!(percentile(&samples, 0.5), Some(50));
+        assert_eq!(percentile(&samples, 0.95), Some(100));
+        assert_eq!(percentile(&[], 0.5), None);
+        assert_eq!(percentile(&[7], 0.95), Some(7));
+    }
+}

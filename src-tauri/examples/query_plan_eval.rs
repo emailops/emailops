@@ -48,6 +48,10 @@ struct Args {
 
     #[arg(long)]
     cases_dir: Option<PathBuf>,
+
+    /// Print the metrics JSON to stdout instead of prose.
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 fn main() {
@@ -73,6 +77,7 @@ fn main() {
         // Never the live DB: the planner only reads prompts and tags, but the
         // harness has no business holding the app's database open.
         db_mode: EvalDbMode::CopyToTemp,
+        json_stdout: args.json,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -80,13 +85,21 @@ fn main() {
         .build()
         .expect("failed to build tokio runtime");
 
-    match rt.block_on(run(cfg)) {
-        Ok(path) => eprintln!("[plan-eval] done → {}", path.display()),
+    let code = match rt.block_on(run(cfg)) {
+        Ok(summary) => {
+            eprintln!("[plan-eval] done → {}", summary.html_path.display());
+            0
+        }
         Err(e) => {
             eprintln!("[plan-eval] ERROR: {e}");
-            std::process::exit(1);
+            1
         }
-    }
+    };
+
+    // The single exit path for anything that can load the embedded provider:
+    // leaving normally lets ggml's Metal static destructor abort and turns a
+    // finished run into a failing exit code.
+    emailops_lib::services::ai::shutdown_and_exit(code);
 }
 
 #[cfg(target_os = "macos")]
