@@ -136,7 +136,7 @@ pub async fn add_imap_account(
     display_name: Option<String>,
     sync_from_timestamp: Option<i64>,
 ) -> Result<Account, AppError> {
-    let identity = services::accounts::resolve_imap_identity(Some(&email), username.as_deref())?;
+    let identity = services::accounts::resolve_imap_identity(&email, username.as_deref())?;
     let credentials = ImapCredentials {
         host,
         port,

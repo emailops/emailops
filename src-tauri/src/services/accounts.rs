@@ -758,23 +758,20 @@ fn invalid_address_error(raw: &str) -> AppError {
 
 /// Decide the address/login pair for a new IMAP account.
 ///
-/// `email` is required and validated; a blank or absent `username` means "the
-/// login is the address". `email: None` is the legacy CLI invocation
-/// (`--username me@host`) and falls back to the username, which is then
-/// validated like any other address — so that path can no longer create an
-/// account that syncs but can never send.
-pub fn resolve_imap_identity(email: Option<&str>, username: Option<&str>) -> Result<ImapIdentity> {
+/// The address is required: it is the account's identity — the `From` on
+/// everything it sends and the key every "is this me?" check compares against —
+/// so it is never derived from the login. A blank or absent `username` means
+/// "the login is the address", the same defaulting the Add Account modal
+/// applies, and the defaulting only ever runs in that direction.
+pub fn resolve_imap_identity(email: &str, username: Option<&str>) -> Result<ImapIdentity> {
     let username = username.map(str::trim).filter(|u| !u.is_empty());
-    let address = email
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
-        .or(username)
-        .ok_or_else(|| {
-            AppError::InvalidInput(
-                "An email address is required. Enter the address people write to; if your server's login is different, put that in Username."
-                    .to_string(),
-            )
-        })?;
+    let address = email.trim();
+    if address.is_empty() {
+        return Err(AppError::InvalidInput(
+            "An email address is required. Enter the address people write to; if your server's login is different, put that in Username."
+                .to_string(),
+        ));
+    }
 
     let email = parse_account_address(address).ok_or_else(|| invalid_address_error(address))?;
     let username = username.unwrap_or(email.as_str()).to_string();
@@ -928,14 +925,14 @@ mod tests {
     // login, while the account's own address stays a real address.
     #[test]
     fn imap_identity_keeps_a_separate_login_username() {
-        let identity = resolve_imap_identity(Some("alex@example.de"), Some("alex")).expect("valid address");
+        let identity = resolve_imap_identity("alex@example.de", Some("alex")).expect("valid address");
         assert_eq!(identity.email, "alex@example.de");
         assert_eq!(identity.username, "alex");
     }
 
     #[test]
     fn imap_identity_defaults_username_to_the_address() {
-        let identity = resolve_imap_identity(Some("alex@example.de"), None).expect("valid address");
+        let identity = resolve_imap_identity("alex@example.de", None).expect("valid address");
         assert_eq!(identity.email, "alex@example.de");
         assert_eq!(identity.username, "alex@example.de");
     }
@@ -943,7 +940,7 @@ mod tests {
     // The modal sends "" for an optional field the user never touched.
     #[test]
     fn imap_identity_treats_a_blank_username_as_absent() {
-        let identity = resolve_imap_identity(Some("alex@example.de"), Some("   ")).expect("valid address");
+        let identity = resolve_imap_identity("alex@example.de", Some("   ")).expect("valid address");
         assert_eq!(identity.username, "alex@example.de");
     }
 
@@ -951,36 +948,34 @@ mod tests {
     // an account that can never send.
     #[test]
     fn imap_identity_rejects_a_login_name_as_the_address() {
-        let err = resolve_imap_identity(Some("alex"), None).expect_err("a bare login is not an address");
+        let err = resolve_imap_identity("alex", None).expect_err("a bare login is not an address");
         assert!(
             matches!(err, AppError::InvalidInput(_)),
             "expected InvalidInput, got {err:?}"
         );
     }
 
-    // Legacy CLI contract: `accounts add imap --username me@host` with no
-    // --email must keep working exactly as before.
+    // A login is never promoted to an address, so the only thing left to reject
+    // is an empty address -- with the "required" wording, not "not valid".
     #[test]
-    fn imap_identity_falls_back_to_username_when_no_address_given() {
-        let identity = resolve_imap_identity(None, Some("me@example.com")).expect("valid address");
-        assert_eq!(identity.email, "me@example.com");
-        assert_eq!(identity.username, "me@example.com");
-    }
-
-    #[test]
-    fn imap_identity_requires_at_least_one_of_address_or_username() {
-        let err = resolve_imap_identity(None, None).expect_err("nothing to identify the account with");
-        assert!(
-            matches!(err, AppError::InvalidInput(_)),
-            "expected InvalidInput, got {err:?}"
-        );
+    fn imap_identity_rejects_a_blank_address() {
+        for blank in ["", "   "] {
+            let err = resolve_imap_identity(blank, Some("alex")).expect_err("an address is required");
+            match err {
+                AppError::InvalidInput(msg) => assert!(
+                    msg.contains("is required"),
+                    "expected the required-address wording, got {msg:?}"
+                ),
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+        }
     }
 
     // RFC 5321 makes the local-part case-sensitive; some servers' logins are
     // case-sensitive too. Neither value may be folded on the way in.
     #[test]
     fn imap_identity_does_not_lowercase_the_login() {
-        let identity = resolve_imap_identity(Some("Alex.Doe@Example.de"), Some("Alex")).expect("valid address");
+        let identity = resolve_imap_identity("Alex.Doe@Example.de", Some("Alex")).expect("valid address");
         assert_eq!(identity.email, "Alex.Doe@Example.de");
         assert_eq!(identity.username, "Alex");
     }

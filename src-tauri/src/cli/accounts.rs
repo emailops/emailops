@@ -58,9 +58,10 @@ pub enum AddProvider {
         #[arg(long, default_value_t = 993)]
         port: u16,
         /// The account's own email address — what people write to, and the
-        /// `From` address on outgoing mail. Defaults to --username.
+        /// `From` address on outgoing mail. Required: it is never derived from
+        /// --username.
         #[arg(long)]
-        email: Option<String>,
+        email: String,
         /// Server login, when it differs from the address (some servers sign
         /// you in with a bare name). Defaults to --email.
         #[arg(long)]
@@ -120,7 +121,7 @@ async fn add_account(session: &CliSession, provider: AddProvider) -> Result<()> 
         } => {
             // Resolved before the password prompt, so a bad address fails
             // immediately instead of after the user has typed a secret.
-            let identity = crate::services::accounts::resolve_imap_identity(email.as_deref(), username.as_deref())?;
+            let identity = crate::services::accounts::resolve_imap_identity(&email, username.as_deref())?;
             let ts = parse_sync_from(sync_from.as_deref())?;
             let password = resolve_password(session.mode, password)?;
             let credentials = ImapCredentials {
@@ -234,7 +235,7 @@ mod tests {
     }
 
     /// Parse an `accounts add imap` line and hand back its `(email, username)`.
-    fn parse_imap_identity_flags(args: &[&str]) -> (Option<String>, Option<String>) {
+    fn parse_imap_identity_flags(args: &[&str]) -> (String, Option<String>) {
         use clap::Parser as _;
 
         let cli = crate::cli::Cli::parse_from(args);
@@ -264,25 +265,29 @@ mod tests {
             "--username",
             "alex",
         ]);
-        assert_eq!(email.as_deref(), Some("alex@example.de"));
+        assert_eq!(email, "alex@example.de");
         assert_eq!(username.as_deref(), Some("alex"));
     }
 
-    // The legacy invocation: `--username me@host` alone still parses, because
-    // `--email` is optional and the resolver falls back to the username.
+    // The address is the account's identity, so it is never inferred from the
+    // login: omitting --email is a parse error, not a silent fallback.
     #[test]
-    fn imap_add_without_email_is_still_valid() {
-        let (email, username) = parse_imap_identity_flags(&[
-            "emailops-cli",
-            "accounts",
-            "add",
-            "imap",
-            "--host",
-            "imap.example.com",
-            "--username",
-            "me@example.com",
-        ]);
-        assert!(email.is_none());
-        assert_eq!(username.as_deref(), Some("me@example.com"));
+    fn imap_add_requires_an_email() {
+        use clap::Parser as _;
+
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "emailops-cli",
+                "accounts",
+                "add",
+                "imap",
+                "--host",
+                "imap.example.com",
+                "--username",
+                "me@example.com",
+            ])
+            .is_err(),
+            "--username alone must not stand in for --email"
+        );
     }
 }

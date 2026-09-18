@@ -168,7 +168,7 @@ logging in before anything is saved.
 |---|---|---|
 | `--host <H>` | *(required)* | IMAP server host, e.g. `imap.fastmail.com`. |
 | `--port <N>` | `993` | IMAP TLS port. |
-| `--email <E>` | = `--username` | The account's own address: what people write to, and the `From` address on outgoing mail. |
+| `--email <E>` | *(required)* | The account's own address: what people write to, and the `From` address on outgoing mail. |
 | `--username <U>` | = `--email` | Server login, for servers that sign you in with something other than the address (e.g. a bare name). |
 | `--password <P>` | *(prompt)* | App password. Omit to be prompted **without echo**; required with `--json`. |
 | `--smtp-host <H>` | = `--host` | SMTP server host. |
@@ -176,9 +176,10 @@ logging in before anything is saved.
 | `--name <N>` | *(none)* | Display name. Without it the account stores no display name and readers fall back to the address. |
 | `--sync-from <YYYY-MM-DD>` | all history | Only sync mail on/after this date. |
 
-At least one of `--email` / `--username` is required, and whichever supplies the
-address must be a real address — it is parsed with the same parser the send path
-uses, so an account can never be created that can sync but not send.
+`--email` is required and must be a real address — it is parsed with the same
+parser the send path uses, so an account can never be created that can sync but
+not send. It is never inferred from `--username`: the address is the account's
+identity, and a login that merely looks like an address is not the same thing.
 
 ```bash
 # Login is the address (the common case) — prompts for the password (no echo):
@@ -188,11 +189,12 @@ make cli-run ARGS="accounts add imap --host imap.fastmail.com --email me@fastmai
 make cli-run ARGS="accounts add imap --host imap.example.com --email alex@example.de --username alex"
 ```
 
-> **Breaking change.** `--username alex` with no `--email` used to succeed and
-> created an account whose address was `alex` — it synced, but every send failed
-> and every "is this me?" comparison silently missed. It is now rejected with
-> `invalid_input` (exit 2). `--username me@example.com` with no `--email` is
-> unchanged: the address and the login are both that value.
+> **Breaking change.** `--email` is now required. It used to be optional and the
+> address fell back to `--username`, so `--username alex` created an account
+> whose address was `alex`: it synced, but every send failed and every "is this
+> me?" comparison silently missed. Omitting `--email` is now a usage error
+> (exit 2), including when the login happens to be a valid address — add
+> `--email <that same address>` to such invocations.
 
 > Prefer the interactive prompt over `--password` so the secret doesn't land in
 > your shell history. In `--json` (agent) mode there's no prompt, so `--password`
@@ -462,7 +464,8 @@ make cli-fast ARGS="config unset default-account --json"                 # ok:tr
 ```bash
 make cli-fast ARGS="show nonexistent-id --json"; echo "exit=$?"   # ok:false code:not_found, exit=3
 make cli-fast ARGS="accounts add imap --host x --email u@example.com --json"; echo "exit=$?"  # missing --password → invalid_input, exit=2
-make cli-fast ARGS="accounts add imap --host x --username u --password p --json"; echo "exit=$?" # login name as address → invalid_input, exit=2
+make cli-fast ARGS="accounts add imap --host x --email u --password p --json"; echo "exit=$?" # login name as address → invalid_input, exit=2
+make cli-fast ARGS="accounts add imap --host x --username u@example.com --password p --json"; echo "exit=$?" # no --email → clap usage error, exit=2
 make cli-fast ARGS="bogus-command"; echo "exit=$?"                # clap usage error, exit=2
 ```
 

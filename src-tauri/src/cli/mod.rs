@@ -940,7 +940,7 @@ mod tests {
             "imap",
             "--host",
             "imap.fastmail.com",
-            "--username",
+            "--email",
             "me@fastmail.com",
             "--password",
             "secret",
@@ -965,8 +965,11 @@ mod tests {
             }) => {
                 assert_eq!(host, "imap.fastmail.com");
                 assert_eq!(port, 993);
-                assert!(email.is_none(), "no --email given");
-                assert_eq!(username.as_deref(), Some("me@fastmail.com"));
+                assert_eq!(email, "me@fastmail.com");
+                assert!(
+                    username.is_none(),
+                    "no --username given; the login defaults to the address"
+                );
                 assert_eq!(password.as_deref(), Some("secret"));
                 assert!(smtp_host.is_none());
                 assert_eq!(smtp_port, 587);
@@ -978,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn accounts_add_imap_requires_host_and_username() {
+    fn accounts_add_imap_requires_host_and_email() {
         // Missing both required flags → clap parse error (not a silent default).
         assert!(Cli::try_parse_from(["emailops-cli", "accounts", "add", "imap"]).is_err());
     }
