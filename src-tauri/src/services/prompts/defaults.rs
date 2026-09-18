@@ -226,7 +226,7 @@ Fields (use null when the question does not imply them):
   subject : subject keywords
   since   : ISO date YYYY-MM-DD (range start)
   until   : ISO date YYYY-MM-DD (range end)
-  limit   : integer 1-25
+  limit   : integer 1-25 — ONLY when the question names a count or asks for the latest/first few; omit it otherwise
   order   : "newest" (default) or "oldest"
   unread  : true only when the question asks for mail the user has not read yet; omit otherwise
   intent  : what the sender wants — one of:
@@ -241,6 +241,9 @@ Rules:
 - A named recipient: "to X" / "a X" / "para X" / "que le envié a X" -> to = X (the name), NOT query.
   A named sender: "from X" / "de X" -> from = X. Never put a person/company name in query.
 - "last" / "latest" / "most recent" / "última" -> order = "newest", small limit (e.g. 3-5).
+- Every other question -> NO limit. A question about a kind of mail, a sender or a period asks
+  for all of it; the search returns a full page and the user can ask for the next one. A limit
+  there hides matches and makes the answer look complete when it is not.
 - "first" / "earliest" / "oldest" / "primer" / "más antiguo" -> order = "oldest", limit = 1.
 - "this week" / "esta semana" -> since = {{this_week_since}}, until = {{this_week_until}} (week starts Monday; until is end-exclusive).
 - "last week" / "semana pasada" -> since = {{last_week_since}}, until = {{last_week_until}}.
@@ -258,6 +261,7 @@ Rules:
 
 Example: "primer correo que envié a acme" -> {"to": "acme", "order": "oldest", "limit": 1}
 Example: "latest emails from potential clients" -> {"intent": "introduction", "limit": 5}
+Example: "qué peticiones de contacto he recibido" -> {"to": "{{user_email}}", "intent": "introduction"}
 Example: "correos donde pido presupuesto a un proveedor" -> {"from": "{{user_email}}", "intent": "request", "query": "presupuesto", "mode": "semantic"}
 Example: "quejas de clientes en 2025" -> {"intent": "complaint", "since": "2025-01-01", "until": "2026-01-01"}
 

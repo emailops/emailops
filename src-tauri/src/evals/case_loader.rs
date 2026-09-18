@@ -154,6 +154,13 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_tool_args_contains: Vec<String>,
 
+    /// Case-insensitive substrings that must appear in NO traced tool call's
+    /// arguments. The positive form above passes as soon as ONE call matches,
+    /// so it cannot pin a wrong FIRST call (a planner that asked for 5 rows
+    /// and a later call that asked for 25); this one can.
+    #[serde(default)]
+    pub expected_tool_args_not_contains: Vec<String>,
+
     /// Regex pattern the auto-derived conversation title must match.
     #[serde(default)]
     pub expected_title_pattern: Option<String>,

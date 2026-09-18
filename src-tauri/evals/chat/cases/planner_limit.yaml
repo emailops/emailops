@@ -1,0 +1,34 @@
+# The planner must not shrink a list the user never asked to shrink.
+#
+# `chat.query_plan` turns a question into one search_emails filter. Its only
+# intent-filter example carried `"limit": 5` ("latest emails from potential
+# clients"), and the only limit rule spoke about "last / latest". The model
+# copied that shape into questions that ask for a KIND of mail with no recency
+# at all ("qué peticiones de contacto he recibido"), so a mailbox with dozens
+# of matches answered from five rows — and the user could not tell the answer
+# was partial. `into_tool_call` already defaults to 25 when the plan carries no
+# limit, so the fix is for the planner to leave it out.
+#
+# WHAT THESE ASSERT
+# The tool ARGUMENTS, not the prose: the limit is a planner decision, and the
+# answer text would only show it indirectly. The second case is the
+# over-correction guard — "los últimos 3" must still come back as a small page.
+
+- id: planner_keeps_the_default_page_for_a_kind_of_mail_es
+  question: "qué peticiones de contacto he recibido?"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_tool_args_contains: ['"limit":25']
+  expected_tool_args_not_contains: ['"limit":5']
+  metrics: []
+
+- id: planner_honours_an_explicit_count_es
+  question: "muéstrame los últimos 3 correos de metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_tool_args_contains: ['"limit":3']
+  metrics: []
