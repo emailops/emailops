@@ -1681,6 +1681,57 @@ mod tests {
     /// the classifier already knows a prospect (intent introduction /
     /// question / request). The tool exposes that as a filter.
     #[test]
+    fn an_intent_filter_does_not_match_a_company_tag_with_the_same_name() {
+        // The clause compared `tag_value` alone, so `intent=billing` also
+        // matched the company tag "billing" — a vendor's whole mailbox came
+        // back as if the classifier had called it billing mail.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "tagged",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Factura",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "company",
+            "acc",
+            "t2",
+            "Billing Inc",
+            "hi@billing.com",
+            "Hola",
+            "hola",
+            t + 200,
+        );
+        tag_email(&db, "tagged", "intent", "billing");
+        tag_email(&db, "company", "company", "billing");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "billing" })),
+        );
+
+        // The company still shows up — the tag is a preference, not a gate —
+        // but behind the classified one, and the note says only one carries it.
+        assert!(
+            out.starts_with("(1 emails carry the intent/topic asked for"),
+            "the company must not count as billing intent; out:\n{out}"
+        );
+        let tagged = out.find("id=tagged").expect("classified email listed");
+        let company = out.find("id=company").expect("company email listed behind it");
+        assert!(tagged < company, "the classified email leads; out:\n{out}");
+    }
+
+    #[test]
     fn search_emails_filters_by_classification_intent_and_topic() {
         let db = tools_test_db();
         let t = parse_iso_date_secs("2026-04-17").unwrap();
@@ -1730,8 +1781,14 @@ mod tests {
             "search_emails",
             &arg(serde_json::json!({ "intent": "introduction" })),
         );
-        assert!(out.contains("id=lead"), "{out}");
-        assert!(!out.contains("id=promo") && !out.contains("id=q"), "{out}");
+        // Tagged first, the rest behind: an email carries ONE intent, so
+        // "introduction" is a preference over the others, not a wall.
+        assert!(out.starts_with("(1 emails carry the intent/topic asked for"), "{out}");
+        let lead = out.find("id=lead").expect("the tagged lead is listed");
+        for other in ["id=promo", "id=q"] {
+            let pos = out.find(other).expect("the rest follow the tagged block");
+            assert!(lead < pos, "the tagged email leads; {out}");
+        }
 
         let out = execute_tool(
             &db,
@@ -1740,10 +1797,11 @@ mod tests {
             "search_emails",
             &arg(serde_json::json!({ "intent": "question", "topic": "sales" })),
         );
-        assert!(
-            out.contains("id=q") && !out.contains("id=lead"),
-            "both filters must hold: {out}"
-        );
+        // Both tags asked for: `q` carries them, so it leads.
+        assert!(out.contains("id=q"), "{out}");
+        let q = out.find("id=q").expect("the doubly tagged email is listed");
+        let lead = out.find("id=lead").expect("the others follow");
+        assert!(q < lead, "both filters hold on q, so it comes first: {out}");
 
         let schema = super::search_emails::SearchEmailsTool.parameters_schema();
         for key in ["intent", "topic", "with_bodies"] {
@@ -1959,9 +2017,49 @@ mod tests {
         );
 
         assert!(
-            out.starts_with("(PARTIAL: 4 more emails match the other filters but were never classified"),
-            "the uncovered matches must lead the result; out:\n{out}"
+            out.starts_with("(2 emails carry the intent/topic asked for; the 4 rows after them"),
+            "the note must separate the tagged rows from the widened ones; out:\n{out}"
         );
+        let tagged_first = out.find("id=p1").expect("tagged rows listed");
+        let widened = out.find("id=p5").expect("the rest listed behind them");
+        assert!(tagged_first < widened, "tagged rows lead; out:\n{out}");
+    }
+
+    #[test]
+    fn a_tag_nobody_carries_still_answers_with_the_other_matches() {
+        // The reported failure: "¿qué correos de BorgBase tengo sin leer?" was
+        // planned with intent=notification while those invoices are tagged
+        // billing, and the answer became "there are none".
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("inv{i}"),
+                "acc",
+                &format!("t{i}"),
+                "BorgBase",
+                "billing@borgbase.com",
+                &format!("Invoice {i}"),
+                "body",
+                t + i as i64,
+            );
+            tag_email(&db, &format!("inv{i}"), "intent", "billing");
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "billing@borgbase.com", "intent": "notification" })),
+        );
+
+        assert!(
+            out.starts_with("(no email carries the intent/topic asked for; the 3 rows below"),
+            "the wrong tag must not swallow the answer; out:\n{out}"
+        );
+        assert!(out.contains("id=inv0") && out.contains("id=inv2"), "out:\n{out}");
     }
 
     #[test]

@@ -319,7 +319,7 @@ pub(crate) fn or_fallback_search(
     from_filter: Option<&str>,
     to_filter: Option<&str>,
     subject_filter: Option<&str>,
-    tag_filters: Option<&[String]>,
+    tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
 ) -> Option<Vec<Email>> {

@@ -1,5 +1,35 @@
 use super::*;
 
+/// One classifier tag to filter by.
+///
+/// `tag_type` is optional because the two callers know different things: the
+/// chat tool filters an `intent` or a `topic` and must not match a company
+/// that happens to share the name, while the search box's `tag:` operator
+/// takes a bare value the user typed, with no type attached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagQuery {
+    pub tag_type: Option<String>,
+    pub value: String,
+}
+
+impl TagQuery {
+    /// Any tag type with this value — the `tag:` operator's historical meaning.
+    pub fn any_type(value: impl Into<String>) -> Self {
+        Self {
+            tag_type: None,
+            value: value.into(),
+        }
+    }
+
+    /// One specific tag type and value.
+    pub fn typed(tag_type: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            tag_type: Some(tag_type.into()),
+            value: value.into(),
+        }
+    }
+}
+
 /// Split a `Name <addr@host>` header into its display name and address.
 /// A bare address yields an empty name.
 fn split_addressee(raw: &str) -> (String, String) {
@@ -547,7 +577,7 @@ impl Database {
         subject_filter: Option<&str>,
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
-        tag_filters: Option<&[String]>,
+        tag_filters: Option<&[TagQuery]>,
         limit: i32,
     ) -> Result<Vec<Email>> {
         // Default ordering is newest-first (the long-standing behaviour every
@@ -585,7 +615,7 @@ impl Database {
         subject_filter: Option<&str>,
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
-        tag_filters: Option<&[String]>,
+        tag_filters: Option<&[TagQuery]>,
         limit: i32,
         ascending: bool,
         // `true` drops mail the junk detector called spam or phishing (unless
@@ -624,7 +654,7 @@ impl Database {
         subject_filter: Option<&str>,
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
-        tag_filters: Option<&[String]>,
+        tag_filters: Option<&[TagQuery]>,
         limit: i32,
         ascending: bool,
         exclude_spam: bool,
@@ -930,15 +960,25 @@ impl Database {
             param_idx += 1;
         }
 
-        // Tag filters
+        // Tag filters. A typed filter also binds `tag_type`, which keeps
+        // `intent=billing` from matching the company tag "billing" and lets
+        // SQLite use idx_email_tags_type_value instead of scanning by value.
         if let Some(tags) = tag_filters.filter(|t| !t.is_empty()) {
-            for tag_value in tags {
+            for tag in tags {
+                let type_clause = match &tag.tag_type {
+                    Some(_) => format!(" AND et.tag_type = ?{}", param_idx + 1),
+                    None => String::new(),
+                };
                 cte_conditions.push(format!(
-                    "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{})",
-                    param_idx
+                    "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{}{})",
+                    param_idx, type_clause
                 ));
-                params_vec.push(Box::new(tag_value.clone()));
+                params_vec.push(Box::new(tag.value.clone()));
                 param_idx += 1;
+                if let Some(tag_type) = &tag.tag_type {
+                    params_vec.push(Box::new(tag_type.clone()));
+                    param_idx += 1;
+                }
             }
         }
 

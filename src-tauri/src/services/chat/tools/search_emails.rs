@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::{SearchPage, Tool, ToolCtx, ToolError, ToolOutput};
+use crate::db::emails::search::TagQuery;
 use crate::db::Database;
 use crate::models::Email;
 use crate::services::chat::{
@@ -40,18 +41,30 @@ fn total_count_note(shown: usize, offset: i32, total: i32) -> Option<String> {
     ))
 }
 
-/// What an `intent` / `topic` filter structurally cannot return: mail the
-/// classifier never tagged. Classification only covers emails inside the
-/// user's AI window (`ai_max_email_count` / `ai_max_email_age_days`), so a
-/// partially-classified mailbox is the normal case, and a tag-filtered answer
-/// there is partial without saying so. `None` when nothing is uncovered.
-fn unclassified_coverage_note(uncovered: usize) -> Option<String> {
-    if uncovered == 0 {
+/// The line that explains a widened page: how many rows carry the tag that was
+/// asked for, and how many were added behind them.
+///
+/// An email stores exactly ONE intent (`PRIMARY KEY (email_id, tag_type)`),
+/// while a real email is often several things at once — a request that is also
+/// a question — and older mail carries no tag at all. So an intent/topic filter
+/// is a preference here, not a gate: the tagged rows come first, the rest of the
+/// matches follow, and this note keeps the two apart so a count stays honest.
+/// `None` when the page filled with tagged rows and nothing was added.
+fn tag_coverage_note(tagged: usize, added: usize) -> Option<String> {
+    if added == 0 {
         return None;
     }
+    if tagged == 0 {
+        return Some(format!(
+            "(no email carries the intent/topic asked for; the {added} rows below match every other \
+filter and are shown instead — each email stores only ONE intent, so the tag may simply be a \
+different one)"
+        ));
+    }
     Some(format!(
-        "(PARTIAL: {uncovered} more emails match the other filters but were never classified, \
-so this intent/topic filter cannot reach them)"
+        "({tagged} emails carry the intent/topic asked for; the {added} rows after them match every \
+other filter but are tagged differently or not classified — each email stores only ONE intent, \
+so count only the first {tagged} when asked how many)"
     ))
 }
 
@@ -70,19 +83,48 @@ pub(crate) struct PostFilters<'a> {
     pub to: Option<&'a str>,
     pub since: Option<i64>,
     pub until: Option<i64>,
-    /// Intent / topic values that must ALL be present on the email.
-    pub tags: &'a [String],
+    /// Intent / topic filters that must ALL hold on the email.
+    pub tags: &'a [TagQuery],
     pub received_only: bool,
     /// Keep only mail the user has not read.
     pub unread_only: bool,
 }
 
+/// Split ranked candidates into the ones carrying every requested tag and the
+/// rest, both in their original order.
+///
+/// The keyword path widens a short tag-filtered page with the other matches;
+/// this is the same idea on the semantic path, where the candidates are
+/// already ranked by meaning: prefer the tagged ones, keep the rest behind
+/// them instead of dropping them.
+pub(crate) fn partition_by_tags(
+    emails: Vec<Email>,
+    tags: &[TagQuery],
+    tags_of: &dyn Fn(&str) -> Vec<(String, String)>,
+) -> (Vec<Email>, Vec<Email>) {
+    if tags.is_empty() {
+        return (Vec::new(), emails);
+    }
+    emails.into_iter().partition(|e| {
+        let have = tags_of(&e.id);
+        tags.iter().all(|want| {
+            have.iter().any(|(tag_type, value)| {
+                value.eq_ignore_ascii_case(&want.value)
+                    && want
+                        .tag_type
+                        .as_ref()
+                        .is_none_or(|wanted| tag_type.eq_ignore_ascii_case(wanted))
+            })
+        })
+    })
+}
+
 /// Keep the candidates that satisfy every filter, in their original order.
-/// `tags_of` yields the classifier tag values attached to an email id.
+/// `tags_of` yields the classifier tags — type and value — attached to an id.
 pub(crate) fn semantic_post_filter(
     emails: Vec<Email>,
     f: &PostFilters<'_>,
-    tags_of: &dyn Fn(&str) -> Vec<String>,
+    tags_of: &dyn Fn(&str) -> Vec<(String, String)>,
 ) -> Vec<Email> {
     let contains_ci = |haystack: &str, needle: &str| haystack.to_lowercase().contains(&needle.to_lowercase());
     emails
@@ -109,7 +151,16 @@ pub(crate) fn semantic_post_filter(
             }
             if !f.tags.is_empty() {
                 let have = tags_of(&e.id);
-                if !f.tags.iter().all(|t| have.iter().any(|h| h.eq_ignore_ascii_case(t))) {
+                let holds = |want: &TagQuery| {
+                    have.iter().any(|(tag_type, value)| {
+                        value.eq_ignore_ascii_case(&want.value)
+                            && want
+                                .tag_type
+                                .as_ref()
+                                .is_none_or(|wanted| tag_type.eq_ignore_ascii_case(wanted))
+                    })
+                };
+                if !f.tags.iter().all(holds) {
                     return false;
                 }
             }
@@ -160,7 +211,7 @@ impl Tool for SearchEmailsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic must be non-empty. `intent` / `topic` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
+        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic must be non-empty. `intent` / `topic` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic` filter RANKS rather than excludes: each email stores only one intent, so the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
 
     fn prompt_summary(&self) -> &'static str {
@@ -203,14 +254,19 @@ impl Tool for SearchEmailsTool {
         // shortcuts' internal one — same effect.
         let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false)
             || args.get("with_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
-        // Classification filters: intent / topic tag values, both must hold.
-        let tag_filters: Vec<String> = ["intent", "topic"]
+        // Classification filters: intent / topic, carried WITH their type so a
+        // company or topic that shares the name cannot answer for them.
+        let tag_filters: Vec<TagQuery> = ["intent", "topic"]
             .iter()
-            .filter_map(|k| args.get(*k).and_then(|v| v.as_str()))
-            .map(|v| v.trim().to_lowercase())
-            .filter(|v| !v.is_empty())
+            .filter_map(|k| {
+                args.get(*k)
+                    .and_then(|v| v.as_str())
+                    .map(|v| (*k, v.trim().to_lowercase()))
+            })
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(tag_type, value)| TagQuery::typed(tag_type, value))
             .collect();
-        let tag_filter_arg: Option<&[String]> = if tag_filters.is_empty() {
+        let tag_filter_arg: Option<&[TagQuery]> = if tag_filters.is_empty() {
             None
         } else {
             Some(&tag_filters)
@@ -378,9 +434,53 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             }
         });
 
+        // The classifier stores ONE intent per email and older mail carries
+        // none, so a tag is a preference, not a gate: when the tagged rows do
+        // not fill the page, the same search without the tag tops it up. The
+        // note below keeps the two blocks apart so a count stays honest.
+        let (primary, widened_by) = match (primary, tag_filter_arg) {
+            (Ok(tagged), Some(_)) if (tagged.len() as i32) < offset + limit => {
+                let wanted = (offset + limit) as usize;
+                let seen: std::collections::HashSet<String> = tagged.iter().map(|e| e.id.clone()).collect();
+                let extra = emails::search_emails_filtered(
+                    ctx.db,
+                    ctx.account_id,
+                    query,
+                    cat_filter,
+                    from_filter,
+                    to_filter,
+                    subject_filter,
+                    since_ts,
+                    until_ts,
+                    None,
+                    (offset + limit) * 2,
+                    ascending,
+                    unread_only,
+                )
+                .unwrap_or_default();
+                let mut rows = tagged;
+                let tagged_len = rows.len();
+                for email in extra {
+                    if rows.len() >= wanted {
+                        break;
+                    }
+                    if received_only && email.is_sent {
+                        continue;
+                    }
+                    if !seen.contains(&email.id) {
+                        rows.push(email);
+                    }
+                }
+                let added = rows.len() - tagged_len;
+                (Ok(rows), added)
+            }
+            (primary, _) => (primary, 0),
+        };
+
         match primary {
             Err(e) => Ok(ToolOutput::text(format!("Search error: {}", e))),
             Ok(matches) if !matches.is_empty() => {
+                let tagged_on_page = matches.len() - widened_by;
                 let emails: Vec<crate::models::Email> = matches.into_iter().skip(offset as usize).collect();
                 if emails.is_empty() {
                     return Ok(ToolOutput::text(
@@ -419,30 +519,8 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                 if let Some(note) = total_count_note(emails.len(), offset, total) {
                     body = format!("{note}\n{body}");
                 }
-                // A tag filter can only match what the classifier tagged. Count
-                // the matches it structurally cannot see, so the model can say
-                // the list is partial instead of presenting it as complete.
-                if tag_filter_arg.is_some() {
-                    let uncovered = emails::search_emails_filtered(
-                        ctx.db,
-                        ctx.account_id,
-                        query,
-                        cat_filter,
-                        from_filter,
-                        to_filter,
-                        subject_filter,
-                        since_ts,
-                        until_ts,
-                        None,
-                        COUNT_PROBE_LIMIT,
-                        ascending,
-                        unread_only,
-                    )
-                    .map(|candidates| count_unclassified(ctx.db, &candidates))
-                    .unwrap_or(0);
-                    if let Some(note) = unclassified_coverage_note(uncovered) {
-                        body = format!("{note}\n{body}");
-                    }
+                if let Some(note) = tag_coverage_note(tagged_on_page.saturating_sub(offset as usize), widened_by) {
+                    body = format!("{note}\n{body}");
                 }
                 if let Some(note) = mode_note {
                     body = format!("{note}{body}");
@@ -577,14 +655,21 @@ impl SearchEmailsTool {
         } else {
             ctx.db.get_email_tags_batch(&ids).unwrap_or_default()
         };
-        let tags_of = |id: &str| -> Vec<String> {
+        let tags_of = |id: &str| -> Vec<(String, String)> {
             tag_rows
                 .iter()
                 .filter(|t| t.email_id == id)
-                .map(|t| t.tag_value.clone())
+                .map(|t| (t.tag_type.clone(), t.tag_value.clone()))
                 .collect()
         };
-        let mut kept = semantic_post_filter(candidates, post, &tags_of);
+        // Every filter except the tags is a hard one; the tags only decide the
+        // order, the same way the keyword path widens a short tagged page.
+        let hard = PostFilters { tags: &[], ..*post };
+        let kept_all = semantic_post_filter(candidates, &hard, &tags_of);
+        let (tagged, rest) = partition_by_tags(kept_all, post.tags, &tags_of);
+        let tagged_len = tagged.len().min(limit as usize);
+        let mut kept = tagged;
+        kept.extend(rest);
         kept.truncate(limit as usize);
         if kept.is_empty() {
             return Ok(ToolOutput::text(
@@ -593,6 +678,10 @@ impl SearchEmailsTool {
         }
         let per_email = thread_clean::summary_chars_per_email(kept.len());
         let mut out = String::from("(semantic search — ranked by relevance to the query, not by date)\n");
+        if let Some(note) = tag_coverage_note(tagged_len, kept.len() - tagged_len) {
+            out.push_str(&note);
+            out.push('\n');
+        }
         if include_bodies {
             let cleaned: std::collections::HashMap<String, String> = bodies
                 .into_iter()
@@ -606,25 +695,6 @@ impl SearchEmailsTool {
         let ids: Vec<String> = kept.iter().map(|e| e.id.clone()).collect();
         Ok(ToolOutput::text_with_email_refs(out, ids))
     }
-}
-
-/// How many of `candidates` carry no `intent` tag — the rows a tag filter can
-/// never return. One batched tag read; a failure counts as "all classified"
-/// so a DB hiccup adds no note rather than a wrong one.
-fn count_unclassified(db: &std::sync::Arc<Database>, candidates: &[crate::models::Email]) -> usize {
-    if candidates.is_empty() {
-        return 0;
-    }
-    let ids: Vec<String> = candidates.iter().map(|e| e.id.clone()).collect();
-    let Ok(tags) = db.get_email_tags_batch(&ids) else {
-        return 0;
-    };
-    let classified: std::collections::HashSet<&str> = tags
-        .iter()
-        .filter(|t| t.tag_type == "intent")
-        .map(|t| t.email_id.as_str())
-        .collect();
-    ids.iter().filter(|id| !classified.contains(id.as_str())).count()
 }
 
 /// Formats result rows with each thread's message count, so the model can
@@ -690,16 +760,34 @@ mod tests {
     }
 
     #[test]
-    fn no_coverage_note_when_every_match_is_classified() {
-        assert_eq!(unclassified_coverage_note(0), None);
+    fn no_coverage_note_when_the_tag_answered_on_its_own() {
+        // The page filled with tagged rows: nothing was widened, nothing to say.
+        assert_eq!(tag_coverage_note(25, 0), None);
     }
 
     #[test]
-    fn the_coverage_note_names_what_the_tag_filter_cannot_see() {
+    fn the_coverage_note_separates_the_two_blocks() {
+        // The classifier stores ONE intent per email, so a tag-filtered list is
+        // a preference, not the whole truth. The model needs both numbers: the
+        // tagged count answers "how many", the rest is context.
         assert_eq!(
-            unclassified_coverage_note(26).as_deref(),
+            tag_coverage_note(3, 12).as_deref(),
             Some(
-                "(PARTIAL: 26 more emails match the other filters but were never classified, so this intent/topic filter cannot reach them)"
+                "(3 emails carry the intent/topic asked for; the 12 rows after them match every \
+other filter but are tagged differently or not classified — each email stores only ONE intent, \
+so count only the first 3 when asked how many)"
+            )
+        );
+    }
+
+    #[test]
+    fn the_coverage_note_says_when_nothing_carries_the_tag() {
+        assert_eq!(
+            tag_coverage_note(0, 5).as_deref(),
+            Some(
+                "(no email carries the intent/topic asked for; the 5 rows below match every other \
+filter and are shown instead — each email stores only ONE intent, so the tag may simply be a \
+different one)"
             )
         );
     }
@@ -837,16 +925,52 @@ mod tests {
     }
 
     #[test]
+    fn the_semantic_path_ranks_by_tag_instead_of_dropping_rows() {
+        // Same contract as the keyword path: the tag decides the order, never
+        // what the model gets to see.
+        let emails = vec![
+            email("a", "alice", "me@x.com", 100),
+            email("b", "bob", "me@x.com", 200),
+            email("c", "carol", "me@x.com", 300),
+        ];
+        let tags = |id: &str| -> Vec<(String, String)> {
+            match id {
+                "b" => vec![("intent".into(), "request".into())],
+                _ => vec![],
+            }
+        };
+        let want = vec![TagQuery::typed("intent", "request")];
+
+        let (tagged, rest) = partition_by_tags(emails, &want, &tags);
+
+        assert_eq!(tagged.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(rest.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
+    }
+
+    #[test]
+    fn partitioning_without_tags_leaves_everything_in_order() {
+        let emails = vec![email("a", "alice", "me@x.com", 100), email("b", "bob", "me@x.com", 200)];
+        let tags = |_: &str| -> Vec<(String, String)> { Vec::new() };
+
+        let (tagged, rest) = partition_by_tags(emails, &[], &tags);
+
+        assert!(tagged.is_empty(), "no tag asked for → nothing is preferred");
+        assert_eq!(rest.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+    }
+
+    #[test]
     fn semantic_post_filter_applies_sender_recipient_dates_and_tags() {
         let emails = vec![
             email("a", "alice", "me@x.com", 100),
             email("b", "bob", "me@x.com", 200),
             email("c", "alice", "other@x.com", 300),
         ];
-        let tags = |id: &str| -> Vec<String> {
+        let tags = |id: &str| -> Vec<(String, String)> {
             match id {
-                "a" => vec!["request".into()],
-                "c" => vec!["request".into(), "sales".into()],
+                "a" => vec![("intent".into(), "request".into())],
+                "c" => vec![("intent".into(), "request".into()), ("topic".into(), "sales".into())],
+                // A company that shares a tag's name must not answer for it.
+                "b" => vec![("company".into(), "request".into())],
                 _ => vec![],
             }
         };
@@ -879,7 +1003,7 @@ mod tests {
             }),
             ["b"]
         );
-        let both = vec!["request".to_string(), "sales".to_string()];
+        let both = vec![TagQuery::typed("intent", "request"), TagQuery::typed("topic", "sales")];
         assert_eq!(
             keep(PostFilters {
                 tags: &both,
@@ -887,6 +1011,24 @@ mod tests {
             }),
             ["c"],
             "intent AND topic must both hold"
+        );
+        let intent_only = vec![TagQuery::typed("intent", "request")];
+        assert_eq!(
+            keep(PostFilters {
+                tags: &intent_only,
+                ..Default::default()
+            }),
+            ["a", "c"],
+            "the company tagged `request` is not an intent"
+        );
+        let any_type = vec![TagQuery::any_type("request")];
+        assert_eq!(
+            keep(PostFilters {
+                tags: &any_type,
+                ..Default::default()
+            }),
+            ["a", "b", "c"],
+            "an untyped tag: filter still matches any type"
         );
         assert_eq!(
             keep(PostFilters {
