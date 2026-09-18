@@ -131,7 +131,8 @@
   account: "ulises@emailopslabs.dev"
   category: pending_actions
   tier: smoke
-  ambient_thread_id: "thread_129351fb1d33"
+  # By subject, not id: the generator redraws thread ids on every demo-db build.
+  ambient_thread_subject: "Production bug: orders stuck in 'processing'"
   ambient_account: "ulises@emailopslabs.dev"
   expected_tools_not_called: ["generate_email_draft"]
   expected_answer_contains_any: ["processing", "pedidos", "orders"]

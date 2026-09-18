@@ -145,6 +145,71 @@ pub struct SourceSummary {
     pub body_snippet: String,
 }
 
+/// How a case names the thread it binds to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadRef<'a> {
+    /// A literal `thread_id`. Only safe for fixtures whose ids are stable.
+    Id(&'a str),
+    /// A subject to look the thread up by. Preferred for the demo DB, whose
+    /// thread ids are drawn at random on every `make demo-db`.
+    Subject(&'a str),
+    /// The case binds no thread.
+    None,
+}
+
+/// Pure: decide how a case names its thread. Rejects a case that sets both,
+/// rather than picking one — two sources of truth that can disagree would let
+/// a case quietly test something other than what it reads like.
+pub fn plan_thread_ref<'a>(id: Option<&'a str>, subject: Option<&'a str>) -> EvalResult<ThreadRef<'a>> {
+    match (id, subject) {
+        (Some(_), Some(_)) => Err(EvalError::Config(
+            "set thread_id or thread_subject, not both — they can disagree".into(),
+        )),
+        (Some(id), None) => Ok(ThreadRef::Id(id)),
+        (None, Some(subject)) => Ok(ThreadRef::Subject(subject)),
+        (None, None) => Ok(ThreadRef::None),
+    }
+}
+
+/// Turn a [`ThreadRef`] into a concrete thread id, looking a subject up in
+/// `account_id`'s mailbox.
+///
+/// Fails loudly on no match and on several matches. Silence is exactly how the
+/// hardcoded ids rotted: the case still ran, bound to nothing, and reported a
+/// generic answer failure instead of "your fixture moved".
+pub fn resolve_thread_ref(db: &Database, account_id: &str, thread: ThreadRef<'_>) -> EvalResult<Option<String>> {
+    let subject = match thread {
+        ThreadRef::None => return Ok(None),
+        ThreadRef::Id(id) => return Ok(Some(id.to_string())),
+        ThreadRef::Subject(s) => s,
+    };
+
+    let conn = db.reader();
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT thread_id FROM emails
+             WHERE account_id = ?1 AND subject = ?2 AND is_deleted = 0",
+        )
+        .map_err(|e| EvalError::Config(format!("thread lookup failed: {e}")))?;
+    let ids: Vec<String> = stmt
+        .query_map(rusqlite::params![account_id, subject], |row| row.get(0))
+        .map_err(|e| EvalError::Config(format!("thread lookup failed: {e}")))?
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| EvalError::Config(format!("thread lookup failed: {e}")))?;
+
+    match ids.len() {
+        1 => Ok(Some(ids[0].clone())),
+        0 => Err(EvalError::Config(format!(
+            "no thread in account '{account_id}' has subject '{subject}' — \
+             the fixture moved or the demo DB was regenerated"
+        ))),
+        n => Err(EvalError::Config(format!(
+            "subject '{subject}' matches {n} threads in account '{account_id}' — \
+             make it unique, or pin thread_id"
+        ))),
+    }
+}
+
 /// Run a single case against `services::chat::run_chat_turn`.
 ///
 /// Returns `Err` only on infrastructure-level failures (DB unavailable,
@@ -187,7 +252,24 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     //    thread (role='system' message) so `run_chat_turn` takes the
     //    thread-bound short-circuit; everything else starts as an empty chat
     //    whose title defaults to "New chat" so the auto-title logic triggers.
-    let conv: ChatConversation = match case.thread_id.as_deref() {
+    let bound_thread = resolve_thread_ref(
+        &db,
+        account_id,
+        plan_thread_ref(case.thread_id.as_deref(), case.thread_subject.as_deref())?,
+    )?;
+    // Same for the ambient ("open email") thread, resolved under its own
+    // account when the case names one.
+    let ambient_owner = resolve_ambient_account(&db, case.ambient_account.as_deref());
+    let ambient_thread_id = resolve_thread_ref(
+        &db,
+        ambient_owner.as_deref().unwrap_or(account_id),
+        plan_thread_ref(
+            case.ambient_thread_id.as_deref(),
+            case.ambient_thread_subject.as_deref(),
+        )?,
+    )?;
+
+    let conv: ChatConversation = match bound_thread.as_deref() {
         Some(thread_id) => crate::services::chat::create_conversation_with_thread(&db, account_id, thread_id)?,
         None => db.create_chat_conversation(account_id, "New chat")?,
     };
@@ -225,8 +307,8 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         // `ambient_thread_id` to reproduce the chat panel's context chip,
         // including the cross-account shape where the thread belongs to an
         // account other than the one the chat runs on.
-        case.ambient_thread_id.clone(),
-        resolve_ambient_account(&db, case.ambient_account.as_deref()),
+        ambient_thread_id.clone(),
+        ambient_owner.clone(),
     )
     .await?;
 
@@ -271,11 +353,13 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
 
     // Same lookup the turn made: the thread under its own account when the
     // case names one, else under the account the chat ran on.
-    let ambient_thread = match case.ambient_thread_id.as_deref() {
+    let ambient_thread = match ambient_thread_id.as_deref() {
         Some(thread_id) => {
-            let owner = resolve_ambient_account(&db, case.ambient_account.as_deref());
-            let (context, _subject) =
-                crate::services::chat::build_thread_context(&db, owner.as_deref().unwrap_or(account_id), thread_id)?;
+            let (context, _subject) = crate::services::chat::build_thread_context(
+                &db,
+                ambient_owner.as_deref().unwrap_or(account_id),
+                thread_id,
+            )?;
             Some(context)
         }
         None => None,
@@ -337,6 +421,124 @@ mod tests {
 
     fn primary_only() -> Vec<String> {
         vec!["primary".to_string()]
+    }
+
+    fn seed_email_subject(db: &Database, account_id: &str, id: &str, thread_id: &str, subject: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails (
+                    id, account_id, thread_id, subject, sender, sender_email,
+                    sender_domain, recipients_json, cc_json, snippet,
+                    timestamp, is_read, is_deleted, category, mailbox, raw_json, created_at
+                ) VALUES (?1, ?2, ?3, ?4, 'Alice', 'alice@ex.com',
+                    'ex.com', '[]', '[]', '', 1000, 0, 0, 'primary', 'inbox', NULL, 1000)",
+                rusqlite::params![id, account_id, thread_id, subject],
+            )
+            .expect("seed email");
+    }
+
+    // ── plan_thread_ref ───────────────────────────────────────────────────────
+
+    #[test]
+    fn a_case_with_neither_field_binds_no_thread() {
+        assert_eq!(plan_thread_ref(None, None).expect("plan"), ThreadRef::None);
+    }
+
+    #[test]
+    fn a_literal_id_is_used_as_is() {
+        assert_eq!(
+            plan_thread_ref(Some("th-1"), None).expect("plan"),
+            ThreadRef::Id("th-1")
+        );
+    }
+
+    #[test]
+    fn a_subject_is_resolved_against_the_db() {
+        assert_eq!(
+            plan_thread_ref(None, Some("Hello")).expect("plan"),
+            ThreadRef::Subject("Hello")
+        );
+    }
+
+    #[test]
+    fn setting_both_is_rejected_rather_than_silently_preferring_one() {
+        // Two sources of truth for the same binding: if they disagree the case
+        // would quietly test something other than what it reads like.
+        let err = plan_thread_ref(Some("th-1"), Some("Hello")).expect_err("must reject");
+        assert!(
+            err.to_string().contains("thread_id") && err.to_string().contains("thread_subject"),
+            "the error must name both fields, got: {err}"
+        );
+    }
+
+    // ── resolve_thread_ref ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_subject_resolves_to_the_thread_that_carries_it() {
+        // The point of the whole mechanism: the demo generator draws thread ids
+        // at random, so a case pinned to a literal id dies on the next
+        // `make demo-db`. Subjects are authored content and survive.
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct");
+        seed_email_subject(&db, "acct", "e1", "th-random-1", "How do I add a new account?");
+
+        let got = resolve_thread_ref(&db, "acct", ThreadRef::Subject("How do I add a new account?")).expect("resolve");
+        assert_eq!(got.as_deref(), Some("th-random-1"));
+    }
+
+    #[test]
+    fn every_email_of_the_thread_resolves_to_one_id() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct");
+        seed_email_subject(&db, "acct", "e1", "th-1", "Shared subject");
+        seed_email_subject(&db, "acct", "e2", "th-1", "Shared subject");
+
+        let got = resolve_thread_ref(&db, "acct", ThreadRef::Subject("Shared subject")).expect("resolve");
+        assert_eq!(got.as_deref(), Some("th-1"));
+    }
+
+    #[test]
+    fn a_subject_matching_nothing_fails_loudly() {
+        // Silence here is how the old hardcoded ids rotted: the case still ran
+        // and reported a generic failure instead of "your fixture moved".
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct");
+
+        let err =
+            resolve_thread_ref(&db, "acct", ThreadRef::Subject("Nothing matches this")).expect_err("must not resolve");
+        assert!(
+            err.to_string().contains("Nothing matches this"),
+            "the error must quote the subject, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_subject_matching_several_threads_fails_rather_than_guessing() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct");
+        seed_email_subject(&db, "acct", "e1", "th-1", "Ambiguous");
+        seed_email_subject(&db, "acct", "e2", "th-2", "Ambiguous");
+
+        let err = resolve_thread_ref(&db, "acct", ThreadRef::Subject("Ambiguous")).expect_err("must not guess");
+        assert!(
+            err.to_string().contains("2"),
+            "the error must say how many threads matched, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_subject_is_scoped_to_the_cases_account() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "mine");
+        seed_account(&db, "theirs");
+        seed_email_subject(&db, "theirs", "e1", "th-theirs", "Only over there");
+
+        let err = resolve_thread_ref(&db, "mine", ThreadRef::Subject("Only over there"))
+            .expect_err("must not cross accounts");
+        assert!(
+            err.to_string().contains("mine"),
+            "the error must name the account, got: {err}"
+        );
     }
 
     #[test]

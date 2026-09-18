@@ -114,6 +114,23 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     }
     eprintln!("[eval] running {} case(s)", cases.len());
 
+    // Every model this run will touch — the suite default plus any per-case
+    // `model:` pin — checked up front. Otherwise a missing GGUF is rediscovered
+    // once per case, and a long suite spends its whole runtime reporting the
+    // same environment problem as if the cases had failed on their merits.
+    let mut models: Vec<&str> = cases
+        .iter()
+        .map(|c| {
+            cfg.model_override
+                .as_deref()
+                .or(c.model.as_deref())
+                .unwrap_or(&default_model)
+        })
+        .collect();
+    models.sort_unstable();
+    models.dedup();
+    crate::evals::shared::preflight_models(&db, models)?;
+
     // ── 6. Iterate cases serially ───────────────────────────────────────────
     let judge = if judge_enabled {
         Some(Judge::new(
