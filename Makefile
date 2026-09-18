@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-classify dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: eval-plan eval-classify bench-oneshot-kv dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -208,6 +208,15 @@ eval-classify:
 # env: BENCH_Q2="..." make cli-bench
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
+
+# What classifier / planner one-shots cost the chat KV prefix, measured in ONE
+# process (every `make cli-*` run starts with an empty cache and cannot see it).
+# Logic in scripts/oneshot_kv_bench.sh; report under reports/bench/.
+#   make bench-oneshot-kv
+#   make bench-oneshot-kv ARGS="--classifications 40 --skip-small-ctx"
+bench-oneshot-kv:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/oneshot_kv_bench.sh $(ARGS)
 
 # Cross-conversation KV-cache reuse probe: two DIFFERENT questions, each in its
 # own fresh conversation, one process. Shows whether chat 2's first LLM round

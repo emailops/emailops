@@ -87,10 +87,24 @@ static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
 /// ERROR carry the decode-failure breadcrumbs (Metal command-buffer error, OOM,
 /// NaN) we rely on when diagnosing an opaque "Decode Error". Keep only the latter.
 fn debug_log_level_enabled(level: llama_cpp_sys_2::ggml_log_level) -> bool {
+    if verbose_llama_logs() {
+        return true;
+    }
     matches!(
         level,
         llama_cpp_sys_2::GGML_LOG_LEVEL_WARN | llama_cpp_sys_2::GGML_LOG_LEVEL_ERROR
     )
+}
+
+/// `LLAMA_VERBOSE=1` lets the INFO lines through as well.
+///
+/// The sizes llama.cpp reports for the KV cache, the recurrent state and the
+/// compute buffers are only ever printed at INFO, so the memory a context
+/// actually costs is invisible without this — which is exactly what
+/// `oneshot_kv_bench` has to report. Read once: the callback runs per log line.
+fn verbose_llama_logs() -> bool {
+    static VERBOSE: OnceLock<bool> = OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("LLAMA_VERBOSE").as_deref() == Ok("1"))
 }
 
 /// C log callback installed in debug builds: forwards WARN/ERROR lines to stderr
@@ -201,7 +215,8 @@ unsafe extern "C" fn capturing_silent_log(
 /// Neither mode discards WARN/ERROR outright any more: doing so is what made
 /// `Decode Error -3: unknown` undiagnosable from a release bug report.
 fn install_log_callback() {
-    let silent = cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1");
+    let silent =
+        (cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1")) && !verbose_llama_logs();
     let cb: llama_cpp_sys_2::ggml_log_callback = Some(if silent {
         capturing_silent_log
     } else {
