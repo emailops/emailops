@@ -37,6 +37,13 @@ pub struct PlanCase {
     #[serde(default)]
     pub absent: Vec<String>,
 
+    /// Fields the case deliberately does not score — `order: newest` is the
+    /// tool's own default, for instance. Anything the plan sets that is not in
+    /// `expect`, `absent` or here fails the case: every field changes the
+    /// search that runs, so a case has to account for all of them.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+
     /// True when the right answer is "this is not a single email search" —
     /// the planner must defer to the tool loop.
     #[serde(default)]

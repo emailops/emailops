@@ -70,7 +70,7 @@ pub fn render(out_dir: &Path, model: &str, cases: &[ReportCase<'_>]) -> EvalResu
                     status: match check.status {
                         CheckStatus::Pass => "pass",
                         CheckStatus::Fail => "fail",
-                        CheckStatus::Unchecked => "unchecked",
+                        CheckStatus::Ignored => "ignored",
                     }
                     .to_string(),
                 })
@@ -142,9 +142,8 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
   th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 0.3rem 0.5rem 0.3rem 0; }
   td { padding: 0.3rem 0.5rem 0.3rem 0; border-top: 1px solid var(--border); vertical-align: top; }
   td.pass { color: var(--green); } td.fail { color: var(--red); }
-  /* Set by the planner, asserted by nobody: shown so a passing case cannot
-     hide a field the case never mentioned. */
-  td.unchecked { color: var(--text-muted); }
+  /* Deliberately not scored (the case's `ignore` list). */
+  td.ignored { color: var(--text-muted); }
   .label { color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }
 </style>
 </head>

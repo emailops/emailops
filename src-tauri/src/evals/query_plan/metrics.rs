@@ -7,16 +7,17 @@
 use crate::evals::query_plan::case_loader::PlanCase;
 use crate::services::chat::planner::SearchPlan;
 
-/// Three outcomes, not two: a field nobody asserted is reported, not silently
-/// dropped. Hiding it let a passing case plan something the case never
-/// mentioned (a `from` on a "sent to X" question, an `order` nobody asked for).
+/// A case must account for every field the plan sets: each one changes the
+/// search that runs, so "the case never mentioned it" is not a pass. A field
+/// the case genuinely does not care about goes in its `ignore` list, which is
+/// reported but not scored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckStatus {
     Pass,
     Fail,
-    /// The plan set this field and the case says nothing about it.
-    Unchecked,
+    /// Listed in the case's `ignore`: shown, deliberately not scored.
+    Ignored,
 }
 
 /// One field's verdict.
@@ -144,20 +145,27 @@ pub fn evaluate(case: &PlanCase, planned: PlannedOutcome<'_>) -> PlanReport {
         }
     }
 
-    // Everything else the plan set: reported, never scored. The case decides
-    // what matters; the report shows what actually happened.
+    // Everything else the plan set. Each of these changes the query, so a case
+    // that does not mention one is not describing the search that would really
+    // run — it fails, unless the case explicitly ignores that field.
     for field in PLAN_FIELDS {
         if case.expect.contains_key(field) || case.absent.iter().any(|f| f == field) {
             continue;
         }
-        if let Ok(Some(actual)) = field_value(plan, field) {
-            checks.push(FieldCheck {
-                field: field.to_string(),
-                expected: "—".to_string(),
-                actual,
-                status: CheckStatus::Unchecked,
-            });
-        }
+        let Ok(Some(actual)) = field_value(plan, field) else {
+            continue;
+        };
+        let ignored = case.ignore.iter().any(|f| f == field);
+        checks.push(FieldCheck {
+            field: field.to_string(),
+            expected: if ignored { "(ignored)" } else { "(not accounted for)" }.to_string(),
+            actual,
+            status: if ignored {
+                CheckStatus::Ignored
+            } else {
+                CheckStatus::Fail
+            },
+        });
     }
 
     let passed = checks.iter().all(FieldCheck::passed);
@@ -208,7 +216,7 @@ mod tests {
 
     #[test]
     fn a_forbidden_field_passes_when_the_plan_leaves_it_out() {
-        let c = case("id: x\nquestion: q\nabsent: [intent, topic]\n");
+        let c = case("id: x\nquestion: q\nexpect:\n  from: x\nabsent: [intent, topic]\n");
         let p = plan(r#"{"from": "x"}"#);
 
         assert!(evaluate(&c, Some(&p)).passed);
@@ -216,7 +224,7 @@ mod tests {
 
     #[test]
     fn limit_and_order_compare_exactly() {
-        let c = case("id: x\nquestion: q\nexpect:\n  limit: 1\n  order: oldest\n");
+        let c = case("id: x\nquestion: q\nexpect:\n  from: x\n  limit: 1\n  order: oldest\n");
         let p = plan(r#"{"from": "x", "limit": 1, "order": "oldest"}"#);
         assert!(evaluate(&c, Some(&p)).passed);
 
@@ -227,22 +235,33 @@ mod tests {
     }
 
     #[test]
-    fn every_field_the_plan_sets_shows_up_even_when_nobody_asserts_it() {
-        // A case that only pins `to` used to hide the rest: the plan also
-        // carried `from` and `order`, and the report showed neither, so a
-        // passing case could still be planning something unexpected.
+    fn a_field_the_case_never_mentions_fails_the_case() {
+        // Every field the planner sets changes the query that runs. A case that
+        // pins only `to` while the plan also carries `from` is not describing
+        // the search that would actually happen, so it must not pass.
         let c = case("id: x\nquestion: q\nexpect:\n  to: marisol\n");
-        let p = plan(r#"{"to": "Marisol", "from": "ulises@emailopslabs.dev", "order": "newest"}"#);
+        let p = plan(r#"{"to": "Marisol", "from": "ulises@emailopslabs.dev"}"#);
 
         let report = evaluate(&c, Some(&p));
 
-        assert!(report.passed, "unchecked fields must not fail the case");
-        let by_field = |name: &str| report.checks.iter().find(|c| c.field == name).cloned();
-        assert_eq!(by_field("to").expect("to").status, CheckStatus::Pass);
-        let from = by_field("from").expect("from row");
-        assert_eq!(from.status, CheckStatus::Unchecked);
-        assert_eq!(from.actual, "ulises@emailopslabs.dev");
-        assert_eq!(by_field("order").expect("order row").status, CheckStatus::Unchecked);
+        assert!(!report.passed, "{:?}", report.checks);
+        let from = report.checks.iter().find(|c| c.field == "from").expect("from row");
+        assert_eq!(from.status, CheckStatus::Fail);
+        assert!(from.expected.contains("not accounted for"), "{}", from.expected);
+    }
+
+    #[test]
+    fn an_ignored_field_is_shown_without_scoring_it() {
+        // `order: newest` is the tool's own default, so a case may say it does
+        // not care — but it has to say so.
+        let c = case("id: x\nquestion: q\nexpect:\n  to: marisol\nignore: [order]\n");
+        let p = plan(r#"{"to": "Marisol", "order": "newest"}"#);
+
+        let report = evaluate(&c, Some(&p));
+
+        assert!(report.passed, "{:?}", report.checks);
+        let order = report.checks.iter().find(|c| c.field == "order").expect("order row");
+        assert_eq!(order.status, CheckStatus::Ignored);
     }
 
     #[test]
