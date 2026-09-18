@@ -232,7 +232,8 @@ Fields (use null when the question does not imply them):
   until   : ISO date YYYY-MM-DD (range end)
   limit   : integer 1-25 — ONLY when the question names a count or asks for the latest/first few; omit it otherwise
   order   : "newest" (default) or "oldest"
-  unread  : true only when the question asks for mail the user has not read yet; omit otherwise
+  unread  : true only when the question asks for mail the user has not read yet, in whatever
+            language it says so ("unread", "sin leer", "ungelesene", "non lus"); omit otherwise
   intent  : what the sender wants — one of:
 {{intent_definitions}}
   topic   : what the mail is about — ONLY when the question names one of these subjects
@@ -248,9 +249,15 @@ Rules:
 - Every other question -> NO limit. A question about a kind of mail, a sender or a period asks
   for all of it; the search returns a full page and the user can ask for the next one. A limit
   there hides matches and makes the answer look complete when it is not.
-- "first" / "earliest" / "oldest" / "primer" / "más antiguo" -> order = "oldest", limit = 1.
-- "this week" / "esta semana" -> since = {{this_week_since}}, until = {{this_week_until}} (week starts Monday; until is end-exclusive).
-- "last week" / "semana pasada" -> since = {{last_week_since}}, until = {{last_week_until}}.
+- The FIRST / earliest email, in whatever language it is asked ("first", "primer", "erste",
+  "premier", "más antiguo") -> order = "oldest", limit = 1. Asking WHEN something first
+  happened ("when did X first write to me?") is this same case: it needs the oldest matching
+  email, not a date window.
+- A named week means the CALENDAR week, never the last 7 days, in whatever language it is
+  named — take the bounds below verbatim, never count days back from {{today}}:
+    this week ("esta semana", "diese Woche", "cette semaine") -> since = {{this_week_since}}, until = {{this_week_until}}
+    last week ("semana pasada", "letzte Woche", "la semaine dernière") -> since = {{last_week_since}}, until = {{last_week_until}}
+  (weeks start Monday; until is end-exclusive).
 - Other relative dates ("today", "yesterday", "in May") -> resolve against {{today}} into since/until.
 - No date in the question -> NO since and NO until. Never stamp today's date on a question that
   did not ask for a period ("when did X first write to me?" is a sort, not a window). A window

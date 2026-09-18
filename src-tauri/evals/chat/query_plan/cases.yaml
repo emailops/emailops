@@ -79,3 +79,102 @@
   note: "the calendar tool answers this; the planner must defer"
   today: "2026-09-18"
   expect_defer: true
+
+# ── German ───────────────────────────────────────────────────────────────────
+# The routing keyword list is English/Spanish only, so German questions never
+# had a fast path — the planner is the whole mechanism there. These pin that it
+# reads German dates, counts and directions as well as it reads Spanish.
+# `today` = Friday 2026-09-18, so "letzte Woche" is 07-09 → 14-09 (end-exclusive).
+
+- id: de_last_week_window
+  question: "welche E-Mails habe ich letzte Woche bekommen?"
+  note: "German relative date; the window comes from the prompt's injected week bounds"
+  today: "2026-09-18"
+  expect:
+    since: "2026-09-07"
+    until: "2026-09-14"
+  absent: [intent, topic]
+
+- id: de_yesterday_window
+  question: "zeig mir die E-Mails von gestern"
+  today: "2026-09-18"
+  expect:
+    since: "2026-09-17"
+    until: "2026-09-18"
+
+- id: de_unread_from_sender
+  question: "ungelesene E-Mails von metrics@emailopslabs.dev"
+  note: "unread is a flag, not a keyword to search for"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    unread: true
+  absent: [query, since, until]
+
+- id: de_oldest_email_is_a_sort
+  question: "was war die erste E-Mail von Marisol?"
+  today: "2026-09-18"
+  expect:
+    from: "marisol"
+    order: "oldest"
+    limit: 1
+  absent: [since, until]
+
+- id: de_named_count
+  question: "die letzten 3 E-Mails von Codeberg"
+  today: "2026-09-18"
+  expect:
+    from: "codeberg"
+    limit: 3
+
+- id: de_draft_request_defers
+  question: "schreib eine Antwort an Marisol über das Dashboard"
+  note: "writing is the tool loop's job, never a search filter"
+  today: "2026-09-18"
+  expect_defer: true
+
+- id: de_calendar_question_defers
+  question: "welche Termine habe ich morgen?"
+  today: "2026-09-18"
+  expect_defer: true
+
+# ── French ───────────────────────────────────────────────────────────────────
+
+- id: fr_last_week_window
+  question: "quels courriels ai-je reçus la semaine dernière ?"
+  today: "2026-09-18"
+  expect:
+    since: "2026-09-07"
+    until: "2026-09-14"
+  absent: [intent, topic]
+
+- id: fr_sender_lookup
+  question: "montre-moi les courriels de metrics@emailopslabs.dev"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+  absent: [since, until, intent, topic]
+
+- id: fr_unread
+  question: "mes courriels non lus"
+  note: "no sender, no date — the unread flag alone is the whole filter"
+  today: "2026-09-18"
+  expect:
+    unread: true
+  absent: [from, since, until]
+
+- id: fr_invoices_are_a_topic
+  question: "les factures que j'ai reçues"
+  note: "a named subject maps to the topic tag, not to keywords"
+  today: "2026-09-18"
+  expect:
+    topic: "billing"
+  absent: [since, until]
+
+- id: fr_sent_to_someone
+  question: "les courriels que j'ai envoyés à Marisol"
+  note: "direction matters: the user is the author, Marisol the recipient"
+  today: "2026-09-18"
+  expect:
+    to: "marisol"
+  absent: [since, until]
