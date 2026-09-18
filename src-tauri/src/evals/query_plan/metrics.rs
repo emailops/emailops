@@ -7,14 +7,46 @@
 use crate::evals::query_plan::case_loader::PlanCase;
 use crate::services::chat::planner::SearchPlan;
 
+/// Three outcomes, not two: a field nobody asserted is reported, not silently
+/// dropped. Hiding it let a passing case plan something the case never
+/// mentioned (a `from` on a "sent to X" question, an `order` nobody asked for).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckStatus {
+    Pass,
+    Fail,
+    /// The plan set this field and the case says nothing about it.
+    Unchecked,
+}
+
 /// One field's verdict.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FieldCheck {
     pub field: String,
     pub expected: String,
     pub actual: String,
-    pub passed: bool,
+    pub status: CheckStatus,
 }
+
+impl FieldCheck {
+    fn verdict(field: &str, expected: &str, actual: &str, passed: bool) -> Self {
+        Self {
+            field: field.to_string(),
+            expected: expected.to_string(),
+            actual: actual.to_string(),
+            status: if passed { CheckStatus::Pass } else { CheckStatus::Fail },
+        }
+    }
+
+    pub fn passed(&self) -> bool {
+        self.status != CheckStatus::Fail
+    }
+}
+
+/// Every field a plan can carry, in the order the report lists them.
+const PLAN_FIELDS: [&str; 12] = [
+    "query", "from", "to", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
+];
 
 /// Every verdict for one case.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -73,70 +105,62 @@ pub fn evaluate(case: &PlanCase, planned: PlannedOutcome<'_>) -> PlanReport {
 
     if case.expect_defer {
         let passed = planned.is_none();
-        checks.push(FieldCheck {
-            field: "defer".to_string(),
-            expected: "defer to the tool loop".to_string(),
-            actual: if passed { "deferred" } else { "planned a search" }.to_string(),
+        checks.push(FieldCheck::verdict(
+            "defer",
+            "defer to the tool loop",
+            if passed { "deferred" } else { "planned a search" },
             passed,
-        });
-        let passed = checks.iter().all(|c| c.passed);
+        ));
+        let passed = checks.iter().all(FieldCheck::passed);
         return PlanReport { checks, passed };
     }
 
     let Some(plan) = planned else {
-        checks.push(FieldCheck {
-            field: "plan".to_string(),
-            expected: "a search plan".to_string(),
-            actual: "deferred".to_string(),
-            passed: false,
-        });
+        checks.push(FieldCheck::verdict("plan", "a search plan", "deferred", false));
         return PlanReport { checks, passed: false };
     };
 
     for (field, expected) in &case.expect {
         let expected = render_expected(expected);
         match field_value(plan, field) {
-            Err(message) => checks.push(FieldCheck {
-                field: field.clone(),
-                expected,
-                actual: message,
-                passed: false,
-            }),
+            Err(message) => checks.push(FieldCheck::verdict(field, &expected, &message, false)),
             Ok(actual) => {
                 let actual = actual.unwrap_or_default();
                 let passed = !actual.is_empty() && matches(field, &expected, &actual);
-                checks.push(FieldCheck {
-                    field: field.clone(),
-                    expected,
-                    actual: if actual.is_empty() {
-                        "(absent)".to_string()
-                    } else {
-                        actual
-                    },
-                    passed,
-                });
+                let shown = if actual.is_empty() { "(absent)" } else { actual.as_str() };
+                checks.push(FieldCheck::verdict(field, &expected, shown, passed));
             }
         }
     }
 
     for field in &case.absent {
         match field_value(plan, field) {
-            Err(message) => checks.push(FieldCheck {
-                field: field.clone(),
-                expected: "(absent)".to_string(),
-                actual: message,
-                passed: false,
-            }),
-            Ok(actual) => checks.push(FieldCheck {
-                field: field.clone(),
-                expected: "(absent)".to_string(),
-                actual: actual.clone().unwrap_or_else(|| "(absent)".to_string()),
-                passed: actual.is_none(),
-            }),
+            Err(message) => checks.push(FieldCheck::verdict(field, "(absent)", &message, false)),
+            Ok(actual) => {
+                let passed = actual.is_none();
+                let shown = actual.unwrap_or_else(|| "(absent)".to_string());
+                checks.push(FieldCheck::verdict(field, "(absent)", &shown, passed));
+            }
         }
     }
 
-    let passed = checks.iter().all(|c| c.passed);
+    // Everything else the plan set: reported, never scored. The case decides
+    // what matters; the report shows what actually happened.
+    for field in PLAN_FIELDS {
+        if case.expect.contains_key(field) || case.absent.iter().any(|f| f == field) {
+            continue;
+        }
+        if let Ok(Some(actual)) = field_value(plan, field) {
+            checks.push(FieldCheck {
+                field: field.to_string(),
+                expected: "—".to_string(),
+                actual,
+                status: CheckStatus::Unchecked,
+            });
+        }
+    }
+
+    let passed = checks.iter().all(FieldCheck::passed);
     PlanReport { checks, passed }
 }
 
@@ -165,6 +189,7 @@ mod tests {
 
         assert!(report.passed, "{:?}", report.checks);
         assert_eq!(report.checks[0].actual, "Marisol Vega");
+        assert_eq!(report.checks[0].status, CheckStatus::Pass);
     }
 
     #[test]
@@ -178,7 +203,7 @@ mod tests {
         assert!(!report.passed);
         let since = report.checks.iter().find(|c| c.field == "since").expect("since check");
         assert_eq!(since.actual, "2026-09-18");
-        assert!(report.checks.iter().any(|c| c.field == "until" && !c.passed));
+        assert!(report.checks.iter().any(|c| c.field == "until" && !c.passed()));
     }
 
     #[test]
@@ -199,6 +224,35 @@ mod tests {
         let report = evaluate(&c, Some(&p));
         assert!(!report.passed);
         assert!(report.checks.iter().any(|c| c.field == "limit" && c.actual == "5"));
+    }
+
+    #[test]
+    fn every_field_the_plan_sets_shows_up_even_when_nobody_asserts_it() {
+        // A case that only pins `to` used to hide the rest: the plan also
+        // carried `from` and `order`, and the report showed neither, so a
+        // passing case could still be planning something unexpected.
+        let c = case("id: x\nquestion: q\nexpect:\n  to: marisol\n");
+        let p = plan(r#"{"to": "Marisol", "from": "ulises@emailopslabs.dev", "order": "newest"}"#);
+
+        let report = evaluate(&c, Some(&p));
+
+        assert!(report.passed, "unchecked fields must not fail the case");
+        let by_field = |name: &str| report.checks.iter().find(|c| c.field == name).cloned();
+        assert_eq!(by_field("to").expect("to").status, CheckStatus::Pass);
+        let from = by_field("from").expect("from row");
+        assert_eq!(from.status, CheckStatus::Unchecked);
+        assert_eq!(from.actual, "ulises@emailopslabs.dev");
+        assert_eq!(by_field("order").expect("order row").status, CheckStatus::Unchecked);
+    }
+
+    #[test]
+    fn an_unchecked_row_is_not_added_for_a_field_already_asserted() {
+        let c = case("id: x\nquestion: q\nexpect:\n  from: marisol\nabsent: [since]\n");
+        let p = plan(r#"{"from": "Marisol"}"#);
+
+        let report = evaluate(&c, Some(&p));
+
+        assert_eq!(report.checks.len(), 2, "{:?}", report.checks);
     }
 
     #[test]

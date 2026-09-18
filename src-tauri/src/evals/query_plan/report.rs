@@ -8,7 +8,7 @@ use serde::Serialize;
 use tera::{Context, Tera};
 
 use crate::evals::query_plan::case_loader::PlanCase;
-use crate::evals::query_plan::metrics::PlanReport;
+use crate::evals::query_plan::metrics::{CheckStatus, PlanReport};
 use crate::evals::EvalResult;
 use crate::services::chat::planner::SearchPlan;
 
@@ -37,7 +37,8 @@ struct CheckView {
     field: String,
     expected: String,
     actual: String,
-    passed: bool,
+    /// "pass" | "fail" | "unchecked" — drives the row's colour.
+    status: String,
 }
 
 /// Write the report and return its path.
@@ -66,7 +67,12 @@ pub fn render(out_dir: &Path, model: &str, cases: &[ReportCase<'_>]) -> EvalResu
                     field: check.field.clone(),
                     expected: check.expected.clone(),
                     actual: check.actual.clone(),
-                    passed: check.passed,
+                    status: match check.status {
+                        CheckStatus::Pass => "pass",
+                        CheckStatus::Fail => "fail",
+                        CheckStatus::Unchecked => "unchecked",
+                    }
+                    .to_string(),
                 })
                 .collect(),
         })
@@ -135,7 +141,10 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
           font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
   th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 0.3rem 0.5rem 0.3rem 0; }
   td { padding: 0.3rem 0.5rem 0.3rem 0; border-top: 1px solid var(--border); vertical-align: top; }
-  td.ok { color: var(--green); } td.no { color: var(--red); }
+  td.pass { color: var(--green); } td.fail { color: var(--red); }
+  /* Set by the planner, asserted by nobody: shown so a passing case cannot
+     hide a field the case never mentioned. */
+  td.unchecked { color: var(--text-muted); }
   .label { color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }
 </style>
 </head>
@@ -172,7 +181,7 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
         <tr>
           <td>{{ ck.field }}</td>
           <td>{{ ck.expected }}</td>
-          <td class="{% if ck.passed %}ok{% else %}no{% endif %}">{{ ck.actual }}</td>
+          <td class="{{ ck.status }}">{{ ck.actual }}</td>
         </tr>
         {% endfor %}
       </table>

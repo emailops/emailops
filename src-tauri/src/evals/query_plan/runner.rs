@@ -100,7 +100,7 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PathBuf> {
             "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",
             if report.passed { "OK  " } else { "FAIL" },
             case.id,
-            report.checks.iter().filter(|c| c.passed).count(),
+            report.checks.iter().filter(|c| c.passed()).count(),
             report.checks.len(),
         );
         runs.push(CaseRun {
