@@ -164,6 +164,7 @@ pub async fn send_reply_with_provider(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    subject: Option<&str>,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
 ) -> Result<()> {
@@ -187,16 +188,26 @@ pub async fn send_reply_with_provider(
         &format!("Sending reply to {}...", to.join(", ")),
     );
 
+    // Normalize once, here, rather than per provider: Gmail did it inside its
+    // own send path and IMAP did not, so the same reply went out as "Re: x" or
+    // bare "x" depending on the account. `reply_subject` is idempotent, so an
+    // already-prefixed subject is untouched. Outlook's `/reply` sets the prefix
+    // server-side and ignores ours.
+    let subject = crate::sync::mime_builder::reply_subject(subject.unwrap_or(&email.subject));
+
     let meta = provider
         .send_reply(
             &account.email,
             crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
-            &email.thread_id,
-            email.message_id.as_deref(),
-            email.references.as_deref(),
-            &email.subject,
+            &crate::sync::provider::ReplyTarget {
+                provider_message_id: &email.id,
+                thread_id: &email.thread_id,
+                message_id: email.message_id.as_deref(),
+                references: email.references.as_deref(),
+            },
+            &subject,
             &body,
             &attachments,
         )
@@ -215,7 +226,7 @@ pub async fn send_reply_with_provider(
         &account,
         &to,
         &cc,
-        &email.subject,
+        &subject,
         &body,
         Some(&email.thread_id),
         &meta,
@@ -227,6 +238,10 @@ pub async fn send_reply_with_provider(
     Ok(())
 }
 
+/// `subject` overrides the subject derived from the parent: `None` replies to
+/// the parent's subject, while a drafted reply passes its own (the user may
+/// have edited it). Either way it is normalized with `reply_subject`.
+///
 /// Send a reply for `email_id`, building the OAuth provider from the account's
 /// stored credentials. The `AppHandle` is used for mid-send token-refresh UI
 /// events; pass `None` (via `send_reply_with_provider`) in tests.
@@ -240,6 +255,7 @@ pub async fn send_reply(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    subject: Option<&str>,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     app: AppHandle,
 ) -> Result<String> {
@@ -266,16 +282,26 @@ pub async fn send_reply(
     let provider = build_provider_for_account(&account, Some(app))
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
+    // Normalize once, here, rather than per provider: Gmail did it inside its
+    // own send path and IMAP did not, so the same reply went out as "Re: x" or
+    // bare "x" depending on the account. `reply_subject` is idempotent, so an
+    // already-prefixed subject is untouched. Outlook's `/reply` sets the prefix
+    // server-side and ignores ours.
+    let subject = crate::sync::mime_builder::reply_subject(subject.unwrap_or(&email.subject));
+
     let meta = provider
         .send_reply(
             &account.email,
             crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
-            &email.thread_id,
-            email.message_id.as_deref(),
-            email.references.as_deref(),
-            &email.subject,
+            &crate::sync::provider::ReplyTarget {
+                provider_message_id: &email.id,
+                thread_id: &email.thread_id,
+                message_id: email.message_id.as_deref(),
+                references: email.references.as_deref(),
+            },
+            &subject,
             &body,
             &attachments,
         )
@@ -294,7 +320,7 @@ pub async fn send_reply(
         &account,
         &to,
         &cc,
-        &email.subject,
+        &subject,
         &body,
         Some(&email.thread_id),
         &meta,

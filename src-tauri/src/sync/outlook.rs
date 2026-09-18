@@ -433,19 +433,25 @@ impl OutlookClient {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
-        _thread_id: &str,
-        original_message_id: Option<&str>,
+        item_id: &str,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<crate::sync::provider::SentMessageMeta> {
         // Graph's `/reply` endpoint auto-preserves subject prefix, In-Reply-To,
         // References, and (with the `comment` form) the quoted thread history.
-        let Some(msg_id) = original_message_id.filter(|s| !s.trim().is_empty()) else {
+        //
+        // It addresses the parent by *item id* — the opaque `AQMkAD…` handle we
+        // store as `emails.id`. Passing `internetMessageId` (`<abc@host>`) here
+        // is not a slower path, it is a different resource: Graph rejects it,
+        // and it is `NULL` on many rows besides, which turned a perfectly
+        // replyable message into a hard error before it reached the network.
+        let item_id = item_id.trim();
+        if item_id.is_empty() {
             return Err(AppError::InvalidInput(
-                "send_reply requires original message ID for Outlook".to_string(),
+                "send_reply requires the Graph item id of the message being answered".to_string(),
             ));
-        };
+        }
 
         let payload =
             crate::sync::outlook_payload::build_reply_payload(&crate::sync::outlook_payload::OutlookSendParams {
@@ -455,7 +461,7 @@ impl OutlookClient {
                 body,
                 attachments,
             });
-        let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(msg_id),);
+        let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(item_id),);
         let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
         // /reply returns 202 Accepted with no body on success — Graph reports
         // nothing about the created Sent message, so the meta stays empty and
@@ -1051,11 +1057,10 @@ impl EmailProvider for OutlookClient {
         _from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
-        // Graph builds In-Reply-To/References itself from the message being
-        // replied to, so the parent's chain is not ours to send.
-        _original_references: Option<&str>,
+        // Graph writes In-Reply-To/References itself from the message being
+        // replied to, so the parent's RFC headers are not ours to send; only
+        // the item id matters here.
+        target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1064,8 +1069,7 @@ impl EmailProvider for OutlookClient {
             from_email,
             to_emails,
             cc_emails,
-            thread_id,
-            original_message_id,
+            target.provider_message_id,
             subject,
             body,
             attachments,
@@ -1500,6 +1504,83 @@ mod tests {
         // test silently calls the real Graph API.
         let c = OutlookClient::new("tok".into(), None, None, None).with_base_url("http://127.0.0.1:9999");
         assert_eq!(c.base_url, "http://127.0.0.1:9999");
+    }
+
+    /// Regression: `/me/messages/{id}/reply` takes the Graph **item id**.
+    ///
+    /// The service handed every provider `email.message_id`, which for Outlook
+    /// is `internetMessageId` (`<abc@host>`) — a different identifier for a
+    /// different lookup. Graph rejects it, so replying from an Outlook account
+    /// hit a resource that does not exist.
+    #[tokio::test]
+    async fn reply_addresses_the_graph_item_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/AQMkAD-item-id/reply"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::send_reply(
+            &client,
+            "me@example.com",
+            None,
+            &["them@example.com".to_string()],
+            &[],
+            &crate::sync::provider::ReplyTarget {
+                provider_message_id: "AQMkAD-item-id",
+                thread_id: "conv-1",
+                // Present, and deliberately NOT what the URL must use.
+                message_id: Some("<abc@example.com>"),
+                references: Some("<root@example.com>"),
+            },
+            "Re: hi",
+            &EmailBody::plain("reply"),
+            &[],
+        )
+        .await
+        .expect("the mock only matches the item-id path, so reaching it proves the fix");
+    }
+
+    /// A message Graph never gave an `internetMessageId` is still replyable.
+    ///
+    /// The old code hard-errored on a missing Message-ID before touching the
+    /// network, even though the item id it actually needed was right there.
+    #[tokio::test]
+    async fn reply_works_without_an_internet_message_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/item-without-header/reply"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::send_reply(
+            &client,
+            "me@example.com",
+            None,
+            &["them@example.com".to_string()],
+            &[],
+            &crate::sync::provider::ReplyTarget {
+                provider_message_id: "item-without-header",
+                thread_id: "conv-2",
+                message_id: None,
+                references: None,
+            },
+            "Re: hi",
+            &EmailBody::plain("reply"),
+            &[],
+        )
+        .await
+        .expect("a missing internetMessageId must not block a reply");
     }
 
     #[tokio::test]

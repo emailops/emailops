@@ -792,9 +792,12 @@ async fn fake_provider_send_reply_records_all_fields() {
             None,
             &["them@example.com".to_string()],
             &["cc@example.com".to_string()],
-            "thread-xyz",
-            Some("orig-msg-id"),
-            Some("<root@example.com>"),
+            &emailops_lib::sync::provider::ReplyTarget {
+                provider_message_id: "provider-item-id",
+                thread_id: "thread-xyz",
+                message_id: Some("orig-msg-id"),
+                references: Some("<root@example.com>"),
+            },
             "Re: Hello",
             &EmailBody::plain("reply body"),
             &[],
@@ -811,6 +814,7 @@ async fn fake_provider_send_reply_records_all_fields() {
     assert_eq!(msg.thread_id.as_deref(), Some("thread-xyz"));
     assert_eq!(msg.original_message_id.as_deref(), Some("orig-msg-id"));
     assert_eq!(msg.original_references.as_deref(), Some("<root@example.com>"));
+    assert_eq!(msg.provider_message_id.as_deref(), Some("provider-item-id"));
     assert_eq!(msg.subject, "Re: Hello");
     assert_eq!(msg.body.text, "reply body");
     assert!(msg.body.html.is_none());
@@ -842,6 +846,7 @@ async fn a_reply_hands_the_provider_the_parents_reference_chain() {
         None,
         None,
         None,
+        None,
         Vec::new(),
         &provider,
     )
@@ -856,6 +861,202 @@ async fn a_reply_hands_the_provider_the_parents_reference_chain() {
         "the parent's chain must reach the provider, not just its Message-ID"
     );
     assert_eq!(sent[0].original_message_id.as_deref(), Some("<parent@example.com>"));
+}
+
+/// Regression: Graph's `/me/messages/{id}/reply` addresses the parent by item
+/// id, so that — not `internetMessageId` — is what a provider must receive.
+///
+/// The service used to hand over `email.message_id` (`<abc@host>`) for every
+/// provider. Outlook put it straight into the URL path, addressing a resource
+/// that does not exist; and because `internetMessageId` is `NULL` on many rows,
+/// the same path also rejected perfectly replyable messages before reaching the
+/// network.
+#[tokio::test]
+async fn a_reply_addresses_the_parent_by_its_provider_id() {
+    use emailops_lib::sync::provider::EmailBody;
+    let db = test_db();
+    db.insert_account(&make_account("acc-pid", "me@example.com")).unwrap();
+
+    let mut parent = make_email_with("AQMkAD-item-id", "acc-pid", 1_700_000_000, "them@example.com", "inbox");
+    parent.message_id = None; // exactly the case that used to hard-error
+    db.insert_email(&parent).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "AQMkAD-item-id",
+        &EmailBody::plain("ok"),
+        None,
+        None,
+        None,
+        None,
+        Vec::new(),
+        &provider,
+    )
+    .await
+    .unwrap();
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].provider_message_id.as_deref(),
+        Some("AQMkAD-item-id"),
+        "the provider must be handed the id it addresses the parent by"
+    );
+}
+
+/// Regression: every provider's replies get the `Re:` prefix.
+///
+/// Gmail normalized the subject inside its own send path and IMAP did not, so
+/// the same reply went out as "Re: x" or bare "x" purely depending on which
+/// account sent it.
+#[tokio::test]
+async fn a_reply_subject_is_prefixed_regardless_of_provider() {
+    use emailops_lib::sync::provider::EmailBody;
+    let db = test_db();
+    db.insert_account(&make_account("acc-subj", "me@example.com")).unwrap();
+
+    let mut parent = make_email_with("parent-subj", "acc-subj", 1_700_000_000, "them@example.com", "inbox");
+    parent.subject = "Quarterly numbers".to_string();
+    db.insert_email(&parent).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "parent-subj",
+        &EmailBody::plain("ok"),
+        None,
+        None,
+        None,
+        None,
+        Vec::new(),
+        &provider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(provider.sent()[0].subject, "Re: Quarterly numbers");
+}
+
+/// An already-prefixed subject must not collect a second `Re:`.
+#[tokio::test]
+async fn a_reply_subject_is_not_prefixed_twice() {
+    use emailops_lib::sync::provider::EmailBody;
+    let db = test_db();
+    db.insert_account(&make_account("acc-subj2", "me@example.com")).unwrap();
+
+    let mut parent = make_email_with("parent-subj2", "acc-subj2", 1_700_000_000, "them@example.com", "inbox");
+    parent.subject = "Re: Quarterly numbers".to_string();
+    db.insert_email(&parent).unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "parent-subj2",
+        &EmailBody::plain("ok"),
+        None,
+        None,
+        None,
+        None,
+        Vec::new(),
+        &provider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(provider.sent()[0].subject, "Re: Quarterly numbers");
+}
+
+/// Regression: a draft started from a message must be *sent* as a reply.
+///
+/// `send_draft` routed every draft through the new-message path and never read
+/// `draft.email_id`, so a reply saved as a draft shipped with no In-Reply-To,
+/// no References and no Gmail `threadId` at all — a guaranteed new thread,
+/// worse than the partial break a directly-sent reply had.
+#[tokio::test]
+async fn a_drafted_reply_is_sent_as_a_reply() {
+    let db = test_db();
+    let account = make_account("acc-draft", "me@example.com");
+    db.insert_account(&account).unwrap();
+
+    let mut parent = make_email_with("parent-draft", "acc-draft", 1_700_000_000, "them@example.com", "inbox");
+    parent.message_id = Some("<parent@example.com>".to_string());
+    parent.references = Some("<root@example.com>".to_string());
+    parent.thread_id = "thread-draft".to_string();
+    db.insert_email(&parent).unwrap();
+
+    let draft = db
+        .save_draft(&emailops_lib::models::SaveDraftRequest {
+            id: None,
+            email_id: Some("parent-draft".to_string()),
+            account_id: "acc-draft".to_string(),
+            to_addresses: vec!["them@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Re: Quarterly numbers".to_string(),
+            body: "sending later".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
+        })
+        .unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_draft(&db, &account, &draft.id, &provider)
+        .await
+        .unwrap();
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1);
+    let msg = &sent[0];
+    assert_eq!(
+        msg.original_message_id.as_deref(),
+        Some("<parent@example.com>"),
+        "a drafted reply must carry In-Reply-To"
+    );
+    assert_eq!(
+        msg.original_references.as_deref(),
+        Some("<root@example.com>"),
+        "a drafted reply must continue the parent's chain"
+    );
+    assert_eq!(msg.thread_id.as_deref(), Some("thread-draft"));
+    assert_eq!(msg.provider_message_id.as_deref(), Some("parent-draft"));
+}
+
+/// A drafted reply keeps the subject the user typed.
+///
+/// Routing the draft through the reply path must not silently swap in the
+/// parent's subject — `drafts.subject` is editable in the composer.
+#[tokio::test]
+async fn a_drafted_reply_keeps_its_own_subject() {
+    let db = test_db();
+    let account = make_account("acc-subj3", "me@example.com");
+    db.insert_account(&account).unwrap();
+
+    let mut parent = make_email_with("parent-subj3", "acc-subj3", 1_700_000_000, "them@example.com", "inbox");
+    parent.subject = "Original subject".to_string();
+    db.insert_email(&parent).unwrap();
+
+    let draft = db
+        .save_draft(&emailops_lib::models::SaveDraftRequest {
+            id: None,
+            email_id: Some("parent-subj3".to_string()),
+            account_id: "acc-subj3".to_string(),
+            to_addresses: vec!["them@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Edited by the user".to_string(),
+            body: "body".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
+        })
+        .unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_draft(&db, &account, &draft.id, &provider)
+        .await
+        .unwrap();
+
+    assert_eq!(provider.sent()[0].subject, "Re: Edited by the user");
 }
 
 /// The chain has to survive a round trip through SQLite, not just live on the
@@ -1330,6 +1531,7 @@ async fn send_reply_with_provider_routes_to_provider() {
         None,
         None,
         None,
+        None,
         vec![],
         &provider,
     )
@@ -1356,6 +1558,7 @@ async fn send_reply_with_provider_sends_the_account_name_as_sender_name() {
         &db,
         "orig-n1",
         &emailops_lib::sync::provider::EmailBody::plain("Hello back!"),
+        None,
         None,
         None,
         None,
@@ -1409,6 +1612,7 @@ async fn send_reply_with_provider_uses_explicit_to() {
         None,
         Some(vec!["override@dest.com".to_string()]),
         None,
+        None,
         vec![],
         &provider,
     )
@@ -1442,6 +1646,7 @@ async fn send_reply_with_provider_forwards_attachments() {
         None,
         None,
         None,
+        None,
         vec![attachment],
         &provider,
     )
@@ -1469,6 +1674,7 @@ async fn send_reply_with_provider_inserts_optimistic_row_in_thread_and_sent_view
         &db,
         "orig-opt",
         &emailops_lib::sync::provider::EmailBody::plain("On my way"),
+        None,
         None,
         None,
         None,
@@ -1561,6 +1767,7 @@ async fn send_reply_with_gmail_meta_uses_provider_ids_not_pending() {
         None,
         None,
         None,
+        None,
         vec![],
         &provider,
     )
@@ -1590,6 +1797,7 @@ async fn send_failure_does_not_insert_optimistic_row() {
         None,
         None,
         None,
+        None,
         vec![],
         &FailingEmailProvider,
     )
@@ -1610,6 +1818,7 @@ async fn send_reply_with_provider_fails_when_email_missing() {
         &db,
         "no-such-email",
         &emailops_lib::sync::provider::EmailBody::plain("body"),
+        None,
         None,
         None,
         None,
@@ -2891,9 +3100,7 @@ impl EmailProvider for FailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
-        _thread_id: &str,
-        _original_message_id: Option<&str>,
-        _original_references: Option<&str>,
+        _target: &emailops_lib::sync::provider::ReplyTarget<'_>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
@@ -3193,6 +3400,7 @@ async fn send_reply_failing_provider_returns_error() {
         None,
         None,
         None,
+        None,
         vec![],
         &FailingEmailProvider,
     )
@@ -3258,9 +3466,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
-        _thread_id: &str,
-        _original_message_id: Option<&str>,
-        _original_references: Option<&str>,
+        _target: &emailops_lib::sync::provider::ReplyTarget<'_>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],

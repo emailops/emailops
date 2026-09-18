@@ -468,9 +468,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
-        original_references: Option<&str>,
+        target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -482,15 +480,15 @@ impl GmailClient {
             to_emails,
             cc_emails,
             subject: &normalized_subject,
-            in_reply_to: original_message_id.filter(|v| !v.trim().is_empty()),
-            references: original_references.filter(|v| !v.trim().is_empty()),
+            in_reply_to: target.message_id.filter(|v| !v.trim().is_empty()),
+            references: target.references.filter(|v| !v.trim().is_empty()),
             body,
             attachments,
         })?;
         let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
         let raw = base64_url_encode(&message.formatted());
         let payload = serde_json::json!({
-            "threadId": thread_id,
+            "threadId": target.thread_id,
             "raw": raw,
         });
         let url = format!("{}/users/me/messages/send", self.base_url);
@@ -1572,9 +1570,7 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        thread_id: &str,
-        original_message_id: Option<&str>,
-        original_references: Option<&str>,
+        target: &provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1584,9 +1580,7 @@ impl EmailProvider for GmailClient {
             from_name,
             to_emails,
             cc_emails,
-            thread_id,
-            original_message_id,
-            original_references,
+            target,
             subject,
             body,
             attachments,
