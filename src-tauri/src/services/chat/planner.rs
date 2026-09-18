@@ -76,6 +76,21 @@ impl SearchPlan {
             && self.unread.is_none()
     }
 
+    /// The plan without the classifier tags the planner guessed.
+    ///
+    /// `intent` / `topic` only match what the classifier tagged, and the model
+    /// adds them even when the question named no kind of mail — its own prompt
+    /// forbids it, and it does it anyway. On a turn the keyword heuristic did
+    /// not recognise, that guess is the part most likely to return nothing
+    /// ("¿qué correos de BorgBase tengo sin leer?" planned with
+    /// intent=notification over invoices tagged billing → zero rows), so the
+    /// hard filters are kept and the guess is dropped.
+    pub fn without_classifier_tags(mut self) -> Self {
+        self.intent = None;
+        self.topic = None;
+        self
+    }
+
     /// Whether the plan names a FILTER (sender, recipient, subject, date
     /// window, classifier tag, unread) rather than just words to match.
     ///
@@ -473,6 +488,37 @@ mod tests {
                 Plan::Defer => panic!("expected a plan for {json}"),
             }
         }
+    }
+
+    #[test]
+    fn dropping_the_guessed_tags_keeps_the_hard_filters() {
+        // The planner adds a classifier tag the question never named
+        // ("¿qué correos de BorgBase tengo sin leer?" → intent=notification,
+        // while those invoices are tagged billing), and the search returns
+        // nothing. On a turn the keyword list did not recognise, the tag is the
+        // guessed half of the plan: drop it, keep from/unread.
+        let Plan::Search(plan) = parse_plan(r#"{"from": "BorgBase", "unread": true, "intent": "notification"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert_eq!(plan.intent, None);
+        assert_eq!(plan.topic, None);
+        assert_eq!(plan.from.as_deref(), Some("BorgBase"));
+        assert_eq!(plan.unread, Some(true));
+        assert!(plan.has_structural_filter());
+    }
+
+    #[test]
+    fn a_plan_that_was_only_a_tag_stops_being_structural() {
+        // "¿quién es Janos?" planned as a semantic query plus intent=question.
+        // Without the tag there is no filter left, so the turn belongs to
+        // retrieval — which is where it answered correctly before.
+        let Plan::Search(plan) = parse_plan(r#"{"query": "Janos", "mode": "semantic", "intent": "question"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert!(!plan.has_structural_filter());
+        assert_eq!(plan.query.as_deref(), Some("Janos"));
     }
 
     #[test]

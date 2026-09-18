@@ -3611,6 +3611,14 @@ pub async fn run_chat_turn(
                 // only a plan with a real filter earns the tools route. A
                 // keyword-only plan is what retrieval ranks better, so that turn
                 // stays on RAG and the plan is dropped rather than pre-seeded.
+                // On a turn the planner is also routing, its classifier-tag
+                // guess is dropped first: what is left decides both the route
+                // and what runs.
+                let plan = if asked_planner {
+                    Box::new(plan.without_classifier_tags())
+                } else {
+                    plan
+                };
                 let structural = plan.has_structural_filter();
                 if asked_planner && !structural {
                     emit_log(
