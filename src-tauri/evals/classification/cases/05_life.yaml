@@ -1,0 +1,301 @@
+# Synthetic tag-classification corpus — education, travel and personal.
+# Every address is a .test domain and every name is invented: this corpus
+# never touches a real mailbox. Gold label first, accepted alternatives after.
+
+- id: en_education_course_enrolment
+  lang: en
+  from_name: "Craftworks Academy"
+  from_email: "registrations@craftworksacademy.test"
+  subject: "You are enrolled in Advanced Rust"
+  snippet: "Your seat is confirmed for the October cohort. The first session is on the 6th at 18:00."
+  expect:
+    intent: [notification]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: en_education_workshop_invite
+  lang: en
+  from_name: "Studio School"
+  from_email: "hello@studioschool.test"
+  subject: "Two seats left on the accessibility workshop"
+  snippet: "Our one-day accessibility workshop runs on the 21st and two seats remain. Early rate ends Friday."
+  expect:
+    intent: [promotion]
+    topic: [education]
+    urgency: [low]
+
+- id: en_education_material_delivery
+  lang: en
+  from_name: "Tessa Lund"
+  from_email: "tessa@lundteaching.test"
+  subject: "Slides and exercises from today"
+  snippet: "Here are the slides and the exercise files from today's session, plus the reading list."
+  expect:
+    intent: [delivery]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: en_education_question_prereq
+  lang: en
+  from_name: "Amir Haddad"
+  from_email: "amir@haddadstudy.test"
+  subject: "Do I need the intro module first?"
+  snippet: "I have three years of production experience. Can I skip the intro module and start with the advanced one?"
+  expect:
+    intent: [question]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: es_education_matricula
+  lang: es
+  from_name: "Academia Oficio"
+  from_email: "inscripciones@academiaoficio.test"
+  subject: "Matr\u00edcula confirmada en Rust Avanzado"
+  snippet: "Tu plaza est\u00e1 confirmada para la convocatoria de octubre. La primera sesi\u00f3n es el d\u00eda 6 a las 18:00."
+  expect:
+    intent: [notification]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: es_education_taller
+  lang: es
+  from_name: "Escuela Estudio"
+  from_email: "hola@escuelaestudio.test"
+  subject: "Quedan dos plazas en el taller de accesibilidad"
+  snippet: "El taller de accesibilidad de un d\u00eda es el d\u00eda 21 y quedan dos plazas. La tarifa reducida acaba el viernes."
+  expect:
+    intent: [promotion]
+    topic: [education]
+    urgency: [low]
+
+- id: es_education_materiales
+  lang: es
+  from_name: "Teresa Lorenzo"
+  from_email: "teresa@lorenzoformacion.test"
+  subject: "Diapositivas y ejercicios de hoy"
+  snippet: "Te paso las diapositivas y los ejercicios de la sesi\u00f3n de hoy, junto con la lista de lecturas."
+  expect:
+    intent: [delivery]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: es_education_duda_requisitos
+  lang: es
+  from_name: "Samuel Ortu\u00f1o"
+  from_email: "samuel@ortunoestudia.test"
+  subject: "\u00bfNecesito hacer antes el m\u00f3dulo inicial?"
+  snippet: "Llevo tres a\u00f1os trabajando en producci\u00f3n. \u00bfPuedo saltarme el m\u00f3dulo inicial y empezar por el avanzado?"
+  expect:
+    intent: [question]
+    topic: [education]
+    urgency: [low, normal]
+
+- id: en_education_newsletter
+  lang: en
+  from_name: "Learn In Public"
+  from_email: "digest@learninpublic.test"
+  subject: "Five reads on distributed systems"
+  snippet: "This fortnight: five papers worth your time, one course recommendation and a reader's notes."
+  expect:
+    intent: [newsletter]
+    topic: [education]
+    urgency: [low]
+
+- id: en_travel_booking_confirmed
+  lang: en
+  from_name: "Skyline Bookings"
+  from_email: "confirmations@skylinebookings.test"
+  subject: "Your flight on 14 October is confirmed"
+  snippet: "Booking reference QX7T2L. Departure 07:40, gate information available 90 minutes before."
+  expect:
+    intent: [notification]
+    topic: [travel]
+    urgency: [normal, low]
+
+- id: en_travel_hotel_change
+  lang: en
+  from_name: "Harbour Rooms"
+  from_email: "reservations@harbourrooms.test"
+  subject: "We have moved your room type"
+  snippet: "We had to move you to a twin room for the 14th. Let us know if that does not work and we will refund."
+  expect:
+    intent: [notification, complaint]
+    topic: [travel]
+    urgency: [normal]
+
+- id: en_travel_itinerary_question
+  lang: en
+  from_name: "Daniel Fiske"
+  from_email: "daniel@fisketrips.test"
+  subject: "Do we need the early train?"
+  snippet: "If the workshop starts at 10:00, is the 07:15 train necessary or does the 08:10 get us there in time?"
+  expect:
+    intent: [question]
+    topic: [travel]
+    urgency: [normal, low]
+
+- id: en_travel_expense_request
+  lang: en
+  from_name: "Ayla Kurtz"
+  from_email: "ayla@kurtzadmin.test"
+  subject: "Send me the hotel receipts"
+  snippet: "For the October trip I still need the hotel and taxi receipts to close the expense report."
+  expect:
+    intent: [request]
+    topic: [travel, finance]
+    urgency: [normal]
+
+- id: es_travel_vuelo_confirmado
+  lang: es
+  from_name: "Reservas Skyline"
+  from_email: "confirmaciones@skylinereservas.test"
+  subject: "Tu vuelo del 14 de octubre est\u00e1 confirmado"
+  snippet: "Localizador QX7T2L. Salida a las 07:40; la puerta de embarque se publica 90 minutos antes."
+  expect:
+    intent: [notification]
+    topic: [travel]
+    urgency: [normal, low]
+
+- id: es_travel_cambio_hotel
+  lang: es
+  from_name: "Hotel D\u00e1rsena"
+  from_email: "reservas@hoteldarsena.test"
+  subject: "Hemos cambiado tu tipo de habitaci\u00f3n"
+  snippet: "Hemos tenido que pasarte a una habitaci\u00f3n doble para la noche del 14. Si no te encaja, te devolvemos el importe."
+  expect:
+    intent: [notification, complaint]
+    topic: [travel]
+    urgency: [normal]
+
+- id: es_travel_duda_tren
+  lang: es
+  from_name: "Daniel Fisac"
+  from_email: "daniel@fisacviajes.test"
+  subject: "\u00bfHace falta coger el tren de las 07:15?"
+  snippet: "Si el taller empieza a las 10:00, \u00bfnecesitamos el tren de las 07:15 o llegamos con el de las 08:10?"
+  expect:
+    intent: [question]
+    topic: [travel]
+    urgency: [normal, low]
+
+- id: es_travel_justificantes
+  lang: es
+  from_name: "Aitana Kortajarena"
+  from_email: "aitana@kortaadmin.test"
+  subject: "M\u00e1ndame los justificantes del hotel"
+  snippet: "Para cerrar la nota de gastos del viaje de octubre me faltan los justificantes del hotel y de los taxis."
+  expect:
+    intent: [request]
+    topic: [travel, finance]
+    urgency: [normal]
+
+- id: en_travel_trip_recap
+  lang: en
+  from_name: "Rosa Lindt"
+  from_email: "rosa@lindtcollective.test"
+  subject: "Back from the conference"
+  snippet: "Good trip. Two useful contacts and one idea worth stealing. I will write it up on Monday."
+  expect:
+    intent: [conversation]
+    topic: [travel, networking]
+    urgency: [low]
+
+- id: en_personal_family_dinner
+  lang: en
+  from_name: "Kim Ferrow"
+  from_email: "kim.ferrow@mailbox.test"
+  subject: "Sunday lunch at mine?"
+  snippet: "Are you around on Sunday? I am cooking at one and it would be lovely to see you both."
+  expect:
+    intent: [scheduling, conversation]
+    topic: [personal]
+    urgency: [low]
+
+- id: en_personal_birthday_thanks
+  lang: en
+  from_name: "Jules Amery"
+  from_email: "jules.amery@mailbox.test"
+  subject: "Thank you for the record"
+  snippet: "The record arrived and it is perfect. You have very good taste. Thank you, really."
+  expect:
+    intent: [feedback, conversation]
+    topic: [personal]
+    urgency: [low]
+
+- id: en_personal_favour_request
+  lang: en
+  from_name: "Sam Ferrow"
+  from_email: "sam.ferrow@mailbox.test"
+  subject: "Could you pick up the parcel?"
+  snippet: "The delivery is coming Thursday afternoon and I am at the hospital with Mum. Could you take it in?"
+  expect:
+    intent: [request]
+    topic: [personal]
+    urgency: [normal, low]
+
+- id: en_personal_school_notice
+  lang: en
+  from_name: "Ashfield School"
+  from_email: "office@ashfieldschool.test"
+  subject: "Parents evening on 23 October"
+  snippet: "Parents evening is on 23 October from 17:00. Please book a slot through the portal by Friday."
+  expect:
+    intent: [notification, request]
+    topic: [personal]
+    urgency: [normal, low]
+
+- id: es_personal_comida_familia
+  lang: es
+  from_name: "Puri Mendieta"
+  from_email: "puri.mendieta@correo.test"
+  subject: "\u00bfComemos el domingo en casa?"
+  snippet: "\u00bfEst\u00e1is por aqu\u00ed el domingo? Cocino a la una y me har\u00eda mucha ilusi\u00f3n veros."
+  expect:
+    intent: [scheduling, conversation]
+    topic: [personal]
+    urgency: [low]
+
+- id: es_personal_gracias_regalo
+  lang: es
+  from_name: "Julen Amestoy"
+  from_email: "julen.amestoy@correo.test"
+  subject: "Gracias por el disco"
+  snippet: "Me ha llegado el disco y es perfecto. Tienes muy buen gusto. Gracias de verdad."
+  expect:
+    intent: [feedback, conversation]
+    topic: [personal]
+    urgency: [low]
+
+- id: es_personal_favor
+  lang: es
+  from_name: "Sara Mendieta"
+  from_email: "sara.mendieta@correo.test"
+  subject: "\u00bfPuedes recoger el paquete?"
+  snippet: "La entrega llega el jueves por la tarde y yo estoy en el hospital con mam\u00e1. \u00bfPodr\u00edas recogerlo t\u00fa?"
+  expect:
+    intent: [request]
+    topic: [personal]
+    urgency: [normal, low]
+
+- id: es_personal_aviso_colegio
+  lang: es
+  from_name: "Colegio Fresneda"
+  from_email: "secretaria@colegiofresneda.test"
+  subject: "Reuni\u00f3n de padres el 23 de octubre"
+  snippet: "La reuni\u00f3n de padres ser\u00e1 el 23 de octubre a partir de las 17:00. Reserva tu hora en el portal antes del viernes."
+  expect:
+    intent: [notification, request]
+    topic: [personal]
+    urgency: [normal, low]
+
+- id: en_personal_moving_news
+  lang: en
+  from_name: "Nina Oyelaran"
+  from_email: "nina.oyelaran@mailbox.test"
+  subject: "We are moving in November"
+  snippet: "Just so you know, we are leaving the flat in November. New address once the paperwork is done."
+  expect:
+    intent: [conversation]
+    topic: [personal]
+    urgency: [low]
+

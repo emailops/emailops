@@ -1,0 +1,301 @@
+# Synthetic tag-classification corpus — sales, marketing and networking.
+# Every address is a .test domain and every name is invented: this corpus
+# never touches a real mailbox. Gold label first, accepted alternatives after.
+
+- id: en_sales_quote_request
+  lang: en
+  from_name: "Hanna Ljung"
+  from_email: "hanna@ljungretail.test"
+  subject: "Can you quote for 12 landing pages?"
+  snippet: "We need twelve landing pages before the spring campaign. Could you send a quote with timings?"
+  expect:
+    intent: [request]
+    topic: [sales]
+    urgency: [normal]
+
+- id: en_sales_lead_followup
+  lang: en
+  from_name: "Petra Vogl"
+  from_email: "petra@voglpartners.test"
+  subject: "Following up on our call"
+  snippet: "Thanks for the call yesterday. Attaching the pricing we discussed \u2014 shall we aim to start in November?"
+  expect:
+    intent: [conversation, request]
+    topic: [sales]
+    urgency: [normal]
+
+- id: en_sales_cold_outreach
+  lang: en
+  from_name: "Marcus Feld"
+  from_email: "marcus@scalewindow.test"
+  subject: "Quick idea for your pipeline"
+  snippet: "I help studios add 20% more qualified leads without extra ad spend. Worth fifteen minutes next week?"
+  expect:
+    intent: [promotion]
+    topic: [sales]
+    urgency: [low]
+
+- id: en_sales_deal_won_notice
+  lang: en
+  from_name: "CRM Pulse"
+  from_email: "alerts@crmpulse.test"
+  subject: "Deal moved to Won: Brightloom retainer"
+  snippet: "The Brightloom retainer was marked Won by your teammate. Value EUR 24,000."
+  expect:
+    intent: [notification]
+    topic: [sales]
+    urgency: [low, normal]
+
+- id: en_sales_lost_feedback
+  lang: en
+  from_name: "Emil Haraldsen"
+  from_email: "emil@haraldsen.test"
+  subject: "Why we went with another studio"
+  snippet: "You were close on quality but the timeline did not work for us. Happy to explain if it is useful."
+  expect:
+    intent: [feedback]
+    topic: [sales]
+    urgency: [normal, low]
+
+- id: es_sales_peticion_presupuesto
+  lang: es
+  from_name: "Alba Terr\u00e9n"
+  from_email: "alba@terrenretail.test"
+  subject: "\u00bfNos pasas presupuesto de 12 landings?"
+  snippet: "Necesitamos doce p\u00e1ginas de aterrizaje antes de la campa\u00f1a de primavera. \u00bfPuedes enviarnos presupuesto y plazos?"
+  expect:
+    intent: [request]
+    topic: [sales]
+    urgency: [normal]
+
+- id: es_sales_seguimiento
+  lang: es
+  from_name: "Vicente Amat"
+  from_email: "vicente@amatsocios.test"
+  subject: "Seguimiento de la llamada de ayer"
+  snippet: "Gracias por la llamada de ayer. Te adjunto las tarifas que comentamos, \u00bflo enfocamos para empezar en noviembre?"
+  expect:
+    intent: [conversation, request]
+    topic: [sales]
+    urgency: [normal]
+
+- id: es_sales_puerta_fria
+  lang: es
+  from_name: "Adri\u00e1n Lobo"
+  from_email: "adrian@escalaventana.test"
+  subject: "Una idea r\u00e1pida para tu embudo"
+  snippet: "Ayudo a estudios como el tuyo a conseguir un 20% m\u00e1s de oportunidades sin aumentar la inversi\u00f3n. \u00bfQuince minutos la semana que viene?"
+  expect:
+    intent: [promotion]
+    topic: [sales]
+    urgency: [low]
+
+- id: es_sales_motivo_perdida
+  lang: es
+  from_name: "Nacho Berruezo"
+  from_email: "nacho@berruezo.test"
+  subject: "Por qu\u00e9 elegimos otro estudio"
+  snippet: "La calidad nos convenc\u00eda, pero los plazos no nos encajaban. Si te sirve, te lo cuento con m\u00e1s detalle."
+  expect:
+    intent: [feedback]
+    topic: [sales]
+    urgency: [normal, low]
+
+- id: en_marketing_campaign_brief
+  lang: en
+  from_name: "Lena Stroh"
+  from_email: "lena@strohmedia.test"
+  subject: "Brief for the autumn campaign"
+  snippet: "Attached is the brief with audiences, budget split and the three messages we want to test."
+  expect:
+    intent: [delivery, request]
+    topic: [marketing]
+    urgency: [normal]
+
+- id: en_marketing_newsletter_issue
+  lang: en
+  from_name: "Signal & Noise"
+  from_email: "weekly@signalandnoise.test"
+  subject: "Issue 112: the death of the homepage hero"
+  snippet: "This week: why hero sections stopped converting, two teardowns, and a reader question on pricing pages."
+  expect:
+    intent: [newsletter]
+    topic: [marketing]
+    urgency: [low]
+
+- id: en_marketing_ad_account_alert
+  lang: en
+  from_name: "Ads Console"
+  from_email: "no-reply@adsconsole.test"
+  subject: "Your campaign was paused for billing"
+  snippet: "Campaign Autumn-Push was paused because the payment method was declined."
+  expect:
+    intent: [notification]
+    topic: [marketing, billing]
+    urgency: [urgent, normal]
+
+- id: en_marketing_copy_feedback
+  lang: en
+  from_name: "Dorota Nagy"
+  from_email: "dorota@nagybrand.test"
+  subject: "Thoughts on the landing copy"
+  snippet: "The second version reads much better. The pricing section still buries the guarantee though."
+  expect:
+    intent: [feedback]
+    topic: [marketing]
+    urgency: [normal, low]
+
+- id: en_marketing_agency_pitch
+  lang: en
+  from_name: "Bright Harbour"
+  from_email: "new@brightharbour.test"
+  subject: "Could we pitch for your rebrand?"
+  snippet: "We work with independent studios on positioning and identity. Would you consider a short pitch?"
+  expect:
+    intent: [promotion, introduction]
+    topic: [marketing]
+    urgency: [low]
+
+- id: es_marketing_brief_campana
+  lang: es
+  from_name: "Sonia Bellver"
+  from_email: "sonia@bellvermedios.test"
+  subject: "Brief de la campa\u00f1a de oto\u00f1o"
+  snippet: "Te adjunto el brief con las audiencias, el reparto de presupuesto y los tres mensajes que queremos probar."
+  expect:
+    intent: [delivery, request]
+    topic: [marketing]
+    urgency: [normal]
+
+- id: es_marketing_boletin
+  lang: es
+  from_name: "Se\u00f1al y Ruido"
+  from_email: "semanal@senalyruido.test"
+  subject: "N\u00famero 112: el final del hero en la home"
+  snippet: "Esta semana: por qu\u00e9 los hero dejaron de convertir, dos an\u00e1lisis y una pregunta sobre p\u00e1ginas de precios."
+  expect:
+    intent: [newsletter]
+    topic: [marketing]
+    urgency: [low]
+
+- id: es_marketing_campana_pausada
+  lang: es
+  from_name: "Consola de Anuncios"
+  from_email: "no-responder@consolaanuncios.test"
+  subject: "Tu campa\u00f1a se ha pausado por facturaci\u00f3n"
+  snippet: "La campa\u00f1a Oto\u00f1o-Impulso se ha pausado porque el m\u00e9todo de pago ha sido rechazado."
+  expect:
+    intent: [notification]
+    topic: [marketing, billing]
+    urgency: [urgent, normal]
+
+- id: es_marketing_opinion_copy
+  lang: es
+  from_name: "Irene Zabala"
+  from_email: "irene@zabalamarca.test"
+  subject: "Impresiones sobre el texto de la landing"
+  snippet: "La segunda versi\u00f3n se lee mucho mejor. Aun as\u00ed, la garant\u00eda queda escondida en el bloque de precios."
+  expect:
+    intent: [feedback]
+    topic: [marketing]
+    urgency: [normal, low]
+
+- id: en_networking_event_invite
+  lang: en
+  from_name: "Nordic Founders"
+  from_email: "invites@nordicfounders.test"
+  subject: "You are invited: founders dinner on 8 October"
+  snippet: "We are hosting a small dinner for independent founders on 8 October. Twenty seats, no pitches."
+  expect:
+    intent: [introduction, promotion]
+    topic: [networking]
+    urgency: [low, normal]
+
+- id: en_networking_conference_cfp
+  lang: en
+  from_name: "DevNorth"
+  from_email: "cfp@devnorth.test"
+  subject: "Call for speakers closes Friday"
+  snippet: "Submissions for the spring track close on Friday. We would welcome a talk on local-first apps."
+  expect:
+    intent: [request, notification]
+    topic: [networking, education]
+    urgency: [normal, low]
+
+- id: en_networking_warm_intro
+  lang: en
+  from_name: "Ravi Menon"
+  from_email: "ravi@menonadvisory.test"
+  subject: "Introducing you to Kirsten"
+  snippet: "Kirsten runs product at Harbourline and is looking for exactly your kind of work. Copying you both."
+  expect:
+    intent: [introduction]
+    topic: [networking]
+    urgency: [normal]
+
+- id: en_networking_meetup_reschedule
+  lang: en
+  from_name: "Local Makers"
+  from_email: "hello@localmakers.test"
+  subject: "October meetup moved to the 19th"
+  snippet: "The venue double-booked us, so the October meetup is now on the 19th, same time."
+  expect:
+    intent: [notification, scheduling]
+    topic: [networking]
+    urgency: [low, normal]
+
+- id: en_networking_thanks_after_event
+  lang: en
+  from_name: "Alicia Fonseca"
+  from_email: "alicia@fonsecaux.test"
+  subject: "Great to meet you yesterday"
+  snippet: "Really enjoyed the conversation about onboarding flows. Let me know if you want that template."
+  expect:
+    intent: [conversation]
+    topic: [networking]
+    urgency: [low]
+
+- id: es_networking_invitacion_evento
+  lang: es
+  from_name: "Fundadores del Norte"
+  from_email: "invitaciones@fundadoresnorte.test"
+  subject: "Est\u00e1s invitado: cena de fundadores el 8 de octubre"
+  snippet: "Organizamos una cena reducida para fundadores independientes el 8 de octubre. Veinte plazas y sin presentaciones comerciales."
+  expect:
+    intent: [introduction, promotion]
+    topic: [networking]
+    urgency: [low, normal]
+
+- id: es_networking_cfp
+  lang: es
+  from_name: "DevSur"
+  from_email: "ponencias@devsur.test"
+  subject: "El plazo para ponentes acaba el viernes"
+  snippet: "El plazo de propuestas para la edici\u00f3n de primavera termina el viernes. Nos encantar\u00eda una charla sobre aplicaciones local-first."
+  expect:
+    intent: [request, notification]
+    topic: [networking, education]
+    urgency: [normal, low]
+
+- id: es_networking_presentacion
+  lang: es
+  from_name: "Ra\u00fal Mendive"
+  from_email: "raul@mendiveasesores.test"
+  subject: "Te presento a Kirsten"
+  snippet: "Kirsten lleva producto en Harbourline y busca justo lo que t\u00fa haces. Os pongo en copia a los dos."
+  expect:
+    intent: [introduction]
+    topic: [networking]
+    urgency: [normal]
+
+- id: es_networking_cambio_fecha
+  lang: es
+  from_name: "Creadores Locales"
+  from_email: "hola@creadoreslocales.test"
+  subject: "El encuentro de octubre pasa al d\u00eda 19"
+  snippet: "El local nos ha duplicado la reserva, as\u00ed que el encuentro de octubre ser\u00e1 el d\u00eda 19 a la misma hora."
+  expect:
+    intent: [notification, scheduling]
+    topic: [networking]
+    urgency: [low, normal]
+

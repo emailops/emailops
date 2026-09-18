@@ -1,0 +1,301 @@
+# Synthetic tag-classification corpus — billing, contract and finance.
+# Every address is a .test domain and every name is invented: this corpus
+# never touches a real mailbox. Gold label first, accepted alternatives after.
+
+- id: en_billing_invoice_overdue
+  lang: en
+  from_name: "Nadia Vrell"
+  from_email: "accounts@brightloom.test"
+  subject: "Invoice BL-2214 is 21 days overdue"
+  snippet: "Our records show invoice BL-2214 for EUR 3,400 is still unpaid. Please arrange payment this week or let us know if there is a problem."
+  expect:
+    intent: [request]
+    topic: [billing]
+    urgency: [urgent, normal]
+
+- id: en_billing_receipt_auto
+  lang: en
+  from_name: "Meridian Cloud"
+  from_email: "no-reply@meridiancloud.test"
+  subject: "Your receipt for September"
+  snippet: "Thanks for your payment of EUR 29.00. No action is needed; this receipt is for your records."
+  expect:
+    intent: [notification]
+    topic: [billing]
+    urgency: [low]
+
+- id: en_billing_question_vat
+  lang: en
+  from_name: "Tomas Ekker"
+  from_email: "tomas@ekkerdesign.test"
+  subject: "Quick question about the VAT line"
+  snippet: "On the last invoice the VAT came out at 21% but I thought we agreed the reverse-charge applies. Which is right?"
+  expect:
+    intent: [question]
+    topic: [billing]
+    urgency: [normal]
+
+- id: en_billing_plan_upgrade_pitch
+  lang: en
+  from_name: "Rowan Sales"
+  from_email: "hello@ledgerpilot.test"
+  subject: "Cut your invoicing time in half"
+  snippet: "Teams like yours save six hours a month with LedgerPilot. Want a 20-minute walkthrough next week?"
+  expect:
+    intent: [promotion]
+    topic: [billing, sales]
+    urgency: [low]
+
+- id: en_billing_complaint_double_charge
+  lang: en
+  from_name: "Priya Anand"
+  from_email: "priya@harborlane.test"
+  subject: "I was charged twice this month"
+  snippet: "My card shows two EUR 120 charges on the 3rd. This is the second month it happens and I would like it refunded."
+  expect:
+    intent: [complaint]
+    topic: [billing]
+    urgency: [urgent, normal]
+
+- id: es_billing_factura_pendiente
+  lang: es
+  from_name: "Marta Belmonte"
+  from_email: "facturacion@nortealba.test"
+  subject: "Factura NA-1180 pendiente de pago"
+  snippet: "Te escribo porque la factura NA-1180 de 1.250 EUR vence hoy. \u00bfPuedes confirmarme si sale el pago esta semana?"
+  expect:
+    intent: [request]
+    topic: [billing]
+    urgency: [urgent, normal]
+
+- id: es_billing_recibo_automatico
+  lang: es
+  from_name: "Suministros Avel"
+  from_email: "no-responder@avel.test"
+  subject: "Recibo de tu suscripci\u00f3n"
+  snippet: "Se ha cobrado correctamente tu cuota mensual de 19,00 EUR. No es necesario que hagas nada."
+  expect:
+    intent: [notification]
+    topic: [billing]
+    urgency: [low]
+
+- id: es_billing_duda_irpf
+  lang: es
+  from_name: "Javier Rold\u00e1n"
+  from_email: "javier@roldanestudio.test"
+  subject: "Duda con la retenci\u00f3n de la factura"
+  snippet: "En la \u00faltima factura no aparece la retenci\u00f3n de IRPF del 15%. \u00bfLa incluimos o la dejamos fuera?"
+  expect:
+    intent: [question]
+    topic: [billing]
+    urgency: [normal]
+
+- id: es_billing_queja_cobro
+  lang: es
+  from_name: "Luc\u00eda Ferr\u00e1n"
+  from_email: "lucia@casaferran.test"
+  subject: "Me hab\u00e9is cobrado de m\u00e1s"
+  snippet: "He visto un cargo de 240 EUR cuando el presupuesto era de 180 EUR. Necesito que me lo expliqu\u00e9is."
+  expect:
+    intent: [complaint]
+    topic: [billing]
+    urgency: [normal, urgent]
+
+- id: en_contract_nda_signature
+  lang: en
+  from_name: "Odile Marchand"
+  from_email: "legal@versacrest.test"
+  subject: "NDA for signature before Thursday"
+  snippet: "Attached is the mutual NDA. Please sign and return before Thursday so we can share the technical annexes."
+  expect:
+    intent: [request, approval]
+    topic: [contract, legal]
+    urgency: [normal, urgent]
+
+- id: en_contract_approval_granted
+  lang: en
+  from_name: "Ben Okafor"
+  from_email: "ben@northgate.test"
+  subject: "Approved: statement of work v3"
+  snippet: "Legal signed off on SOW v3 this morning. You are clear to start on Monday."
+  expect:
+    intent: [approval]
+    topic: [contract]
+    urgency: [normal]
+
+- id: en_contract_renewal_notice
+  lang: en
+  from_name: "Atlas Tools"
+  from_email: "billing-notices@atlastools.test"
+  subject: "Your annual agreement renews on 12 October"
+  snippet: "This is an automated reminder that your annual agreement renews on 12 October at the current rate."
+  expect:
+    intent: [notification]
+    topic: [contract]
+    urgency: [low, normal]
+
+- id: en_contract_terms_question
+  lang: en
+  from_name: "Sara Lindqvist"
+  from_email: "sara@lindqvistco.test"
+  subject: "Question on clause 7.2"
+  snippet: "Clause 7.2 says either party can terminate with 30 days notice. Does that include the pilot phase?"
+  expect:
+    intent: [question]
+    topic: [contract, legal]
+    urgency: [normal]
+
+- id: en_contract_proposal_sent
+  lang: en
+  from_name: "Dev Raman"
+  from_email: "dev@raman-partners.test"
+  subject: "Proposal attached for the Q4 engagement"
+  snippet: "Here is the proposal we discussed, covering scope, timeline and the fixed fee. Let me know if the phasing works."
+  expect:
+    intent: [delivery, request]
+    topic: [contract, sales]
+    urgency: [normal]
+
+- id: es_contract_firma_nda
+  lang: es
+  from_name: "Beatriz Sanz"
+  from_email: "legal@cumbreazul.test"
+  subject: "NDA para firmar antes del jueves"
+  snippet: "Te adjunto el acuerdo de confidencialidad. \u00bfPuedes firmarlo antes del jueves para poder enviarte los anexos?"
+  expect:
+    intent: [request, approval]
+    topic: [contract, legal]
+    urgency: [normal, urgent]
+
+- id: es_contract_aprobado
+  lang: es
+  from_name: "Ignacio Puga"
+  from_email: "ignacio@pugaconsult.test"
+  subject: "Aprobada la propuesta v2"
+  snippet: "Direcci\u00f3n ha dado el visto bueno a la propuesta v2. Puedes empezar el lunes."
+  expect:
+    intent: [approval]
+    topic: [contract]
+    urgency: [normal]
+
+- id: es_contract_renovacion_aviso
+  lang: es
+  from_name: "Plataforma Sendero"
+  from_email: "avisos@sendero.test"
+  subject: "Tu contrato anual se renueva el 3 de noviembre"
+  snippet: "Aviso autom\u00e1tico: tu contrato anual se renovar\u00e1 el 3 de noviembre con las mismas condiciones."
+  expect:
+    intent: [notification]
+    topic: [contract]
+    urgency: [low, normal]
+
+- id: es_contract_duda_clausula
+  lang: es
+  from_name: "Elena Muro"
+  from_email: "elena@muroabogados.test"
+  subject: "Duda sobre la cl\u00e1usula de exclusividad"
+  snippet: "\u00bfLa cl\u00e1usula de exclusividad afecta tambi\u00e9n a proyectos fuera del sector? No me queda claro tal como est\u00e1 redactada."
+  expect:
+    intent: [question]
+    topic: [contract, legal]
+    urgency: [normal]
+
+- id: en_finance_tax_deadline
+  lang: en
+  from_name: "Helena Fors"
+  from_email: "helena@forsaccounting.test"
+  subject: "Q3 filing due 20 October"
+  snippet: "Your Q3 return is due on 20 October. I need the bank statements and the expense export by the 14th."
+  expect:
+    intent: [request]
+    topic: [finance]
+    urgency: [urgent, normal]
+
+- id: en_finance_bank_statement_ready
+  lang: en
+  from_name: "Rivermouth Bank"
+  from_email: "statements@rivermouthbank.test"
+  subject: "Your September statement is available"
+  snippet: "Your statement for September is now available in online banking. No action required."
+  expect:
+    intent: [notification]
+    topic: [finance]
+    urgency: [low]
+
+- id: en_finance_question_depreciation
+  lang: en
+  from_name: "Karl Iversen"
+  from_email: "karl@iversenbooks.test"
+  subject: "How do we book the laptop?"
+  snippet: "Do you want the laptop expensed this year or depreciated over three? Either works, it changes the Q4 result."
+  expect:
+    intent: [question]
+    topic: [finance]
+    urgency: [normal]
+
+- id: en_finance_newsletter_rates
+  lang: en
+  from_name: "Fiscal Brief"
+  from_email: "digest@fiscalbrief.test"
+  subject: "This week: rate decision and what it means for SMEs"
+  snippet: "Your Monday digest: the rate decision, three filing deadlines, and a note on the new invoicing rules."
+  expect:
+    intent: [newsletter]
+    topic: [finance]
+    urgency: [low]
+
+- id: en_finance_investment_pitch
+  lang: en
+  from_name: "Owen Drax"
+  from_email: "owen@draxcapital.test"
+  subject: "Introducing Drax Capital"
+  snippet: "I lead a small fund investing in independent studios. Would you be open to a short call to see if there is a fit?"
+  expect:
+    intent: [introduction, promotion]
+    topic: [finance, networking]
+    urgency: [low, normal]
+
+- id: es_finance_modelo_303
+  lang: es
+  from_name: "Rosa Id\u00edgoras"
+  from_email: "rosa@idigorasasesores.test"
+  subject: "Modelo 303: necesito los datos antes del 16"
+  snippet: "Para presentar el modelo 303 necesito los extractos del trimestre y el registro de gastos antes del d\u00eda 16."
+  expect:
+    intent: [request]
+    topic: [finance]
+    urgency: [urgent, normal]
+
+- id: es_finance_extracto_disponible
+  lang: es
+  from_name: "Banco Ribera"
+  from_email: "extractos@bancoribera.test"
+  subject: "Tu extracto de septiembre ya est\u00e1 disponible"
+  snippet: "Ya puedes consultar tu extracto de septiembre en la banca online. No tienes que hacer nada."
+  expect:
+    intent: [notification]
+    topic: [finance]
+    urgency: [low]
+
+- id: es_finance_duda_amortizacion
+  lang: es
+  from_name: "\u00c1lvaro Cenal"
+  from_email: "alvaro@cenalcontable.test"
+  subject: "\u00bfAmortizamos el equipo o lo gastamos?"
+  snippet: "\u00bfPrefieres que el port\u00e1til vaya como gasto de este a\u00f1o o amortizado en tres? Cambia bastante el resultado del trimestre."
+  expect:
+    intent: [question]
+    topic: [finance]
+    urgency: [normal]
+
+- id: es_finance_boletin_tipos
+  lang: es
+  from_name: "Pulso Fiscal"
+  from_email: "boletin@pulsofiscal.test"
+  subject: "Resumen semanal: tipos y plazos de octubre"
+  snippet: "Tu resumen del lunes: la decisi\u00f3n de tipos, tres plazos de presentaci\u00f3n y una nota sobre facturaci\u00f3n electr\u00f3nica."
+  expect:
+    intent: [newsletter]
+    topic: [finance]
+    urgency: [low]
+

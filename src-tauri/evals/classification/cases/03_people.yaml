@@ -1,0 +1,301 @@
+# Synthetic tag-classification corpus — hiring, legal and security.
+# Every address is a .test domain and every name is invented: this corpus
+# never touches a real mailbox. Gold label first, accepted alternatives after.
+
+- id: en_hiring_candidate_intro
+  lang: en
+  from_name: "Noa Brandt"
+  from_email: "noa.brandt@mailbox.test"
+  subject: "Backend developer interested in your team"
+  snippet: "I saw you are growing the platform team. I have six years with Rust and would love to hear about the role."
+  expect:
+    intent: [introduction]
+    topic: [hiring]
+    urgency: [low, normal]
+
+- id: en_hiring_interview_slot
+  lang: en
+  from_name: "Sofia Marek"
+  from_email: "sofia@marektalent.test"
+  subject: "Interview slots for Thursday"
+  snippet: "I can offer Thursday 11:00 or 16:00 for the second interview. Which suits the panel?"
+  expect:
+    intent: [scheduling]
+    topic: [hiring]
+    urgency: [normal]
+
+- id: en_hiring_offer_approval
+  lang: en
+  from_name: "Lars Bohm"
+  from_email: "lars@bohmgroup.test"
+  subject: "Approve the offer for the designer role"
+  snippet: "Finance signed off on the band. I need your approval on the final offer before I send it tomorrow."
+  expect:
+    intent: [approval, request]
+    topic: [hiring]
+    urgency: [urgent, normal]
+
+- id: en_hiring_recruiter_pitch
+  lang: en
+  from_name: "Talent Reach"
+  from_email: "hello@talentreach.test"
+  subject: "Three pre-screened engineers this week"
+  snippet: "We place senior engineers on a no-win-no-fee basis. Shall I send three profiles that match your stack?"
+  expect:
+    intent: [promotion]
+    topic: [hiring]
+    urgency: [low]
+
+- id: en_hiring_application_ack
+  lang: en
+  from_name: "Careers Portal"
+  from_email: "no-reply@careers-vantis.test"
+  subject: "We received your application"
+  snippet: "Thank you for applying. If your profile matches we will be in touch within two weeks."
+  expect:
+    intent: [notification]
+    topic: [hiring]
+    urgency: [low]
+
+- id: es_hiring_candidatura
+  lang: es
+  from_name: "Iker Salvat"
+  from_email: "iker.salvat@correo.test"
+  subject: "Desarrollador backend interesado en vuestro equipo"
+  snippet: "He visto que est\u00e1is ampliando el equipo de plataforma. Tengo seis a\u00f1os con Rust y me encantar\u00eda conocer la vacante."
+  expect:
+    intent: [introduction]
+    topic: [hiring]
+    urgency: [low, normal]
+
+- id: es_hiring_horarios_entrevista
+  lang: es
+  from_name: "Carmen Orz\u00e1ez"
+  from_email: "carmen@orzaeztalento.test"
+  subject: "Huecos para la entrevista del jueves"
+  snippet: "Puedo ofrecer el jueves a las 11:00 o a las 16:00 para la segunda entrevista. \u00bfCu\u00e1l le va mejor al equipo?"
+  expect:
+    intent: [scheduling]
+    topic: [hiring]
+    urgency: [normal]
+
+- id: es_hiring_aprobar_oferta
+  lang: es
+  from_name: "Dani Lastra"
+  from_email: "dani@lastragrupo.test"
+  subject: "Necesito tu visto bueno a la oferta"
+  snippet: "Finanzas ya ha aprobado la banda salarial. Me falta tu visto bueno para enviar la oferta ma\u00f1ana."
+  expect:
+    intent: [approval, request]
+    topic: [hiring]
+    urgency: [urgent, normal]
+
+- id: es_hiring_acuse_candidatura
+  lang: es
+  from_name: "Portal de Empleo"
+  from_email: "no-responder@empleo-vantis.test"
+  subject: "Hemos recibido tu candidatura"
+  snippet: "Gracias por inscribirte. Si tu perfil encaja nos pondremos en contacto en dos semanas."
+  expect:
+    intent: [notification]
+    topic: [hiring]
+    urgency: [low]
+
+- id: en_legal_gdpr_request
+  lang: en
+  from_name: "Data Office"
+  from_email: "privacy@corvellgroup.test"
+  subject: "Access request under Article 15"
+  snippet: "We received a data subject access request naming your service. Please confirm what personal data you hold."
+  expect:
+    intent: [request]
+    topic: [legal]
+    urgency: [urgent, normal]
+
+- id: en_legal_dispute_notice
+  lang: en
+  from_name: "Hallam & Roe"
+  from_email: "notices@hallamroe.test"
+  subject: "Formal notice regarding unpaid invoice 3391"
+  snippet: "Our client instructs us that invoice 3391 remains unpaid. Payment is required within 14 days."
+  expect:
+    intent: [complaint, notification]
+    topic: [legal, billing]
+    urgency: [urgent]
+
+- id: en_legal_policy_question
+  lang: en
+  from_name: "Wren Attia"
+  from_email: "wren@attialegal.test"
+  subject: "Is the retention period 12 or 24 months?"
+  snippet: "The privacy notice says 12 months but the DPA annex says 24. Which one should we align to?"
+  expect:
+    intent: [question]
+    topic: [legal]
+    urgency: [normal]
+
+- id: en_legal_signed_copy
+  lang: en
+  from_name: "Clara Bosch"
+  from_email: "clara@boschlegal.test"
+  subject: "Counter-signed agreement attached"
+  snippet: "Attached is the fully executed agreement. Nothing further needed from your side."
+  expect:
+    intent: [delivery]
+    topic: [legal, contract]
+    urgency: [normal, low]
+
+- id: en_legal_compliance_digest
+  lang: en
+  from_name: "Compliance Weekly"
+  from_email: "digest@complianceweekly.test"
+  subject: "What changed in EU data rules this week"
+  snippet: "This week: two enforcement decisions, a new guidance note, and what it means for small processors."
+  expect:
+    intent: [newsletter]
+    topic: [legal]
+    urgency: [low]
+
+- id: es_legal_solicitud_rgpd
+  lang: es
+  from_name: "Oficina de Privacidad"
+  from_email: "privacidad@corvell.test"
+  subject: "Solicitud de acceso del art\u00edculo 15"
+  snippet: "Hemos recibido una solicitud de acceso que menciona vuestro servicio. Confirmadnos qu\u00e9 datos personales trat\u00e1is."
+  expect:
+    intent: [request]
+    topic: [legal]
+    urgency: [urgent, normal]
+
+- id: es_legal_burofax
+  lang: es
+  from_name: "Halc\u00f3n y Ruiz"
+  from_email: "avisos@halconyruiz.test"
+  subject: "Requerimiento formal por la factura 3391"
+  snippet: "Nuestro cliente nos indica que la factura 3391 sigue impagada. El pago debe realizarse en 14 d\u00edas."
+  expect:
+    intent: [complaint, notification]
+    topic: [legal, billing]
+    urgency: [urgent]
+
+- id: es_legal_duda_plazos
+  lang: es
+  from_name: "Nerea Ozcoidi"
+  from_email: "nerea@ozcoidilegal.test"
+  subject: "\u00bfEl plazo de conservaci\u00f3n es de 12 o 24 meses?"
+  snippet: "La pol\u00edtica de privacidad dice 12 meses y el anexo del contrato dice 24. \u00bfCon cu\u00e1l nos quedamos?"
+  expect:
+    intent: [question]
+    topic: [legal]
+    urgency: [normal]
+
+- id: es_legal_copia_firmada
+  lang: es
+  from_name: "Marcos Ibarra"
+  from_email: "marcos@ibarralegal.test"
+  subject: "Contrato firmado por ambas partes"
+  snippet: "Te adjunto el contrato ya firmado por las dos partes. No necesitamos nada m\u00e1s por tu parte."
+  expect:
+    intent: [delivery]
+    topic: [legal, contract]
+    urgency: [normal, low]
+
+- id: en_security_login_code
+  lang: en
+  from_name: "Vantis Accounts"
+  from_email: "security@vantis-id.test"
+  subject: "Your verification code is 481923"
+  snippet: "Use this code to finish signing in. It expires in ten minutes. If this was not you, change your password."
+  expect:
+    intent: [notification]
+    topic: [security]
+    urgency: [urgent, normal]
+
+- id: en_security_new_device
+  lang: en
+  from_name: "Pallas Security"
+  from_email: "alerts@pallasapp.test"
+  subject: "New sign-in from a device we do not recognise"
+  snippet: "We noticed a sign-in from a new device in another country. Review it and secure your account if it was not you."
+  expect:
+    intent: [notification]
+    topic: [security]
+    urgency: [urgent]
+
+- id: en_security_password_reset_request
+  lang: en
+  from_name: "Ida Kowal"
+  from_email: "ida@kowalworks.test"
+  subject: "Can you reset my access to the admin panel?"
+  snippet: "I am locked out of the admin panel after the migration. Could you reset my access when you get a moment?"
+  expect:
+    intent: [request]
+    topic: [security]
+    urgency: [normal]
+
+- id: en_security_phish_report
+  lang: en
+  from_name: "Tobias Renn"
+  from_email: "tobias@rennlabs.test"
+  subject: "Someone is spoofing our invoices"
+  snippet: "A client got an invoice from a lookalike domain with different bank details. We should warn everyone today."
+  expect:
+    intent: [complaint, request]
+    topic: [security]
+    urgency: [urgent]
+
+- id: en_security_audit_question
+  lang: en
+  from_name: "Mira Solberg"
+  from_email: "mira@solbergaudit.test"
+  subject: "Do you enforce MFA on admin accounts?"
+  snippet: "For the questionnaire I need to state whether MFA is enforced for all administrator accounts. Is it?"
+  expect:
+    intent: [question]
+    topic: [security]
+    urgency: [normal]
+
+- id: es_security_codigo_verificacion
+  lang: es
+  from_name: "Cuentas Vantis"
+  from_email: "seguridad@vantis-id.test"
+  subject: "Tu c\u00f3digo de verificaci\u00f3n es 481923"
+  snippet: "Usa este c\u00f3digo para terminar de iniciar sesi\u00f3n. Caduca en diez minutos. Si no has sido t\u00fa, cambia la contrase\u00f1a."
+  expect:
+    intent: [notification]
+    topic: [security]
+    urgency: [urgent, normal]
+
+- id: es_security_dispositivo_nuevo
+  lang: es
+  from_name: "Seguridad Pallas"
+  from_email: "alertas@pallasapp.test"
+  subject: "Nuevo inicio de sesi\u00f3n desde un dispositivo desconocido"
+  snippet: "Hemos detectado un inicio de sesi\u00f3n desde un dispositivo nuevo en otro pa\u00eds. Rev\u00edsalo y protege tu cuenta si no has sido t\u00fa."
+  expect:
+    intent: [notification]
+    topic: [security]
+    urgency: [urgent]
+
+- id: es_security_restablecer_acceso
+  lang: es
+  from_name: "Olga Rinc\u00f3n"
+  from_email: "olga@rinconobras.test"
+  subject: "\u00bfPuedes restablecer mi acceso al panel?"
+  snippet: "Me he quedado fuera del panel de administraci\u00f3n despu\u00e9s de la migraci\u00f3n. \u00bfPuedes restablecerme el acceso?"
+  expect:
+    intent: [request]
+    topic: [security]
+    urgency: [normal]
+
+- id: es_security_suplantacion
+  lang: es
+  from_name: "Bruno Alcaraz"
+  from_email: "bruno@alcarazlab.test"
+  subject: "Est\u00e1n suplantando nuestras facturas"
+  snippet: "Un cliente ha recibido una factura desde un dominio parecido al nuestro y con otra cuenta bancaria. Hay que avisar hoy."
+  expect:
+    intent: [complaint, request]
+    topic: [security]
+    urgency: [urgent]
+

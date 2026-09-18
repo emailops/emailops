@@ -220,6 +220,27 @@ pub struct ClassificationConfig {
     pub categories: Vec<String>,
 }
 
+// Only the eval harness needs the shipped taxonomy as a value; the app reads
+// the user's own config from the DB.
+#[cfg_attr(not(feature = "eval"), allow(dead_code))]
+impl ClassificationConfig {
+    /// The taxonomy a fresh install ships with.
+    ///
+    /// The eval harness pins this instead of reading the DB: a labelled
+    /// corpus checked into the repo has to score the same everywhere, and a
+    /// database that predates a taxonomy change would silently mark every
+    /// case using the new tag as invalid.
+    pub(crate) fn built_in() -> Self {
+        Self {
+            enabled: true,
+            classify_previous: false,
+            intents: DEFAULT_INTENTS.iter().map(|s| s.to_string()).collect(),
+            topics: DEFAULT_TOPICS.iter().map(|s| s.to_string()).collect(),
+            categories: vec!["primary".to_string()],
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ClassificationResponse {
     intent: String,
@@ -740,18 +761,65 @@ async fn classify_email(
     // sequence and leaves the chat prompt cache warm (see llama_cpp::actor).
     let provider = AiService::load_provider(db)?;
 
-    classify_with_provider(provider.as_ref(), config, &prompt, email.subject).await
+    let run = classify_with_provider(provider.as_ref(), config, &prompt)
+        .await
+        .map_err(|e| match e {
+            ReplyError::Empty => AppError::AiError(format!(
+                "AI returned empty response for classification of '{}'",
+                truncate_utf8(email.subject, 80)
+            )),
+            other => AppError::from(other),
+        })?;
+    Ok(run.classified)
+}
+
+/// Why a model reply could not be turned into tags. The eval harness reports
+/// unparseable replies separately from provider failures, so they stay
+/// distinct rather than collapsing into one error string.
+#[derive(Debug)]
+pub(crate) enum ReplyError {
+    /// The provider itself failed (network, model load, cancellation).
+    Provider(AppError),
+    /// The model returned nothing.
+    Empty,
+    /// The reply contained no JSON object this module could parse.
+    Unparseable(String),
+}
+
+impl From<ReplyError> for AppError {
+    fn from(err: ReplyError) -> Self {
+        match err {
+            ReplyError::Provider(e) => e,
+            ReplyError::Empty => AppError::AiError("AI returned empty response for classification".to_string()),
+            ReplyError::Unparseable(detail) => AppError::AiError(format!("Classification JSON parse failed: {detail}")),
+        }
+    }
+}
+
+/// One classifier call: what it decided, what normalisation had to repair,
+/// and what the provider charged for it.
+// The app only reads `classified`; the counters are what the eval harness
+// reports, so they are dead code in a build without it.
+#[cfg_attr(not(feature = "eval"), allow(dead_code))]
+#[derive(Debug)]
+pub(crate) struct ClassifyRun {
+    pub classified: Classified,
+    pub repairs: LabelRepairs,
+    pub latency_ms: u64,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub prefill_ms: Option<i64>,
+    pub cached_prompt_tokens: Option<u32>,
 }
 
 /// The model half of `classify_email`: one completion, parse, normalise.
-/// Split out from the DB-bound caller so tests can drive it with a fake
-/// provider.
-async fn classify_with_provider(
+/// Split out from the DB-bound caller so tests and the eval harness can drive
+/// it with any provider.
+pub(crate) async fn classify_with_provider(
     provider: &dyn crate::ai::provider::AIProvider,
     config: &ClassificationConfig,
     prompt: &str,
-    subject: &str,
-) -> Result<Classified> {
+) -> std::result::Result<ClassifyRun, ReplyError> {
     // Classification is a one-shot JSON extraction. With thinking suppressed
     // at the runtime layer (llama_cpp/runtime.rs primes Qwen 3 with a closed
     // `<think>` block before generation; Ollama honours `think: None` on the
@@ -764,7 +832,7 @@ async fn classify_with_provider(
     };
 
     let t = std::time::Instant::now();
-    let result = provider.complete(prompt, opts).await?;
+    let result = provider.complete(prompt, opts).await.map_err(ReplyError::Provider)?;
     let latency_ms = t.elapsed().as_millis() as u64;
     let raw = result.text.trim().to_string();
     crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
@@ -780,24 +848,24 @@ async fn classify_with_provider(
     });
 
     if raw.is_empty() {
-        return Err(AppError::AiError(format!(
-            "AI returned empty response for classification of '{}'",
-            truncate_utf8(subject, 80)
-        )));
+        return Err(ReplyError::Empty);
     }
 
     // Parse JSON from response
     let json_str = extract_json(&raw);
-    let parsed: ClassificationResponse = serde_json::from_str(&json_str).map_err(|e| {
-        AppError::AiError(format!(
-            "Classification JSON parse failed: {}. Raw: {}",
-            e,
-            &raw[..raw.len().min(200)]
-        ))
-    })?;
+    let parsed: ClassificationResponse = serde_json::from_str(&json_str)
+        .map_err(|e| ReplyError::Unparseable(format!("{}. Raw: {}", e, truncate_utf8(&raw, 200))))?;
 
-    let (classified, _repairs) = normalise_labels(parsed, config);
-    Ok(classified)
+    let (classified, repairs) = normalise_labels(parsed, config);
+    Ok(ClassifyRun {
+        classified,
+        repairs,
+        latency_ms,
+        prompt_tokens: result.prompt_tokens,
+        completion_tokens: result.completion_tokens,
+        prefill_ms: result.prefill_ms,
+        cached_prompt_tokens: result.cached_prompt_tokens,
+    })
 }
 
 /// Classify unclassified emails for an account (called after sync).
@@ -1655,15 +1723,16 @@ mod tests {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("```json\n{\"intent\": \"a request\", \"topic\": \"billing\", \"urgency\": \"urgent\", \"confidence\": 0.7}\n```");
 
-        let classified = classify_with_provider(&provider, &taxonomy_config(), "PROMPT", "Invoice 42")
+        let run = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
             .await
             .expect("classification");
 
-        assert_eq!(classified.intent, "request");
-        assert_eq!(classified.topic, "billing");
-        assert_eq!(classified.urgency, "urgent");
-        assert_eq!(classified.confidence, Some(0.7));
-        assert_eq!(classified.method, ClassifyMethod::LlmJson);
+        assert_eq!(run.classified.intent, "request");
+        assert_eq!(run.classified.topic, "billing");
+        assert_eq!(run.classified.urgency, "urgent");
+        assert_eq!(run.classified.confidence, Some(0.7));
+        assert_eq!(run.classified.method, ClassifyMethod::LlmJson);
+        assert_eq!(run.repairs.intent, Repair::Matched);
         assert_eq!(provider.completion_calls(), vec!["PROMPT"]);
     }
 
@@ -1672,11 +1741,11 @@ mod tests {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("   ");
 
-        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT", "Invoice 42")
+        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
             .await
             .expect_err("empty reply must fail");
 
-        assert!(format!("{err}").contains("empty response"), "{err}");
+        assert!(matches!(err, ReplyError::Empty), "{err:?}");
     }
 
     #[tokio::test]
@@ -1684,10 +1753,10 @@ mod tests {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("I think this is a billing request.");
 
-        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT", "Invoice 42")
+        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
             .await
             .expect_err("unparseable reply must fail");
 
-        assert!(format!("{err}").contains("JSON parse failed"), "{err}");
+        assert!(matches!(err, ReplyError::Unparseable(_)), "{err:?}");
     }
 }

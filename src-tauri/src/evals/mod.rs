@@ -28,6 +28,7 @@ pub mod report;
 pub mod runner;
 pub mod shared;
 pub mod shortcuts;
+pub mod tag_classification;
 pub mod translation;
 
 use thiserror::Error;
