@@ -300,38 +300,87 @@ fn auto_route(user_question: &str, prev_user_question: Option<&str>) -> RouteDec
     }
 }
 
-/// Pick a retrieval strategy for this turn based on the user's configured
-/// `chat.routing_mode` preference and a cheap keyword heuristic.
+/// What the pure routing pass concluded.
+///
+/// The keyword list is an **accelerator, not a gate**: a hit decides the route
+/// for free, a miss hands the question to the query planner, which reads it in
+/// any language and already knows how to turn it into a search. Before that,
+/// a miss fell straight to `RagFirst`, so every question the EN/ES list did not
+/// happen to contain — every German and French one among them — paid retrieval
+/// it did not need and never got a pre-seeded search.
+pub(super) enum RoutePlan {
+    /// Settled without asking the model.
+    Decided(RouteDecision),
+    /// No cheap signal: let the planner decide. `fallback` is the route to take
+    /// when the planner cannot run (disabled by preference, provider error).
+    AskPlanner { fallback: RouteDecision },
+}
+
+/// The route implied by the planner's own verdict: a filter it could build is
+/// a search (tools), a `defer` is an open question (RAG).
+pub(super) fn planner_route(planned_search: bool) -> RouteDecision {
+    let (mode, reason) = if planned_search {
+        (
+            RouteMode::ToolsFirst,
+            "planner turned the question into a search filter",
+        )
+    } else {
+        (
+            RouteMode::RagFirst,
+            "planner found no single search behind the question",
+        )
+    };
+    RouteDecision {
+        mode,
+        reason: reason.to_string(),
+        matched_keywords: Vec::new(),
+        classifier: "planner".to_string(),
+    }
+}
+
+/// Pure routing pass: the `chat.routing_mode` preference plus the cheap keyword
+/// heuristic, with no DB and no model.
 ///
 /// Modes:
-///   - `always_rag`  → always `RagFirst` (pre-Fix-B behavior; useful for A/B).
 ///   - `always_tools` → always `ToolsFirst` (debug / eval comparison).
-///   - `auto`        → heuristic-driven: `ToolsFirst` when a keyword matches,
-///     otherwise `RagFirst`. Keeps RAG for open-ended questions. A
+///   - `auto`        → a keyword or date hit decides `ToolsFirst`; a
 ///     context-dependent follow-up inherits the previous turn's tool-first
-///     route (see [`auto_route`]). This is the default when unset.
-pub(super) fn classify_route(db: &Arc<Database>, user_question: &str, history: &[ChatMessage]) -> RouteDecision {
+///     route (see [`auto_route`]); anything else asks the planner.
+///   - anything else → always `RagFirst` (pre-Fix-B behavior; useful for A/B).
+pub(super) fn plan_route(mode_pref: &str, user_question: &str, prev_user_question: Option<&str>) -> RoutePlan {
+    match mode_pref {
+        "always_tools" => RoutePlan::Decided(RouteDecision {
+            mode: RouteMode::ToolsFirst,
+            reason: "forced by preference chat.routing_mode=always_tools".to_string(),
+            matched_keywords: Vec::new(),
+            classifier: "forced".to_string(),
+        }),
+        "auto" => {
+            let decision = auto_route(user_question, prev_user_question);
+            if decision.mode == RouteMode::ToolsFirst {
+                RoutePlan::Decided(decision)
+            } else {
+                RoutePlan::AskPlanner { fallback: decision }
+            }
+        }
+        _ => RoutePlan::Decided(RouteDecision {
+            mode: RouteMode::RagFirst,
+            reason: "default: RAG first (set chat.routing_mode=auto to enable tool routing)".to_string(),
+            matched_keywords: Vec::new(),
+            classifier: "forced".to_string(),
+        }),
+    }
+}
+
+/// [`plan_route`] against the stored preference and the conversation history.
+pub(super) fn classify_route(db: &Arc<Database>, user_question: &str, history: &[ChatMessage]) -> RoutePlan {
     let mode_pref = db
         .get_preference("chat.routing_mode")
         .ok()
         .flatten()
         .unwrap_or_else(|| "auto".to_string());
 
-    match mode_pref.as_str() {
-        "always_tools" => RouteDecision {
-            mode: RouteMode::ToolsFirst,
-            reason: "forced by preference chat.routing_mode=always_tools".to_string(),
-            matched_keywords: Vec::new(),
-            classifier: "forced".to_string(),
-        },
-        "auto" => auto_route(user_question, most_recent_prior_user_question(history)),
-        _ => RouteDecision {
-            mode: RouteMode::RagFirst,
-            reason: "default: RAG first (set chat.routing_mode=auto to enable tool routing)".to_string(),
-            matched_keywords: Vec::new(),
-            classifier: "forced".to_string(),
-        },
-    }
+    plan_route(&mode_pref, user_question, most_recent_prior_user_question(history))
 }
 
 #[cfg(test)]
@@ -534,6 +583,76 @@ mod tests {
         ChatMessage {
             role: "assistant".into(),
             ..user_msg(content)
+        }
+    }
+
+    // ── Route plan: the keyword list accelerates, the planner decides ──
+
+    #[test]
+    fn a_keyword_hit_decides_without_the_planner() {
+        // The list's only job now: skip the planner call when the answer is
+        // already obvious.
+        match plan_route("auto", "cuántos correos recibí hoy", None) {
+            RoutePlan::Decided(d) => {
+                assert_eq!(d.mode, RouteMode::ToolsFirst);
+                assert_eq!(d.classifier, "heuristic");
+            }
+            RoutePlan::AskPlanner { .. } => panic!("a keyword hit must not pay for a planner call"),
+        }
+    }
+
+    #[test]
+    fn a_question_the_list_misses_goes_to_the_planner() {
+        // The reported case, plus the languages the list never covered. None of
+        // these carry a listed keyword; all of them are searches.
+        for q in [
+            "que emails tengo de cristobal",
+            "welche E-Mails habe ich von Nadia",
+            "quels courriels ai-je reçus de Marisol",
+        ] {
+            match plan_route("auto", q, None) {
+                RoutePlan::AskPlanner { fallback } => {
+                    assert_eq!(fallback.mode, RouteMode::RagFirst, "fallback for: {q}");
+                }
+                RoutePlan::Decided(d) => panic!("expected the planner to decide {q}, got {:?}", d.mode),
+            }
+        }
+    }
+
+    #[test]
+    fn the_planner_outcome_becomes_the_route() {
+        let search = planner_route(true);
+        assert_eq!(search.mode, RouteMode::ToolsFirst);
+        assert_eq!(search.classifier, "planner");
+
+        let defer = planner_route(false);
+        assert_eq!(defer.mode, RouteMode::RagFirst);
+        assert_eq!(defer.classifier, "planner");
+    }
+
+    #[test]
+    fn a_followup_still_inherits_before_the_planner_is_asked() {
+        match plan_route("auto", "resume la de ReinoIA", Some("que newsletters recibí ayer")) {
+            RoutePlan::Decided(d) => assert_eq!(d.classifier, "heuristic_followup"),
+            RoutePlan::AskPlanner { .. } => panic!("inheritance must decide without a planner call"),
+        }
+    }
+
+    #[test]
+    fn forced_modes_never_reach_the_planner() {
+        match plan_route("always_tools", "qué opina el equipo", None) {
+            RoutePlan::Decided(d) => {
+                assert_eq!(d.mode, RouteMode::ToolsFirst);
+                assert_eq!(d.classifier, "forced");
+            }
+            RoutePlan::AskPlanner { .. } => panic!("always_tools is not a question for the planner"),
+        }
+        match plan_route("always_rag", "qué opina el equipo", None) {
+            RoutePlan::Decided(d) => {
+                assert_eq!(d.mode, RouteMode::RagFirst);
+                assert_eq!(d.classifier, "forced");
+            }
+            RoutePlan::AskPlanner { .. } => panic!("a forced RAG mode is not a question for the planner"),
         }
     }
 

@@ -4,6 +4,7 @@ import { useLogStore } from '@/stores/logStore';
 import type { ChatMessage, ChatPhase } from '@/types';
 import { MarkdownContent } from './MarkdownContent';
 import { ReasoningSection, StatsFooter } from './ReasoningTrace';
+import { buildIdSearchQuery, collectReferencedEmailIds } from './referencedEmails';
 import { SourcesList } from './SourcesList';
 
 interface MessageBubbleProps {
@@ -15,6 +16,8 @@ interface MessageBubbleProps {
   phase?: ChatPhase | null;
   accountId: string;
   onOpenEmail?: () => void;
+  /** Show the emails this answer references in the email list, via this search query. */
+  onShowEmailsInList?: (query: string) => void;
 }
 
 /** LM Studio-style "Processing…" status: a spinner plus a localized label for
@@ -113,9 +116,18 @@ function ThinkingSection({ text, streaming }: { text: string; streaming: boolean
   );
 }
 
-export function MessageBubble({ message, isStreaming, phase, accountId, onOpenEmail }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  isStreaming,
+  phase,
+  accountId,
+  onOpenEmail,
+  onShowEmailsInList,
+}: MessageBubbleProps) {
+  const { t } = useTranslation(['chat']);
   const isUser = message.role === 'user';
   const addLog = useLogStore((s) => s.addLog);
+  const referencedEmailIds = isUser ? [] : collectReferencedEmailIds(message);
 
   const handleOpenAttachment = async (ns: 'meta' | 'attach', id: string) => {
     try {
@@ -191,6 +203,19 @@ export function MessageBubble({ message, isStreaming, phase, accountId, onOpenEm
             )}
             {!isStreaming && <StatsFooter message={message} />}
             {!isStreaming && <SourcesList sources={message.sources} accountId={accountId} onOpenEmail={onOpenEmail} />}
+            {!isStreaming && onShowEmailsInList && referencedEmailIds.length > 0 && (
+              <button
+                type="button"
+                data-testid="chat-show-in-list"
+                onClick={() => onShowEmailsInList(buildIdSearchQuery(referencedEmailIds))}
+                className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 text-xs font-medium text-white hover:bg-primary-700 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h10" />
+                </svg>
+                {t('chat:sources.showInList', { count: referencedEmailIds.length })}
+              </button>
+            )}
             {!isStreaming && message.trace && <ReasoningSection trace={message.trace} />}
           </>
         )}

@@ -470,11 +470,13 @@ fn describe_search_filters(args: &serde_json::Value) -> String {
 /// [`correct_mangled_address_args`]), the search is re-run once with the
 /// verbatim address and the corrected result is returned, with
 /// `corrected_args` set so callers trace what actually ran.
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_tool(
     registry: &tools::ToolRegistry,
     db: &Arc<Database>,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     name: &str,
     args: serde_json::Value,
@@ -489,6 +491,7 @@ async fn dispatch_tool(
                 db,
                 account_id,
                 categories,
+                page,
             };
             match tool.execute(&ctx, args.clone()).await {
                 Ok(mut out) => {
@@ -606,6 +609,7 @@ pub(in crate::services::chat) fn execute_tool(
     name: &str,
     arguments: &serde_json::Value,
 ) -> String {
+    let page = None;
     // The tests assume every tool is available, including gated ones, because
     // the old `execute_tool` had no gating. Enable each feature on a fresh
     // test DB so lookups succeed. Production code path goes through real
@@ -622,8 +626,10 @@ pub(in crate::services::chat) fn execute_tool(
         .build()
         .expect("test runtime");
     // Existing tests only assert on text — drop the refs after dispatch.
-    rt.block_on(dispatch_tool(&registry, db, account_id, categories, "", name, args))
-        .text
+    rt.block_on(dispatch_tool(
+        &registry, db, account_id, categories, page, "", name, args,
+    ))
+    .text
 }
 
 /// Salvage XML-style tool calls embedded in plain assistant text.
@@ -1938,6 +1944,7 @@ async fn run_tool_loop(
     message_id: &str,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     initial_messages: Vec<(String, String)>,
     preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
@@ -2051,7 +2058,17 @@ async fn run_tool_loop(
                         }
                     }
                     None => {
-                        dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await
+                        dispatch_tool(
+                            registry,
+                            db,
+                            account_id,
+                            categories,
+                            page,
+                            user_question,
+                            name,
+                            args.clone(),
+                        )
+                        .await
                     }
                 };
                 let elapsed_ms = t_tool.elapsed().as_millis() as i64;
@@ -2419,7 +2436,19 @@ async fn run_tool_loop(
                         corrected_args: None,
                     }
                 }
-                None => dispatch_tool(registry, db, account_id, categories, user_question, name, args.clone()).await,
+                None => {
+                    dispatch_tool(
+                        registry,
+                        db,
+                        account_id,
+                        categories,
+                        page,
+                        user_question,
+                        name,
+                        args.clone(),
+                    )
+                    .await
+                }
             };
             let elapsed_ms = t_tool.elapsed().as_millis() as i64;
             let traced_args = dispatched.corrected_args.unwrap_or_else(|| args.clone());
@@ -2777,6 +2806,12 @@ async fn run_thread_bound_turn(
     );
     let system = build_thread_bound_system(&base_system, &system_messages, drafts_available);
 
+    // A paged `search_emails` result can be continued by `next_page` in a
+    // LATER turn, but the history the model replays carries no tool arguments
+    // — so the page to continue is recovered from the previous assistant
+    // message's persisted trace.
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
+
     // Build the message list as (role, content) pairs for the tool loop:
     // system + last N user/assistant turns + the current question.
     let mut initial_messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
@@ -2805,6 +2840,7 @@ async fn run_thread_bound_turn(
         &assistant_message_id,
         &account_id,
         &[],
+        Some(&page_state),
         &user_question,
         initial_messages,
         None,
@@ -3174,6 +3210,7 @@ async fn synthesize_with_recovery(
     db: &Arc<Database>,
     account_id: &str,
     categories: &[String],
+    page: Option<&tools::PageState>,
     user_question: &str,
     synthesis_messages: Vec<AiMessage>,
     conversation_id: &str,
@@ -3258,6 +3295,7 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
                     db,
                     account_id,
                     categories,
+                    page,
                     user_question,
                     &tc.function.name,
                     tc.function.arguments.clone(),
@@ -3459,27 +3497,51 @@ pub async fn run_chat_turn(
     let t_route = std::time::Instant::now();
     emit_log("info", "stage: route");
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Routing);
-    let route = if ambient_context.is_some() {
+    // A keyword hit (or a forced mode) settles the route here; anything else
+    // comes back as `AskPlanner` and is settled below by the planner's own
+    // verdict, so a question the EN/ES keyword list never covered still reaches
+    // the tool path.
+    let route_plan = if ambient_context.is_some() {
         // No retrieval and no planner: the thread is the context, and the
         // model keeps every tool for questions that are not about it.
-        RouteDecision {
+        super::routing::RoutePlan::Decided(RouteDecision {
             mode: RouteMode::ToolsFirst,
             reason: "open email as context; all tools available".to_string(),
             matched_keywords: Vec::new(),
             classifier: "ambient".to_string(),
-        }
+        })
     } else {
         classify_route(&db, &user_question, &history)
     };
-    emit_log(
-        "info",
-        &format!(
-            "route: {:?} ({}) [{}ms]",
-            route.mode,
-            route.reason,
-            t_route.elapsed().as_millis()
-        ),
-    );
+    let mut route = match &route_plan {
+        super::routing::RoutePlan::Decided(decision) => decision.clone(),
+        super::routing::RoutePlan::AskPlanner { fallback } => fallback.clone(),
+    };
+
+    // A paged `search_emails` result can be continued by `next_page` in a
+    // LATER turn, but the history the model replays carries no tool arguments
+    // — so the page to continue is recovered from the previous assistant
+    // message's persisted trace.
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
+    if matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. }) {
+        emit_log(
+            "info",
+            &format!(
+                "route: pending — no cheap signal, asking the planner [{}ms]",
+                t_route.elapsed().as_millis()
+            ),
+        );
+    } else {
+        emit_log(
+            "info",
+            &format!(
+                "route: {:?} ({}) [{}ms]",
+                route.mode,
+                route.reason,
+                t_route.elapsed().as_millis()
+            ),
+        );
+    }
 
     // Heuristic shortcut: recognise common phrasings and pre-seed the tool
     // call so we can skip the LLM's tool-choice round entirely. Returns None
@@ -3513,20 +3575,25 @@ pub async fn run_chat_turn(
         .map(|a| a.email)
         .unwrap_or_default();
 
-    // Query planner (tools-first fast path): when no heuristic matched and the
-    // route is tools-first, ask the model — in ONE small completion on the
-    // already-loaded chat provider, so no model swap — to turn the question into
-    // a single search_emails filter. A concrete filter is pre-seeded as round-0
-    // (the chat model then goes straight to synthesis, skipping the slow
-    // tool-choice round); anything else (a write/draft/multi-step ask, an
-    // unparseable reply, a provider error) defers to the normal loop. Gated by
-    // the `chat.planner_enabled` preference (default on).
+    // Query planner: ONE small completion on the already-loaded chat provider
+    // (so no model swap, and it runs on the scratch sequence — the chat KV
+    // prefix is untouched) that turns the question into a single search_emails
+    // filter. A concrete filter is pre-seeded as round-0, so the chat model goes
+    // straight to synthesis and skips the slow tool-choice round; anything else
+    // (a write/draft/multi-step ask, an unparseable reply, a provider error)
+    // defers to the normal loop. Gated by `chat.planner_enabled` (default on).
+    //
+    // It runs on two kinds of turn: the ones a keyword already routed
+    // tools-first, and the ones with no cheap signal at all (`AskPlanner`) —
+    // there its verdict also SETS the route, which is how a question in a
+    // language the keyword list never covered still avoids pointless retrieval.
+    let asked_planner = matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. });
     // Trace entry for the planner LLM call, prepended to `llm_calls` below so it
     // shows in the flow timeline ahead of the tool rounds.
     let mut planner_trace: Option<LlmCallTrace> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
-        && route.mode == RouteMode::ToolsFirst
+        && (route.mode == RouteMode::ToolsFirst || asked_planner)
         && planner_enabled(&db)
     {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
@@ -3545,13 +3612,44 @@ pub async fn run_chat_turn(
         let plan_ms = t_plan.elapsed().as_millis() as i64;
         match plan {
             super::planner::Plan::Search(plan) => {
-                emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
-                planner_trace = Some(build_planner_trace(plan_ms, "search"));
-                preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
+                // On an `AskPlanner` turn the plan also settles the route — but
+                // only a plan with a real filter earns the tools route. A
+                // keyword-only plan is what retrieval ranks better, so that turn
+                // stays on RAG and the plan is dropped rather than pre-seeded.
+                // On a turn the planner is also routing, its classifier-tag
+                // guess is dropped first: what is left decides both the route
+                // and what runs.
+                let plan = if asked_planner {
+                    Box::new(plan.without_classifier_tags())
+                } else {
+                    plan
+                };
+                let structural = plan.has_structural_filter();
+                if asked_planner && !structural {
+                    emit_log(
+                        "debug",
+                        &format!("planner: keyword-only plan, keeping RAG [{plan_ms}ms]"),
+                    );
+                    planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                    route = super::routing::planner_route(false);
+                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                } else {
+                    emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
+                    planner_trace = Some(build_planner_trace(plan_ms, "search"));
+                    preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
+                    if asked_planner {
+                        route = super::routing::planner_route(true);
+                        emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                    }
+                }
             }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                if asked_planner {
+                    route = super::routing::planner_route(false);
+                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                }
             }
         }
     }
@@ -3718,6 +3816,7 @@ pub async fn run_chat_turn(
             &assistant_message_id,
             &account_id,
             &categories,
+            Some(&page_state),
             &user_question,
             initial_messages,
             preseeded_tool_calls,
@@ -3866,6 +3965,7 @@ pub async fn run_chat_turn(
                         &db,
                         &account_id,
                         &categories,
+                        Some(&page_state),
                         &user_question,
                         retry_messages,
                         &conversation_id,
@@ -3988,6 +4088,7 @@ pub async fn run_chat_turn(
                     &db,
                     &account_id,
                     &categories,
+                    Some(&page_state),
                     &user_question,
                     synthesis_messages,
                     &conversation_id,
@@ -4860,6 +4961,7 @@ mod tests {
             "msg-1",
             "acct-1",
             &[],
+            None,
             "analiza los correos de esa newsletter",
             vec![
                 ("system".to_string(), "SYS".to_string()),
@@ -5030,6 +5132,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5113,6 +5216,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5185,6 +5289,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "analiza los correos de x@substack.com",
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
@@ -5248,6 +5353,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5286,6 +5392,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5328,6 +5435,7 @@ mod tests {
             &db,
             "acct-1",
             &[],
+            None,
             "hola",
             vec![ai_msg("user", "hola")],
             "conv-1",
@@ -5421,6 +5529,7 @@ mod tests {
             "msg-1",
             "acct-1",
             &[],
+            None,
             "summarise today's emails",
             vec![
                 ("system".to_string(), "SYS".to_string()),

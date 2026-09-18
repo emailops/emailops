@@ -14,6 +14,7 @@ use crate::evals::harness::{CaseOutcome, SourceSummary};
 use crate::evals::judge::JudgeScores;
 use crate::evals::metrics::HeuristicReport;
 use crate::evals::EvalResult;
+use crate::models::ChatTrace;
 
 /// Inputs for a single case card in the report.
 pub struct ReportCase<'a> {
@@ -35,9 +36,8 @@ struct CaseView {
     latency_ms: i64,
     wall_elapsed_ms: i64,
     token_count: Option<i32>,
-    route_mode: Option<String>,
-    route_reason: Option<String>,
-    route_classifier: Option<String>,
+    /// Execution path of the turn on one line — see [`flow_line`].
+    flow: Option<String>,
     retrieval: Option<RetrievalView>,
     tool_calls: Vec<ToolCallView>,
     heuristics: Vec<CheckView>,
@@ -179,9 +179,7 @@ fn avg_pct(vals: &[f64]) -> Option<i32> {
 
 fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
     let trace = rc.outcome.assistant_trace.as_ref();
-    let route_mode = trace.map(|t| format!("{:?}", t.route.mode));
-    let route_reason = trace.map(|t| t.route.reason.clone());
-    let route_classifier = trace.map(|t| t.route.classifier.clone());
+    let flow = trace.map(flow_line);
 
     let retrieval = trace.and_then(|t| t.retrieval.as_ref()).map(|r| RetrievalView {
         vector_hits: r.vector_hits,
@@ -251,9 +249,7 @@ fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
         latency_ms: rc.outcome.assistant_latency_ms.unwrap_or(0),
         wall_elapsed_ms: rc.outcome.wall_elapsed_ms,
         token_count: rc.outcome.assistant_token_count,
-        route_mode,
-        route_reason,
-        route_classifier,
+        flow,
         retrieval,
         tool_calls,
         heuristics,
@@ -323,6 +319,9 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
   .tc-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; gap: 1rem; }
   .tc-title { font-weight: 600; flex: 1; }
   .tc-meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.15rem; }
+  /* The path the turn took, so "planner or model choice?" is answerable
+     without opening the card and cross-reading three blocks. */
+  .tc-flow { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.78rem; margin-top: 0.3rem; color: #7aa2f7; }
   .badge { display: inline-block; padding: 0.2rem 0.7rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
   .badge-pass { background: rgba(34,197,94,0.15); color: var(--green); }
   .badge-fail { background: rgba(239,68,68,0.15); color: var(--red); }
@@ -415,6 +414,7 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
     <div>
       <div class="tc-title">[{{ c.id }}] {{ c.question }}</div>
       <div class="tc-meta">category: {{ c.category }} · tier: {{ c.tier }} · title: "{{ c.title }}" · {{ c.latency_ms }}ms{% if c.token_count %} · {{ c.token_count }} tok{% endif %}</div>
+      {% if c.flow %}<div class="tc-flow">{{ c.flow }}</div>{% endif %}
     </div>
     <div>
       {% if c.overall_pass %}<span class="badge badge-pass">pass</span>{% else %}<span class="badge badge-fail">fail</span>{% endif %}
@@ -422,16 +422,6 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
     </div>
   </div>
   <div class="tc-body">
-
-    <div class="section">
-      <div class="section-label">Route</div>
-      <div class="content-box mono">
-        mode: {{ c.route_mode | default(value="?") }} · classifier: {{ c.route_classifier | default(value="?") }}
-        {% if c.route_reason %}
-        reason: {{ c.route_reason }}
-        {% endif %}
-      </div>
-    </div>
 
     {% if c.retrieval %}
     <div class="section">
@@ -526,3 +516,161 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
 </body>
 </html>
 "###;
+
+/// One-line summary of the path a turn actually took, for the report header of
+/// each case: `heuristic → planner → search_emails → llm round 0 → llm round 1`.
+///
+/// Reading a case used to mean cross-referencing three blocks (route, tool
+/// calls, LLM calls) to answer "did this go through the planner, or did the
+/// model pick the tool itself?". The line is assembled from the persisted
+/// trace, in execution order: the classifier that decided the route, then the
+/// planner and retrieval when they ran, then every tool call and model round.
+pub(crate) fn flow_line(trace: &ChatTrace) -> String {
+    // Round numbers order the timeline: the planner is -2, pre-seeded shortcut
+    // tools -1, the tool loop 0.., and the final stream is emitted last.
+    let mut steps: Vec<(i32, u8, String)> = Vec::new();
+    // The classifier carries the signal it fired on, so the line answers
+    // "why this route?" without a separate block.
+    let classifier = if trace.route.matched_keywords.is_empty() {
+        trace.route.classifier.clone()
+    } else {
+        format!(
+            "{} (matched: {})",
+            trace.route.classifier,
+            trace.route.matched_keywords.join(", ")
+        )
+    };
+    steps.push((i32::MIN, 0, classifier));
+    if trace.retrieval.is_some() {
+        steps.push((-3, 1, "retrieval".to_string()));
+    }
+    for call in &trace.llm_calls {
+        let label = match call.kind.as_str() {
+            "planner" => "planner".to_string(),
+            "final_stream" => "answer".to_string(),
+            _ => format!("llm round {}", call.round),
+        };
+        // The final stream carries round -1 but always runs last.
+        let order = if call.kind == "final_stream" {
+            i32::MAX
+        } else {
+            call.round
+        };
+        steps.push((order, 2, label));
+    }
+    for tool in &trace.tool_calls {
+        steps.push((tool.round, 1, tool.name.clone()));
+    }
+    steps.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    steps
+        .into_iter()
+        .map(|(_, _, label)| label)
+        .collect::<Vec<_>>()
+        .join(" → ")
+}
+
+#[cfg(test)]
+mod flow_line_tests {
+    use super::*;
+
+    fn trace(classifier: &str, retrieval: bool, llm: Vec<(&str, i32)>, tools: Vec<(&str, i32)>) -> ChatTrace {
+        // Built through serde so the fixture only names the fields this test
+        // cares about; everything else takes its `#[serde(default)]`.
+        let llm_calls: Vec<serde_json::Value> = llm
+            .into_iter()
+            .map(|(kind, round)| serde_json::json!({ "kind": kind, "round": round, "latencyMs": 1 }))
+            .collect();
+        let tool_calls: Vec<serde_json::Value> = tools
+            .into_iter()
+            .map(|(name, round)| {
+                serde_json::json!({
+                    "name": name,
+                    "round": round,
+                    "arguments": {},
+                    "resultPreview": "",
+                    "resultChars": 0,
+                    "elapsedMs": 1,
+                })
+            })
+            .collect();
+        let mut value = serde_json::json!({
+            "route": { "mode": "tools_first", "reason": "", "classifier": classifier },
+            "toolCalls": tool_calls,
+            "model": "m",
+            "totalElapsedMs": 1,
+            "toolLoopMs": 1,
+            "llmCalls": llm_calls,
+        });
+        if retrieval {
+            value["retrieval"] = serde_json::json!({
+                "vectorHits": 20,
+                "ftsHits": 30,
+                "fusedTopK": 10,
+                "elapsedMs": 330,
+                "ftsSearchMs": 298,
+                "fetchMs": 0,
+                "expansionMs": 0,
+            });
+        }
+        serde_json::from_value(value).expect("trace fixture")
+    }
+
+    #[test]
+    fn the_classifier_carries_what_the_heuristic_matched() {
+        // The route block used to spell this out in its own section; the line
+        // has to say which signal fired or it loses that.
+        let mut t = trace("heuristic", false, vec![("tool_round", 0)], vec![]);
+        t.route.matched_keywords = vec!["recibi".to_string()];
+        assert_eq!(flow_line(&t), "heuristic (matched: recibi) → llm round 0");
+
+        t.route.matched_keywords = vec!["hoy".to_string(), "2026".to_string()];
+        assert!(
+            flow_line(&t).starts_with("heuristic (matched: hoy, 2026)"),
+            "{}",
+            flow_line(&t)
+        );
+    }
+
+    #[test]
+    fn a_classifier_with_nothing_matched_stays_bare() {
+        let t = trace("planner", false, vec![("planner", -2)], vec![]);
+        assert_eq!(flow_line(&t), "planner → planner");
+    }
+
+    #[test]
+    fn a_planned_search_reads_in_execution_order() {
+        let t = trace(
+            "planner",
+            false,
+            vec![("planner", -2), ("tool_round", 0), ("tool_round", 1)],
+            vec![("search_emails", 0)],
+        );
+        assert_eq!(
+            flow_line(&t),
+            "planner → planner → search_emails → llm round 0 → llm round 1"
+        );
+    }
+
+    #[test]
+    fn a_rag_turn_shows_the_retrieval_it_paid_for() {
+        let t = trace("heuristic", true, vec![("tool_round", 0)], vec![]);
+        assert_eq!(flow_line(&t), "heuristic → retrieval → llm round 0");
+    }
+
+    #[test]
+    fn the_final_stream_closes_the_line_whatever_round_it_carries() {
+        let t = trace(
+            "heuristic",
+            false,
+            vec![("tool_round", 0), ("final_stream", -1)],
+            vec![("get_thread", 0)],
+        );
+        assert_eq!(flow_line(&t), "heuristic → get_thread → llm round 0 → answer");
+    }
+
+    #[test]
+    fn a_shortcut_tool_precedes_the_first_model_round() {
+        let t = trace("heuristic", false, vec![("tool_round", 0)], vec![("search_emails", -1)]);
+        assert_eq!(flow_line(&t), "heuristic → search_emails → llm round 0");
+    }
+}

@@ -1074,3 +1074,55 @@ account-scoped tools — still the real fix and still deferred, since it means d
 citations and drafts behave across accounts. Probing sibling accounts on an empty result to
 offer a one-click switch — more machinery than the wording needs, worth revisiting only if
 the prompt fix proves insufficient in practice.
+
+## 2026-09-17 — AI processing limit: whole small accounts, day cutoff for large ones
+
+**Decision:** Embeddings and classification cover every email of an account with at most
+`ai_max_email_count` live emails (default 1000). Accounts above that only process emails
+newer than `ai_max_email_age_days` (default 365). The count is evaluated per account; a
+count limit of 0 always applies the day cutoff, a day limit of 0 removes the cutoff.
+**Context:** The day cutoff alone was global, so a small account with a long history kept
+most of its mail unclassified. Intent/topic search filters then silently missed it (a
+chat search for contact-form requests found 4 of 31).
+**Rejected:** Union semantics (always the newest N emails plus anything within D days) —
+the developer preferred the simpler switch. A per-account settings UI — the global pair of
+limits already makes small accounts whole without extra configuration.
+
+## 2026-09-18 — The routing keyword list accelerates, the query planner decides
+
+**Decision:** In `chat.routing_mode = auto` a keyword or date hit still settles the route for
+free (and skips nothing else). A miss no longer falls to `RagFirst`: the query planner runs,
+and its verdict sets the route — a plan carrying a real filter (from/to/subject/date/tag/unread)
+becomes `ToolsFirst` with that call pre-seeded, a `defer` or a keyword-only plan stays
+`RagFirst`. Forced modes and follow-up inheritance are unchanged.
+**Context:** `TOOLS_FIRST_KEYWORDS` is an EN/ES substring list, so "que emails tengo de X" and
+every German or French question fell to RAG: retrieval it did not need, and no pre-seeded
+search. Growing the list was already rejected (14/09/2026). The planner reads any language and
+already turns a question into a filter, so its Search/Defer verdict IS the routing signal.
+Measured: the planner prompt is ~1.5k tokens, capped at 128 generated, and runs on the scratch
+sequence with `cache_prompt=false`, so it never touches the chat KV prefix; warm latency
+997-1466 ms on an M5 Pro with qwen3.5-4b-q4.
+**Rejected:** the planner deciding every turn including keyword hits (pays a model call where a
+substring already answers, and on a 16 GB M1 that lands on every open question); adding de/fr
+keywords (the 14/09 rejection, one entry per paraphrase per language); a trained router model
+(worth revisiting only if the planner call proves to be the bottleneck on older machines —
+the route classifier could ride on the embedding already computed for RAG).
+
+## 2026-09-18 — A classifier tag ranks a chat search, it never gates it
+
+**Decision:** `search_emails`' `intent` / `topic` filters put the tagged rows first and keep the
+other matches behind them, with a note giving both counts ("N emails carry the intent/topic asked
+for; the M rows after them…"). A "how many of this kind" answer uses N. The tag clause now also
+binds `tag_type`, so `intent=billing` cannot be answered by a company called billing. The sidebar,
+Tag Board and lens filters are untouched — they stay exact.
+**Context:** an email stores exactly ONE intent (`PRIMARY KEY (email_id, tag_type)`, prompt says
+"pick exactly ONE"), while a real email is often several things at once, and mail outside the AI
+window carries no tag at all. As a hard filter that lost whole answers: "¿qué correos de BorgBase
+tengo sin leer?" planned `intent=notification` over invoices tagged `billing` and replied that
+there were none. Measured on the production mailbox: 34.713 classified emails, mean confidence
+0.94 (only 444 below 0.8), so confidence cannot be used to soften the filter either.
+**Rejected:** real multi-label storage (new PK, primary + secondary intents, reclassifying 34.713
+emails — hours of local inference, and a thread would start appearing in several Tag Board blocks);
+dropping intent/topic from the chat tool (loses counting by kind, which is the only thing tags buy
+there); leaving it as a gate and only warning (the note only fires when rows come back, so the
+zero-result case — the one that hurt — stayed silent).

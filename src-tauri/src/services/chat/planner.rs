@@ -31,7 +31,7 @@ pub enum Plan {
 /// The subset of `search_emails` arguments the planner can fill. All optional;
 /// at least one selective field must be present for the plan to be a `Search`
 /// (the tool rejects a filter-less call).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct SearchPlan {
     pub query: Option<String>,
     pub from: Option<String>,
@@ -74,6 +74,40 @@ impl SearchPlan {
             && self.intent.is_none()
             && self.topic.is_none()
             && self.unread.is_none()
+    }
+
+    /// The plan without the classifier tags the planner guessed.
+    ///
+    /// `intent` / `topic` only match what the classifier tagged, and the model
+    /// adds them even when the question named no kind of mail — its own prompt
+    /// forbids it, and it does it anyway. On a turn the keyword heuristic did
+    /// not recognise, that guess is the part most likely to return nothing
+    /// ("¿qué correos de BorgBase tengo sin leer?" planned with
+    /// intent=notification over invoices tagged billing → zero rows), so the
+    /// hard filters are kept and the guess is dropped.
+    pub fn without_classifier_tags(mut self) -> Self {
+        self.intent = None;
+        self.topic = None;
+        self
+    }
+
+    /// Whether the plan names a FILTER (sender, recipient, subject, date
+    /// window, classifier tag, unread) rather than just words to match.
+    ///
+    /// This is the line between the two retrieval mechanisms. A filter is
+    /// something only `search_emails` can express, so a plan that carries one
+    /// is worth taking off the RAG route. A keyword-only plan ("qué opina el
+    /// equipo sobre el proyecto" → `query: "proyecto"`) is exactly what the
+    /// embeddings index ranks better, so it stays on RAG.
+    pub fn has_structural_filter(&self) -> bool {
+        self.from.is_some()
+            || self.to.is_some()
+            || self.subject.is_some()
+            || self.since.is_some()
+            || self.until.is_some()
+            || self.intent.is_some()
+            || self.topic.is_some()
+            || self.unread == Some(true)
     }
 
     /// Convert the plan into the `search_emails` tool call fed into the loop as
@@ -154,6 +188,17 @@ impl SearchPlan {
             .unwrap_or(false);
         if bare_name && !self.wants_oldest() && self.limit.unwrap_or(25) < 5 {
             self.limit = Some(5);
+        }
+        // 3. A window that cannot contain anything is dropped rather than run.
+        //    The model stamps `since = until = {{today}}` on questions that
+        //    name no date at all ("when did X first write to me?"), and
+        //    `until` is end-exclusive, so the search matches nothing and the
+        //    turn burns rounds widening it by hand.
+        if let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) {
+            if until <= since {
+                self.since = None;
+                self.until = None;
+            }
         }
         self
     }
@@ -301,7 +346,7 @@ pub(crate) fn render_planner_prompt(
 /// Thin executor: render the prompt, run ONE completion on the (already-loaded)
 /// chat provider, and parse the reply into a [`Plan`]. Never errors — a provider
 /// failure degrades to [`Plan::Defer`] so the turn proceeds normally.
-pub(crate) async fn plan_search(
+pub async fn plan_search(
     provider: &dyn AIProvider,
     template: &str,
     user_email: &str,
@@ -420,6 +465,116 @@ mod tests {
         assert_eq!(p.to.as_deref(), Some("alex"));
         assert_eq!(p.query.as_deref(), Some("budget"));
         assert_eq!(p.subject.as_deref(), Some("Q3"));
+    }
+
+    #[test]
+    fn a_plan_with_a_real_filter_is_structural() {
+        for json in [
+            r#"{"from": "nadia"}"#,
+            r#"{"to": "billing@acme.com"}"#,
+            r#"{"subject": "invoice"}"#,
+            r#"{"since": "2026-03-01"}"#,
+            r#"{"intent": "introduction"}"#,
+            r#"{"topic": "billing"}"#,
+            r#"{"unread": true}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(p.has_structural_filter(), "expected structural: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_keyword_only_plan_is_not_structural() {
+        // "qué opina el equipo sobre el proyecto" plans as a bare keyword
+        // search. Retrieval ranks that kind of question better than an FTS
+        // filter does, so it must not pull the turn off the RAG route.
+        for json in [
+            r#"{"query": "proyecto"}"#,
+            r#"{"query": "proyecto", "mode": "semantic"}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(!p.has_structural_filter(), "expected keyword-only: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
+    }
+
+    #[test]
+    fn dropping_the_guessed_tags_keeps_the_hard_filters() {
+        // The planner adds a classifier tag the question never named
+        // ("¿qué correos de BorgBase tengo sin leer?" → intent=notification,
+        // while those invoices are tagged billing), and the search returns
+        // nothing. On a turn the keyword list did not recognise, the tag is the
+        // guessed half of the plan: drop it, keep from/unread.
+        let Plan::Search(plan) = parse_plan(r#"{"from": "BorgBase", "unread": true, "intent": "notification"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert_eq!(plan.intent, None);
+        assert_eq!(plan.topic, None);
+        assert_eq!(plan.from.as_deref(), Some("BorgBase"));
+        assert_eq!(plan.unread, Some(true));
+        assert!(plan.has_structural_filter());
+    }
+
+    #[test]
+    fn a_plan_that_was_only_a_tag_stops_being_structural() {
+        // "¿quién es Janos?" planned as a semantic query plus intent=question.
+        // Without the tag there is no filter left, so the turn belongs to
+        // retrieval — which is where it answered correctly before.
+        let Plan::Search(plan) = parse_plan(r#"{"query": "Janos", "mode": "semantic", "intent": "question"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert!(!plan.has_structural_filter());
+        assert_eq!(plan.query.as_deref(), Some("Janos"));
+    }
+
+    #[test]
+    fn a_zero_width_date_window_is_dropped() {
+        // "when did Marisol first write to me about the logistics dashboard?"
+        // carries no date, yet the planner stamped since = until = today. The
+        // tool then matched nothing and the model spent two more rounds
+        // widening it by hand. A window that starts and ends on the same day
+        // can never be what the user asked for: the prompt's own rule for a
+        // single day ("today") is since=today, until=tomorrow.
+        let Plan::Search(plan) =
+            parse_plan(r#"{"from": "Marisol", "order": "oldest", "since": "2026-09-18", "until": "2026-09-18"}"#)
+        else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+        assert_eq!(plan.from.as_deref(), Some("Marisol"));
+    }
+
+    #[test]
+    fn an_inverted_date_window_is_dropped() {
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "since": "2026-09-18", "until": "2026-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+    }
+
+    #[test]
+    fn a_real_date_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2026-09-18", "until": "2026-09-19"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2026-09-18"));
+        assert_eq!(plan.until.as_deref(), Some("2026-09-19"));
+    }
+
+    #[test]
+    fn an_open_ended_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2025-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2025-01-01"));
+        assert_eq!(plan.until, None);
     }
 
     #[test]

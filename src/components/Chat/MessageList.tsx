@@ -11,6 +11,8 @@ interface MessageListProps {
   streamingPhase: ChatPhase | null;
   accountId: string;
   onOpenEmail?: () => void;
+  /** Show the emails an answer references in the email list, via this search query. */
+  onShowEmailsInList?: (query: string) => void;
 }
 
 /**
@@ -65,6 +67,7 @@ export function MessageList({
   streamingPhase,
   accountId,
   onOpenEmail,
+  onShowEmailsInList,
 }: MessageListProps) {
   const { t } = useTranslation(['chat']);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -108,6 +111,7 @@ export function MessageList({
           phase={m.id === streamingMessageId ? streamingPhase : null}
           accountId={accountId}
           onOpenEmail={onOpenEmail}
+          onShowEmailsInList={onShowEmailsInList}
         />
       ))}
     </div>

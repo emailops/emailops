@@ -698,7 +698,7 @@ pub async fn classify_new_emails(db: &Arc<Database>, account_id: &str) -> Result
     let rules = db.get_enabled_classification_rules(account_id)?;
     // Skip emails older than the user-configured age cutoff so very old
     // mail in big mailboxes doesn't trigger a long classification backlog.
-    let min_ts = db.ai_processing_min_timestamp(chrono::Utc::now().timestamp())?;
+    let min_ts = db.ai_processing_min_timestamp(account_id, chrono::Utc::now().timestamp())?;
     let email_ids = db.get_unclassified_email_ids(account_id, 100, &config.categories, min_ts)?;
     if email_ids.is_empty() {
         return Ok(0);
@@ -796,7 +796,7 @@ pub async fn classify_all_emails(db: &Arc<Database>, account_id: &str) -> Result
 
     // Same age cutoff as the per-sync path. User-triggered backfills should
     // also respect "limit AI work to emails newer than N days".
-    let min_ts = db.ai_processing_min_timestamp(chrono::Utc::now().timestamp())?;
+    let min_ts = db.ai_processing_min_timestamp(account_id, chrono::Utc::now().timestamp())?;
     let email_ids = db.get_unclassified_email_ids(account_id, 10000, &config.categories, min_ts)?;
 
     if email_ids.is_empty() {
@@ -826,7 +826,7 @@ pub async fn reclassify_all_emails(db: &Arc<Database>, account_id: &str) -> Resu
     // Respect the user's "limit AI work to recent emails" cutoff even for
     // an explicit reclassify-all: a 5-year backlog reclassify is exactly
     // the kind of run-away job this preference is meant to prevent.
-    let min_ts = db.ai_processing_min_timestamp(chrono::Utc::now().timestamp())?;
+    let min_ts = db.ai_processing_min_timestamp(account_id, chrono::Utc::now().timestamp())?;
     let email_ids = {
         use rusqlite::types::ToSql;
         let conn = db.connection();

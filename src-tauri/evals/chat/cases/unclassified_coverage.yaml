@@ -1,0 +1,38 @@
+# A tag-filtered list is a preference, and the count has to stay honest.
+#
+# `intent` / `topic` read the classifier's tags, and an email stores exactly ONE
+# intent (`PRIMARY KEY (email_id, tag_type)`) while a real email is often several
+# things at once — plus older mail carries no tag at all. So `search_emails` no
+# longer treats the tag as a gate: the tagged rows come first, the rest of the
+# matches follow, and the result says how many of each ("N emails carry the
+# intent/topic asked for; the M rows after them…").
+#
+# What that has to produce in an answer: the count of the KIND asked for is the
+# tagged N, not the length of the list the model was handed. The demo mailbox has
+# 8 first contacts tagged `introduction` and three older ones with no tag at all
+# (`populate_unclassified_leads` in scripts/generate_demo_db.py).
+
+- id: tag_search_counts_only_the_tagged_es
+  question: "cuántos correos de primer contacto he recibido?"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  # 8 carry the tag; the widened rows must not inflate the count.
+  expected_answer_contains: ["8"]
+  expected_output: "Has recibido 8 correos de primer contacto clasificados como introduction; en la lista aparecen además otros correos que coinciden con el resto de filtros pero llevan otra etiqueta o ninguna."
+  metrics:
+    - answer_relevancy
+
+# The over-trigger guard: an ordinary search carries no tag filter, so there is
+# no preferred block and the answer must not talk about classification at all.
+- id: plain_search_says_nothing_about_classification_es
+  question: "muéstrame los correos de metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_answer_not_contains:
+    - "sin clasificar"
+    - "clasificad"
+  metrics: []

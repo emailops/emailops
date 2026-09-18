@@ -1,0 +1,29 @@
+# A partial list must be presented as partial.
+#
+# `search_emails` returns one page (limit ≤ 25) of a thread-deduped result and
+# leads it with "(showing A-B of M matching threads …)" when more remain. Before
+# pagination existed the note said "showing N of M … to see the rest" even when
+# N == M, and there was no way to fetch the rest at all: the model could only
+# re-run the search with a bigger limit, which re-lists the rows the user has
+# already seen. `next_page` continues the same search from where the page
+# stopped, and the system prompt asks for the total plus an offer of more.
+#
+# WHAT THIS ASSERTS
+# The first half of that contract, which is what a single-turn harness can
+# reach: the answer must carry the real total (13 threads from the metrics
+# sender in the demo mailbox), not the 5 rows shown. The continuation itself is
+# covered by unit tests (`tools::next_page`, `tools::mod`) because the harness
+# runs one question per case.
+
+- id: partial_list_states_the_total_es
+  question: "muéstrame los últimos 5 correos de metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  expected_tools_called: ["search_emails"]
+  expected_answer_contains: ["13"]
+  expected_answer_not_contains:
+    - "next_page"
+  expected_output: "Te muestro los 5 más recientes de los 13 correos de metrics@emailopslabs.dev. Dime si quieres ver los siguientes."
+  metrics:
+    - answer_relevancy

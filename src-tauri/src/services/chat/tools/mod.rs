@@ -33,6 +33,7 @@ pub mod list_lenses;
 pub mod list_open_threads;
 pub mod list_pending_tasks;
 pub mod memory_search;
+pub mod next_page;
 pub mod recall_entity;
 pub mod remember;
 pub mod search_contacts;
@@ -55,6 +56,47 @@ pub struct ToolCtx<'a> {
     /// Active category filter for this chat turn. Empty = all categories.
     /// Today only `search_emails` consults it.
     pub categories: &'a [String],
+    /// Where `search_emails` leaves the page it just returned so `next_page`
+    /// can continue it. `None` in tests that never paginate.
+    pub page: Option<&'a PageState>,
+}
+
+/// One page of `search_emails` results: the call that produced it and where
+/// the next page starts. `args` is the original argument object, so the
+/// continuation re-runs the very same filters.
+#[derive(Debug, Clone)]
+pub struct SearchPage {
+    pub args: serde_json::Value,
+    pub next_offset: i32,
+    pub total: i32,
+}
+
+/// The conversation's current search page. Interior-mutable because tools
+/// run behind a shared `&ToolCtx`. A chat turn seeds it from the previous
+/// assistant message's trace, so "show me the next ones" works across turns.
+#[derive(Debug, Default)]
+pub struct PageState(std::sync::Mutex<Option<SearchPage>>);
+
+impl PageState {
+    pub fn seeded(page: Option<SearchPage>) -> Self {
+        Self(std::sync::Mutex::new(page))
+    }
+
+    pub fn remember(&self, page: SearchPage) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(page);
+        }
+    }
+
+    /// The page to continue, or `None` when the last search had no more
+    /// results (or no search ran in this conversation).
+    pub fn pending(&self) -> Option<SearchPage> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .filter(|p| p.next_offset < p.total)
+    }
 }
 
 /// What a tool returns to the chat loop.
@@ -488,6 +530,7 @@ pub fn default_registry() -> ToolRegistry {
         Arc::new(list_drafts::ListDraftsTool),
         Arc::new(list_lenses::ListLensesTool),
         Arc::new(get_lens_data::GetLensDataTool),
+        Arc::new(next_page::NextPageTool),
     ])
 }
 
@@ -687,6 +730,7 @@ mod tests {
             db: &db,
             account_id: "acct",
             categories: &categories,
+            page: None,
         };
         let out = tool.execute(&ctx, serde_json::json!({})).await.expect("ok");
         assert_eq!(out.text, "alpha ran");
@@ -1637,6 +1681,57 @@ mod tests {
     /// the classifier already knows a prospect (intent introduction /
     /// question / request). The tool exposes that as a filter.
     #[test]
+    fn an_intent_filter_does_not_match_a_company_tag_with_the_same_name() {
+        // The clause compared `tag_value` alone, so `intent=billing` also
+        // matched the company tag "billing" — a vendor's whole mailbox came
+        // back as if the classifier had called it billing mail.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "tagged",
+            "acc",
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "Factura",
+            "hola",
+            t + 100,
+        );
+        seed_email(
+            &db,
+            "company",
+            "acc",
+            "t2",
+            "Billing Inc",
+            "hi@billing.com",
+            "Hola",
+            "hola",
+            t + 200,
+        );
+        tag_email(&db, "tagged", "intent", "billing");
+        tag_email(&db, "company", "company", "billing");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "intent": "billing" })),
+        );
+
+        // The company still shows up — the tag is a preference, not a gate —
+        // but behind the classified one, and the note says only one carries it.
+        assert!(
+            out.starts_with("(1 emails carry the intent/topic asked for"),
+            "the company must not count as billing intent; out:\n{out}"
+        );
+        let tagged = out.find("id=tagged").expect("classified email listed");
+        let company = out.find("id=company").expect("company email listed behind it");
+        assert!(tagged < company, "the classified email leads; out:\n{out}");
+    }
+
+    #[test]
     fn search_emails_filters_by_classification_intent_and_topic() {
         let db = tools_test_db();
         let t = parse_iso_date_secs("2026-04-17").unwrap();
@@ -1686,8 +1781,14 @@ mod tests {
             "search_emails",
             &arg(serde_json::json!({ "intent": "introduction" })),
         );
-        assert!(out.contains("id=lead"), "{out}");
-        assert!(!out.contains("id=promo") && !out.contains("id=q"), "{out}");
+        // Tagged first, the rest behind: an email carries ONE intent, so
+        // "introduction" is a preference over the others, not a wall.
+        assert!(out.starts_with("(1 emails carry the intent/topic asked for"), "{out}");
+        let lead = out.find("id=lead").expect("the tagged lead is listed");
+        for other in ["id=promo", "id=q"] {
+            let pos = out.find(other).expect("the rest follow the tagged block");
+            assert!(lead < pos, "the tagged email leads; {out}");
+        }
 
         let out = execute_tool(
             &db,
@@ -1696,10 +1797,11 @@ mod tests {
             "search_emails",
             &arg(serde_json::json!({ "intent": "question", "topic": "sales" })),
         );
-        assert!(
-            out.contains("id=q") && !out.contains("id=lead"),
-            "both filters must hold: {out}"
-        );
+        // Both tags asked for: `q` carries them, so it leads.
+        assert!(out.contains("id=q"), "{out}");
+        let q = out.find("id=q").expect("the doubly tagged email is listed");
+        let lead = out.find("id=lead").expect("the others follow");
+        assert!(q < lead, "both filters hold on q, so it comes first: {out}");
 
         let schema = super::search_emails::SearchEmailsTool.parameters_schema();
         for key in ["intent", "topic", "with_bodies"] {
@@ -1819,9 +1921,226 @@ mod tests {
             &arg(serde_json::json!({ "from": "news@example.com", "limit": 25 })),
         );
         assert!(
-            out.starts_with("(showing 25 of 30 matching threads"),
-            "full page must lead with the total; out:\n{out}"
+            out.starts_with("(showing 1-25 of 30 matching threads"),
+            "full page must lead with the range and the total; out:\n{out}"
         );
+    }
+
+    #[tokio::test]
+    async fn next_page_continues_the_previous_search_without_repeating_rows() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..30 {
+            seed_email(
+                &db,
+                &format!("m{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Newsletter",
+                "news@example.com",
+                &format!("Issue {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        let categories: Vec<String> = Vec::new();
+        let page = PageState::default();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc",
+            categories: &categories,
+            page: Some(&page),
+        };
+
+        let first = search_emails::SearchEmailsTool
+            .execute(&ctx, serde_json::json!({ "from": "news@example.com", "limit": 25 }))
+            .await
+            .expect("first page");
+        let second = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("second page");
+
+        assert!(
+            second
+                .text
+                .starts_with("(showing 26-30 of 30 matching threads — this is the last page)"),
+            "second page must continue the first and say it is the last; out:\n{}",
+            second.text
+        );
+        assert_eq!(second.email_refs.len(), 5, "30 matches, 25 already shown");
+        assert!(
+            second.email_refs.iter().all(|id| !first.email_refs.contains(id)),
+            "a continuation must not repeat rows from the page before it"
+        );
+
+        let exhausted = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("third call");
+        assert!(
+            exhausted.text.starts_with("No further results"),
+            "nothing left to continue; out:\n{}",
+            exhausted.text
+        );
+    }
+
+    #[test]
+    fn search_emails_reports_matches_the_intent_filter_cannot_see() {
+        // A partially classified mailbox: the tag filter returns 2 rows, but 4
+        // more emails from the same sender were never classified. Answering
+        // from the 2 alone reads as complete and is not.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..6 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        tag_email(&db, "p0", "intent", "introduction");
+        tag_email(&db, "p1", "intent", "introduction");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com", "intent": "introduction" })),
+        );
+
+        assert!(
+            out.starts_with("(2 emails carry the intent/topic asked for; the 4 rows after them"),
+            "the note must separate the tagged rows from the widened ones; out:\n{out}"
+        );
+        let tagged_first = out.find("id=p1").expect("tagged rows listed");
+        let widened = out.find("id=p5").expect("the rest listed behind them");
+        assert!(tagged_first < widened, "tagged rows lead; out:\n{out}");
+    }
+
+    #[test]
+    fn a_tag_nobody_carries_still_answers_with_the_other_matches() {
+        // The reported failure: "¿qué correos de BorgBase tengo sin leer?" was
+        // planned with intent=notification while those invoices are tagged
+        // billing, and the answer became "there are none".
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("inv{i}"),
+                "acc",
+                &format!("t{i}"),
+                "BorgBase",
+                "billing@borgbase.com",
+                &format!("Invoice {i}"),
+                "body",
+                t + i as i64,
+            );
+            tag_email(&db, &format!("inv{i}"), "intent", "billing");
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "billing@borgbase.com", "intent": "notification" })),
+        );
+
+        assert!(
+            out.starts_with("(no email carries the intent/topic asked for; the 3 rows below"),
+            "the wrong tag must not swallow the answer; out:\n{out}"
+        );
+        assert!(out.contains("id=inv0") && out.contains("id=inv2"), "out:\n{out}");
+    }
+
+    #[test]
+    fn search_emails_says_nothing_about_coverage_when_everything_is_classified() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+            tag_email(&db, &format!("p{i}"), "intent", "introduction");
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com", "intent": "introduction" })),
+        );
+
+        assert!(!out.contains("never classified"), "out:\n{out}");
+    }
+
+    #[test]
+    fn search_emails_without_a_tag_filter_says_nothing_about_coverage() {
+        // No intent/topic filter → nothing is structurally hidden, so the note
+        // would be noise on every ordinary search.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("p{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Lead",
+                "lead@example.com",
+                &format!("Project inquiry {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "lead@example.com" })),
+        );
+
+        assert!(!out.contains("never classified"), "out:\n{out}");
+    }
+
+    #[tokio::test]
+    async fn next_page_without_a_previous_search_says_so() {
+        let db = tools_test_db();
+        let categories: Vec<String> = Vec::new();
+        let page = PageState::default();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc",
+            categories: &categories,
+            page: Some(&page),
+        };
+
+        let out = next_page::NextPageTool
+            .execute(&ctx, serde_json::json!({}))
+            .await
+            .expect("tool ran");
+
+        assert!(out.text.starts_with("No further results"), "{}", out.text);
     }
 
     #[test]

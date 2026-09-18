@@ -19,7 +19,9 @@
 pub mod tools;
 
 mod conversations;
-mod planner;
+// `pub(crate)` for the query-planner eval harness, which scores it directly
+// instead of inferring its quality from chat answers.
+pub(crate) mod planner;
 mod prewarm;
 pub(crate) mod retrieval;
 mod routing;
@@ -317,7 +319,7 @@ pub(crate) fn or_fallback_search(
     from_filter: Option<&str>,
     to_filter: Option<&str>,
     subject_filter: Option<&str>,
-    tag_filters: Option<&[String]>,
+    tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
 ) -> Option<Vec<Email>> {

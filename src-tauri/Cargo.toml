@@ -280,6 +280,12 @@ name = "chat_eval"
 required-features = ["eval"]
 
 [[example]]
+# Scores the chat query planner on its own — one completion per case instead
+# of a full chat turn. See `make eval-plan`.
+name = "query_plan_eval"
+required-features = ["eval"]
+
+[[example]]
 # Single-turn ad-hoc probe of `services::chat::run_chat_turn` against the
 # real DB. Usage:
 #   cargo run --features eval --example chat_probe -- --question "..."

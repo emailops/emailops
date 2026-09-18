@@ -65,6 +65,33 @@ fn search_target_accounts(db: &Arc<Database>, account_id: Option<&str>) -> Resul
     }
 }
 
+/// Read one `tag:` token into a filter.
+///
+/// `intent=urgent` names the tag type; a bare `urgent` matches any type, which
+/// is what the operator meant before types existed — a user who types
+/// `tag:urgent` does not know whether "urgent" is a priority, an intent or a
+/// company. An empty value is no filter at all.
+pub(crate) fn parse_tag_token(raw: &str) -> Option<crate::db::emails::search::TagQuery> {
+    use crate::db::emails::search::TagQuery;
+    let raw = raw.trim();
+    match raw.split_once('=') {
+        Some((tag_type, value)) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return None;
+            }
+            let tag_type = tag_type.trim();
+            if tag_type.is_empty() {
+                Some(TagQuery::any_type(value.to_lowercase()))
+            } else {
+                Some(TagQuery::typed(tag_type.to_lowercase(), value.to_lowercase()))
+            }
+        }
+        None if raw.is_empty() => None,
+        None => Some(TagQuery::any_type(raw.to_lowercase())),
+    }
+}
+
 /// Run `db.search_emails` once per target account and merge the results
 /// newest-first, truncated to `limit`. Pattern parsing and every other
 /// search decision happens once in the caller — only the DB call fans out.
@@ -79,7 +106,7 @@ fn db_search_merged(
     subject_filter: Option<&str>,
     after_timestamp: Option<i64>,
     before_timestamp: Option<i64>,
-    tag_filters: Option<&[String]>,
+    tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
 ) -> Result<Vec<Email>> {
     if let [single] = targets {
@@ -449,6 +476,22 @@ async fn structured_search(
         );
     }
 
+    if !parsed.id_filters.is_empty() {
+        let mut results = Vec::new();
+        for account in target_accounts {
+            results.extend(db.get_account_emails_by_ids(account, &parsed.id_filters, categories)?);
+        }
+        results.retain(|email| matches_parsed_filters(email, parsed));
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+        emit_log(
+            app,
+            "debug",
+            "search",
+            &format!("Structured: id lookup returned {} results", results.len()),
+        );
+        return Ok(emails_to_scored(results, Some(&filter_reason)));
+    }
+
     let t_db = std::time::Instant::now();
     emit_log(
         app,
@@ -460,10 +503,17 @@ async fn structured_search(
         ),
     );
 
-    let tag_filters = if parsed.tag_filters.is_empty() {
+    // `tag:` tokens are raw text: `tag:intent=urgent` names a type, a bare
+    // `tag:urgent` means any type (what the operator has always meant).
+    let tag_filters: Vec<crate::db::emails::search::TagQuery> = parsed
+        .tag_filters
+        .iter()
+        .filter_map(|raw| parse_tag_token(raw))
+        .collect();
+    let tag_filters = if tag_filters.is_empty() {
         None
     } else {
-        Some(parsed.tag_filters.as_slice())
+        Some(tag_filters.as_slice())
     };
     let mut results = db_search_merged(
         db,
@@ -1332,6 +1382,112 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
         assert_eq!(ids, vec!["e1"], "single-account search must not leak other accounts");
+    }
+
+    #[test]
+    fn a_tag_token_can_name_its_type() {
+        use crate::db::emails::search::TagQuery;
+        assert_eq!(
+            parse_tag_token("intent=urgent"),
+            Some(TagQuery::typed("intent", "urgent"))
+        );
+        assert_eq!(
+            parse_tag_token("Intent=Urgent"),
+            Some(TagQuery::typed("intent", "urgent"))
+        );
+    }
+
+    #[test]
+    fn a_bare_tag_token_matches_any_type() {
+        use crate::db::emails::search::TagQuery;
+        // What `tag:` has always meant: the user does not know whether
+        // "urgent" is a priority, an intent or a company.
+        assert_eq!(parse_tag_token("urgent"), Some(TagQuery::any_type("urgent")));
+        assert_eq!(parse_tag_token("=urgent"), Some(TagQuery::any_type("urgent")));
+    }
+
+    #[test]
+    fn a_tag_token_without_a_value_is_no_filter() {
+        assert_eq!(parse_tag_token("intent="), None);
+        assert_eq!(parse_tag_token(""), None);
+    }
+
+    #[tokio::test]
+    async fn a_typed_tag_search_ignores_a_company_of_the_same_name() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "classified", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "vendor", "acc1", "t2", "Hello", 200);
+        {
+            let conn = db.connection();
+            for (id, tag_type) in [("classified", "intent"), ("vendor", "company")] {
+                conn.execute(
+                    "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at) VALUES (?1, ?2, 'billing', 1.0, 0)",
+                    rusqlite::params![id, tag_type],
+                )
+                .unwrap();
+            }
+        }
+
+        let typed = search_emails(&db, Some("acc1"), "tag:intent=billing", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = typed.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["classified"], "a company named billing is not billing intent");
+
+        let untyped = search_emails(&db, Some("acc1"), "tag:billing", false, None, None)
+            .await
+            .unwrap();
+        let mut ids: Vec<&str> = untyped.emails.iter().map(|e| e.email.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["classified", "vendor"], "a bare tag: still spans every type");
+    }
+
+    // The `id:` operator (chat "show in list") returns exactly the cited
+    // emails — even two from the same thread — and nothing else.
+    #[tokio::test]
+    async fn search_by_ids_returns_exactly_those_emails() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc1", "t1", "Re: Invoice January", 200);
+        seed_searchable_email(&db, "e3", "acc1", "t2", "Lunch plans", 300);
+
+        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["e2", "e1"]);
+    }
+
+    #[tokio::test]
+    async fn search_by_ids_in_unified_mode_spans_enabled_accounts() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_account(&db, "acc2", "a2@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "acc2::7", "acc2", "t2", "Invoice February", 200);
+        seed_searchable_email(&db, "acc2::8", "acc2", "t3", "Invoice March", 300);
+
+        let result = search_emails(&db, None, "id:e1 id:acc2::7", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["acc2::7", "e1"]);
+    }
+
+    #[tokio::test]
+    async fn search_by_ids_still_applies_other_operators() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
+        seed_searchable_email(&db, "e2", "acc1", "t2", "Lunch plans", 200);
+
+        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2 subject:invoice", false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"]);
     }
 
     fn open_prod_db() -> Option<(Arc<Database>, String)> {

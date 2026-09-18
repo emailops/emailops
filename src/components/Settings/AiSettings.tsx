@@ -87,7 +87,10 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
   // in the `chat.keep_alive_seconds` preference.
   const [keepAliveMinutes, setKeepAliveMinutes] = useState<number>(30);
   // Cap on how far back AI processing (embeddings + classification) reaches.
-  // Stored as days in the `ai_max_email_age_days` preference. 0 = no limit.
+  // An account with at most `ai_max_email_count` emails is processed whole;
+  // a larger one only for the last `ai_max_email_age_days` days. 0 emails =
+  // always apply the day limit, 0 days = no limit.
+  const [aiMaxEmailCount, setAiMaxEmailCount] = useState<number>(1000);
   const [aiMaxEmailAgeDays, setAiMaxEmailAgeDays] = useState<number>(365);
   // Context window (tokens) for the embedded llama.cpp chat model. Stored in
   // `chat.n_ctx`; an unset pref (or stored 0 = auto) shows this machine's
@@ -233,6 +236,15 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
         }
       } catch {
         setAiOutputLanguage('');
+      }
+
+      // AI processing email-count limit — default 1000. 0 = always apply days.
+      try {
+        const raw = await api.getPref('ai_max_email_count');
+        const n = raw != null && raw.trim() !== '' ? parseInt(raw, 10) : 1000;
+        setAiMaxEmailCount(Number.isFinite(n) && n >= 0 ? n : 1000);
+      } catch {
+        setAiMaxEmailCount(1000);
       }
 
       // AI processing age cutoff (days) — default 365. 0 = no limit.
@@ -392,6 +404,14 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
         await api.setPref('chat.keep_alive_seconds', String(secs));
       } catch (err) {
         addLog('error', 'ai', t('settings:ai.keepAliveSaveFailed', { error: errorText(err) }));
+      }
+
+      // Save AI processing email-count limit. Clamp negatives.
+      try {
+        const count = Number.isFinite(aiMaxEmailCount) ? Math.max(0, Math.round(aiMaxEmailCount)) : 1000;
+        await api.setPref('ai_max_email_count', String(count));
+      } catch (err) {
+        addLog('error', 'ai', t('settings:ai.emailCountCutoffSaveFailed', { error: errorText(err) }));
       }
 
       // Save AI processing age cutoff (days). 0 = no limit; clamp negatives.
@@ -606,6 +626,8 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
                 onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
                 keepAliveMinutes={keepAliveMinutes}
                 onKeepAliveChange={setKeepAliveMinutes}
+                aiMaxEmailCount={aiMaxEmailCount}
+                onMaxEmailCountChange={setAiMaxEmailCount}
                 aiMaxEmailAgeDays={aiMaxEmailAgeDays}
                 onMaxEmailAgeDaysChange={setAiMaxEmailAgeDays}
                 nCtx={nCtx}
