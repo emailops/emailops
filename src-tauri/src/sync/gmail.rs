@@ -1358,7 +1358,7 @@ impl GmailClient {
         message_ids: &[&str],
         boundary: &str,
         operation: &str,
-    ) -> Result<Vec<std::result::Result<String, u16>>> {
+    ) -> Result<Vec<BatchPart>> {
         // Build multipart/mixed request body.
         let mut body = String::new();
         for (i, &id) in message_ids.iter().enumerate() {
@@ -1677,11 +1677,17 @@ impl EmailProvider for GmailClient {
         let mut final_results: Vec<Option<ProviderResult>> = (0..message_ids.len()).map(|_| None).collect();
         let mut rate_limited: Vec<usize> = Vec::new();
 
-        for (idx, part) in initial_parts.into_iter().enumerate() {
+        for (idx, part) in slot_batch_parts(initial_parts, message_ids.len())
+            .into_iter()
+            .enumerate()
+        {
             match part {
-                Ok(json) => final_results[idx] = Some(self.parse_batch_part_json(&json).await),
-                Err(429) => rate_limited.push(idx),
-                Err(status) => {
+                // Unanswered slot — left for the "Missing batch response part"
+                // fill-in below, so one gap costs one message, not the chunk.
+                None => {}
+                Some(Ok(json)) => final_results[idx] = Some(self.parse_batch_part_json(&json).await),
+                Some(Err(429)) => rate_limited.push(idx),
+                Some(Err(status)) => {
                     final_results[idx] = Some(Err(AppError::SyncError(format!(
                         "Batch sub-request failed with HTTP {}",
                         status
@@ -1723,13 +1729,20 @@ impl EmailProvider for GmailClient {
                 }
             };
 
+            // The retry re-sends only the rate-limited ids, so a part's index is
+            // a position within `rate_limited`, not within `message_ids`.
             let mut still_limited: Vec<usize> = Vec::new();
-            for (local_i, part) in retry_parts.into_iter().enumerate() {
+            for (local_i, part) in slot_batch_parts(retry_parts, rate_limited.len())
+                .into_iter()
+                .enumerate()
+            {
                 let original_idx = rate_limited[local_i];
                 match part {
-                    Ok(json) => final_results[original_idx] = Some(self.parse_batch_part_json(&json).await),
-                    Err(429) => still_limited.push(original_idx),
-                    Err(status) => {
+                    // Still unanswered — keep it queued for the next attempt.
+                    None => still_limited.push(original_idx),
+                    Some(Ok(json)) => final_results[original_idx] = Some(self.parse_batch_part_json(&json).await),
+                    Some(Err(429)) => still_limited.push(original_idx),
+                    Some(Err(status)) => {
                         final_results[original_idx] = Some(Err(AppError::SyncError(format!(
                             "Batch sub-request failed with HTTP {}",
                             status
@@ -1771,10 +1784,21 @@ fn extract_batch_boundary(content_type: &str) -> Option<String> {
     None
 }
 
+/// One sub-response of a `$batch` reply.
+pub(crate) struct BatchPart {
+    /// Which sub-request this answers, read from the response `Content-ID`.
+    ///
+    /// The request labels each sub-request `Content-ID: <item{i}>` and Gmail
+    /// echoes it as `<response-item{i}>`. `None` when the server sent no
+    /// usable Content-ID, which leaves position as the only way to attribute
+    /// the part.
+    pub index: Option<usize>,
+    /// `Ok(json)` for a 2xx sub-response, `Err(http_status)` otherwise.
+    pub outcome: std::result::Result<String, u16>,
+}
+
 /// Split a multipart/mixed `body` on `boundary` and extract JSON from each part.
-///
-/// Returns `Ok(json_string)` for 2xx sub-responses, `Err(http_status_code)` otherwise.
-fn parse_batch_parts(body: &str, boundary: &str) -> Vec<std::result::Result<String, u16>> {
+fn parse_batch_parts(body: &str, boundary: &str) -> Vec<BatchPart> {
     let delimiter = format!("--{}", boundary);
     let mut results = Vec::new();
 
@@ -1785,17 +1809,62 @@ fn parse_batch_parts(body: &str, boundary: &str) -> Vec<std::result::Result<Stri
             continue;
         }
 
-        match extract_json_from_batch_part(part) {
-            Some((status, json)) if (200..300).contains(&status) => results.push(Ok(json)),
-            Some((status, _)) => results.push(Err(status)),
-            None => {
-                // Malformed part — treat as an unknown server error
-                results.push(Err(0));
-            }
-        }
+        let index = batch_part_index(part);
+        let outcome = match extract_json_from_batch_part(part) {
+            Some((status, json)) if (200..300).contains(&status) => Ok(json),
+            Some((status, _)) => Err(status),
+            // Malformed part — treat as an unknown server error
+            None => Err(0),
+        };
+        results.push(BatchPart { index, outcome });
     }
 
     results
+}
+
+/// Read the sub-request index out of a part's `Content-ID` header.
+///
+/// Accepts `<response-item3>`, `<item3>` and the unbracketed forms, so a
+/// change in how the server decorates the echoed id does not silently drop us
+/// back to positional matching.
+fn batch_part_index(part: &str) -> Option<usize> {
+    let header_block = part.split("\r\n\r\n").next().or_else(|| part.split("\n\n").next())?;
+    let value = header_block
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Content-ID:").map(str::trim))?;
+    let digits = value.rsplit("item").next()?;
+    digits
+        .trim_end_matches(['>', '\r'])
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|_| value.contains("item"))
+}
+
+/// Place each sub-response in the slot of the sub-request it answers.
+///
+/// Pure so the attribution rules are table-testable: this used to be an
+/// `enumerate()` over the response parts, which assumed the server returns
+/// exactly as many parts as were asked for, in the same order. When one part
+/// was skipped — `parse_batch_parts` drops malformed and empty ones — every
+/// later result shifted by one and **the body of one message was stored under
+/// another message's id**, then fed to FTS, embeddings and chat citations. The
+/// same `enumerate()` could also index past the end of the slot vector and
+/// panic.
+///
+/// A slot left `None` is not an error here: the caller turns an unanswered
+/// sub-request into a per-message failure, which keeps one missing message from
+/// costing the other nineteen.
+fn slot_batch_parts(parts: Vec<BatchPart>, expected: usize) -> Vec<Option<std::result::Result<String, u16>>> {
+    let mut slots: Vec<Option<std::result::Result<String, u16>>> = (0..expected).map(|_| None).collect();
+    for (position, part) in parts.into_iter().enumerate() {
+        // No Content-ID leaves position as the only signal available.
+        let Some(slot) = part.index.or(Some(position)).filter(|i| *i < expected) else {
+            continue;
+        };
+        slots[slot] = Some(part.outcome);
+    }
+    slots
 }
 
 /// Parse one multipart part that wraps an inner HTTP response.
@@ -3498,5 +3567,109 @@ mod tests {
         let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
 
         assert_eq!(client.locate_message("gone", None).await.unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod batch_slotting_tests {
+    use super::*;
+
+    /// Build a well-formed sub-response part for `Content-ID: <response-item{i}>`.
+    fn part(i: usize, status: u16, json: &str) -> String {
+        format!(
+            "\r\nContent-Type: application/http\r\nContent-ID: <response-item{i}>\r\n\r\nHTTP/1.1 {status} OK\r\nContent-Type: application/json\r\n\r\n{json}\r\n"
+        )
+    }
+
+    fn envelope(parts: &[String]) -> String {
+        let mut body = String::new();
+        for p in parts {
+            body.push_str("--bnd");
+            body.push_str(p);
+        }
+        body.push_str("--bnd--\r\n");
+        body
+    }
+
+    /// The request labels every sub-request `Content-ID: <item{i}>` and Gmail
+    /// echoes it back as `<response-item{i}>`. Until this was read, results were
+    /// slotted by their position in the response.
+    #[test]
+    fn parse_reports_the_content_id_index_of_each_part() {
+        let body = envelope(&[part(0, 200, r#"{"id":"a"}"#), part(1, 200, r#"{"id":"b"}"#)]);
+
+        let parsed = parse_batch_parts(&body, "bnd");
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].index, Some(0));
+        assert_eq!(parsed[1].index, Some(1));
+    }
+
+    /// Nothing in the multipart spec promises response order matches request
+    /// order. Positional slotting silently assumed it.
+    #[test]
+    fn parts_returned_out_of_order_keep_their_own_index() {
+        let body = envelope(&[part(1, 200, r#"{"id":"b"}"#), part(0, 200, r#"{"id":"a"}"#)]);
+
+        let parsed = parse_batch_parts(&body, "bnd");
+
+        assert_eq!(parsed[0].index, Some(1));
+        assert_eq!(parsed[1].index, Some(0));
+    }
+
+    /// The corruption this prevents: one part missing shifted every later
+    /// result by one, so message B's body was stored under message A's id.
+    #[test]
+    fn a_missing_part_does_not_shift_the_others_onto_the_wrong_ids() {
+        // The server answered items 0 and 2; item 1 never came back.
+        let body = envelope(&[part(0, 200, r#"{"id":"a"}"#), part(2, 200, r#"{"id":"c"}"#)]);
+
+        let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 3);
+
+        assert!(matches!(slotted[0], Some(Ok(ref j)) if j.contains("\"a\"")));
+        assert!(slotted[1].is_none(), "the unanswered slot must stay empty");
+        assert!(
+            matches!(slotted[2], Some(Ok(ref j)) if j.contains("\"c\"")),
+            "the third message must keep its own id, not inherit the second's slot"
+        );
+    }
+
+    /// A part whose index is beyond the request must never index out of bounds
+    /// — the old code would have panicked.
+    #[test]
+    fn an_out_of_range_index_is_dropped_rather_than_panicking() {
+        let body = envelope(&[part(0, 200, r#"{"id":"a"}"#), part(99, 200, r#"{"id":"x"}"#)]);
+
+        let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 2);
+
+        assert_eq!(slotted.len(), 2);
+        assert!(slotted[0].is_some());
+        assert!(slotted[1].is_none());
+    }
+
+    /// Without a Content-ID there is nothing to slot by, so position is the only
+    /// option left — safe here because the count matches the request.
+    #[test]
+    fn parts_without_a_content_id_fall_back_to_position() {
+        let no_id = |json: &str| {
+            format!("\r\nContent-Type: application/http\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{json}\r\n")
+        };
+        let body = envelope(&[no_id(r#"{"id":"a"}"#), no_id(r#"{"id":"b"}"#)]);
+
+        let parsed = parse_batch_parts(&body, "bnd");
+        assert_eq!(parsed[0].index, None);
+
+        let slotted = slot_batch_parts(parsed, 2);
+        assert!(matches!(slotted[0], Some(Ok(ref j)) if j.contains("\"a\"")));
+        assert!(matches!(slotted[1], Some(Ok(ref j)) if j.contains("\"b\"")));
+    }
+
+    #[test]
+    fn a_non_2xx_sub_response_is_slotted_as_its_status() {
+        let body = envelope(&[part(0, 200, r#"{"id":"a"}"#), part(1, 429, r#"{"error":"slow"}"#)]);
+
+        let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 2);
+
+        assert!(matches!(slotted[1], Some(Err(429))));
     }
 }
