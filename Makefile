@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -208,6 +208,16 @@ eval-classify:
 # env: BENCH_Q2="..." make cli-bench
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
+
+# Compare chat models across the four evals that measure a reply (chat, query
+# planner, classifier, drafts): accuracy, wall time and peak RSS per model, as
+# a text table and an HTML page under reports/bench/.
+# Logic in scripts/model_bench.sh + scripts/model_bench_report.py.
+#   make bench-models ARGS="--models qwen3.5-4b-q4_k_m,qwen3.5-9b-q4_k_m"
+#   LLAMA_PATCH_DIR=/path/to/patched-sys-crate make bench-models ARGS="--models ..."
+bench-models:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/model_bench.sh $(ARGS)
 
 # Before/after table for the one-shot prefix slot: runs the planner eval twice
 # from the same build (slot off via EMAILOPS_AUX_PREFIX=0, then on) plus the
