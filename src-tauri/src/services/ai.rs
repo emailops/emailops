@@ -349,6 +349,23 @@ impl AiService {
     /// override keeps the configured model. The provider (Ollama / OpenRouter /
     /// llama.cpp) is still chosen by the `ai_provider` preference.
     pub fn load_provider_with_model(db: &Database, model_override: Option<&str>) -> Result<Arc<dyn AIProvider>> {
+        // The master AI switch is enforced here rather than in each
+        // `#[tauri::command]`, because "each command remembers to check" is a
+        // rule that was already broken: every AI command had the guard except
+        // the three lens commands, which reached for `load_provider` directly.
+        // With AI off and OpenRouter configured, running a Lens sent mail
+        // content off the machine — exactly what the switch exists to prevent.
+        //
+        // This is the one seam every AI path funnels through, so the guard
+        // cannot be forgotten by a future caller. Callers that legitimately run
+        // with AI off already handle the error: `warmup_from_db` logs and
+        // skips, which is the behaviour we want anyway (no model loaded into
+        // RAM when AI is disabled). Configuring a provider from Settings is
+        // unaffected — `test_ai_provider` builds its client directly.
+        if !db.is_ai_enabled()? {
+            return Err(AppError::AiDisabled);
+        }
+
         let mut config = Self::get_config(db)?;
         if let Some(m) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
             config.model = m.to_string();
@@ -801,6 +818,60 @@ mod provider_tests {
             msg.to_lowercase().contains("api key") || msg.to_lowercase().contains("not configured"),
             "error must describe the missing key; got: {msg}"
         );
+    }
+
+    /// The master AI switch is the privacy control: with it off, no mail
+    /// content may reach a model — least of all a remote one. The guard used to
+    /// live in each `#[tauri::command]`, and every AI command had it except the
+    /// three lens commands, which called `load_provider` directly. Turning AI
+    /// off and running a Lens with OpenRouter configured sent mail content off
+    /// the machine.
+    ///
+    /// The guard belongs here, at the single seam every AI path funnels
+    /// through, so a future caller cannot reintroduce the hole by forgetting a
+    /// line in a command.
+    #[test]
+    fn load_provider_refuses_when_the_master_ai_switch_is_off() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        match AiService::load_provider(&db) {
+            Err(AppError::AiDisabled) => {}
+            Err(other) => panic!("expected AiDisabled, got: {other}"),
+            Ok(provider) => panic!("built a {} provider with AI disabled", provider.model_name()),
+        }
+    }
+
+    /// Same seam, the per-turn-model entry point — the one the CLI `--model`
+    /// and REPL `/model` paths use.
+    #[test]
+    fn load_provider_with_model_refuses_when_the_master_ai_switch_is_off() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        assert!(
+            matches!(
+                AiService::load_provider_with_model(&db, Some("qwen3.5-4b-q8_0")),
+                Err(AppError::AiDisabled)
+            ),
+            "an explicit model override must not bypass the master switch"
+        );
+    }
+
+    /// The switch defaults to on, and an explicit "true" keeps it on — the
+    /// guard must not break every existing install.
+    #[test]
+    fn load_provider_works_when_ai_is_enabled_or_unset() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+
+        // Unset: defaults to enabled.
+        assert!(AiService::load_provider(&db).is_ok(), "unset must default to enabled");
+
+        db.set_preference("ai_enabled", "true").unwrap();
+        assert!(AiService::load_provider(&db).is_ok(), "explicit true must stay enabled");
     }
 
     /// Fresh installs must default to a tool-capable chat model that exists in
