@@ -308,6 +308,7 @@ impl AIProvider for OpenRouterClient {
             model: self.model.clone(),
             prefill_ms: None,
             cached_prompt_tokens: None,
+            aux_plan: None,
         })
     }
 

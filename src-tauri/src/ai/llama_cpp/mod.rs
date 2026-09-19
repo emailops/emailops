@@ -109,6 +109,26 @@ impl AIProvider for LlamaCppBackend {
             model: self.model_name.clone(),
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
+            aux_plan: outcome.aux_plan,
+        })
+    }
+
+    async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+    ) -> Result<CompletionResult> {
+        let outcome = self.runtime.generate_with_prefix(prefix, suffix, &options).await?;
+        Ok(CompletionResult {
+            text: outcome.text,
+            prompt_tokens: outcome.prompt_tokens,
+            completion_tokens: outcome.gen_tokens,
+            cost_usd: 0.0,
+            model: self.model_name.clone(),
+            prefill_ms: Some(outcome.prefill_ms),
+            cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
+            aux_plan: outcome.aux_plan,
         })
     }
 

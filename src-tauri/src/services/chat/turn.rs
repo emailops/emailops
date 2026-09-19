@@ -1916,6 +1916,9 @@ struct PlannerTelemetry {
     prompt_tokens: u32,
     prefill_ms: Option<i64>,
     cached_prompt_tokens: Option<u32>,
+    /// What the backend's one-shot prefix slot did for this call — the
+    /// planner's equivalent of the chat path's `PrefixPlan`.
+    aux_plan: Option<&'static str>,
 }
 
 /// Trace entry for the pre-loop query planner (`plan_search`). Surfaced in the
@@ -1933,7 +1936,10 @@ fn build_planner_trace(latency_ms: i64, outcome: &str, telemetry: PlannerTelemet
         prompt_tokens: Some(telemetry.prompt_tokens),
         prefill_ms: telemetry.prefill_ms,
         cached_prompt_tokens: telemetry.cached_prompt_tokens,
-        prefix_plan: None,
+        // For the planner this is its one-shot prefix slot, not the chat
+        // prefix: same question ("was the head reused or re-decoded?"), same
+        // place in the trace.
+        prefix_plan: telemetry.aux_plan.map(str::to_string),
         sys_cached_before: None,
         sys_cached_after: None,
         system_prefix_tokens: None,
@@ -3625,12 +3631,14 @@ pub async fn run_chat_turn(
             prompt_tokens: plan_prompt_tokens,
             prefill_ms: plan_prefill_ms,
             cached_prompt_tokens: plan_cached_tokens,
+            aux_plan: plan_aux,
             ..
         } = run;
         let plan_telemetry = PlannerTelemetry {
             prompt_tokens: plan_prompt_tokens,
             prefill_ms: plan_prefill_ms,
             cached_prompt_tokens: plan_cached_tokens,
+            aux_plan: plan_aux,
         };
         match plan {
             super::planner::Plan::Search(plan) => {

@@ -9,12 +9,20 @@
 // stays loaded; requests arrive over an mpsc channel and are answered over
 // per-request oneshots. Streaming callbacks run on this thread.
 //
-// KV REUSE — THREE SEQUENCES
-// ──────────────────────────
+// KV REUSE — FOUR SEQUENCES
+// ─────────────────────────
 // `cached_tokens` mirrors exactly the PROMPT tokens materialised in sequence
 // 0 (the working prompt prefix). Generation happens on sequence 1 (a copy of
 // seq 0), dropped wholesale at the start of the next request. Sequence 2 is a
 // never-evicted ANCHOR holding only the invariant system prefix.
+//
+// Sequence 3 (`AUX_SEQ`) belongs to ONE-SHOT prompts — the query planner's
+// instructions, which are the same ~1.5k tokens for every question asked in a
+// session. One-shots still run with `cache_prompt: false` and still never
+// touch seq 0; the slot only spares them re-processing their own head. It is
+// always the first thing evicted when cells run short, from either side:
+// `plan_oneshot_cells` gives it up before the chat prefix, and
+// `chat_must_evict_aux` drops it before a chat turn would truncate.
 //
 // Why no partial eviction: each tool round's prompt is a strict extension of
 // the previous round's PROMPT, but a NEW conversation's prompt only shares the
@@ -64,8 +72,9 @@ use llama_cpp_2::{
 };
 
 use super::planner::{
-    anchor_shares_cells_with_seq0, effective_n_ctx, plan_anchor_seed, plan_auto_n_ctx_cap, plan_cached_prefix,
-    plan_n_ctx_suggestion, plan_prompt_budget, plan_stable_boundary, plan_uncached_budget, PrefixPlan,
+    anchor_shares_cells_with_seq0, chat_must_evict_aux, effective_n_ctx, plan_anchor_seed, plan_auto_n_ctx_cap,
+    plan_aux_prefix, plan_cached_prefix, plan_n_ctx_suggestion, plan_oneshot_cells, plan_prompt_budget,
+    plan_stable_boundary, AuxPrefixPlan, OneshotEvict, PrefixPlan,
 };
 use super::runtime::backend;
 
@@ -74,6 +83,18 @@ use super::runtime::backend;
 /// buffers and is a known cause of fatal `llama_decode` failures on Apple
 /// Silicon under memory pressure. 512 is llama.cpp's own default.
 const N_UBATCH: u32 = 512;
+
+/// Sequences reserved for one-shot prompt prefixes, on top of the three the
+/// chat path uses (working prefix, generation scratch, system anchor).
+///
+/// One, for the query planner: its ~1.5k-token invariant prefix accounts for
+/// 682 ms of its 1161 ms, measured by `oneshot_kv_bench`. The classifier has
+/// an invariant prefix too, but its prefill is 2 ms of 587 ms — a slot for it
+/// would cost cells and recurrent state to save nothing measurable.
+const AUX_SLOTS: u32 = 1;
+
+/// Sequence id of the one-shot prefix slot.
+const AUX_SEQ: i32 = 3;
 
 /// Result of one generation pass.
 pub(crate) struct GenOutcome {
@@ -117,6 +138,9 @@ pub(crate) struct GenOutcome {
     /// it in the trace so a user staring at a wall of cold prefills can tell
     /// "out of context" from "actual cache bug".
     pub dropped_front_tokens: u32,
+    /// What the one-shot prefix slot did this call — `"Reuse"`, `"Reseed"` or
+    /// `"Bypass"`. `None` on the chat path, which does not use it.
+    pub aux_plan: Option<&'static str>,
 }
 
 /// Streaming callback: receives each generated piece; return `false` to stop.
@@ -131,6 +155,12 @@ struct GenRequest {
     /// prefix warm for the next chat turn. Their next prompt never extends
     /// the previous one, so caching them only evicts what IS reusable.
     cache_prompt: bool,
+    /// Byte length of the invariant head of a ONE-SHOT prompt (the planner
+    /// instructions, a classifier template). Only meaningful with
+    /// `cache_prompt: false`: the actor keeps those tokens in a sequence of
+    /// their own so the next one-shot sharing that head skips re-processing
+    /// it. `None` runs the prompt exactly as before.
+    aux_prefix_bytes: Option<usize>,
     /// Byte length of the prompt prefix that is stable across turns (the
     /// render without the generation header). Tokens past it stay out of the
     /// persistent seq-0 cache — see "VOLATILE TAIL" above. `None` caches the
@@ -201,6 +231,7 @@ impl InferenceActorHandle {
         temperature: f32,
         max_tokens: usize,
         cache_prompt: bool,
+        aux_prefix_bytes: Option<usize>,
         stable_prompt_bytes: Option<usize>,
         system_prefix_bytes: Option<usize>,
         on_token: Option<OnToken>,
@@ -212,6 +243,7 @@ impl InferenceActorHandle {
                 temperature,
                 max_tokens,
                 cache_prompt,
+                aux_prefix_bytes,
                 stable_prompt_bytes,
                 system_prefix_bytes,
                 on_token,
@@ -305,7 +337,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
         // it llama.cpp splits the n_ctx cell budget per sequence (→
         // NoKvCacheSlot on long prompts). The sequences share cells via
         // tagging, so unified costs nothing.
-        .with_n_seq_max(3)
+        .with_n_seq_max(3 + AUX_SLOTS)
         .with_kv_unified(true);
 
     let mut ctx = match model.new_context(backend(), ctx_params) {
@@ -323,6 +355,10 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     // Token mirror of the seq-2 system-prefix anchor (never evicted except on
     // a route flip that re-renders the system message, or a hard error).
     let mut cached_system: Vec<LlamaToken> = Vec::new();
+    // Token mirror of the one-shot prefix slot (seq 3). Dropped before the
+    // chat prefix whenever cells run short — chat latency is what the user
+    // waits on, and re-seeding this costs one one-shot prefill, not a turn.
+    let mut aux_prefix: Vec<LlamaToken> = Vec::new();
     // The "raise your context window" hint fires at most once per actor
     // lifetime — long multi-turn chats truncate every turn once they overflow
     // and repeating the same advice would spam the output panel.
@@ -333,6 +369,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             temperature,
             max_tokens,
             cache_prompt,
+            aux_prefix_bytes,
             stable_prompt_bytes,
             system_prefix_bytes,
             mut on_token,
@@ -343,10 +380,12 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             &mut ctx,
             &mut cached_tokens,
             &mut cached_system,
+            &mut aux_prefix,
             &prompt,
             temperature,
             max_tokens,
             cache_prompt,
+            aux_prefix_bytes,
             stable_prompt_bytes,
             system_prefix_bytes,
             on_token.as_mut(),
@@ -358,9 +397,20 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             ctx.clear_kv_cache();
             cached_tokens.clear();
             cached_system.clear();
+            aux_prefix.clear();
         }
         let _ = reply.send(result);
     }
+}
+
+/// Copy the whole one-shot prefix sequence onto the generation sequence.
+///
+/// Whole-sequence: a ranged copy would bring the recurrent state from the END
+/// of the source sequence on a hybrid model (Qwen 3.5), which is not the state
+/// that belongs at the copied position.
+fn copy_aux_into_generation(ctx: &mut LlamaContext) -> std::result::Result<(), String> {
+    ctx.copy_kv_cache_seq(AUX_SEQ, 1, None, None)
+        .map_err(|e| format!("KV aux-seq→generation copy failed: {}", e))
 }
 
 /// One generation pass against the persistent context.
@@ -376,10 +426,12 @@ fn generate_with_cache(
     ctx: &mut LlamaContext,
     cached: &mut Vec<LlamaToken>,
     cached_system: &mut Vec<LlamaToken>,
+    aux_prefix: &mut Vec<LlamaToken>,
     prompt: &str,
     temperature: f32,
     max_tokens: usize,
     cache_prompt: bool,
+    aux_prefix_bytes: Option<usize>,
     stable_prompt_bytes: Option<usize>,
     system_prefix_bytes: Option<usize>,
     mut on_token: Option<&mut OnToken>,
@@ -409,6 +461,7 @@ fn generate_with_cache(
             system_prefix_tokens: 0,
             stable_tokens: 0,
             dropped_front_tokens: 0,
+            aux_plan: None,
         });
     }
 
@@ -430,6 +483,8 @@ fn generate_with_cache(
     // the chat reasoning trace so the UI can show "ColdPrefill 🔥 wiped"
     // etc. instead of just a cached-token count. None for cache_prompt=false.
     let plan_name: Option<&'static str>;
+    // What the one-shot prefix slot did; None on the chat path.
+    let mut aux_plan_name: Option<&'static str> = None;
     // Tokens dropped from the front of the prompt to fit n_ctx (0 if no
     // truncation was needed). Reported back via GenOutcome so the trace can
     // distinguish "cold because of context overflow" from "cold because of
@@ -442,6 +497,16 @@ fn generate_with_cache(
             dropped_front = budget.drop_front;
         }
         max_gen = budget.max_gen;
+
+        // The one-shot prefix slot is given up before the chat turn has to
+        // give up anything of its own. The budget above is computed against
+        // the FULL window, so a resident one-shot prefix can never push a chat
+        // prompt into front truncation.
+        if chat_must_evict_aux(tokens.len(), max_gen, n_ctx, aux_prefix.len()) {
+            ctx.clear_kv_cache_seq(Some(AUX_SEQ as u32), None, None)
+                .map_err(|e| format!("KV aux-seq eviction failed: {}", e))?;
+            aux_prefix.clear();
+        }
 
         // Decide the seq-0 strategy WITHOUT any partial mid-sequence eviction
         // (unsupported on hybrid caches): extend the resident prefix, restart
@@ -596,36 +661,94 @@ fn generate_with_cache(
         // One-shot request: keep the seq-0 chat prefix warm and run this
         // prompt entirely on the throwaway generation sequence. Evict the
         // resident prefix only when the prompt cannot fit beside it.
-        let plan = plan_uncached_budget(tokens.len(), max_tokens, n_ctx, cached.len());
+        let plan = plan_oneshot_cells(tokens.len(), max_tokens, n_ctx, cached.len(), aux_prefix.len());
         crate::services::logger::log(
             "info",
             "ai",
             format!(
-                "llamacpp kv: uncached prompt={} resident={} sys_cached={} evict={}",
+                "llamacpp kv: uncached prompt={} resident={} aux={} sys_cached={} evict={:?}",
                 tokens.len(),
                 cached.len(),
+                aux_prefix.len(),
                 prev_sys_cached,
-                plan.evict_resident
+                plan.evict
             ),
         );
-        if plan.evict_resident {
-            // Full clear frees the anchor's cells too; drop both mirrors so
-            // they never disagree with the real KV. The next chat turn reseeds
-            // the anchor (correctness beats keeping it warm).
-            ctx.clear_kv_cache();
-            cached.clear();
-            cached_system.clear();
+        match plan.evict {
+            OneshotEvict::Nothing => {}
+            OneshotEvict::Aux => {
+                // The one-shot prefix is the cheapest thing in the cache to
+                // rebuild, so it goes before the chat prefix does.
+                ctx.clear_kv_cache_seq(Some(AUX_SEQ as u32), None, None)
+                    .map_err(|e| format!("KV aux-seq eviction failed: {}", e))?;
+                aux_prefix.clear();
+            }
+            OneshotEvict::Everything => {
+                // Full clear frees the anchor's and the aux slot's cells too;
+                // drop every mirror so none disagrees with the real KV. The
+                // next chat turn reseeds the anchor (correctness beats keeping
+                // it warm).
+                ctx.clear_kv_cache();
+                cached.clear();
+                cached_system.clear();
+                aux_prefix.clear();
+            }
         }
         if plan.budget.drop_front > 0 {
             tokens.drain(0..plan.budget.drop_front);
             dropped_front = plan.budget.drop_front;
         }
         max_gen = plan.budget.max_gen;
-        lcp = 0;
         stable_tok = tokens.len();
         sys_tok = 0;
         prefill_seq = 1;
         plan_name = None;
+
+        // Hold the invariant head of the prompt in a sequence of its own, so
+        // the next one-shot that shares it decodes only its own tail. The
+        // boundary is resolved the same way the chat path resolves its stable
+        // boundary: tokenise the byte prefix and let `plan_stable_boundary`
+        // absorb the merge at the seam.
+        let aux_tok = match aux_prefix_bytes {
+            Some(b) if dropped_front == 0 && b < prompt.len() && prompt.is_char_boundary(b) => {
+                let prefix_tokens = model
+                    .str_to_token(&prompt[..b], AddBos::Always)
+                    .map_err(|e| format!("Aux-prefix tokenisation failed: {}", e))?;
+                plan_stable_boundary(&tokens, &prefix_tokens, 0)
+            }
+            _ => 0,
+        };
+
+        let aux_plan = plan_aux_prefix(aux_prefix, &tokens, aux_tok, n_ctx as u32);
+        aux_plan_name = Some(match aux_plan {
+            AuxPrefixPlan::Reuse { .. } => "Reuse",
+            AuxPrefixPlan::Reseed { .. } => "Reseed",
+            AuxPrefixPlan::Bypass => "Bypass",
+        });
+        lcp = match aux_plan {
+            AuxPrefixPlan::Bypass => 0,
+            AuxPrefixPlan::Reseed { prefix_len } => {
+                // Re-seed the slot from scratch: whole-sequence eviction only,
+                // which every cache type supports.
+                ctx.clear_kv_cache_seq(Some(AUX_SEQ as u32), None, None)
+                    .map_err(|e| format!("KV aux-seq eviction failed: {}", e))?;
+                aux_prefix.clear();
+                let mut seed = LlamaBatch::new(prefix_len, 1);
+                for (pos, &token) in tokens[..prefix_len].iter().enumerate() {
+                    seed.add(token, pos as i32, &[AUX_SEQ], false)
+                        .map_err(|e| format!("Batch add error during aux prefill: {}", e))?;
+                }
+                ctx.decode(&mut seed)
+                    .map_err(|e| super::runtime::decode_failure("Aux-prefix decode failed", e))?;
+                aux_prefix.extend_from_slice(&tokens[..prefix_len]);
+                copy_aux_into_generation(ctx)?;
+                prefix_len
+            }
+            AuxPrefixPlan::Reuse { reuse } => {
+                copy_aux_into_generation(ctx)?;
+                reuse
+            }
+        };
     }
     let n_prompt = tokens.len();
 
@@ -743,5 +866,6 @@ fn generate_with_cache(
         system_prefix_tokens: sys_tok as u32,
         stable_tokens: stable_tok as u32,
         dropped_front_tokens: dropped_front as u32,
+        aux_plan: aux_plan_name,
     })
 }

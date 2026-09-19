@@ -44,6 +44,7 @@ pub struct CaseRun {
     pub prompt_tokens: u32,
     pub prefill_ms: Option<i64>,
     pub cached_prompt_tokens: Option<u32>,
+    pub aux_plan: Option<&'static str>,
 }
 
 /// The run as a whole, for `--json` and for the before/after report.
@@ -63,6 +64,12 @@ pub struct PlanMetricsReport {
     pub latency_ms_p95: Option<u64>,
     pub prompt_tokens_mean: Option<f64>,
     pub prefill_ms_mean: Option<f64>,
+    /// How often the backend could reuse the planner's invariant head, and
+    /// how often it had to decode it again. A run dominated by `reseeded` is
+    /// paying for the prefix slot without getting anything back.
+    pub prefix_reused: usize,
+    pub prefix_reseeded: usize,
+    pub prefix_bypassed: usize,
 }
 
 impl PlanMetricsReport {
@@ -85,6 +92,9 @@ impl PlanMetricsReport {
             latency_ms_p95: percentile(&latencies, 0.95),
             prompt_tokens_mean: mean(runs.iter().map(|r| r.prompt_tokens as f64).collect()),
             prefill_ms_mean: mean(runs.iter().filter_map(|r| r.prefill_ms).map(|v| v as f64).collect()),
+            prefix_reused: runs.iter().filter(|r| r.aux_plan == Some("Reuse")).count(),
+            prefix_reseeded: runs.iter().filter(|r| r.aux_plan == Some("Reseed")).count(),
+            prefix_bypassed: runs.iter().filter(|r| r.aux_plan == Some("Bypass")).count(),
         }
     }
 }
@@ -148,6 +158,7 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
         let prompt_tokens = planned.prompt_tokens;
         let prefill_ms = planned.prefill_ms;
         let cached_prompt_tokens = planned.cached_prompt_tokens;
+        let aux_plan = planned.aux_plan;
         let plan = match planned.plan {
             Plan::Search(plan) => Some(*plan),
             Plan::Defer => None,
@@ -169,6 +180,7 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             prompt_tokens,
             prefill_ms,
             cached_prompt_tokens,
+            aux_plan,
         });
     }
 
@@ -215,6 +227,10 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
                 .prefill_ms_mean
                 .map(|v| format!("{v:.0}"))
                 .unwrap_or_else(|| "n/a".into()),
+        );
+        println!(
+            "[plan-eval] prefix slot: reused {} · reseeded {} · bypassed {}",
+            metrics.prefix_reused, metrics.prefix_reseeded, metrics.prefix_bypassed
         );
         println!("[plan-eval] report written to {}", html_path.display());
     }
