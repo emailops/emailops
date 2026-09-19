@@ -65,11 +65,13 @@ context length tell you what you are about to run, and the architecture is
 what decides the template and priming questions in Phase 2.
 
 **If stock llama.cpp cannot load the file** (a vendor's private quant type, a
-custom activation runtime), that is a fork port, not a download. It is
-feasible — the C API is usually a superset — but it is hours of work and it
-replaces the runtime for every model. Surface the cost and let the user choose
-before starting. `docs/model-bench-prismml-fork.md` is a worked example with
-the recipe.
+custom activation runtime), that is a fork port, not a download. It is usually
+feasible — a vendor fork's public C API tends to be a strict superset of the
+upstream the bindings were generated from, so only `llama-cpp-sys-2`'s own C++
+shim needs patching, and `--config 'patch.crates-io...'` applies it per command
+without changing a committed file (`LLAMA_PATCH_DIR` in the harness). But it is
+hours of work and the fork then serves every model, not just the candidate.
+Surface that cost and let the user choose before starting.
 
 ## Phase 2 — One case first: is it wired in correctly?
 

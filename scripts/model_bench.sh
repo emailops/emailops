@@ -12,10 +12,11 @@
 #   scripts/model_bench.sh --models a,b [--repeats N] [--tier smoke] [--drafts N]
 #
 # Env:
-#   LLAMA_PATCH_DIR  path to a patched llama-cpp-sys-2 (the PrismML fork port).
-#                    When set, every cargo invocation gets the corresponding
-#                    [patch.crates-io] via --config, and nothing committed
-#                    changes. Leave unset for the stock runtime.
+#   LLAMA_PATCH_DIR  path to a patched llama-cpp-sys-2, for a candidate whose
+#                    GGUF stock llama.cpp cannot load. When set, every cargo
+#                    invocation gets the corresponding [patch.crates-io] via
+#                    --config, so nothing committed changes and the normal
+#                    build is untouched. Leave unset for the stock runtime.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
