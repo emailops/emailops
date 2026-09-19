@@ -1,11 +1,14 @@
-// Not gated behind `llamacpp`: the offload decision is pure and is unit-tested
-// in `--no-default-features` builds, which is the only configuration the CI
-// fast jobs compile.
+// Not gated behind `llamacpp`: the offload decision, the GGUF header read and
+// the no-think priming rule are all pure, and are unit-tested in
+// `--no-default-features` builds, which is the only configuration the CI fast
+// jobs compile.
+pub mod gguf;
 pub mod gpu_plan;
 pub mod ollama;
 pub mod openrouter;
 pub mod provider;
 pub mod stream_gate;
+pub mod think_priming;
 pub mod thinking_filter;
 pub mod tracing;
 
