@@ -153,7 +153,8 @@ constant: `auto_n_ctx_tier` (`src-tauri/src/util/system.rs`) gives 8192 below
 16 GB, 16384 below 24 GB and 32768 above, and `plan_auto_n_ctx_cap` /
 `effective_n_ctx` (`src-tauri/src/ai/llama_cpp/planner.rs`) shrink that to what
 the KV cache actually fits and to the model's `n_ctx_train`. So **8192 is the
-floor, not the clamp** — assume it, because it is what a 16 GB machine gets.
+floor, not the clamp** — it is what a machine under 16 GB gets, and what
+anything with a failed RAM probe falls back to.
 `plan_prompt_budget` (same file) shrinks the generation budget and then
 **front-truncates the prompt** when `prompt_len + max_tokens > n_ctx` —
 silently dropping the head of the prompt (and emitting a warning). At the 8192
@@ -392,8 +393,8 @@ prompt? Ask and I'll paste."
   retrieved snippets in the system prefix bust the KV-prefix anchor every turn
   (`ColdPrefill`). Keep them out of the prefix — inject after the stable block.
 - **Ignoring the context budget.** A bigger prompt / tool array can front-
-  truncate real turns on a 16 GB machine, where the window is 8192. Check
-  before, gate or trim if it's big.
+  truncate real turns on a machine under 16 GB, where the window is 8192.
+  Check before, gate or trim if it's big.
 - **Writing the executor before the planner is tested.** The planner is the
   decision; test it exhaustively first. The executor is plumbing.
 - **A model call where a heuristic suffices** (or vice versa). Intent matching
