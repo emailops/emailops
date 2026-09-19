@@ -286,6 +286,18 @@ name = "query_plan_eval"
 required-features = ["eval"]
 
 [[example]]
+# Scores the email classifier (intent / topic / urgency) against the labelled
+# synthetic corpus in evals/classification/cases. See `make eval-classify`.
+name = "tag_classification_eval"
+required-features = ["eval"]
+
+[[example]]
+# Measures what classifier / planner one-shots cost the chat KV prefix, in one
+# process. See `make bench-oneshot-kv`.
+name = "oneshot_kv_bench"
+required-features = ["eval"]
+
+[[example]]
 # Single-turn ad-hoc probe of `services::chat::run_chat_turn` against the
 # real DB. Usage:
 #   cargo run --features eval --example chat_probe -- --question "..."

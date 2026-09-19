@@ -148,16 +148,24 @@ not silently ship a regression.
 
 ### A. Context-window budget (`n_ctx`)
 
-The embedded llama.cpp runtime clamps context to `MAX_N_CTX = 8192`
-(`src-tauri/src/ai/llama_cpp/actor.rs`). `plan_prompt_budget`
-(`src-tauri/src/ai/llama_cpp/planner.rs`) shrinks the generation budget and
-then **front-truncates the prompt** when `prompt_len + max_tokens > n_ctx` —
-silently dropping the head of the prompt (and emitting a warning).
+The embedded llama.cpp runtime sizes its context from RAM, not from a fixed
+constant: `auto_n_ctx_tier` (`src-tauri/src/util/system.rs`) gives 8192 below
+16 GB, 16384 below 24 GB and 32768 above, and `plan_auto_n_ctx_cap` /
+`effective_n_ctx` (`src-tauri/src/ai/llama_cpp/planner.rs`) shrink that to what
+the KV cache actually fits and to the model's `n_ctx_train`. So **8192 is the
+floor, not the clamp** — it is what a machine under 16 GB gets, and what
+anything with a failed RAM probe falls back to.
+`plan_prompt_budget` (same file) shrinks the generation budget and then
+**front-truncates the prompt** when `prompt_len + max_tokens > n_ctx` —
+silently dropping the head of the prompt (and emitting a warning). At the 8192
+tier a full chat prompt (~7.5k tokens) already truncates and cold-prefills
+every turn; `make bench-oneshot-kv` measures this.
 
 - Anything that grows the prompt (a longer system prompt, a new tool's schema
   in the tool array, more retrieved sources, longer summaries) eats this
   budget. The system prompt, tool schemas, retrieval block, and conversation
-  history all share 8192 tokens with generation.
+  history all share the window with generation — 8192 tokens on the smallest
+  supported machine.
 - **Risk to flag:** a large addition can push real turns into front-truncation
   (losing the head of the system prompt) or starve generation. **Fix options:**
   trim/condense the addition; gate it behind the feature toggle so it's only
@@ -294,7 +302,8 @@ run the matching eval **scoped to related cases**, not the full suite:
 | Shortcut fast-path | `chat_shortcut_eval` |
 | Draft generation | `draft_eval` |
 | Draft review | `draft_review_eval` |
-| Classification | `email_classification_eval` |
+| Classification (intent / topic / urgency) | `tag_classification_eval` (`make eval-classify`) |
+| Query planner (`chat.query_plan`) | `query_plan_eval` (`make eval-plan`) |
 | Lens / memory / task / invoice / agent-search | the matching `examples/*_eval.rs` |
 
 - Eval canonical model/provider: `qwen3.5-4b-q4_k_m` on `llamacpp` (matches
@@ -384,7 +393,8 @@ prompt? Ask and I'll paste."
   retrieved snippets in the system prefix bust the KV-prefix anchor every turn
   (`ColdPrefill`). Keep them out of the prefix — inject after the stable block.
 - **Ignoring the context budget.** A bigger prompt / tool array can front-
-  truncate real turns at `n_ctx=8192`. Check before, gate or trim if it's big.
+  truncate real turns on a machine under 16 GB, where the window is 8192.
+  Check before, gate or trim if it's big.
 - **Writing the executor before the planner is tested.** The planner is the
   decision; test it exhaustively first. The executor is plumbing.
 - **A model call where a heuristic suffices** (or vice versa). Intent matching

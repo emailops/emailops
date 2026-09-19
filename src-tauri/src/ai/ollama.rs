@@ -1016,6 +1016,9 @@ impl AIProvider for OllamaClient {
             completion_tokens: 0,
             cost_usd: 0.0,
             model: self.model.clone(),
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            aux_plan: None,
         })
     }
 

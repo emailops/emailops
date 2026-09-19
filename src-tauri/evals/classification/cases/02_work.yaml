@@ -1,0 +1,301 @@
+# Synthetic tag-classification corpus — project, operations and support.
+# Every address is a .test domain and every name is invented: this corpus
+# never touches a real mailbox. Gold label first, accepted alternatives after.
+
+- id: en_project_status_update
+  lang: en
+  from_name: "Ingrid Halm"
+  from_email: "ingrid@halmstudio.test"
+  subject: "Sprint 14 wrapped, demo Friday"
+  snippet: "We closed sprint 14 with all but one ticket done. Demo is Friday at 10:00 unless you say otherwise."
+  expect:
+    intent: [conversation, delivery]
+    topic: [project]
+    urgency: [normal]
+
+- id: en_project_deliverable_handover
+  lang: en
+  from_name: "Mateo Riera"
+  from_email: "mateo@rieradev.test"
+  subject: "Final assets for the rebrand"
+  snippet: "Here are the final assets, source files included. Everything from the last review round is applied."
+  expect:
+    intent: [delivery]
+    topic: [project, marketing]
+    urgency: [normal]
+
+- id: en_project_blocker_question
+  lang: en
+  from_name: "Ana Belova"
+  from_email: "ana@belova.test"
+  subject: "Which environment should the migration target?"
+  snippet: "We are ready to run the migration but the runbook names two environments. Which one is the real target?"
+  expect:
+    intent: [question]
+    topic: [project]
+    urgency: [normal, urgent]
+
+- id: en_project_scope_complaint
+  lang: en
+  from_name: "Felix Nowak"
+  from_email: "felix@nowakgroup.test"
+  subject: "This is the third scope change this month"
+  snippet: "Every time we freeze the scope something new lands. We cannot keep the date if this continues."
+  expect:
+    intent: [complaint]
+    topic: [project]
+    urgency: [normal, urgent]
+
+- id: en_project_kickoff_scheduling
+  lang: en
+  from_name: "Grace Otieno"
+  from_email: "grace@otienoworks.test"
+  subject: "Kickoff on Tuesday or Wednesday?"
+  snippet: "Can we do the kickoff Tuesday at 15:00? Wednesday morning also works if that is easier for your team."
+  expect:
+    intent: [scheduling]
+    topic: [project]
+    urgency: [normal]
+
+- id: es_project_estado_semanal
+  lang: es
+  from_name: "Nuria Balaguer"
+  from_email: "nuria@balaguerlab.test"
+  subject: "Cierre del sprint 9 y demo del viernes"
+  snippet: "Hemos cerrado el sprint 9 con todo salvo una incidencia. La demo ser\u00eda el viernes a las 10:00."
+  expect:
+    intent: [conversation, delivery]
+    topic: [project]
+    urgency: [normal]
+
+- id: es_project_entrega_final
+  lang: es
+  from_name: "Hugo Cant\u00f3"
+  from_email: "hugo@cantodigital.test"
+  subject: "Entrega final de los materiales"
+  snippet: "Te paso los materiales finales con los archivos editables. Est\u00e1n aplicados todos los cambios de la \u00faltima revisi\u00f3n."
+  expect:
+    intent: [delivery]
+    topic: [project, marketing]
+    urgency: [normal]
+
+- id: es_project_bloqueo_pregunta
+  lang: es
+  from_name: "Silvia Arroyo"
+  from_email: "silvia@arroyotech.test"
+  subject: "\u00bfA qu\u00e9 entorno apunta la migraci\u00f3n?"
+  snippet: "Tenemos la migraci\u00f3n lista pero el manual menciona dos entornos. \u00bfCu\u00e1l es el bueno?"
+  expect:
+    intent: [question]
+    topic: [project]
+    urgency: [normal, urgent]
+
+- id: es_project_queja_alcance
+  lang: es
+  from_name: "Pablo Miralles"
+  from_email: "pablo@mirallesgrupo.test"
+  subject: "Es el tercer cambio de alcance este mes"
+  snippet: "Cada vez que cerramos el alcance aparece algo nuevo. As\u00ed no podemos mantener la fecha de entrega."
+  expect:
+    intent: [complaint]
+    topic: [project]
+    urgency: [normal, urgent]
+
+- id: en_ops_supplier_delay
+  lang: en
+  from_name: "Dario Fenn"
+  from_email: "logistics@fennsupply.test"
+  subject: "Pallet delayed to Thursday"
+  snippet: "The carrier pushed the pallet to Thursday morning. Nothing you need to do, I will confirm once it ships."
+  expect:
+    intent: [notification, delivery]
+    topic: [operations]
+    urgency: [normal, low]
+
+- id: en_ops_order_shipped
+  lang: en
+  from_name: "Northbay Depot"
+  from_email: "orders@northbaydepot.test"
+  subject: "Order 88421 has shipped"
+  snippet: "Your order has left the warehouse. Tracking number is inside; expected delivery in two working days."
+  expect:
+    intent: [notification, delivery]
+    topic: [operations]
+    urgency: [low]
+
+- id: en_ops_access_request
+  lang: en
+  from_name: "Ilya Sorokin"
+  from_email: "ilya@sorokinops.test"
+  subject: "Can you add me to the shared drive?"
+  snippet: "I need read access to the supplier folder to finish the stock count. Can you add me today?"
+  expect:
+    intent: [request]
+    topic: [operations]
+    urgency: [normal]
+
+- id: en_ops_office_move_notice
+  lang: en
+  from_name: "Building Management"
+  from_email: "notices@quaysidebuilding.test"
+  subject: "Water shut-off on Saturday 08:00-13:00"
+  snippet: "Scheduled maintenance will interrupt the water supply on Saturday between 08:00 and 13:00."
+  expect:
+    intent: [notification]
+    topic: [operations]
+    urgency: [low, normal]
+
+- id: en_ops_vendor_intro
+  lang: en
+  from_name: "Renata Voss"
+  from_email: "renata@vossprint.test"
+  subject: "Introducing Voss Print"
+  snippet: "We print small-run packaging for studios like yours. Happy to send samples if that is useful."
+  expect:
+    intent: [introduction, promotion]
+    topic: [operations, sales]
+    urgency: [low]
+
+- id: es_ops_retraso_proveedor
+  lang: es
+  from_name: "Rub\u00e9n Caldas"
+  from_email: "logistica@caldassuministros.test"
+  subject: "El pal\u00e9 se retrasa al jueves"
+  snippet: "El transportista ha movido la entrega al jueves por la ma\u00f1ana. No hace falta que hagas nada, te confirmo cuando salga."
+  expect:
+    intent: [notification, delivery]
+    topic: [operations]
+    urgency: [normal, low]
+
+- id: es_ops_pedido_enviado
+  lang: es
+  from_name: "Almac\u00e9n Duero"
+  from_email: "pedidos@almacenduero.test"
+  subject: "Tu pedido 33107 ya ha salido"
+  snippet: "Tu pedido ha salido del almac\u00e9n. Dentro tienes el n\u00famero de seguimiento; llegar\u00e1 en dos d\u00edas laborables."
+  expect:
+    intent: [notification, delivery]
+    topic: [operations]
+    urgency: [low]
+
+- id: es_ops_solicitud_acceso
+  lang: es
+  from_name: "Miriam Elgue"
+  from_email: "miriam@elgueoperaciones.test"
+  subject: "\u00bfMe das acceso a la carpeta de proveedores?"
+  snippet: "Necesito permiso de lectura en la carpeta de proveedores para cerrar el inventario. \u00bfPuedes d\u00e1rmelo hoy?"
+  expect:
+    intent: [request]
+    topic: [operations]
+    urgency: [normal]
+
+- id: es_ops_corte_agua
+  lang: es
+  from_name: "Administraci\u00f3n del edificio"
+  from_email: "avisos@edificiolaribera.test"
+  subject: "Corte de agua el s\u00e1bado de 08:00 a 13:00"
+  snippet: "Por mantenimiento programado el suministro de agua estar\u00e1 cortado el s\u00e1bado de 08:00 a 13:00."
+  expect:
+    intent: [notification]
+    topic: [operations]
+    urgency: [low, normal]
+
+- id: en_support_ticket_opened
+  lang: en
+  from_name: "Sunmark Helpdesk"
+  from_email: "support@sunmark.test"
+  subject: "Ticket 7741 received"
+  snippet: "We have received your request and a technician will reply within one working day. Reference 7741."
+  expect:
+    intent: [notification]
+    topic: [support]
+    urgency: [low, normal]
+
+- id: en_support_bug_report
+  lang: en
+  from_name: "Yusuf Demir"
+  from_email: "yusuf@demirlabs.test"
+  subject: "Export fails on files over 50 MB"
+  snippet: "Every export above 50 MB stops at 80% with a timeout. It worked last week. Can someone look today?"
+  expect:
+    intent: [complaint, request]
+    topic: [support]
+    urgency: [urgent, normal]
+
+- id: en_support_how_to_question
+  lang: en
+  from_name: "Clara Mensah"
+  from_email: "clara@mensahco.test"
+  subject: "Where do I change the reply-to address?"
+  snippet: "I cannot find where to set a different reply-to for the shared inbox. Is it under settings?"
+  expect:
+    intent: [question]
+    topic: [support]
+    urgency: [normal, low]
+
+- id: en_support_resolution_feedback
+  lang: en
+  from_name: "Jonas Beck"
+  from_email: "jonas@becklab.test"
+  subject: "Thanks, that fixed it"
+  snippet: "The workaround you sent worked straight away. Good support, no further action needed."
+  expect:
+    intent: [feedback]
+    topic: [support]
+    urgency: [low]
+
+- id: en_support_maintenance_notice
+  lang: en
+  from_name: "Pallas Status"
+  from_email: "status@pallasapp.test"
+  subject: "Scheduled maintenance tonight 23:00 UTC"
+  snippet: "The API will be read-only for roughly 30 minutes tonight from 23:00 UTC."
+  expect:
+    intent: [notification]
+    topic: [support]
+    urgency: [low, normal]
+
+- id: es_support_ticket_abierto
+  lang: es
+  from_name: "Soporte Alvia"
+  from_email: "soporte@alvia.test"
+  subject: "Hemos recibido tu incidencia 5520"
+  snippet: "Hemos registrado tu incidencia con la referencia 5520. Un t\u00e9cnico te responder\u00e1 en un d\u00eda laborable."
+  expect:
+    intent: [notification]
+    topic: [support]
+    urgency: [low, normal]
+
+- id: es_support_fallo_exportacion
+  lang: es
+  from_name: "Ander Loyola"
+  from_email: "ander@loyoladatos.test"
+  subject: "La exportaci\u00f3n falla con archivos grandes"
+  snippet: "Cualquier exportaci\u00f3n de m\u00e1s de 50 MB se queda al 80% y da error. La semana pasada funcionaba. \u00bfPod\u00e9is mirarlo hoy?"
+  expect:
+    intent: [complaint, request]
+    topic: [support]
+    urgency: [urgent, normal]
+
+- id: es_support_como_se_hace
+  lang: es
+  from_name: "Teresa Vilar"
+  from_email: "teresa@vilarestudio.test"
+  subject: "\u00bfD\u00f3nde cambio la direcci\u00f3n de respuesta?"
+  snippet: "No encuentro d\u00f3nde configurar una direcci\u00f3n de respuesta distinta para el buz\u00f3n compartido. \u00bfEst\u00e1 en ajustes?"
+  expect:
+    intent: [question]
+    topic: [support]
+    urgency: [normal, low]
+
+- id: es_support_agradecimiento
+  lang: es
+  from_name: "Gonzalo Reija"
+  from_email: "gonzalo@reija.test"
+  subject: "Gracias, ya funciona"
+  snippet: "La soluci\u00f3n que me mandasteis funcion\u00f3 a la primera. Muy buen servicio, no hace falta nada m\u00e1s."
+  expect:
+    intent: [feedback]
+    topic: [support]
+    urgency: [low]
+

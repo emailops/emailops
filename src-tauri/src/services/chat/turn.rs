@@ -1910,21 +1910,36 @@ fn build_final_stream_trace(latency_ms: i64, result: Option<&crate::ai::provider
     }
 }
 
+/// What the planner call cost, for the trace entry below.
+#[derive(Debug, Clone, Copy)]
+struct PlannerTelemetry {
+    prompt_tokens: u32,
+    prefill_ms: Option<i64>,
+    cached_prompt_tokens: Option<u32>,
+    /// What the backend's one-shot prefix slot did for this call — the
+    /// planner's equivalent of the chat path's `PrefixPlan`.
+    aux_plan: Option<&'static str>,
+}
+
 /// Trace entry for the pre-loop query planner (`plan_search`). Surfaced in the
 /// flow timeline so the planner LLM call is visible (`kind: "planner"`, sorted
 /// before round 0 via `round: -2`) instead of hidden behind a log line.
-/// `outcome` is `"search"` or `"defer"`.
-fn build_planner_trace(latency_ms: i64, outcome: &str) -> LlmCallTrace {
+/// `outcome` is `"search"`, `"defer"`, or the finer reason the planner
+/// produced no filter (`"unparseable"`, `"provider_error"`, …).
+fn build_planner_trace(latency_ms: i64, outcome: &str, telemetry: PlannerTelemetry) -> LlmCallTrace {
     LlmCallTrace {
         kind: "planner".to_string(),
         round: -2,
         latency_ms,
         tool_calls_requested: 0,
         failed: false,
-        prompt_tokens: None,
-        prefill_ms: None,
-        cached_prompt_tokens: None,
-        prefix_plan: None,
+        prompt_tokens: Some(telemetry.prompt_tokens),
+        prefill_ms: telemetry.prefill_ms,
+        cached_prompt_tokens: telemetry.cached_prompt_tokens,
+        // For the planner this is its one-shot prefix slot, not the chat
+        // prefix: same question ("was the head reused or re-decoded?"), same
+        // place in the trace.
+        prefix_plan: telemetry.aux_plan.map(str::to_string),
         sys_cached_before: None,
         sys_cached_after: None,
         system_prefix_tokens: None,
@@ -3600,7 +3615,7 @@ pub async fn run_chat_turn(
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
-        let plan = super::planner::plan_search(
+        let run = super::planner::plan_search(
             provider.as_ref(),
             &template,
             &user_email,
@@ -3610,6 +3625,21 @@ pub async fn run_chat_turn(
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
+        let super::planner::PlanRun {
+            plan,
+            outcome: plan_outcome,
+            prompt_tokens: plan_prompt_tokens,
+            prefill_ms: plan_prefill_ms,
+            cached_prompt_tokens: plan_cached_tokens,
+            aux_plan: plan_aux,
+            ..
+        } = run;
+        let plan_telemetry = PlannerTelemetry {
+            prompt_tokens: plan_prompt_tokens,
+            prefill_ms: plan_prefill_ms,
+            cached_prompt_tokens: plan_cached_tokens,
+            aux_plan: plan_aux,
+        };
         match plan {
             super::planner::Plan::Search(plan) => {
                 // On an `AskPlanner` turn the plan also settles the route — but
@@ -3630,12 +3660,12 @@ pub async fn run_chat_turn(
                         "debug",
                         &format!("planner: keyword-only plan, keeping RAG [{plan_ms}ms]"),
                     );
-                    planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                    planner_trace = Some(build_planner_trace(plan_ms, "defer", plan_telemetry));
                     route = super::routing::planner_route(false);
                     emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
                 } else {
                     emit_log("info", &format!("planner: pre-seeded search_emails [{plan_ms}ms]"));
-                    planner_trace = Some(build_planner_trace(plan_ms, "search"));
+                    planner_trace = Some(build_planner_trace(plan_ms, "search", plan_telemetry));
                     preseeded_tool_calls = Some(vec![(*plan).into_tool_call()]);
                     if asked_planner {
                         route = super::routing::planner_route(true);
@@ -3645,7 +3675,7 @@ pub async fn run_chat_turn(
             }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
-                planner_trace = Some(build_planner_trace(plan_ms, "defer"));
+                planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
                 if asked_planner {
                     route = super::routing::planner_route(false);
                     emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
