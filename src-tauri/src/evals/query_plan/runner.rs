@@ -136,9 +136,13 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
     };
     let default_today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
-    println!("[plan-eval] model = {model}");
-    println!("[plan-eval] account = {user_email}");
-    println!("[plan-eval] running {} case(s)", cases.len());
+    // `--json` prints ONE object on stdout and nothing else, so a script can
+    // parse it without filtering progress lines out first.
+    if !cfg.json_stdout {
+        println!("[plan-eval] model = {model}");
+        println!("[plan-eval] account = {user_email}");
+        println!("[plan-eval] running {} case(s)", cases.len());
+    }
 
     let mut runs = Vec::new();
     for case in cases {
@@ -164,13 +168,15 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             Plan::Defer => None,
         };
         let report = evaluate(&case, plan.as_ref());
-        println!(
-            "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",
-            if report.passed { "OK  " } else { "FAIL" },
-            case.id,
-            report.checks.iter().filter(|c| c.passed()).count(),
-            report.checks.len(),
-        );
+        if !cfg.json_stdout {
+            println!(
+                "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",
+                if report.passed { "OK  " } else { "FAIL" },
+                case.id,
+                report.checks.iter().filter(|c| c.passed()).count(),
+                report.checks.len(),
+            );
+        }
         runs.push(CaseRun {
             case,
             plan,

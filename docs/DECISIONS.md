@@ -1126,3 +1126,36 @@ emails — hours of local inference, and a thread would start appearing in sever
 dropping intent/topic from the chat tool (loses counting by kind, which is the only thing tags buy
 there); leaving it as a gate and only warning (the note only fires when rows come back, so the
 zero-result case — the one that hurt — stayed silent).
+
+## 2026-09-19 — One-shot prompts get a prefix sequence; letter-scoring does not ship
+
+**Decision:** the llama.cpp actor reserves one KV sequence (`AUX_SEQ`, seq 3) for the
+invariant head of a one-shot prompt, and the query planner marks its split with
+`complete_with_prefix`. The slot is the first thing evicted from either direction —
+`plan_oneshot_cells` gives it up before the chat prefix, `chat_must_evict_aux` drops it
+before a chat turn would truncate — and it is bypassed below a 16k window. The classifier
+does **not** get one, and does **not** answer by picking a lettered menu: it keeps writing
+JSON.
+**Context:** both surfaces are one-shot completions with `cache_prompt=false`, so both
+re-process their whole prompt every call. Measured on qwen3.5-4b-q4_k_m against the demo
+DB before changing anything: the planner spends 682 ms of its 1161 ms on prefill of a
+1693-token prompt, of which ~1.5k is the same instructions, examples and glossary every
+time — so caching it is nearly all of the win. The classifier's prompt is 317 tokens and
+its prefill is 2 ms of 587 ms; its cost is the ~28 tokens it generates, which a cache
+cannot touch. After the change the planner runs at 495 ms mean / 379 ms p50 (prefill
+46 ms) with identical output — 21/21 eval cases, same 17/4 search/defer split, prompt
+byte-identical — and the chat turn still reuses 7459 of 7466 prompt tokens after a
+classification burst, at +54 MiB of RSS. `EMAILOPS_AUX_PREFIX=0` restores the old path
+from the same build (1185 ms), which is how the delta was isolated.
+**Rejected:** a second slot for the classifier (its prefill is 2 ms — the slot would cost
+cells and recurrent state to save nothing measurable). Answering the classifier with a
+lettered menu scored from the logits: it is 2.4× faster (587 → 246 ms per email, 102 →
+244 emails/min) and never produces an unparseable reply, but on 145 labelled synthetic
+cases it costs 17-22 points of accuracy on every axis — intent 78.6% → 61.4% strict
+(macro-F1 0.794 → 0.572), topic 71.0% → 54.5%, urgency 71.7% → 49.7%, all three axes
+right on 90/145 emails → 44/145 — so the tags would get materially worse to make a
+background job faster. Scoring the tag NAME instead of a letter is worse still on this
+mechanism, because only the first token of a label is scored and the built-in tags share
+initials (`notification`/`newsletter`, `complaint`/`conversation`). A grammar (GBNF) to
+constrain the JSON: both harnesses measured zero unparseable replies (145 classifier
+cases × 3 repeats, 21 planner cases), so there is nothing for it to fix.

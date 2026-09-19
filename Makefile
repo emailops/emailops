@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-classify bench-oneshot-kv dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -208,6 +208,15 @@ eval-classify:
 # env: BENCH_Q2="..." make cli-bench
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
+
+# Before/after table for the one-shot prefix slot: runs the planner eval twice
+# from the same build (slot off via EMAILOPS_AUX_PREFIX=0, then on) plus the
+# classifier eval. Logic in scripts/oneshot_report.sh; output under reports/bench/.
+#   make report-oneshot
+#   make report-oneshot ARGS="--repeats 3"
+report-oneshot:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/oneshot_report.sh $(ARGS)
 
 # What classifier / planner one-shots cost the chat KV prefix, measured in ONE
 # process (every `make cli-*` run starts with an empty cache and cannot see it).
