@@ -20,13 +20,31 @@ old algorithm.
 | P0-2 + P1-13 `INSERT OR REPLACE` cascade + unindexed retry path | `be2b3b6` | 4 new, 2 re-verified red |
 | P0-3 Gmail `$batch` correlated by position | `7442018` | 6 new, 2 re-verified red |
 | Third `INSERT OR REPLACE` (optimistic Sent copy) | `1ee9e9f` | 1 new, red first |
+| P0-7 + P0-9 + AI budget reset — all of class H | `d6aa120` | 11 new |
 
-Gates on every commit: full Rust suite (2038 + 149), full frontend suite
-(1117), clippy `-D warnings`, rustfmt, tsc, biome, gitleaks, jsx-literals,
-`no-invoke-outside-api`.
+Gates on every commit: full Rust suite (2041 + 149), full frontend suite
+(1126), clippy `-D warnings`, rustfmt, tsc, biome, gitleaks, jsx-literals,
+i18n drift, `no-invoke-outside-api`.
 
-**Still open, in plan order:** the rest of Phase 1 (class H — P0-7, P0-9 and the
-AI-budget reset, all of which need new UI), then Phases 2–7 below.
+Two further defects surfaced while fixing class H, both fixed in `d6aa120`:
+
+- `get_ai_usage` / `reset_ai_usage` built an `AiService` — and therefore a
+  provider — to reach a DB counter. Once the master AI switch grew its guard
+  (`0769ebb`) that made reading your own spend fail exactly when a user who had
+  hit their budget would look, and on llama.cpp it loaded a multi-GB model to
+  read an integer.
+- A latent deadlock in `get_usage_since`, found by the first test ever to cover
+  it: it held the write connection while calling `get_config`, and
+  `Database::reader()` falls back to that same mutex when no reader pool exists
+  — which is the case for the in-memory test database.
+
+Fixing P0-9 also revealed the finding understated it. The undo was missing two
+things, not one: nothing listed excluded rows (so `include_lens_row` had no row
+to name), *and* `remove_lens_exclusion` deliberately left
+`lens_rows.status = 'excluded'`, which `get_lens_rows` filters out — so the
+command would have restored nothing visible even once called.
+
+**Still open, in plan order:** Phases 2–7 below.
 
 ---
 
