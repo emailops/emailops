@@ -78,47 +78,22 @@ pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &s
 }
 
 impl Database {
+    /// Store one email, creating or refreshing its row.
+    ///
+    /// Delegates to [`Database::insert_emails_batch`] rather than writing its
+    /// own INSERT. It used to have one, and it wrote only `emails` +
+    /// `email_bodies` -- no FTS row and no `email_headers`. The failed-download
+    /// retry path (`sync_failed_emails`) ingests through here, and for a
+    /// retried message that is the *first* insert, so the mail was never
+    /// indexed: invisible to keyword search and to the chat's `search_emails`
+    /// tool, permanently, because `populate_fts_if_empty` only runs when the
+    /// whole index is empty. It also never got its captured headers, so the
+    /// junk detector scored it `Unknown` forever.
+    ///
+    /// One insert path means one set of invariants, so the two cannot drift
+    /// apart again.
     pub fn insert_email(&self, email: &Email) -> Result<()> {
-        let conn = self.connection();
-        let recipients_json = serde_json::to_string(&email.recipients)?;
-        let cc_json = serde_json::to_string(&email.cc)?;
-        let sender_domain = extract_sender_domain(&email.sender_email);
-        let now = chrono::Utc::now().timestamp();
-
-        let mailbox = normalize_mailbox(&email.mailbox);
-        conn.execute(
-            r#"INSERT OR REPLACE INTO emails
-               (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
-                references_header)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
-            params![
-                email.id,
-                email.account_id,
-                email.thread_id,
-                email.message_id,
-                email.subject,
-                email.sender,
-                email.sender_email,
-                sender_domain,
-                recipients_json,
-                cc_json,
-                email.snippet,
-                email.timestamp,
-                email.is_read as i32,
-                email.triage_status,
-                email.category,
-                mailbox,
-                is_sent_flag(email, mailbox) as i32,
-                now,
-                email.references,
-            ],
-        )?;
-        conn.execute(
-            "INSERT OR REPLACE INTO email_bodies (email_id, body) VALUES (?1, ?2)",
-            params![email.id, email.body],
-        )?;
-        Ok(())
+        self.insert_emails_batch(std::slice::from_ref(email))
     }
 
     /// Insert a locally constructed Sent copy at send time (optimistic insert).
