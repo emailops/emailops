@@ -559,7 +559,7 @@ impl AiService {
             return Ok(());
         }
 
-        let spent = self.get_usage_since(config.period_start)?;
+        let spent = Self::get_usage_since(&self.db, config.period_start)?;
         let total = spent.total_cost_usd + additional_cost;
 
         if total > config.monthly_budget_usd {
@@ -572,8 +572,20 @@ impl AiService {
         }
     }
 
-    pub fn get_usage_since(&self, period_start: i64) -> Result<AiUsageSummary> {
-        let conn = self.db.connection();
+    /// Spend since `period_start`. Takes `&Database` rather than `&self`
+    /// because reading a counter must never require an AI provider — see
+    /// [`AiService::usage_summary`].
+    pub fn get_usage_since(db: &Database, period_start: i64) -> Result<AiUsageSummary> {
+        // Resolve the budget *before* opening a connection. `get_config` takes
+        // one of its own, and `Database::reader()` falls back to the write
+        // connection when no reader pool exists — which is the case for the
+        // in-memory test database. Reading the config while holding a
+        // connection therefore deadlocks on the same mutex. It never fired
+        // because nothing tested this function.
+        let budget_usd = Self::get_config(db)?.monthly_budget_usd;
+        // A pure SELECT: reads go through the reader pool, never the write
+        // connection (see `src-tauri/CLAUDE.md`, "Database Access Patterns").
+        let conn = db.reader();
         let mut stmt = conn.prepare(
             "SELECT COALESCE(SUM(cost_usd), 0.0), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
              FROM ai_usage WHERE timestamp >= ?1"
@@ -586,7 +598,7 @@ impl AiService {
                 total_completion_tokens: row.get(2)?,
                 total_calls: row.get(3)?,
                 period_start,
-                budget_usd: Self::get_config(&self.db)?.monthly_budget_usd,
+                budget_usd,
             })
         } else {
             Ok(AiUsageSummary {
@@ -595,19 +607,28 @@ impl AiService {
                 total_completion_tokens: 0,
                 total_calls: 0,
                 period_start,
-                budget_usd: Self::get_config(&self.db)?.monthly_budget_usd,
+                budget_usd,
             })
         }
     }
 
-    pub fn get_current_usage(&self) -> Result<AiUsageSummary> {
-        let config = Self::get_config(&self.db)?;
-        self.get_usage_since(config.period_start)
+    /// Spend in the current accounting period.
+    ///
+    /// Associated function, not a method: the `get_ai_usage` command used to
+    /// build an `AiService` to reach this, which constructs a provider. That
+    /// made reading your own spend fail once the master AI switch grew a guard
+    /// — precisely when a user who had hit their budget would go looking — and
+    /// on a llama.cpp setup it loaded a multi-GB model into RAM to read a
+    /// counter.
+    pub fn usage_summary(db: &Database) -> Result<AiUsageSummary> {
+        let config = Self::get_config(db)?;
+        Self::get_usage_since(db, config.period_start)
     }
 
-    pub fn reset_usage(&self) -> Result<()> {
+    /// Start a fresh accounting period. Same reasoning as [`Self::usage_summary`].
+    pub fn reset_usage_period(db: &Database) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        self.db.set_preference("ai_period_start", &now.to_string())?;
+        db.set_preference("ai_period_start", &now.to_string())?;
         Ok(())
     }
 
@@ -858,6 +879,30 @@ mod provider_tests {
             ),
             "an explicit model override must not bypass the master switch"
         );
+    }
+
+    /// Reading what you have spent, and resetting the accounting period, are
+    /// pure DB reads — but both commands routed through `AiService::new`, which
+    /// builds a provider. That made them fail once the master switch grew a
+    /// guard, and on a llama.cpp setup it would load a multi-GB model into RAM
+    /// to read a counter. A user who hits their budget and turns AI off could
+    /// then neither see their spend nor reset the period.
+    #[test]
+    fn usage_can_be_read_and_reset_without_a_provider() {
+        let db = std::sync::Arc::new(Database::new_for_testing().expect("test db"));
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        // The old route: building a service just to reach the counter.
+        assert!(
+            matches!(AiService::new(db.clone()), Err(AppError::AiDisabled)),
+            "the provider-building route is exactly what must not gate usage"
+        );
+
+        // The route the commands take now touches only the database.
+        let usage = AiService::usage_summary(&db).expect("usage must be readable with AI off");
+        assert_eq!(usage.total_calls, 0);
+        AiService::reset_usage_period(&db).expect("the period must be resettable with AI off");
     }
 
     /// The switch defaults to on, and an explicit "true" keeps it on — the

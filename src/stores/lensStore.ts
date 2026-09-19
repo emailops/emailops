@@ -46,6 +46,8 @@ export interface LensState {
   rows: LensRow[];
   totalRows: number;
   isLoadingRows: boolean;
+  /** Viewing the rows the user excluded, rather than the Lens itself. */
+  showExcluded: boolean;
   sort: LensSortSpec | null;
   error: string | null;
   runStatus: Record<string, LensStatus>;
@@ -59,6 +61,7 @@ export const initialLensState: LensState = {
   rows: [],
   totalRows: 0,
   isLoadingRows: false,
+  showExcluded: false,
   sort: null,
   error: null,
   runStatus: {},
@@ -78,6 +81,8 @@ export type LensAction =
   | { type: 'UPDATE_ACTIVE_LENS'; lens: Lens }
   | { type: 'DESELECT_LENS' }
   | { type: 'EXCLUDE_ROW'; emailId: string }
+  | { type: 'INCLUDE_ROW'; emailId: string }
+  | { type: 'SET_SHOW_EXCLUDED'; showExcluded: boolean }
   | { type: 'SET_RUN_STATUS'; lensId: string; status: LensStatus };
 
 // ── Pure reducer ─────────────────────────────────────────────────────────────
@@ -96,7 +101,7 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
     case 'SET_ERROR':
       return { ...state, error: action.error, isLoadingLenses: false, isLoadingRows: false };
     case 'SET_ACTIVE_LENS_ID':
-      return { ...state, activeLensId: action.lensId, isLoadingRows: true, error: null };
+      return { ...state, activeLensId: action.lensId, isLoadingRows: true, error: null, showExcluded: false };
     case 'SET_LOADING_ROWS':
       return { ...state, isLoadingRows: action.loading };
     case 'SET_ACTIVE_LENS_DATA':
@@ -114,13 +119,23 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
     case 'UPDATE_ACTIVE_LENS':
       return { ...state, activeLens: action.lens };
     case 'DESELECT_LENS':
-      return { ...state, activeLensId: null, activeLens: null, rows: [], totalRows: 0 };
+      return { ...state, activeLensId: null, activeLens: null, rows: [], totalRows: 0, showExcluded: false };
     case 'EXCLUDE_ROW':
       return {
         ...state,
         rows: state.rows.filter((r) => r.emailId !== action.emailId),
         totalRows: Math.max(0, state.totalRows - 1),
       };
+    // Viewed from the excluded list, putting a row back removes it from *that*
+    // list — the mirror image of EXCLUDE_ROW against the main one.
+    case 'INCLUDE_ROW':
+      return {
+        ...state,
+        rows: state.rows.filter((r) => r.emailId !== action.emailId),
+        totalRows: Math.max(0, state.totalRows - 1),
+      };
+    case 'SET_SHOW_EXCLUDED':
+      return { ...state, showExcluded: action.showExcluded, isLoadingRows: true };
     case 'SET_RUN_STATUS':
       return { ...state, runStatus: { ...state.runStatus, [action.lensId]: action.status } };
   }
@@ -188,6 +203,8 @@ interface LensStore extends LensState {
   // Row-level actions
   reextractRow: (emailId: string) => Promise<void>;
   excludeRow: (emailId: string) => Promise<void>;
+  includeRow: (emailId: string) => Promise<void>;
+  setShowExcluded: (showExcluded: boolean) => Promise<void>;
   updateRowOverride: (emailId: string, overrides: Record<string, unknown>) => Promise<void>;
 }
 
@@ -328,6 +345,25 @@ export const useLensStore = create<LensStore>((set, get) => ({
     if (!id) return;
     await api.excludeLensRow(id, emailId);
     dispatch(set, { type: 'EXCLUDE_ROW', emailId });
+  },
+
+  includeRow: async (emailId) => {
+    const id = get().activeLensId;
+    if (!id) return;
+    await api.includeLensRow(id, emailId);
+    dispatch(set, { type: 'INCLUDE_ROW', emailId });
+  },
+
+  setShowExcluded: async (showExcluded) => {
+    dispatch(set, { type: 'SET_SHOW_EXCLUDED', showExcluded });
+    const id = get().activeLensId;
+    if (!id) return;
+    const page = showExcluded
+      ? await api.getExcludedLensRows(id)
+      : await api.getLensRows(id, { sort: get().sort ?? undefined });
+    if (get().activeLensId !== id || get().showExcluded !== showExcluded) return;
+    dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
+    dispatch(set, { type: 'SET_LOADING_ROWS', loading: false });
   },
 
   updateRowOverride: async (emailId, overrides) => {

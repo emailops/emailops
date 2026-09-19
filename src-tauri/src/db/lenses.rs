@@ -392,6 +392,34 @@ impl Database {
         Ok(LensRowsPage { rows, total: -1 })
     }
 
+    /// The rows the user has excluded from this Lens, newest email first.
+    ///
+    /// `get_lens_rows` hard-filters `status = 'ok'`, so an excluded row vanishes
+    /// from every listing even though it keeps its extracted values. Without a
+    /// way to see them, excluding was irreversible in practice: the undo command
+    /// existed but there was no screen on which to name a row to undo.
+    ///
+    /// Deliberately simpler than `get_lens_rows` — no schema-driven sort, no
+    /// unique-key deduplication. An exclusion list is short and is read to find
+    /// one row and put it back, not to analyse.
+    pub fn get_excluded_lens_rows(&self, lens_id: &str, limit: i64, offset: i64) -> Result<LensRowsPage> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT r.lens_id, r.email_id, r.account_id, r.extracted_json, r.overrides_json, \
+                    r.prompt_version, r.email_timestamp, r.extracted_at, r.status, r.error_message, \
+                    e.subject, e.sender, e.sender_email \
+             FROM lens_rows r \
+             JOIN emails e ON e.id = r.email_id \
+             WHERE r.lens_id = ?1 AND r.status = 'excluded' \
+             ORDER BY r.email_timestamp DESC, r.email_id DESC \
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![lens_id, limit, offset.max(0)], map_lens_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(LensRowsPage { rows, total: -1 })
+    }
+
     /// `email_ids` whose `lens_rows.prompt_version < lens.prompt_version` —
     /// the set of rows that need re-extraction after a prompt/schema edit.
     pub fn list_stale_row_email_ids(&self, lens_id: &str) -> Result<Vec<String>> {
@@ -483,13 +511,32 @@ impl Database {
         Ok(())
     }
 
+    /// Undo [`Self::add_lens_exclusion`]: drop the exclusion and put the row
+    /// back in the Lens.
+    ///
+    /// The status flip is what makes this an undo rather than half of one.
+    /// `add_lens_exclusion` sets `status = 'excluded'` and `get_lens_rows`
+    /// filters on `status = 'ok'`, so clearing only the `lens_exclusions` entry
+    /// left the row invisible — the user would press "include" and see nothing
+    /// come back. The extracted values are still on the row, so there is nothing
+    /// to recompute: `exclude` sets `excluded`, `include` sets `ok`, a symmetric
+    /// pair.
+    ///
+    /// There is deliberately no "was it any good?" guard. `extracted_json` is
+    /// NOT NULL and a failed extraction still writes valid JSON, so no column
+    /// distinguishes a row that never produced anything; judging extraction
+    /// quality is the re-extraction banner's job, not this one's.
     pub fn remove_lens_exclusion(&self, lens_id: &str, email_id: &str) -> Result<()> {
         let conn = self.connection();
         conn.execute(
             "DELETE FROM lens_exclusions WHERE lens_id = ?1 AND email_id = ?2",
             params![lens_id, email_id],
         )?;
-        // Don't auto-revive the row's status — re-extraction will overwrite it.
+        conn.execute(
+            "UPDATE lens_rows SET status = 'ok' \
+             WHERE lens_id = ?1 AND email_id = ?2 AND status = 'excluded'",
+            params![lens_id, email_id],
+        )?;
         Ok(())
     }
 
@@ -784,7 +831,7 @@ mod tests {
     use super::*;
     use crate::models::lens::{CreateLensInput, LensColumn, LensColumnType, LensSchema, LensScope};
 
-    fn sample_input() -> CreateLensInput {
+    pub(super) fn sample_input() -> CreateLensInput {
         CreateLensInput {
             name: "Test Lens".into(),
             icon: None,
@@ -962,5 +1009,76 @@ mod tests {
         // round-trips so the editor's "Either" option survives a save.
         use crate::models::lens::Direction;
         assert!(matches!(fetched.scope.direction, Some(Direction::Either)));
+    }
+}
+
+#[cfg(test)]
+mod exclusion_round_trip_tests {
+    use super::tests::sample_input;
+    use crate::db::Database;
+
+    /// Seed an account, an email and an extracted lens row for it.
+    fn seed_row(db: &Database, lens_id: &str, email_id: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'gmail', 'me@example.test', 'Test', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                                 recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,'acc1',?1,'Invoice','Vendor','billing@vendor.test','vendor.test','[]','[]','snip',100,0,'primary',0)",
+            rusqlite::params![email_id],
+        )
+        .unwrap();
+        drop(conn);
+        db.upsert_lens_row(lens_id, email_id, "acc1", r#"{"vendor":"Acme"}"#, 1, 100, "ok", None)
+            .unwrap();
+    }
+
+    /// Excluding a row hides it from every listing. Until this query existed
+    /// there was no way to see what had been excluded, so the `include_lens_row`
+    /// command — implemented, registered and wrapped — had no row to name.
+    #[test]
+    fn an_excluded_row_is_listed_as_excluded_and_hidden_from_the_lens() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+
+        db.add_lens_exclusion(&lens.id, "e1").unwrap();
+
+        let visible = db.get_lens_rows(&lens.id, None, 50, 0).unwrap();
+        assert!(visible.rows.is_empty(), "an excluded row must leave the Lens");
+        let excluded = db.get_excluded_lens_rows(&lens.id, 50, 0).unwrap();
+        assert_eq!(
+            excluded.rows.iter().map(|r| r.email_id.as_str()).collect::<Vec<_>>(),
+            vec!["e1"]
+        );
+    }
+
+    /// The undo must actually undo. Clearing only the `lens_exclusions` entry
+    /// left `lens_rows.status = 'excluded'`, which `get_lens_rows` filters out —
+    /// so the user pressed "include" and nothing came back.
+    #[test]
+    fn including_a_row_puts_it_back_in_the_lens() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        db.add_lens_exclusion(&lens.id, "e1").unwrap();
+
+        db.remove_lens_exclusion(&lens.id, "e1").unwrap();
+
+        let visible = db.get_lens_rows(&lens.id, None, 50, 0).unwrap();
+        assert_eq!(
+            visible.rows.iter().map(|r| r.email_id.as_str()).collect::<Vec<_>>(),
+            vec!["e1"],
+            "including a row must restore it to the Lens"
+        );
+        assert!(
+            db.get_excluded_lens_rows(&lens.id, 50, 0).unwrap().rows.is_empty(),
+            "and drop it from the excluded list"
+        );
     }
 }

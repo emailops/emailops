@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState } from './types';
+import { UsageSummary } from './UsageSummary';
 
 interface OpenRouterPanelProps {
   config: AiConfigState;
@@ -53,6 +54,9 @@ export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRo
         />
         <p className="text-xs text-gray-500 mt-1">{t('settings:ai.monthlyBudgetHelp')}</p>
       </div>
+      {/* Directly under the cap it reports against, so hitting the budget and
+          finding out what you spent are the same screen. */}
+      <UsageSummary />
       <ThinkingToggle
         enabled={config.thinkingEnabled}
         onToggle={() => setConfig({ ...config, thinkingEnabled: !config.thinkingEnabled })}

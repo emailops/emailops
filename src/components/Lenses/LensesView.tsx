@@ -42,6 +42,8 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     runLens,
     cancelRun,
     startStatusListener,
+    showExcluded,
+    setShowExcluded,
   } = useLensStore();
 
   const [showCreate, setShowCreate] = useState(false);
@@ -299,6 +301,21 @@ export function LensesView({ initialLensId }: LensesViewProps) {
 
       {error && <div className="border-b border-red-700/50 bg-red-900/30 px-5 py-2 text-xs text-red-300">{error}</div>}
 
+      {/* Excluded rows are hidden from every listing, so without this switch a
+          row excluded by accident could never be found again — the undo command
+          existed but had no screen on which to name a row. */}
+      {activeLens && (
+        <div className="flex items-center justify-end border-b border-gray-800 px-5 py-1.5">
+          <button
+            type="button"
+            onClick={() => void setShowExcluded(!showExcluded)}
+            className="text-[11px] text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            {showExcluded ? t('lenses:showLensRows') : t('lenses:showExcludedRows')}
+          </button>
+        </div>
+      )}
+
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto">
         {!activeLens ? (
@@ -323,6 +340,8 @@ export function LensesView({ initialLensId }: LensesViewProps) {
             }
             onReextract={(emailId) => void useLensStore.getState().reextractRow(emailId)}
             onExclude={(emailId) => void useLensStore.getState().excludeRow(emailId)}
+            onInclude={(emailId) => void useLensStore.getState().includeRow(emailId)}
+            isExcludedView={showExcluded}
             onOpenRow={setDrawerRow}
             groupBy={groupBy}
           />

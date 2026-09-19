@@ -88,14 +88,17 @@ pub async fn set_ai_config(
 
 #[tauri::command]
 pub async fn get_ai_usage(state: State<'_, AppState>) -> Result<AiUsageSummary, AppError> {
-    let service = AiService::new(state.db.clone())?;
-    service.get_current_usage()
+    // Straight to the database: reading a spend counter must not build a
+    // provider. Going through `AiService::new` made this fail whenever the
+    // master AI switch was off — exactly when a user who had hit their budget
+    // would come looking — and on a llama.cpp setup it loaded the model into
+    // RAM to read an integer.
+    AiService::usage_summary(&state.db)
 }
 
 #[tauri::command]
 pub async fn reset_ai_usage(state: State<'_, AppState>) -> Result<(), AppError> {
-    let service = AiService::new(state.db.clone())?;
-    service.reset_usage()
+    AiService::reset_usage_period(&state.db)
 }
 
 #[tauri::command]
