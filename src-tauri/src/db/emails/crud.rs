@@ -78,47 +78,22 @@ pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &s
 }
 
 impl Database {
+    /// Store one email, creating or refreshing its row.
+    ///
+    /// Delegates to [`Database::insert_emails_batch`] rather than writing its
+    /// own INSERT. It used to have one, and it wrote only `emails` +
+    /// `email_bodies` -- no FTS row and no `email_headers`. The failed-download
+    /// retry path (`sync_failed_emails`) ingests through here, and for a
+    /// retried message that is the *first* insert, so the mail was never
+    /// indexed: invisible to keyword search and to the chat's `search_emails`
+    /// tool, permanently, because `populate_fts_if_empty` only runs when the
+    /// whole index is empty. It also never got its captured headers, so the
+    /// junk detector scored it `Unknown` forever.
+    ///
+    /// One insert path means one set of invariants, so the two cannot drift
+    /// apart again.
     pub fn insert_email(&self, email: &Email) -> Result<()> {
-        let conn = self.connection();
-        let recipients_json = serde_json::to_string(&email.recipients)?;
-        let cc_json = serde_json::to_string(&email.cc)?;
-        let sender_domain = extract_sender_domain(&email.sender_email);
-        let now = chrono::Utc::now().timestamp();
-
-        let mailbox = normalize_mailbox(&email.mailbox);
-        conn.execute(
-            r#"INSERT OR REPLACE INTO emails
-               (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
-                references_header)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
-            params![
-                email.id,
-                email.account_id,
-                email.thread_id,
-                email.message_id,
-                email.subject,
-                email.sender,
-                email.sender_email,
-                sender_domain,
-                recipients_json,
-                cc_json,
-                email.snippet,
-                email.timestamp,
-                email.is_read as i32,
-                email.triage_status,
-                email.category,
-                mailbox,
-                is_sent_flag(email, mailbox) as i32,
-                now,
-                email.references,
-            ],
-        )?;
-        conn.execute(
-            "INSERT OR REPLACE INTO email_bodies (email_id, body) VALUES (?1, ?2)",
-            params![email.id, email.body],
-        )?;
-        Ok(())
+        self.insert_emails_batch(std::slice::from_ref(email))
     }
 
     /// Insert a locally constructed Sent copy at send time (optimistic insert).
@@ -135,16 +110,41 @@ impl Database {
         let mailbox = normalize_mailbox(&email.mailbox);
         let now = chrono::Utc::now().timestamp();
 
-        // Remove stale FTS entry before REPLACE (DELETE trigger may not fire
-        // during INSERT OR REPLACE without recursive_triggers enabled).
+        // The FTS table is not a child of `emails` (no FK), so its stale row is
+        // cleared by hand.
         tx.execute("DELETE FROM emails_fts WHERE email_id = ?1", params![email.id])?;
+        // UPSERT, not `INSERT OR REPLACE` — see the statement in
+        // `batch.rs::insert_emails_batch` for why. Reachable here because the
+        // optimistic Sent row can carry an id the provider has already given a
+        // synced copy, and a REPLACE would then cascade that message's tags,
+        // junk verdict and citations away. `is_deleted` stays out of both lists
+        // so a re-inserted row cannot un-delete itself.
         tx.execute(
-            r#"INSERT OR REPLACE INTO emails
+            r#"INSERT INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
                 sender_domain, recipients_json, cc_json, snippet, timestamp, is_read,
                 triage_status, category, mailbox, is_sent, pending_sync, created_at,
                 references_header)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"#,
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+               ON CONFLICT(id) DO UPDATE SET
+                 account_id = excluded.account_id,
+                 thread_id = excluded.thread_id,
+                 message_id = excluded.message_id,
+                 subject = excluded.subject,
+                 sender = excluded.sender,
+                 sender_email = excluded.sender_email,
+                 sender_domain = excluded.sender_domain,
+                 recipients_json = excluded.recipients_json,
+                 cc_json = excluded.cc_json,
+                 snippet = excluded.snippet,
+                 timestamp = excluded.timestamp,
+                 is_read = excluded.is_read,
+                 triage_status = excluded.triage_status,
+                 category = excluded.category,
+                 mailbox = excluded.mailbox,
+                 is_sent = excluded.is_sent,
+                 pending_sync = excluded.pending_sync,
+                 references_header = excluded.references_header"#,
             params![
                 email.id,
                 email.account_id,
@@ -1411,6 +1411,29 @@ mod tests {
             is_sent: true,
             headers: None,
         }
+    }
+
+    /// Same cascade hazard as the main ingest path: `INSERT OR REPLACE` deletes
+    /// the conflicting row first, taking every `ON DELETE CASCADE` child with
+    /// it. Reachable here because the optimistic Sent row can carry an id the
+    /// provider has already given a synced copy.
+    #[test]
+    fn re_inserting_a_sent_copy_keeps_its_tags() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+        db.insert_sent_email_local(&local_sent_email("sent-1", "acc1", "t1", 100), true)
+            .unwrap();
+        db.upsert_email_tag("sent-1", "intent", "quote", Some(0.8)).unwrap();
+
+        db.insert_sent_email_local(&local_sent_email("sent-1", "acc1", "t1", 100), false)
+            .unwrap();
+
+        let tags = db.get_email_tags("sent-1").unwrap();
+        assert_eq!(
+            tags.iter().map(|t| t.tag_value.as_str()).collect::<Vec<_>>(),
+            vec!["quote"],
+            "re-inserting the optimistic Sent row must not cascade-delete its tags"
+        );
     }
 
     #[test]

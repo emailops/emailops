@@ -99,6 +99,17 @@
     "contextWindowSaveFailed": "Failed to save context window: {{error}}",
     "monthlyBudget": "Monthly Budget (USD)",
     "monthlyBudgetHelp": "Set to 0 for no limit.",
+    "usage": {
+      "title": "This period",
+      "loading": "Loading usage…",
+      "spent": "{{spent}} spent",
+      "spentOfBudget": "{{spent}} of {{budget}}",
+      "detail": "{{calls}} calls · {{prompt}} prompt / {{completion}} completion tokens",
+      "since": "since {{date}}",
+      "exceeded": "Budget reached — AI calls are refused until you reset the period or raise the budget.",
+      "reset": "Start a new period",
+      "resetting": "Resetting…"
+    },
     "noModelsFound": "(no models found)",
     "noModelsAvailable": "(no models available)",
     "noCatalog": "No model catalog available in this build.",
@@ -406,7 +417,13 @@
     "removePassword": "Remove password",
     "remoteContent": "Remote content",
     "remoteContentHelp": "When disabled, images and other remote resources in emails are blocked until you explicitly allow them.",
-    "trustedSenders": "Trusted senders",
+    "trustedSenders": {
+      "title": "Trusted senders",
+      "help": "Senders you allowed to load remote images. Revoking one blocks their images again.",
+      "loading": "Loading trusted senders…",
+      "none": "No trusted senders.",
+      "revoke": "Revoke"
+    },
     "trustedSendersHelp": "Senders allowed to load remote images automatically.",
     "emailContent": "Email Content",
     "allowRemoteToggle": "Allow remote content in emails",

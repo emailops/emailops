@@ -1003,7 +1003,7 @@ impl EmailProvider for ImapClient {
                     }
 
                     let uids: Vec<u32> = items.iter().map(|(_, uid)| *uid).collect();
-                    match imap_search::uid_fetch_rfc822_batch(&mut session, &uids) {
+                    match imap_search::uid_fetch_body_batch(&mut session, &uids) {
                         Ok(bodies) => {
                             for (index, uid) in items {
                                 let parsed = match bodies.get(uid) {
@@ -1084,7 +1084,7 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let raw = imap_search::uid_fetch_rfc822(&mut session, uid)?;
+            let raw = imap_search::uid_fetch_body(&mut session, uid)?;
 
             let _ = session.logout();
             Self::parse_message(uid, &raw)

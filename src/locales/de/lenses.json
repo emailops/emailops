@@ -107,7 +107,9 @@
     "email": "E-Mail",
     "doubleClickToEdit": "Zum Bearbeiten doppelklicken",
     "openSourceEmail": "Quell-E-Mail öffnen",
-    "reextractRow": "Diese Zeile erneut extrahieren"
+    "reextractRow": "Diese Zeile erneut extrahieren",
+    "includeRow": "Diese Zeile wieder in den Lens aufnehmen",
+    "excludeRow": "Diese Zeile ausschließen"
   },
   "row": {
     "sourceEmail": "Quell-E-Mail",
@@ -128,5 +130,7 @@
   "apply": {
     "applyToAccount": "Auf Konto anwenden",
     "allAccounts": "Alle Konten"
-  }
+  },
+  "showExcludedRows": "Ausgeschlossene Zeilen anzeigen",
+  "showLensRows": "Zurück zum Lens"
 }

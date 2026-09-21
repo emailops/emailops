@@ -9,8 +9,9 @@
 import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useRemoteContentPolicy } from '@/hooks/useRemoteContentPolicy';
 import * as api from '@/lib/api';
-import { sanitizeEmailHtml, senderName } from '@/lib/emailFormatting';
+import { sanitizeEmailHtmlFull, senderName } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
 import type { Email } from '@/types';
 import { EmailHtmlFrame } from './EmailHtmlFrame';
@@ -45,7 +46,15 @@ export function EmailPreviewById({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const safeHtml = useMemo(() => (email ? sanitizeEmailHtml(body || email.snippet || '') : ''), [body, email]);
+  // Same remote-content policy as the main reading pane. This panel shows no
+  // "load images?" banner, so an unresolved policy must never render: it would
+  // fetch under the permissive default before the real preference arrives.
+  const { ready: policyReady, allowRemote } = useRemoteContentPolicy(accountId, email?.senderEmail ?? null, emailId);
+
+  const safeHtml = useMemo(
+    () => (email ? sanitizeEmailHtmlFull(body || email.snippet || '', allowRemote).html : ''),
+    [body, email, allowRemote],
+  );
 
   useEffect(() => {
     if (!emailId) {
@@ -116,7 +125,7 @@ export function EmailPreviewById({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 email-body-content">
-        <EmailHtmlFrame html={safeHtml} />
+        {policyReady && <EmailHtmlFrame html={safeHtml} />}
       </div>
     </div>
   );

@@ -99,6 +99,17 @@
     "contextWindowSaveFailed": "Kontextfenster konnte nicht gespeichert werden: {{error}}",
     "monthlyBudget": "Monatsbudget (USD)",
     "monthlyBudgetHelp": "Auf 0 setzen für kein Limit.",
+    "usage": {
+      "title": "Dieser Zeitraum",
+      "loading": "Verbrauch wird geladen…",
+      "spent": "{{spent}} ausgegeben",
+      "spentOfBudget": "{{spent}} von {{budget}}",
+      "detail": "{{calls}} Aufrufe · {{prompt}} Eingabe- / {{completion}} Ausgabe-Token",
+      "since": "seit {{date}}",
+      "exceeded": "Budget erreicht — KI-Aufrufe werden abgelehnt, bis du den Zeitraum zurücksetzt oder das Budget erhöhst.",
+      "reset": "Neuen Zeitraum starten",
+      "resetting": "Wird zurückgesetzt…"
+    },
     "noModelsFound": "(keine Modelle gefunden)",
     "noModelsAvailable": "(keine Modelle verfügbar)",
     "noCatalog": "In diesem Build ist kein Modellkatalog verfügbar.",
@@ -406,7 +417,13 @@
     "removePassword": "Passwort entfernen",
     "remoteContent": "Externe Inhalte",
     "remoteContentHelp": "Wenn deaktiviert, werden Bilder und andere externe Ressourcen in E-Mails blockiert, bis du sie ausdrücklich zulässt.",
-    "trustedSenders": "Vertrauenswürdige Absender",
+    "trustedSenders": {
+      "title": "Vertrauenswürdige Absender",
+      "help": "Absender, denen du das Laden entfernter Bilder erlaubt hast. Beim Widerrufen werden ihre Bilder wieder blockiert.",
+      "loading": "Vertrauenswürdige Absender werden geladen…",
+      "none": "Keine vertrauenswürdigen Absender.",
+      "revoke": "Widerrufen"
+    },
     "trustedSendersHelp": "Absender, deren externe Bilder automatisch geladen werden.",
     "emailContent": "E-Mail-Inhalt",
     "allowRemoteToggle": "Externe Inhalte in E-Mails erlauben",

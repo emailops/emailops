@@ -1621,6 +1621,13 @@ export async function excludeLensRow(lensId: string, emailId: string): Promise<v
   return invoke('exclude_lens_row', { lensId, emailId });
 }
 
+export async function getExcludedLensRows(
+  lensId: string,
+  opts?: { limit?: number; offset?: number },
+): Promise<LensRowsPage> {
+  return invoke('get_excluded_lens_rows', { lensId, limit: opts?.limit, offset: opts?.offset });
+}
+
 export async function includeLensRow(lensId: string, emailId: string): Promise<void> {
   return invoke('include_lens_row', { lensId, emailId });
 }

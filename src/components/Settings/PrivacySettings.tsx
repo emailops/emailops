@@ -6,6 +6,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { privacyPolicyUrl } from '@/lib/privacyPolicy';
 import { useLogStore } from '@/stores/logStore';
+import { TrustedSendersSection } from './TrustedSendersSection';
 
 // ── Small reusable toggle row ─────────────────────────────────────────────────
 
@@ -277,6 +278,16 @@ export function PrivacySettings() {
               onChange={handleToggleRemoteContent}
             />
           </div>
+        </div>
+
+        {/* Directly under the toggle these grants override, so the exception
+            and the rule are read together. */}
+        <div className="mt-3">
+          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            {t('settings:privacy.trustedSenders.title')}
+          </h4>
+          <p className="text-xs text-gray-500 mb-2">{t('settings:privacy.trustedSenders.help')}</p>
+          <TrustedSendersSection />
         </div>
 
         <div className="mt-3">

@@ -349,6 +349,23 @@ impl AiService {
     /// override keeps the configured model. The provider (Ollama / OpenRouter /
     /// llama.cpp) is still chosen by the `ai_provider` preference.
     pub fn load_provider_with_model(db: &Database, model_override: Option<&str>) -> Result<Arc<dyn AIProvider>> {
+        // The master AI switch is enforced here rather than in each
+        // `#[tauri::command]`, because "each command remembers to check" is a
+        // rule that was already broken: every AI command had the guard except
+        // the three lens commands, which reached for `load_provider` directly.
+        // With AI off and OpenRouter configured, running a Lens sent mail
+        // content off the machine — exactly what the switch exists to prevent.
+        //
+        // This is the one seam every AI path funnels through, so the guard
+        // cannot be forgotten by a future caller. Callers that legitimately run
+        // with AI off already handle the error: `warmup_from_db` logs and
+        // skips, which is the behaviour we want anyway (no model loaded into
+        // RAM when AI is disabled). Configuring a provider from Settings is
+        // unaffected — `test_ai_provider` builds its client directly.
+        if !db.is_ai_enabled()? {
+            return Err(AppError::AiDisabled);
+        }
+
         let mut config = Self::get_config(db)?;
         if let Some(m) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
             config.model = m.to_string();
@@ -542,7 +559,7 @@ impl AiService {
             return Ok(());
         }
 
-        let spent = self.get_usage_since(config.period_start)?;
+        let spent = Self::get_usage_since(&self.db, config.period_start)?;
         let total = spent.total_cost_usd + additional_cost;
 
         if total > config.monthly_budget_usd {
@@ -555,8 +572,20 @@ impl AiService {
         }
     }
 
-    pub fn get_usage_since(&self, period_start: i64) -> Result<AiUsageSummary> {
-        let conn = self.db.connection();
+    /// Spend since `period_start`. Takes `&Database` rather than `&self`
+    /// because reading a counter must never require an AI provider — see
+    /// [`AiService::usage_summary`].
+    pub fn get_usage_since(db: &Database, period_start: i64) -> Result<AiUsageSummary> {
+        // Resolve the budget *before* opening a connection. `get_config` takes
+        // one of its own, and `Database::reader()` falls back to the write
+        // connection when no reader pool exists — which is the case for the
+        // in-memory test database. Reading the config while holding a
+        // connection therefore deadlocks on the same mutex. It never fired
+        // because nothing tested this function.
+        let budget_usd = Self::get_config(db)?.monthly_budget_usd;
+        // A pure SELECT: reads go through the reader pool, never the write
+        // connection (see `src-tauri/CLAUDE.md`, "Database Access Patterns").
+        let conn = db.reader();
         let mut stmt = conn.prepare(
             "SELECT COALESCE(SUM(cost_usd), 0.0), COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COUNT(*)
              FROM ai_usage WHERE timestamp >= ?1"
@@ -569,7 +598,7 @@ impl AiService {
                 total_completion_tokens: row.get(2)?,
                 total_calls: row.get(3)?,
                 period_start,
-                budget_usd: Self::get_config(&self.db)?.monthly_budget_usd,
+                budget_usd,
             })
         } else {
             Ok(AiUsageSummary {
@@ -578,19 +607,28 @@ impl AiService {
                 total_completion_tokens: 0,
                 total_calls: 0,
                 period_start,
-                budget_usd: Self::get_config(&self.db)?.monthly_budget_usd,
+                budget_usd,
             })
         }
     }
 
-    pub fn get_current_usage(&self) -> Result<AiUsageSummary> {
-        let config = Self::get_config(&self.db)?;
-        self.get_usage_since(config.period_start)
+    /// Spend in the current accounting period.
+    ///
+    /// Associated function, not a method: the `get_ai_usage` command used to
+    /// build an `AiService` to reach this, which constructs a provider. That
+    /// made reading your own spend fail once the master AI switch grew a guard
+    /// — precisely when a user who had hit their budget would go looking — and
+    /// on a llama.cpp setup it loaded a multi-GB model into RAM to read a
+    /// counter.
+    pub fn usage_summary(db: &Database) -> Result<AiUsageSummary> {
+        let config = Self::get_config(db)?;
+        Self::get_usage_since(db, config.period_start)
     }
 
-    pub fn reset_usage(&self) -> Result<()> {
+    /// Start a fresh accounting period. Same reasoning as [`Self::usage_summary`].
+    pub fn reset_usage_period(db: &Database) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        self.db.set_preference("ai_period_start", &now.to_string())?;
+        db.set_preference("ai_period_start", &now.to_string())?;
         Ok(())
     }
 
@@ -801,6 +839,84 @@ mod provider_tests {
             msg.to_lowercase().contains("api key") || msg.to_lowercase().contains("not configured"),
             "error must describe the missing key; got: {msg}"
         );
+    }
+
+    /// The master AI switch is the privacy control: with it off, no mail
+    /// content may reach a model — least of all a remote one. The guard used to
+    /// live in each `#[tauri::command]`, and every AI command had it except the
+    /// three lens commands, which called `load_provider` directly. Turning AI
+    /// off and running a Lens with OpenRouter configured sent mail content off
+    /// the machine.
+    ///
+    /// The guard belongs here, at the single seam every AI path funnels
+    /// through, so a future caller cannot reintroduce the hole by forgetting a
+    /// line in a command.
+    #[test]
+    fn load_provider_refuses_when_the_master_ai_switch_is_off() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        match AiService::load_provider(&db) {
+            Err(AppError::AiDisabled) => {}
+            Err(other) => panic!("expected AiDisabled, got: {other}"),
+            Ok(provider) => panic!("built a {} provider with AI disabled", provider.model_name()),
+        }
+    }
+
+    /// Same seam, the per-turn-model entry point — the one the CLI `--model`
+    /// and REPL `/model` paths use.
+    #[test]
+    fn load_provider_with_model_refuses_when_the_master_ai_switch_is_off() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        assert!(
+            matches!(
+                AiService::load_provider_with_model(&db, Some("qwen3.5-4b-q8_0")),
+                Err(AppError::AiDisabled)
+            ),
+            "an explicit model override must not bypass the master switch"
+        );
+    }
+
+    /// Reading what you have spent, and resetting the accounting period, are
+    /// pure DB reads — but both commands routed through `AiService::new`, which
+    /// builds a provider. That made them fail once the master switch grew a
+    /// guard, and on a llama.cpp setup it would load a multi-GB model into RAM
+    /// to read a counter. A user who hits their budget and turns AI off could
+    /// then neither see their spend nor reset the period.
+    #[test]
+    fn usage_can_be_read_and_reset_without_a_provider() {
+        let db = std::sync::Arc::new(Database::new_for_testing().expect("test db"));
+        db.set_preference("ai_provider", "ollama").unwrap();
+        db.set_preference("ai_enabled", "false").unwrap();
+
+        // The old route: building a service just to reach the counter.
+        assert!(
+            matches!(AiService::new(db.clone()), Err(AppError::AiDisabled)),
+            "the provider-building route is exactly what must not gate usage"
+        );
+
+        // The route the commands take now touches only the database.
+        let usage = AiService::usage_summary(&db).expect("usage must be readable with AI off");
+        assert_eq!(usage.total_calls, 0);
+        AiService::reset_usage_period(&db).expect("the period must be resettable with AI off");
+    }
+
+    /// The switch defaults to on, and an explicit "true" keeps it on — the
+    /// guard must not break every existing install.
+    #[test]
+    fn load_provider_works_when_ai_is_enabled_or_unset() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_provider", "ollama").unwrap();
+
+        // Unset: defaults to enabled.
+        assert!(AiService::load_provider(&db).is_ok(), "unset must default to enabled");
+
+        db.set_preference("ai_enabled", "true").unwrap();
+        assert!(AiService::load_provider(&db).is_ok(), "explicit true must stay enabled");
     }
 
     /// Fresh installs must default to a tool-capable chat model that exists in

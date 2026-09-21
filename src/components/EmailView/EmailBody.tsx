@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EmailHtmlFrame } from '@/components/shared/EmailHtmlFrame';
+import { useRemoteContentPolicy } from '@/hooks/useRemoteContentPolicy';
 import * as api from '@/lib/api';
 import { plainTextToHtml } from '@/lib/composeHtml';
 import { type ParsedMailto, sanitizeEmailHtmlFull } from '@/lib/emailFormatting';
@@ -35,63 +36,19 @@ export function EmailBody({
     },
     [accountId, openComposeTab],
   );
-  // Both async checks start unresolved. We defer rendering the iframe until
-  // both have completed — otherwise images would briefly load with the default
-  // pref (true), then flash to "stripped" once the pref resolves to false, and
-  // finally flash back to "loaded" once the trust check returns true. That
-  // sequence both leaks privacy (the initial flash) and produces a confusing
-  // "no banner, no images" state for trusted senders.
-  const [allowRemoteContent, setAllowRemoteContent] = useState<boolean | null>(null);
-  const [showImages, setShowImages] = useState(false);
-  const [isTrusted, setIsTrusted] = useState<boolean | null>(null);
-
-  // Load the remote-content preference once when the email body mounts.
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getPref('privacy.allow_remote_content')
-      .then((val) => {
-        if (cancelled) return;
-        // Default is OFF (block remote content). Only allow if explicitly "true".
-        setAllowRemoteContent(val === 'true');
-      })
-      .catch(() => {
-        if (!cancelled) setAllowRemoteContent(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Reset per-email overrides whenever a new email is loaded, then check
-  // whether this sender is on the trusted allowlist for the current account.
-  useEffect(() => {
-    setShowImages(false);
-    setIsTrusted(null);
-    if (!senderEmail || !accountId) {
-      setIsTrusted(false);
-      return;
-    }
-    let cancelled = false;
-    api
-      .isSenderTrusted(accountId, senderEmail)
-      .then((trusted) => {
-        if (!cancelled) setIsTrusted(trusted);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        // Surface the failure so the user can see it in the output panel rather
-        // than silently treating the sender as untrusted forever.
-        addLog('error', 'system', `Trusted-sender check failed for ${senderEmail}: ${errorText(err)}`);
-        setIsTrusted(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [html, accountId, senderEmail, addLog]);
-
-  const ready = allowRemoteContent !== null && isTrusted !== null;
-  const effectiveAllowRemote = (allowRemoteContent ?? false) || showImages || isTrusted === true;
+  // The policy (preference + trusted-sender allowlist + the render gate that
+  // stops images flashing in before both resolve) is shared with
+  // `EmailPreviewById` — see `useRemoteContentPolicy`. It is one hook because
+  // the two copies had already diverged, and the preview's copy did not strip
+  // anything.
+  const {
+    ready,
+    allowRemote: effectiveAllowRemote,
+    isTrusted,
+    showImages,
+    allowOnce,
+    markSenderTrusted,
+  } = useRemoteContentPolicy(accountId, senderEmail, html);
 
   const { html: sanitizedHtml, hasBlockedImages } = useMemo(
     () => sanitizeEmailHtmlFull(html, effectiveAllowRemote),
@@ -101,15 +58,15 @@ export function EmailBody({
   const handleTrustSender = useCallback(async () => {
     try {
       await api.addTrustedSender(accountId, senderEmail);
-      setIsTrusted(true);
+      markSenderTrusted();
       addLog('success', 'system', `Trusted ${senderEmail} — remote images will auto-load on future emails.`);
     } catch (err) {
       addLog('error', 'system', `Failed to trust ${senderEmail}: ${errorText(err)}`);
       // Fall back to a one-off image load so the user still gets the images
       // they asked for, even if persistence failed.
-      setShowImages(true);
+      allowOnce();
     }
-  }, [accountId, senderEmail, addLog]);
+  }, [accountId, senderEmail, addLog, markSenderTrusted, allowOnce]);
 
   // Banner appears only when (a) trust resolved to false, (b) there ARE remote
   // images to block, and (c) the user hasn't already overridden with "Show images".
@@ -128,11 +85,7 @@ export function EmailBody({
             />
           </svg>
           <span>{t('inbox:emailView.remoteImagesBlocked')}</span>
-          <button
-            type="button"
-            onClick={() => setShowImages(true)}
-            className="ml-1 underline hover:no-underline font-medium"
-          >
+          <button type="button" onClick={allowOnce} className="ml-1 underline hover:no-underline font-medium">
             {t('inbox:emailView.showImages')}
           </button>
           {senderEmail && (

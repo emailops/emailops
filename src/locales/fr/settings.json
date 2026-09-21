@@ -99,6 +99,17 @@
     "contextWindowSaveFailed": "Échec de l'enregistrement de la fenêtre de contexte : {{error}}",
     "monthlyBudget": "Budget mensuel (USD)",
     "monthlyBudgetHelp": "Mettez 0 pour aucune limite.",
+    "usage": {
+      "title": "Cette période",
+      "loading": "Chargement de la consommation…",
+      "spent": "{{spent}} dépensés",
+      "spentOfBudget": "{{spent}} sur {{budget}}",
+      "detail": "{{calls}} appels · {{prompt}} jetons d’entrée / {{completion}} de sortie",
+      "since": "depuis le {{date}}",
+      "exceeded": "Budget atteint — les appels à l’IA sont refusés jusqu’à ce que vous réinitialisiez la période ou augmentiez le budget.",
+      "reset": "Démarrer une nouvelle période",
+      "resetting": "Réinitialisation…"
+    },
     "noModelsFound": "(aucun modèle trouvé)",
     "noModelsAvailable": "(aucun modèle disponible)",
     "noCatalog": "Aucun catalogue de modèles dans cette version.",
@@ -406,7 +417,13 @@
     "removePassword": "Supprimer le mot de passe",
     "remoteContent": "Contenu distant",
     "remoteContentHelp": "Lorsque c'est désactivé, les images et autres ressources distantes des courriels sont bloquées jusqu'à autorisation explicite.",
-    "trustedSenders": "Expéditeurs de confiance",
+    "trustedSenders": {
+      "title": "Expéditeurs de confiance",
+      "help": "Expéditeurs autorisés à charger des images distantes. En révoquer un rebloque ses images.",
+      "loading": "Chargement des expéditeurs de confiance…",
+      "none": "Aucun expéditeur de confiance.",
+      "revoke": "Révoquer"
+    },
     "trustedSendersHelp": "Expéditeurs autorisés à charger les images distantes automatiquement.",
     "emailContent": "Contenu des courriels",
     "allowRemoteToggle": "Autoriser le contenu distant dans les courriels",

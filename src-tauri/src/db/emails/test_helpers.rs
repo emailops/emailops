@@ -243,3 +243,29 @@ pub(super) fn insert_account(db: &Database, id: &str, email: &str) {
         )
         .unwrap();
 }
+
+/// A fully-populated `Email` for the ingest paths (`insert_email`,
+/// `insert_emails_batch`) that take the struct rather than raw SQL.
+pub(super) fn email_fixture(id: &str, account_id: &str, body: &str) -> crate::models::Email {
+    crate::models::Email {
+        id: id.to_string(),
+        account_id: account_id.to_string(),
+        thread_id: format!("thread-{id}"),
+        message_id: Some(format!("<{id}@example.test>")),
+        references: None,
+        subject: "Quarterly figures".to_string(),
+        sender: "Finance Bot".to_string(),
+        sender_email: "finance@example.test".to_string(),
+        recipients: vec!["me@example.test".to_string()],
+        cc: Vec::new(),
+        body: body.to_string(),
+        snippet: "Quarterly figures".to_string(),
+        timestamp: 1_700_000_000,
+        is_read: false,
+        triage_status: None,
+        category: "primary".to_string(),
+        mailbox: "inbox".to_string(),
+        is_sent: false,
+        headers: None,
+    }
+}

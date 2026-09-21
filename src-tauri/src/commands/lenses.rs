@@ -139,6 +139,21 @@ pub async fn get_lens_rows(
         .get_lens_rows(&lens_id, sort.as_ref(), limit.unwrap_or(200), offset.unwrap_or(0))
 }
 
+/// The rows the user has excluded, so the "include" command below has a screen
+/// on which to name one. Without this listing, excluding was irreversible in
+/// practice even though the undo existed.
+#[tauri::command]
+pub async fn get_excluded_lens_rows(
+    state: State<'_, AppState>,
+    lens_id: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<LensRowsPage> {
+    state
+        .db
+        .get_excluded_lens_rows(&lens_id, limit.unwrap_or(200), offset.unwrap_or(0))
+}
+
 #[tauri::command]
 pub async fn update_lens_row_override(
     state: State<'_, AppState>,

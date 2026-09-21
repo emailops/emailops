@@ -283,10 +283,22 @@ interface LensTableRowProps {
   onOverride: (emailId: string, columnKey: string, value: unknown) => void;
   onReextract: (emailId: string) => void;
   onExclude: (emailId: string) => void;
+  onInclude: (emailId: string) => void;
+  /** Showing excluded rows: the row action puts a row back instead of removing it. */
+  isExcludedView: boolean;
   onOpenRow: (row: LensRow) => void;
 }
 
-function LensTableRow({ row, columns, onOverride, onReextract, onExclude, onOpenRow }: LensTableRowProps) {
+function LensTableRow({
+  row,
+  columns,
+  onOverride,
+  onReextract,
+  onExclude,
+  onInclude,
+  isExcludedView,
+  onOpenRow,
+}: LensTableRowProps) {
   const { t } = useTranslation(['lenses']);
   const fmt = useFormatters();
   return (
@@ -329,14 +341,25 @@ function LensTableRow({ row, columns, onOverride, onReextract, onExclude, onOpen
           >
             ↻
           </button>
-          <button
-            type="button"
-            onClick={() => onExclude(row.emailId)}
-            className="rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-900/40"
-            title="Exclude this row"
-          >
-            ✕
-          </button>
+          {isExcludedView ? (
+            <button
+              type="button"
+              onClick={() => onInclude(row.emailId)}
+              className="rounded border border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-gray-700"
+              title={t('lenses:table.includeRow')}
+            >
+              ↩
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onExclude(row.emailId)}
+              className="rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-900/40"
+              title={t('lenses:table.excludeRow')}
+            >
+              ✕
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -353,6 +376,9 @@ export interface LensTableProps {
   onOverride: (emailId: string, columnKey: string, value: unknown) => void;
   onReextract: (emailId: string) => void;
   onExclude: (emailId: string) => void;
+  onInclude: (emailId: string) => void;
+  /** Showing excluded rows: the row action puts a row back instead of removing it. */
+  isExcludedView: boolean;
   onOpenRow: (row: LensRow) => void;
   groupBy?: string | null;
 }
@@ -365,6 +391,8 @@ export function LensTable({
   onOverride,
   onReextract,
   onExclude,
+  onInclude,
+  isExcludedView,
   onOpenRow,
   groupBy,
 }: LensTableProps) {
@@ -471,6 +499,8 @@ export function LensTable({
                     onOverride={onOverride}
                     onReextract={onReextract}
                     onExclude={onExclude}
+                    onInclude={onInclude}
+                    isExcludedView={isExcludedView}
                     onOpenRow={onOpenRow}
                   />
                 ))}
@@ -484,6 +514,8 @@ export function LensTable({
                 onOverride={onOverride}
                 onReextract={onReextract}
                 onExclude={onExclude}
+                onInclude={onInclude}
+                isExcludedView={isExcludedView}
                 onOpenRow={onOpenRow}
               />
             ))}

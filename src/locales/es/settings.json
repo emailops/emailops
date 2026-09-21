@@ -99,6 +99,17 @@
     "contextWindowSaveFailed": "No se pudo guardar la ventana de contexto: {{error}}",
     "monthlyBudget": "Presupuesto mensual (USD)",
     "monthlyBudgetHelp": "Pon 0 para no aplicar límite.",
+    "usage": {
+      "title": "Este periodo",
+      "loading": "Cargando consumo…",
+      "spent": "{{spent}} gastado",
+      "spentOfBudget": "{{spent}} de {{budget}}",
+      "detail": "{{calls}} llamadas · {{prompt}} tokens de entrada / {{completion}} de salida",
+      "since": "desde el {{date}}",
+      "exceeded": "Presupuesto alcanzado: las llamadas a la IA se rechazan hasta que reinicies el periodo o subas el presupuesto.",
+      "reset": "Iniciar un periodo nuevo",
+      "resetting": "Reiniciando…"
+    },
     "noModelsFound": "(no se encontraron modelos)",
     "noModelsAvailable": "(no hay modelos disponibles)",
     "noCatalog": "No hay catálogo de modelos en esta versión.",
@@ -406,7 +417,13 @@
     "removePassword": "Quitar contraseña",
     "remoteContent": "Contenido remoto",
     "remoteContentHelp": "Cuando está desactivado, las imágenes y otros recursos remotos en los correos se bloquean hasta que los permitas.",
-    "trustedSenders": "Remitentes de confianza",
+    "trustedSenders": {
+      "title": "Remitentes de confianza",
+      "help": "Remitentes a los que permitiste cargar imágenes remotas. Al revocar uno, sus imágenes vuelven a bloquearse.",
+      "loading": "Cargando remitentes de confianza…",
+      "none": "Ningún remitente de confianza.",
+      "revoke": "Revocar"
+    },
     "trustedSendersHelp": "Remitentes a los que se permite cargar imágenes remotas automáticamente.",
     "emailContent": "Contenido del correo",
     "allowRemoteToggle": "Permitir contenido remoto en los correos",
