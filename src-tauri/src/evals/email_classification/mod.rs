@@ -1,3 +1,12 @@
+// NOTE — this is NOT the eval for the app's classifier.
+//
+// It probes `distil-labs/distil-email-classifier` on its own 10-way taxonomy
+// (Billing, Newsletter, Work, …) and has no ground truth: it records what the
+// model said, its latency and the label distribution. The tags EmailOps
+// actually assigns — intent / topic / urgency from `services::classification`
+// — are measured by `tag_classification_eval` (`make eval-classify`) against
+// a labelled corpus.
+//
 // Eval harness for the `distil-labs/distil-email-classifier` Hugging Face
 // model (Qwen3-0.6B distilled into a 10-way email classifier).
 //

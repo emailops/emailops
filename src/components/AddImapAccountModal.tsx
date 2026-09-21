@@ -39,6 +39,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
   const [preset, setPreset] = useState<Preset>(PRESETS[0]);
   const [host, setHost] = useState('');
   const [port, setPort] = useState(993);
+  const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [smtpHost, setSmtpHost] = useState('');
@@ -49,6 +50,10 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
   const [testError, setTestError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Most servers sign you in with your address; a few use a bare name. A blank
+  // Username box means "the login is the address".
+  const loginUsername = username.trim() || email.trim();
 
   function resetTest() {
     if (testStatus !== 'idle') {
@@ -88,7 +93,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
       await testImapConnection({
         host: host.trim(),
         port,
-        username: username.trim(),
+        username: loginUsername,
         password,
         smtpHost: smtpHost.trim(),
         smtpPort,
@@ -107,9 +112,10 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
     setSubmitting(true);
     try {
       const config: ImapAccountConfig = {
+        email: email.trim(),
         host: host.trim(),
         port,
-        username: username.trim(),
+        username: loginUsername,
         password,
         smtpHost: smtpHost.trim(),
         smtpPort,
@@ -124,7 +130,8 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
     }
   }
 
-  const canTest = host.trim() && username.trim() && password && smtpHost.trim() && testStatus !== 'testing';
+  const canTest =
+    email.trim() && loginUsername && password && host.trim() && smtpHost.trim() && testStatus !== 'testing';
   const canSubmit = testStatus === 'ok' && !submitting;
 
   return (
@@ -153,19 +160,40 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.emailLabel')}</label>
+              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-email">
+                {t('modal:imapAccount.email')}
+              </label>
               <input
+                id="add-imap-email"
                 type="email"
-                value={username}
-                onChange={credentialField(setUsername)}
+                value={email}
+                onChange={credentialField(setEmail)}
                 required
                 placeholder={'you@example.com'} // i18n-ignore: example email address, not user-facing copy
                 className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.passwordLabel')}</label>
+              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-username">
+                {t('modal:imapAccount.usernameLabel')}
+              </label>
               <input
+                id="add-imap-username"
+                type="text"
+                autoComplete="off"
+                value={username}
+                onChange={credentialField(setUsername)}
+                placeholder={email.trim()} // i18n-ignore: echoes the address typed above
+                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+              />
+              <p className="text-neutral-500 text-xs mt-1">{t('modal:imapAccount.usernameHint')}</p>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-password">
+                {t('modal:imapAccount.passwordLabel')}
+              </label>
+              <input
+                id="add-imap-password"
                 type="password"
                 value={password}
                 onChange={credentialField(setPassword)}
@@ -174,8 +202,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.imapHost')}</label>
+              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-host">
+                {t('modal:imapAccount.imapHost')}
+              </label>
               <input
+                id="add-imap-host"
                 type="text"
                 value={host}
                 onChange={credentialField(setHost)}
@@ -197,8 +228,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.smtpHost')}</label>
+              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-smtp-host">
+                {t('modal:imapAccount.smtpHost')}
+              </label>
               <input
+                id="add-imap-smtp-host"
                 type="text"
                 value={smtpHost}
                 onChange={credentialField(setSmtpHost)}

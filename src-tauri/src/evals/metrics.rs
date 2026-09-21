@@ -96,6 +96,18 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         checks.push(check_tool_args_contains(&case.expected_tool_args_contains, tool_calls));
     }
 
+    if !case.expected_tool_args_not_contains.is_empty() {
+        let tool_calls = outcome
+            .assistant_trace
+            .as_ref()
+            .map(|t| t.tool_calls.as_slice())
+            .unwrap_or(&[]);
+        checks.push(check_tool_args_not_contains(
+            &case.expected_tool_args_not_contains,
+            tool_calls,
+        ));
+    }
+
     if let Some(pattern) = case.expected_title_pattern.as_deref() {
         checks.push(check_title_pattern(pattern, &outcome.conversation_title)?);
     }
@@ -314,6 +326,39 @@ fn check_tool_args_contains(expected: &[String], tool_calls: &[crate::models::To
     }
 }
 
+/// The mirror of [`check_tool_args_contains`]: every needle must be absent
+/// from EVERY traced call's arguments.
+fn check_tool_args_not_contains(expected: &[String], tool_calls: &[crate::models::ToolCallTrace]) -> HeuristicCheck {
+    let serialized: Vec<String> = tool_calls
+        .iter()
+        .map(|tc| tc.arguments.to_string().to_lowercase())
+        .collect();
+    let present: Vec<String> = expected
+        .iter()
+        .filter(|needle| {
+            let n = needle.to_lowercase();
+            serialized.iter().any(|args| args.contains(&n))
+        })
+        .cloned()
+        .collect();
+    let passed = present.is_empty();
+    HeuristicCheck {
+        name: "tool_args_not_contains".into(),
+        passed,
+        expected: format!("absent: {}", expected.join(", ")),
+        actual: if serialized.is_empty() {
+            "<no tool calls>".into()
+        } else {
+            truncate(&serialized.join(" | "), 300)
+        },
+        detail: if passed {
+            "no tool call carried a forbidden substring".into()
+        } else {
+            format!("forbidden substrings present in tool arguments: {}", present.join(", "))
+        },
+    }
+}
+
 fn check_title_pattern(pattern: &str, title: &str) -> EvalResult<HeuristicCheck> {
     let re = Regex::new(pattern)?;
     let passed = re.is_match(title);
@@ -504,5 +549,42 @@ mod tests {
     fn tool_args_contains_fails_on_empty_tool_calls() {
         let check = check_tool_args_contains(&["x@y.com".to_string()], &[]);
         assert!(!check.passed);
+    }
+
+    #[test]
+    fn tool_args_not_contains_fails_when_any_call_carries_the_substring() {
+        // The planner-limit failure: the FIRST call asked for 5 rows and a
+        // later one for 25, which the positive check alone accepts.
+        let calls = vec![
+            tool_call(
+                "search_emails",
+                serde_json::json!({"intent": "introduction", "limit": 5}),
+            ),
+            tool_call(
+                "search_emails",
+                serde_json::json!({"intent": "introduction", "limit": 25}),
+            ),
+        ];
+        let check = check_tool_args_not_contains(&["\"limit\":5".to_string()], &calls);
+        assert!(!check.passed);
+        assert!(check.detail.contains("limit"), "detail: {}", check.detail);
+    }
+
+    #[test]
+    fn tool_args_not_contains_passes_when_no_call_carries_the_substring() {
+        let calls = vec![tool_call(
+            "search_emails",
+            serde_json::json!({"intent": "introduction", "limit": 25}),
+        )];
+        let check = check_tool_args_not_contains(&["\"limit\":5".to_string()], &calls);
+        assert!(check.passed);
+    }
+
+    #[test]
+    fn tool_args_not_contains_passes_on_empty_tool_calls() {
+        // Nothing ran, so nothing forbidden was asked for. A missing call is
+        // the positive check's job to catch, not this one's.
+        let check = check_tool_args_not_contains(&["\"limit\":5".to_string()], &[]);
+        assert!(check.passed);
     }
 }

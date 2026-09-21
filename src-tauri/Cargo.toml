@@ -125,9 +125,9 @@ llama-cpp-sys-2 = { version = "0.1.151", optional = true, default-features = fal
 ts-rs = { version = "12", optional = true }
 
 # Phoenix (Arize AI) observability (optional — enabled via the `tracing` feature, dev only)
-opentelemetry      = { version = "0.32", optional = true }
-opentelemetry_sdk  = { version = "0.32", optional = true }
-opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry      = { version = "0.33", optional = true }
+opentelemetry_sdk  = { version = "0.33", optional = true }
+opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 
 [features]
 # Enables tauri::test::mock_builder for the eval examples so they can build an
@@ -277,6 +277,24 @@ required-features = ["eval"]
 
 [[example]]
 name = "chat_eval"
+required-features = ["eval"]
+
+[[example]]
+# Scores the chat query planner on its own — one completion per case instead
+# of a full chat turn. See `make eval-plan`.
+name = "query_plan_eval"
+required-features = ["eval"]
+
+[[example]]
+# Scores the email classifier (intent / topic / urgency) against the labelled
+# synthetic corpus in evals/classification/cases. See `make eval-classify`.
+name = "tag_classification_eval"
+required-features = ["eval"]
+
+[[example]]
+# Measures what classifier / planner one-shots cost the chat KV prefix, in one
+# process. See `make bench-oneshot-kv`.
+name = "oneshot_kv_bench"
 required-features = ["eval"]
 
 [[example]]

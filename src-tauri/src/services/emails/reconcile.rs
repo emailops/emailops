@@ -236,6 +236,7 @@ mod tests {
             account_id: "acc".to_string(),
             thread_id: thread_id.to_string(),
             message_id: message_id.map(str::to_string),
+            references: None,
             subject: subject.to_string(),
             sender: "Me".to_string(),
             sender_email: "me@example.com".to_string(),

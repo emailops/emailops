@@ -74,8 +74,9 @@ never keeps a missing layer silently.
   Anchor goldens on data the generator seeds (`scripts/generate_demo_db.py`); date-relative
   data ("tomorrow's meeting") must be re-anchored on every run the way `ensure_demo_db.sh`
   refreshes the calendar (`--refresh-calendar`), never frozen at generation time. If the case
-  needs rows the demo DB lacks, seed them there and apply the same SQL to the live
-  `.emailops-demo-data/emailops.db` (never regenerate it: ids are random).
+  needs rows the demo DB lacks, seed them there and regenerate
+  (`make demo-db && make demo-embed`): ids are content-addressed, so a rebuild
+  reproduces them exactly and a case may pin one.
 - **Junk / translation eval**: a case in `src-tauri/evals/junk/cases/*.yaml` (expected verdict
   per axis) or `src-tauri/evals/translation/cases.yaml` (ISO code, keywords); run
   `make eval-junk ARGS="--case <id>"` or the `translation_eval` example alone first.

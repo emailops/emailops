@@ -78,45 +78,22 @@ pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &s
 }
 
 impl Database {
+    /// Store one email, creating or refreshing its row.
+    ///
+    /// Delegates to [`Database::insert_emails_batch`] rather than writing its
+    /// own INSERT. It used to have one, and it wrote only `emails` +
+    /// `email_bodies` -- no FTS row and no `email_headers`. The failed-download
+    /// retry path (`sync_failed_emails`) ingests through here, and for a
+    /// retried message that is the *first* insert, so the mail was never
+    /// indexed: invisible to keyword search and to the chat's `search_emails`
+    /// tool, permanently, because `populate_fts_if_empty` only runs when the
+    /// whole index is empty. It also never got its captured headers, so the
+    /// junk detector scored it `Unknown` forever.
+    ///
+    /// One insert path means one set of invariants, so the two cannot drift
+    /// apart again.
     pub fn insert_email(&self, email: &Email) -> Result<()> {
-        let conn = self.connection();
-        let recipients_json = serde_json::to_string(&email.recipients)?;
-        let cc_json = serde_json::to_string(&email.cc)?;
-        let sender_domain = extract_sender_domain(&email.sender_email);
-        let now = chrono::Utc::now().timestamp();
-
-        let mailbox = normalize_mailbox(&email.mailbox);
-        conn.execute(
-            r#"INSERT OR REPLACE INTO emails
-               (id, account_id, thread_id, message_id, subject, sender, sender_email,
-                sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"#,
-            params![
-                email.id,
-                email.account_id,
-                email.thread_id,
-                email.message_id,
-                email.subject,
-                email.sender,
-                email.sender_email,
-                sender_domain,
-                recipients_json,
-                cc_json,
-                email.snippet,
-                email.timestamp,
-                email.is_read as i32,
-                email.triage_status,
-                email.category,
-                mailbox,
-                is_sent_flag(email, mailbox) as i32,
-                now,
-            ],
-        )?;
-        conn.execute(
-            "INSERT OR REPLACE INTO email_bodies (email_id, body) VALUES (?1, ?2)",
-            params![email.id, email.body],
-        )?;
-        Ok(())
+        self.insert_emails_batch(std::slice::from_ref(email))
     }
 
     /// Insert a locally constructed Sent copy at send time (optimistic insert).
@@ -133,15 +110,41 @@ impl Database {
         let mailbox = normalize_mailbox(&email.mailbox);
         let now = chrono::Utc::now().timestamp();
 
-        // Remove stale FTS entry before REPLACE (DELETE trigger may not fire
-        // during INSERT OR REPLACE without recursive_triggers enabled).
+        // The FTS table is not a child of `emails` (no FK), so its stale row is
+        // cleared by hand.
         tx.execute("DELETE FROM emails_fts WHERE email_id = ?1", params![email.id])?;
+        // UPSERT, not `INSERT OR REPLACE` — see the statement in
+        // `batch.rs::insert_emails_batch` for why. Reachable here because the
+        // optimistic Sent row can carry an id the provider has already given a
+        // synced copy, and a REPLACE would then cascade that message's tags,
+        // junk verdict and citations away. `is_deleted` stays out of both lists
+        // so a re-inserted row cannot un-delete itself.
         tx.execute(
-            r#"INSERT OR REPLACE INTO emails
+            r#"INSERT INTO emails
                (id, account_id, thread_id, message_id, subject, sender, sender_email,
                 sender_domain, recipients_json, cc_json, snippet, timestamp, is_read,
-                triage_status, category, mailbox, is_sent, pending_sync, created_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"#,
+                triage_status, category, mailbox, is_sent, pending_sync, created_at,
+                references_header)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+               ON CONFLICT(id) DO UPDATE SET
+                 account_id = excluded.account_id,
+                 thread_id = excluded.thread_id,
+                 message_id = excluded.message_id,
+                 subject = excluded.subject,
+                 sender = excluded.sender,
+                 sender_email = excluded.sender_email,
+                 sender_domain = excluded.sender_domain,
+                 recipients_json = excluded.recipients_json,
+                 cc_json = excluded.cc_json,
+                 snippet = excluded.snippet,
+                 timestamp = excluded.timestamp,
+                 is_read = excluded.is_read,
+                 triage_status = excluded.triage_status,
+                 category = excluded.category,
+                 mailbox = excluded.mailbox,
+                 is_sent = excluded.is_sent,
+                 pending_sync = excluded.pending_sync,
+                 references_header = excluded.references_header"#,
             params![
                 email.id,
                 email.account_id,
@@ -162,6 +165,7 @@ impl Database {
                 is_sent_flag(email, mailbox) as i32,
                 pending_sync as i32,
                 now,
+                email.references,
             ],
         )?;
         tx.execute(
@@ -656,6 +660,44 @@ impl Database {
         Ok(result)
     }
 
+    /// The `id:` search operator: the requested emails that belong to
+    /// `account_id` and would be visible in search (not deleted, not in
+    /// spam/trash, in one of `categories` when given), newest first. No thread
+    /// dedup — the caller asked for these exact emails.
+    pub fn get_account_emails_by_ids(
+        &self,
+        account_id: &str,
+        email_ids: &[String],
+        categories: Option<&[String]>,
+    ) -> Result<Vec<Email>> {
+        if email_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let categories = categories.filter(|c| !c.is_empty()).unwrap_or(&[]);
+
+        let id_placeholders = vec!["?"; email_ids.len()].join(", ");
+        let category_clause = if categories.is_empty() {
+            String::new()
+        } else {
+            format!(" AND category IN ({})", vec!["?"; categories.len()].join(", "))
+        };
+        let sql = format!(
+            "SELECT {EMAIL_COLUMNS}
+             FROM emails
+             WHERE account_id = ? AND is_deleted = 0 AND mailbox NOT IN ('spam', 'trash')
+               AND id IN ({id_placeholders}){category_clause}
+             ORDER BY timestamp DESC, id DESC"
+        );
+
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let params = std::iter::once(account_id)
+            .chain(email_ids.iter().map(String::as_str))
+            .chain(categories.iter().map(String::as_str));
+        let emails = stmt.query_map(rusqlite::params_from_iter(params), row_to_email)?;
+        Ok(emails.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Get the most recent email timestamp for an account (seconds since epoch)
     pub fn get_latest_email_timestamp(&self, account_id: &str) -> Result<Option<i64>> {
         let conn = self.reader();
@@ -860,6 +902,52 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    #[test]
+    fn account_emails_by_ids_returns_only_live_visible_rows_of_that_account_newest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email_with_category(&db, "old", "acc1", "t1", 100, "primary");
+        insert_email_with_category(&db, "new", "acc1", "t1", 200, "updates");
+        insert_email_with_category(&db, "other-account", "acc2", "t2", 300, "primary");
+        insert_email_with_category(&db, "deleted", "acc1", "t3", 300, "primary");
+        insert_email_with_category(&db, "spam", "acc1", "t4", 300, "primary");
+        insert_email_with_category(&db, "trash", "acc1", "t5", 300, "primary");
+        insert_email_with_category(&db, "not-asked", "acc1", "t6", 300, "primary");
+        db.delete_email("deleted").unwrap();
+        db.connection()
+            .execute("UPDATE emails SET mailbox = id WHERE id IN ('spam', 'trash')", [])
+            .unwrap();
+        let ids: Vec<String> = ["old", "new", "other-account", "deleted", "spam", "trash", "missing"]
+            .map(String::from)
+            .to_vec();
+
+        let found: Vec<String> = db
+            .get_account_emails_by_ids("acc1", &ids, None)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+
+        assert_eq!(found, vec!["new", "old"]);
+    }
+
+    #[test]
+    fn account_emails_by_ids_honours_categories() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email_with_category(&db, "p", "acc1", "t1", 100, "primary");
+        insert_email_with_category(&db, "u", "acc1", "t2", 200, "updates");
+        let ids = vec!["p".to_string(), "u".to_string()];
+        let categories = vec!["primary".to_string()];
+
+        let found: Vec<String> = db
+            .get_account_emails_by_ids("acc1", &ids, Some(&categories))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+
+        assert_eq!(found, vec!["p"]);
+    }
 
     #[test]
     fn emails_in_mailbox_since_is_scoped_to_account_mailbox_window_and_live_rows() {
@@ -1307,6 +1395,7 @@ mod tests {
             account_id: account_id.to_string(),
             thread_id: thread_id.to_string(),
             message_id: Some(format!("<{}@local>", id)),
+            references: None,
             subject: "Quarterly report".to_string(),
             sender: "Me".to_string(),
             sender_email: "me@example.com".to_string(),
@@ -1322,6 +1411,29 @@ mod tests {
             is_sent: true,
             headers: None,
         }
+    }
+
+    /// Same cascade hazard as the main ingest path: `INSERT OR REPLACE` deletes
+    /// the conflicting row first, taking every `ON DELETE CASCADE` child with
+    /// it. Reachable here because the optimistic Sent row can carry an id the
+    /// provider has already given a synced copy.
+    #[test]
+    fn re_inserting_a_sent_copy_keeps_its_tags() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+        db.insert_sent_email_local(&local_sent_email("sent-1", "acc1", "t1", 100), true)
+            .unwrap();
+        db.upsert_email_tag("sent-1", "intent", "quote", Some(0.8)).unwrap();
+
+        db.insert_sent_email_local(&local_sent_email("sent-1", "acc1", "t1", 100), false)
+            .unwrap();
+
+        let tags = db.get_email_tags("sent-1").unwrap();
+        assert_eq!(
+            tags.iter().map(|t| t.tag_value.as_str()).collect::<Vec<_>>(),
+            vec!["quote"],
+            "re-inserting the optimistic Sent row must not cascade-delete its tags"
+        );
     }
 
     #[test]

@@ -81,6 +81,7 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
+            page: None,
         };
         let out = ListDraftsTool.execute(&ctx, serde_json::json!({})).await.unwrap();
         assert_eq!(out.text, "No drafts saved.");
@@ -107,6 +108,7 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
+            page: None,
         };
         let out = ListDraftsTool.execute(&ctx, serde_json::json!({})).await.unwrap();
         assert!(out.text.contains("First"), "got: {}", out.text);
@@ -136,6 +138,7 @@ mod tests {
             db: &db,
             account_id: "acc",
             categories: &[],
+            page: None,
         };
         let out = ListDraftsTool
             .execute(&ctx, serde_json::json!({ "limit": 2 }))

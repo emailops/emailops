@@ -27,9 +27,11 @@ interface ChatViewProps {
   onAccountChange: (accountId: string) => void;
   /** Called when a citation opens an email — lets the parent switch to the inbox view. */
   onNavigateToInbox?: () => void;
+  /** Show the emails an answer references in the email list, via this search query. */
+  onShowEmailsInList?: (query: string) => void;
 }
 
-export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: ChatViewProps) {
+export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShowEmailsInList }: ChatViewProps) {
   const { t } = useTranslation(['chat', 'common']);
   // Chat conversations are hard-scoped to one account. In unified
   const {
@@ -203,6 +205,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox }: Chat
                   streamingPhase={streamingPhase}
                   accountId={accountId}
                   onOpenEmail={onNavigateToInbox}
+                  onShowEmailsInList={onShowEmailsInList}
                 />
               )}
               {error && <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>}

@@ -1,0 +1,33 @@
+# The keyword list accelerates the route; it no longer gates it.
+#
+# `TOOLS_FIRST_KEYWORDS` is an EN/ES substring list, so a question that names a
+# sender ("que emails tengo de X") or arrives in German or French matched
+# nothing and fell to RagFirst: the turn paid embedding + vector + FTS for a
+# question that is a plain `from:` filter, and skipped the planner that would
+# have pre-seeded it. Now a miss asks the query planner instead, and its verdict
+# sets the route — a plan with a real filter is tools-first, a keyword-only plan
+# stays on RAG (retrieval ranks those better).
+#
+# WHAT THESE ASSERT
+# The route and the tool, not the prose: the reply was already correct before
+# the change (the tool menu is complete on both routes), what changed is the
+# path. The German case is the one the keyword list could never have covered.
+
+- id: sender_question_routes_via_planner_es
+  question: "que emails tengo de metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: routing
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  expected_tool_args_contains: ["metrics@emailopslabs.dev"]
+  metrics: []
+
+- id: sender_question_routes_via_planner_de
+  question: "welche E-Mails habe ich von metrics@emailopslabs.dev"
+  account: "ulises@emailopslabs.dev"
+  category: routing
+  tier: smoke
+  expected_route: tools_first
+  expected_tools_called: ["search_emails"]
+  metrics: []

@@ -246,6 +246,10 @@ pub struct ParsedSearchQuery {
     pub before_timestamp: Option<i64>,
     #[serde(default)]
     pub tag_filters: Vec<String>,
+    /// Exact email ids from `id:` operators. Kept verbatim (ids are
+    /// case-sensitive and IMAP ids contain `::`).
+    #[serde(default)]
+    pub id_filters: Vec<String>,
 }
 
 pub struct OllamaClient {
@@ -1012,6 +1016,9 @@ impl AIProvider for OllamaClient {
             completion_tokens: 0,
             cost_usd: 0.0,
             model: self.model.clone(),
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            aux_plan: None,
         })
     }
 
@@ -1200,10 +1207,24 @@ fn extract_json(text: &str) -> String {
 }
 
 pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
-    let query = query.trim();
-    let query_lower = query.to_lowercase();
     let mut parsed = ParsedSearchQuery::default();
     let mut has_filter = false;
+
+    // `id:` tokens come out first, whole, so the substring-based operator
+    // matching below never sees an id (a uuid ending in `de` would read as `de:`).
+    let mut rest_tokens = Vec::new();
+    for token in query.split_whitespace() {
+        match token.get(..3) {
+            Some(prefix) if prefix.eq_ignore_ascii_case("id:") && token.len() > 3 => {
+                parsed.id_filters.push(token[3..].to_string());
+                has_filter = true;
+            }
+            _ => rest_tokens.push(token),
+        }
+    }
+    let query = rest_tokens.join(" ");
+    let query = query.as_str();
+    let query_lower = query.to_lowercase();
 
     if let Some(value) = extract_prefixed_value(query, &query_lower, &["from:", "de:"]) {
         parsed.from_filter = Some(value);
@@ -1642,5 +1663,45 @@ mod base_url_tests {
     #[test]
     fn an_empty_value_falls_back_to_the_default() {
         with_host(Some("   "), || assert_eq!(ollama_base_url(), "http://localhost:11434"));
+    }
+}
+
+#[cfg(test)]
+mod pattern_parser_tests {
+    use super::parse_search_query_patterns;
+
+    #[test]
+    fn collects_every_id_operator() {
+        let parsed = parse_search_query_patterns("id:19e2598128ca4655 id:19e2598128ca4656").unwrap();
+        assert_eq!(parsed.id_filters, vec!["19e2598128ca4655", "19e2598128ca4656"]);
+        assert!(parsed.keywords.is_empty(), "keywords: {:?}", parsed.keywords);
+    }
+
+    #[test]
+    fn keeps_imap_ids_verbatim() {
+        let parsed = parse_search_query_patterns("ID:0f9a-Acct::SENT::42").unwrap();
+        assert_eq!(parsed.id_filters, vec!["0f9a-Acct::SENT::42"]);
+    }
+
+    #[test]
+    fn an_id_ending_in_an_operator_name_does_not_leak_into_other_filters() {
+        // A uuid account id can end in `de`, which would otherwise read as the
+        // Spanish `de:` (from) operator.
+        let parsed = parse_search_query_patterns("id:3b1c-77de::15").unwrap();
+        assert_eq!(parsed.id_filters, vec!["3b1c-77de::15"]);
+        assert_eq!(parsed.from_filter, None);
+    }
+
+    #[test]
+    fn id_combines_with_other_operators() {
+        let parsed = parse_search_query_patterns("from:alice@example.com id:abc123").unwrap();
+        assert_eq!(parsed.id_filters, vec!["abc123"]);
+        assert_eq!(parsed.from_filter.as_deref(), Some("alice@example.com"));
+    }
+
+    #[test]
+    fn a_word_containing_id_is_not_an_id_operator() {
+        let parsed = parse_search_query_patterns("paid:invoice").unwrap_or_default();
+        assert!(parsed.id_filters.is_empty());
     }
 }

@@ -635,6 +635,7 @@ impl ImapClient {
             account_id: String::new(),
             thread_id,
             message_id,
+            references,
             subject,
             sender: sender_name,
             sender_email: sender_email_addr,
@@ -1002,7 +1003,7 @@ impl EmailProvider for ImapClient {
                     }
 
                     let uids: Vec<u32> = items.iter().map(|(_, uid)| *uid).collect();
-                    match imap_search::uid_fetch_rfc822_batch(&mut session, &uids) {
+                    match imap_search::uid_fetch_body_batch(&mut session, &uids) {
                         Ok(bodies) => {
                             for (index, uid) in items {
                                 let parsed = match bodies.get(uid) {
@@ -1083,7 +1084,7 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let raw = imap_search::uid_fetch_rfc822(&mut session, uid)?;
+            let raw = imap_search::uid_fetch_body(&mut session, uid)?;
 
             let _ = session.logout();
             Self::parse_message(uid, &raw)
@@ -1223,8 +1224,7 @@ impl EmailProvider for ImapClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
-        _thread_id: &str,
-        original_message_id: Option<&str>,
+        target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1235,7 +1235,8 @@ impl EmailProvider for ImapClient {
             to_emails,
             cc_emails,
             subject,
-            in_reply_to: original_message_id.filter(|s| !s.trim().is_empty()),
+            in_reply_to: target.message_id.filter(|s| !s.trim().is_empty()),
+            references: target.references.filter(|s| !s.trim().is_empty()),
             body,
             attachments,
         })?;
@@ -1268,6 +1269,7 @@ impl EmailProvider for ImapClient {
             cc_emails,
             subject,
             in_reply_to: None,
+            references: None,
             body,
             attachments,
         })?;

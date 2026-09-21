@@ -313,6 +313,7 @@ mod tests {
             db: &db,
             account_id: "acc1",
             categories: &[],
+            page: None,
         };
         let out = ListCalendarEventsTool.execute(&ctx, json!({})).await.expect("execute");
         let text = out.text;
@@ -329,6 +330,7 @@ mod tests {
             db: &db,
             account_id: "acc1",
             categories: &[],
+            page: None,
         };
         let out = ListCalendarEventsTool.execute(&ctx, json!({})).await.expect("execute");
         assert!(out.text.starts_with("(today is "), "today header first: {}", out.text);
@@ -353,6 +355,7 @@ mod tests {
             db: &db,
             account_id: "imap1",
             categories: &[],
+            page: None,
         };
         let out = ListCalendarEventsTool.execute(&ctx, json!({})).await.expect("execute");
         assert!(out.text.contains("no calendar integration"));
@@ -389,6 +392,7 @@ mod tests {
             db: &db,
             account_id: "acc1",
             categories: &[],
+            page: None,
         };
         let out = ListCalendarEventsTool.execute(&ctx, json!({})).await.expect("execute");
         assert!(out.text.contains("no calendar integration"), "got: {}", out.text);

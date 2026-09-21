@@ -570,21 +570,39 @@ impl Database {
             .unwrap_or(true))
     }
 
-    /// Maximum age (in days) of emails eligible for AI processing
-    /// (embeddings + classification). Default: 365 days. A value of 0 means
-    /// "no limit" — process every email regardless of age.
+    /// Oldest email timestamp eligible for AI processing (embeddings +
+    /// classification) in `account_id`.
     ///
-    /// Returns `Some(min_unix_seconds)` when a cutoff is configured, or
-    /// `None` when there is no cutoff. Callers pass this through to the
-    /// SQL fetch functions so old emails are never selected for AI work
-    /// in the first place.
-    pub fn ai_processing_min_timestamp(&self, now_unix_seconds: i64) -> Result<Option<i64>> {
+    /// An account with at most `ai_max_email_count` live emails (default
+    /// 1000) has no cutoff — it is small enough to process whole. A larger
+    /// account only processes emails newer than `ai_max_email_age_days`
+    /// (default 365). A count limit of 0 always applies the day cutoff; a day
+    /// limit of 0 means no cutoff at all.
+    ///
+    /// Returns `Some(min_unix_seconds)` when a cutoff applies, or `None` when
+    /// there is none. Callers pass this through to the SQL fetch functions so
+    /// old emails are never selected for AI work in the first place.
+    pub fn ai_processing_min_timestamp(&self, account_id: &str, now_unix_seconds: i64) -> Result<Option<i64>> {
         let days = self
             .get_preference("ai_max_email_age_days")?
             .and_then(|s| s.trim().parse::<i64>().ok())
             .unwrap_or(365);
         if days <= 0 {
             return Ok(None);
+        }
+        let max_count = self
+            .get_preference("ai_max_email_count")?
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .unwrap_or(1000);
+        if max_count > 0 {
+            let count: i64 = self.reader().query_row(
+                "SELECT COUNT(*) FROM emails WHERE account_id = ?1 AND is_deleted = 0",
+                rusqlite::params![account_id],
+                |row| row.get(0),
+            )?;
+            if count <= max_count {
+                return Ok(None);
+            }
         }
         Ok(Some(now_unix_seconds.saturating_sub(days.saturating_mul(86_400))))
     }
@@ -730,6 +748,116 @@ mod ai_enabled_tests {
         let db = Database::new_for_testing().expect("create test db");
         db.set_preference("ai_enabled", "TRUE").expect("write pref");
         assert!(db.is_ai_enabled().expect("read pref"));
+    }
+}
+
+#[cfg(test)]
+mod ai_processing_cutoff_tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+    const DAY: i64 = 86_400;
+
+    fn seed_emails(db: &Database, account_id: &str, count: usize) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at) VALUES (?1, 'imap', ?1, 'Test', 0)",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        for i in 0..count {
+            conn.execute(
+                "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES (?1, ?2, ?1, 's', 'x', 'x@ex.com', 'ex.com', '[]', '[]', 'snip', 0, 0, 'primary', 0)",
+                rusqlite::params![format!("{account_id}-{i}"), account_id],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_small_account_has_no_age_cutoff() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "3").unwrap();
+        seed_emails(&db, "small", 3);
+
+        assert_eq!(db.ai_processing_min_timestamp("small", NOW).unwrap(), None);
+    }
+
+    #[test]
+    fn a_large_account_keeps_the_day_cutoff() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "3").unwrap();
+        db.set_preference("ai_max_email_age_days", "30").unwrap();
+        seed_emails(&db, "large", 4);
+
+        assert_eq!(
+            db.ai_processing_min_timestamp("large", NOW).unwrap(),
+            Some(NOW - 30 * DAY)
+        );
+    }
+
+    #[test]
+    fn the_email_count_is_per_account() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "3").unwrap();
+        seed_emails(&db, "small", 2);
+        seed_emails(&db, "large", 5);
+
+        assert_eq!(db.ai_processing_min_timestamp("small", NOW).unwrap(), None);
+        assert_eq!(
+            db.ai_processing_min_timestamp("large", NOW).unwrap(),
+            Some(NOW - 365 * DAY)
+        );
+    }
+
+    #[test]
+    fn defaults_are_1000_emails_and_365_days() {
+        let db = Database::new_for_testing().unwrap();
+        seed_emails(&db, "at-limit", 1000);
+        seed_emails(&db, "over-limit", 1001);
+
+        assert_eq!(db.ai_processing_min_timestamp("at-limit", NOW).unwrap(), None);
+        assert_eq!(
+            db.ai_processing_min_timestamp("over-limit", NOW).unwrap(),
+            Some(NOW - 365 * DAY)
+        );
+    }
+
+    #[test]
+    fn zero_email_limit_always_applies_the_day_cutoff() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "0").unwrap();
+        seed_emails(&db, "tiny", 1);
+
+        assert_eq!(
+            db.ai_processing_min_timestamp("tiny", NOW).unwrap(),
+            Some(NOW - 365 * DAY)
+        );
+    }
+
+    #[test]
+    fn zero_days_means_no_cutoff_at_all() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "3").unwrap();
+        db.set_preference("ai_max_email_age_days", "0").unwrap();
+        seed_emails(&db, "large", 4);
+
+        assert_eq!(db.ai_processing_min_timestamp("large", NOW).unwrap(), None);
+    }
+
+    #[test]
+    fn deleted_emails_do_not_count() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_max_email_count", "3").unwrap();
+        seed_emails(&db, "acct", 5);
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id IN ('acct-3', 'acct-4')", [])
+            .unwrap();
+
+        assert_eq!(db.ai_processing_min_timestamp("acct", NOW).unwrap(), None);
     }
 }
 

@@ -345,6 +345,7 @@ mod tests {
             db,
             account_id,
             categories: &[],
+            page: None,
         }
     }
 

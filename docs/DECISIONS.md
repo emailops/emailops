@@ -1079,3 +1079,130 @@ about 9k tokens per turn on an 8k-token local context. Indexing only the UI lang
 the developer chose all four so a question in one language finds the section whatever
 language it is asked in. Navigating whenever the lookup matched — a false positive of the
 gate would move the user's screen; the answer's own citation is the safer signal.
+## 2026-09-17 — Chat states its single-account scope instead of searching every account
+
+**Decision:** The chat system prompt names the one mailbox the turn can search, tells the
+model that other accounts exist and are unreachable, and requires it to report absence as
+scoped ("not in <address>") and suggest switching the chat's account rather than declaring
+the mail was never sent. Every empty `search_emails` result names that mailbox too. Chat
+stays structurally single-account; `AccountScope::AllEnabled` remains deferred.
+**Context:** Asked for a message that lived in another enabled account, the model reported
+it absent as fact and then presented unrelated years-old mail from the account it could see
+as if it answered — the exact ambiguity the 2026-08-14 entry predicted ("indistinguishable
+from having none"). Naming the scope costs one static block: it varies per account, not per
+turn, so it rides inside the existing `user_identity` text in the KV-cached system prefix
+without busting the anchor, and `prewarm_chat` inherits it by construction because both
+paths call the same `build_prompt`. Keeping it out of the user-editable `chat.system`
+template avoids a new placeholder the thread-bound path would have to bind.
+**Rejected:** Threading `AccountScope::AllEnabled` through retrieval and the 12
+account-scoped tools — still the real fix and still deferred, since it means deciding how
+citations and drafts behave across accounts. Probing sibling accounts on an empty result to
+offer a one-click switch — more machinery than the wording needs, worth revisiting only if
+the prompt fix proves insufficient in practice.
+
+## 2026-09-17 — AI processing limit: whole small accounts, day cutoff for large ones
+
+**Decision:** Embeddings and classification cover every email of an account with at most
+`ai_max_email_count` live emails (default 1000). Accounts above that only process emails
+newer than `ai_max_email_age_days` (default 365). The count is evaluated per account; a
+count limit of 0 always applies the day cutoff, a day limit of 0 removes the cutoff.
+**Context:** The day cutoff alone was global, so a small account with a long history kept
+most of its mail unclassified. Intent/topic search filters then silently missed it (a
+chat search for contact-form requests found 4 of 31).
+**Rejected:** Union semantics (always the newest N emails plus anything within D days) —
+the developer preferred the simpler switch. A per-account settings UI — the global pair of
+limits already makes small accounts whole without extra configuration.
+
+## 2026-09-18 — The routing keyword list accelerates, the query planner decides
+
+**Decision:** In `chat.routing_mode = auto` a keyword or date hit still settles the route for
+free (and skips nothing else). A miss no longer falls to `RagFirst`: the query planner runs,
+and its verdict sets the route — a plan carrying a real filter (from/to/subject/date/tag/unread)
+becomes `ToolsFirst` with that call pre-seeded, a `defer` or a keyword-only plan stays
+`RagFirst`. Forced modes and follow-up inheritance are unchanged.
+**Context:** `TOOLS_FIRST_KEYWORDS` is an EN/ES substring list, so "que emails tengo de X" and
+every German or French question fell to RAG: retrieval it did not need, and no pre-seeded
+search. Growing the list was already rejected (14/09/2026). The planner reads any language and
+already turns a question into a filter, so its Search/Defer verdict IS the routing signal.
+Measured: the planner prompt is ~1.5k tokens, capped at 128 generated, and runs on the scratch
+sequence with `cache_prompt=false`, so it never touches the chat KV prefix; warm latency
+997-1466 ms on an M5 Pro with qwen3.5-4b-q4.
+**Rejected:** the planner deciding every turn including keyword hits (pays a model call where a
+substring already answers, and on a 16 GB M1 that lands on every open question); adding de/fr
+keywords (the 14/09 rejection, one entry per paraphrase per language); a trained router model
+(worth revisiting only if the planner call proves to be the bottleneck on older machines —
+the route classifier could ride on the embedding already computed for RAG).
+
+## 2026-09-18 — A classifier tag ranks a chat search, it never gates it
+
+**Decision:** `search_emails`' `intent` / `topic` filters put the tagged rows first and keep the
+other matches behind them, with a note giving both counts ("N emails carry the intent/topic asked
+for; the M rows after them…"). A "how many of this kind" answer uses N. The tag clause now also
+binds `tag_type`, so `intent=billing` cannot be answered by a company called billing. The sidebar,
+Tag Board and lens filters are untouched — they stay exact.
+**Context:** an email stores exactly ONE intent (`PRIMARY KEY (email_id, tag_type)`, prompt says
+"pick exactly ONE"), while a real email is often several things at once, and mail outside the AI
+window carries no tag at all. As a hard filter that lost whole answers: "¿qué correos de BorgBase
+tengo sin leer?" planned `intent=notification` over invoices tagged `billing` and replied that
+there were none. Measured on the production mailbox: 34.713 classified emails, mean confidence
+0.94 (only 444 below 0.8), so confidence cannot be used to soften the filter either.
+**Rejected:** real multi-label storage (new PK, primary + secondary intents, reclassifying 34.713
+emails — hours of local inference, and a thread would start appearing in several Tag Board blocks);
+dropping intent/topic from the chat tool (loses counting by kind, which is the only thing tags buy
+there); leaving it as a gate and only warning (the note only fires when rows come back, so the
+zero-result case — the one that hurt — stayed silent).
+
+## 2026-09-19 — One-shot prompts get a prefix sequence; letter-scoring does not ship
+
+**Decision:** the llama.cpp actor reserves one KV sequence (`AUX_SEQ`, seq 3) for the
+invariant head of a one-shot prompt, and the query planner marks its split with
+`complete_with_prefix`. The slot is the first thing evicted from either direction —
+`plan_oneshot_cells` gives it up before the chat prefix, `chat_must_evict_aux` drops it
+before a chat turn would truncate — and it is bypassed below a 16k window. The classifier
+does **not** get one, and does **not** answer by picking a lettered menu: it keeps writing
+JSON.
+**Context:** both surfaces are one-shot completions with `cache_prompt=false`, so both
+re-process their whole prompt every call. Measured on qwen3.5-4b-q4_k_m against the demo
+DB before changing anything: the planner spends 682 ms of its 1161 ms on prefill of a
+1693-token prompt, of which ~1.5k is the same instructions, examples and glossary every
+time — so caching it is nearly all of the win. The classifier's prompt is 317 tokens and
+its prefill is 2 ms of 587 ms; its cost is the ~28 tokens it generates, which a cache
+cannot touch. After the change the planner runs at 495 ms mean / 379 ms p50 (prefill
+46 ms) with identical output — 21/21 eval cases, same 17/4 search/defer split, prompt
+byte-identical — and the chat turn still reuses 7459 of 7466 prompt tokens after a
+classification burst, at +54 MiB of RSS. `EMAILOPS_AUX_PREFIX=0` restores the old path
+from the same build (1185 ms), which is how the delta was isolated.
+**Rejected:** a second slot for the classifier (its prefill is 2 ms — the slot would cost
+cells and recurrent state to save nothing measurable). Answering the classifier with a
+lettered menu scored from the logits: it is 2.4× faster (587 → 246 ms per email, 102 →
+244 emails/min) and never produces an unparseable reply, but on 145 labelled synthetic
+cases it costs 17-22 points of accuracy on every axis — intent 78.6% → 61.4% strict
+(macro-F1 0.794 → 0.572), topic 71.0% → 54.5%, urgency 71.7% → 49.7%, all three axes
+right on 90/145 emails → 44/145 — so the tags would get materially worse to make a
+background job faster. Scoring the tag NAME instead of a letter is worse still on this
+mechanism, because only the first token of a label is scored and the built-in tags share
+initials (`notification`/`newsletter`, `complaint`/`conversation`). A grammar (GBNF) to
+constrain the JSON: both harnesses measured zero unparseable replies (145 classifier
+cases × 3 repeats, 21 planner cases), so there is nothing for it to fix.
+
+## 2026-09-19 — Model-family behaviour is decided by GGUF metadata, not by file name
+
+**Decision:** Any behaviour that depends on which model family is loaded reads the GGUF's
+own header (`general.architecture`, via `ai::gguf`) and treats the file name only as a
+fallback for headers that cannot be read. The first case is the Qwen 3 no-think primer
+(`ai::think_priming`): architecture `qwen3*` gets the closed `<think></think>` block,
+everything else does not, whatever the file is called.
+**Context:** the primer was keyed off a `qwen3` file-name prefix, so every Qwen 3 build not
+named that way — a re-quant, a community fine-tune, a file the user renamed, a GGUF adopted
+from disk via "link local model" — got no primer. On a near-full context window that model
+spends the whole generation reserve inside `<think>…`, `strip_reasoning` removes it, and the
+user sees an empty answer: a silent, total failure of chat, drafts and classification on a
+model the app otherwise supports. The header is written by the converter from the source
+config, travels with the file, and is a few hundred bytes in, so it is both authoritative
+and cheap to read before any weights are loaded.
+**Rejected:** widening the file-name match (`contains("qwen3")` and friends — same class of
+bug, now with false positives on look-alike names, and it still cannot see a renamed file);
+asking llama.cpp for the metadata after the model is loaded (the decision is needed on paths
+that must not pay for a multi-GB mmap, and it would put the rule behind the `llamacpp`
+feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
+setting (makes the user responsible for a detail the file already states).

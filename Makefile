@@ -1,4 +1,4 @@
-.PHONY: dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -181,6 +181,28 @@ cli-eval:
 	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
 	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval --cases-dir src-tauri/evals/chat/cases $(ARGS)
 
+# Score the chat query planner on its own (one completion per case, HTML
+# report under src-tauri/reports/evaluations/query_plan/). Much faster than a
+# chat eval: use it when touching the `chat.query_plan` prompt or planner code.
+#   make eval-plan
+#   make eval-plan ARGS="--case no_date_window_on_a_dateless_question"
+eval-plan:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features eval --example query_plan_eval -- \
+	  --prod-db "$(EMAILOPS_DEMO_DIR)/emailops.db" --account ulises@emailopslabs.dev $(ARGS)
+
+# Score the email classifier (intent / topic / urgency) against the synthetic
+# labelled corpus in src-tauri/evals/classification/cases. Runs the real
+# `services::classification` path with the rule engine out of the way, and
+# writes JSON + HTML under src-tauri/reports/evaluations/classification/.
+#   make eval-classify
+#   make eval-classify ARGS="--json --repeats 3"
+#   make eval-classify ARGS="--lang es --case es_billing_factura_pendiente"
+eval-classify:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features eval --example tag_classification_eval -- \
+	  --prod-db "$(EMAILOPS_DEMO_DIR)/emailops.db" $(ARGS)
+
 # Multi-turn chat prefill/latency bench against the demo DB (model stays loaded
 # across turns). Logic lives in scripts/cli_bench.sh; questions overridable via
 # env: BENCH_Q2="..." make cli-bench
@@ -195,6 +217,34 @@ help-docs-report:
 
 cli-bench:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_bench.sh
+
+# Compare chat models across the four evals that measure a reply (chat, query
+# planner, classifier, drafts): accuracy, wall time and peak RSS per model, as
+# a text table and an HTML page under reports/bench/.
+# Logic in scripts/model_bench.sh + scripts/model_bench_report.py.
+#   make bench-models ARGS="--models qwen3.5-4b-q4_k_m,qwen3.5-9b-q4_k_m"
+#   LLAMA_PATCH_DIR=/path/to/patched-sys-crate make bench-models ARGS="--models ..."
+bench-models:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/model_bench.sh $(ARGS)
+
+# Before/after table for the one-shot prefix slot: runs the planner eval twice
+# from the same build (slot off via EMAILOPS_AUX_PREFIX=0, then on) plus the
+# classifier eval. Logic in scripts/oneshot_report.sh; output under reports/bench/.
+#   make report-oneshot
+#   make report-oneshot ARGS="--repeats 3"
+report-oneshot:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/oneshot_report.sh $(ARGS)
+
+# What classifier / planner one-shots cost the chat KV prefix, measured in ONE
+# process (every `make cli-*` run starts with an empty cache and cannot see it).
+# Logic in scripts/oneshot_kv_bench.sh; report under reports/bench/.
+#   make bench-oneshot-kv
+#   make bench-oneshot-kv ARGS="--classifications 40 --skip-small-ctx"
+bench-oneshot-kv:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/oneshot_kv_bench.sh $(ARGS)
 
 # Cross-conversation KV-cache reuse probe: two DIFFERENT questions, each in its
 # own fresh conversation, one process. Shows whether chat 2's first LLM round

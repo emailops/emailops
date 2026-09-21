@@ -1076,6 +1076,19 @@ function AppInner() {
     [activeFilter, clearSearchQuery, selectEmail, setActiveTab, setSelectedCategories, toggleFilter],
   );
 
+  // Chat "show in list": an `id:` search over the emails an answer cites. The
+  // cited emails can sit in any category, and an open email would cover the
+  // list, so reset both like a smart filter does.
+  const handleShowChatEmailsInList = useCallback(
+    (query: string) => {
+      setSelectedCategories(new Set(VALID_CATEGORIES));
+      setActiveTab(null);
+      void selectEmail(null);
+      handleApplySearch(query);
+    },
+    [handleApplySearch, selectEmail, setActiveTab, setSelectedCategories],
+  );
+
   const navigateToEmail = useEmailStore((s) => s.navigateToEmail);
   const handleViewAttachmentEmail = useCallback(
     async (emailId: string) => {
@@ -1363,6 +1376,7 @@ function AppInner() {
               accountId={chatAccountId}
               onAccountChange={handleChatAccountChange}
               onNavigateToInbox={() => setViewMode('inbox')}
+              onShowEmailsInList={handleShowChatEmailsInList}
             />
           ) : viewMode === 'tasks' && tasksEnabled ? (
             <div className="flex flex-col flex-1 overflow-hidden">
@@ -1612,6 +1626,7 @@ function AppInner() {
               setViewMode('chat');
             }}
             onNavigateToInbox={() => setViewMode('inbox')}
+            onShowEmailsInList={handleShowChatEmailsInList}
           />
         )}
       </div>

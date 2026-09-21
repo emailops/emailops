@@ -376,10 +376,19 @@ async fn generate_embeddings_inner(
     };
 
     // Respect the user's "limit AI work to recent emails" preference so we
-    // never embed emails older than the cutoff (default 1 year). 0 / unset
-    // means no cutoff.
-    let min_ts = db.ai_processing_min_timestamp(chrono::Utc::now().timestamp())?;
-    let email_ids = db.get_emails_without_embeddings(account_id, batch_size, &union_categories, min_ts)?;
+    // never embed emails older than the cutoff. The cutoff depends on each
+    // account's size, so candidates are collected account by account (the
+    // global path included) rather than with one mixed cutoff.
+    let now = chrono::Utc::now().timestamp();
+    let mut email_ids = Vec::new();
+    for acc in per_account_cfg.keys() {
+        let remaining = batch_size - email_ids.len() as i32;
+        if remaining <= 0 {
+            break;
+        }
+        let min_ts = db.ai_processing_min_timestamp(acc, now)?;
+        email_ids.extend(db.get_emails_without_embeddings(Some(acc), remaining, &union_categories, min_ts)?);
+    }
 
     if email_ids.is_empty() {
         return Ok(0);

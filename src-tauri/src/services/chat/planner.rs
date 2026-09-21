@@ -28,10 +28,56 @@ pub enum Plan {
     Defer,
 }
 
+/// Why the planner did or did not produce a filter.
+///
+/// Production treats every non-`Search` outcome identically — fall through to
+/// the tool loop — but they are not the same event: a model that answered
+/// `{"defer": true}` did its job, one that answered prose did not. The eval
+/// harness reports them apart so a decoding regression can't hide behind a
+/// legitimate defer rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanOutcome {
+    /// A filter with at least one selective field.
+    Search,
+    /// The model explicitly asked to defer.
+    Deferred,
+    /// Valid JSON, but nothing to search on.
+    EmptyFilter,
+    /// No JSON object in the reply.
+    Unparseable,
+    /// The provider call failed.
+    ProviderError,
+}
+
+impl PlanOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlanOutcome::Search => "search",
+            PlanOutcome::Deferred => "defer",
+            PlanOutcome::EmptyFilter => "empty_filter",
+            PlanOutcome::Unparseable => "unparseable",
+            PlanOutcome::ProviderError => "provider_error",
+        }
+    }
+}
+
+/// One planner call: the decision, why, and what the provider charged.
+#[derive(Debug)]
+pub struct PlanRun {
+    pub plan: Plan,
+    pub outcome: PlanOutcome,
+    pub prompt_tokens: u32,
+    pub prefill_ms: Option<i64>,
+    pub cached_prompt_tokens: Option<u32>,
+    /// What the backend's one-shot prefix slot did — `"Reuse"`, `"Reseed"`,
+    /// `"Bypass"`, or `None` from a backend without one.
+    pub aux_plan: Option<&'static str>,
+}
+
 /// The subset of `search_emails` arguments the planner can fill. All optional;
 /// at least one selective field must be present for the plan to be a `Search`
 /// (the tool rejects a filter-less call).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct SearchPlan {
     pub query: Option<String>,
     pub from: Option<String>,
@@ -74,6 +120,40 @@ impl SearchPlan {
             && self.intent.is_none()
             && self.topic.is_none()
             && self.unread.is_none()
+    }
+
+    /// The plan without the classifier tags the planner guessed.
+    ///
+    /// `intent` / `topic` only match what the classifier tagged, and the model
+    /// adds them even when the question named no kind of mail — its own prompt
+    /// forbids it, and it does it anyway. On a turn the keyword heuristic did
+    /// not recognise, that guess is the part most likely to return nothing
+    /// ("¿qué correos de BorgBase tengo sin leer?" planned with
+    /// intent=notification over invoices tagged billing → zero rows), so the
+    /// hard filters are kept and the guess is dropped.
+    pub fn without_classifier_tags(mut self) -> Self {
+        self.intent = None;
+        self.topic = None;
+        self
+    }
+
+    /// Whether the plan names a FILTER (sender, recipient, subject, date
+    /// window, classifier tag, unread) rather than just words to match.
+    ///
+    /// This is the line between the two retrieval mechanisms. A filter is
+    /// something only `search_emails` can express, so a plan that carries one
+    /// is worth taking off the RAG route. A keyword-only plan ("qué opina el
+    /// equipo sobre el proyecto" → `query: "proyecto"`) is exactly what the
+    /// embeddings index ranks better, so it stays on RAG.
+    pub fn has_structural_filter(&self) -> bool {
+        self.from.is_some()
+            || self.to.is_some()
+            || self.subject.is_some()
+            || self.since.is_some()
+            || self.until.is_some()
+            || self.intent.is_some()
+            || self.topic.is_some()
+            || self.unread == Some(true)
     }
 
     /// Convert the plan into the `search_emails` tool call fed into the loop as
@@ -155,16 +235,28 @@ impl SearchPlan {
         if bare_name && !self.wants_oldest() && self.limit.unwrap_or(25) < 5 {
             self.limit = Some(5);
         }
+        // 3. A window that cannot contain anything is dropped rather than run.
+        //    The model stamps `since = until = {{today}}` on questions that
+        //    name no date at all ("when did X first write to me?"), and
+        //    `until` is end-exclusive, so the search matches nothing and the
+        //    turn burns rounds widening it by hand.
+        if let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) {
+            if until <= since {
+                self.since = None;
+                self.until = None;
+            }
+        }
         self
     }
 }
 
-pub fn parse_plan(text: &str) -> Plan {
+/// Turn the model's reply into a [`Plan`], and say why it landed there.
+pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
     let Some(obj) = extract_json_object(text) else {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::Unparseable);
     };
     if obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::Deferred);
     }
     let str_field = |key: &str| {
         obj.get(key)
@@ -203,9 +295,9 @@ pub fn parse_plan(text: &str) -> Plan {
         unread: obj.get("unread").and_then(|v| v.as_bool()).filter(|u| *u),
     };
     if plan.is_empty() {
-        return Plan::Defer;
+        return (Plan::Defer, PlanOutcome::EmptyFilter);
     }
-    Plan::Search(Box::new(plan.normalised()))
+    (Plan::Search(Box::new(plan.normalised())), PlanOutcome::Search)
 }
 
 /// Lenient JSON-object extraction: drop ``` fences, then parse the first
@@ -259,13 +351,22 @@ pub(crate) fn week_bounds(today: &str) -> Option<WeekBounds> {
 /// Render the planner prompt from its registry template, substituting the
 /// per-turn variables. Pure (no DB / no I/O) so it is unit-testable; the executor
 /// fetches the template via `prompts::get_template`.
-pub(crate) fn render_planner_prompt(
+/// The planner prompt in two halves, split at the first `{{query}}`.
+///
+/// Everything before the question — the instructions, the examples, the tag
+/// glossary, today's date — is the same for every question asked in a session,
+/// and it is ~1.5k of the ~1.7k tokens the planner sends. Handing the halves
+/// to the provider separately lets the llama.cpp backend keep the first one
+/// decoded instead of re-processing it per turn. A template with no
+/// `{{query}}` (a user override that dropped it) yields an empty suffix, which
+/// the backend treats as "no prefix to anchor".
+pub(crate) fn split_planner_prompt(
     template: &str,
     user_email: &str,
     today: &str,
     query: &str,
     glossary: &TagGlossary,
-) -> String {
+) -> (String, String) {
     let mut vars = std::collections::HashMap::new();
     vars.insert("user_email", user_email.to_string());
     vars.insert("today", today.to_string());
@@ -295,34 +396,83 @@ pub(crate) fn render_planner_prompt(
         "last_week_until",
         wb.as_ref().map(|w| w.last_until.clone()).unwrap_or_default(),
     );
-    crate::services::prompts::render(template, &vars)
+    // Splitting the TEMPLATE (not the rendered text) keeps the halves exact:
+    // the cut lands on a placeholder boundary, so no `{{var}}` straddles it
+    // and rendering each half separately gives the same bytes as rendering
+    // the whole.
+    let (head, tail) = match template.find(QUERY_PLACEHOLDER) {
+        Some(at) => template.split_at(at),
+        None => (template, ""),
+    };
+    (
+        crate::services::prompts::render(head, &vars),
+        crate::services::prompts::render(tail, &vars),
+    )
 }
+
+/// Where the planner prompt stops being the same for every question.
+const QUERY_PLACEHOLDER: &str = "{{query}}";
 
 /// Thin executor: render the prompt, run ONE completion on the (already-loaded)
 /// chat provider, and parse the reply into a [`Plan`]. Never errors — a provider
 /// failure degrades to [`Plan::Defer`] so the turn proceeds normally.
-pub(crate) async fn plan_search(
+pub async fn plan_search(
     provider: &dyn AIProvider,
     template: &str,
     user_email: &str,
     today: &str,
     query: &str,
     glossary: &TagGlossary,
-) -> Plan {
-    let prompt = render_planner_prompt(template, user_email, today, query, glossary);
+) -> PlanRun {
+    let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary);
     let opts = CompletionOptions {
         temperature: Some(0.0),
         max_tokens: Some(128),
         think: Some(false),
     };
-    match provider.complete(&prompt, opts).await {
-        Ok(result) => parse_plan(&result.text),
-        Err(_) => Plan::Defer,
+    match provider.complete_with_prefix(&prefix, &suffix, opts).await {
+        Ok(result) => {
+            let (plan, outcome) = parse_plan_detailed(&result.text);
+            PlanRun {
+                plan,
+                outcome,
+                prompt_tokens: result.prompt_tokens,
+                prefill_ms: result.prefill_ms,
+                cached_prompt_tokens: result.cached_prompt_tokens,
+                aux_plan: result.aux_plan,
+            }
+        }
+        Err(_) => PlanRun {
+            plan: Plan::Defer,
+            outcome: PlanOutcome::ProviderError,
+            prompt_tokens: 0,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            aux_plan: None,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// The whole prompt in one string — what the executor sent before it
+    /// started handing the halves to the provider separately.
+    fn render_planner_prompt(
+        template: &str,
+        user_email: &str,
+        today: &str,
+        query: &str,
+        glossary: &TagGlossary,
+    ) -> String {
+        let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary);
+        format!("{prefix}{suffix}")
+    }
+
+    /// The plan alone — every assertion below predates the outcome split.
+    fn parse_plan(text: &str) -> Plan {
+        parse_plan_detailed(text).0
+    }
+
     use super::*;
     use crate::services::classification::ClassificationConfig;
 
@@ -420,6 +570,116 @@ mod tests {
         assert_eq!(p.to.as_deref(), Some("alex"));
         assert_eq!(p.query.as_deref(), Some("budget"));
         assert_eq!(p.subject.as_deref(), Some("Q3"));
+    }
+
+    #[test]
+    fn a_plan_with_a_real_filter_is_structural() {
+        for json in [
+            r#"{"from": "nadia"}"#,
+            r#"{"to": "billing@acme.com"}"#,
+            r#"{"subject": "invoice"}"#,
+            r#"{"since": "2026-03-01"}"#,
+            r#"{"intent": "introduction"}"#,
+            r#"{"topic": "billing"}"#,
+            r#"{"unread": true}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(p.has_structural_filter(), "expected structural: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_keyword_only_plan_is_not_structural() {
+        // "qué opina el equipo sobre el proyecto" plans as a bare keyword
+        // search. Retrieval ranks that kind of question better than an FTS
+        // filter does, so it must not pull the turn off the RAG route.
+        for json in [
+            r#"{"query": "proyecto"}"#,
+            r#"{"query": "proyecto", "mode": "semantic"}"#,
+        ] {
+            match parse_plan(json) {
+                Plan::Search(p) => assert!(!p.has_structural_filter(), "expected keyword-only: {json}"),
+                Plan::Defer => panic!("expected a plan for {json}"),
+            }
+        }
+    }
+
+    #[test]
+    fn dropping_the_guessed_tags_keeps_the_hard_filters() {
+        // The planner adds a classifier tag the question never named
+        // ("¿qué correos de BorgBase tengo sin leer?" → intent=notification,
+        // while those invoices are tagged billing), and the search returns
+        // nothing. On a turn the keyword list did not recognise, the tag is the
+        // guessed half of the plan: drop it, keep from/unread.
+        let Plan::Search(plan) = parse_plan(r#"{"from": "BorgBase", "unread": true, "intent": "notification"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert_eq!(plan.intent, None);
+        assert_eq!(plan.topic, None);
+        assert_eq!(plan.from.as_deref(), Some("BorgBase"));
+        assert_eq!(plan.unread, Some(true));
+        assert!(plan.has_structural_filter());
+    }
+
+    #[test]
+    fn a_plan_that_was_only_a_tag_stops_being_structural() {
+        // "¿quién es Janos?" planned as a semantic query plus intent=question.
+        // Without the tag there is no filter left, so the turn belongs to
+        // retrieval — which is where it answered correctly before.
+        let Plan::Search(plan) = parse_plan(r#"{"query": "Janos", "mode": "semantic", "intent": "question"}"#) else {
+            panic!("expected a plan");
+        };
+        let plan = plan.without_classifier_tags();
+        assert!(!plan.has_structural_filter());
+        assert_eq!(plan.query.as_deref(), Some("Janos"));
+    }
+
+    #[test]
+    fn a_zero_width_date_window_is_dropped() {
+        // "when did Marisol first write to me about the logistics dashboard?"
+        // carries no date, yet the planner stamped since = until = today. The
+        // tool then matched nothing and the model spent two more rounds
+        // widening it by hand. A window that starts and ends on the same day
+        // can never be what the user asked for: the prompt's own rule for a
+        // single day ("today") is since=today, until=tomorrow.
+        let Plan::Search(plan) =
+            parse_plan(r#"{"from": "Marisol", "order": "oldest", "since": "2026-09-18", "until": "2026-09-18"}"#)
+        else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+        assert_eq!(plan.from.as_deref(), Some("Marisol"));
+    }
+
+    #[test]
+    fn an_inverted_date_window_is_dropped() {
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "since": "2026-09-18", "until": "2026-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+    }
+
+    #[test]
+    fn a_real_date_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2026-09-18", "until": "2026-09-19"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2026-09-18"));
+        assert_eq!(plan.until.as_deref(), Some("2026-09-19"));
+    }
+
+    #[test]
+    fn an_open_ended_window_survives() {
+        let Plan::Search(plan) = parse_plan(r#"{"since": "2025-01-01"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2025-01-01"));
+        assert_eq!(plan.until, None);
     }
 
     #[test]
@@ -631,5 +891,138 @@ mod tests {
             &TagGlossary::defaults(),
         );
         assert_eq!(out, "addr=me@x.com day=2026-06-17 q=emails I sent");
+    }
+
+    // ── Why the planner did not search ──────────────────────────────────
+    //
+    // Production treats every one of these the same (fall through to the tool
+    // loop), but the eval has to tell a model that asked to defer apart from
+    // one that produced noise.
+
+    #[test]
+    fn a_filled_filter_reports_search() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"from": "marisol"}"#);
+        assert!(matches!(plan, Plan::Search(_)));
+        assert_eq!(outcome, PlanOutcome::Search);
+    }
+
+    #[test]
+    fn an_explicit_defer_is_not_a_parse_failure() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"defer": true}"#);
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::Deferred);
+    }
+
+    #[test]
+    fn a_parsed_but_empty_filter_is_its_own_outcome() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"mode": "semantic"}"#);
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::EmptyFilter);
+    }
+
+    #[test]
+    fn prose_without_json_is_unparseable() {
+        let (plan, outcome) = parse_plan_detailed("I think you want emails from Marisol.");
+        assert_eq!(plan, Plan::Defer);
+        assert_eq!(outcome, PlanOutcome::Unparseable);
+    }
+
+    #[test]
+    fn parse_plan_still_returns_just_the_plan() {
+        assert_eq!(parse_plan("not json"), Plan::Defer);
+        assert!(matches!(parse_plan(r#"{"from": "ana"}"#), Plan::Search(_)));
+    }
+
+    #[tokio::test]
+    async fn plan_search_reports_the_provider_counters() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "marisol", "limit": 3}"#);
+
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "mail from marisol",
+            &TagGlossary::defaults(),
+        )
+        .await;
+
+        assert_eq!(run.outcome, PlanOutcome::Search);
+        assert!(matches!(run.plan, Plan::Search(_)));
+        assert_eq!(run.prefill_ms, None, "the fake reports no llama.cpp timing");
+    }
+
+    #[tokio::test]
+    async fn a_provider_failure_defers_and_says_so() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.fail_completions(Some("model is not loaded"));
+
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "mail from marisol",
+            &TagGlossary::defaults(),
+        )
+        .await;
+
+        assert_eq!(run.plan, Plan::Defer);
+        assert_eq!(run.outcome, PlanOutcome::ProviderError);
+    }
+
+    #[test]
+    fn splitting_the_planner_prompt_preserves_it_byte_for_byte() {
+        let glossary = TagGlossary::defaults();
+        let template = crate::services::prompts::defaults::CHAT_QUERY_PLAN;
+        let (prefix, suffix) = split_planner_prompt(
+            template,
+            "me@example.test",
+            "2026-06-15",
+            "mail from marisol",
+            &glossary,
+        );
+
+        assert_eq!(
+            format!("{prefix}{suffix}"),
+            render_planner_prompt(
+                template,
+                "me@example.test",
+                "2026-06-15",
+                "mail from marisol",
+                &glossary
+            )
+        );
+        assert!(
+            prefix.ends_with("Question: "),
+            "prefix must stop at the question: {prefix:?}"
+        );
+        assert!(suffix.starts_with("mail from marisol"));
+    }
+
+    #[test]
+    fn the_prefix_is_identical_for_two_questions_asked_the_same_day() {
+        let glossary = TagGlossary::defaults();
+        let template = crate::services::prompts::defaults::CHAT_QUERY_PLAN;
+        let (first, _) = split_planner_prompt(template, "me@example.test", "2026-06-15", "one", &glossary);
+        let (second, _) = split_planner_prompt(template, "me@example.test", "2026-06-15", "another", &glossary);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_template_without_the_question_placeholder_has_no_suffix() {
+        let glossary = TagGlossary::defaults();
+        let (prefix, suffix) = split_planner_prompt(
+            "Plan a search. Today is {{today}}.",
+            "me@example.test",
+            "2026-06-15",
+            "q",
+            &glossary,
+        );
+
+        assert_eq!(prefix, "Plan a search. Today is 2026-06-15.");
+        assert!(suffix.is_empty());
     }
 }

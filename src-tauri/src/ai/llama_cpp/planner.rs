@@ -215,7 +215,7 @@ pub(crate) fn plan_anchor_seed(cached_system: &[LlamaToken], new: &[LlamaToken],
 }
 
 /// How to fit a prompt plus generation into a fixed `n_ctx` window.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PromptBudget {
     /// Tokens to drop from the FRONT of the prompt (tail bias: keep the most
     /// recent content). 0 in the common case — see `GEN_RESERVE_TOKENS`.
@@ -285,6 +285,124 @@ pub(crate) fn plan_uncached_budget(
         evict_resident: true,
         budget: plan_prompt_budget(prompt_len, max_tokens, n_ctx),
     }
+}
+
+/// Smallest context window that can hold a second resident prefix beside the
+/// chat one. Below this the cells simply are not there — an 8192 window
+/// already front-truncates a full chat prompt (see `oneshot_kv_bench`).
+const AUX_MIN_N_CTX: u32 = 16384;
+
+/// A prefix shorter than this is cheaper to re-decode than to keep resident.
+const AUX_MIN_PREFIX_TOKENS: usize = 64;
+
+/// How far the resident mirror may fall short of the requested boundary and
+/// still count as covering it. The prefix/suffix split is made on bytes, and
+/// the tokeniser merges across the seam, so the boundary moves by a token or
+/// two between prompts that share the same prefix text.
+const AUX_BOUNDARY_SLACK: usize = 4;
+
+/// What to do with the auxiliary one-shot prefix sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxPrefixPlan {
+    /// The slot already holds a prefix of this prompt: copy it into the
+    /// generation sequence and decode only what follows.
+    Reuse { reuse: usize },
+    /// Decode `prefix_len` tokens into the slot first, then proceed as above.
+    Reseed { prefix_len: usize },
+    /// Don't use the slot for this call.
+    Bypass,
+}
+
+/// Decide how the one-shot prefix slot can serve this prompt.
+///
+/// `mirror` is what the slot currently holds, `prefix_boundary` the token
+/// index the caller marked as invariant.
+pub(crate) fn plan_aux_prefix(
+    mirror: &[LlamaToken],
+    tokens: &[LlamaToken],
+    prefix_boundary: usize,
+    n_ctx: u32,
+) -> AuxPrefixPlan {
+    if n_ctx < AUX_MIN_N_CTX || prefix_boundary < AUX_MIN_PREFIX_TOKENS {
+        return AuxPrefixPlan::Bypass;
+    }
+    // At or past the end there would be nothing left to decode, and the final
+    // decode is what produces the logits to sample the first token from.
+    if prefix_boundary >= tokens.len() {
+        return AuxPrefixPlan::Bypass;
+    }
+
+    let lcp = plan_prefix_reuse(mirror, tokens);
+    // The slot is copied WHOLE — a ranged copy would bring the recurrent state
+    // from the end of the source sequence on a hybrid model — so everything it
+    // holds must be a prefix of this prompt, it must stop short of the prompt's
+    // last token (something has to decode and produce logits), and it must
+    // reach the boundary bar the merge slack.
+    if lcp == mirror.len() && mirror.len() < tokens.len() && lcp + AUX_BOUNDARY_SLACK >= prefix_boundary {
+        return AuxPrefixPlan::Reuse { reuse: lcp };
+    }
+    AuxPrefixPlan::Reseed {
+        prefix_len: prefix_boundary,
+    }
+}
+
+/// Which resident cells a one-shot prompt needs out of the way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OneshotEvict {
+    /// It fits beside everything already resident.
+    Nothing,
+    /// It fits once the auxiliary prefix slot is dropped.
+    Aux,
+    /// It only fits with the whole cache cleared.
+    Everything,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OneshotCells {
+    pub evict: OneshotEvict,
+    pub budget: PromptBudget,
+}
+
+/// Plan the cells for a one-shot (uncached) prompt, given what the chat
+/// prefix and the auxiliary slot are holding.
+///
+/// The auxiliary slot is always given up before the chat prefix: chat latency
+/// is what the user waits on, and a re-seeded one-shot prefix costs one
+/// prefill of its own, not a turn.
+pub(crate) fn plan_oneshot_cells(
+    prompt_len: usize,
+    max_tokens: usize,
+    n_ctx: usize,
+    chat_resident: usize,
+    aux_resident: usize,
+) -> OneshotCells {
+    let beside_both = plan_uncached_budget(prompt_len, max_tokens, n_ctx, chat_resident + aux_resident);
+    if !beside_both.evict_resident {
+        return OneshotCells {
+            evict: OneshotEvict::Nothing,
+            budget: beside_both.budget,
+        };
+    }
+    let beside_chat = plan_uncached_budget(prompt_len, max_tokens, n_ctx, chat_resident);
+    if aux_resident > 0 && !beside_chat.evict_resident {
+        return OneshotCells {
+            evict: OneshotEvict::Aux,
+            budget: beside_chat.budget,
+        };
+    }
+    OneshotCells {
+        evict: OneshotEvict::Everything,
+        budget: beside_chat.budget,
+    }
+}
+
+/// Whether a chat turn has to drop the auxiliary slot to fit.
+///
+/// The chat budget itself is still computed against the full window, so a
+/// resident one-shot prefix can never cause front truncation — it is given up
+/// first instead.
+pub(crate) fn chat_must_evict_aux(n_prompt: usize, max_gen: usize, n_ctx: usize, aux_resident: usize) -> bool {
+    aux_resident > 0 && n_prompt + max_gen + aux_resident > n_ctx
 }
 
 #[cfg(test)]
@@ -858,5 +976,143 @@ mod tests {
             let got = plan_prompt_budget(*prompt_len, *max_tokens, *n_ctx);
             assert_eq!(&got, want, "{label}");
         }
+    }
+
+    // ── Auxiliary one-shot prefix slot ──────────────────────────────────
+
+    /// `n` distinct tokens, so a prefix comparison means something.
+    fn seq(n: usize) -> Vec<LlamaToken> {
+        (0..n as i32).map(LlamaToken::new).collect()
+    }
+
+    #[test]
+    fn aux_prefix_plan_table() {
+        // A planner-shaped prompt: ~1.5k invariant tokens then the question.
+        let prompt = seq(1600);
+        let boundary = 1500;
+
+        // A window too small to hold a second resident prefix: never anchor.
+        assert_eq!(
+            plan_aux_prefix(&[], &prompt, boundary, 8192),
+            AuxPrefixPlan::Bypass,
+            "8k tier has no cells to spare"
+        );
+        // A prefix too short to be worth a sequence of its own.
+        assert_eq!(
+            plan_aux_prefix(&[], &prompt, 32, 16384),
+            AuxPrefixPlan::Bypass,
+            "a handful of tokens is cheaper to re-decode"
+        );
+        // A boundary at or past the end would leave nothing to decode, and the
+        // final decode is what produces the logits to sample from.
+        assert_eq!(
+            plan_aux_prefix(&[], &prompt, prompt.len(), 16384),
+            AuxPrefixPlan::Bypass
+        );
+        // Nothing resident yet.
+        assert_eq!(
+            plan_aux_prefix(&[], &prompt, boundary, 16384),
+            AuxPrefixPlan::Reseed { prefix_len: boundary }
+        );
+        // The slot holds exactly this prefix.
+        assert_eq!(
+            plan_aux_prefix(&seq(1500), &prompt, boundary, 16384),
+            AuxPrefixPlan::Reuse { reuse: 1500 }
+        );
+        // The slot holds a little less than the boundary — token merges at the
+        // seam move it by a token or two, which must not force a reseed.
+        assert_eq!(
+            plan_aux_prefix(&seq(1497), &prompt, boundary, 16384),
+            AuxPrefixPlan::Reuse { reuse: 1497 }
+        );
+        // The slot is a prefix but falls short of the boundary by more than
+        // the merge slack.
+        assert_eq!(
+            plan_aux_prefix(&seq(1200), &prompt, boundary, 16384),
+            AuxPrefixPlan::Reseed { prefix_len: boundary }
+        );
+        // The slot holds a different prefix (the date rolled over, the account
+        // changed, the glossary grew).
+        let mut diverged = seq(1500);
+        diverged[700] = LlamaToken::new(9999);
+        assert_eq!(
+            plan_aux_prefix(&diverged, &prompt, boundary, 16384),
+            AuxPrefixPlan::Reseed { prefix_len: boundary }
+        );
+    }
+
+    #[test]
+    fn aux_prefix_never_leaves_the_prompt_with_nothing_to_decode() {
+        // A boundary at the end is rejected up front.
+        let prompt = seq(1600);
+        assert_eq!(plan_aux_prefix(&prompt, &prompt, 1600, 16384), AuxPrefixPlan::Bypass);
+        // A slot holding the WHOLE prompt cannot be reused either: the copy is
+        // whole-sequence, so there would be no token left to decode logits
+        // from. Re-seed one token short instead.
+        assert_eq!(
+            plan_aux_prefix(&prompt, &prompt, 1599, 16384),
+            AuxPrefixPlan::Reseed { prefix_len: 1599 }
+        );
+        // A slot reaching past the boundary but short of the end is fine, and
+        // reuses everything it holds.
+        assert_eq!(
+            plan_aux_prefix(&seq(1550), &prompt, 1500, 16384),
+            AuxPrefixPlan::Reuse { reuse: 1550 }
+        );
+    }
+
+    #[test]
+    fn oneshot_cells_table() {
+        // Fits beside both the chat prefix and the aux slot
+        // (16384 - 6900 - 1900 = 7584 cells free).
+        let plan = plan_oneshot_cells(1800, 128, 16384, 6900, 1900);
+        assert_eq!(plan.evict, OneshotEvict::Nothing);
+        assert_eq!(plan.budget.drop_front, 0);
+        assert_eq!(plan.budget.max_gen, 128);
+
+        // 8128 cells needed: more than the 7584 free beside both, less than
+        // the 9484 free beside the chat prefix alone.
+        let plan = plan_oneshot_cells(8000, 128, 16384, 6900, 1900);
+        assert_eq!(plan.evict, OneshotEvict::Aux);
+        assert_eq!(plan.budget.drop_front, 0);
+
+        // Does not fit even without the aux slot.
+        let plan = plan_oneshot_cells(12000, 128, 16384, 6900, 1900);
+        assert_eq!(plan.evict, OneshotEvict::Everything);
+
+        // The 8k tier with a chat prefix resident: the aux slot is empty there
+        // by construction, and a planner prompt still needs the window.
+        let plan = plan_oneshot_cells(1800, 128, 8192, 6900, 0);
+        assert_eq!(plan.evict, OneshotEvict::Everything);
+    }
+
+    #[test]
+    fn oneshot_cells_matches_the_old_two_way_decision_without_an_aux_slot() {
+        for (prompt_len, max_tokens, n_ctx, resident) in [
+            (1800usize, 128usize, 16384usize, 6900usize),
+            (12000, 128, 16384, 6900),
+            (500, 256, 8192, 0),
+        ] {
+            let old = plan_uncached_budget(prompt_len, max_tokens, n_ctx, resident);
+            let new = plan_oneshot_cells(prompt_len, max_tokens, n_ctx, resident, 0);
+            assert_eq!(
+                old.evict_resident,
+                new.evict == OneshotEvict::Everything,
+                "{prompt_len}/{max_tokens}/{n_ctx}/{resident}"
+            );
+            assert_eq!(old.budget, new.budget);
+        }
+    }
+
+    #[test]
+    fn chat_evicts_the_aux_slot_only_when_its_own_cells_would_not_fit() {
+        // Plenty of room beside a 1.9k aux prefix.
+        assert!(!chat_must_evict_aux(6900, 1024, 16384, 1900));
+        // The chat turn alone nearly fills the window: the aux slot has to go.
+        assert!(chat_must_evict_aux(14000, 1024, 16384, 1900));
+        // Nothing resident to evict.
+        assert!(!chat_must_evict_aux(14000, 1024, 16384, 0));
+        // Exactly at the limit is still fine.
+        assert!(!chat_must_evict_aux(15000, 1024, 16384, 360));
     }
 }

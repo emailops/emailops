@@ -25,13 +25,16 @@
 //!   UIDNEXT, flags, …) unparsed. Safe because none of this codebase's
 //!   `select_folder_blocking` callers use that payload — they only care
 //!   whether SELECT succeeded.
-//! - [`uid_fetch_rfc822`]: still calls the crate's typed `uid_fetch` (and
-//!   therefore its literal-boundary-aware parsing of the RFC822 body — the
+//! - [`uid_fetch_body`]: still calls the crate's typed `uid_fetch` (and
+//!   therefore its literal-boundary-aware parsing of the message body — the
 //!   one piece of this bug class it is not safe to hand-roll, since getting a
 //!   `{n}` byte count wrong risks silently truncating or corrupting email
 //!   content), but retries on `ParseError::Unexpected`. The interleave is a
 //!   race against another client mutating the mailbox at that instant, so an
 //!   immediate retry essentially never repeats it.
+//!
+//! Every body fetch here goes out as [`FETCH_BODY_PEEK`]. Read its docs before
+//! changing the attribute: the non-`PEEK` form mutates the user's mailbox.
 
 use std::io::{Read, Write};
 
@@ -87,17 +90,33 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
         .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
 }
 
-/// How many times to retry `UID FETCH … RFC822` after the typed parser
+/// The FETCH attribute used for every body download.
+///
+/// **`.PEEK` is load-bearing, not a style choice.** RFC 3501 §6.4.5: `RFC822`
+/// is "functionally equivalent to `BODY[]`", and fetching a body section
+/// without `.PEEK` "implicitly sets the `\Seen` flag". Requesting `RFC822` (as
+/// this module did until the fix) therefore marked every message the sync
+/// downloaded as read *on the server* — in the user's phone, their webmail and
+/// every other client — and nothing here records what was unread beforehand, so
+/// there is no undo. A first backfill of a large mailbox wiped the unread state
+/// of the whole account.
+///
+/// `Fetch::body()` reads both `BODY[]` and `RFC822` responses, so the parser is
+/// indifferent; only the request changes.
+const FETCH_BODY_PEEK: &str = "BODY.PEEK[]";
+
+/// How many times to retry `UID FETCH … BODY.PEEK[]` after the typed parser
 /// rejects an interleaved untagged response before giving up. See the module
 /// docs for why this is a retry rather than a reimplementation.
 const FETCH_RETRY_ATTEMPTS: u32 = 3;
 
-/// Fetch the raw RFC822 body of `uid`, retrying past interleaved-response
-/// failures. See the module docs for the tradeoff behind this approach.
-pub(crate) fn uid_fetch_rfc822<T: Read + Write>(session: &mut imap::Session<T>, uid: u32) -> Result<Vec<u8>> {
+/// Fetch the raw message body of `uid` without marking it read on the server
+/// (see [`FETCH_BODY_PEEK`]), retrying past interleaved-response failures. See
+/// the module docs for the tradeoff behind this approach.
+pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, uid: u32) -> Result<Vec<u8>> {
     let mut last_err: Option<imap::Error> = None;
     for attempt in 1..=FETCH_RETRY_ATTEMPTS {
-        match session.uid_fetch(uid.to_string(), "RFC822") {
+        match session.uid_fetch(uid.to_string(), FETCH_BODY_PEEK) {
             Ok(messages) => {
                 return messages
                     .iter()
@@ -135,9 +154,9 @@ pub(crate) fn uid_fetch_rfc822<T: Read + Write>(session: &mut imap::Session<T>, 
 /// A UID the server does not return is simply absent from the map rather than
 /// an error for the whole chunk: messages get deleted between SEARCH and FETCH,
 /// and one gap must not cost the other nineteen. Retries follow the same rule
-/// as [`uid_fetch_rfc822`] — an interleaved untagged response makes the crate
+/// as [`uid_fetch_body`] — an interleaved untagged response makes the crate
 /// reject an otherwise good reply, so the command is re-issued.
-pub(crate) fn uid_fetch_rfc822_batch<T: Read + Write>(
+pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
     session: &mut imap::Session<T>,
     uids: &[u32],
 ) -> Result<std::collections::HashMap<u32, Vec<u8>>> {
@@ -148,7 +167,7 @@ pub(crate) fn uid_fetch_rfc822_batch<T: Read + Write>(
     let set = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
     let mut last_err: Option<imap::Error> = None;
     for attempt in 1..=FETCH_RETRY_ATTEMPTS {
-        match session.uid_fetch(&set, "RFC822") {
+        match session.uid_fetch(&set, FETCH_BODY_PEEK) {
             Ok(messages) => {
                 let mut bodies = std::collections::HashMap::with_capacity(uids.len());
                 for fetch in messages.iter() {
@@ -278,17 +297,34 @@ pub(crate) fn truncate_for_error(line: &str) -> String {
 mod tests {
     use super::*;
 
-    /// A canned IMAP server: hands back `script` on reads and swallows writes.
+    /// Everything the client wrote to the socket, shared with the test so it
+    /// can assert on the exact command that went out. Most tests only care
+    /// about the response, but the fetch attribute is itself the behaviour
+    /// under test — `BODY[]`/`RFC822` mutate `\Seen` server-side and
+    /// `BODY.PEEK[]` does not, and the difference is invisible in the reply.
+    #[derive(Clone, Default)]
+    struct SentCommands(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl SentCommands {
+        fn text(&self) -> String {
+            let guard = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            String::from_utf8_lossy(&guard).into_owned()
+        }
+    }
+
+    /// A canned IMAP server: hands back `script` on reads and records writes.
     /// Enough to drive `Client::login` + one command, which is all these tests
     /// need to exercise the real `imap` crate's response handling.
     struct ScriptedStream {
         script: std::io::Cursor<Vec<u8>>,
+        sent: SentCommands,
     }
 
     impl ScriptedStream {
-        fn new(script: &str) -> Self {
+        fn new(script: &str, sent: SentCommands) -> Self {
             Self {
                 script: std::io::Cursor::new(script.as_bytes().to_vec()),
+                sent,
             }
         }
     }
@@ -301,6 +337,11 @@ mod tests {
 
     impl Write for ScriptedStream {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.sent
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
             Ok(buf.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
@@ -311,9 +352,15 @@ mod tests {
     /// `login` consumes tag `a1`, so the first command under test answers to
     /// `a2`, the second (if any, concatenated in `remaining`) to `a3`, etc.
     fn session_for(remaining: &str) -> imap::Session<ScriptedStream> {
+        recorded_session_for(remaining).0
+    }
+
+    /// As [`session_for`], plus the log of everything written to the socket.
+    fn recorded_session_for(remaining: &str) -> (imap::Session<ScriptedStream>, SentCommands) {
         let script = format!("a1 OK Logged in.\r\n{remaining}");
-        match imap::Client::new(ScriptedStream::new(&script)).login("u", "p") {
-            Ok(session) => session,
+        let sent = SentCommands::default();
+        match imap::Client::new(ScriptedStream::new(&script, sent.clone())).login("u", "p") {
+            Ok(session) => (session, sent),
             Err((e, _)) => panic!("scripted login failed: {e}"),
         }
     }
@@ -440,13 +487,67 @@ mod tests {
         assert_eq!(err, "Encountered unexpected parse response");
     }
 
+    /// RFC 3501 §6.4.5: `RFC822` is "functionally equivalent to `BODY[]`", and
+    /// fetching a body section without `.PEEK` "implicitly sets the `\Seen`
+    /// flag". Syncing therefore used to mark every downloaded message as read
+    /// on the server — in the user's phone, their webmail and every other
+    /// client — with no way to restore what was unread before.
+    ///
+    /// The reply is identical either way, so nothing but the issued command can
+    /// catch this.
+    #[test]
+    fn single_fetch_does_not_mark_the_message_read_on_the_server() {
+        let response = "* 1 FETCH (UID 91 BODY[] {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        assert!(uid_fetch_body(&mut session, 91).is_ok());
+
+        let sent = sent.text();
+        assert!(sent.contains("BODY.PEEK[]"), "fetch must use BODY.PEEK[]; sent: {sent}");
+        assert!(
+            !sent.contains("RFC822"),
+            "a non-PEEK body fetch sets \\Seen server-side; sent: {sent}"
+        );
+    }
+
+    /// The batch path is where the damage scales: it is the one the backfill
+    /// uses, twenty messages at a time.
+    #[test]
+    fn batch_fetch_does_not_mark_the_messages_read_on_the_server() {
+        let response = "* 1 FETCH (UID 91 BODY[] {5}\r\nhello)\r\n\
+                        * 2 FETCH (UID 92 BODY[] {5}\r\nworld)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        assert!(uid_fetch_body_batch(&mut session, &[91, 92]).is_ok());
+
+        let sent = sent.text();
+        assert!(sent.contains("BODY.PEEK[]"), "fetch must use BODY.PEEK[]; sent: {sent}");
+        assert!(
+            !sent.contains("RFC822"),
+            "a non-PEEK body fetch sets \\Seen server-side; sent: {sent}"
+        );
+    }
+
+    /// `Fetch::body()` accepts `BODY[]` and `RFC822` alike, so switching the
+    /// request attribute must not change what the parser hands back.
+    #[test]
+    fn a_peeked_body_section_parses_the_same_as_rfc822() {
+        let response = "* 1 FETCH (UID 91 BODY[] {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let body = match uid_fetch_body(&mut session_for(response), 91) {
+            Ok(body) => body,
+            Err(e) => panic!("peeked fetch failed: {e}"),
+        };
+        assert_eq!(body, b"hello");
+    }
+
     #[test]
     fn batch_fetch_returns_every_body_from_a_single_command() {
         // One round trip for the whole chunk: the point of the batch fetch.
         let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                         * 2 FETCH (UID 92 RFC822 {5}\r\nworld)\r\n\
                         a2 OK Fetch completed.\r\n";
-        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91, 92]) {
+        let bodies = match uid_fetch_body_batch(&mut session_for(response), &[91, 92]) {
             Ok(bodies) => bodies,
             Err(e) => panic!("batch fetch failed: {e}"),
         };
@@ -463,7 +564,7 @@ mod tests {
                         a2 OK Fetch completed.\r\n\
                         * 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                         a3 OK Fetch completed.\r\n";
-        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91]) {
+        let bodies = match uid_fetch_body_batch(&mut session_for(response), &[91]) {
             Ok(bodies) => bodies,
             Err(e) => panic!("batch fetch failed: {e}"),
         };
@@ -476,7 +577,7 @@ mod tests {
         // must still land, with the gap reported per message by the caller.
         let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                         a2 OK Fetch completed.\r\n";
-        let bodies = match uid_fetch_rfc822_batch(&mut session_for(response), &[91, 92]) {
+        let bodies = match uid_fetch_body_batch(&mut session_for(response), &[91, 92]) {
             Ok(bodies) => bodies,
             Err(e) => panic!("batch fetch failed: {e}"),
         };
@@ -488,7 +589,7 @@ mod tests {
     fn batch_fetch_of_nothing_issues_no_command() {
         // `UID FETCH ` with an empty set is a protocol error — and the session
         // here is scripted to answer nothing, so a command would hang or fail.
-        let bodies = match uid_fetch_rfc822_batch(&mut session_for(""), &[]) {
+        let bodies = match uid_fetch_body_batch(&mut session_for(""), &[]) {
             Ok(bodies) => bodies,
             Err(e) => panic!("empty batch fetch failed: {e}"),
         };
@@ -498,7 +599,7 @@ mod tests {
     #[test]
     fn batch_fetch_propagates_a_tagged_no_without_retrying() {
         let response = "a2 NO [SERVERBUG] Internal error\r\n";
-        let err = match uid_fetch_rfc822_batch(&mut session_for(response), &[91]) {
+        let err = match uid_fetch_body_batch(&mut session_for(response), &[91]) {
             Ok(bodies) => panic!("expected a failure, got {bodies:?}"),
             Err(e) => e.to_string(),
         };
@@ -506,13 +607,13 @@ mod tests {
     }
 
     #[test]
-    fn uid_fetch_rfc822_retries_past_an_interleaved_search_and_returns_the_body() {
+    fn uid_fetch_body_retries_past_an_interleaved_search_and_returns_the_body() {
         let response = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                         * SEARCH 1 2\r\n\
                         a2 OK Fetch completed.\r\n\
                         * 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                         a3 OK Fetch completed.\r\n";
-        let body = match uid_fetch_rfc822(&mut session_for(response), 91) {
+        let body = match uid_fetch_body(&mut session_for(response), 91) {
             Ok(body) => body,
             Err(e) => panic!("expected the retry to succeed, got: {e}"),
         };
@@ -520,13 +621,13 @@ mod tests {
     }
 
     #[test]
-    fn uid_fetch_rfc822_gives_up_after_exhausting_its_retries() {
+    fn uid_fetch_body_gives_up_after_exhausting_its_retries() {
         let failing = "* 1 FETCH (UID 91 RFC822 {5}\r\nhello)\r\n\
                        * SEARCH 1 2\r\n\
                        aN OK Fetch completed.\r\n";
         // FETCH_RETRY_ATTEMPTS attempts, tags a2..a4.
         let script: String = (2..=4).map(|tag| failing.replace("aN", &format!("a{tag}"))).collect();
-        let err = match uid_fetch_rfc822(&mut session_for(&script), 91) {
+        let err = match uid_fetch_body(&mut session_for(&script), 91) {
             Ok(body) => panic!("expected every attempt to fail, got {body:?}"),
             Err(e) => e.to_string(),
         };
@@ -534,9 +635,9 @@ mod tests {
     }
 
     #[test]
-    fn uid_fetch_rfc822_propagates_a_tagged_no_without_retrying() {
+    fn uid_fetch_body_propagates_a_tagged_no_without_retrying() {
         let response = "a2 NO [SERVERBUG] Internal error\r\n";
-        let err = match uid_fetch_rfc822(&mut session_for(response), 91) {
+        let err = match uid_fetch_body(&mut session_for(response), 91) {
             Ok(body) => panic!("expected a failure, got {body:?}"),
             Err(e) => e.to_string(),
         };
@@ -544,9 +645,9 @@ mod tests {
     }
 
     #[test]
-    fn uid_fetch_rfc822_reports_a_missing_body_as_not_found() {
+    fn uid_fetch_body_reports_a_missing_body_as_not_found() {
         let response = "* 1 FETCH (UID 91 FLAGS (\\Seen))\r\na2 OK Fetch completed.\r\n";
-        let err = match uid_fetch_rfc822(&mut session_for(response), 91) {
+        let err = match uid_fetch_body(&mut session_for(response), 91) {
             Ok(body) => panic!("expected a failure, got {body:?}"),
             Err(e) => e.to_string(),
         };

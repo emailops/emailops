@@ -31,6 +31,20 @@ pub struct Email {
     pub account_id: String,
     pub thread_id: String,
     pub message_id: Option<String>,
+    /// The RFC 5322 `References` header, verbatim (space-separated Message-IDs,
+    /// oldest first). Kept so a reply can continue this message's chain rather
+    /// than rooting a new thread — see `mime_builder::reply_references`.
+    ///
+    /// `None` for messages synced before the column existed, and for providers
+    /// that do not expose the header (Outlook: Graph writes the threading
+    /// headers itself on `/reply`).
+    ///
+    /// Backend-only, like `headers`: skipped in serialization and in the
+    /// generated TS, because the frontend never needs a raw header — the reply
+    /// path reads it from the row on its way to the provider.
+    #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub references: Option<String>,
     pub subject: String,
     pub sender: String,
     pub sender_email: String,

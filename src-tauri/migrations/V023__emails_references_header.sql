@@ -1,0 +1,16 @@
+-- Store the RFC 5322 `References` header so a reply can continue the chain it
+-- was handed instead of rooting a new thread.
+--
+-- Until now the header was parsed on ingest (to derive a thread id hash) and
+-- then dropped. With nothing to carry forward, every outgoing reply advertised
+-- `References: <parent Message-ID>` alone — declaring itself a thread root.
+-- The break is contagious: the recipient's client builds its next reply's
+-- chain from ours, so the wrong root comes back and one conversation fragments
+-- into pairs of messages.
+--
+-- Named `references_header`, not `references`: REFERENCES is a SQLite keyword
+-- and an unquoted column of that name is a syntax error in ordinary queries.
+--
+-- NULL for every row ingested before this migration — the header is gone for
+-- those and can only be recovered by re-syncing the account.
+ALTER TABLE emails ADD COLUMN references_header TEXT;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -26,23 +26,70 @@ pub(crate) type SyncFn = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Everything `spawn_watcher` needs to start a watcher for one account.
+///
+/// Captured once by `SyncScheduler::start` so registering an account later —
+/// when the user adds one mid-session — needs nothing but the `Account`.
+#[derive(Clone)]
+struct WatcherDeps {
+    db: Arc<Database>,
+    app_data_dir: PathBuf,
+    app: AppHandle,
+    ai_background: TaskQueue,
+    sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    online_flag: Arc<AtomicBool>,
+}
+
+/// The background tasks belonging to a single account, so they can be stopped
+/// together when the account is removed or disabled.
+struct AccountWatcher {
+    handles: Vec<tauri::async_runtime::JoinHandle<()>>,
+    stop_flags: Vec<Arc<AtomicBool>>,
+}
+
+impl AccountWatcher {
+    fn stop(&self) {
+        for flag in &self.stop_flags {
+            flag.store(true, Ordering::Relaxed);
+        }
+        for handle in &self.handles {
+            handle.abort();
+        }
+    }
+}
+
 /// Background sync scheduler.
 ///
 /// - Gmail: polls every 60 s
 /// - IMAP: maintains IDLE connection, syncs on server push; exponential reconnect backoff
+///
+/// State is behind `Mutex`es because the only live reference reaches it through
+/// Tauri's managed `State<'_, AppState>`, which hands out `&self`. Accounts are
+/// added and removed while the app runs, and a scheduler that could only be
+/// populated once at start-up left every mid-session account with no watcher at
+/// all until the next restart.
 pub struct SyncScheduler {
-    handles: Vec<tauri::async_runtime::JoinHandle<()>>,
+    /// Process-wide tickers (meeting reminders, vacuum, update check) — started
+    /// once and stopped only at shutdown.
+    handles: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
     /// Stop flags passed to IMAP blocking threads so they exit without waiting
     /// for the full IDLE timeout.
-    stop_flags: Vec<Arc<AtomicBool>>,
+    stop_flags: Mutex<Vec<Arc<AtomicBool>>>,
+    /// Per-account background tasks, keyed by account id.
+    account_watchers: Mutex<HashMap<String, AccountWatcher>>,
+    /// `None` in `stub()`, which makes `watch_account` a safe no-op in tests.
+    deps: Option<WatcherDeps>,
 }
 
 impl SyncScheduler {
     /// No-op instance for tests: no background tasks, `stop()` is safe to call.
     pub fn stub() -> Self {
         Self {
-            handles: Vec::new(),
-            stop_flags: Vec::new(),
+            handles: Mutex::new(Vec::new()),
+            stop_flags: Mutex::new(Vec::new()),
+            account_watchers: Mutex::new(HashMap::new()),
+            deps: None,
         }
     }
 
@@ -63,9 +110,22 @@ impl SyncScheduler {
         online_flag: Arc<AtomicBool>,
     ) -> Self {
         let accounts = db.list_accounts().unwrap_or_default();
-        let mut handles = Vec::new();
-        let mut stop_flags = Vec::new();
         let enabled: Vec<Account> = enabled_accounts(accounts);
+
+        let scheduler = Self {
+            handles: Mutex::new(Vec::new()),
+            stop_flags: Mutex::new(Vec::new()),
+            account_watchers: Mutex::new(HashMap::new()),
+            deps: Some(WatcherDeps {
+                db: db.clone(),
+                app_data_dir,
+                app: app.clone(),
+                ai_background,
+                sync_abort_flags,
+                sync_locks,
+                online_flag: online_flag.clone(),
+            }),
+        };
 
         // Recover from prior-process crashes: if a previous run of the app was
         // killed or panicked mid-sync, sync_state is still "syncing" on disk.
@@ -92,42 +152,21 @@ impl SyncScheduler {
             }
         }
 
+        // Every per-account loop — sync watcher, calendar poll, memory
+        // consolidation — is registered through the same entry point the
+        // account commands use, so an account added later gets exactly what an
+        // account present at start-up gets.
         for account in &enabled {
-            let flag = Arc::new(AtomicBool::new(false));
-            stop_flags.push(flag.clone());
-            handles.push(spawn_watcher(
-                account.clone(),
-                db.clone(),
-                app_data_dir.clone(),
-                app.clone(),
-                ai_background.clone(),
-                flag,
-                sync_abort_flags.clone(),
-                sync_locks.clone(),
-                online_flag.clone(),
-            ));
-        }
-        // One calendar poll loop per OAuth account (IMAP has no calendar).
-        for account in plan_calendar_accounts(&enabled) {
-            let flag = Arc::new(AtomicBool::new(false));
-            stop_flags.push(flag.clone());
-            let sync_fn = make_calendar_sync_fn(db.clone(), account, app.clone());
-            handles.push(tauri::async_runtime::spawn(calendar_poll_loop(
-                sync_fn,
-                CALENDAR_POLL_INTERVAL,
-                online_flag.clone(),
-            )));
+            scheduler.watch_account(account);
         }
 
         // Single global meeting-reminder ticker across all calendar accounts.
         {
             let flag = Arc::new(AtomicBool::new(false));
-            stop_flags.push(flag.clone());
-            handles.push(tauri::async_runtime::spawn(meeting_notification_loop(
-                db.clone(),
-                app.clone(),
+            scheduler.push_global(
+                tauri::async_runtime::spawn(meeting_notification_loop(db.clone(), app.clone(), flag.clone())),
                 flag,
-            )));
+            );
         }
 
         // Single global release-update check (daily, gated inside the tick).
@@ -138,16 +177,16 @@ impl SyncScheduler {
             match crate::services::updates::make_github_fetch() {
                 Ok(fetch) => {
                     let flag = Arc::new(AtomicBool::new(false));
-                    stop_flags.push(flag.clone());
-                    handles.push(tauri::async_runtime::spawn(
-                        crate::services::updates::update_check_loop(
+                    scheduler.push_global(
+                        tauri::async_runtime::spawn(crate::services::updates::update_check_loop(
                             db.clone(),
                             app.clone(),
                             online_flag.clone(),
-                            flag,
+                            flag.clone(),
                             fetch,
-                        ),
-                    ));
+                        )),
+                        flag,
+                    );
                 }
                 Err(e) => crate::services::logger::log(
                     "error",
@@ -157,44 +196,139 @@ impl SyncScheduler {
             }
         }
 
-        // One consolidation ticker per account. Cheap: it no-ops quickly when
-        // the memory subsystem is disabled or nothing needs consolidating.
-        for account in &enabled {
-            let flag = Arc::new(AtomicBool::new(false));
-            stop_flags.push(flag.clone());
-            handles.push(tauri::async_runtime::spawn(memory_consolidation_loop(
-                db.clone(),
-                app.clone(),
-                account.id.clone(),
-                flag,
-            )));
-        }
-
         // Single global VACUUM / WAL-truncate ticker. Runs every 30 minutes
         // and is best-effort: contention is swallowed inside the DB helpers
         // so a busy writer never blocks startup or shutdown.
         {
             let flag = Arc::new(AtomicBool::new(false));
-            stop_flags.push(flag.clone());
-            handles.push(tauri::async_runtime::spawn(vacuum_loop(db.clone(), app.clone(), flag)));
+            scheduler.push_global(
+                tauri::async_runtime::spawn(vacuum_loop(db.clone(), app.clone(), flag.clone())),
+                flag,
+            );
         }
 
-        Self { handles, stop_flags }
+        scheduler
+    }
+
+    /// Start every background loop belonging to `account`, unless it is
+    /// disabled or already watched.
+    ///
+    /// Call this whenever an account starts existing or becomes enabled. Before
+    /// it existed, `start()` was the only thing that ever enumerated accounts,
+    /// so an account added while the app was running had no IMAP IDLE watcher,
+    /// no poll loop and no calendar/memory ticker for the rest of the session —
+    /// nothing retried its first sync, and it sat at zero emails until restart.
+    pub fn watch_account(&self, account: &Account) {
+        let Some(deps) = self.deps.as_ref() else {
+            return; // stub(): no dependencies wired, nothing to spawn
+        };
+
+        let mut watchers = self.account_watchers.lock().unwrap_or_else(PoisonError::into_inner);
+        let watched: HashSet<String> = watchers.keys().cloned().collect();
+        match plan_watch_change(&watched, account) {
+            WatchChange::AlreadyWatched | WatchChange::SkipDisabled => return,
+            WatchChange::Spawn => {}
+        }
+
+        let sync_flag = Arc::new(AtomicBool::new(false));
+        let mut handles = vec![spawn_watcher(account.clone(), deps, sync_flag.clone())];
+        let mut stop_flags = vec![sync_flag];
+
+        // Calendar poll loop — OAuth providers only (IMAP has no calendar).
+        if !plan_calendar_accounts(std::slice::from_ref(account)).is_empty() {
+            let flag = Arc::new(AtomicBool::new(false));
+            let sync_fn = make_calendar_sync_fn(deps.db.clone(), account.clone(), deps.app.clone());
+            handles.push(tauri::async_runtime::spawn(calendar_poll_loop(
+                sync_fn,
+                CALENDAR_POLL_INTERVAL,
+                deps.online_flag.clone(),
+            )));
+            stop_flags.push(flag);
+        }
+
+        // Consolidation ticker. Cheap: it no-ops quickly when the memory
+        // subsystem is disabled or nothing needs consolidating.
+        {
+            let flag = Arc::new(AtomicBool::new(false));
+            handles.push(tauri::async_runtime::spawn(memory_consolidation_loop(
+                deps.db.clone(),
+                deps.app.clone(),
+                account.id.clone(),
+                flag.clone(),
+            )));
+            stop_flags.push(flag);
+        }
+
+        watchers.insert(account.id.clone(), AccountWatcher { handles, stop_flags });
+    }
+
+    /// Stop and forget every background loop belonging to `account_id`.
+    ///
+    /// Call this when an account is removed or disabled — otherwise its IDLE
+    /// connection and poll loop keep running against a mailbox the app no
+    /// longer has, or has been told to leave alone.
+    pub fn unwatch_account(&self, account_id: &str) {
+        let watcher = self
+            .account_watchers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(account_id);
+        if let Some(watcher) = watcher {
+            watcher.stop();
+        }
+    }
+
+    /// Ids of the accounts currently watched, sorted. Test/diagnostic surface.
+    pub fn watched_account_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .account_watchers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Record a process-wide ticker so `stop()` can shut it down.
+    fn push_global(&self, handle: tauri::async_runtime::JoinHandle<()>, stop_flag: Arc<AtomicBool>) {
+        self.stop_flags
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(stop_flag);
+        self.handles.lock().unwrap_or_else(PoisonError::into_inner).push(handle);
     }
 
     /// Signal all background tasks to stop and abort their async handles.
     /// IMAP blocking threads will exit within one IDLE timeout cycle (≤ 30 s).
     pub fn stop(&self) {
-        for flag in &self.stop_flags {
+        for watcher in self
+            .account_watchers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
+            watcher.stop();
+        }
+        for flag in self.stop_flags.lock().unwrap_or_else(PoisonError::into_inner).iter() {
             flag.store(true, Ordering::Relaxed);
         }
-        for h in &self.handles {
+        for h in self.handles.lock().unwrap_or_else(PoisonError::into_inner).iter() {
             h.abort();
         }
     }
 
     pub fn task_count(&self) -> usize {
-        self.handles.len()
+        let globals = self.handles.lock().unwrap_or_else(PoisonError::into_inner).len();
+        let per_account: usize = self
+            .account_watchers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .map(|w| w.handles.len())
+            .sum();
+        globals + per_account
     }
 }
 
@@ -202,37 +336,38 @@ impl SyncScheduler {
 
 fn spawn_watcher(
     account: Account,
-    db: Arc<Database>,
-    app_data_dir: PathBuf,
-    app: AppHandle,
-    ai_background: TaskQueue,
+    deps: &WatcherDeps,
     stop_flag: Arc<AtomicBool>,
-    sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-    sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    online_flag: Arc<AtomicBool>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let sync_fn = make_sync_fn(
-        db.clone(),
+        deps.db.clone(),
         account.id.clone(),
-        app_data_dir,
-        app.clone(),
-        ai_background,
-        sync_abort_flags,
-        sync_locks,
+        deps.app_data_dir.clone(),
+        deps.app.clone(),
+        deps.ai_background.clone(),
+        deps.sync_abort_flags.clone(),
+        deps.sync_locks.clone(),
     );
 
     match plan_watcher_kind(&account) {
         WatcherKind::ImapIdle => {
             let creds = crate::services::accounts::get_imap_credentials(&account.id);
             let email = account.email.clone();
-            tauri::async_runtime::spawn(imap_idle_watcher(creds, sync_fn, app, email, stop_flag, online_flag))
+            tauri::async_runtime::spawn(imap_idle_watcher(
+                creds,
+                sync_fn,
+                deps.app.clone(),
+                email,
+                stop_flag,
+                deps.online_flag.clone(),
+            ))
         }
         WatcherKind::GmailPoll => tauri::async_runtime::spawn(gmail_poll_loop(
-            db,
+            deps.db.clone(),
             account.id,
             sync_fn,
             Duration::from_secs(60),
-            online_flag,
+            deps.online_flag.clone(),
         )),
     }
 }
@@ -833,6 +968,33 @@ pub fn plan_watcher_kind(account: &Account) -> WatcherKind {
     }
 }
 
+/// What registering `account` with the scheduler should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchChange {
+    /// Start this account's background loops.
+    Spawn,
+    /// Already running — spawning again would leave two IDLE connections and
+    /// two poll loops racing on one mailbox.
+    AlreadyWatched,
+    /// Disabled accounts get no background work, matching the
+    /// [`enabled_accounts`] filter `SyncScheduler::start` applies.
+    SkipDisabled,
+}
+
+/// Pure planner: decide whether `account` needs watchers started.
+///
+/// Kept I/O-free so the "enabled, and only once" rule is table-testable
+/// without spawning threads or opening an IMAP connection.
+pub fn plan_watch_change(watched: &HashSet<String>, account: &Account) -> WatchChange {
+    if !account.enabled {
+        WatchChange::SkipDisabled
+    } else if watched.contains(&account.id) {
+        WatchChange::AlreadyWatched
+    } else {
+        WatchChange::Spawn
+    }
+}
+
 fn emit_log(_app: &AppHandle, message: &str) {
     crate::services::logger::log("error", "sync", message);
 }
@@ -887,6 +1049,69 @@ mod tests {
                 c.fetch_add(1, Ordering::SeqCst);
             })
         })
+    }
+
+    // ── plan_watch_change ────────────────────────────────────────────────────
+
+    #[test]
+    fn an_unwatched_enabled_account_is_spawned() {
+        let watched = HashSet::new();
+        assert_eq!(
+            plan_watch_change(&watched, &make_account("a", "gmail", true)),
+            WatchChange::Spawn
+        );
+    }
+
+    #[test]
+    fn an_already_watched_account_is_not_spawned_twice() {
+        // `watch_account` is called from every account command, and the app
+        // start-up path already watched whatever existed then. Registering the
+        // same account twice would leave two IDLE connections and two poll
+        // loops racing on one mailbox.
+        let watched = HashSet::from(["a".to_string()]);
+        assert_eq!(
+            plan_watch_change(&watched, &make_account("a", "gmail", true)),
+            WatchChange::AlreadyWatched
+        );
+    }
+
+    #[test]
+    fn a_disabled_account_is_not_watched() {
+        // Matches the `enabled_accounts` filter `SyncScheduler::start` applies,
+        // so watching on demand can't drift from watching at start-up.
+        let watched = HashSet::new();
+        assert_eq!(
+            plan_watch_change(&watched, &make_account("a", "gmail", false)),
+            WatchChange::SkipDisabled
+        );
+    }
+
+    #[test]
+    fn a_disabled_account_is_skipped_even_when_already_watched() {
+        let watched = HashSet::from(["a".to_string()]);
+        assert_eq!(
+            plan_watch_change(&watched, &make_account("a", "imap", false)),
+            WatchChange::SkipDisabled
+        );
+    }
+
+    // ── watch_account / unwatch_account ───────────────────────────────────────
+
+    #[test]
+    fn a_stub_scheduler_ignores_watch_requests() {
+        // `AppState::for_testing` builds a stub with no watcher dependencies;
+        // command tests must be able to call through it without panicking.
+        let scheduler = SyncScheduler::stub();
+        scheduler.watch_account(&make_account("a", "gmail", true));
+        scheduler.watch_account(&make_account("a", "gmail", true));
+        assert_eq!(scheduler.watched_account_ids(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn unwatching_an_unknown_account_is_a_no_op() {
+        let scheduler = SyncScheduler::stub();
+        scheduler.unwatch_account("never-registered");
+        assert_eq!(scheduler.watched_account_ids(), Vec::<String>::new());
     }
 
     // ── next_backoff ──────────────────────────────────────────────────────────

@@ -127,7 +127,10 @@
     "title": "Sources",
     "openEmail": "Ouvrir le courriel",
     "emailCount": "{{count}} sources",
-    "emailCountOne": "1 source"
+    "emailCountOne": "1 source",
+    "showInList_other": "Afficher {{count}} e-mails dans la liste",
+    "showInList_many": "Afficher {{count}} e-mails dans la liste",
+    "showInList_one": "Afficher dans la liste des e-mails"
   },
   "citation": {
     "label": "Citation {{n}}"

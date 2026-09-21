@@ -2,7 +2,7 @@
 
 Typing in the search box above the list and pressing Enter filters the inbox to matching
 threads across subject, sender and body, with `from:`, `to:`, `subject:`, `is:unread`,
-`after:`, `before:` and `tag:` operators. The ✕ inside the box clears the search and
+`after:`, `before:`, `tag:` and `id:` (exact email ids, repeatable; used by the chat "Show in email list" button) operators. The ✕ inside the box clears the search and
 restores the full list.
 
 ## Sub-features

@@ -104,7 +104,7 @@ pub fn search_emails_filtered(
     subject_filter: Option<&str>,
     after_timestamp: Option<i64>,
     before_timestamp: Option<i64>,
-    tag_filters: Option<&[String]>,
+    tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     // `true` returns oldest-first — needed to answer "first / primer correo".
     // Default callers pass `false` (newest-first, the historical behaviour).

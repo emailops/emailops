@@ -12,6 +12,7 @@ import {
   type SyncProgress,
   selectAccountById,
   selectEffectiveAccountId,
+  selectIsSyncing,
   toQueryAccountId,
   useAccountStore,
 } from './accountStore';
@@ -43,6 +44,12 @@ function makeProgress(accountId: string, status: string): SyncProgress {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` only clears recorded calls — a `mockRejectedValue` from a
+  // previous test survives it and silently poisons the next one. Re-establish
+  // the happy-path implementations explicitly.
+  vi.mocked(api.listAccounts).mockImplementation(async () => []);
+  vi.mocked(api.removeAccount).mockImplementation(async () => {});
+  vi.mocked(api.syncAccount).mockImplementation(async () => {});
   useAccountStore.setState({
     accounts: [],
     activeAccountId: null,
@@ -53,7 +60,7 @@ beforeEach(() => {
     errorAccountId: null,
     currentSyncId: 0,
     setupPendingAccountId: null,
-    pendingSyncAccountIds: new Set<string>(),
+    syncingAccountIds: new Set<string>(),
   });
 });
 
@@ -124,52 +131,85 @@ describe('selectAccountById', () => {
 // ── reduceSyncProgress ────────────────────────────────────────────────────────
 
 describe('reduceSyncProgress', () => {
-  const base = { error: null, errorAccountId: null, pendingSyncAccountIds: new Set<string>() };
+  const base = { error: null, errorAccountId: null, syncingAccountIds: new Set<string>() };
 
-  it('null progress clears sync state and pending set', () => {
-    const s = reduceSyncProgress({ ...base, pendingSyncAccountIds: new Set(['a']) }, null);
+  it('null progress clears sync state and the syncing set', () => {
+    const s = reduceSyncProgress({ ...base, syncingAccountIds: new Set(['a']) }, null);
     expect(s.syncProgress).toBeNull();
     expect(s.isSyncing).toBe(false);
-    expect(s.pendingSyncAccountIds.size).toBe(0);
+    expect(s.syncingAccountIds.size).toBe(0);
   });
 
-  it('non-terminal progress keeps syncing', () => {
+  it('non-terminal progress marks its own account as syncing', () => {
     const s = reduceSyncProgress(base, makeProgress('a', 'fetching'));
+    expect(s.syncingAccountIds.has('a')).toBe(true);
     expect(s.isSyncing).toBe(true);
   });
 
-  it('terminal progress with empty pending stops syncing', () => {
+  it('non-terminal progress does not mark any OTHER account as syncing (regression)', () => {
+    // The starvation bug: a single global `isSyncing` meant account A's backlog
+    // made the whole app look busy, which blocked B's first sync and showed a
+    // spinner over B's empty inbox.
+    const s = reduceSyncProgress(base, makeProgress('a', 'fetching'));
+    expect(s.syncingAccountIds.has('b')).toBe(false);
+  });
+
+  it('terminal progress for an untracked account leaves nothing syncing', () => {
     const s = reduceSyncProgress(base, makeProgress('a', 'complete'));
     expect(s.isSyncing).toBe(false);
   });
 
-  it('terminal progress removes the account from pending and keeps syncing while others remain', () => {
-    const s = reduceSyncProgress(
-      { ...base, pendingSyncAccountIds: new Set(['a', 'b']) },
-      makeProgress('a', 'complete'),
-    );
-    expect(s.pendingSyncAccountIds.has('a')).toBe(false);
-    expect(s.pendingSyncAccountIds.has('b')).toBe(true);
+  it('terminal progress clears only its own account and keeps the others syncing', () => {
+    const s = reduceSyncProgress({ ...base, syncingAccountIds: new Set(['a', 'b']) }, makeProgress('a', 'complete'));
+    expect(s.syncingAccountIds.has('a')).toBe(false);
+    expect(s.syncingAccountIds.has('b')).toBe(true);
     expect(s.isSyncing).toBe(true);
   });
 
-  it('terminal progress for the LAST pending account stops syncing', () => {
-    const s = reduceSyncProgress({ ...base, pendingSyncAccountIds: new Set(['a']) }, makeProgress('a', 'complete'));
-    expect(s.pendingSyncAccountIds.size).toBe(0);
+  it('terminal progress for the LAST syncing account stops syncing', () => {
+    const s = reduceSyncProgress({ ...base, syncingAccountIds: new Set(['a']) }, makeProgress('a', 'complete'));
+    expect(s.syncingAccountIds.size).toBe(0);
     expect(s.isSyncing).toBe(false);
   });
 
   it('error progress records the error scoped to its account', () => {
-    const s = reduceSyncProgress({ ...base, pendingSyncAccountIds: new Set(['a', 'b']) }, makeProgress('a', 'error'));
+    const s = reduceSyncProgress({ ...base, syncingAccountIds: new Set(['a', 'b']) }, makeProgress('a', 'error'));
     expect(s.error).toContain('error for a');
     expect(s.errorAccountId).toBe('a');
-    expect(s.isSyncing).toBe(true); // b still pending
+    expect(s.isSyncing).toBe(true); // b still syncing
   });
 
-  it('does not mutate the input pending set', () => {
-    const pending = new Set(['a']);
-    reduceSyncProgress({ ...base, pendingSyncAccountIds: pending }, makeProgress('a', 'complete'));
-    expect(pending.has('a')).toBe(true);
+  it('does not mutate the input syncing set', () => {
+    const syncing = new Set(['a']);
+    reduceSyncProgress({ ...base, syncingAccountIds: syncing }, makeProgress('a', 'complete'));
+    expect(syncing.has('a')).toBe(true);
+  });
+});
+
+// ── selectIsSyncing ───────────────────────────────────────────────────────────
+
+describe('selectIsSyncing', () => {
+  it('is true for an account that is syncing', () => {
+    expect(selectIsSyncing(new Set(['a']), 'a')).toBe(true);
+  });
+
+  it('is FALSE for an idle account while a different one syncs (regression)', () => {
+    // A freshly added account must not inherit another account's spinner —
+    // that is what made a stalled first sync look like work in progress.
+    expect(selectIsSyncing(new Set(['a']), 'b')).toBe(false);
+  });
+
+  it('is true in unified mode when any account is syncing', () => {
+    expect(selectIsSyncing(new Set(['a']), ALL_ACCOUNTS_ID)).toBe(true);
+  });
+
+  it('is false in unified mode when nothing is syncing', () => {
+    expect(selectIsSyncing(new Set(), ALL_ACCOUNTS_ID)).toBe(false);
+  });
+
+  it('falls back to "any account" for a null scope', () => {
+    expect(selectIsSyncing(new Set(['a']), null)).toBe(true);
+    expect(selectIsSyncing(new Set(), null)).toBe(false);
   });
 });
 
@@ -217,35 +257,102 @@ describe('removeAccount', () => {
   });
 });
 
+describe('syncAccount', () => {
+  it('enqueues the sync and marks that account as syncing', async () => {
+    await useAccountStore.getState().syncAccount('a');
+    expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('a');
+    expect(useAccountStore.getState().syncingAccountIds).toEqual(new Set(['a']));
+  });
+
+  it('enqueues even while a DIFFERENT account is already syncing (regression)', async () => {
+    // The reported bug: after 3 months offline, the existing accounts held a
+    // global `isSyncing` latch true for the whole backfill, so a newly added
+    // account's one-and-only auto-sync returned before invoking anything and
+    // was never retried — 15 minutes later it still had zero emails and no
+    // `sync_state` row at all.
+    useAccountStore.setState({ syncingAccountIds: new Set(['busy-account']) });
+
+    await useAccountStore.getState().syncAccount('brand-new');
+
+    expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('brand-new');
+    expect(useAccountStore.getState().syncingAccountIds).toEqual(new Set(['busy-account', 'brand-new']));
+  });
+
+  it('does not re-enqueue an account that is already syncing', async () => {
+    // Scoped to the one account, so it cannot starve any other. Switching
+    // back and forth between accounts during a long backfill would otherwise
+    // queue a second full backfill behind the first.
+    useAccountStore.setState({ syncingAccountIds: new Set(['a']) });
+    await useAccountStore.getState().syncAccount('a');
+    expect(vi.mocked(api.syncAccount)).not.toHaveBeenCalled();
+  });
+
+  it('stops tracking the account when its enqueue fails', async () => {
+    vi.mocked(api.syncAccount).mockRejectedValue(new Error('enqueue failed'));
+
+    await expect(useAccountStore.getState().syncAccount('a')).rejects.toThrow('enqueue failed');
+
+    const state = useAccountStore.getState();
+    expect(state.syncingAccountIds.has('a')).toBe(false);
+    expect(state.errorAccountId).toBe('a');
+  });
+
+  it('leaves other accounts tracked when one enqueue fails', async () => {
+    useAccountStore.setState({ syncingAccountIds: new Set(['busy-account']) });
+    vi.mocked(api.syncAccount).mockRejectedValue(new Error('enqueue failed'));
+
+    await expect(useAccountStore.getState().syncAccount('a')).rejects.toThrow('enqueue failed');
+
+    expect(useAccountStore.getState().syncingAccountIds).toEqual(new Set(['busy-account']));
+  });
+});
+
 describe('syncAllAccounts', () => {
-  it('enqueues a sync for every given account and tracks them as pending', async () => {
+  it('enqueues a sync for every given account and tracks them all', async () => {
     await useAccountStore.getState().syncAllAccounts(['a', 'b']);
     expect(vi.mocked(api.syncAccount)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('a');
     expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('b');
     const state = useAccountStore.getState();
     expect(state.isSyncing).toBe(true);
-    expect(state.pendingSyncAccountIds).toEqual(new Set(['a', 'b']));
+    expect(state.syncingAccountIds).toEqual(new Set(['a', 'b']));
   });
 
-  it('is a no-op while a sync is already running', async () => {
-    useAccountStore.setState({ isSyncing: true });
+  it('enqueues even while another account is already syncing (regression)', async () => {
+    // Same latch as syncAccount: switching to "All accounts" during a backlog
+    // used to enqueue nothing at all.
+    useAccountStore.setState({ syncingAccountIds: new Set(['busy-account']) });
+
     await useAccountStore.getState().syncAllAccounts(['a']);
+
+    expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('a');
+    expect(useAccountStore.getState().syncingAccountIds).toEqual(new Set(['busy-account', 'a']));
+  });
+
+  it('skips the accounts already syncing and enqueues the rest', async () => {
+    useAccountStore.setState({ syncingAccountIds: new Set(['a']) });
+    await useAccountStore.getState().syncAllAccounts(['a', 'b']);
+    expect(vi.mocked(api.syncAccount)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.syncAccount)).toHaveBeenCalledWith('b');
+  });
+
+  it('is a no-op for an empty account list', async () => {
+    await useAccountStore.getState().syncAllAccounts([]);
     expect(vi.mocked(api.syncAccount)).not.toHaveBeenCalled();
   });
 
-  it('drops an account from pending when its enqueue fails, keeping the rest', async () => {
+  it('drops an account from tracking when its enqueue fails, keeping the rest', async () => {
     vi.mocked(api.syncAccount).mockImplementation(async (id: string) => {
       if (id === 'a') throw new Error('enqueue failed');
     });
     await useAccountStore.getState().syncAllAccounts(['a', 'b']);
     const state = useAccountStore.getState();
-    expect(state.pendingSyncAccountIds).toEqual(new Set(['b']));
+    expect(state.syncingAccountIds).toEqual(new Set(['b']));
     expect(state.errorAccountId).toBe('a');
     expect(state.isSyncing).toBe(true);
   });
 
-  it('progress events drain pending until syncing stops', async () => {
+  it('progress events drain the syncing set until syncing stops', async () => {
     await useAccountStore.getState().syncAllAccounts(['a', 'b']);
     useAccountStore.getState().setSyncProgress(makeProgress('a', 'complete'));
     expect(useAccountStore.getState().isSyncing).toBe(true);

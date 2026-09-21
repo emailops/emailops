@@ -125,6 +125,49 @@ describe('DESELECT_LENS', () => {
   });
 });
 
+// ── INCLUDE_ROW / SET_SHOW_EXCLUDED ────────────────────────────────────────
+
+describe('INCLUDE_ROW', () => {
+  it('removes the row from the excluded listing and decrements totalRows', () => {
+    // The mirror of EXCLUDE_ROW: viewed from the excluded list, putting a row
+    // back takes it out of *that* list.
+    const s0: LensState = {
+      ...initialLensState,
+      showExcluded: true,
+      rows: [makeRow('e1'), makeRow('e2')],
+      totalRows: 2,
+    };
+    const s = reduce(s0, { type: 'INCLUDE_ROW', emailId: 'e1' });
+    expect(s.rows.map((r) => r.emailId)).toEqual(['e2']);
+    expect(s.totalRows).toBe(1);
+  });
+
+  it('does not go below zero', () => {
+    const s0: LensState = { ...initialLensState, totalRows: 0 };
+    expect(reduce(s0, { type: 'INCLUDE_ROW', emailId: 'missing' }).totalRows).toBe(0);
+  });
+});
+
+describe('SET_SHOW_EXCLUDED', () => {
+  it('flips the view and marks rows as loading', () => {
+    const s = reduce(initialLensState, { type: 'SET_SHOW_EXCLUDED', showExcluded: true });
+    expect(s.showExcluded).toBe(true);
+    // The rows on screen belong to the other listing until the fetch lands.
+    expect(s.isLoadingRows).toBe(true);
+  });
+
+  it('returns to the Lens view when another lens is selected', () => {
+    const s0: LensState = { ...initialLensState, showExcluded: true };
+    const s = reduce(s0, { type: 'SET_ACTIVE_LENS_ID', lensId: 'other' });
+    expect(s.showExcluded).toBe(false);
+  });
+
+  it('returns to the Lens view when the selection is cleared', () => {
+    const s0: LensState = { ...initialLensState, showExcluded: true };
+    expect(reduce(s0, { type: 'DESELECT_LENS' }).showExcluded).toBe(false);
+  });
+});
+
 // ── EXCLUDE_ROW ────────────────────────────────────────────────────────────
 
 describe('EXCLUDE_ROW', () => {

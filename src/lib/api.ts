@@ -85,6 +85,9 @@ export async function addAccount(provider: 'gmail' | 'outlook', syncFromTimestam
 }
 
 export interface ImapAccountConfig {
+  /** The account's own address: the `From` on outgoing mail, and what every
+   *  "is this me?" comparison keys on. Not necessarily the server login. */
+  email: string;
   host: string;
   port: number;
   username: string;
@@ -96,7 +99,7 @@ export interface ImapAccountConfig {
 }
 
 export async function testImapConnection(
-  config: Omit<ImapAccountConfig, 'displayName' | 'syncFromTimestamp'>,
+  config: Omit<ImapAccountConfig, 'displayName' | 'syncFromTimestamp' | 'email'>,
 ): Promise<void> {
   return invoke('test_imap_connection', {
     host: config.host,
@@ -110,6 +113,7 @@ export async function testImapConnection(
 
 export async function addImapAccount(config: ImapAccountConfig): Promise<Account> {
   return invoke('add_imap_account', {
+    email: config.email,
     host: config.host,
     port: config.port,
     username: config.username,
@@ -1615,6 +1619,13 @@ export async function updateLensRowOverride(
 
 export async function excludeLensRow(lensId: string, emailId: string): Promise<void> {
   return invoke('exclude_lens_row', { lensId, emailId });
+}
+
+export async function getExcludedLensRows(
+  lensId: string,
+  opts?: { limit?: number; offset?: number },
+): Promise<LensRowsPage> {
+  return invoke('get_excluded_lens_rows', { lensId, limit: opts?.limit, offset: opts?.offset });
 }
 
 export async function includeLensRow(lensId: string, emailId: string): Promise<void> {

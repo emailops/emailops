@@ -79,6 +79,8 @@ eval/REPORT.md
 # and DB snapshots the runner materializes under /tmp is fine but any local
 # staging copies should not be tracked.
 reports/evaluations/
+# Bench output: llama.cpp stderr, RSS samples and timing JSON, all local.
+reports/bench/
 src-tauri/evals/.cache/
 src-tauri/evals/tmp/
 src-tauri/reports/
@@ -136,3 +138,7 @@ src-tauri/gen/apple/xcuserdata/
 # Local session notes and marketing drafts: stay on this machine, never committed
 /NEXT-SESSION.md
 /docs/marketing/
+
+# ts-rs output when the `ts` feature runs from inside src-tauri/ — the
+# committed frontend types live in src/types/index.ts and are hand-maintained.
+src-tauri/src/types/generated/
