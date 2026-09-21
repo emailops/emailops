@@ -29,7 +29,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # like this quietly stops meaning anything.
 ALLOWED_UNRESOLVED = {
     "docs/site/README.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
-    ".claude/skills/release/SKILL.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
     "homebrew/README.md:../homebrew-tap/Casks/emailops.rb": "lives in the emailops/homebrew-tap repo",
     "tools/kv_viz/README.md:src-tauri/reports/bench/kv_xconv_*.json": "generated at run time into gitignored reports/",
     # A worked example of adding a draft-review feature. The files are
@@ -104,6 +103,7 @@ def resolves(candidate: str, md_dir: pathlib.Path, tracked: list[str]) -> bool:
 def main() -> int:
     problems = []
     checked = 0
+    used: set[str] = set()
     tracked = git_ls()
 
     for md in tracked_markdown():
@@ -114,11 +114,23 @@ def main() -> int:
                 continue
             if not CANDIDATE.match(candidate):
                 continue
-            if f"{rel_md}:{candidate}" in ALLOWED_UNRESOLVED:
-                continue
             checked += 1
-            if not resolves(candidate, md.parent, tracked):
-                problems.append(f"{rel_md}: `{candidate}` does not exist")
+            if resolves(candidate, md.parent, tracked):
+                continue
+            key = f"{rel_md}:{candidate}"
+            if key in ALLOWED_UNRESOLVED:
+                used.add(key)
+                continue
+            problems.append(f"{rel_md}: `{candidate}` does not exist")
+
+    # An exception that no longer applies is the same rot one level up: it
+    # sits there implying a path is checked-and-excused when the reference has
+    # simply gone, and the next real one gets added next to it unquestioned.
+    for key in sorted(set(ALLOWED_UNRESOLVED) - used):
+        problems.append(
+            f"stale ALLOWED_UNRESOLVED entry {key!r} ({ALLOWED_UNRESOLVED[key]}) — "
+            "that path no longer needs excusing; remove it"
+        )
 
     if problems:
         print("\ndocs path check FAILED:", file=sys.stderr)

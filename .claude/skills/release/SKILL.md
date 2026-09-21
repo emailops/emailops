@@ -219,81 +219,36 @@ install the freshly built app locally and confirm it runs:
 
 ## Phase 5d — Doc staleness check (run every release, not just once)
 
-Do this **before committing/tagging** — once a tag is pushed, you want docs and
-the public website already caught up, not a follow-up commit chasing it. Check
-whether anything user-facing or platform-specific has fallen behind what this
-release actually ships, based on the new CHANGELOG section from Phase 3 (the
-Phase 7b CI build hasn't run yet at this point, so judge "did this release add
-a platform for the first time" from the CHANGELOG entries, not from actual
-produced GitHub-release assets). Report findings as a checklist — **do not
-silently auto-edit prose docs or website copy**; ask the developer to confirm
-each change first, since this is user-facing/marketing content:
+Run this **before committing/tagging** — not as tidiness, as a hard dependency.
+The site's sync script resolves its ref as `DOCS_REF` → newest `v*` tag →
+`main`, and Amplify sets no `DOCS_REF`, so a doc fix committed *after* the tag
+is cut cannot reach getemailops.com without either another release or someone
+editing the Amplify environment. **Treat "the docs are behind" as a
+tag-blocking finding, not a follow-up.**
 
-1. **`README.md` download section.** If this release's CHANGELOG entries
-   introduce Linux/Windows installers for the first time, or the README still
-   reads "on the roadmap" for a platform that has now shipped (this or a prior
-   release), flag it and offer to update the download links.
-2. **`ROADMAP.md`.** Check for entries describing work this release just
-   completed (compare against the new CHANGELOG section) — flag any that now
-   read as still-pending when they're done.
-3. **`docs/site/<lang>/*.md` — two separate checks, both required.**
+Invoke the `maintain-docs` skill, passing it the new CHANGELOG section from
+Phase 3. It runs the doc guards and the doc↔code contract tests, drives the
+`docClaim()` cases against the real UI, walks the CHANGELOG entries for
+features that shipped undocumented, fixes what it finds in all four languages,
+and reports an HTML run case by case:
 
-   a. **Stale platform claims.** Scan for statements that no longer hold given
-      what changed (e.g. a doc describing a macOS-only install flow when this
-      release adds a Linux/Windows equivalent, or a "separate Intel build"
-      that has been retired).
+```bash
+make docs-check ARGS="--with-app"
+```
 
-   b. **Feature coverage — the check that is easy to skip.** Walk the
-      `### Added` and `### Changed` entries of the new CHANGELOG section one
-      by one and confirm each is actually *described* somewhere in the docs.
-      Absence of a stale sentence is not coverage: a doc can be perfectly
-      accurate about the old feature set and still never mention what this
-      release added. Grep the docs for a distinctive phrase from each entry;
-      if nothing comes back, that feature is undocumented — say so explicitly
-      rather than reporting "docs look fine". (v0.6.6 shipped a docked chat
-      panel and multi-calendar sync; both were absent from the docs while
-      every existing sentence was still correct, and the release went out
-      before anyone noticed.)
+Two things that skill deliberately leaves to you:
 
-   **These docs have exactly one source: this repo.** The website repo does
-   **not** track them — `content/*/docs/` is in its `.gitignore`, and its
-   `scripts/sync-docs.sh` `rm -rf`s each destination and re-copies from
-   `docs/site/<lang>/` before every Hugo build. Never hand-copy docs into
-   the website repo and never edit them there: the next build wipes it, and
-   the change is invisible to that repo's git the whole time. There is no
-   second push and no mirror to keep in sync.
+- It **asks** before adding to `docs/DECISIONS.md` rather than assuming — that
+  file is append-only and durable-decisions-only.
+- It **never commits or pushes the website repo**
+  (`/Users/gerodp/CTO/AI/Email/landingpage_cursor/emailops_web`, deployed via
+  Amplify on push to `main`). It reports what that copy needs; you decide. Even
+  when the developer asks for website changes here, hold them until Phase 7b
+  confirms the CI build for those platforms actually succeeded — there is no
+  point publishing download links for a build that just failed — then push,
+  still confirmation-gated.
 
-   **The site pulls docs at the newest `v*` tag, not from `main`.**
-   `sync-docs.sh` resolves its ref as `DOCS_REF` → newest `v*` tag →
-   `main`, and `amplify.yml` sets no `DOCS_REF`. So a doc fix committed
-   *after* the tag is cut does not reach getemailops.com until the next
-   release tag exists. **This is why the whole phase runs before Phase 6** —
-   a doc gap found after tagging cannot be published without either cutting
-   another release or someone setting `DOCS_REF` in the Amplify
-   environment. Treat "docs are behind" as a tag-blocking finding, not a
-   follow-up.
-
-   Every edit must cover **all four locales** (en, es, de, fr) — a section
-   added only to English leaves the other three describing an older
-   product. Flag findings first; do not rewrite prose unsolicited (see the
-   intro to this phase).
-4. **`docs/DECISIONS.md`.** Ask the developer whether anything in this release
-   constitutes a durable decision worth logging there (that file is
-   append-only and durable-decisions-only by convention — not every release
-   needs an entry, but the skill should ask rather than assume).
-5. **Public website** (`getemailops.com`, source at
-   `/Users/gerodp/CTO/AI/Email/landingpage_cursor/emailops_web`, a separate
-   Hugo repo/remote from this one, deployed via AWS Amplify on push to
-   `main`). Check whether its download/pricing/feature copy needs updating for
-   this release — new platform support, new download links, a changed feature
-   set. That repo's own `AGENTS.md` tells agents to never commit/push there by
-   default; that guardrail is overridden only when the developer explicitly
-   asks in this session, same as any other confirmation-gated push elsewhere
-   in this skill. **Do not push website changes yet even if the developer asks
-   for them here** — hold them until after Phase 7b confirms the CI build for
-   the platforms in question actually succeeded (no point publishing new
-   download links for a build that just failed); push then, still
-   confirmation-gated.
+Review the uncommitted diff before moving on; it ships in the Phase 6 commit.
 
 ## Phase 6 — Commit + tag
 
