@@ -27,11 +27,13 @@ Si activaste la IA, elige dónde se ejecuta la inferencia:
 | **Ollama (local)** | Usa tu servidor Ollama existente en `http://localhost:11434`. |
 | **OpenRouter (remoto)** | Envía los prompts a una API de pago en la nube. Opcional, por función, y desactivado por defecto. |
 
-Con el backend integrado, elige un modelo de chat del catálogo. **Qwen 3.5 4B** es el
-predeterminado recomendado: unos 3 GB de descarga, necesita aproximadamente 8 GB de memoria
-para ejecutarse y admite las llamadas a herramientas de las que depende el chat. Los modelos
-demasiado grandes para la memoria de tu sistema aparecen atenuados. La descarga corre en
-segundo plano — puedes seguir con el asistente.
+Con el backend integrado, elige un modelo de chat del catálogo. EmailOps preselecciona el
+modelo más grande que tu máquina puede mover con holgura, así que la recomendación depende de
+la memoria que encuentre: en una máquina de 16 GB es **Qwen 3.5 4B**, unos 3 GB de descarga y
+aproximadamente 8 GB de memoria para ejecutarse; una máquina más amplia recibe un modelo mayor
+del mismo catálogo. Todos los modelos recomendados admiten las llamadas a herramientas de las
+que depende el chat. Los modelos demasiado grandes para la memoria de tu sistema aparecen
+atenuados. La descarga corre en segundo plano — puedes seguir con el asistente.
 
 La memoria que cuenta depende de la máquina: **memoria unificada** en un Mac con Apple
 Silicon, la **VRAM de tu GPU** en un equipo Windows o Linux con tarjeta dedicada, y la RAM del

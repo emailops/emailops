@@ -627,4 +627,133 @@ mod recommendation_tests {
             Some("qwen3.6-35b-a3b-ud-q4_k_xl")
         );
     }
+
+    // ── Contract: the published docs quote this catalog ──────────────────────
+    // docs/site/<lang>/ai-features.md renders the catalog as a table, and
+    // getting-started.md names the model the first-run wizard recommends. Both
+    // are hand-written prose on getemailops.com, with no way to notice the
+    // catalog moving underneath them — so a model added, resized or retired
+    // here must fail below rather than in a user's download.
+
+    const DOC_LANGS: [&str; 4] = ["en", "es", "fr", "de"];
+
+    fn published_doc(lang: &str, page: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../docs/site")
+            .join(lang)
+            .join(page);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    }
+
+    /// The download-size column as the docs spell it: decimal GB, one place.
+    fn published_size(bytes: u64) -> String {
+        if bytes >= 1_000_000_000 {
+            format!("~{:.1} GB", bytes as f64 / 1e9)
+        } else {
+            format!("~{} MB", (bytes as f64 / 1e6).round() as u64)
+        }
+    }
+
+    /// Fold a translated cell onto the English spelling. A decimal comma and
+    /// the French Go/Mo units are presentation; the number is the same.
+    fn fold_locale_number(cell: &str) -> String {
+        cell.replace(',', ".").replace("Go", "GB").replace("Mo", "MB")
+    }
+
+    /// The contiguous Markdown table holding `anchor`, minus its header and
+    /// separator rows. Located by content rather than by position so adding a
+    /// paragraph above it does not silently start testing a different table.
+    fn table_containing(md: &str, anchor: &str) -> Vec<Vec<String>> {
+        let lines: Vec<&str> = md.lines().collect();
+        let hit = lines
+            .iter()
+            .position(|l| l.starts_with('|') && l.contains(anchor))
+            .unwrap_or_else(|| panic!("no table row mentions {anchor}"));
+        let mut start = hit;
+        while start > 0 && lines[start - 1].starts_with('|') {
+            start -= 1;
+        }
+        let mut end = hit;
+        while end + 1 < lines.len() && lines[end + 1].starts_with('|') {
+            end += 1;
+        }
+        lines[start..=end]
+            .iter()
+            .filter(|l| !l.contains("---"))
+            .skip(1) // header
+            .map(|l| {
+                l.trim()
+                    .trim_matches('|')
+                    .split('|')
+                    .map(|c| fold_locale_number(c.trim()))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn published_model_table_matches_the_catalog_in_every_language() {
+        for lang in DOC_LANGS {
+            let md = published_doc(lang, "ai-features.md");
+            let rows = table_containing(&md, CATALOG[0].display_name);
+            assert_eq!(
+                rows.len(),
+                CATALOG.len(),
+                "{lang}/ai-features.md lists {} models, the catalog has {}",
+                rows.len(),
+                CATALOG.len()
+            );
+            // Matched by name, not position: the table is ordered by memory so
+            // it reads as a ladder, while CATALOG order encodes which entry is
+            // the curated pick at a given size. Both orders are deliberate and
+            // neither should be forced to follow the other.
+            for model in CATALOG {
+                let row = rows
+                    .iter()
+                    .find(|r| r[0].contains(model.display_name))
+                    .unwrap_or_else(|| {
+                        panic!("{lang}/ai-features.md does not list {}", model.display_name)
+                    });
+                assert_eq!(
+                    row[1],
+                    published_size(model.size_bytes),
+                    "{lang}/ai-features.md quotes the wrong download size for {}",
+                    model.display_name
+                );
+                assert_eq!(
+                    row[2],
+                    format!("{} GB", model.min_ram_gb),
+                    "{lang}/ai-features.md quotes the wrong memory floor for {}",
+                    model.display_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn getting_started_anchors_the_recommendation_to_a_machine_size() {
+        // The wizard's pick is a function of the machine, not a constant: the
+        // same catalog recommends 4B at 16 GB and 35B A3B at 64. A doc that
+        // names one model flatly is wrong for most readers, so the published
+        // sentence must tie the model it names to the memory it assumes.
+        let md = published_doc("en", "getting-started.md");
+        let anchor = regex::Regex::new(r"on a (\d+) GB machine that is \*\*([^*]+)\*\*")
+            .expect("static pattern");
+        let found = anchor.captures(&md).unwrap_or_else(|| {
+            panic!(
+                "getting-started.md must anchor its recommendation, e.g. \
+                 \"on a 16 GB machine that is **Qwen 3.5 4B**\" — the wizard's \
+                 pick varies with installed memory"
+            )
+        });
+        let ram: u64 = found[1].parse().expect("digits");
+        let named = found[2].trim();
+        let actual = recommended_chat_model(CATALOG, ram, None).expect("a model fits at this size");
+        assert_eq!(
+            actual.display_name, named,
+            "getting-started.md says a {ram} GB machine is recommended {named}, \
+             but recommended_chat_model picks {}",
+            actual.display_name
+        );
+    }
 }

@@ -27,11 +27,13 @@ Wenn Sie die KI aktiviert haben, wählen Sie, wo die Inferenz stattfindet:
 | **Ollama (lokal)** | Nutzt Ihren vorhandenen Ollama-Server unter `http://localhost:11434`. |
 | **OpenRouter (entfernt)** | Sendet Prompts an eine kostenpflichtige Cloud-API. Optional, pro Funktion, standardmäßig aus. |
 
-Wählen Sie beim eingebauten Backend ein Chat-Modell aus dem Katalog. **Qwen 3.5 4B** ist der
-empfohlene Standard: rund 3 GB Download, benötigt etwa 8 GB Arbeitsspeicher zum Ausführen und
-unterstützt die Tool-Aufrufe, auf die der Chat angewiesen ist. Modelle, die für Ihren
-Systemspeicher zu groß sind, werden ausgegraut. Der Download läuft im Hintergrund — Sie können
-im Assistenten weitermachen.
+Wählen Sie beim eingebauten Backend ein Chat-Modell aus dem Katalog. EmailOps wählt das größte
+Modell vor, das Ihre Maschine bequem ausführen kann — die Empfehlung hängt also vom gefundenen
+Arbeitsspeicher ab: auf einer 16-GB-Maschine ist das **Qwen 3.5 4B**, rund 3 GB Download und
+etwa 8 GB Arbeitsspeicher zum Ausführen; eine größere Maschine bekommt ein größeres Modell aus
+demselben Katalog angeboten. Alle empfohlenen Modelle unterstützen die Tool-Aufrufe, auf die
+der Chat angewiesen ist. Modelle, die für Ihren Systemspeicher zu groß sind, werden ausgegraut.
+Der Download läuft im Hintergrund — Sie können im Assistenten weitermachen.
 
 Welcher Speicher zählt, hängt von der Maschine ab: **Unified Memory** auf einem Apple-Silicon-
 Mac, der **VRAM Ihrer GPU** auf einem Windows- oder Linux-Rechner mit dedizierter Karte, und

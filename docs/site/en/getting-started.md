@@ -25,10 +25,13 @@ If you enabled AI, choose where inference happens:
 | **Ollama (local)** | Uses your existing Ollama server at `http://localhost:11434`. |
 | **OpenRouter (remote)** | Sends prompts to a paid cloud API. Opt-in, per feature, and off by default. |
 
-With the in-app backend, pick a chat model from the built-in catalog. **Qwen 3.5 4B** is the
-recommended default: about 3 GB to download, needs roughly 8 GB of memory to run, and
-supports the tool-calling that chat relies on. Models too large for your system memory are
-greyed out. The download runs in the background — you can carry on with the wizard.
+With the in-app backend, pick a chat model from the built-in catalog. EmailOps preselects the
+largest model your machine can comfortably run, so the recommendation depends on the memory
+it finds — on a 16 GB machine that is **Qwen 3.5 4B**, about 3 GB to download and roughly
+8 GB of memory to run; a roomier machine is offered a larger model from the same catalog.
+Every recommended model supports the tool-calling that chat relies on. Models too large for
+your system memory are greyed out. The download runs in the background — you can carry on
+with the wizard.
 
 The memory that counts depends on the machine: **unified memory** on an Apple Silicon Mac,
 your **GPU's VRAM** on a Windows or Linux box with a discrete card, and system RAM if there
