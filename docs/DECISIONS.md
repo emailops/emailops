@@ -1181,3 +1181,25 @@ asking llama.cpp for the metadata after the model is loaded (the decision is nee
 that must not pay for a multi-GB mmap, and it would put the rule behind the `llamacpp`
 feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
 setting (makes the user responsible for a detail the file already states).
+
+## 2026-09-21 — `[n]` cites numbered Sources only; tool results are cited with `email://`
+
+**Decision:** In chat answers a bare `[n]` always means "the n-th numbered Source" — the
+pre-retrieved block the UI shows as the answer's sources. A fact that came from a tool
+result (`search_emails`, `get_email_body`, …) is cited with an `email://ID` link to that
+email, never with a number. The prompt says so in the CITATION CONTRACT and again under the
+Sources header of each turn. As a backstop, `relink_self_numbered_citations` rewrites a bare
+`[n]` into `[n](email://X)` whenever the answer itself defines `[n]` as an email `X` that is
+not Source n.
+**Context:** the contract asked for an `[n]` on claims "from a numbered source or a tool
+result", but tool results carry no number. Qwen 3.6 35B numbered the bullets of its own
+answer `[1]`, `[2]`… (sometimes adding `[1](email://<right id>)` at the end), and the UI
+resolved those markers to unrelated Sources — a correct answer that looked hallucinated
+because every citation opened a shipping notice. Measured on the `kelvo_support_addresses`
+chat eval: wrong-source citations before, none after.
+**Rejected:** numbering tool results into the same citation space (append them to the
+Sources panel as `[9]`, `[10]`…) — robust, but it changes every tool's output format, the
+sources model on both sides and the KV-cached transcript for a problem the link contract
+already solves; a post-processor that guesses the right Source from the cited sentence
+(e.g. matching an address against Source senders) — a heuristic that can only cover the
+shapes it was written for, and a wrong guess is worse than no citation.

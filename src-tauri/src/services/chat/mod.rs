@@ -100,11 +100,21 @@ pub(super) fn phase_for_tool(tool_name: &str) -> ChatPhase {
 /// isn't in the valid range (1..=max_valid). Used by `run_chat_turn` to
 /// surface hallucinated citations in the reasoning trace.
 pub(crate) fn count_invalid_citations(answer: &str, max_valid: usize) -> i32 {
+    let invalid = bare_citation_numbers(answer)
+        .into_iter()
+        .filter(|&n| n == 0 || n > max_valid)
+        .count();
+    i32::try_from(invalid).unwrap_or(i32::MAX)
+}
+
+/// The numbers of the bare `[n]` citation markers in `answer`, in order. The
+/// UI resolves each one to the n-th numbered source.
+pub(crate) fn bare_citation_numbers(answer: &str) -> Vec<usize> {
     // Naive scan for [<digits>]. Regex would be overkill; this runs on every
     // turn and the answer is short.
     let bytes = answer.as_bytes();
     let mut i = 0;
-    let mut invalid = 0i32;
+    let mut numbers = Vec::new();
     while i < bytes.len() {
         if bytes[i] == b'[' {
             // Collect digits until ']'.
@@ -118,9 +128,7 @@ pub(crate) fn count_invalid_citations(answer: &str, max_valid: usize) -> i32 {
                 let is_link_label = j + 1 < bytes.len() && bytes[j + 1] == b'(';
                 if !is_link_label {
                     if let Ok(n) = std::str::from_utf8(&bytes[i + 1..j]).unwrap_or("0").parse::<usize>() {
-                        if n == 0 || n > max_valid {
-                            invalid += 1;
-                        }
+                        numbers.push(n);
                     }
                 }
                 i = j + 1;
@@ -129,7 +137,75 @@ pub(crate) fn count_invalid_citations(answer: &str, max_valid: usize) -> i32 {
         }
         i += 1;
     }
-    invalid
+    numbers
+}
+
+/// Point each bare `[n]` at the email the answer itself says it means.
+///
+/// A model that found its evidence through a tool (whose results carry no
+/// number) sometimes numbers those emails itself and defines each number with
+/// a link: `… [1].\n\n[1](email://X)`. The UI resolves a bare `[1]` to the
+/// first numbered Source (`source_ids[0]`), so the citation opened an
+/// unrelated email. Where the answer defines `[n]` as an email other than
+/// source n, rewrite each bare `[n]` into that link and drop the lines that
+/// only held the definitions. Markers without a definition, or whose
+/// definition agrees with the source, are left alone; so is a number defined
+/// as two different emails.
+pub(crate) fn relink_self_numbered_citations(answer: &str, source_ids: &[String]) -> String {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DEFINITION_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static MARKER_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literals that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let definition_re = DEFINITION_RE.get_or_init(|| regex::Regex::new(r"\[(\d+)\]\(email://([^)\s]+)\)").unwrap());
+    // The optional `(` tells a link label (`[n](…)`) from a bare marker; the
+    // regex crate has no lookahead.
+    #[allow(clippy::unwrap_used)]
+    let marker_re = MARKER_RE.get_or_init(|| regex::Regex::new(r"\[(\d+)\](\()?").unwrap());
+
+    let mut defined: HashMap<usize, Option<&str>> = HashMap::new();
+    for cap in definition_re.captures_iter(answer) {
+        let (Ok(n), Some(id)) = (cap[1].parse::<usize>(), cap.get(2).map(|m| m.as_str())) else {
+            continue;
+        };
+        let entry = defined.entry(n).or_insert(Some(id));
+        if *entry != Some(id) {
+            *entry = None;
+        }
+    }
+    let relink: HashMap<usize, &str> = defined
+        .into_iter()
+        .filter_map(|(n, id)| id.map(|id| (n, id)))
+        .filter(|&(n, id)| n.checked_sub(1).and_then(|i| source_ids.get(i)).map(String::as_str) != Some(id))
+        .collect();
+    if relink.is_empty() {
+        return answer.to_string();
+    }
+
+    let is_relinked_definition =
+        |cap: &regex::Captures<'_>| cap[1].parse::<usize>().ok().and_then(|n| relink.get(&n)) == Some(&&cap[2]);
+    let kept: Vec<&str> = answer
+        .lines()
+        .filter(|line| {
+            let only_definitions = !line.trim().is_empty()
+                && definition_re.captures_iter(line).all(|c| is_relinked_definition(&c))
+                && definition_re.replace_all(line, "").trim().is_empty();
+            !only_definitions
+        })
+        .collect();
+    let body = kept.join("\n");
+    let relinked = marker_re.replace_all(&body, |cap: &regex::Captures<'_>| {
+        let whole = cap[0].to_string();
+        if cap.get(2).is_some() {
+            return whole;
+        }
+        match cap[1].parse::<usize>().ok().and_then(|n| relink.get(&n)) {
+            Some(id) => format!("[{}](email://{id})", &cap[1]),
+            None => whole,
+        }
+    });
+    relinked.trim_end().to_string()
 }
 
 /// Remove `[n]` markers from `answer` where n is outside 1..=max_valid.
@@ -687,6 +763,56 @@ mod tests {
         // source, so both marker and definition must survive untouched.
         let ans = "Ver el contrato [1].\n\n[1] Contrato de servicios";
         assert_eq!(strip_invalid_citations(ans, 3), ans);
+    }
+
+    // ── relink_self_numbered_citations ──────────────────────────────────
+    //
+    // A model that found its evidence through a tool numbers those emails
+    // itself and says which email each number meant by defining it:
+    // `[1](email://eml-claim)`. The UI still resolves the bare `[1]` to the
+    // first pre-retrieved Source — an unrelated shipping notice.
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn relink_points_a_self_numbered_marker_at_the_email_the_answer_defines() {
+        let ans = "Write to help@vendor.example [1] or care@vendor.example [2].\n\n\
+                   [1](email://eml-claim)\n[2](email://eml-care)";
+        assert_eq!(
+            relink_self_numbered_citations(ans, &ids(&["eml-ship", "eml-review", "eml-claim"])),
+            "Write to help@vendor.example [1](email://eml-claim) or care@vendor.example [2](email://eml-care)."
+        );
+    }
+
+    #[test]
+    fn relink_keeps_a_marker_whose_definition_matches_its_source() {
+        let ans = "The kickoff was on March 3rd [1].\n\n[1](email://eml-k)";
+        assert_eq!(relink_self_numbered_citations(ans, &ids(&["eml-k"])), ans);
+    }
+
+    #[test]
+    fn relink_leaves_markers_the_answer_does_not_define() {
+        let ans = "The kickoff was on March 3rd [1], see [the email](email://eml-k).";
+        assert_eq!(relink_self_numbered_citations(ans, &ids(&["eml-ship"])), ans);
+    }
+
+    #[test]
+    fn relink_covers_a_self_numbered_marker_past_the_source_range() {
+        // Relinked before `strip_invalid_citations` runs, so the marker becomes
+        // a link instead of being stripped as a hallucination.
+        let ans = "Write to help@vendor.example [4].\n\n[4](email://eml-claim)";
+        assert_eq!(
+            relink_self_numbered_citations(ans, &ids(&["eml-ship"])),
+            "Write to help@vendor.example [4](email://eml-claim)."
+        );
+    }
+
+    #[test]
+    fn relink_ignores_a_number_defined_as_two_different_emails() {
+        let ans = "Write to help@vendor.example [1].\n\n[1](email://eml-a) [1](email://eml-b)";
+        assert_eq!(relink_self_numbered_citations(ans, &ids(&["eml-ship"])), ans);
     }
 
     #[test]

@@ -27,12 +27,19 @@ use super::retrieval::{
 use super::routing::classify_route;
 use super::tools;
 use super::{
-    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, strip_invalid_citations,
-    strip_tool_call_markup, truncate_chars,
+    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, relink_self_numbered_citations,
+    strip_invalid_citations, strip_tool_call_markup, truncate_chars,
 };
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
 const MAX_HISTORY_TURNS: usize = 6;
+
+/// Printed under the numbered Sources header. Models numbered the bullets of
+/// their own answer `[1]`, `[2]`… and the UI opened unrelated Sources; the
+/// reminder sits next to the numbers it is about, in the per-turn tail, so the
+/// cached system prefix is untouched.
+const SOURCES_CITATION_REMINDER: &str = "(Cite a fact with the number printed before the Source it came from — not \
+the position of the item in your answer. Emails you get from tools have no number: link them with email://ID.)\n";
 
 /// `Utc::now()` routed through the `Clock` seam so eval cases can pin "today"
 /// to a specific date via `services::clock::install(FixedClock::new(...))`.
@@ -263,6 +270,7 @@ before answering any factual question about the user's mailbox.)\n",
         );
     } else {
         tail.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
+        tail.push_str(SOURCES_CITATION_REMINDER);
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
@@ -3953,6 +3961,10 @@ pub async fn run_chat_turn(
                 // markers despite the CITATION CONTRACT — strip any that fall
                 // outside the retrieved source range BEFORE emitting so the user
                 // never sees them. count_invalid_citations later then reports 0.
+                // Relink first: a self-numbered marker the answer defines as a
+                // tool-found email becomes a link to it instead of pointing at
+                // (or, past the range, being stripped from) the Sources.
+                let answer = relink_self_numbered_citations(&answer, &source_email_ids(&sources));
                 let answer = strip_invalid_citations(&answer, sources.len());
                 // Contradiction guard: the model answered "no emails found"
                 // even though the tool results above DO contain emails
@@ -4188,6 +4200,7 @@ pub async fn run_chat_turn(
             // text. The direct-answer path already stripped earlier; this catches
             // the live-streaming path (and is a cheap no-op when nothing leaked).
             result.content = strip_tool_call_markup(&result.content);
+            result.content = relink_self_numbered_citations(&result.content, &source_email_ids(&sources));
             result.content = strip_invalid_citations(&result.content, sources.len());
             // Robustness net: still no answer text after the synthesis retry
             // (or a direct answer that stripped to nothing). Ship a localized
