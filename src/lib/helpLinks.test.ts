@@ -33,9 +33,17 @@ describe('parseHelpLink', () => {
 });
 
 describe('helpLinkToDocsUrl', () => {
-  it('maps to the public docs page with the fragment', () => {
+  // Spanish is the site's default language and is served without a prefix:
+  // /es/docs/… is a 404 on getemailops.com.
+  it('maps a Spanish link to the unprefixed docs page', () => {
     expect(helpLinkToDocsUrl('help://es/ai-features#choosing-a-backend')).toBe(
-      'https://getemailops.com/es/docs/ai-features/#choosing-a-backend',
+      'https://getemailops.com/docs/ai-features/#choosing-a-backend',
+    );
+  });
+
+  it('keeps the language prefix for the other languages', () => {
+    expect(helpLinkToDocsUrl('help://en/ai-features#choosing-a-backend')).toBe(
+      'https://getemailops.com/en/docs/ai-features/#choosing-a-backend',
     );
   });
 
