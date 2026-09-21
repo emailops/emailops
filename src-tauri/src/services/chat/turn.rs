@@ -787,6 +787,19 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
     Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
 }
 
+/// Rewrite a leading `{"name="x"` (Qwen 3.6 typing `=` for `":"`) into
+/// `{"name":"x"`; any other shape is returned unchanged. Mirrors the runtime
+/// parser's repair, which lives behind the llamacpp feature.
+fn repair_name_equals(inner: &str) -> std::borrow::Cow<'_, str> {
+    let body = inner.trim_start();
+    match body.strip_prefix('{').map(str::trim_start) {
+        Some(rest) if rest.starts_with("\"name=\"") => {
+            std::borrow::Cow::Owned(format!("{{\"name\":\"{}", &rest["\"name=\"".len()..]))
+        }
+        _ => std::borrow::Cow::Borrowed(inner),
+    }
+}
+
 /// Parse the JSON body of a `<tool_call>{…}</tool_call>` block (Qwen 3.6's
 /// shape, as opposed to the `<function=>` Hermes form). Mirrors the leniency
 /// of the runtime's native Qwen parser: hoists a `name` nested inside
@@ -798,6 +811,8 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
 fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
+    let inner = repair_name_equals(inner);
+    let inner = inner.as_ref();
     let value = parse_first_json_value(inner)
         .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))?;
     let obj = value.as_object()?;
@@ -6800,6 +6815,21 @@ Preséntalos en una tabla markdown …";
         assert_eq!(
             calls[0].function.arguments,
             serde_json::json!({"unread":true,"order":"oldest","limit":1})
+        );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_repairs_an_equals_after_the_name_key() {
+        // Qwen 3.6 35B emission: `"name="x"` for `"name":"x"`. Mirrors the
+        // runtime parser's repair.
+        let text =
+            "<tool_call>{\"name=\"search_emails\",\"arguments\":{\"from\":\"kelvo\",\"limit\":25}}\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            serde_json::json!({"from":"kelvo","limit":25})
         );
     }
 

@@ -31,6 +31,7 @@
 //     top-level keys beside `name` become the arguments.
 //   - Missing `</tool_call>` (newline-batched calls) → the next open tag or
 //     end of text is an implicit close; incomplete JSON still yields nothing.
+//   - `{"name="x",…}` (`=` typed for `":"`) → repaired before parsing.
 
 use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
@@ -58,7 +59,8 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
             (_, Some(o)) => (after_open + o, after_open + o),
             (None, None) => (text.len(), text.len()),
         };
-        let inner = text[after_open..close].trim();
+        let inner = repair_name_equals(text[after_open..close].trim());
+        let inner = inner.as_ref();
         cursor = next_cursor;
 
         // Lenient first-value parse: take the first complete JSON value and
@@ -137,6 +139,19 @@ fn first_json_value(s: &str) -> Option<serde_json::Value> {
         .and_then(|r| r.ok())
 }
 
+/// Rewrite a leading `{"name="x"` (Qwen 3.6 typing `=` for `":"`) into
+/// `{"name":"x"`; any other shape is returned unchanged. The turn loop's text
+/// salvager mirrors this (this module is feature-gated).
+fn repair_name_equals(inner: &str) -> std::borrow::Cow<'_, str> {
+    let body = inner.trim_start();
+    match body.strip_prefix('{').map(str::trim_start) {
+        Some(rest) if rest.starts_with("\"name=\"") => {
+            std::borrow::Cow::Owned(format!("{{\"name\":\"{}", &rest["\"name=\"".len()..]))
+        }
+        _ => std::borrow::Cow::Borrowed(inner),
+    }
+}
+
 /// Rewrite `{"name":"x":{…}}` (the `,"arguments"` key dropped) into the
 /// canonical `{"name":"x","arguments":{…}}`. `None` for any other shape.
 /// The turn loop's text salvager mirrors this (this module is feature-gated).
@@ -187,6 +202,19 @@ mod tests {
     // round as soon as a block repeats one already emitted; these pin when.
     const A: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"a@x.io","limit":1}}</tool_call>"#;
     const B: &str = r#"<tool_call>{"name":"search_emails","arguments":{"from":"b@x.io","limit":1}}</tool_call>"#;
+
+    #[test]
+    fn an_equals_after_the_name_key_is_repaired() {
+        // Qwen 3.6 35B emission: `"name="x"` for `"name":"x"`. Two of these in
+        // one round parsed to nothing, so the turn answered with an empty reply.
+        let text =
+            "<tool_call>{\"name=\"search_emails\",\"arguments\":{\"from\":\"kelvo\",\"limit\":25}}\n</tool_call>\n\
+                    <tool_call>{\"name=\"get_email_body\",\"arguments\":{\"email_id\":\"eml-1\"}}\n</tool_call>";
+        let calls = parse_qwen_tool_calls(text);
+        let names: Vec<&str> = calls.iter().map(|c| c.function.name.as_str()).collect();
+        assert_eq!(names, ["search_emails", "get_email_body"]);
+        assert_eq!(calls[0].function.arguments, json!({"from":"kelvo","limit":25}));
+    }
 
     #[test]
     fn a_closed_block_repeating_an_earlier_one_is_detected() {
