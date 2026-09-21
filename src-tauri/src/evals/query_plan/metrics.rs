@@ -175,14 +175,14 @@ pub fn evaluate(case: &PlanCase, planned: PlannedOutcome<'_>) -> PlanReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::chat::planner::{parse_plan, Plan};
+    use crate::services::chat::planner::{parse_plan_detailed, Plan};
 
     fn case(yaml: &str) -> PlanCase {
         serde_yaml::from_str(yaml).expect("case")
     }
 
     fn plan(json: &str) -> SearchPlan {
-        match parse_plan(json) {
+        match parse_plan_detailed(json).0 {
             Plan::Search(p) => *p,
             Plan::Defer => panic!("expected a plan for {json}"),
         }

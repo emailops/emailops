@@ -147,6 +147,18 @@ pub struct CompletionResult {
     pub completion_tokens: u32,
     pub cost_usd: f64,
     pub model: String,
+    /// Milliseconds spent processing the prompt before the first sampled
+    /// token. `None` from providers that don't report it (Ollama,
+    /// OpenRouter) — the same convention `ToolStreamResult` uses.
+    pub prefill_ms: Option<i64>,
+    /// Prompt tokens served from the KV cache rather than re-processed.
+    pub cached_prompt_tokens: Option<u32>,
+    /// What the one-shot prefix slot did: `"Reuse"` (the head was already
+    /// decoded), `"Reseed"` (it changed and had to be re-decoded) or
+    /// `"Bypass"` (the slot was not usable). `None` from providers without
+    /// one. A run that reports mostly `Reseed` is paying for the slot without
+    /// getting anything back.
+    pub aux_plan: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -187,6 +199,23 @@ pub trait AIProvider: Send + Sync {
 
     /// Non-streaming single-turn completion (prompt → text).
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult>;
+
+    /// One-shot completion whose leading `prefix` is the same on every call
+    /// (a classifier template, the planner's instructions) and whose `suffix`
+    /// is the per-call part.
+    ///
+    /// The default concatenates and calls [`complete`](Self::complete), which
+    /// is exactly what every provider did before this existed. Backends with a
+    /// persistent KV cache override it to keep the prefix decoded between
+    /// calls instead of re-processing it.
+    async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+    ) -> Result<CompletionResult> {
+        self.complete(&format!("{prefix}{suffix}"), options).await
+    }
 
     /// Generate a single embedding vector.
     async fn embed(&self, text: &str) -> Result<EmbeddingResult>;
@@ -301,6 +330,11 @@ pub struct FakeAiProvider {
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
     completions: RwLock<std::collections::VecDeque<CompletionResult>>,
+    /// When set, `complete` returns this as an `AiError` instead of a canned
+    /// reply, so callers' provider-failure branches are reachable in tests.
+    completion_failure: RwLock<Option<String>>,
+    /// Prefix/suffix pairs seen by `complete_with_prefix`, for assertions.
+    prefix_completion_calls: RwLock<Vec<(String, String)>>,
     default_completion: RwLock<CompletionResult>,
     /// FIFO of canned chat responses. When empty, falls back to an empty
     /// assistant message.
@@ -319,12 +353,17 @@ impl FakeAiProvider {
             embedding_model: "fake-embed-model".to_string(),
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
+            completion_failure: RwLock::new(None),
+            prefix_completion_calls: RwLock::new(Vec::new()),
             default_completion: RwLock::new(CompletionResult {
                 text: String::new(),
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 cost_usd: 0.0,
                 model: "fake-model".to_string(),
+                prefill_ms: None,
+                cached_prompt_tokens: None,
+                aux_plan: None,
             }),
             chats: RwLock::new(std::collections::VecDeque::new()),
             completion_calls: RwLock::new(Vec::new()),
@@ -343,6 +382,19 @@ impl FakeAiProvider {
         *self.available.write().unwrap_or_else(PoisonError::into_inner) = available;
     }
 
+    /// The (prefix, suffix) pairs passed to `complete_with_prefix`, in order.
+    pub fn prefix_completion_calls(&self) -> Vec<(String, String)> {
+        self.prefix_completion_calls
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Make every `complete` call fail with this message until cleared.
+    pub fn fail_completions(&self, message: Option<&str>) {
+        *self.completion_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
+    }
+
     /// Queue a canned completion. Returned in FIFO order from `complete`.
     pub fn push_completion(&self, text: impl Into<String>) {
         self.completions
@@ -354,6 +406,9 @@ impl FakeAiProvider {
                 completion_tokens: 0,
                 cost_usd: 0.0,
                 model: self.model.clone(),
+                prefill_ms: None,
+                cached_prompt_tokens: None,
+                aux_plan: None,
             });
     }
 
@@ -487,6 +542,14 @@ impl AIProvider for FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(prompt.to_string());
+        if let Some(message) = self
+            .completion_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(crate::models::error::AppError::AiError(message));
+        }
         let popped = self
             .completions
             .write()
@@ -498,6 +561,19 @@ impl AIProvider for FakeAiProvider {
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
         }))
+    }
+
+    async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+    ) -> Result<CompletionResult> {
+        self.prefix_completion_calls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((prefix.to_string(), suffix.to_string()));
+        self.complete(&format!("{prefix}{suffix}"), options).await
     }
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {

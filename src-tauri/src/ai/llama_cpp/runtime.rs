@@ -69,7 +69,7 @@ use llama_cpp_2::{
     model::{params::LlamaModelParams, AddBos, LlamaChatMessage, LlamaModel},
 };
 
-use super::actor::{InferenceActorHandle, OnToken};
+use super::actor::{GenOutcome, InferenceActorHandle, OnToken};
 use super::tool_parser::parse_qwen_tool_calls;
 use crate::ai::provider::{AiMessage, AiToolCall, ChatStreamResult, CompletionOptions, ToolStreamResult};
 use crate::ai::stream_gate::StreamGate;
@@ -88,10 +88,24 @@ static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
 /// ERROR carry the decode-failure breadcrumbs (Metal command-buffer error, OOM,
 /// NaN) we rely on when diagnosing an opaque "Decode Error". Keep only the latter.
 fn debug_log_level_enabled(level: llama_cpp_sys_2::ggml_log_level) -> bool {
+    if verbose_llama_logs() {
+        return true;
+    }
     matches!(
         level,
         llama_cpp_sys_2::GGML_LOG_LEVEL_WARN | llama_cpp_sys_2::GGML_LOG_LEVEL_ERROR
     )
+}
+
+/// `LLAMA_VERBOSE=1` lets the INFO lines through as well.
+///
+/// The sizes llama.cpp reports for the KV cache, the recurrent state and the
+/// compute buffers are only ever printed at INFO, so the memory a context
+/// actually costs is invisible without this — which is exactly what
+/// `oneshot_kv_bench` has to report. Read once: the callback runs per log line.
+fn verbose_llama_logs() -> bool {
+    static VERBOSE: OnceLock<bool> = OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("LLAMA_VERBOSE").as_deref() == Ok("1"))
 }
 
 /// C log callback installed in debug builds: forwards WARN/ERROR lines to stderr
@@ -187,6 +201,13 @@ unsafe extern "C" fn capturing_silent_log(
     record_breadcrumb(&msg);
 }
 
+/// `EMAILOPS_AUX_PREFIX=0` turns the one-shot prefix slot off for the whole
+/// process, so a before/after measurement can be repeated from one build.
+fn aux_prefix_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("EMAILOPS_AUX_PREFIX").as_deref() != Ok("0"))
+}
+
 /// Install the global llama.cpp / ggml log handler.
 ///
 /// This MUST run before `LlamaBackend::init()`: the Metal device probe
@@ -202,7 +223,8 @@ unsafe extern "C" fn capturing_silent_log(
 /// Neither mode discards WARN/ERROR outright any more: doing so is what made
 /// `Decode Error -3: unknown` undiagnosable from a release bug report.
 fn install_log_callback() {
-    let silent = cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1");
+    let silent =
+        (cfg!(not(debug_assertions)) || std::env::var("LLAMA_SILENT").as_deref() == Ok("1")) && !verbose_llama_logs();
     let cb: llama_cpp_sys_2::ggml_log_callback = Some(if silent {
         capturing_silent_log
     } else {
@@ -907,7 +929,35 @@ impl LlamaCppRuntime {
     // ── Public inference API ──────────────────────────────────────────────────
 
     /// Non-streaming single-turn completion.
-    pub async fn generate(&self, prompt: &str, opts: &CompletionOptions) -> Result<String> {
+    /// One-shot completion. Returns the actor's full outcome so the caller
+    /// can report prefill time and cache hits, not just the text.
+    pub(crate) async fn generate(&self, prompt: &str, opts: &CompletionOptions) -> Result<GenOutcome> {
+        self.generate_inner(prompt, None, opts).await
+    }
+
+    /// One-shot completion whose leading `prefix` repeats across calls.
+    ///
+    /// The prefix is located inside the CHAT-TEMPLATE-rendered prompt, because
+    /// that is what the actor tokenises; when it cannot be found (a template
+    /// that escapes or reflows the content) the call runs exactly like
+    /// [`generate`](Self::generate), with no anchor.
+    pub(crate) async fn generate_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        opts: &CompletionOptions,
+    ) -> Result<GenOutcome> {
+        let prompt = format!("{prefix}{suffix}");
+        let anchor = (!prefix.is_empty()).then(|| prefix.to_string());
+        self.generate_inner(&prompt, anchor, opts).await
+    }
+
+    async fn generate_inner(
+        &self,
+        prompt: &str,
+        aux_prefix: Option<String>,
+        opts: &CompletionOptions,
+    ) -> Result<GenOutcome> {
         self.touch_last_used();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
@@ -934,17 +984,26 @@ impl LlamaCppRuntime {
         // unbounded `<think>…</think>` span can't swallow the token budget and
         // collapse the reply to "". See `no_think_priming`.
         prompt_str.push_str(self.no_think_priming());
+        // Byte offset where the invariant head ends INSIDE the rendered
+        // prompt. `None` (no prefix given, not found, or the kill switch set)
+        // runs the old path exactly.
+        let aux_prefix_bytes = aux_prefix
+            .filter(|_| aux_prefix_enabled())
+            .and_then(|prefix| prompt_str.find(prefix.as_str()).map(|at| at + prefix.len()));
         let outcome = actor
             // One-shot completion (rewrite/rerank/extraction/warmup): never
-            // cached — its prompt would evict the reusable chat prefix. No
-            // anchoring either (cache_prompt=false runs entirely on seq 1).
-            .generate(prompt_str, temperature, max_tokens, false, None, None, None)
+            // cached — its prompt would evict the reusable chat prefix. The
+            // invariant head, when the caller marked one, rides its own
+            // sequence instead of being re-processed every call.
+            .generate(prompt_str, temperature, max_tokens, false, aux_prefix_bytes, None, None, None)
             .await
             .map_err(AppError::AiError)?;
 
         // Strip any reasoning/thinking markers (Gemma 4 `<|channel>…<channel|>`,
         // Qwen `<think>…</think>`) the model leaked into the visible answer.
-        Ok(strip_reasoning(&outcome.text))
+        let mut outcome = outcome;
+        outcome.text = strip_reasoning(&outcome.text);
+        Ok(outcome)
     }
 
     /// Streaming generation.  `on_token` is called for each piece; returning
@@ -1000,6 +1059,9 @@ impl LlamaCppRuntime {
                 temperature,
                 max_tokens,
                 true,
+                // Chat turns cache their own prefix; the one-shot slot is not
+                // theirs to use.
+                None,
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
@@ -1067,6 +1129,9 @@ impl LlamaCppRuntime {
                 temperature,
                 max_tokens,
                 true,
+                // Chat turns cache their own prefix; the one-shot slot is not
+                // theirs to use.
+                None,
                 stable_bytes,
                 system_bytes,
                 None,
@@ -1153,6 +1218,9 @@ impl LlamaCppRuntime {
                 temperature,
                 max_tokens,
                 true,
+                // Chat turns cache their own prefix; the one-shot slot is not
+                // theirs to use.
+                None,
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
@@ -1318,7 +1386,7 @@ impl LlamaCppRuntime {
 
         let t = std::time::Instant::now();
         let outcome = actor
-            .generate(prompt_str, 0.0, 0, true, stable_bytes, system_bytes, None)
+            .generate(prompt_str, 0.0, 0, true, None, stable_bytes, system_bytes, None)
             .await
             .map_err(AppError::AiError)?;
         crate::services::logger::log(
