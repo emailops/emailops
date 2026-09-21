@@ -11,7 +11,7 @@ use std::time::Instant;
 use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
 use crate::evals::query_plan::case_loader::{load_plan_cases, PlanCase};
-use crate::evals::query_plan::metrics::{evaluate, PlanReport};
+use crate::evals::query_plan::metrics::{evaluate_outcome, PlanReport};
 use crate::evals::query_plan::report::{render, ReportCase};
 use crate::evals::shared::percentile;
 use crate::evals::{EvalError, EvalResult};
@@ -56,6 +56,7 @@ pub struct PlanMetricsReport {
     pub passed: usize,
     pub searched: usize,
     pub deferred: usize,
+    pub app_help: usize,
     pub empty_filter: usize,
     pub unparseable: usize,
     pub provider_errors: usize,
@@ -84,6 +85,7 @@ impl PlanMetricsReport {
             passed: runs.iter().filter(|r| r.report.passed).count(),
             searched: count(PlanOutcome::Search),
             deferred: count(PlanOutcome::Deferred),
+            app_help: count(PlanOutcome::AppHelp),
             empty_filter: count(PlanOutcome::EmptyFilter),
             unparseable: count(PlanOutcome::Unparseable),
             provider_errors: count(PlanOutcome::ProviderError),
@@ -165,9 +167,9 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
         let aux_plan = planned.aux_plan;
         let plan = match planned.plan {
             Plan::Search(plan) => Some(*plan),
-            Plan::Defer => None,
+            Plan::Defer | Plan::AppHelp => None,
         };
-        let report = evaluate(&case, plan.as_ref());
+        let report = evaluate_outcome(&case, plan.as_ref(), outcome);
         if !cfg.json_stdout {
             println!(
                 "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",
@@ -208,8 +210,13 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
     } else {
         println!("[plan-eval] {}/{} cases passed", metrics.passed, metrics.total_cases);
         println!(
-            "[plan-eval] search {} · defer {} · empty filter {} · unparseable {} · provider errors {}",
-            metrics.searched, metrics.deferred, metrics.empty_filter, metrics.unparseable, metrics.provider_errors
+            "[plan-eval] search {} · defer {} · app help {} · empty filter {} · unparseable {} · provider errors {}",
+            metrics.searched,
+            metrics.deferred,
+            metrics.app_help,
+            metrics.empty_filter,
+            metrics.unparseable,
+            metrics.provider_errors
         );
         println!(
             "[plan-eval] latency mean {} p50 {} p95 {} ms · prompt tokens {} · prefill {} ms",

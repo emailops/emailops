@@ -38,7 +38,9 @@ an answer cites a guide section.
 
 - `ensure_index(db, provider)` / `ensure_text_index(db)` / `ensure_embeddings(db, provider)`
 - `lookup_help(db, provider, query, query_embedding, ui_lang, k) -> (Vec<HelpSource>, HelpTrace)`
-- `render_help_block(&[HelpSource]) -> Option<String>`
+- `render_help_block(&[HelpSource], app_help: bool) -> Option<String>` — `app_help` is the
+  query planner's verdict that the question is about EmailOps; the block then instructs
+  unconditionally instead of asking the model to judge whether it applies
 - `plan_help_navigation(answer, &[HelpSource]) -> Option<(NavTarget, &HelpSource)>`
 
 ## What should NOT live here

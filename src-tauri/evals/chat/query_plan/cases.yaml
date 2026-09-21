@@ -206,3 +206,45 @@
     from: "ulises@emailopslabs.dev"
   absent: [since, until]
 
+# ── Questions about EmailOps itself ──────────────────────────────────────────
+# Answered from the bundled guides; mailbox retrieval only adds emails that
+# discuss the same topic (the demo mailbox holds users asking these very
+# questions). The planner flags them with {"app_help": true}. The boundary
+# cases below are about MAIL that mentions the app, and must not be flagged.
+
+- id: app_help_configure_ollama_en
+  question: "how do I make EmailOps use my local Ollama instead of the built-in model?"
+  note: "fed 9 mailbox emails, one a user asking the same thing, next to the guide sections"
+  today: "2026-09-18"
+  expect_app_help: true
+
+- id: app_help_change_model_es
+  question: "¿cómo cambio el modelo de IA que usa EmailOps?"
+  today: "2026-09-18"
+  expect_app_help: true
+
+- id: app_help_data_location_de
+  question: "Wo speichert EmailOps meine Daten auf dem Rechner?"
+  today: "2026-09-18"
+  expect_app_help: true
+
+- id: app_help_slow_chat_fr
+  question: "pourquoi le chat d'EmailOps est-il si lent, et comment l'accélérer ?"
+  today: "2026-09-18"
+  expect_app_help: true
+
+- id: mail_about_the_app_is_still_a_search
+  question: "which emails ask me about using Ollama with EmailOps?"
+  note: "a question about mail that mentions the app keeps its mailbox search"
+  today: "2026-09-18"
+  expect:
+    query: "ollama"
+  absent: [since, until]
+  ignore: [mode, to, intent, topic, subject]
+
+- id: a_reply_about_the_app_is_not_app_help
+  question: "reply to Kwame explaining how to connect Ollama to EmailOps"
+  note: "writing a reply is the tool loop's job, even when the topic is the app"
+  today: "2026-09-18"
+  expect_defer: true
+

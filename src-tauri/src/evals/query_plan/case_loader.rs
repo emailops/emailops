@@ -49,6 +49,12 @@ pub struct PlanCase {
     #[serde(default)]
     pub expect_defer: bool,
 
+    /// True when the question is about EmailOps itself — the planner must
+    /// answer `{"app_help": true}` so the turn skips mailbox retrieval and is
+    /// answered from the bundled guides.
+    #[serde(default)]
+    pub expect_app_help: bool,
+
     /// `{{today}}` for this case, so date expectations stay stable as the
     /// calendar moves. ISO `YYYY-MM-DD`; defaults to the runner's today.
     #[serde(default)]

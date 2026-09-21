@@ -270,6 +270,10 @@ Rules:
   and do not add a second tag the question did not ask for.
 - Meetings, appointments, calendar, agenda, events ("qué reuniones tengo hoy") are answered by
   the calendar tool, not by an email search -> {"defer": true}.
+- If the question is about EmailOps itself — how to use, set up or fix the app, its settings,
+  features, AI models or where it keeps its data — and not about the user's mail, output exactly
+  {"app_help": true} and nothing else. A question about MAIL that mentions the app ("emails from
+  users asking about EmailOps") is still a mail search.
 - If the question is NOT a single email search (it asks to write/draft/summarize/reply,
   needs multiple steps, or is not about finding mail), output exactly {"defer": true} and nothing else.
 

@@ -338,6 +338,18 @@ pub(super) fn planner_route(planned_search: bool) -> RouteDecision {
     }
 }
 
+/// The route for a question the planner says is about EmailOps itself. The
+/// guides are looked up on every route, so all this has to do is skip mailbox
+/// retrieval — which only feeds the model emails that discuss the same topic.
+pub(super) fn planner_help_route() -> RouteDecision {
+    RouteDecision {
+        mode: RouteMode::ToolsFirst,
+        reason: "planner: a question about EmailOps itself, answered from the guides".to_string(),
+        matched_keywords: Vec::new(),
+        classifier: "planner".to_string(),
+    }
+}
+
 /// Pure routing pass: the `chat.routing_mode` preference plus the cheap keyword
 /// heuristic, with no DB and no model.
 ///
@@ -628,6 +640,16 @@ mod tests {
         let defer = planner_route(false);
         assert_eq!(defer.mode, RouteMode::RagFirst);
         assert_eq!(defer.classifier, "planner");
+    }
+
+    #[test]
+    fn an_app_help_verdict_skips_mailbox_retrieval() {
+        // ToolsFirst is the route that pre-retrieves nothing; the guides are
+        // looked up on every route, so they still reach the prompt.
+        let help = planner_help_route();
+        assert_eq!(help.mode, RouteMode::ToolsFirst);
+        assert_eq!(help.classifier, "planner");
+        assert!(help.reason.contains("EmailOps"), "{}", help.reason);
     }
 
     #[test]

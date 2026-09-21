@@ -1206,3 +1206,21 @@ asking llama.cpp for the metadata after the model is loaded (the decision is nee
 that must not pay for a multi-GB mmap, and it would put the rule behind the `llamacpp`
 feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
 setting (makes the user responsible for a detail the file already states).
+
+## 2026-09-21 — The query planner decides when a chat question is about EmailOps itself
+
+**Decision:** A question about the app (how to use, set up or fix EmailOps, its settings,
+models or data) is recognised by the chat query planner, which answers `{"app_help": true}`.
+That turn skips mailbox retrieval and is answered from the bundled guides; the help lookup
+still runs on every route. A question about mail that mentions the app stays a mail search.
+**Context:** app questions went through RAG-first retrieval, so 8-9 mailbox emails rode in
+the prompt next to the guide sections — in the demo mailbox, users asking the very same
+question — and the answer mixed both. The `help://` link in the answer hid it, because the
+turn appends one whenever any guide section was included. The planner already reads every
+question in any language, costs no extra model call on those turns, and its verdict is
+measurable in `query_plan_eval`.
+**Rejected:** skipping the mailbox whenever the help lookup outscores the best email
+(cheapest, but a similarity threshold cannot tell "how do I connect Ollama?" from "what did
+users say about Ollama?"); keeping both corpora and only asserting the guide is cited first
+(accepts the mixing the change set out to remove); a keyword list of app terms (fails on
+paraphrase and on every language the list does not cover).

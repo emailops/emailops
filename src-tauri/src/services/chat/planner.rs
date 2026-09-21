@@ -10,7 +10,8 @@
 //!     the single-runtime cache in `services::ai`), so by default it runs on the
 //!     configured chat model — `qwen3.5-4b-q4_k_m` out of the box.
 //!
-//! The planner only ever pre-seeds a search or defers; it never invents an answer.
+//! The planner only ever pre-seeds a search, defers, or flags a question about
+//! EmailOps itself (answered from the guides); it never invents an answer.
 //! Any uncertainty (unparseable output, an empty filter, a provider error, a
 //! non-search ask) falls through to `Plan::Defer` so the normal loop still runs —
 //! the fast path can only ever *save* a round, never break a turn.
@@ -26,6 +27,9 @@ pub enum Plan {
     Search(Box<SearchPlan>),
     /// Not a single email search — let the normal model tool loop handle it.
     Defer,
+    /// A question about EmailOps itself: answer it from the bundled guides,
+    /// without mailbox retrieval.
+    AppHelp,
 }
 
 /// Why the planner did or did not produce a filter.
@@ -41,6 +45,8 @@ pub enum PlanOutcome {
     Search,
     /// The model explicitly asked to defer.
     Deferred,
+    /// The model said the question is about EmailOps itself.
+    AppHelp,
     /// Valid JSON, but nothing to search on.
     EmptyFilter,
     /// No JSON object in the reply.
@@ -54,6 +60,7 @@ impl PlanOutcome {
         match self {
             PlanOutcome::Search => "search",
             PlanOutcome::Deferred => "defer",
+            PlanOutcome::AppHelp => "app_help",
             PlanOutcome::EmptyFilter => "empty_filter",
             PlanOutcome::Unparseable => "unparseable",
             PlanOutcome::ProviderError => "provider_error",
@@ -257,6 +264,9 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
     };
     if obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
         return (Plan::Defer, PlanOutcome::Deferred);
+    }
+    if obj.get("app_help").and_then(|v| v.as_bool()) == Some(true) {
+        return (Plan::AppHelp, PlanOutcome::AppHelp);
     }
     let str_field = |key: &str| {
         obj.get(key)
@@ -479,7 +489,7 @@ mod tests {
     fn search(text: &str) -> SearchPlan {
         match parse_plan(text) {
             Plan::Search(p) => *p,
-            Plan::Defer => panic!("expected Search, got Defer for: {text}"),
+            other => panic!("expected Search, got {other:?} for: {text}"),
         }
     }
 
@@ -585,7 +595,7 @@ mod tests {
         ] {
             match parse_plan(json) {
                 Plan::Search(p) => assert!(p.has_structural_filter(), "expected structural: {json}"),
-                Plan::Defer => panic!("expected a plan for {json}"),
+                other => panic!("expected a plan for {json}, got {other:?}"),
             }
         }
     }
@@ -601,7 +611,7 @@ mod tests {
         ] {
             match parse_plan(json) {
                 Plan::Search(p) => assert!(!p.has_structural_filter(), "expected keyword-only: {json}"),
-                Plan::Defer => panic!("expected a plan for {json}"),
+                other => panic!("expected a plan for {json}, got {other:?}"),
             }
         }
     }
@@ -685,6 +695,36 @@ mod tests {
     #[test]
     fn explicit_defer_is_defer() {
         assert_eq!(parse_plan(r#"{"defer": true}"#), Plan::Defer);
+    }
+
+    // ── app help ────────────────────────────────────────────────────────
+    // A question about EmailOps itself is answered from the bundled guides;
+    // mailbox retrieval only feeds the model emails that happen to discuss
+    // the same topic. The planner already reads every question, in any
+    // language, so it is the one that says so.
+
+    #[test]
+    fn an_app_help_verdict_is_its_own_plan() {
+        assert_eq!(
+            parse_plan_detailed(r#"{"app_help": true}"#),
+            (Plan::AppHelp, PlanOutcome::AppHelp)
+        );
+    }
+
+    #[test]
+    fn an_app_help_verdict_survives_leading_prose_and_fences() {
+        assert_eq!(parse_plan("Sure:\n```json\n{\"app_help\": true}\n```"), Plan::AppHelp);
+    }
+
+    #[test]
+    fn a_false_app_help_flag_is_not_a_verdict() {
+        let plan = search(r#"{"app_help": false, "from": "marisol"}"#);
+        assert_eq!(plan.from.as_deref(), Some("marisol"));
+    }
+
+    #[test]
+    fn app_help_outcome_has_a_stable_label() {
+        assert_eq!(PlanOutcome::AppHelp.as_str(), "app_help");
     }
 
     #[test]
