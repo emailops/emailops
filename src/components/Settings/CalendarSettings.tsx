@@ -8,6 +8,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { calendarCapableAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Calendar } from '@/types';
+import { SettingsPanel } from './SettingsPanel';
 
 /** Lead-time choices for the upcoming-meeting notification (minutes). */
 const LEAD_TIME_OPTIONS = [1, 5, 10, 15, 30, 60] as const;
@@ -204,150 +205,150 @@ export function CalendarSettings() {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      {/* Error banner — pinned above the scroll container, always visible. */}
-      {error && (
-        <div className="flex-shrink-0 mx-6 mt-4 border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
-          {error}
-        </div>
-      )}
-      <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-        <section>
-          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.accountsLabel')}</h3>
-          <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.accountsDesc')}</p>
-          {capableAccounts.length === 0 ? (
-            <p className="text-xs text-gray-400">{t('settings:calendar.noCapableAccounts')}</p>
-          ) : (
-            <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
-              {capableAccounts.map((account) => {
-                const enabled = integrationIds.has(account.id);
-                const accountCalendars = calendarsByAccount[account.id] ?? [];
-                return (
-                  <div key={account.id}>
-                    <div className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="min-w-0">
-                        <span className="text-sm text-gray-100 block truncate">{account.email}</span>
-                        <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        aria-label={t('settings:calendar.accountToggleAria', { email: account.email })}
-                        disabled={!integrationLoaded}
-                        onClick={() => toggleAccountIntegration(account.id, !enabled)}
-                        className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-                          enabled ? 'bg-primary-600' : 'bg-neutral-600'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                            enabled ? 'translate-x-5' : 'translate-x-1'
-                          }`}
-                        />
-                      </button>
+    <SettingsPanel
+      header={
+        error && (
+          <div className="flex-shrink-0 mx-6 mt-4 border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
+            {error}
+          </div>
+        )
+      }
+    >
+      <section>
+        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.accountsLabel')}</h3>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.accountsDesc')}</p>
+        {capableAccounts.length === 0 ? (
+          <p className="text-xs text-gray-400">{t('settings:calendar.noCapableAccounts')}</p>
+        ) : (
+          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
+            {capableAccounts.map((account) => {
+              const enabled = integrationIds.has(account.id);
+              const accountCalendars = calendarsByAccount[account.id] ?? [];
+              return (
+                <div key={account.id}>
+                  <div className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <span className="text-sm text-gray-100 block truncate">{account.email}</span>
+                      <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
                     </div>
-                    {/* Which of the account's calendars appear in the calendar
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      aria-label={t('settings:calendar.accountToggleAria', { email: account.email })}
+                      disabled={!integrationLoaded}
+                      onClick={() => toggleAccountIntegration(account.id, !enabled)}
+                      className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                        enabled ? 'bg-primary-600' : 'bg-neutral-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          enabled ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {/* Which of the account's calendars appear in the calendar
                         view. Hidden ones keep syncing, so re-showing one is
                         instant. Only rendered when there is a real choice. */}
-                    {enabled && accountCalendars.length > 1 && (
-                      <div className="px-4 pb-3 -mt-1 space-y-1.5">
-                        {accountCalendars.map((calendar) => (
-                          <label
-                            key={calendar.providerCalendarId}
-                            className="flex items-center gap-2.5 cursor-pointer group"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={calendar.isVisible}
-                              onChange={(e) => toggleCalendarVisible(account.id, calendar, e.target.checked)}
-                              className="rounded border-gray-600 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
-                            />
-                            <span
-                              className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/20"
-                              style={{
-                                backgroundColor: calendarColor(calendar.color, calendar.providerCalendarId),
-                              }}
-                            />
-                            <span className="text-xs text-gray-300 truncate group-hover:text-gray-100">
-                              {calendar.name || calendar.providerCalendarId}
+                  {enabled && accountCalendars.length > 1 && (
+                    <div className="px-4 pb-3 -mt-1 space-y-1.5">
+                      {accountCalendars.map((calendar) => (
+                        <label
+                          key={calendar.providerCalendarId}
+                          className="flex items-center gap-2.5 cursor-pointer group"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={calendar.isVisible}
+                            onChange={(e) => toggleCalendarVisible(account.id, calendar, e.target.checked)}
+                            className="rounded border-gray-600 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
+                          />
+                          <span
+                            className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/20"
+                            style={{
+                              backgroundColor: calendarColor(calendar.color, calendar.providerCalendarId),
+                            }}
+                          />
+                          <span className="text-xs text-gray-300 truncate group-hover:text-gray-100">
+                            {calendar.name || calendar.providerCalendarId}
+                          </span>
+                          {calendar.isPrimary && (
+                            <span className="text-[10px] text-gray-500 flex-shrink-0">
+                              {t('settings:calendar.primaryCalendar')}
                             </span>
-                            {calendar.isPrimary && (
-                              <span className="text-[10px] text-gray-500 flex-shrink-0">
-                                {t('settings:calendar.primaryCalendar')}
-                              </span>
-                            )}
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {reauthAccountId && (
-            <div className="mt-2 rounded-lg border border-amber-700 bg-amber-950 px-4 py-3">
-              <p className="text-xs text-amber-200">{t('calendar:reauthNeeded')}</p>
-              <button
-                type="button"
-                disabled={isReauthing}
-                onClick={() => runReauth(reauthAccountId)}
-                className="mt-2 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60"
-              >
-                {isReauthing ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <span className="text-sm font-medium text-gray-100">{t('settings:calendar.notificationsLabel')}</span>
-              <p className="text-xs text-gray-400 mt-1">{t('settings:calendar.notificationsDesc')}</p>
-            </div>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {reauthAccountId && (
+          <div className="mt-2 rounded-lg border border-amber-700 bg-amber-950 px-4 py-3">
+            <p className="text-xs text-amber-200">{t('calendar:reauthNeeded')}</p>
             <button
               type="button"
-              role="switch"
-              aria-checked={notificationsEnabled}
-              disabled={!isLoaded}
-              onClick={() => persistEnabled(!notificationsEnabled)}
-              className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 disabled:opacity-50 ${
-                notificationsEnabled ? 'bg-primary-600' : 'bg-neutral-600'
-              }`}
+              disabled={isReauthing}
+              onClick={() => runReauth(reauthAccountId)}
+              className="mt-2 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors disabled:opacity-60"
             >
-              <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                  notificationsEnabled ? 'translate-x-5' : 'translate-x-1'
-                }`}
-              />
+              {isReauthing ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
             </button>
           </div>
-        </section>
+        )}
+      </section>
 
-        <section>
-          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.leadTimeLabel')}</h3>
-          <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.leadTimeDesc')}</p>
-          <Select
-            value={String(leadMinutes)}
-            disabled={!isLoaded || !notificationsEnabled}
-            onChange={(value) => persistLeadMinutes(Number.parseInt(value, 10))}
-            ariaLabel={t('settings:calendar.leadTimeLabel')}
-            options={
-              // Include an out-of-list stored value (backend accepts 1–120) so the
-              // select never silently shows the wrong lead time.
-              (LEAD_TIME_OPTIONS.includes(leadMinutes as (typeof LEAD_TIME_OPTIONS)[number])
-                ? [...LEAD_TIME_OPTIONS]
-                : [...LEAD_TIME_OPTIONS, leadMinutes].sort((a, b) => a - b)
-              ).map((minutes) => ({
-                value: String(minutes),
-                label: t('settings:calendar.minutesOption', { n: minutes }),
-              }))
-            }
-          />
-        </section>
-      </div>
-    </div>
+      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-gray-100">{t('settings:calendar.notificationsLabel')}</span>
+            <p className="text-xs text-gray-400 mt-1">{t('settings:calendar.notificationsDesc')}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notificationsEnabled}
+            disabled={!isLoaded}
+            onClick={() => persistEnabled(!notificationsEnabled)}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 disabled:opacity-50 ${
+              notificationsEnabled ? 'bg-primary-600' : 'bg-neutral-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                notificationsEnabled ? 'translate-x-5' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.leadTimeLabel')}</h3>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.leadTimeDesc')}</p>
+        <Select
+          value={String(leadMinutes)}
+          disabled={!isLoaded || !notificationsEnabled}
+          onChange={(value) => persistLeadMinutes(Number.parseInt(value, 10))}
+          ariaLabel={t('settings:calendar.leadTimeLabel')}
+          options={
+            // Include an out-of-list stored value (backend accepts 1–120) so the
+            // select never silently shows the wrong lead time.
+            (LEAD_TIME_OPTIONS.includes(leadMinutes as (typeof LEAD_TIME_OPTIONS)[number])
+              ? [...LEAD_TIME_OPTIONS]
+              : [...LEAD_TIME_OPTIONS, leadMinutes].sort((a, b) => a - b)
+            ).map((minutes) => ({
+              value: String(minutes),
+              label: t('settings:calendar.minutesOption', { n: minutes }),
+            }))
+          }
+        />
+      </section>
+    </SettingsPanel>
   );
 }

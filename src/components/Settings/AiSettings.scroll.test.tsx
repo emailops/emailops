@@ -95,7 +95,7 @@ describe('AiSettings — scroll container stability', () => {
     // Mount and let the async loadAll() settle so the main (config-loaded)
     // tree with the scroll container renders.
     await act(async () => {
-      root.render(<AiSettings embedded onClose={() => {}} />);
+      root.render(<AiSettings />);
     });
     // Drain loadAll()'s chained awaits (getAiConfig → catalog → prefs) in one
     // macrotask flush so the config-loaded tree with the scroll container renders.
@@ -106,11 +106,11 @@ describe('AiSettings — scroll container stability', () => {
     const before = container.querySelector('.overflow-y-auto');
     expect(before, 'scroll container should be mounted after load').not.toBeNull();
 
-    // Force a parent re-render of AiSettings (new onClose identity → new
-    // element). With Shell hoisted this reconciles in place; with Shell defined
-    // inline it remounts the subtree and `after` becomes a different node.
+    // Force a re-render of AiSettings. With module-scoped chrome this
+    // reconciles in place; with a render-body wrapper it remounts the subtree
+    // and `after` becomes a different node.
     await act(async () => {
-      root.render(<AiSettings embedded onClose={() => {}} />);
+      root.render(<AiSettings />);
     });
 
     const after = container.querySelector('.overflow-y-auto');

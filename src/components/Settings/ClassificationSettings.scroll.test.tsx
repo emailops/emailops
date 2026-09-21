@@ -69,7 +69,7 @@ describe('ClassificationSettings — scroll container stability', () => {
 
   it('keeps the same scroll container and textarea DOM nodes across a re-render', async () => {
     await act(async () => {
-      root.render(<ClassificationSettings embedded activeAccountId="acct-1" onClose={() => {}} />);
+      root.render(<ClassificationSettings activeAccountId="acct-1" />);
     });
     // Drain loadConfig()'s await so the config-loaded tree renders.
     await act(async () => {
@@ -81,12 +81,11 @@ describe('ClassificationSettings — scroll container stability', () => {
     expect(shellBefore, 'scroll container should be mounted after load').not.toBeNull();
     expect(intentsBefore, 'intents textarea should be mounted after load').toBeDefined();
 
-    // Force a parent re-render (new onClose identity → new element). This is
-    // what every sync-progress batch event does while Settings is open. With
-    // Shell hoisted React reconciles in place; with Shell defined inline it
-    // remounts the subtree and these become different nodes.
+    // Force a re-render — what every sync-progress batch event does while
+    // Settings is open. With module-scoped chrome React reconciles in place;
+    // with a render-body wrapper it remounts and these become different nodes.
     await act(async () => {
-      root.render(<ClassificationSettings embedded activeAccountId="acct-1" onClose={() => {}} />);
+      root.render(<ClassificationSettings activeAccountId="acct-1" />);
     });
 
     expect(container.querySelector('.overflow-y-auto')).toBe(shellBefore);

@@ -230,6 +230,8 @@ export function PrivacySettings() {
     );
   }
 
+  // Deliberately not <SettingsPanel>: this panel wants wider spacing between
+  // its sections (space-y-8) than the shared chrome's space-y-6.
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5 space-y-8">
       {/* Password ─────────────────────────────────────────────────────────── */}

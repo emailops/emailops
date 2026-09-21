@@ -5,6 +5,7 @@ import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { BackfillStatus, EmailCategory, MemoryConfig } from '@/types';
 import { PromptEditorBlock } from './PromptEditorBlock';
+import { SettingsPanel } from './SettingsPanel';
 
 interface MemorySettingsProps {
   activeAccountId: string | null;
@@ -210,342 +211,341 @@ export function MemorySettings({
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-        {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
-        {success && (
-          <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
-        )}
-
-        {/* Experimental header */}
-        <section className="p-3 rounded-lg border border-amber-700/50 bg-amber-900/10">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-100">{t('settings:memory.title')}</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700/50">
-                  {t('settings:dialog.experimental')}
-                </span>
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{t('settings:memory.experimentalDesc')}</p>
-            </div>
+    <SettingsPanel
+      footer={
+        experimentalEnabled && (
+          <div className="px-6 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
             <button
-              type="button"
-              role="switch"
-              aria-checked={experimentalEnabled}
-              onClick={() => onChangeExperimentalEnabled(!experimentalEnabled)}
-              className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-                experimentalEnabled ? 'bg-primary-600' : 'bg-neutral-600'
-              }`}
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="px-4 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50"
             >
-              <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                  experimentalEnabled ? 'translate-x-5' : 'translate-x-1'
-                }`}
-              />
+              {saving ? t('common:state.saving') : t('common:actions.save')}
             </button>
           </div>
-        </section>
+        )
+      }
+    >
+      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {success && (
+        <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+      )}
 
-        {!experimentalEnabled && <p className="text-xs text-gray-500 italic">{t('settings:memory.enablePrompt')}</p>}
-
-        {experimentalEnabled && (
-          <>
-            {/* Global toggle. The master "Memory enabled" switch lives in the
-                experimental header above; this section only exposes the
-                downstream behavioural toggles. */}
-            <section>
-              <ToggleRow
-                label={t('settings:memory.extractOnSync')}
-                description={t('settings:memory.extractOnSyncDesc')}
-                enabled={config.extractOnSync}
-                onToggle={() => setConfig({ ...config, extractOnSync: !config.extractOnSync })}
-              />
-              <ToggleRow
-                label={t('settings:memory.selfOnly')}
-                description={t('settings:memory.selfOnlyDesc')}
-                enabled={config.extractFromSelfOnly}
-                onToggle={() => setConfig({ ...config, extractFromSelfOnly: !config.extractFromSelfOnly })}
-              />
-            </section>
-
-            {/* Categories */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.gmailCategories')}</h3>
-              <p className="text-xs text-gray-500 mb-2">{t('settings:memory.gmailCategoriesDesc')}</p>
-              <div className="flex flex-wrap gap-2">
-                {ALL_CATEGORIES.map((cat) => {
-                  const active = config.categories.includes(cat.id);
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => toggleCategory(cat.id)}
-                      className={`px-3 py-1.5 rounded border text-sm transition-colors ${
-                        active
-                          ? 'bg-primary-700 border-primary-600 text-white'
-                          : 'bg-[#2a2a2b] border-gray-700 text-gray-400 hover:border-gray-500'
-                      }`}
-                    >
-                      {cat.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Excluded senders */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.excludedSenders')}</h3>
-              <p className="text-xs text-gray-500 mb-2">
-                {t('settings:memory.excludedSendersDescStart')}{' '}
-                <code className="text-gray-400">{t('settings:memory.excludedSendersExample1')}</code>{' '}
-                {t('settings:memory.excludedSendersDescMiddle')}{' '}
-                <code className="text-gray-400">{t('settings:memory.excludedSendersExample2')}</code>{' '}
-                {t('settings:memory.excludedSendersDescEnd')}
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newExcluded}
-                  onChange={(e) => setNewExcluded(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addExcluded();
-                    }
-                  }}
-                  placeholder={t('settings:memory.excludedSendersPlaceholder')}
-                  className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={addExcluded}
-                  className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm"
-                >
-                  {t('common:actions.add')}
-                </button>
-              </div>
-              {config.excludedSenders.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {config.excludedSenders.map((p) => (
-                    <span
-                      key={p}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
-                    >
-                      {p}
-                      <button
-                        type="button"
-                        onClick={() => removeExcluded(p)}
-                        className="text-gray-500 hover:text-red-400"
-                        aria-label={t('settings:memory.removeAria', { value: p })}
-                      >
-                        × {/* i18n-ignore */}
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Excluded tags */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.excludedTags')}</h3>
-              <p className="text-xs text-gray-500 mb-2">{t('settings:memory.excludedTagsDesc')}</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newExcludedTag}
-                  onChange={(e) => setNewExcludedTag(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addExcludedTag();
-                    }
-                  }}
-                  placeholder={t('settings:memory.tagPlaceholder')}
-                  className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => addExcludedTag()}
-                  className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm"
-                >
-                  {t('common:actions.add')}
-                </button>
-              </div>
-              {config.excludedTags.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {config.excludedTags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        onClick={() => removeExcludedTag(tag)}
-                        className="text-gray-500 hover:text-red-400"
-                        aria-label={t('settings:memory.removeAria', { value: tag })}
-                      >
-                        × {/* i18n-ignore */}
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {/* Suggestions: click to add, hidden once already present. */}
-              {SUGGESTED_EXCLUDED_TAGS.some((tag) => !config.excludedTags.includes(tag)) && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className="text-xs text-gray-500 self-center">{t('settings:memory.suggestions')}</span>
-                  {SUGGESTED_EXCLUDED_TAGS.filter((tag) => !config.excludedTags.includes(tag)).map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => addExcludedTag(tag)}
-                      className="px-2 py-0.5 bg-transparent border border-gray-700 text-gray-400 hover:border-primary-500 hover:text-primary-300 rounded text-xs font-mono"
-                    >
-                      + {tag} {/* i18n-ignore */}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* Tuning */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:memory.tuning')}</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <NumberField
-                  label={t('settings:memory.consolidationInterval')}
-                  hint={t('settings:memory.consolidationIntervalHint')}
-                  min={0}
-                  step={5}
-                  value={config.consolidationIntervalMinutes}
-                  onChange={(v) => setConfig({ ...config, consolidationIntervalMinutes: v })}
-                />
-                <NumberField
-                  label={t('settings:memory.promoteThreshold')}
-                  hint={t('settings:memory.promoteThresholdHint')}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={config.promoteThreshold}
-                  onChange={(v) => setConfig({ ...config, promoteThreshold: v })}
-                />
-                <NumberField
-                  label={t('settings:memory.candidateTtl')}
-                  hint={t('settings:memory.candidateTtlHint')}
-                  min={1}
-                  step={1}
-                  value={config.candidateTtlDays}
-                  onChange={(v) => setConfig({ ...config, candidateTtlDays: v })}
-                />
-                <NumberField
-                  label={t('settings:memory.eventRetention')}
-                  hint={t('settings:memory.eventRetentionHint')}
-                  min={1}
-                  step={1}
-                  value={config.eventRetentionDays}
-                  onChange={(v) => setConfig({ ...config, eventRetentionDays: v })}
-                />
-                <NumberField
-                  label={t('settings:memory.backfillBatchSize')}
-                  hint={t('settings:memory.backfillBatchSizeHint')}
-                  min={1}
-                  max={500}
-                  step={1}
-                  value={config.backfillBatchSize}
-                  onChange={(v) => setConfig({ ...config, backfillBatchSize: v })}
-                />
-              </div>
-            </section>
-
-            {/* Backfill + consolidation actions */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.backfillSection')}</h3>
-              <p className="text-xs text-gray-500 mb-3">{t('settings:memory.backfillSectionDesc')}</p>
-              {!activeAccountId && (
-                <p className="text-xs text-amber-400 mb-3">{t('settings:memory.selectAccountWarn')}</p>
-              )}
-              <div className="flex items-center gap-2 flex-wrap">
-                {status.running ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleCancelBackfill()}
-                    className="px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded text-sm"
-                  >
-                    {t('settings:memory.cancelBackfill')}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void handleStartBackfill()}
-                    disabled={!activeAccountId || !experimentalEnabled}
-                    className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {t('settings:memory.startBackfill')}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void handleRunConsolidation()}
-                  disabled={!activeAccountId}
-                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {t('settings:memory.runConsolidation')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleResetExtraction()}
-                  disabled={!activeAccountId || status.running}
-                  className="px-3 py-2 bg-gray-700 hover:bg-red-900 text-gray-400 hover:text-red-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={t('settings:memory.resetExtractionTitle')}
-                >
-                  {t('settings:memory.resetExtraction')}
-                </button>
-                <div className="text-xs text-gray-400 ml-2">
-                  {status.running ? (
-                    <span>
-                      {t('settings:memory.runningWithRemaining')}
-                      <span className="text-gray-500">
-                        {t('settings:memory.runningRemaining', { count: status.remaining })}
-                      </span>
-                    </span>
-                  ) : (
-                    <span>{t('settings:memory.eligibleForExtraction', { count: status.remaining })}</span>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            {/* Fact extraction prompt */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.extractionPrompt')}</h3>
-              <p className="text-xs text-gray-500 mb-3">{t('settings:memory.extractionPromptDesc')}</p>
-              <PromptEditorBlock
-                promptId="memory.extract_facts"
-                title={t('settings:memory.factExtractionTitle')}
-                description={t('settings:memory.factExtractionDesc')}
-              />
-            </section>
-          </>
-        )}
-      </div>
-
-      {/* Footer — only when the user can actually save changes. */}
-      {experimentalEnabled && (
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
+      {/* Experimental header */}
+      <section className="p-3 rounded-lg border border-amber-700/50 bg-amber-900/10">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-100">{t('settings:memory.title')}</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700/50">
+                {t('settings:dialog.experimental')}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">{t('settings:memory.experimentalDesc')}</p>
+          </div>
           <button
-            onClick={() => void handleSave()}
-            disabled={saving}
-            className="px-4 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50"
+            type="button"
+            role="switch"
+            aria-checked={experimentalEnabled}
+            onClick={() => onChangeExperimentalEnabled(!experimentalEnabled)}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 ${
+              experimentalEnabled ? 'bg-primary-600' : 'bg-neutral-600'
+            }`}
           >
-            {saving ? t('common:state.saving') : t('common:actions.save')}
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                experimentalEnabled ? 'translate-x-5' : 'translate-x-1'
+              }`}
+            />
           </button>
         </div>
+      </section>
+
+      {!experimentalEnabled && <p className="text-xs text-gray-500 italic">{t('settings:memory.enablePrompt')}</p>}
+
+      {experimentalEnabled && (
+        <>
+          {/* Global toggle. The master "Memory enabled" switch lives in the
+                experimental header above; this section only exposes the
+                downstream behavioural toggles. */}
+          <section>
+            <ToggleRow
+              label={t('settings:memory.extractOnSync')}
+              description={t('settings:memory.extractOnSyncDesc')}
+              enabled={config.extractOnSync}
+              onToggle={() => setConfig({ ...config, extractOnSync: !config.extractOnSync })}
+            />
+            <ToggleRow
+              label={t('settings:memory.selfOnly')}
+              description={t('settings:memory.selfOnlyDesc')}
+              enabled={config.extractFromSelfOnly}
+              onToggle={() => setConfig({ ...config, extractFromSelfOnly: !config.extractFromSelfOnly })}
+            />
+          </section>
+
+          {/* Categories */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.gmailCategories')}</h3>
+            <p className="text-xs text-gray-500 mb-2">{t('settings:memory.gmailCategoriesDesc')}</p>
+            <div className="flex flex-wrap gap-2">
+              {ALL_CATEGORIES.map((cat) => {
+                const active = config.categories.includes(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => toggleCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded border text-sm transition-colors ${
+                      active
+                        ? 'bg-primary-700 border-primary-600 text-white'
+                        : 'bg-[#2a2a2b] border-gray-700 text-gray-400 hover:border-gray-500'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Excluded senders */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.excludedSenders')}</h3>
+            <p className="text-xs text-gray-500 mb-2">
+              {t('settings:memory.excludedSendersDescStart')}{' '}
+              <code className="text-gray-400">{t('settings:memory.excludedSendersExample1')}</code>{' '}
+              {t('settings:memory.excludedSendersDescMiddle')}{' '}
+              <code className="text-gray-400">{t('settings:memory.excludedSendersExample2')}</code>{' '}
+              {t('settings:memory.excludedSendersDescEnd')}
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newExcluded}
+                onChange={(e) => setNewExcluded(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addExcluded();
+                  }
+                }}
+                placeholder={t('settings:memory.excludedSendersPlaceholder')}
+                className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+              />
+              <button
+                type="button"
+                onClick={addExcluded}
+                className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm"
+              >
+                {t('common:actions.add')}
+              </button>
+            </div>
+            {config.excludedSenders.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {config.excludedSenders.map((p) => (
+                  <span
+                    key={p}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
+                  >
+                    {p}
+                    <button
+                      type="button"
+                      onClick={() => removeExcluded(p)}
+                      className="text-gray-500 hover:text-red-400"
+                      aria-label={t('settings:memory.removeAria', { value: p })}
+                    >
+                      × {/* i18n-ignore */}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Excluded tags */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.excludedTags')}</h3>
+            <p className="text-xs text-gray-500 mb-2">{t('settings:memory.excludedTagsDesc')}</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newExcludedTag}
+                onChange={(e) => setNewExcludedTag(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addExcludedTag();
+                  }
+                }}
+                placeholder={t('settings:memory.tagPlaceholder')}
+                className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => addExcludedTag()}
+                className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm"
+              >
+                {t('common:actions.add')}
+              </button>
+            </div>
+            {config.excludedTags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {config.excludedTags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => removeExcludedTag(tag)}
+                      className="text-gray-500 hover:text-red-400"
+                      aria-label={t('settings:memory.removeAria', { value: tag })}
+                    >
+                      × {/* i18n-ignore */}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Suggestions: click to add, hidden once already present. */}
+            {SUGGESTED_EXCLUDED_TAGS.some((tag) => !config.excludedTags.includes(tag)) && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <span className="text-xs text-gray-500 self-center">{t('settings:memory.suggestions')}</span>
+                {SUGGESTED_EXCLUDED_TAGS.filter((tag) => !config.excludedTags.includes(tag)).map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => addExcludedTag(tag)}
+                    className="px-2 py-0.5 bg-transparent border border-gray-700 text-gray-400 hover:border-primary-500 hover:text-primary-300 rounded text-xs font-mono"
+                  >
+                    + {tag} {/* i18n-ignore */}
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Tuning */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:memory.tuning')}</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <NumberField
+                label={t('settings:memory.consolidationInterval')}
+                hint={t('settings:memory.consolidationIntervalHint')}
+                min={0}
+                step={5}
+                value={config.consolidationIntervalMinutes}
+                onChange={(v) => setConfig({ ...config, consolidationIntervalMinutes: v })}
+              />
+              <NumberField
+                label={t('settings:memory.promoteThreshold')}
+                hint={t('settings:memory.promoteThresholdHint')}
+                min={0}
+                max={1}
+                step={0.05}
+                value={config.promoteThreshold}
+                onChange={(v) => setConfig({ ...config, promoteThreshold: v })}
+              />
+              <NumberField
+                label={t('settings:memory.candidateTtl')}
+                hint={t('settings:memory.candidateTtlHint')}
+                min={1}
+                step={1}
+                value={config.candidateTtlDays}
+                onChange={(v) => setConfig({ ...config, candidateTtlDays: v })}
+              />
+              <NumberField
+                label={t('settings:memory.eventRetention')}
+                hint={t('settings:memory.eventRetentionHint')}
+                min={1}
+                step={1}
+                value={config.eventRetentionDays}
+                onChange={(v) => setConfig({ ...config, eventRetentionDays: v })}
+              />
+              <NumberField
+                label={t('settings:memory.backfillBatchSize')}
+                hint={t('settings:memory.backfillBatchSizeHint')}
+                min={1}
+                max={500}
+                step={1}
+                value={config.backfillBatchSize}
+                onChange={(v) => setConfig({ ...config, backfillBatchSize: v })}
+              />
+            </div>
+          </section>
+
+          {/* Backfill + consolidation actions */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.backfillSection')}</h3>
+            <p className="text-xs text-gray-500 mb-3">{t('settings:memory.backfillSectionDesc')}</p>
+            {!activeAccountId && (
+              <p className="text-xs text-amber-400 mb-3">{t('settings:memory.selectAccountWarn')}</p>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {status.running ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCancelBackfill()}
+                  className="px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded text-sm"
+                >
+                  {t('settings:memory.cancelBackfill')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleStartBackfill()}
+                  disabled={!activeAccountId || !experimentalEnabled}
+                  className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {t('settings:memory.startBackfill')}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleRunConsolidation()}
+                disabled={!activeAccountId}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {t('settings:memory.runConsolidation')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleResetExtraction()}
+                disabled={!activeAccountId || status.running}
+                className="px-3 py-2 bg-gray-700 hover:bg-red-900 text-gray-400 hover:text-red-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title={t('settings:memory.resetExtractionTitle')}
+              >
+                {t('settings:memory.resetExtraction')}
+              </button>
+              <div className="text-xs text-gray-400 ml-2">
+                {status.running ? (
+                  <span>
+                    {t('settings:memory.runningWithRemaining')}
+                    <span className="text-gray-500">
+                      {t('settings:memory.runningRemaining', { count: status.remaining })}
+                    </span>
+                  </span>
+                ) : (
+                  <span>{t('settings:memory.eligibleForExtraction', { count: status.remaining })}</span>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Fact extraction prompt */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:memory.extractionPrompt')}</h3>
+            <p className="text-xs text-gray-500 mb-3">{t('settings:memory.extractionPromptDesc')}</p>
+            <PromptEditorBlock
+              promptId="memory.extract_facts"
+              title={t('settings:memory.factExtractionTitle')}
+              description={t('settings:memory.factExtractionDesc')}
+            />
+          </section>
+        </>
       )}
-    </div>
+    </SettingsPanel>
   );
 }
 
