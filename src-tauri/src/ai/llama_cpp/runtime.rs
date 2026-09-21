@@ -73,6 +73,7 @@ use super::actor::{GenOutcome, InferenceActorHandle, OnToken};
 use super::tool_parser::parse_qwen_tool_calls;
 use crate::ai::provider::{AiMessage, AiToolCall, ChatStreamResult, CompletionOptions, ToolStreamResult};
 use crate::ai::stream_gate::StreamGate;
+use crate::ai::think_priming;
 use crate::ai::thinking_filter::{strip_reasoning, ThinkingGate};
 use crate::models::error::{AppError, Result};
 use crate::services::chat::{parse_python_call_tool_calls, parse_xml_tool_calls};
@@ -398,6 +399,12 @@ pub struct LlamaCppRuntime {
     /// `LlamaCppRuntime::new`; callable sites override via
     /// `with_keep_alive`.
     keep_alive_secs: Arc<AtomicU32>,
+    /// The "thinking disabled" primer this chat model needs, resolved once from
+    /// the GGUF header (see `think_priming`). Cached because every inference
+    /// call needs it and resolving it reads the file; `chat_model_path` never
+    /// changes for a given runtime (a model swap builds a new one), so the
+    /// answer cannot go stale.
+    chat_no_think_primer: OnceLock<&'static str>,
     /// User-configured context window for the chat actor's `LlamaContext`.
     /// `0` = auto (the model's trained context, capped at the default). Read
     /// when the actor is (re)spawned in `get_chat_actor`; `set_n_ctx_override`
@@ -424,6 +431,7 @@ impl LlamaCppRuntime {
             last_used: Arc::new(AtomicI64::new(now_secs())),
             keep_alive_secs: Arc::new(AtomicU32::new(30 * 60)),
             n_ctx_override: Arc::new(AtomicU32::new(0)),
+            chat_no_think_primer: OnceLock::new(),
         });
         Self::spawn_eviction_task(&runtime);
         runtime
@@ -448,6 +456,39 @@ impl LlamaCppRuntime {
                 *guard = None;
             }
         }
+    }
+
+    /// The "thinking disabled" primer for the configured chat model, or `""`
+    /// when it needs none.
+    ///
+    /// Qwen 3 family models otherwise open every answer with an unbounded
+    /// `<think>…</think>` span; on a near-full context window that span eats
+    /// the whole generation reserve and `strip_reasoning` collapses the reply
+    /// to "". The family is read from the GGUF's `general.architecture` — the
+    /// file name is only a fallback, since a renamed or re-quantised Qwen 3 is
+    /// still a Qwen 3. Resolved once per runtime: the header read is small but
+    /// it sits on every inference path.
+    ///
+    /// Append it AFTER the cached-prefix byte counts are computed — it lands at
+    /// the generation point (prompt tail), so it never shifts the prefix the KV
+    /// cache anchors on.
+    fn no_think_priming(&self) -> &'static str {
+        self.chat_no_think_primer.get_or_init(|| {
+            let Some(path) = self.chat_model_path.as_deref() else {
+                return "";
+            };
+            let primer = think_priming::no_think_priming_for_model(path);
+            crate::services::logger::log(
+                "debug",
+                "ai",
+                format!(
+                    "llamacpp: no-think priming {} for {}",
+                    if primer.is_empty() { "off" } else { "on" },
+                    path.display()
+                ),
+            );
+            primer
+        })
     }
 
     fn touch_last_used(&self) {
@@ -942,7 +983,7 @@ impl LlamaCppRuntime {
         // extraction) need raw payload, not reasoning — disable thinking so an
         // unbounded `<think>…</think>` span can't swallow the token budget and
         // collapse the reply to "". See `no_think_priming`.
-        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+        prompt_str.push_str(self.no_think_priming());
         // Byte offset where the invariant head ends INSIDE the rendered
         // prompt. `None` (no prefix given, not found, or the kill switch set)
         // runs the old path exactly.
@@ -990,7 +1031,7 @@ impl LlamaCppRuntime {
         // prompts the generation reserve shrinks to GEN_RESERVE_TOKENS and an
         // unbounded `<think>` span would consume it, yielding an empty reply.
         // Appended after the prefix byte counts so the cache anchor is intact.
-        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+        prompt_str.push_str(self.no_think_priming());
 
         // Suppress reasoning/thinking spans from the live stream so the user
         // never sees `<|channel>…<channel|>` / `<think>…</think>`. The actor
@@ -1081,7 +1122,7 @@ impl LlamaCppRuntime {
         let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
         // Disable thinking on tool-call rounds — keeps the reserve for the
         // tool call / answer instead of an unbounded `<think>` span.
-        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+        prompt_str.push_str(self.no_think_priming());
         let outcome = actor
             .generate(
                 prompt_str,
@@ -1132,7 +1173,7 @@ impl LlamaCppRuntime {
         let system_bytes = Self::system_prefix_bytes(model, messages, &prompt_str).await;
         // Disable thinking on the streaming tool-call round — see
         // `no_think_priming`; prevents the unbounded-`<think>` empty-reply path.
-        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+        prompt_str.push_str(self.no_think_priming());
 
         // Gate each piece through two filters: first strip reasoning spans
         // (`<|channel>…`, `<think>…`), then suppress tool-call syntax;
@@ -1341,7 +1382,7 @@ impl LlamaCppRuntime {
         let system_bytes = Self::system_prefix_bytes(model, &messages, &prompt_str).await;
         // Same priming as the real chat call — appended after the prefix byte
         // counts so the anchor boundary is unaffected.
-        prompt_str.push_str(no_think_priming(self.chat_model_path.as_deref()));
+        prompt_str.push_str(self.no_think_priming());
 
         let t = std::time::Instant::now();
         let outcome = actor
@@ -1466,42 +1507,6 @@ fn extract_tool_calls(text: &str) -> AiMessage {
             content: String::new(),
             tool_calls: Some(tool_calls),
         }
-    }
-}
-
-/// True when the chat-model GGUF on disk is a Qwen 3 family build (Qwen 3 or
-/// Qwen 3.5, instruct or base). The OAI-compat layer's `enable_thinking=false`
-/// flag is no longer plumbed through `apply_chat_template`, and the
-/// in-message `/no_think` directive is silently ignored by some Qwen 3 GGUFs
-/// (notably `qwen3.5-4b-q4_k_m`). The caller uses this flag to manually
-/// append the canonical "thinking disabled" priming block after the assistant
-/// generation header so one-shot completions don't get swallowed by an
-/// unbounded `<think>…</think>` span.
-fn is_qwen3_model_path(path: &std::path::Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    name.starts_with("qwen3")
-}
-
-/// The empty closed `<think></think>` block that puts a Qwen 3 family model
-/// into no-think mode — Qwen reads it as "thinking already done, emit the
-/// answer now" and skips the (otherwise unbounded) reasoning span. Returns an
-/// empty string for non-Qwen models.
-///
-/// Why this matters for CHAT (not just one-shot completions): on a near-full
-/// context window the prompt-budget planner shrinks the generation reserve to
-/// `GEN_RESERVE_TOKENS` (1024). A reasoning model then spends that whole reserve
-/// inside `<think>…` and `strip_reasoning` collapses the reply to "" — an empty
-/// answer on long/multi-email prompts. Priming no-think keeps the answer inside
-/// the reserve. Append it AFTER the cached-prefix byte counts are computed: it
-/// lands at the generation point (prompt tail), so it never shifts the prefix.
-fn no_think_priming(model_path: Option<&std::path::Path>) -> &'static str {
-    match model_path {
-        Some(p) if is_qwen3_model_path(p) => "<think>\n\n</think>\n\n",
-        _ => "",
     }
 }
 
@@ -1673,45 +1678,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn is_qwen3_model_path_detects_qwen3_ggufs() {
-        use std::path::PathBuf;
-        // The catalog ids that ship as defaults.
-        assert!(is_qwen3_model_path(&PathBuf::from(
-            "/models/chat/qwen3.5-4b-q4_k_m.gguf"
-        )));
-        assert!(is_qwen3_model_path(&PathBuf::from(
-            "/models/chat/qwen3.5-9b-q4_k_m.gguf"
-        )));
-        assert!(is_qwen3_model_path(&PathBuf::from("Qwen3-14B-Instruct.gguf")));
-        // Older Qwen families don't get the thinking-disable primer — they
-        // never had a `<think>` mode to begin with.
-        assert!(!is_qwen3_model_path(&PathBuf::from(
-            "/models/chat/qwen2.5-7b-instruct.gguf"
-        )));
-        // Other thinking families need a different priming shape (Gemma 4
-        // uses `<|channel>`, DeepSeek-R1 uses `<think>` but ships with the
-        // closed-block hint already in the template).
-        assert!(!is_qwen3_model_path(&PathBuf::from(
-            "/models/chat/gemma-4-12b-it-qat-ud-q4_k_xl.gguf"
-        )));
-        assert!(!is_qwen3_model_path(&PathBuf::from(
-            "/models/chat/deepseek-r1-distill-llama-8b.gguf"
-        )));
-        assert!(!is_qwen3_model_path(&PathBuf::from("")));
+    #[tokio::test]
+    async fn no_think_priming_is_resolved_from_the_gguf_header() {
+        // A Qwen 3 GGUF whose name says nothing about the family still gets the
+        // primer; the decision itself is unit-tested in `ai::think_priming`.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("assistant-4b-q4_k_m.gguf");
+        let mut header = b"GGUF".to_vec();
+        header.extend_from_slice(&3u32.to_le_bytes()); // version
+        header.extend_from_slice(&0u64.to_le_bytes()); // tensor count
+        header.extend_from_slice(&1u64.to_le_bytes()); // kv count
+        let key = crate::ai::gguf::KEY_ARCHITECTURE;
+        header.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        header.extend_from_slice(key.as_bytes());
+        header.extend_from_slice(&8u32.to_le_bytes()); // value type: string
+        header.extend_from_slice(&5u64.to_le_bytes());
+        header.extend_from_slice(b"qwen3");
+        std::fs::write(&path, header).unwrap();
+
+        let runtime = LlamaCppRuntime::new(Some(path), None);
+        assert_eq!(runtime.no_think_priming(), think_priming::QWEN3_NO_THINK_PRIMER);
+        // Cached: the second call returns the same answer without re-reading.
+        assert_eq!(runtime.no_think_priming(), think_priming::QWEN3_NO_THINK_PRIMER);
     }
 
-    #[test]
-    fn no_think_priming_only_for_qwen3() {
-        use std::path::PathBuf;
-        // Qwen 3 family (incl. 3.6 MoE) gets the closed think block so an
-        // unbounded `<think>` span can't swallow the generation reserve.
-        let qwen = PathBuf::from("/models/chat/qwen3.6-35b-a3b-ud-q4_k_xl.gguf");
-        assert_eq!(no_think_priming(Some(qwen.as_path())), "<think>\n\n</think>\n\n");
-        // Non-Qwen and absent paths prime nothing.
-        let gemma = PathBuf::from("/models/chat/gemma-4-12b-it-qat-ud-q4_k_xl.gguf");
-        assert_eq!(no_think_priming(Some(gemma.as_path())), "");
-        assert_eq!(no_think_priming(None), "");
+    #[tokio::test]
+    async fn no_think_priming_is_empty_without_a_chat_model() {
+        let runtime = LlamaCppRuntime::new(None, None);
+        assert_eq!(runtime.no_think_priming(), "");
     }
 
     #[test]

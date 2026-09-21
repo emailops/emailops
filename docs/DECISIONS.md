@@ -1159,3 +1159,25 @@ mechanism, because only the first token of a label is scored and the built-in ta
 initials (`notification`/`newsletter`, `complaint`/`conversation`). A grammar (GBNF) to
 constrain the JSON: both harnesses measured zero unparseable replies (145 classifier
 cases × 3 repeats, 21 planner cases), so there is nothing for it to fix.
+
+## 2026-09-19 — Model-family behaviour is decided by GGUF metadata, not by file name
+
+**Decision:** Any behaviour that depends on which model family is loaded reads the GGUF's
+own header (`general.architecture`, via `ai::gguf`) and treats the file name only as a
+fallback for headers that cannot be read. The first case is the Qwen 3 no-think primer
+(`ai::think_priming`): architecture `qwen3*` gets the closed `<think></think>` block,
+everything else does not, whatever the file is called.
+**Context:** the primer was keyed off a `qwen3` file-name prefix, so every Qwen 3 build not
+named that way — a re-quant, a community fine-tune, a file the user renamed, a GGUF adopted
+from disk via "link local model" — got no primer. On a near-full context window that model
+spends the whole generation reserve inside `<think>…`, `strip_reasoning` removes it, and the
+user sees an empty answer: a silent, total failure of chat, drafts and classification on a
+model the app otherwise supports. The header is written by the converter from the source
+config, travels with the file, and is a few hundred bytes in, so it is both authoritative
+and cheap to read before any weights are loaded.
+**Rejected:** widening the file-name match (`contains("qwen3")` and friends — same class of
+bug, now with false positives on look-alike names, and it still cannot see a renamed file);
+asking llama.cpp for the metadata after the model is loaded (the decision is needed on paths
+that must not pay for a multi-GB mmap, and it would put the rule behind the `llamacpp`
+feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
+setting (makes the user responsible for a detail the file already states).
