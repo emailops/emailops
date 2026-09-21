@@ -61,8 +61,8 @@ Der letzte Schritt fügt Ihr erstes Postfach hinzu. EmailOps unterstützt:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge oder ein beliebiger eigener
   Server. Serverdaten und Zugangsdaten direkt eingeben.
 
-Weitere Konten fügen Sie jederzeit über **Konto hinzufügen** in der Seitenleiste hinzu. Mit mehreren
-verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereinten Posteingang
+Weitere Konten fügen Sie jederzeit über die Schaltfläche **+** neben **Konten** in der Seitenleiste
+hinzu. Mit mehreren verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereinten Posteingang
 „Alle Konten“.
 
 ## Nach dem Assistenten

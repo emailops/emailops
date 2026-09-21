@@ -58,8 +58,8 @@ The last step adds your first mailbox. EmailOps supports:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge or any custom server. Enter
   the server details and credentials directly.
 
-Add more accounts any time with **Add account** in the sidebar. With several connected you get a
-unified "All accounts" inbox on top of the per-account views.
+Add more accounts any time with the **+** button next to **Accounts** in the sidebar. With several
+connected you get a unified "All accounts" inbox on top of the per-account views.
 
 ## After the wizard
 

@@ -59,8 +59,22 @@ or shows individual calendars; the same switches live in **Settings → Calendar
 
 ## Attachments view {#attachments-view}
 
-One place listing every attachment across your mail — invoices, contracts, images — with
-preview and export, instead of digging back through threads.
+One place for the attachments you care about — invoices, contracts, receipts — with preview and
+download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or
+**Create a Rule** on the empty view) and fill in:
+
+- **Rule Name** — how the rule is listed.
+- **Sender Email Pattern** — comma-separated; an exact match unless it contains `*`
+  (`*apple.com*` matches any sender containing "apple.com"). Leave it empty to match any sender.
+- **Subject Pattern** and **Filename Pattern** — `*` is a wildcard; only matching filenames are
+  collected.
+- **Tags** — comma-separated; they appear as filter buttons at the top of the view.
+
+Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
+emails after creating** to collect from the mail you already have. Select attachments to download
+them together to your Downloads folder.
 
 ## Search
 

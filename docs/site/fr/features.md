@@ -66,8 +66,26 @@ ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
 
 ## Vue des pièces jointes {#attachments-view}
 
-Un seul endroit qui liste toutes les pièces jointes de votre courrier — factures, contrats,
-images — avec aperçu et export, au lieu de fouiller à nouveau les fils de discussion.
+Un seul endroit pour les pièces jointes qui comptent — factures, contrats, reçus — avec aperçu
+et téléchargement, au lieu de fouiller à nouveau les fils de discussion. Ouvrez-la depuis
+**Pièces jointes** dans la barre latérale.
+
+La vue collecte les pièces jointes grâce à des **règles**, elle est donc vide au départ. Cliquez
+sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et remplissez :
+
+- **Nom de la règle** — le nom affiché dans la liste.
+- **Motif de l'expéditeur** — séparés par des virgules ; correspondance exacte sauf s'il contient
+  `*` (`*apple.com*` correspond à tout expéditeur contenant « apple.com »). Laissez vide pour
+  n'importe quel expéditeur.
+- **Motif de l'objet** et **Motif du nom de fichier** — `*` est un joker ; seuls les noms de
+  fichiers correspondants sont collectés.
+- **Étiquettes** — séparées par des virgules ; elles apparaissent comme boutons de filtre en haut
+  de la vue.
+
+Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
+fil de la synchronisation ; cochez **Appliquer aux e-mails existants après la création** pour
+collecter aussi dans le courrier déjà présent. Sélectionnez des pièces jointes pour les
+télécharger ensemble dans votre dossier Téléchargements.
 
 ## Recherche
 

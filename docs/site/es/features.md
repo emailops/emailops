@@ -64,8 +64,25 @@ cuadrícula oculta o muestra calendarios individuales; los mismos interruptores 
 
 ## Vista de adjuntos {#attachments-view}
 
-Un único sitio con todos los adjuntos de tu correo — facturas, contratos, imágenes — con
-vista previa y exportación, en lugar de bucear otra vez en los hilos.
+Un único sitio con los adjuntos que te importan — facturas, contratos, recibos — con vista
+previa y descarga, en lugar de bucear otra vez en los hilos. Ábrela desde **Adjuntos** en la
+barra lateral.
+
+La vista recopila adjuntos mediante **reglas**, así que empieza vacía. Pulsa **Gestionar
+reglas** (o **Crear una regla** en la vista vacía) y rellena:
+
+- **Nombre de la regla** — cómo aparece en la lista.
+- **Patrón del remitente** — separados por coma; coincidencia exacta salvo que lleve `*`
+  (`*apple.com*` coincide con cualquier remitente que contenga "apple.com"). Déjalo vacío para
+  cualquier remitente.
+- **Patrón del asunto** y **Patrón del nombre de archivo** — `*` es un comodín; solo se
+  recopilan los nombres de archivo que coinciden.
+- **Etiquetas** — separadas por coma; aparecen como botones de filtro arriba de la vista.
+
+Tienen que coincidir todos los patrones que rellenes. Las reglas se aplican al correo nuevo
+según se sincroniza; marca **Aplicar a los correos existentes después de crear** para recopilar
+también del correo que ya tienes. Selecciona adjuntos para descargarlos juntos en tu carpeta de
+Descargas.
 
 ## Búsqueda
 

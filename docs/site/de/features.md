@@ -65,8 +65,24 @@ einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 
 ## Anhänge-Ansicht {#attachments-view}
 
-Ein Ort mit allen Anhängen aus Ihrem Postfach — Rechnungen, Verträge, Bilder — mit Vorschau
-und Export, statt sich erneut durch Threads zu graben.
+Ein Ort für die Anhänge, die Ihnen wichtig sind — Rechnungen, Verträge, Belege — mit Vorschau
+und Download, statt sich erneut durch Threads zu graben. Öffnen Sie sie über **Anhänge** in der
+Seitenleiste.
+
+Die Ansicht sammelt Anhänge über **Regeln** und ist daher anfangs leer. Klicken Sie auf **Regeln
+verwalten** (oder **Regel erstellen** in der leeren Ansicht) und füllen Sie aus:
+
+- **Regelname** — so erscheint die Regel in der Liste.
+- **Absender-Muster** — komma-getrennt; exakter Treffer, sofern es kein `*` enthält
+  (`*apple.com*` erfasst jeden Absender, der „apple.com“ enthält). Leer lassen für jeden Absender.
+- **Betreffmuster** und **Dateinamen-Muster** — `*` ist ein Platzhalter; nur passende Dateinamen
+  werden gesammelt.
+- **Tags** — komma-getrennt; sie erscheinen oben in der Ansicht als Filter-Schaltflächen.
+
+Alle ausgefüllten Muster müssen zutreffen. Regeln greifen bei neuer Post während der
+Synchronisierung; setzen Sie **Nach dem Erstellen auf vorhandene E-Mails anwenden**, um auch aus
+der bereits vorhandenen Post zu sammeln. Markieren Sie Anhänge, um sie gemeinsam in Ihren
+Downloads-Ordner herunterzuladen.
 
 ## Suche
 

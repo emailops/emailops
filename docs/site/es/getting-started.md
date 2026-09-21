@@ -62,8 +62,8 @@ El último paso añade tu primer buzón. EmailOps admite:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge o cualquier servidor
   personalizado. Introduce los datos del servidor y las credenciales directamente.
 
-Añade más cuentas cuando quieras con **Añadir cuenta** en la barra lateral. Con varias conectadas obtienes
-una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
+Añade más cuentas cuando quieras con el botón **+** junto a **Cuentas** en la barra lateral. Con
+varias conectadas obtienes una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 
 ## Después del asistente
 

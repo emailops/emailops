@@ -62,10 +62,9 @@ La dernière étape ajoute votre première boîte. EmailOps prend en charge :
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge ou tout serveur personnalisé.
   Saisissez directement les paramètres du serveur et les identifiants.
 
-Ajoutez d'autres comptes quand vous voulez avec **Ajouter un compte** dans la barre
-latérale. Avec plusieurs
-comptes connectés, vous obtenez une boîte unifiée « Tous les comptes » en plus des vues par
-compte.
+Ajoutez d'autres comptes quand vous voulez avec le bouton **+** à côté de **Comptes** dans la
+barre latérale. Avec plusieurs comptes connectés, vous obtenez une boîte unifiée « Tous les
+comptes » en plus des vues par compte.
 
 ## Après l'assistant
 
