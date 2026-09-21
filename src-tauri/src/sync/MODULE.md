@@ -33,5 +33,5 @@ Provider-specific email synchronisation adapters plus the shared `EmailProvider`
 ## What should NOT live here
 
 - Business logic (draft generation, classification) — those are in `services/`
-- DB schema — that is `db/schema.rs`
+- DB schema — that is `src-tauri/migrations/`
 - Sync scheduling (when to sync) — that is `services/sync_scheduler`

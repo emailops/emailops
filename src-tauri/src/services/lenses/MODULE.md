@@ -26,6 +26,6 @@ AI-extracted, schema-typed tabular views over a user's mailbox — "Lenses".
 
 ## What should NOT live here
 
-- SQL schema — that is `db/lenses.rs` and the migration in `db/schema.rs`
+- SQL schema — that is `db/lenses.rs` and the migration in `src-tauri/migrations/`
 - Frontend Lens component state — that is `src/stores/lensStore.ts`
 - Classification tags — those are `services/classification`; lens extraction is separate

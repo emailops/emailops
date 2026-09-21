@@ -152,7 +152,7 @@ avec le lien **Afficher les étiquettes masquées**.
 
 La barre d'outils restreint le tableau par période (**Aujourd'hui**, **Hier**, **7 derniers
 jours** ou une plage de dates personnalisée), par catégorie Gmail, par nom d'étiquette, et
-avec le même interrupteur de masquage des indésirables que la boîte de réception ; deux
+avec le même interrupteur **Masquer les indésirables** que la boîte de réception ; deux
 icônes règlent la largeur des blocs. Un clic sur une carte ouvre le fil dans le volet de
 lecture, son menu ⋮ propose les mêmes actions qu'une ligne de la boîte de réception, et
 l'icône de chat du volet de lecture démarre une conversation avec ce fil en contexte.

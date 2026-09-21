@@ -146,7 +146,7 @@ und holen Sie ausgeblendete Tags über den Link **Ausgeblendete Tags anzeigen** 
 
 Die Werkzeugleiste grenzt das Board nach Zeitraum ein (**Heute**, **Gestern**, **Letzte 7
 Tage** oder ein eigener Datumsbereich), nach Gmail-Kategorie, nach Tag-Name und mit
-demselben Schalter zum Ausblenden von Junk wie im Posteingang; zwei Symbole legen die
+demselben Schalter **Spam-Nachrichten ausblenden** wie im Posteingang; zwei Symbole legen die
 Blockbreite fest. Ein Klick auf eine Karte öffnet den Thread im Lesebereich, ihr ⋮-Menü
 bietet dieselben Aktionen wie eine Zeile im Posteingang, und das Chat-Symbol im Lesebereich
 startet eine Unterhaltung mit diesem Thread als Kontext.

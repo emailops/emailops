@@ -16,7 +16,11 @@ SITE_DIR="docs/site"
 LANGS=(en es fr de)
 REF_LANG="en"
 
-python3 - "$SITE_DIR" "$REF_LANG" "${LANGS[@]}" <<'PY'
+# `uv run --no-project` rather than a bare `python3`: on macOS the first python3
+# on PATH is often an x86_64 Homebrew build that cannot exec on Apple Silicon
+# ("Bad CPU type in executable"), which silently made this check unrunnable.
+# --no-project stops uv looking for a pyproject.toml this repo does not have.
+uv run --no-project python - "$SITE_DIR" "$REF_LANG" "${LANGS[@]}" <<'PY'
 import pathlib, re, sys
 
 site = pathlib.Path(sys.argv[1])

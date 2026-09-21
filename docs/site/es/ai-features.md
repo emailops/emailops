@@ -146,7 +146,7 @@ etiquetas ocultas**.
 
 La barra superior acota el tablero por periodo (**Hoy**, **Ayer**, **Últimos 7 días** o un
 rango de fechas personalizado), por categoría de Gmail, por nombre de etiqueta y con el mismo
-interruptor de ocultar correo basura que la bandeja; dos iconos fijan el ancho de los
+interruptor **Ocultar mensajes de basura** que la bandeja; dos iconos fijan el ancho de los
 bloques. Al pulsar una tarjeta el hilo se abre en el panel de lectura, su menú ⋮ ofrece las
 mismas acciones que una fila de la bandeja, y el icono de chat del panel de lectura inicia
 una conversación con ese hilo como contexto.
