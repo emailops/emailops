@@ -150,10 +150,15 @@ await docClaim('tag-board-toolbar', 'Tag Board y clasificación', 'ai-features.m
   'the toolbar narrows the board by time (Today, Yesterday, Last 7 days) and carries the same Hide junk messages switch as the inbox',
   'si un control ya no existe, reescribir el párrafo de la barra de herramientas en los 4 idiomas citando las etiquetas reales de src/locales/<lang>/',
   async () => {
-    const promised = ['Today', 'Yesterday', 'Last 7 days', 'Hide junk messages'];
     const missing = [];
-    for (const label of promised) if (!(await exists(`button=${label}`))) missing.push(label);
-    return ok(!missing.length, promised.join(', '), `el doc promete ${missing.join(', ')} en la barra`);
+    for (const label of ['Today', 'Yesterday', 'Last 7 days']) if (!(await exists(`button=${label}`))) missing.push(label);
+    // The junk control is a switch, not a button: a <label> wrapping a
+    // checkbox and its text. Checking the input and the visible label
+    // separately keeps the claim about what the reader is told to look for.
+    const hasSwitch = await exists('#tagboard-hide-junk');
+    const hasLabel = (await bodyText()).includes('Hide junk messages');
+    if (!hasSwitch || !hasLabel) missing.push(`Hide junk messages (switch=${hasSwitch}, etiqueta=${hasLabel})`);
+    return ok(!missing.length, 'Today, Yesterday, Last 7 days, Hide junk messages', `el doc promete ${missing.join(', ')} en la barra`);
   });
 await docClaim('tag-board-dimensions', 'Tag Board y clasificación', 'ai-features.md',
   'pick one dimension — Company, Priority, Intent or Topic',
