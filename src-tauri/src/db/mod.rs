@@ -1065,6 +1065,25 @@ mod schema_parity_tests {
         rows
     }
 
+    /// Two branches that each add "the next" migration collide on a merge.
+    /// Refinery runs both on a fresh DB, but on a DB that already applied one
+    /// of them it silently skips the other, so the collision only shows up on
+    /// existing installs.
+    #[test]
+    fn migration_versions_are_unique() {
+        let runner = embedded::migrations::runner();
+        let mut seen = std::collections::HashMap::new();
+        for m in runner.get_migrations() {
+            if let Some(other) = seen.insert(m.version(), m.name().to_string()) {
+                panic!(
+                    "migration version V{:03} is used by both `{other}` and `{}`",
+                    m.version(),
+                    m.name()
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_db_has_critical_tables() {
         let db = Database::new_for_testing().expect("create test db");
