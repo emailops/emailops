@@ -7,6 +7,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useJunkStore } from '@/stores/junkStore';
 import { useLogStore } from '@/stores/logStore';
 import type { JunkConfig, JunkFlaggedAction, JunkStats } from '@/types';
+import { SettingsPanel } from './SettingsPanel';
 
 /** Axes with a trained model. Typed so a missing translation fails the build. */
 const MODEL_AXES = ['spam', 'graymail'] as const;
@@ -156,128 +157,119 @@ export function JunkSettings() {
     };
   }, [runningKey]);
 
-  // Same two-level shape as every sibling panel: the tab body in
-  // SettingsDialog has no padding or scrolling of its own, so each panel owns
-  // its `overflow-y-auto flex-1 px-6 py-5` container.
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-        {/* Errors sit above everything, never at the bottom of a scroll container. */}
-        {error && (
-          <div className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-sm text-red-200">{error}</div>
-        )}
+    <SettingsPanel>
+      {/* Errors sit above everything, never at the bottom of a scroll container. */}
+      {error && (
+        <div className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-sm text-red-200">{error}</div>
+      )}
 
-        <ToggleSwitch
-          checked={config.enabled}
-          onChange={(v) => void save({ ...config, enabled: v })}
-          label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.enabled')}</span>}
-          description={<span className="text-xs text-gray-500">{t('settings:junk.enabledDesc')}</span>}
-        />
+      <ToggleSwitch
+        checked={config.enabled}
+        onChange={(v) => void save({ ...config, enabled: v })}
+        label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.enabled')}</span>}
+        description={<span className="text-xs text-gray-500">{t('settings:junk.enabledDesc')}</span>}
+      />
 
-        <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-          <h3 className="text-sm font-semibold text-gray-300 mb-2">{t('settings:junk.flaggedActionTitle')}</h3>
-          <div className="space-y-2">
-            {ACTIONS.map((action) => (
-              <label key={action} className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="junk-flagged-action"
-                  className="mt-1 accent-primary-600"
-                  checked={config.flaggedAction === action}
-                  onChange={() => void save({ ...config, flaggedAction: action })}
-                  disabled={!config.enabled}
-                />
-                <span className="text-sm">
-                  <span className="text-gray-200">{t(`settings:junk.action.${action}` as const)}</span>
-                  <span className="block text-xs text-gray-500">
-                    {t(`settings:junk.actionDesc.${action}` as const)}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <p className="mt-3 text-xs text-gray-500">{t('settings:junk.neverMoves')}</p>
-        </section>
+      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+        <h3 className="text-sm font-semibold text-gray-300 mb-2">{t('settings:junk.flaggedActionTitle')}</h3>
+        <div className="space-y-2">
+          {ACTIONS.map((action) => (
+            <label key={action} className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="junk-flagged-action"
+                className="mt-1 accent-primary-600"
+                checked={config.flaggedAction === action}
+                onChange={() => void save({ ...config, flaggedAction: action })}
+                disabled={!config.enabled}
+              />
+              <span className="text-sm">
+                <span className="text-gray-200">{t(`settings:junk.action.${action}` as const)}</span>
+                <span className="block text-xs text-gray-500">{t(`settings:junk.actionDesc.${action}` as const)}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-gray-500">{t('settings:junk.neverMoves')}</p>
+      </section>
 
-        <ToggleSwitch
-          checked={config.phishingEnabled}
-          onChange={(v) => void save({ ...config, phishingEnabled: v })}
-          label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.phishing')}</span>}
-          description={<span className="text-xs text-gray-500">{t('settings:junk.phishingDesc')}</span>}
-        />
+      <ToggleSwitch
+        checked={config.phishingEnabled}
+        onChange={(v) => void save({ ...config, phishingEnabled: v })}
+        label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.phishing')}</span>}
+        description={<span className="text-xs text-gray-500">{t('settings:junk.phishingDesc')}</span>}
+      />
 
-        {/* One card per account. Every figure below is per-mailbox, so a single
+      {/* One card per account. Every figure below is per-mailbox, so a single
             merged block would be a number nobody could act on. "Status" is the
             heading for the group, not for each card — repeating it once per
             mailbox buries the thing the reader is scanning for, which is the
             address. */}
-        <div className="space-y-3">
-          {scoredAccounts.some((a) => statsByAccount[a.id]) && (
-            <h3 className="text-sm font-semibold text-gray-300">{t('settings:junk.statusTitle')}</h3>
-          )}
-          {scoredAccounts.map((account) => {
-            const stats = statsByAccount[account.id];
-            if (!stats) return null;
-            const isBackfilling = backfilling[account.id] === true;
-            return (
-              <section key={account.id} className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-                <h4 className="mb-2 text-sm font-medium text-gray-200">{account.email}</h4>
+      <div className="space-y-3">
+        {scoredAccounts.some((a) => statsByAccount[a.id]) && (
+          <h3 className="text-sm font-semibold text-gray-300">{t('settings:junk.statusTitle')}</h3>
+        )}
+        {scoredAccounts.map((account) => {
+          const stats = statsByAccount[account.id];
+          if (!stats) return null;
+          const isBackfilling = backfilling[account.id] === true;
+          return (
+            <section key={account.id} className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+              <h4 className="mb-2 text-sm font-medium text-gray-200">{account.email}</h4>
 
-                <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
-                  <dt className="text-gray-400">{t('settings:junk.scored')}</dt>
-                  <dd className="text-right tabular-nums text-gray-200">{stats.scored}</dd>
-                  <dt className="text-gray-400">{t('settings:junk.unscored')}</dt>
-                  <dd className="text-right tabular-nums text-gray-200">{stats.unscored}</dd>
-                  <dt className="text-gray-400">{t('settings:junk.foundSpam')}</dt>
-                  <dd className="text-right tabular-nums text-gray-200">{stats.spam}</dd>
-                  <dt className="text-gray-400">{t('settings:junk.foundGraymail')}</dt>
-                  <dd className="text-right tabular-nums text-gray-200">{stats.graymail}</dd>
-                  {config.phishingEnabled && (
-                    <>
-                      <dt className="text-gray-400">{t('settings:junk.foundPhishing')}</dt>
-                      <dd className="text-right tabular-nums text-gray-200">{stats.phishing}</dd>
-                    </>
-                  )}
-                  <dt className="text-gray-400">{t('settings:junk.yourFeedback')}</dt>
-                  <dd className="text-right tabular-nums text-gray-200">
-                    {stats.markedJunk} / {stats.markedNotJunk}
-                  </dd>
-                </dl>
+              <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
+                <dt className="text-gray-400">{t('settings:junk.scored')}</dt>
+                <dd className="text-right tabular-nums text-gray-200">{stats.scored}</dd>
+                <dt className="text-gray-400">{t('settings:junk.unscored')}</dt>
+                <dd className="text-right tabular-nums text-gray-200">{stats.unscored}</dd>
+                <dt className="text-gray-400">{t('settings:junk.foundSpam')}</dt>
+                <dd className="text-right tabular-nums text-gray-200">{stats.spam}</dd>
+                <dt className="text-gray-400">{t('settings:junk.foundGraymail')}</dt>
+                <dd className="text-right tabular-nums text-gray-200">{stats.graymail}</dd>
+                {config.phishingEnabled && (
+                  <>
+                    <dt className="text-gray-400">{t('settings:junk.foundPhishing')}</dt>
+                    <dd className="text-right tabular-nums text-gray-200">{stats.phishing}</dd>
+                  </>
+                )}
+                <dt className="text-gray-400">{t('settings:junk.yourFeedback')}</dt>
+                <dd className="text-right tabular-nums text-gray-200">
+                  {stats.markedJunk} / {stats.markedNotJunk}
+                </dd>
+              </dl>
 
-                <div className="mt-3 space-y-1 border-t border-gray-700 pt-3">
-                  {stats.models
-                    .filter((m) => isModelAxis(m.axis))
-                    .map((m) => (
-                      <div key={m.axis} className="flex items-baseline justify-between gap-4 text-xs">
-                        <span className="text-gray-400">
-                          {t(`settings:junk.model.${m.axis as ModelAxis}` as const)}
-                        </span>
-                        {/* Amber, not red: "not enough labels yet" is the expected
+              <div className="mt-3 space-y-1 border-t border-gray-700 pt-3">
+                {stats.models
+                  .filter((m) => isModelAxis(m.axis))
+                  .map((m) => (
+                    <div key={m.axis} className="flex items-baseline justify-between gap-4 text-xs">
+                      <span className="text-gray-400">{t(`settings:junk.model.${m.axis as ModelAxis}` as const)}</span>
+                      {/* Amber, not red: "not enough labels yet" is the expected
                         state on a young mailbox, not a fault. */}
-                        <span className={m.inUse ? 'text-right text-gray-300' : 'text-right text-amber-400'}>
-                          {m.inUse
-                            ? t('settings:junk.modelInUse', { pos: m.positives, neg: m.negatives })
-                            : t('settings:junk.modelNotYet', { pos: m.positives, neg: m.negatives })}
-                        </span>
-                      </div>
-                    ))}
-                </div>
+                      <span className={m.inUse ? 'text-right text-gray-300' : 'text-right text-amber-400'}>
+                        {m.inUse
+                          ? t('settings:junk.modelInUse', { pos: m.positives, neg: m.negatives })
+                          : t('settings:junk.modelNotYet', { pos: m.positives, neg: m.negatives })}
+                      </span>
+                    </div>
+                  ))}
+              </div>
 
-                <button
-                  type="button"
-                  onClick={() => void handleBackfill(account.id)}
-                  disabled={isBackfilling || !config.enabled || stats.unscored === 0}
-                  className="mt-3 rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50"
-                >
-                  {isBackfilling
-                    ? t('settings:junk.backfillRunning', { count: stats.unscored })
-                    : t('settings:junk.backfill', { count: stats.unscored })}
-                </button>
-              </section>
-            );
-          })}
-        </div>
+              <button
+                type="button"
+                onClick={() => void handleBackfill(account.id)}
+                disabled={isBackfilling || !config.enabled || stats.unscored === 0}
+                className="mt-3 rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50"
+              >
+                {isBackfilling
+                  ? t('settings:junk.backfillRunning', { count: stats.unscored })
+                  : t('settings:junk.backfill', { count: stats.unscored })}
+              </button>
+            </section>
+          );
+        })}
       </div>
-    </div>
+    </SettingsPanel>
   );
 }
