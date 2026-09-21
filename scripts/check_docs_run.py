@@ -28,6 +28,20 @@ def sh(cmd, timeout=1800):
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
+def first_problem(out):
+    """The summary row wants the problem, not the closing advice.
+
+    Every guard prints its findings as `  - <what is wrong>` and then a line
+    telling you how to fix the class of thing. Taking the last line puts that
+    generic advice in the table and leaves the reader opening each failure to
+    learn which file it was actually about.
+    """
+    for line in out.splitlines():
+        if line.lstrip().startswith("- "):
+            return line.strip()[2:][:200]
+    return out.splitlines()[-1][:200] if out.splitlines() else ""
+
+
 def add(typ, name, status, detail="", ms=None, desc="", **evidence):
     records.append(
         {
@@ -78,7 +92,7 @@ for name, cmd, desc, fix in STATIC:
         "static",
         name,
         "ok" if rc == 0 else "fail",
-        "" if rc == 0 else out.splitlines()[-1][:200],
+        "" if rc == 0 else first_problem(out),
         int((time.time() - t0) * 1000),
         desc=f"{desc} · Comando: {cmd}",
         trace="" if rc == 0 else out[-4000:],
