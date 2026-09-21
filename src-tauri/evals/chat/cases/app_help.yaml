@@ -11,6 +11,12 @@
 #   from the model's own memory fails.
 # - No mailbox search ran: a question about the app must not spend a round on
 #   `search_emails` and must not end in "I could not find this in your inbox".
+# - The answer is grounded in the guides, asserted on the trace rather than on
+#   the text: the help lookup served a section of the expected guide page
+#   (`expected_help_pages_any`) and mailbox RAG fed the model no email
+#   (`expected_no_email_sources`). The `help://` anchor alone cannot prove it —
+#   the turn appends a link whenever any guide section rode in the prompt, and
+#   the demo mailbox holds user emails asking the same questions.
 # - The mirror case: a mailbox question about a demo sender gets NO help link
 #   even though the guides mention chat, drafts and calendars — the similarity
 #   gate (`HELP_MIN_SIMILARITY`) keeps the guides out of ordinary turns.
@@ -28,6 +34,8 @@
   category: out_of_scope
   tier: smoke
   expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features", "getting-started"]
+  expected_no_email_sources: true
   expected_answer_contains: ["help://"]
   expected_answer_contains_any: ["11434", "Ollama (local)", "AI Backend"]
   expected_answer_not_contains: ["could not find this in your inbox", "no puedo encontrar"]
@@ -42,6 +50,8 @@
   category: out_of_scope
   tier: smoke
   expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features", "getting-started"]
+  expected_no_email_sources: true
   expected_answer_contains: ["help://"]
   expected_answer_contains_any: ["Qwen", "catálogo", "catalog", "AI Backend", "Backend"]
   expected_output: "En Ajustes → AI Backend & Models eliges el backend y el modelo de chat del catálogo integrado (Qwen 3.5 4B es el recomendado). Los modelos demasiado grandes para tu memoria aparecen atenuados. Ver Funciones de IA › El catálogo de modelos."
@@ -55,6 +65,8 @@
   category: out_of_scope
   tier: full
   expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["privacy-security", "installation"]
+  expected_no_email_sources: true
   expected_answer_contains: ["help://"]
   expected_answer_contains_any: ["com.emailops.app", "Application Support", "APPDATA", ".local/share", "SQLite"]
   expected_output: "Alles liegt im Anwendungsdatenverzeichnis deines Systems (macOS: ~/Library/Application Support/com.emailops.app, Windows: %APPDATA%\\com.emailops.app, Linux: ~/.local/share/com.emailops.app): eine SQLite-Datenbank und ein models/-Ordner. Zugangsdaten liegen im System-Schlüsselbund. Siehe Datenschutz & Sicherheit › Wo deine Daten gespeichert werden."
@@ -68,6 +80,8 @@
   category: out_of_scope
   tier: full
   expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["troubleshooting", "ai-features"]
+  expected_no_email_sources: true
   expected_answer_contains: ["help://"]
   expected_answer_contains_any: ["VRAM", "plus petit", "smaller model", "contexte", "context window", "Keep model loaded", "modèle chargé", "thinking", "réflexion"]
   expected_output: "Vérifiez d'abord que le modèle tient dans la mémoire (VRAM sur Windows/Linux, mémoire unifiée sur Apple Silicon), sinon prenez un modèle plus petit ; augmentez « Garder le modèle chargé », réduisez la fenêtre de contexte et désactivez le mode réflexion. Voir Dépannage › Le chat est lent."
@@ -81,6 +95,8 @@
   category: out_of_scope
   tier: full
   expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features"]
+  expected_no_email_sources: true
   expected_answer_contains: ["help://"]
   expected_answer_contains_any: ["Experimental", "experimental", "Settings", "sidebar"]
   expected_output: "Lenses are an experimental feature: enable them in Settings → Lenses, then create and run individual lenses from the Lenses entry in the sidebar. See AI features › Lenses."

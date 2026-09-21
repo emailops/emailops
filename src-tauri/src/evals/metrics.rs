@@ -108,6 +108,17 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if !case.expected_help_pages_any.is_empty() {
+        checks.push(check_help_pages_any(
+            &case.expected_help_pages_any,
+            outcome.assistant_trace.as_ref(),
+        ));
+    }
+
+    if case.expected_no_email_sources {
+        checks.push(check_no_email_sources(&outcome.sources_used));
+    }
+
     if let Some(pattern) = case.expected_title_pattern.as_deref() {
         checks.push(check_title_pattern(pattern, &outcome.conversation_title)?);
     }
@@ -169,6 +180,57 @@ fn check_tools_not_called(forbidden: &[String], trace: Option<&ChatTrace>) -> He
             "no forbidden tool was invoked".into()
         } else {
             format!("forbidden tool calls: {}", violations.join(", "))
+        },
+    }
+}
+
+/// Assert that the help lookup served at least one section of one of `pages`
+/// (guide file stems, e.g. `ai-features`). Chunk ids are `<lang>/<page>#…`,
+/// and the lookup serves sections in the AI output language, so the page is
+/// matched regardless of language.
+fn check_help_pages_any(pages: &[String], trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let served: Vec<String> = trace
+        .and_then(|t| t.help.as_ref())
+        .map(|h| h.chunk_ids.clone())
+        .unwrap_or_default();
+    let page_of = |chunk_id: &str| -> Option<String> {
+        let (_, rest) = chunk_id.split_once('/')?;
+        Some(rest.split('#').next().unwrap_or(rest).to_string())
+    };
+    let passed = served.iter().any(|id| page_of(id).is_some_and(|p| pages.contains(&p)));
+
+    HeuristicCheck {
+        name: "help_pages_any".into(),
+        passed,
+        expected: format!("a guide section from any of: {}", pages.join(", ")),
+        actual: if served.is_empty() {
+            "<no guide section served>".into()
+        } else {
+            served.join(", ")
+        },
+        detail: if passed {
+            "the help lookup served an expected guide page".into()
+        } else {
+            "the answer was not grounded in the expected guide page".into()
+        },
+    }
+}
+
+/// Assert that no mailbox email was fed to the model as a RAG source — a
+/// question about the app must be answered from the guides, not from an
+/// email that happens to discuss the same topic.
+fn check_no_email_sources(sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
+    let passed = sources.is_empty();
+    HeuristicCheck {
+        name: "no_email_sources".into(),
+        passed,
+        expected: "0 email sources".into(),
+        actual: format!("{} email sources", sources.len()),
+        detail: if passed {
+            "mailbox RAG fed nothing to the model".into()
+        } else {
+            let ids: Vec<&str> = sources.iter().take(5).map(|s| s.email_id.as_str()).collect();
+            format!("mailbox RAG fed emails to the model: {}", ids.join(", "))
         },
     }
 }
@@ -456,6 +518,75 @@ mod tests {
             help: None,
             llm_calls: vec![],
         }
+    }
+
+    // ── help grounding ──────────────────────────────────────────────────
+    // An app question is answered from the guides. The answer text cannot
+    // prove it: the turn appends a `help://` link whenever any guide section
+    // rode in the prompt, and mailbox RAG runs alongside the help lookup, so
+    // a reply built from a user's email about the same topic still passes the
+    // answer anchors. The trace records both corpora, so assert on it.
+
+    fn trace_with_help(chunk_ids: &[&str]) -> ChatTrace {
+        let mut trace = trace_with(vec![]);
+        trace.help = Some(crate::models::HelpTrace {
+            included: chunk_ids.len() as i32,
+            chunk_ids: chunk_ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        });
+        trace
+    }
+
+    fn source(citation_number: i32) -> crate::evals::harness::SourceSummary {
+        crate::evals::harness::SourceSummary {
+            citation_number,
+            email_id: format!("demo_{citation_number}"),
+            subject: String::new(),
+            sender: String::new(),
+            sender_email: String::new(),
+            relevance_score: None,
+            body_snippet: String::new(),
+        }
+    }
+
+    #[test]
+    fn help_pages_passes_when_a_section_of_an_expected_page_was_served() {
+        let trace = trace_with_help(&["en/troubleshooting#1.0", "en/ai-features#2.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn help_pages_ignores_the_language_of_the_served_section() {
+        let trace = trace_with_help(&["es/ai-features#2.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn help_pages_fails_when_only_other_pages_were_served() {
+        let trace = trace_with_help(&["en/troubleshooting#1.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(!check.passed);
+        assert!(check.actual.contains("en/troubleshooting#1.0"), "{}", check.actual);
+    }
+
+    #[test]
+    fn help_pages_fails_when_the_help_lookup_did_not_run() {
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace_with(vec![])));
+        assert!(!check.passed);
+    }
+
+    #[test]
+    fn no_email_sources_passes_when_nothing_from_the_mailbox_was_fed() {
+        assert!(check_no_email_sources(&[]).passed);
+    }
+
+    #[test]
+    fn no_email_sources_fails_when_mailbox_rag_fed_the_prompt() {
+        let check = check_no_email_sources(&[source(1), source(2)]);
+        assert!(!check.passed);
+        assert!(check.actual.contains('2'), "{}", check.actual);
     }
 
     // ── tools_not_called ────────────────────────────────────────────────

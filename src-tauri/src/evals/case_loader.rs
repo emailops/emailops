@@ -175,6 +175,19 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_tool_args_not_contains: Vec<String>,
 
+    /// Guide pages (file stems under `docs/site/<lang>/`, e.g. `ai-features`)
+    /// of which the help lookup must serve at least one section. Asserts the
+    /// answer was grounded in the right guide: the `help://` link in the
+    /// answer cannot, since the turn appends one whenever ANY section rode in
+    /// the prompt.
+    #[serde(default)]
+    pub expected_help_pages_any: Vec<String>,
+
+    /// When true, mailbox RAG must feed no email to the model. For questions
+    /// about the app, which the guides answer.
+    #[serde(default)]
+    pub expected_no_email_sources: bool,
+
     /// Regex pattern the auto-derived conversation title must match.
     #[serde(default)]
     pub expected_title_pattern: Option<String>,

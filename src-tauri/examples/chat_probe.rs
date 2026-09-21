@@ -168,6 +168,8 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         expected_answer_not_contains: vec![],
         expected_tool_args_contains: vec![],
         expected_tool_args_not_contains: vec![],
+        expected_help_pages_any: vec![],
+        expected_no_email_sources: false,
         expected_title_pattern: None,
         expected_output: None,
         metrics: vec![],
