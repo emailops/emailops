@@ -208,6 +208,70 @@ pub(crate) fn relink_self_numbered_citations(answer: &str, source_ids: &[String]
     relinked.trim_end().to_string()
 }
 
+/// What an answer's sources are, and therefore what a bare `[n]` may mean.
+///
+/// The UI resolves a bare `[n]` to the n-th numbered Source. A model that
+/// got emails from a tool (`search_emails`, `get_email_body`, …) numbers
+/// those emails itself — its first bullet is `[1]` whatever Source `[1]`
+/// is — so on such a turn a bare `[n]` cannot be trusted against the
+/// Sources, no matter what the prompt says (measured: Qwen 3.6 35B kept
+/// self-numbering with the contract spelled out). The tool-returned emails
+/// are the answer's grounding instead, cited with `email://` links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AnswerGrounding {
+    /// No tool handed back an email: the numbered Sources stand, and so do
+    /// the `[n]` markers.
+    Sources,
+    /// Tools handed back emails: they replace the numbered Sources, in this
+    /// order, and every bare `[n]` is dropped.
+    ToolEmails(Vec<String>),
+}
+
+impl AnswerGrounding {
+    /// How many bare `[n]` values are valid: the Source count, or none.
+    pub(crate) fn citation_range(&self, source_count: usize) -> usize {
+        match self {
+            Self::Sources => source_count,
+            Self::ToolEmails(_) => 0,
+        }
+    }
+}
+
+/// Decide an answer's grounding. `source_ids` are the numbered Sources in
+/// citation order, `tool_email_ids` every email the turn's tools returned in
+/// the order they produced them. On a tool turn the emails the answer links
+/// come first, in link order — a numbered Source too, when the answer links
+/// it — then the remaining tool emails; a Source the answer never linked is
+/// not listed, and neither is a link outside both sets.
+pub(crate) fn plan_answer_grounding(source_ids: &[String], tool_email_ids: &[String], answer: &str) -> AnswerGrounding {
+    if tool_email_ids.is_empty() {
+        return AnswerGrounding::Sources;
+    }
+    let mut ordered: Vec<String> = Vec::with_capacity(tool_email_ids.len());
+    for id in linked_email_ids(answer) {
+        if (tool_email_ids.contains(&id) || source_ids.contains(&id)) && !ordered.contains(&id) {
+            ordered.push(id);
+        }
+    }
+    for id in tool_email_ids {
+        if !ordered.contains(id) {
+            ordered.push(id.clone());
+        }
+    }
+    AnswerGrounding::ToolEmails(ordered)
+}
+
+/// The ids of the `[label](email://ID)` links in `answer`, in order, repeats
+/// included.
+fn linked_email_ids(answer: &str) -> Vec<String> {
+    use std::sync::OnceLock;
+    static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let link_re = LINK_RE.get_or_init(|| regex::Regex::new(r"\]\(email://([^)\s]+)\)").unwrap());
+    link_re.captures_iter(answer).map(|c| c[1].to_string()).collect()
+}
+
 /// Remove `[n]` markers from `answer` where n is outside 1..=max_valid.
 /// Qwen 4B in tool-results mode often invents `[1]..[9]` despite the system
 /// prompt's CITATION CONTRACT — those markers are user-visible noise pointing
@@ -813,6 +877,53 @@ mod tests {
     fn relink_ignores_a_number_defined_as_two_different_emails() {
         let ans = "Write to help@vendor.example [1].\n\n[1](email://eml-a) [1](email://eml-b)";
         assert_eq!(relink_self_numbered_citations(ans, &ids(&["eml-ship"])), ans);
+    }
+
+    // ── plan_answer_grounding ───────────────────────────────────────────
+    //
+    // A bare `[n]` opens the n-th numbered Source. In a turn where a tool
+    // handed the model emails, the model numbers those emails itself, so
+    // `[n]` is meaningless against the Sources: the turn's citations are its
+    // `email://` links and its sources are the emails the tools returned.
+
+    #[test]
+    fn grounding_keeps_numbered_sources_when_no_tool_returned_an_email() {
+        let plan = plan_answer_grounding(&ids(&["s1", "s2"]), &[], "March 3rd [2], see [it](email://s2).");
+        assert_eq!(plan, AnswerGrounding::Sources);
+    }
+
+    #[test]
+    fn grounding_lists_linked_emails_first_then_the_rest_in_tool_order() {
+        let plan = plan_answer_grounding(
+            &ids(&["s1"]),
+            &ids(&["t1", "t2", "t3"]),
+            "See [the claim](email://t3) and [the order](email://t1).",
+        );
+        assert_eq!(plan, AnswerGrounding::ToolEmails(ids(&["t3", "t1", "t2"])));
+    }
+
+    #[test]
+    fn grounding_keeps_a_linked_numbered_source_in_a_tool_turn() {
+        let plan = plan_answer_grounding(&ids(&["s1", "s2"]), &ids(&["t1"]), "See [the ticket](email://s2).");
+        assert_eq!(plan, AnswerGrounding::ToolEmails(ids(&["s2", "t1"])));
+    }
+
+    #[test]
+    fn grounding_drops_an_unlinked_numbered_source_and_a_link_outside_the_allowlist() {
+        let plan = plan_answer_grounding(&ids(&["s1"]), &ids(&["t1"]), "See [it](email://bogus).");
+        assert_eq!(plan, AnswerGrounding::ToolEmails(ids(&["t1"])));
+    }
+
+    #[test]
+    fn grounding_lists_a_repeatedly_linked_email_once() {
+        let plan = plan_answer_grounding(&[], &ids(&["t1", "t2"]), "[a](email://t2) and [b](email://t2).");
+        assert_eq!(plan, AnswerGrounding::ToolEmails(ids(&["t2", "t1"])));
+    }
+
+    #[test]
+    fn grounding_citation_range_is_empty_on_a_tool_turn() {
+        assert_eq!(AnswerGrounding::Sources.citation_range(3), 3);
+        assert_eq!(AnswerGrounding::ToolEmails(ids(&["t1"])).citation_range(3), 0);
     }
 
     #[test]

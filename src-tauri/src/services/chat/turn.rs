@@ -27,8 +27,8 @@ use super::retrieval::{
 use super::routing::classify_route;
 use super::tools;
 use super::{
-    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, relink_self_numbered_citations,
-    strip_invalid_citations, strip_tool_call_markup, truncate_chars,
+    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, plan_answer_grounding,
+    relink_self_numbered_citations, strip_invalid_citations, strip_tool_call_markup, truncate_chars, AnswerGrounding,
 };
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
@@ -3857,6 +3857,7 @@ pub async fn run_chat_turn(
         mut aggregated_email_refs,
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
+        tool_email_refs,
     ) = {
         emit_log("info", "stage: tool_loop");
         emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
@@ -3892,9 +3893,9 @@ pub async fn run_chat_turn(
         );
         // Numbered sources are citable with `email://` as well as tool results.
         let mut email_refs = source_email_ids(&sources);
-        for id in outcome.aggregated_email_refs {
-            if !email_refs.contains(&id) {
-                email_refs.push(id);
+        for id in &outcome.aggregated_email_refs {
+            if !email_refs.contains(id) {
+                email_refs.push(id.clone());
             }
         }
         (
@@ -3905,6 +3906,9 @@ pub async fn run_chat_turn(
             email_refs,
             outcome.aggregated_draft_refs,
             outcome.answer_streamed_live,
+            // Tool-returned emails only: they decide the answer's grounding
+            // (see `plan_answer_grounding`).
+            outcome.aggregated_email_refs,
         )
     };
 
@@ -4199,9 +4203,35 @@ pub async fn run_chat_turn(
             // before persisting so a re-render after reload shows the cleaned-up
             // text. The direct-answer path already stripped earlier; this catches
             // the live-streaming path (and is a cheap no-op when nothing leaked).
+            let shipped = result.content.clone();
             result.content = strip_tool_call_markup(&result.content);
             result.content = relink_self_numbered_citations(&result.content, &source_email_ids(&sources));
-            result.content = strip_invalid_citations(&result.content, sources.len());
+            // On a tool turn the tool-returned emails are the answer's
+            // sources and a bare `[n]` means nothing against them — the
+            // model numbered its own bullets — so every marker goes; the
+            // `email://` links (relinked just above where the answer
+            // defined a number) are the turn's citations.
+            let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
+            let citation_range = grounding.citation_range(sources.len());
+            result.content = strip_invalid_citations(&result.content, citation_range);
+            // The live bubble holds the text as streamed; ship the cleaned
+            // text over it so a stripped marker does not stay on screen as a
+            // pill until the conversation is reloaded.
+            if result.content != shipped && !result.content.trim().is_empty() {
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: result.content.clone(),
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                        replace: Some(true),
+                    },
+                );
+            }
             // Robustness net: still no answer text after the synthesis retry
             // (or a direct answer that stripped to nothing). Ship a localized
             // rephrase hint instead of a silently blank bubble, and emit it as
@@ -4244,6 +4274,46 @@ pub async fn run_chat_turn(
             if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
                 emit_log("error", &format!("failed to persist draft refs: {}", e));
             }
+            // A tool turn's sources are the emails the tools returned, the
+            // ones the answer links first. They supersede the pre-retrieved
+            // rows written before the loop, on disk and in the open bubble.
+            let source_count = match &grounding {
+                AnswerGrounding::Sources => sources.len(),
+                AnswerGrounding::ToolEmails(ids) => match db.get_emails_by_ids(ids) {
+                    Ok(emails) => {
+                        let rows: Vec<ChatMessageSource> = emails
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| ChatMessageSource {
+                                citation_number: i as i32 + 1,
+                                email_id: e.id.clone(),
+                                relevance_score: None,
+                                subject: e.subject.clone(),
+                                sender: e.sender.clone(),
+                                sender_email: e.sender_email.clone(),
+                                timestamp: e.timestamp,
+                                body_excerpt: (!e.snippet.is_empty()).then(|| e.snippet.clone()),
+                            })
+                            .collect();
+                        if let Err(e) = db.replace_chat_message_sources(&assistant_message_id, &rows) {
+                            emit_log("error", &format!("failed to persist tool-turn sources: {}", e));
+                        }
+                        crate::services::events::emit(
+                            "chat-sources",
+                            ChatSourcesEvent {
+                                message_id: assistant_message_id.clone(),
+                                conversation_id: conversation_id.clone(),
+                                sources: rows.clone(),
+                            },
+                        );
+                        rows.len()
+                    }
+                    Err(e) => {
+                        emit_log("error", &format!("failed to load tool-turn sources: {}", e));
+                        sources.len()
+                    }
+                },
+            };
             #[cfg(feature = "tracing")]
             crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
                 model: provider.model_name().to_string(),
@@ -4323,15 +4393,14 @@ pub async fn run_chat_turn(
             let invalid_citations = if result.content.trim().is_empty() {
                 -1
             } else {
-                count_invalid_citations(&result.content, sources.len())
+                count_invalid_citations(&result.content, citation_range)
             };
             if invalid_citations > 0 {
                 emit_log(
                     "warn",
                     &format!(
                         "answer contains {} citation(s) outside the source range 1..={}",
-                        invalid_citations,
-                        sources.len()
+                        invalid_citations, citation_range
                     ),
                 );
             }
@@ -4389,7 +4458,7 @@ pub async fn run_chat_turn(
                     "reply complete ({}, {:.1}s, {} sources)",
                     tokens_str,
                     latency_ms as f64 / 1000.0,
-                    sources.len()
+                    source_count
                 ),
             );
             Ok(())

@@ -1182,24 +1182,40 @@ that must not pay for a multi-GB mmap, and it would put the rule behind the `lla
 feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
 setting (makes the user responsible for a detail the file already states).
 
-## 2026-09-21 — `[n]` cites numbered Sources only; tool results are cited with `email://`
+## 2026-09-21 — A tool turn's sources are the emails the tools returned; bare `[n]` only cites pre-retrieved Sources
 
-**Decision:** In chat answers a bare `[n]` always means "the n-th numbered Source" — the
-pre-retrieved block the UI shows as the answer's sources. A fact that came from a tool
-result (`search_emails`, `get_email_body`, …) is cited with an `email://ID` link to that
-email, never with a number. The prompt says so in the CITATION CONTRACT and again under the
-Sources header of each turn. As a backstop, `relink_self_numbered_citations` rewrites a bare
-`[n]` into `[n](email://X)` whenever the answer itself defines `[n]` as an email `X` that is
-not Source n.
-**Context:** the contract asked for an `[n]` on claims "from a numbered source or a tool
-result", but tool results carry no number. Qwen 3.6 35B numbered the bullets of its own
-answer `[1]`, `[2]`… (sometimes adding `[1](email://<right id>)` at the end), and the UI
-resolved those markers to unrelated Sources — a correct answer that looked hallucinated
-because every citation opened a shipping notice. Measured on the `kelvo_support_addresses`
-chat eval: wrong-source citations before, none after.
-**Rejected:** numbering tool results into the same citation space (append them to the
-Sources panel as `[9]`, `[10]`…) — robust, but it changes every tool's output format, the
-sources model on both sides and the KV-cached transcript for a problem the link contract
-already solves; a post-processor that guesses the right Source from the cited sentence
-(e.g. matching an address against Source senders) — a heuristic that can only cover the
-shapes it was written for, and a wrong guess is worse than no citation.
+**Decision:** A bare `[n]` opens the n-th numbered Source, so it is rendered only on turns
+where no tool handed the model an email. On a turn where a tool did (`search_emails`,
+`get_email_body`, `get_thread`, …), the message's sources become the emails the tools
+returned — the ones the answer links first, then the rest in tool order — replacing the
+pre-retrieved rows on disk and in the open bubble, every bare `[n]` is stripped, and the
+answer's citations are its `email://ID` links (`plan_answer_grounding`). The prompt still
+tells the model to link tool results with `email://` and to keep `[n]` for numbered
+Sources, and `relink_self_numbered_citations` turns a self-numbered marker into a link when
+the answer defines it; but neither is relied on for correctness.
+**Context:** the UI resolved every bare `[n]` to the n-th pre-retrieved Source. When the
+fact came from a tool result — which carries an `id=` but no number — Qwen 3.6 35B
+numbered the bullets of its own answer `[1]`, `[2]`…, so a correct support address opened an
+unrelated shipping notice. A prompt-only fix (the CITATION CONTRACT rewrite plus a reminder
+under the Sources header) was measured on the demo DB, 54 chat cases, greedy decoding: it
+raised tool turns with `email://` links from 22/34 to 26/36 and fixed `kelvo_support_addresses`
+(`[1][2][2]` → two links), but `pc_priya_address` still answered `… [1]` for a fact in Source
+`[6]` on both prompts, and the developer's real mailbox still got `[1][2][3]` in bullet
+order with no links. Self-numbering survives the instruction, so the fix had to stop
+depending on the model: on those two sweeps bare `[n]` appeared on 2–3 of ~35 tool turns
+and was wrong in the self-numbered ones, while 22–26 of them carried `email://` links —
+the links are the citation mechanism that works on tool turns, and the tool-returned
+emails are the honest "sources used" list (the pre-retrieved rows were rarely what the
+answer drew on). Correct source-number citations on a tool turn (`mem_borgbase_customer_number`
+cited `[1] [2] [8] [9]` rightly once) are lost with the rule; that answer keeps its
+`attachment://` links and its sources panel lists the four opened invoices.
+**Rejected:** numbering tool results into the same citation space (`[9]`, `[10]`… in every
+tool's output and the Sources panel) — the model ignored the numbers already in front of it
+(`pc_priya_address`: `[1]` for Source `[6]`), so this adds format and cache churn without
+making `[n]` trustworthy; resolving a tool turn's `[n]` against the tool-returned list — the
+model's numbering follows its own bullets, not the tool order, so this only moves the wrong
+pill; keeping `[n]` on a tool turn unless the markers read `1..k` in order — a pattern gate
+that still lets a skipped number (`[1] [3]`) open the wrong email; a post-processor that
+guesses the right Source from the cited sentence (matching an address against senders) — a
+heuristic that only covers the shapes it was written for, and a wrong guess is worse than
+no citation.
