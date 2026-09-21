@@ -17,8 +17,8 @@ data = json.loads(src.read_text())
 meta, layers, records = data["meta"], data["layers"], data["records"]
 features = data["features"]; types = data["types"]
 def E(s): return html.escape(str(s)).replace("\ufffd", "&#xFFFD;")  # numbers and None land here too; a model's garbled byte stays visible as an entity
-TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
-TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "static": "Calidad estática", "perf": "Rendimiento"}
+TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "doc": "Promesas de docs/site/ comprobadas contra la app real (docClaim en sweep.mjs)", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
+TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "doc": "Documentación publicada", "static": "Calidad estática", "perf": "Rendimiento"}
 STATUS_LABEL = {"ok": "OK", "fail": "FALLO", "skip": "N/A", "info": "INFO"}
 slug = lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
@@ -77,6 +77,12 @@ def evidence(r):
         if ev.get("ai_trace") is not None:
             parts.append(f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>')
     if ev.get("expect"): parts.append(f'<p><span class="lbl">Esperado</span>{E(ev["expect"])}</p>')
+    # A failed doc claim has two possible culprits — the app changed, or the
+    # page was always wrong — so the case says which edit it expects rather
+    # than leaving the reader to guess from an assertion message.
+    if ev.get("proposed_fix"):
+        page = f' <span class="muted">({E(ev["page"])} ×4 idiomas)</span>' if ev.get("page") else ""
+        parts.append(f'<p class="fix"><span class="lbl">Corrección propuesta</span>{E(ev["proposed_fix"])}{page}</p>')
     if ev.get("trace"): parts.append(f'<details open><summary>Traza</summary><pre>{E(ev["trace"])}</pre></details>')
     if ev.get("log_tail"): parts.append(f'<details><summary>Últimas líneas de app.log</summary><pre>{E(ev["log_tail"])}</pre></details>')
     for s in ev.get("shots") or []: parts.append(img(s))
@@ -199,6 +205,7 @@ h2{{font-size:20px;font-weight:600;margin:44px 0 10px;padding-top:8px;border-top
 h3{{font-size:15px;font-weight:600;margin:24px 0 8px}}
 a{{color:var(--accent)}} .up{{font-size:12px;font-weight:400;margin-left:8px}}
 .muted{{color:var(--muted);font-weight:400;font-size:.92em}} .lbl{{display:inline-block;min-width:88px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}}
+.fix{{border-left:3px solid var(--accent);padding:6px 0 6px 10px;margin:8px 0}} .fix .lbl{{min-width:auto;margin-right:8px}}
 .eyebrow{{text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--muted);font-weight:500}}
 .meta{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 24px;margin:16px 0;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}}
 .meta dt{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}} .meta dd{{margin:2px 0 0;font-family:"IBM Plex Mono",monospace;font-size:13px;word-break:break-all}}

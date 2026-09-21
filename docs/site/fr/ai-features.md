@@ -135,6 +135,7 @@ modifié le prompt, et rattraper le courrier non classé à la demande.
 
 ## Tableau d'étiquettes {#tag-board}
 
+<!-- claim:tag-board-dimensions -->
 Le **Tableau d'étiquettes** (sous **Vues** dans la barre latérale, à côté de la boîte de
 réception) transforme ces étiquettes en tableau. Choisissez une dimension — **Entreprise**,
 **Priorité**, **Intention** ou **Sujet** — et chaque valeur d'étiquette devient un bloc qui
@@ -150,6 +151,7 @@ par dimension), masquez une étiquette depuis son menu ⋮ — l'étiquette suiv
 sa place, et le filtre quitte aussi la barre latérale — et récupérez les étiquettes masquées
 avec le lien **Afficher les étiquettes masquées**.
 
+<!-- claim:tag-board-toolbar -->
 La barre d'outils restreint le tableau par période (**Aujourd'hui**, **Hier**, **7 derniers
 jours** ou une plage de dates personnalisée), par catégorie Gmail, par nom d'étiquette, et
 avec le même interrupteur **Masquer les indésirables** que la boîte de réception ; deux

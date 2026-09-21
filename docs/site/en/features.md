@@ -27,6 +27,7 @@ and drag messages between folders from inside the app.
 
 ## Forwarding
 
+<!-- claim:reading-pane-forward -->
 **Forward** sits next to **Reply** and **Reply all** in the reading pane. The draft opens with
 no recipients and carries the original message under a *Forwarded message* header with its
 sender, date and recipients, together with the original attachments (up to 20 MB in total).

@@ -130,6 +130,7 @@ nachholen.
 
 ## Tag-Board {#tag-board}
 
+<!-- claim:tag-board-dimensions -->
 Das **Tag-Board** (unter **Ansichten** in der Seitenleiste, neben dem Posteingang) macht aus
 diesen Kennzeichnungen ein Board. Wählen Sie eine Dimension — **Unternehmen**, **Priorität**,
 **Absicht** oder **Thema** — und jeder Kennzeichnungswert wird zu einem Block mit seinen
@@ -144,6 +145,7 @@ Reihenfolge wird je Dimension gemerkt), blenden Sie ein Tag über sein ⋮-Menü
 nächste Tag rückt an seine Stelle, und der Filter verschwindet auch aus der Seitenleiste —
 und holen Sie ausgeblendete Tags über den Link **Ausgeblendete Tags anzeigen** zurück.
 
+<!-- claim:tag-board-toolbar -->
 Die Werkzeugleiste grenzt das Board nach Zeitraum ein (**Heute**, **Gestern**, **Letzte 7
 Tage** oder ein eigener Datumsbereich), nach Gmail-Kategorie, nach Tag-Name und mit
 demselben Schalter **Spam-Nachrichten ausblenden** wie im Posteingang; zwei Symbole legen die

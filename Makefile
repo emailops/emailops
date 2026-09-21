@@ -339,6 +339,12 @@ deploy:
 verify:
 	bash scripts/verify_all.sh $(ARGS)
 
+# Validate the published docs against the app: page/label/path/claim guards, the doc↔catalog
+# contract tests, and (with ARGS="--with-app") the docClaim() cases driven through the real UI.
+# HTML report, case by case, under src-tauri/reports/docs/. See .claude/skills/maintain-docs/.
+docs-check:
+	bash scripts/check_docs.sh $(ARGS)
+
 # Private evals (real mailbox) against the `make eval-snapshot` copy; report stays local.
 verify-private:
 	bash scripts/verify_private.sh $(ARGS)

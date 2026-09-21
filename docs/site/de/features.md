@@ -29,6 +29,7 @@ direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-dro
 
 ## Weiterleiten
 
+<!-- claim:reading-pane-forward -->
 **Weiterleiten** steht im Lesebereich neben **Antworten** und **Allen antworten**. Der Entwurf
 öffnet sich ohne Empfänger und enthält die ursprüngliche Nachricht unter der Kopfzeile
 *Weitergeleitete Nachricht* mit Absender, Datum und Empfängern, dazu die ursprünglichen

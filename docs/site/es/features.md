@@ -28,6 +28,7 @@ renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 
 ## Reenviar
 
+<!-- claim:reading-pane-forward -->
 **Reenviar** está junto a **Responder** y **Responder a todos** en el panel de lectura. El
 borrador se abre sin destinatarios y lleva el mensaje original bajo una cabecera *Mensaje
 reenviado* con su remitente, fecha y destinatarios, junto con los adjuntos originales (hasta

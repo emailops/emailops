@@ -30,6 +30,7 @@ l'application.
 
 ## Transférer
 
+<!-- claim:reading-pane-forward -->
 **Transférer** se trouve à côté de **Répondre** et **Répondre à tous** dans le volet de
 lecture. Le brouillon s'ouvre sans destinataire et contient le message d'origine sous un
 en-tête *Message transféré* avec son expéditeur, sa date et ses destinataires, ainsi que les

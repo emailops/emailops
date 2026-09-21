@@ -255,9 +255,16 @@ def layer_e2e():
     if not res.exists():
         add("Transversal", "e2e", "barrida UI (sweep.mjs)", "fail", (out + err)[-2000:]); return
     for r in json.loads(res.read_text()):
-        typ = "ui" if re.search(r"barra de herramientas|anchura|cabecera|panel|Escape", r["step"]) else "e2e"
+        # `doc:` steps are docClaim() cases: a promise the published docs make
+        # about the UI, checked against the running app. They file under their
+        # own type so the report answers "is the documentation still true"
+        # separately from "does the app still work".
+        if r["step"].startswith("doc:"):
+            typ = "doc"
+        else:
+            typ = "ui" if re.search(r"barra de herramientas|anchura|cabecera|panel|Escape", r["step"]) else "e2e"
         shots = [str(APP / "sweep" / r["shot"])] if r.get("shot") else []
-        add(feature_for_e2e(r["feature"], r["step"]), typ, f"{r['feature']} › {r['step']}", r["status"], r["detail"], None, desc=r.get("expect", ""), expect=r.get("expect", ""), shots=shots, log_tail=log_tail() if r["status"] == "fail" else "")
+        add(feature_for_e2e(r["feature"], r["step"]), typ, f"{r['feature']} › {r['step']}", r["status"], r["detail"], None, desc=r.get("expect", ""), expect=r.get("expect", ""), shots=shots, log_tail=log_tail() if r["status"] == "fail" else "", proposed_fix=r.get("fix", ""), page=r.get("page", ""))
 def log_tail():
     p = APP / "app.log"
     return "\n".join(p.read_text(errors="replace").splitlines()[-25:]) if p.exists() else ""

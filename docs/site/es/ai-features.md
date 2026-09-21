@@ -130,6 +130,7 @@ prompt y puedes ponerte al día con el correo sin clasificar cuando quieras.
 
 ## Tablero de etiquetas {#tag-board}
 
+<!-- claim:tag-board-dimensions -->
 El **Tablero de etiquetas** (en **Vistas**, en el menú lateral, junto a la bandeja de
 entrada) convierte esas etiquetas en un tablero. Elige una dimensión — **Empresa**,
 **Prioridad**, **Intención** o **Tema** — y cada valor de etiqueta se convierte en un bloque
@@ -144,6 +145,7 @@ una etiqueta desde su menú ⋮ — la siguiente etiqueta sube a ocupar su sitio
 desaparece también del menú lateral — y recupera las ocultas con el enlace **Mostrar
 etiquetas ocultas**.
 
+<!-- claim:tag-board-toolbar -->
 La barra superior acota el tablero por periodo (**Hoy**, **Ayer**, **Últimos 7 días** o un
 rango de fechas personalizado), por categoría de Gmail, por nombre de etiqueta y con el mismo
 interruptor **Ocultar mensajes de basura** que la bandeja; dos iconos fijan el ancho de los

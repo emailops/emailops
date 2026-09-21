@@ -123,6 +123,7 @@ the prompt, and can catch up on unclassified mail on demand.
 
 ## Tag Board {#tag-board}
 
+<!-- claim:tag-board-dimensions -->
 The **Tag Board** (under **Views** in the sidebar, next to the inbox) turns those tags into a
 board. Pick one dimension — **Company**, **Priority**, **Intent** or **Topic** — and every
 tag value becomes a block listing its threads; in **All accounts** you get one block per
@@ -136,6 +137,7 @@ them (the order is remembered per dimension), hide a tag from its ⋮ menu — t
 up to take its place, and the filter leaves the sidebar too — and bring hidden tags back with
 the **Show hidden tags** link.
 
+<!-- claim:tag-board-toolbar -->
 The toolbar narrows the board by time (**Today**, **Yesterday**, **Last 7 days**, or a custom
 date range), by Gmail category, by tag name, and with the same **Hide junk messages** switch
 as the inbox; two icons set the block width. Clicking a card opens the thread in the reading
