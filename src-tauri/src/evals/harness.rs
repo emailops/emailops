@@ -130,6 +130,10 @@ pub struct CaseOutcome {
     /// same block the model saw. It is the answer's grounding when the case
     /// used neither RAG sources nor tools, so the judge gets it too.
     pub ambient_thread: Option<String>,
+    /// The guide sections the turn's help lookup served, as
+    /// `"<Page › Heading>\n<content>"` — the grounding of an answer about the
+    /// app, which the judge must see like any other source.
+    pub help_sections: Vec<String>,
 }
 
 /// Lightweight view of a `ChatMessageSource` for the report.
@@ -365,6 +369,26 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         None => None,
     };
 
+    // The trace keeps only the ids of the guide sections the turn served.
+    let help_ids: Vec<String> = assistant
+        .trace
+        .as_ref()
+        .and_then(|t| t.help.as_ref())
+        .map(|h| h.chunk_ids.clone())
+        .unwrap_or_default();
+    let help_sections = db
+        .get_help_chunks_by_chunk_ids(&help_ids)?
+        .into_iter()
+        .map(|c| {
+            let title = if c.heading == c.page_title {
+                c.page_title
+            } else {
+                format!("{} › {}", c.page_title, c.heading)
+            };
+            format!("{title}\n{}", c.content)
+        })
+        .collect();
+
     Ok(CaseOutcome {
         conversation_id: conv.id,
         conversation_title: final_title,
@@ -376,6 +400,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         wall_elapsed_ms,
         sources_used,
         ambient_thread,
+        help_sections,
     })
 }
 

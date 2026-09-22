@@ -220,6 +220,21 @@ impl Database {
         Ok(rows)
     }
 
+    /// Chunks by `chunk_id`, in the order asked; unknown ids are skipped.
+    pub fn get_help_chunks_by_chunk_ids(&self, chunk_ids: &[String]) -> Result<Vec<HelpChunk>> {
+        let conn = self.reader();
+        let sql = format!("SELECT {CHUNK_COLS} FROM help_doc_chunks WHERE chunk_id = ?1");
+        let mut stmt = conn.prepare(&sql)?;
+        let mut out = Vec::new();
+        for id in chunk_ids {
+            let rows = stmt
+                .query_map(params![id], row_to_chunk)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            out.extend(rows.into_iter().map(|(_, c)| c));
+        }
+        Ok(out)
+    }
+
     /// Every chunk of the given `(page, section_index)` sections in `lang` —
     /// the siblings a hit in another language is swapped for.
     pub fn get_help_chunk_siblings(&self, sections: &[(String, i32)], lang: &str) -> Result<Vec<HelpChunk>> {
@@ -407,6 +422,18 @@ mod tests {
             db.vec_search_help_docs(&v, "m1", 5, Some("ai-features")).unwrap().len(),
             1
         );
+    }
+
+    /// The eval harness hydrates the sections a turn served (the trace keeps
+    /// only their ids) so the judge sees what the answer was grounded in.
+    #[test]
+    fn chunks_hydrate_by_chunk_id_in_the_order_asked() {
+        let db = seeded();
+        let chunks = db
+            .get_help_chunks_by_chunk_ids(&["en/ai-features#2.0".into(), "en/ai-features#1.0".into(), "nope".into()])
+            .unwrap();
+        let ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["en/ai-features#2.0", "en/ai-features#1.0"]);
     }
 
     #[test]

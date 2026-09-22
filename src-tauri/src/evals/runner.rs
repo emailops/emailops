@@ -243,6 +243,7 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
                     wall_elapsed_ms: 0,
                     sources_used: Vec::new(),
                     ambient_thread: None,
+                    help_sections: Vec::new(),
                 };
                 let report = HeuristicReport {
                     checks: vec![crate::evals::metrics::HeuristicCheck {
