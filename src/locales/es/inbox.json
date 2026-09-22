@@ -82,6 +82,7 @@
     "showRemoteImagesHint": "Cargar imágenes puede informar al remitente de que has abierto este correo.",
     "reply": "Responder",
     "replyAll": "Responder a todos",
+    "aiDraft": "Borrador con IA",
     "aiDraftTitle": "Generar una respuesta con IA (usa los destinatarios de Responder a todos)",
     "openInNewTab": "Abrir en una pestaña nueva",
     "deleteThread": "Eliminar hilo",

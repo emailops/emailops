@@ -164,7 +164,10 @@ for (const file of walk(SRC)) {
     if (isBareProseLine(trimmed)) {
       const prev = prevNonBlank(i);
       const next = nextNonBlank(i);
-      const prevOk = prev && !prev.isComment && (prev.trimmed.endsWith('>') || isBareProseLine(prev.trimmed));
+      // `)}` closes a JSX expression — `{busy ? <Spinner/> : <Icon/>}` right before
+      // a label is the common icon-then-text button shape, and missing it let a
+      // hardcoded "AI Draft" ship untranslated in every language.
+      const prevOk = prev && !prev.isComment && (prev.trimmed.endsWith('>') || prev.trimmed.endsWith(')}') || isBareProseLine(prev.trimmed));
       const nextOk = next && (next.trimmed.startsWith('<') || isBareProseLine(next.trimmed));
       if (prevOk && nextOk) violations.push({ file: rel, line: i + 1, text: trimmed, kind: 'text' });
     }

@@ -82,6 +82,7 @@
     "showRemoteImagesHint": "Loading images may inform the sender that you opened this email.",
     "reply": "Reply",
     "replyAll": "Reply All",
+    "aiDraft": "AI Draft",
     "aiDraftTitle": "Generate a reply with AI (uses Reply All recipients)",
     "openInNewTab": "Open in new tab",
     "deleteThread": "Delete thread",

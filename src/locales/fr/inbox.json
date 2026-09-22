@@ -82,6 +82,7 @@
     "showRemoteImagesHint": "Charger les images peut informer l'expéditeur que vous avez ouvert ce courriel.",
     "reply": "Répondre",
     "replyAll": "Répondre à tous",
+    "aiDraft": "Brouillon IA",
     "aiDraftTitle": "Générer une réponse avec l'IA (utilise les destinataires de Répondre à tous)",
     "openInNewTab": "Ouvrir dans un nouvel onglet",
     "deleteThread": "Supprimer le fil",
