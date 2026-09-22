@@ -54,7 +54,8 @@ checks = [
 
 [inst-system-requirements-local-ai-1]
 checks = [
-  { manual = 'Hardware sizing advice, not a behaviour of the app. Note the first-run wizard says "~5 GB disk for the default model" while this table says ~3 GB — the app and the docs disagree.' },
+  { app = true },
+  { manual = 'The recommended sizes (16 GB unified, 12–16 GB VRAM) are sizing advice, not values the app enforces.' },
 ]
 
 [inst-system-requirements-local-ai-2]

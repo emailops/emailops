@@ -187,6 +187,13 @@ async function wizard() {
   });
   await claim('ai-classification-1', 'asistente', async () => ok(/Auto-classification \(priority, intent, topic\)/.test(await screen()),
     'el asistente anuncia prioridad, intención y tema', 'no'));
+  await claim('inst-system-requirements-local-ai-1', 'disco del modelo', async () => {
+    // The wizard's disk figure (derived from the catalog) against the docs table's.
+    const app = (await screen()).match(/~([\d.]+) GB disk for the smallest model/)?.[1];
+    const doc = norm(CLAIMS['inst-system-requirements-local-ai-1']).match(/Free disk \| ~(\d+) GB/)?.[1];
+    return ok(app && doc && Math.round(+app) === +doc, `el asistente dice ~${app} GB y la doc ~${doc} GB`,
+      `el asistente dice ~${app} GB de disco y la doc ~${doc} GB`);
+  }, 'Quote the disk figure the wizard derives from the catalog in the requirements table, in all four languages.');
   await claim('inst-system-requirements-1', 'paso 1', async () => {
     const s = await screen();
     return ok(s.includes('Plain email client'), 'el asistente ofrece rechazar la IA', 'no hay opción sin IA');
