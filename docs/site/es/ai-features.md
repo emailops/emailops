@@ -104,7 +104,7 @@ mientras la aplicación siga abierta, así que cambiar de cuenta te devuelve don
 y no a un chat en blanco.
 
 El chat también responde preguntas sobre el propio EmailOps — *"¿cómo conecto Ollama?"*,
-*"¿dónde se guardan mis datos?"*, *"¿cómo añado una cuenta?"* — a partir de estas guías, en
+*"¿dónde se guardan mis datos?"*, *"¿qué muestra el Tablero de etiquetas?"* — a partir de estas guías, en
 tu idioma y sin buscar en tu buzón. La respuesta enlaza la sección de la guía que ha usado, y
 al seguir el enlace se abre el ajuste o la vista correspondiente. Con un correo abierto como
 contexto, el chat responde solo desde ese hilo, así que quita el chip para preguntar por la
