@@ -161,7 +161,10 @@ mod tests {
         let db = Database::new_for_testing().unwrap();
         ensure_text_index(&db).unwrap();
         for q in ["Ollama", "OpenRouter", "calendario", "Kalender", "calendrier"] {
-            assert!(!db.fts_search_help_docs(q, 5).unwrap().is_empty(), "no FTS hit for {q}");
+            assert!(
+                !db.fts_search_help_docs(q, 5, None).unwrap().is_empty(),
+                "no FTS hit for {q}"
+            );
         }
     }
 

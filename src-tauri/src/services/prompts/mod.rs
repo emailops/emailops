@@ -388,6 +388,15 @@ Respond with ONLY a JSON object, no markdown, no explanation:\n\
     #[test]
     fn the_planner_prompt_offers_the_app_help_verdict() {
         assert!(defaults::CHAT_QUERY_PLAN.contains(r#"{"app_help": true}"#));
+        assert!(defaults::CHAT_QUERY_PLAN.contains(r#"{"app_help": "<page>"}"#));
+        let pages = defaults::CHAT_QUERY_PLAN
+            .find("{{guide_pages}}")
+            .expect("guide pages listed");
+        let query = defaults::CHAT_QUERY_PLAN.find("{{query}}").expect("query placeholder");
+        assert!(
+            pages < query,
+            "the page list is static and must stay in the cached head"
+        );
     }
 
     #[test]

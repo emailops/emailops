@@ -1224,3 +1224,27 @@ measurable in `query_plan_eval`.
 users say about Ollama?"); keeping both corpora and only asserting the guide is cited first
 (accepts the mixing the change set out to remove); a keyword list of app terms (fails on
 paraphrase and on every language the list does not cover).
+
+## 2026-09-22 — The query planner names the guide page; the page is a preference
+
+**Decision:** The planner's app-help verdict can name a guide page
+(`{"app_help": "<page>"}`), picked from a table of contents generated from the English
+guides (page title plus section titles, ~370 tokens, static, in the planner's cached head).
+The help lookup then serves that page's intro (which lists its sections) and best section,
+plus the two best sections from the other pages — never the picked page alone.
+**Context:** sections were ranked only by bm25 over words shared with the question.
+"que funcionalidades de ia tiene emailops" matched nothing specific ("funcionalidades"
+appears in no guide; "de"/"ia" are too short for FTS) and got two "local AI" sections;
+"cómo cambio el modelo" landed on troubleshooting. The planner reads the question in any
+language. It still picks the wrong page now and then ("añado una nueva cuenta" →
+installation), which is why the global ranking keeps two slots: the right section there was
+its second hit. Cost: up to four guide sections (~1.8k tokens) in the user message of an
+app-help turn, and a planner prompt ~370 tokens longer. Known open cost: with the table of
+contents in the prompt the planner drops `query` on "when did Marisol first write to me
+about the logistics dashboard?" (`no_date_window_on_a_dateless_question` in the planner
+eval).
+**Rejected:** ordering sections by vector similarity when bm25 is weak (measured: it served
+"Privacy › Local AI by default" and "Turning it all off" — the embeddings misrank sections
+of these guides); restricting the lookup to the picked page (lost "add an account" when the
+planner picked the wrong page); page titles and descriptions only (did not tell the pages
+apart); the table of contents at the end of the prompt (26/30 on the planner eval, worse).

@@ -142,8 +142,8 @@ impl Database {
 
     /// FTS5 candidates as `(rowid, bm25)`, lower bm25 = better. The query
     /// goes through the same escaper as mailbox search so punctuation never
-    /// reaches the FTS parser.
-    pub fn fts_search_help_docs(&self, query: &str, limit: i32) -> Result<Vec<(i64, f64)>> {
+    /// reaches the FTS parser. `page` restricts the search to one guide page.
+    pub fn fts_search_help_docs(&self, query: &str, limit: i32, page: Option<&str>) -> Result<Vec<(i64, f64)>> {
         // The whole corpus is about EmailOps: the name is in every question
         // and most sections, so as an FTS term it only ranks sections by how
         // often they repeat it. Drop it before the escaper sees it.
@@ -164,10 +164,11 @@ impl Database {
             "SELECT chunk_rowid, bm25(help_docs_fts, 0.0, 3.0, 1.0) AS rank
              FROM help_docs_fts
              WHERE help_docs_fts MATCH ?1
+               AND (?3 IS NULL OR chunk_rowid IN (SELECT rowid FROM help_doc_chunks WHERE page = ?3))
              ORDER BY rank LIMIT ?2",
         )?;
         let rows = stmt
-            .query_map(params![fts_query, limit], |row| {
+            .query_map(params![fts_query, limit, page], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -176,17 +177,24 @@ impl Database {
 
     /// KNN candidates as `(rowid, cosine similarity)`, best first, restricted
     /// to rows embedded with `model` so a half-migrated corpus never mixes
-    /// vector spaces.
-    pub fn vec_search_help_docs(&self, embedding: &[f32], model: &str, limit: usize) -> Result<Vec<(i64, f32)>> {
+    /// vector spaces. `page` restricts the search to one guide page.
+    pub fn vec_search_help_docs(
+        &self,
+        embedding: &[f32],
+        model: &str,
+        limit: usize,
+        page: Option<&str>,
+    ) -> Result<Vec<(i64, f32)>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
             "SELECT rowid, distance FROM vec_help_docs
              WHERE embedding MATCH ?1
-               AND rowid IN (SELECT rowid FROM help_doc_chunks WHERE embedding_model = ?3)
+               AND rowid IN (SELECT rowid FROM help_doc_chunks
+                             WHERE embedding_model = ?3 AND (?4 IS NULL OR page = ?4))
              ORDER BY distance LIMIT ?2",
         )?;
         let rows = stmt
-            .query_map(params![blob(embedding), limit as i64, model], |row| {
+            .query_map(params![blob(embedding), limit as i64, model, page], |row| {
                 let d: f32 = row.get(1)?;
                 Ok((row.get::<_, i64>(0)?, 1.0 - d))
             })?
@@ -299,11 +307,11 @@ mod tests {
     #[test]
     fn fts_finds_by_heading_and_content() {
         let db = seeded();
-        let hits = db.fts_search_help_docs("ollama", 10).unwrap();
+        let hits = db.fts_search_help_docs("ollama", 10, None).unwrap();
         assert_eq!(hits.len(), 2, "both languages mention Ollama");
-        let hits = db.fts_search_help_docs("catalog", 10).unwrap();
+        let hits = db.fts_search_help_docs("catalog", 10, None).unwrap();
         assert_eq!(hits.len(), 1);
-        assert!(db.fts_search_help_docs("?!", 10).unwrap().is_empty());
+        assert!(db.fts_search_help_docs("?!", 10, None).unwrap().is_empty());
     }
 
     /// The whole corpus is about EmailOps, so the app's name carries no
@@ -330,10 +338,10 @@ mod tests {
             ),
         ])
         .expect("seed");
-        assert!(db.fts_search_help_docs("EmailOps", 10).unwrap().is_empty());
-        assert!(db.fts_search_help_docs("emailops?", 10).unwrap().is_empty());
-        let with = db.fts_search_help_docs("Ollama in EmailOps", 10).unwrap();
-        let without = db.fts_search_help_docs("Ollama", 10).unwrap();
+        assert!(db.fts_search_help_docs("EmailOps", 10, None).unwrap().is_empty());
+        assert!(db.fts_search_help_docs("emailops?", 10, None).unwrap().is_empty());
+        let with = db.fts_search_help_docs("Ollama in EmailOps", 10, None).unwrap();
+        let without = db.fts_search_help_docs("Ollama", 10, None).unwrap();
         assert_eq!(with, without);
     }
 
@@ -351,10 +359,54 @@ mod tests {
         assert!(db.list_help_chunks_needing_embedding("m1", 10).unwrap().is_empty());
         assert_eq!(db.list_help_chunks_needing_embedding("m2", 10).unwrap().len(), 3);
 
-        let hits = db.vec_search_help_docs(&v, "m1", 5).unwrap();
+        let hits = db.vec_search_help_docs(&v, "m1", 5, None).unwrap();
         assert_eq!(hits.len(), 3);
         assert!((hits[0].1 - 1.0).abs() < 1e-4, "identical vector → similarity 1");
-        assert!(db.vec_search_help_docs(&v, "m2", 5).unwrap().is_empty());
+        assert!(db.vec_search_help_docs(&v, "m2", 5, None).unwrap().is_empty());
+    }
+
+    /// The query planner names the guide page on an app-help turn; both
+    /// rankers then only look inside it.
+    #[test]
+    fn searches_can_be_restricted_to_one_page() {
+        let db = Database::new_for_testing().expect("db");
+        db.replace_help_doc_chunks(&[
+            chunk(
+                "en/ai-features#1.0",
+                "en",
+                "ai-features",
+                1,
+                "Choosing a backend",
+                "Ollama runs locally.",
+            ),
+            chunk(
+                "en/troubleshooting#1.0",
+                "en",
+                "troubleshooting",
+                1,
+                "AI unavailable",
+                "Check Ollama is running.",
+            ),
+        ])
+        .expect("seed");
+        assert_eq!(db.fts_search_help_docs("ollama", 10, None).unwrap().len(), 2);
+        let on_page = db.fts_search_help_docs("ollama", 10, Some("troubleshooting")).unwrap();
+        let rows = db
+            .get_help_chunks_by_rowids(&on_page.iter().map(|(r, _)| *r).collect::<Vec<_>>())
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.page, "troubleshooting");
+
+        let mut v = vec![0.0f32; 768];
+        v[0] = 1.0;
+        for (rowid, _) in db.list_help_chunks_needing_embedding("m1", 10).unwrap() {
+            db.upsert_help_chunk_embedding(rowid, &v, "m1").unwrap();
+        }
+        assert_eq!(db.vec_search_help_docs(&v, "m1", 5, None).unwrap().len(), 2);
+        assert_eq!(
+            db.vec_search_help_docs(&v, "m1", 5, Some("ai-features")).unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -367,7 +419,7 @@ mod tests {
         b[1] = 1.0;
         db.upsert_help_chunk_embedding(rowid, &a, "m1").unwrap();
         db.upsert_help_chunk_embedding(rowid, &b, "m1").unwrap();
-        let hits = db.vec_search_help_docs(&b, "m1", 5).unwrap();
+        let hits = db.vec_search_help_docs(&b, "m1", 5, None).unwrap();
         assert_eq!(hits.len(), 1);
         assert!((hits[0].1 - 1.0).abs() < 1e-4);
     }
@@ -375,7 +427,7 @@ mod tests {
     #[test]
     fn hydrates_rows_and_siblings() {
         let db = seeded();
-        let hits = db.fts_search_help_docs("catalog", 10).unwrap();
+        let hits = db.fts_search_help_docs("catalog", 10, None).unwrap();
         let rows = db.get_help_chunks_by_rowids(&[hits[0].0]).unwrap();
         assert_eq!(rows[0].1.chunk_id, "en/ai-features#2.0");
         let sib = db.get_help_chunk_siblings(&[("ai-features".into(), 1)], "es").unwrap();

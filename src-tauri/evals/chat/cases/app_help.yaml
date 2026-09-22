@@ -104,6 +104,58 @@
     - answer_relevancy
     - faithfulness
 
+# A question about a whole page: every chunk is one section, so the lookup
+# served two unrelated sections and the answer said the guide did not list the
+# AI features. The page intro now carries the section outline.
+- id: app_help_ai_features_overview_es
+  question: "que funcionalidades de ia tiene emailops"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  # Features only the ai-features outline names — not the installation page.
+  expected_answer_contains_any: ["Lentes", "Lenses", "Tablero de etiquetas", "Tag Board"]
+  expected_answer_not_contains: ["no detalla", "does not detail", "no incluye", "not included"]
+  expected_output: "EmailOps tiene chat con tu buzón, borradores con IA, clasificación, tablero de etiquetas, búsqueda semántica, traducción, tareas, memoria y lentes, todo sobre el backend que elijas. Ver Funciones de IA."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The guide described the attachments view in one sentence and never said it
+# is filled by rules, so the answer said there were no instructions.
+- id: app_help_attachments_rules_es
+  question: "como configuro la vista de adjuntos"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["regla", "rule"]
+  expected_output: "La vista de adjuntos se llena con reglas: pulsa Gestionar reglas, define patrones de remitente, asunto y nombre de archivo y etiquetas, y marca Aplicar a los correos existentes para recopilar lo que ya tienes. Ver Funciones › Vista de adjuntos."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The guide named an "Add account" button; the app has a + next to Accounts.
+- id: app_help_add_account_es
+  question: "como añado una nueva cuenta"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["getting-started"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://", "+"]
+  expected_output: "Pulsa el botón + junto a Cuentas en la barra lateral y elige Gmail, Outlook o IMAP/SMTP. Ver Primeros pasos › Conectar una cuenta."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
 # Mirror case: a mailbox question must not pull the guides into the answer.
 # Marisol Vega is the demo persona's logistics client (synthetic data).
 - id: app_help_mailbox_question_stays_mailbox

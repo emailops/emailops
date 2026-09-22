@@ -55,6 +55,11 @@ pub struct PlanCase {
     #[serde(default)]
     pub expect_app_help: bool,
 
+    /// With `expect_app_help`: the guide pages any of which the planner may
+    /// name (`{"app_help": "<page>"}`). Empty accepts any page, or none.
+    #[serde(default)]
+    pub expect_help_page_any: Vec<String>,
+
     /// `{{today}}` for this case, so date expectations stay stable as the
     /// calendar moves. ISO `YYYY-MM-DD`; defaults to the runner's today.
     #[serde(default)]

@@ -119,6 +119,10 @@ pub struct HelpPlanInput<'a> {
     pub ui_lang: &'a str,
     /// False when no chunk is embedded for the active model (FTS-only).
     pub vector_available: bool,
+    /// The guide page the query planner picked. `Some` skips the similarity
+    /// gate (the planner already judged the question to be about the app),
+    /// keeps only that page's sections and serves its intro first.
+    pub page: Option<&'a str>,
     pub min_similarity: f32,
     pub k: usize,
 }
@@ -185,30 +189,40 @@ pub fn plan_help_sources(input: HelpPlanInput<'_>) -> Vec<HelpSource> {
         };
     }
 
-    let about_the_app = if input.vector_available {
-        groups
-            .values()
-            .filter_map(|g| g.max_similarity)
-            .any(|s| s >= input.min_similarity)
+    let mut kept: Vec<SectionGroup> = if let Some(page) = input.page {
+        groups.into_values().filter(|g| g.page == page).collect()
     } else {
-        groups.values().any(|g| g.best_fts_rank == Some(0))
+        let about_the_app = if input.vector_available {
+            groups
+                .values()
+                .filter_map(|g| g.max_similarity)
+                .any(|s| s >= input.min_similarity)
+        } else {
+            groups.values().any(|g| g.best_fts_rank == Some(0))
+        };
+        if !about_the_app {
+            return Vec::new();
+        }
+        groups
+            .into_values()
+            .filter(|g| input.vector_available || g.best_fts_rank == Some(0))
+            .collect()
     };
-    if !about_the_app {
-        return Vec::new();
-    }
-    let mut kept: Vec<SectionGroup> = groups
-        .into_values()
-        .filter(|g| input.vector_available || g.best_fts_rank == Some(0))
-        .collect();
     // BM25 order first (rank 0 best; sections FTS never matched go last),
     // fused RRF as the tie-break. Fusion alone rewards agreement between
     // rankers, and with vectors this weak that promoted "present in both"
     // sections over the one bm25 had first (Lenses lost to "Turning it all
     // off" on the eval).
+    // On a picked page the intro goes first: it carries the page outline.
+    let intro_first = input.page.is_some();
     kept.sort_by(|a, b| {
+        let ia = intro_first && a.section_index == 0;
+        let ib = intro_first && b.section_index == 0;
         let fa = a.best_fts_rank.unwrap_or(usize::MAX);
         let fb = b.best_fts_rank.unwrap_or(usize::MAX);
-        fa.cmp(&fb).then_with(|| b.best_fused.total_cmp(&a.best_fused))
+        ib.cmp(&ia)
+            .then_with(|| fa.cmp(&fb))
+            .then_with(|| b.best_fused.total_cmp(&a.best_fused))
     });
     kept.truncate(input.k);
 
@@ -260,10 +274,35 @@ pub fn min_similarity(db: &Database) -> f32 {
         .unwrap_or(HELP_MIN_SIMILARITY)
 }
 
+/// Sections served from the page the planner picked: its intro (the page
+/// outline) and its best section.
+const HELP_PAGE_K: usize = 2;
+
+/// Sections from the rest of the guides that join a picked page.
+const HELP_ELSEWHERE_K: usize = 2;
+
+/// Pure: the page's sources first, then the best sections from other pages.
+/// The planner picks the wrong page now and then, and the global ranking is
+/// what answered such a question before pages existed — the right section
+/// is not always its first hit ("add an account" was the second), so two
+/// ride along.
+pub fn merge_page_and_global(on_page: Vec<HelpSource>, global: Vec<HelpSource>) -> Vec<HelpSource> {
+    let page = on_page.first().map(|s| s.page.clone());
+    let elsewhere: Vec<HelpSource> = global
+        .into_iter()
+        .filter(|g| Some(&g.page) != page.as_ref() && !on_page.iter().any(|s| s.chunk_id == g.chunk_id))
+        .take(HELP_ELSEWHERE_K)
+        .collect();
+    on_page.into_iter().chain(elsewhere).collect()
+}
+
 /// Fetch, fuse and plan the help sources for `query`. Best-effort and
 /// bounded: an error or timeout inside yields no sources plus a trace that
 /// says so, never a failed turn. `query_embedding` is reused when the
-/// mailbox retrieval already embedded the question this turn.
+/// mailbox retrieval already embedded the question this turn. `page` is the
+/// guide page the query planner picked: its intro and best section ride
+/// first, joined by the best section from the rest of the guides (see
+/// [`merge_page_and_global`]).
 pub async fn lookup_help(
     db: &Arc<Database>,
     provider: &dyn AIProvider,
@@ -271,6 +310,7 @@ pub async fn lookup_help(
     query_embedding: Option<&[f32]>,
     ui_lang: &str,
     k: usize,
+    page: Option<&str>,
 ) -> Result<(Vec<HelpSource>, HelpTrace)> {
     let t0 = std::time::Instant::now();
     let mut trace = HelpTrace {
@@ -285,9 +325,8 @@ pub async fn lookup_help(
     let vector_available = db.count_help_chunks_embedded_with(&model)? > 0;
     trace.vector_available = vector_available;
 
-    // ── Vector candidates ──────────────────────────────────────────────
-    let vec_hits: Vec<(i64, f32)> = if vector_available {
-        let owned: Option<Vec<f32>> = match query_embedding {
+    let embedding: Option<Vec<f32>> = if vector_available {
+        match query_embedding {
             Some(e) => Some(e.to_vec()),
             None => match timeout(HELP_LOOKUP_TIMEOUT, provider.embed(query)).await {
                 Ok(Ok(r)) => Some(r.embedding),
@@ -300,78 +339,126 @@ pub async fn lookup_help(
                     None
                 }
             },
-        };
-        match owned {
-            Some(e) => db.vec_search_help_docs(&e, &model, HELP_CANDIDATES)?,
-            None => Vec::new(),
         }
     } else {
-        Vec::new()
+        None
     };
-
-    // ── FTS candidates ─────────────────────────────────────────────────
-    let fts_hits = db.fts_search_help_docs(query, HELP_CANDIDATES as i32)?;
-
-    if vec_hits.is_empty() && fts_hits.is_empty() {
-        trace.elapsed_ms = t0.elapsed().as_millis() as i64;
-        return Ok((Vec::new(), trace));
-    }
-
-    // ── Fuse + hydrate ─────────────────────────────────────────────────
-    let vec_ids: Vec<String> = vec_hits.iter().map(|(r, _)| r.to_string()).collect();
-    let fts_ids: Vec<String> = fts_hits.iter().map(|(r, _)| r.to_string()).collect();
-    let fused: BTreeMap<String, f32> = fuse_rrf(
-        &[
-            Ranking {
-                ids_in_order: &vec_ids,
-                weight: VECTOR_FUSION_WEIGHT,
-            },
-            Ranking {
-                ids_in_order: &fts_ids,
-                weight: FTS_FUSION_WEIGHT,
-            },
-        ],
-        DEFAULT_RRF_K,
-    )
-    .into_iter()
-    .collect();
-    let rowids: Vec<i64> = fused.keys().filter_map(|k| k.parse().ok()).collect();
-    let rows = db.get_help_chunks_by_rowids(&rowids)?;
-    let candidates: Vec<HelpCandidate> = rows
-        .into_iter()
-        .map(|(rowid, chunk)| HelpCandidate {
-            vec_similarity: vec_hits.iter().find(|(r, _)| *r == rowid).map(|(_, s)| *s),
-            fts_rank: fts_hits.iter().position(|(r, _)| *r == rowid),
-            fused: fused.get(&rowid.to_string()).copied().unwrap_or(0.0),
-            chunk,
-        })
-        .collect();
-    let sections: Vec<(String, i32)> = {
-        let mut s: Vec<(String, i32)> = candidates
-            .iter()
-            .map(|c| (c.chunk.page.clone(), c.chunk.section_index))
-            .collect();
-        s.sort();
-        s.dedup();
-        s
-    };
-    let siblings = db.get_help_chunk_siblings(&sections, ui_lang)?;
-
-    trace.candidates = sections.len() as i32;
-    trace.top_similarity = candidates.iter().filter_map(|c| c.vec_similarity).reduce(f32::max);
-
-    let sources = plan_help_sources(HelpPlanInput {
-        candidates: &candidates,
-        siblings: &siblings,
+    let ranker = SectionRanker {
+        db,
+        query,
+        embedding: embedding.as_deref(),
+        model: &model,
         ui_lang,
-        vector_available: vector_available && !vec_hits.is_empty(),
-        min_similarity: min_similarity(db),
-        k,
-    });
+    };
+
+    let sources = match page {
+        None => ranker.rank(k, None, &mut trace)?,
+        Some(p) => {
+            let on_page = ranker.rank(HELP_PAGE_K, Some(p), &mut trace)?;
+            // Enough that hits on the picked page, which are skipped, still
+            // leave HELP_ELSEWHERE_K from other pages.
+            let global = ranker.rank(HELP_PAGE_K + HELP_ELSEWHERE_K, None, &mut trace)?;
+            merge_page_and_global(on_page, global)
+        }
+    };
     trace.included = sources.len() as i32;
     trace.chunk_ids = sources.iter().map(|s| s.chunk_id.clone()).collect();
     trace.elapsed_ms = t0.elapsed().as_millis() as i64;
     Ok((sources, trace))
+}
+
+/// One ranking pass over the corpus (or over one page of it): FTS + KNN,
+/// fused, hydrated and handed to [`plan_help_sources`].
+struct SectionRanker<'a> {
+    db: &'a Arc<Database>,
+    query: &'a str,
+    embedding: Option<&'a [f32]>,
+    model: &'a str,
+    ui_lang: &'a str,
+}
+
+impl SectionRanker<'_> {
+    fn rank(&self, k: usize, page: Option<&str>, trace: &mut HelpTrace) -> Result<Vec<HelpSource>> {
+        let (db, ui_lang) = (self.db, self.ui_lang);
+        let vec_hits: Vec<(i64, f32)> = match self.embedding {
+            Some(e) => db.vec_search_help_docs(e, self.model, HELP_CANDIDATES, page)?,
+            None => Vec::new(),
+        };
+        let fts_hits = db.fts_search_help_docs(self.query, HELP_CANDIDATES as i32, page)?;
+
+        // On a picked page the intro rides even when neither ranker matched it.
+        let page_intro: Vec<HelpChunk> = match page {
+            Some(p) => db.get_help_chunk_siblings(&[(p.to_string(), 0)], ui_lang)?,
+            None => Vec::new(),
+        };
+
+        if vec_hits.is_empty() && fts_hits.is_empty() && page_intro.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // ── Fuse + hydrate ─────────────────────────────────────────────────
+        let vec_ids: Vec<String> = vec_hits.iter().map(|(r, _)| r.to_string()).collect();
+        let fts_ids: Vec<String> = fts_hits.iter().map(|(r, _)| r.to_string()).collect();
+        let fused: BTreeMap<String, f32> = fuse_rrf(
+            &[
+                Ranking {
+                    ids_in_order: &vec_ids,
+                    weight: VECTOR_FUSION_WEIGHT,
+                },
+                Ranking {
+                    ids_in_order: &fts_ids,
+                    weight: FTS_FUSION_WEIGHT,
+                },
+            ],
+            DEFAULT_RRF_K,
+        )
+        .into_iter()
+        .collect();
+        let rowids: Vec<i64> = fused.keys().filter_map(|k| k.parse().ok()).collect();
+        let rows = db.get_help_chunks_by_rowids(&rowids)?;
+        let mut candidates: Vec<HelpCandidate> = rows
+            .into_iter()
+            .map(|(rowid, chunk)| HelpCandidate {
+                vec_similarity: vec_hits.iter().find(|(r, _)| *r == rowid).map(|(_, s)| *s),
+                fts_rank: fts_hits.iter().position(|(r, _)| *r == rowid),
+                fused: fused.get(&rowid.to_string()).copied().unwrap_or(0.0),
+                chunk,
+            })
+            .collect();
+        candidates.extend(page_intro.into_iter().map(|chunk| HelpCandidate {
+            chunk,
+            vec_similarity: None,
+            fts_rank: None,
+            fused: 0.0,
+        }));
+        let sections: Vec<(String, i32)> = {
+            let mut s: Vec<(String, i32)> = candidates
+                .iter()
+                .map(|c| (c.chunk.page.clone(), c.chunk.section_index))
+                .collect();
+            s.sort();
+            s.dedup();
+            s
+        };
+        let siblings = db.get_help_chunk_siblings(&sections, ui_lang)?;
+
+        trace.candidates += sections.len() as i32;
+        let top = candidates.iter().filter_map(|c| c.vec_similarity).reduce(f32::max);
+        trace.top_similarity = match (trace.top_similarity, top) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+
+        Ok(plan_help_sources(HelpPlanInput {
+            candidates: &candidates,
+            siblings: &siblings,
+            ui_lang,
+            vector_available: !vec_hits.is_empty(),
+            page,
+            min_similarity: min_similarity(db),
+            k,
+        }))
+    }
 }
 
 fn log(level: &str, message: impl Into<String>) {
@@ -407,14 +494,130 @@ mod tests {
     }
 
     fn plan(cands: &[HelpCandidate], sibs: &[HelpChunk], lang: &str, vector: bool) -> Vec<HelpSource> {
+        plan_on_page(cands, sibs, lang, vector, None)
+    }
+
+    fn plan_on_page(
+        cands: &[HelpCandidate],
+        sibs: &[HelpChunk],
+        lang: &str,
+        vector: bool,
+        page: Option<&str>,
+    ) -> Vec<HelpSource> {
         plan_help_sources(HelpPlanInput {
             candidates: cands,
             siblings: sibs,
             ui_lang: lang,
             vector_available: vector,
+            page,
             min_similarity: HELP_MIN_SIMILARITY,
             k: HELP_TOP_K,
         })
+    }
+
+    // ── Page picked by the planner ───────────────────────────────────────
+    // The query planner names the guide page; bm25 and vectors only choose
+    // sections inside it. The page intro carries the page outline, so it goes
+    // first: it answers "what is on this page?" and frames the section after it.
+
+    #[test]
+    fn a_picked_page_serves_its_intro_first_then_its_best_section() {
+        let cands = vec![
+            cand(
+                chunk("es", "installation", 2, 0, "Con IA local"),
+                Some(0.62),
+                Some(0),
+                0.05,
+            ),
+            cand(chunk("es", "ai-features", 12, 0, "Lentes"), Some(0.55), Some(1), 0.04),
+            cand(chunk("es", "ai-features", 0, 0, "Funciones de IA"), None, None, 0.0),
+            cand(
+                chunk("es", "ai-features", 13, 0, "Apagarlo todo"),
+                Some(0.50),
+                Some(2),
+                0.03,
+            ),
+        ];
+        let out = plan_on_page(&cands, &[], "es", true, Some("ai-features"));
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["es/ai-features#0.0", "es/ai-features#12.0"]);
+    }
+
+    // The planner picks the wrong page now and then ("add an account" went to
+    // installation), so the picked page is a preference, not a filter: its
+    // intro and best section ride first, then the best section from anywhere
+    // else — which is what answered "add an account" before pages existed.
+
+    fn source(page: &str, section: i32) -> HelpSource {
+        HelpSource::from_chunk(chunk("en", page, section, 0, &format!("{page} {section}")), 0.5)
+    }
+
+    #[test]
+    fn a_picked_page_is_joined_by_the_two_best_sections_from_other_pages() {
+        // "como añado una nueva cuenta": the planner picked installation, and
+        // the right section was the SECOND global hit (the first was
+        // "Something else"), so one global slot was not enough.
+        let on_page = vec![source("installation", 0), source("installation", 12)];
+        let global = vec![
+            source("troubleshooting", 8),
+            source("getting-started", 4),
+            source("features", 1),
+        ];
+        let out = merge_page_and_global(on_page, global);
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "en/installation#0.0",
+                "en/installation#12.0",
+                "en/troubleshooting#8.0",
+                "en/getting-started#4.0"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_global_pick_skips_the_picked_page() {
+        // A global hit already on the page is not repeated and does not use
+        // up a slot.
+        let on_page = vec![source("ai-features", 0), source("ai-features", 1)];
+        let global = vec![source("ai-features", 1), source("getting-started", 2)];
+        let out = merge_page_and_global(on_page, global);
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["en/ai-features#0.0", "en/ai-features#1.0", "en/getting-started#2.0"]
+        );
+    }
+
+    #[test]
+    fn nothing_global_leaves_the_page_sources() {
+        let on_page = vec![source("features", 0), source("features", 6)];
+        assert_eq!(merge_page_and_global(on_page.clone(), Vec::new()), on_page);
+    }
+
+    #[test]
+    fn a_picked_page_skips_the_similarity_gate() {
+        // The planner already said the question is about the app.
+        let cands = vec![cand(
+            chunk("en", "features", 6, 0, "Attachments view"),
+            Some(0.31),
+            Some(0),
+            0.03,
+        )];
+        let out = plan_on_page(&cands, &[], "en", true, Some("features"));
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_picked_page_keeps_its_sections_without_vectors() {
+        let cands = vec![
+            cand(chunk("en", "features", 0, 0, "Features"), None, None, 0.0),
+            cand(chunk("en", "features", 6, 0, "Attachments view"), None, Some(1), 0.02),
+        ];
+        let out = plan_on_page(&cands, &[], "en", false, Some("features"));
+        let ids: Vec<&str> = out.iter().map(|s| s.chunk_id.as_str()).collect();
+        assert_eq!(ids, ["en/features#0.0", "en/features#6.0"]);
     }
 
     /// The gate is global: one candidate above the threshold means the

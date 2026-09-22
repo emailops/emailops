@@ -217,21 +217,45 @@
   note: "fed 9 mailbox emails, one a user asking the same thing, next to the guide sections"
   today: "2026-09-18"
   expect_app_help: true
+  expect_help_page_any: [ai-features, getting-started]
 
 - id: app_help_change_model_es
   question: "¿cómo cambio el modelo de IA que usa EmailOps?"
+  note: "bm25 on 'cambio modelo usa' ranked troubleshooting; the model catalog lives on ai-features"
   today: "2026-09-18"
   expect_app_help: true
+  expect_help_page_any: [ai-features, getting-started]
 
 - id: app_help_data_location_de
   question: "Wo speichert EmailOps meine Daten auf dem Rechner?"
   today: "2026-09-18"
   expect_app_help: true
+  expect_help_page_any: [privacy-security, installation]
 
 - id: app_help_slow_chat_fr
   question: "pourquoi le chat d'EmailOps est-il si lent, et comment l'accélérer ?"
   today: "2026-09-18"
   expect_app_help: true
+  expect_help_page_any: [troubleshooting, ai-features]
+
+- id: app_help_ai_features_overview_es
+  question: "que funcionalidades de ia tiene emailops"
+  note: "no guide says 'funcionalidades'; ranking sections by shared words served two 'local AI' sections"
+  today: "2026-09-18"
+  expect_app_help: true
+  expect_help_page_any: [ai-features]
+
+- id: app_help_attachments_view_es
+  question: "como configuro la vista de adjuntos"
+  today: "2026-09-18"
+  expect_app_help: true
+  expect_help_page_any: [features]
+
+- id: app_help_add_account_es
+  question: "como añado una nueva cuenta"
+  today: "2026-09-18"
+  expect_app_help: true
+  expect_help_page_any: [getting-started, features]
 
 - id: mail_about_the_app_is_still_a_search
   question: "which emails ask me about using Ollama with EmailOps?"

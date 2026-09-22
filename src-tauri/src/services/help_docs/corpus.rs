@@ -83,6 +83,19 @@ fn raw_pages() -> &'static [(&'static str, &'static str, &'static str)] {
     ]
 }
 
+/// `(page, title, description)` for every page in `lang`, in [`PAGES`]
+/// order — the table of contents the query planner picks a page from.
+pub fn page_summaries(lang: &str) -> Vec<(&'static str, String, String)> {
+    raw_pages()
+        .iter()
+        .filter(|(l, _, _)| *l == lang)
+        .map(|(_, page, md)| {
+            let (fm, _) = parse_front_matter(md);
+            (*page, fm.title, fm.description)
+        })
+        .collect()
+}
+
 /// The whole corpus, parsed once per process.
 pub fn corpus() -> &'static [HelpChunk] {
     static CORPUS: OnceLock<Vec<HelpChunk>> = OnceLock::new();
@@ -127,10 +140,12 @@ pub fn embedding_text(chunk: &HelpChunk) -> String {
     }
 }
 
-/// Parsed front matter: the title and the `nav:` map (anchor → target).
+/// Parsed front matter: the title, the one-line description and the `nav:`
+/// map (anchor → target).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct FrontMatter {
     pub title: String,
+    pub description: String,
     pub nav: BTreeMap<String, String>,
 }
 
@@ -168,6 +183,7 @@ pub(crate) fn parse_front_matter(md: &str) -> (FrontMatter, &str) {
         let Some((k, v)) = line.split_once(':') else { continue };
         match k.trim() {
             "title" => fm.title = strip_quotes(v.trim()).to_string(),
+            "description" => fm.description = strip_quotes(v.trim()).to_string(),
             "nav" => in_nav = v.trim().is_empty(),
             _ => {}
         }
@@ -307,13 +323,30 @@ pub(crate) fn split_parts(content: &str, max_chars: usize) -> Vec<String> {
     parts
 }
 
-/// Parse one page into chunks. Section 0 (the intro) is emitted only when
-/// it has text, but always consumes index 0 so numbering matches across
+/// The intro chunk's text: the page description, the intro paragraph and the
+/// titles of the page's sections. Every other chunk is one section, so this
+/// is the only one that answers "what is on this page?" — "what AI features
+/// does EmailOps have?" otherwise lands on two unrelated sections.
+fn intro_with_outline(description: &str, intro: &str, sections: &[RawSection]) -> String {
+    let outline: Vec<String> = sections.iter().skip(1).map(|s| format!("- {}", s.heading)).collect();
+    [description, intro, &outline.join("\n")]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Parse one page into chunks. Section 0 (the intro) carries the page
+/// outline (see [`intro_with_outline`]); it is emitted only when that leaves
+/// it with text, but always consumes index 0 so numbering matches across
 /// languages.
 pub(crate) fn parse_page(lang: &str, page: &str, md: &str) -> Vec<HelpChunk> {
     let (fm, body) = parse_front_matter(md);
+    let mut sections = split_sections(body);
+    let intro = intro_with_outline(&fm.description, &sections[0].content, &sections);
+    sections[0].content = intro;
     let mut chunks = Vec::new();
-    for (section_index, section) in split_sections(body).into_iter().enumerate() {
+    for (section_index, section) in sections.into_iter().enumerate() {
         if section.content.is_empty() {
             continue;
         }
@@ -438,8 +471,43 @@ mod tests {
     #[test]
     fn empty_intro_still_consumes_index_zero() {
         let chunks = parse_page("es", "p", "---\ntitle: 'T'\n---\n\n## A\n\ntext\n");
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].chunk_id, "es/p#1.0");
+        assert_eq!(chunks[0].chunk_id, "es/p#0.0", "the outline gives the intro content");
+        assert_eq!(chunks[1].chunk_id, "es/p#1.0");
+    }
+
+    // "what AI features does EmailOps have?" is a question about a whole
+    // page, but every chunk is one section of it, so the lookup served two
+    // unrelated sections and the answer said the guide did not list them.
+    // The intro chunk therefore carries the page's description and the
+    // titles of its sections: the one chunk that answers "what is on this
+    // page", derived from the page itself.
+
+    #[test]
+    fn the_intro_chunk_carries_the_page_outline() {
+        let chunks = parse_page("en", "ai-features", SAMPLE);
+        let intro = &chunks[0].content;
+        assert!(
+            intro.starts_with("x\n\nIntro paragraph."),
+            "description first: {intro:?}"
+        );
+        for heading in [
+            "Choosing a backend",
+            "The model catalog",
+            "Tag Board",
+            "Turning it all off",
+        ] {
+            assert!(intro.contains(&format!("- {heading}")), "missing {heading}: {intro:?}");
+        }
+        assert!(
+            !intro.contains("not a heading"),
+            "code-fence text is not a section: {intro:?}"
+        );
+    }
+
+    #[test]
+    fn section_chunks_do_not_repeat_the_outline() {
+        let chunks = parse_page("en", "ai-features", SAMPLE);
+        assert_eq!(chunks[4].content, "Master switch.");
     }
 
     #[test]
@@ -457,11 +525,14 @@ mod tests {
     fn parts_share_section_anchor_and_get_own_ids() {
         let big = "y".repeat(MAX_CHUNK_CHARS - 10);
         let md = format!("---\ntitle: 'T'\n---\n\n## Long {{#long}}\n\n{big}\n\n{big}\n");
-        let chunks = parse_page("en", "p", &md);
+        let chunks: Vec<HelpChunk> = parse_page("en", "p", &md)
+            .into_iter()
+            .filter(|c| c.section_index == 1)
+            .collect();
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].chunk_id, "en/p#1.0");
         assert_eq!(chunks[1].chunk_id, "en/p#1.1");
-        assert!(chunks.iter().all(|c| c.anchor == "long" && c.section_index == 1));
+        assert!(chunks.iter().all(|c| c.anchor == "long"));
     }
 
     #[test]

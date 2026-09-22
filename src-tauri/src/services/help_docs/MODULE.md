@@ -11,14 +11,19 @@ an answer cites a guide section.
   page into heading sections (long ones into parts), reads the page's `nav:` front matter and
   fingerprints the whole corpus. Section N means the same thing in every language (the docs
   parity check pins heading counts), which is what lets a hit be served in the answer's
-  language.
+  language. Section 0 (the intro) carries the page description and the titles of its
+  sections, so "what is on this page?" has a chunk that answers it. `page_summaries(lang)`
+  is the table of contents the chat query planner picks a page from.
 - **index.rs** — planner + executor. `ensure_text_index` rebuilds `help_doc_chunks` +
   `help_docs_fts` when the corpus hash changed (synchronous, cheap); `ensure_embeddings`
   fills `vec_help_docs` for the active embedding model in batches (async, best-effort).
 - **retrieval.rs** — `lookup_help` fetches FTS + KNN candidates, fuses them with the shared
   RRF, and the pure `plan_help_sources` collapses to one source per section, gates on
   vector similarity (`HELP_MIN_SIMILARITY`, overridable with `chat.help_min_similarity`)
-  and swaps each kept section for its sibling in the UI language.
+  and swaps each kept section for its sibling in the UI language. When the query planner
+  named a guide page, that page's intro and best section ride first, joined by the two best
+  sections from the other pages (`merge_page_and_global`) — the planner picks the wrong
+  page now and then, so the page is a preference, not a filter.
 - **prompt.rs** — pure. Renders the `EMAILOPS HELP` block that rides in the final user
   message (never the system prompt) with the `help://<lang>/<page>#<anchor>` links the
   answer must cite.
@@ -37,7 +42,8 @@ an answer cites a guide section.
 ## Public surface
 
 - `ensure_index(db, provider)` / `ensure_text_index(db)` / `ensure_embeddings(db, provider)`
-- `lookup_help(db, provider, query, query_embedding, ui_lang, k) -> (Vec<HelpSource>, HelpTrace)`
+- `lookup_help(db, provider, query, query_embedding, ui_lang, k, page) -> (Vec<HelpSource>, HelpTrace)`
+  — `page` is the guide page from the planner's `{"app_help": "<page>"}` verdict
 - `render_help_block(&[HelpSource], app_help: bool) -> Option<String>` — `app_help` is the
   query planner's verdict that the question is about EmailOps; the block then instructs
   unconditionally instead of asking the model to judge whether it applies

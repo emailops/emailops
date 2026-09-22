@@ -165,11 +165,15 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
         let prefill_ms = planned.prefill_ms;
         let cached_prompt_tokens = planned.cached_prompt_tokens;
         let aux_plan = planned.aux_plan;
+        let help_page = match &planned.plan {
+            Plan::AppHelp(page) => page.clone(),
+            _ => None,
+        };
         let plan = match planned.plan {
             Plan::Search(plan) => Some(*plan),
-            Plan::Defer | Plan::AppHelp => None,
+            Plan::Defer | Plan::AppHelp(_) => None,
         };
-        let report = evaluate_outcome(&case, plan.as_ref(), outcome);
+        let report = evaluate_outcome(&case, plan.as_ref(), outcome, help_page.as_deref());
         if !cfg.json_stdout {
             println!(
                 "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",

@@ -3629,6 +3629,8 @@ pub async fn run_chat_turn(
     let mut planner_trace: Option<LlmCallTrace> = None;
     // Set when the planner says the question is about EmailOps itself.
     let mut app_help = false;
+    // The guide page the planner picked for it, when it named one.
+    let mut help_page: Option<String> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
         && (route.mode == RouteMode::ToolsFirst || asked_planner)
@@ -3696,14 +3698,21 @@ pub async fn run_chat_turn(
                     }
                 }
             }
-            super::planner::Plan::AppHelp => {
+            super::planner::Plan::AppHelp(page) => {
                 // Also on a keyword-routed turn ("why is chat slow today?"):
                 // the question is about the app, so no pre-seeded search and
                 // no mailbox retrieval — the guides answer it.
-                emit_log("info", &format!("planner: question about EmailOps [{plan_ms}ms]"));
+                emit_log(
+                    "info",
+                    &format!(
+                        "planner: question about EmailOps (guide page: {}) [{plan_ms}ms]",
+                        page.as_deref().unwrap_or("any")
+                    ),
+                );
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
                 route = super::routing::planner_help_route();
                 app_help = true;
+                help_page = page;
                 emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
             }
             super::planner::Plan::Defer => {
@@ -3785,6 +3794,7 @@ pub async fn run_chat_turn(
                 query_embedding.as_deref(),
                 ai_language.as_code(),
                 crate::services::help_docs::HELP_TOP_K,
+                help_page.as_deref(),
             )
             .await
             {
