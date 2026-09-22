@@ -353,15 +353,29 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
         })
         .unwrap_or_default();
 
+    // The memory header rides in the user message: an answer taken from it
+    // has no RAG source and no tool call, so without it the judge reads the
+    // remembered fact as invented.
+    let memory_section = outcome
+        .memory
+        .as_deref()
+        .map(|m| {
+            format!(
+                "\nMEMORY SHOWN TO THE ASSISTANT (facts it remembers about the user):\n{}\n",
+                indent_lines(m, "    ")
+            )
+        })
+        .unwrap_or_default();
+
     let metrics: Vec<&str> = case.metrics.iter().map(|m| m.as_str()).collect();
 
     format!(
         "QUESTION:\n{question}\n\n\
 GOLDEN REFERENCE ANSWER:\n{expected}\n\n\
-SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}{open_thread}{guides}\n\
+SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}{open_thread}{memory}{guides}\n\
 ASSISTANT RESPONSE:\n{response}\n\n\
 Score the assistant response on the following metrics only: {metrics}.\n\
-For faithfulness / contextual_* metrics, treat the SOURCES, TOOL CALLS, OPEN THREAD and EMAILOPS GUIDE SECTIONS blocks \
+For faithfulness / contextual_* metrics, treat the SOURCES, TOOL CALLS, OPEN THREAD, MEMORY and EMAILOPS GUIDE SECTIONS blocks \
 (whichever are present) as valid grounding context — the assistant is allowed to ground claims on any of them.\n\
 Each score is a float in [0.0, 1.0]. If you cannot score a metric, return null for it.\n\
 Return strict JSON with this shape:\n\
@@ -378,6 +392,7 @@ Only include keys for the metrics requested; set others to null.",
         sources = sources,
         tool_calls = tool_calls_section,
         open_thread = open_thread_section,
+        memory = memory_section,
         guides = guide_section,
         response = outcome.assistant_content,
         metrics = metrics.join(", "),
@@ -429,6 +444,7 @@ mod judge_rule_tests {
             sources_used: Vec::new(),
             open_thread: open_thread.map(str::to_string),
             help_sections: Vec::new(),
+            memory: None,
         }
     }
 
@@ -519,6 +535,22 @@ mod judge_rule_tests {
         assert!(with.contains("How do I add an account?"));
         let without = build_prompt(&case, &outcome_with(None));
         assert!(!without.contains("OPEN THREAD SHOWN TO THE ASSISTANT"));
+    }
+
+    /// A turn that answered from the `<memory>` header (no RAG source, no
+    /// tool) scored faithfulness 0 every run: the judge never saw the header.
+    #[test]
+    fn prompt_shows_the_memory_header_as_grounding_when_the_turn_had_one() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let mut outcome = outcome_with(None);
+        outcome.memory = Some(
+            "<memory>\nEntities matching query:\n  - domain [acme.test]: customer number AC-1234\n</memory>".into(),
+        );
+        let with = build_prompt(&case, &outcome);
+        assert!(with.contains("MEMORY SHOWN TO THE ASSISTANT"), "{with}");
+        assert!(with.contains("AC-1234"));
+        let without = build_prompt(&case, &outcome_with(None));
+        assert!(!without.contains("MEMORY SHOWN TO THE ASSISTANT"));
     }
 
     #[test]
