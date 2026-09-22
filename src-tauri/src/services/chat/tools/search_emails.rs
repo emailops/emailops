@@ -113,8 +113,8 @@ fn empty_result(ctx: &ToolCtx<'_>, prefix: &str, parenthetical: Option<&str>) ->
     });
     if has_calendar {
         out.push_str(
-            " If the question is about a meeting or another scheduled event, list_calendar_events checks \
-the user's calendar.",
+            " If the question is about a meeting or another scheduled event, call list_calendar_events \
+now (with no range it covers last week and the next) and answer from it — do not offer to check.",
         );
     }
     out
