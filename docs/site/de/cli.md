@@ -43,8 +43,8 @@ emailops-cli                              # ohne Unterbefehl → interaktive REP
 ```
 
 <!-- claim:cli-quick-start-2 -->
-In der REPL ist reiner Text ein Chat-Zug (Tokens erscheinen live), und Zeilen mit `/` am
-Anfang entsprechen den Unterbefehlen: `/search`, `/account`, `/sync`, `/help`, `/quit`.
+In der REPL ist jede Aktion ein Befehl mit `/` am Anfang: `/chat <Frage>` ist ein Chat-Zug
+(Tokens erscheinen live), die übrigen entsprechen den Unterbefehlen — `/search`, `/account`, `/sync`, `/help`, `/quit`.
 
 ## Befehle
 

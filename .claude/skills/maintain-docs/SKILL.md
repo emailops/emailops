@@ -1,6 +1,6 @@
 ---
 name: maintain-docs
-description: Keep EmailOps' published documentation true as the app changes — every paragraph, list item, table and code block of the docs is a catalogued claim (docs/site/claims.toml) verified against the code, existing tests or the running app, or explicitly marked manual; run the checks, fix what fails (in all four languages), catalogue any new prose, and report it with an HTML run showing each claim and its result. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
+description: Keep EmailOps' published documentation true as the app changes — every paragraph, list item, table and code block of the docs is a catalogued claim (docs/site/claims.toml) verified by running the app itself — a fresh install, a locked relaunch, the demo mailbox and the CLI — or, where the app cannot show it, against the published release, the tests, or explicitly marked manual; run the checks, fix what fails (in all four languages), catalogue any new prose, and report it with an HTML run showing each claim and its result. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
 
@@ -46,26 +46,42 @@ pre-commit.
 ## 1. Run the checks
 
 ```bash
-make docs-check                      # guards + contract tests, seconds
-make docs-check ARGS="--with-app"    # also drives the docClaim() cases through the real UI
+make docs-check                      # guards, release assets, code tests — minutes, no app
+make docs-check ARGS="--with-app"    # the real verification: runs the app itself
 ```
 
-The report prints as a `file://` link — open it. Every case is listed with its
-result, and a failing one carries the edit it expects. Use `--with-app` before
-a release and whenever a change touched the UI; the fast pass marks the
-app-driven claims as skipped rather than omitting them, so it never reads as
-"all clear" while testing less.
+**The app is the ground truth.** A sentence being true of the code is not the
+same as it being true of the app a reader installs: a locale string can exist
+and never be rendered (the docs quoted "In-app (local)"; the UI says "In-app"),
+a default can be pinned in one backend and not the other. So `--with-app` is
+the verification, and the fast pass is a pre-flight — it marks every app check
+as pending (MANUAL), never as OK. Run `--with-app` before a release and after
+any change a user could see.
+
+`--with-app` drives the app in four phases (`scripts/check_docs_app.sh`):
+
+| Phase | What runs | What it proves |
+|---|---|---|
+| `fresh` | a brand-new data dir | the first-run wizard both ways (AI and plain), factory defaults in every settings tab, what lands on disk; ends by setting a main password |
+| `locked` | the same data dir, relaunched | the lock screen, and that the SQLite file stays readable — the app locks, it does not encrypt |
+| `demo` | the synthetic demo mailbox | reading pane, unified inbox, calendar, attachments, tasks, memory, tag board, chat, AI Search |
+| `cli` | `emailops-cli` on a copy of the demo DB | every command, flag, exit code and JSON shape the CLI page shows; the REPL through a pseudo-terminal |
 
 The report groups claims by page. Each row quotes the claim, says how it was
-proven, and — when it fails — why and what edit it expects. A claim is proven
-one of four ways, and the report files it under the strongest that ran:
+proven, and — when it fails — why, what edit it expects, and the screenshots
+the app showed. A claim is filed under the strongest method that ran:
 
 | Type in the report | How the claim is proven | On failure |
 |---|---|---|
-| **Comprobado en la app** | a `docClaim()` in sweep.mjs drives the real UI (`--with-app`) | the app changed, **or the page was always wrong** — decide which before editing |
-| **Tests existentes** | named Rust tests that prove the behaviour exist and pass | the behaviour changed, or the test was renamed |
-| **Código fuente** | a `quoted` literal is in both the claim and the code/config/release script, or the code has/lacks something | the code moved, or the page was edited past what the catalogue quotes |
-| **Sin prueba automática** | nothing automatic can prove it (performance, third-party behaviour, whole-program promises like "no phone-home") | shown as **MANUAL** with its reason — never counted as OK |
+| **Comprobado en la app** | a `claim('<id>', …)` case reads the claim's text from the docs and checks it on screen | the app changed, **or the page was always wrong** — decide which before editing |
+| **Release publicada** | the asset is on the latest GitHub release and the claim names it | the release stopped publishing it, or the page names the wrong file |
+| **Tests código que comprueban eso** | named tests prove behaviour the demo cannot drive (a real Gmail server, the keychain, an Intel Mac) | the behaviour changed, or the test was renamed |
+| **Código fuente** | only where the file *is* the thing: the cask, `tauri.conf.json`, `release.yml`, `LICENSE` | the file changed and the page did not |
+| **Sin prueba automática** | nothing automatic can prove it (performance, third-party behaviour, "no phone-home") | shown as **MANUAL** with its reason — never counted as OK |
+
+A claim can combine an app check with a `manual` entry for the part the app
+check does not reach ("renaming folders is not exercised: the demo has none").
+Then it reads MANUAL, which is the honest answer, not OK.
 
 Plus the structural guards, which vouch for the claims as a set:
 
@@ -74,12 +90,12 @@ Plus the structural guards, which vouch for the claims as a set:
 | `check-docs-parity.sh` | same pages, sidebar weights and `{#anchors}` in all four languages | a language is missing a page or an anchor a cross-page link targets |
 | `check-docs-labels.sh` | every UI label the docs tell you to click exists verbatim in that language's locale | the app renamed a control, or a translation paraphrased it |
 | `check-docs-paths.py` | every repo path quoted in any `.md` resolves | a file moved or was deleted and the prose did not follow |
-| `check-docs-claims.py` | every block is marked in all four languages, every marker is catalogued, every `app` check has its `docClaim()` | new prose was added uncatalogued, or a marker was lost in a translation |
+| `check-docs-claims.py` | every block is marked in all four languages, every marker is catalogued, every `app` check has its case | new prose was added uncatalogued, or a marker was lost in a translation |
 
-**A locale string proves a label, never a feature.** The app's own help text can
-be as stale as the docs — it still promised a "find similar" feature that does
-not exist. Evidence for a feature is code: `src/lib/api.ts` is the one path from
-the UI to the backend.
+**A failing app check is sometimes an app bug.** The first run of this design
+found the docs right and the app wrong twice: the model recommendation on a
+16 GB Mac, and the Junk settings being unreachable without AI. Report those to
+the developer; do not bend the page to match a bug.
 
 ## 2. Coverage — the part no script can do
 
@@ -141,20 +157,25 @@ this is not optional:
 1. Mark the block in **all four** languages: `<!-- claim:some-id -->` on its own
    line above a paragraph, table or code block; at the end of the **last** line
    of a list item (the first line can sit inside a `**bold span**` that wraps).
-2. Add `[some-id]` to `docs/site/claims.toml` with the strongest check that
-   applies — see the file header for the forms. Prefer, in order: an existing
-   test that proves the behaviour; a `quoted` literal shared by the claim and the
-   code; an `app` check; and only then `manual` with an honest reason. `none` is
-   for lead-ins that make no claim of their own.
-3. For an `app` check, add `docClaim('some-id', feature, page, expect, fix, fn)`
-   in `.claude/skills/verify-emailops/scripts/sweep.mjs`, next to the steps for
-   that screen so it reuses the navigation already done. Ground selectors in the
-   live DOM first (`$V wd find 'button=…'`, see `verify-emailops`) — the first
-   run of a claim is as likely to expose a bad selector as a bad page.
-4. `uv run --no-project scripts/check-docs-claims.py`, then `make docs-check`.
+2. Add `[some-id]` to `docs/site/claims.toml`. **Default to `{ app = true }`**:
+   if a reader could see it in the app, the app is where it gets checked. Fall
+   back, in order, to `release`, `tests`, a `file` that *is* the thing, and only
+   then `manual` with an honest reason. See the file header.
+3. For an app check, add a literal `claim('some-id', 'what', async () => …)` in
+   the phase that reaches that screen: `doc_claims.mjs` (fresh install / locked),
+   `doc_claims_demo.mjs` (demo mailbox) or `scripts/docs_cli_claims.py` (CLI).
+   Read what to look for from the claim itself — `labelsVisible('some-id')`
+   checks every bold span of the claim on screen; `CLAIMS['some-id']` is the
+   text — so the check follows the sentence instead of a copy of it. Never loop
+   over ids: the completeness guard only sees literal ids.
+4. Ground selectors in the live DOM first (`VERIFY_DATA_DIR=<empty dir>` gives a
+   fresh instance; see `verify-emailops`). Pick toggles by the label of their
+   row, never "the first toggle": the sidebar has its own.
+5. `uv run --no-project scripts/check-docs-claims.py`, then
+   `make docs-check ARGS="--with-app"`.
 
-When a `manual` claim becomes provable — a test lands, a sweep step is added —
-upgrade its entry. The count of MANUAL rows in the report is the honest size of
+When a `manual` claim becomes observable — a screen gains data, a phase learns
+to reach it — upgrade it. The MANUAL count in the report is the honest size of
 what is still taken on trust.
 
 ## 5. Report

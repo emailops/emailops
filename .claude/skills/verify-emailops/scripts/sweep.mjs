@@ -43,23 +43,6 @@ async function step(feature, name, expect, fn) {
 }
 const ok = (cond, good, bad) => cond ? good : `FAIL: ${bad}`;
 
-// A claim the published docs make about the UI. `id` matches a
-// `<!-- claim:id -->` marker in docs/site/<lang>/<page> and an entry with
-// `{ app = true }` in docs/site/claims.toml; check-docs-claims.py fails if any
-// of the three loses the others, so a claim cannot be quietly orphaned by
-// rewriting the paragraph it guards. `fix` is what the report shows when the
-// app and the page disagree: the page is as likely to be the wrong one, and a
-// bare assertion failure does not say which.
-// Recorded as a normal sweep step under a `doc:` name so it rides the existing
-// session, screenshots and results.json — verify_all.py reads that prefix to
-// file it under the "doc" test type.
-async function docClaim(id, feature, page, expect, fix, fn) {
-  await step(feature, `doc:${id}`, `${page}: ${expect}`, fn);
-  const rec = results[results.length - 1];
-  rec.claim = id; rec.page = page;
-  if (rec.status === 'fail') rec.fix = fix;
-}
-
 // ---------- Inbox ----------
 await click('button=Inbox'); await sleep(1500);
 await step('Inbox', 'lista inicial', 'la bandeja de la cuenta demo muestra filas', async () => { const r = await rows(); return ok(r > 5, `${r} filas`, `solo ${r} filas`); });
@@ -78,15 +61,6 @@ await step('Inbox', 'menú del hilo', 'los botones Reply, Reply All y AI Draft e
   const have = []; for (const t of ['Reply', 'Reply All', 'AI Draft']) if (await exists(`button=${t}`)) have.push(t);
   return ok(have.length === 3, have.join(', '), `faltan: ${['Reply','Reply All','AI Draft'].filter(x => !have.includes(x))}`);
 });
-await docClaim('reading-pane-forward', 'Inbox', 'features.md',
-  'Forward sits next to Reply and Reply all in the reading pane',
-  'si Forward ya no está junto a Reply/Reply all, corregir el párrafo "Forwarding" en los 4 idiomas',
-  async () => {
-    const promised = ['Forward', 'Reply', 'Reply All'];
-    const missing = [];
-    for (const label of promised) if (!(await exists(`button=${label}`))) missing.push(label);
-    return ok(!missing.length, promised.join(', '), `el doc promete ${missing.join(', ')} en el panel de lectura`);
-  });
 await step('Inbox', 'volver con Back', 'Back devuelve a la lista', async () => { await click('button=Back'); await sleep(1200); return ok(await exists('h2*=Inbox') && !(await exists('h1*=How do I add')), 'lista visible', 'el hilo sigue abierto'); });
 await step('Inbox', 'menú ⋮ de una fila', 'el menú de acciones de la fila abre con opciones', async () => {
   const btn = await b.$('aria/More actions'); if (!(await btn.isExisting())) return 'FAIL: no hay botón "More actions"';
@@ -147,29 +121,6 @@ await step('Tag Board', 'rango Today', 'con Today quedan menos filas (el correo 
   await click('button=All time'); await sleep(1500); const back = await rows();
   return ok(today < before && back === before, `${before} → ${today} → ${back}`, `${before} → ${today} → ${back}`);
 });
-await docClaim('tag-board-toolbar', 'Tag Board y clasificación', 'ai-features.md',
-  'the toolbar narrows the board by time (Today, Yesterday, Last 7 days) and carries the same Hide junk messages switch as the inbox',
-  'si un control ya no existe, reescribir el párrafo de la barra de herramientas en los 4 idiomas citando las etiquetas reales de src/locales/<lang>/',
-  async () => {
-    const missing = [];
-    for (const label of ['Today', 'Yesterday', 'Last 7 days']) if (!(await exists(`button=${label}`))) missing.push(label);
-    // The junk control is a switch, not a button: a <label> wrapping a
-    // checkbox and its text. Checking the input and the visible label
-    // separately keeps the claim about what the reader is told to look for.
-    const hasSwitch = await exists('#tagboard-hide-junk');
-    const hasLabel = (await bodyText()).includes('Hide junk messages');
-    if (!hasSwitch || !hasLabel) missing.push(`Hide junk messages (switch=${hasSwitch}, etiqueta=${hasLabel})`);
-    return ok(!missing.length, 'Today, Yesterday, Last 7 days, Hide junk messages', `el doc promete ${missing.join(', ')} en la barra`);
-  });
-await docClaim('tag-board-dimensions', 'Tag Board y clasificación', 'ai-features.md',
-  'pick one dimension — Company, Priority, Intent or Topic',
-  'si el juego de dimensiones cambió, actualizar la lista del párrafo del Tag Board en los 4 idiomas',
-  async () => {
-    const t = await bodyText();
-    const promised = ['Company', 'Priority', 'Intent', 'Topic'];
-    const missing = promised.filter(d => !t.includes(d));
-    return ok(!missing.length, promised.join(', '), `el doc promete las dimensiones ${missing.join(', ')} y no aparecen`);
-  });
 await step('Tag Board', 'buscar tag', 'Search tags… filtra los bloques', async () => {
   if (!(await exists('input[placeholder^="Search tags"]'))) return 'FAIL: no hay cuadro Search tags';
   const before = await rows(); await type('input[placeholder^="Search tags"]', 'codeberg'); await sleep(1500); const after = await rows();

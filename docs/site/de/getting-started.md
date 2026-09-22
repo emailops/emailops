@@ -5,7 +5,8 @@ weight: 20
 ---
 
 <!-- claim:start-intro-1 -->
-Beim ersten Start von EmailOps läuft ein Assistent mit vier Schritten. Er dauert ein paar
+Beim ersten Start von EmailOps läuft ein Assistent mit bis zu vier Schritten (drei, wenn Sie
+einen einfachen E-Mail-Client wählen). Er dauert ein paar
 Minuten, größtenteils für einen Modell-Download im Hintergrund.
 
 ## 1. KI an oder aus
@@ -26,9 +27,9 @@ Wenn Sie die KI aktiviert haben, wählen Sie, wo die Inferenz stattfindet:
 
 | Backend | Was es bedeutet |
 |---|---|
-| **In der App (lokal)** | Der Standard. Eine in EmailOps eingebettete llama.cpp-Laufzeit. Kein Daemon, keine Einrichtung, kein Netzwerk. |
-| **Ollama (lokal)** | Nutzt Ihren vorhandenen Ollama-Server unter `http://localhost:11434`. |
-| **OpenRouter (entfernt)** | Sendet Prompts an eine kostenpflichtige Cloud-API. Optional, pro Funktion, standardmäßig aus. |
+| **In der App** | Der Standard. Eine in EmailOps eingebettete llama.cpp-Laufzeit. Kein Daemon, keine Einrichtung, kein Netzwerk. |
+| **Ollama** | Nutzt Ihren vorhandenen Ollama-Server unter `http://localhost:11434`. |
+| **OpenRouter** | Sendet Prompts an eine kostenpflichtige Cloud-API. Optional, pro Funktion, standardmäßig aus. |
 
 <!-- claim:start-2-ai-2 -->
 Wählen Sie beim eingebauten Backend ein Chat-Modell aus dem Katalog. EmailOps wählt das größte

@@ -45,7 +45,7 @@ pre-commit:
       run: uv run --no-project scripts/check-docs-paths.py
     # Every block of the docs must be a catalogued claim, in all four languages.
     docs-claims:
-      glob: "{docs/site/**/*.md,docs/site/claims.toml,.claude/skills/verify-emailops/scripts/sweep.mjs}"
+      glob: "{docs/site/**/*.md,docs/site/claims.toml,.claude/skills/verify-emailops/scripts/doc_claims*.mjs,scripts/docs_cli_claims.py}"
       run: uv run --no-project scripts/check-docs-claims.py
     typecheck:
       glob: "src/**/*.{ts,tsx}"

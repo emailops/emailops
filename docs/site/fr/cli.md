@@ -43,8 +43,8 @@ emailops-cli                              # sans sous-commande → REPL interact
 ```
 
 <!-- claim:cli-quick-start-2 -->
-Dans le REPL, le texte simple constitue un tour de chat (les jetons arrivent en direct) et les
-lignes préfixées par `/` correspondent aux sous-commandes : `/search`, `/account`, `/sync`,
+Dans le REPL, toute action est une commande préfixée par `/` : `/chat <question>` est un tour
+de chat (les jetons arrivent en direct) et les autres correspondent aux sous-commandes — `/search`, `/account`, `/sync`,
 `/help`, `/quit`.
 
 ## Commandes

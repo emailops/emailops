@@ -88,22 +88,37 @@ for name, cmd, desc, fix in STATIC:
         desc=f"{desc} · Comando: {cmd}",
         claim=desc, trace="" if rc == 0 else out[-4000:], proposed_fix="" if rc == 0 else fix)
 
-# ── the app, when asked: docClaim() cases ride the verify sweep ─────────────
+# ── the app, when asked: the ground truth ───────────────────────────────────
+# Four phases (fresh install, locked relaunch, demo mailbox, CLI); a claim
+# checked in several passes only if it passes in all of them.
 app_results = None
-shots_dir = None
 if WITH_APP:
-    rc, out = sh("bash scripts/verify_all.sh --only e2e")
-    current = ROOT / "src-tauri/reports/verify/current-full/app/sweep"
-    sweep = current / "results.json"
+    app_dir = RUN / "app"
+    rc, out = sh(f"bash scripts/check_docs_app.sh {app_dir}", timeout=3600)
+    (RUN / "app.log").write_text(out)
     app_results = {}
-    if sweep.exists():
-        shots_dir = current
-        for r in json.loads(sweep.read_text()):
-            if r.get("claim"):
-                app_results[r["claim"]] = r
-    else:
-        add(STRUCTURE, "doc", "barrida de la app", "fail", "la barrida no dejó results.json",
-            trace=out[-4000:])
+    for phase in ("fresh", "locked", "demo", "cli"):
+        f = app_dir / f"{phase}.json"
+        if not f.exists():
+            add(STRUCTURE, "doc", f"fase {phase} de la app", "fail", "la fase no dejó resultados", trace=out[-4000:])
+            continue
+        for r in json.loads(f.read_text()):
+            if r["claim"] == "__launch__":
+                add(STRUCTURE, "doc", f"fase {phase} de la app", "fail", r["detail"], trace=out[-4000:])
+                continue
+            prev = app_results.get(r["claim"])
+            shots = [str(app_dir / s) for s in r.get("shots", [])]
+            if prev is None:
+                app_results[r["claim"]] = {**r, "shots": shots}
+            else:
+                order = {"fail": 2, "ok": 1, "skip": 0}
+                worst = max(prev["status"], r["status"], key=lambda s: order[s])
+                app_results[r["claim"]] = {
+                    "claim": r["claim"], "status": worst,
+                    "detail": f"{prev['detail']} · {phase}: {r['detail']}",
+                    "shots": prev["shots"] + shots,
+                    "fix": prev.get("fix") or r.get("fix", ""),
+                }
 
 # ── every claim ─────────────────────────────────────────────────────────────
 t0 = time.time()
@@ -117,12 +132,8 @@ for r in claim_records:
             "Corregir el párrafo en los 4 idiomas para que diga lo que hace el código, "
             "o actualizar su entrada en docs/site/claims.toml si el código cambió a propósito."
         )
-    shots = []
-    app = (app_results or {}).get(r["name"].rsplit(" · ", 1)[-1])
-    if app and app.get("shot") and shots_dir:
-        shot = shots_dir / app["shot"]
-        if shot.exists():
-            shots = [str(shot)]
+    # Evidence for a failure or a manual call: the screens the app showed.
+    shots = [s for s in r.get("shots", []) if pathlib.Path(s).exists()] if r["status"] in ("fail", "info") else []
     add(r["feature"], r["type"], r["name"], r["status"], r["detail"],
         desc=f"{r['page']}:{r['line']}", claim=r["claim"], page=r["page"],
         trace="\n".join(lines), proposed_fix=fix, shots=shots)
@@ -139,7 +150,7 @@ data = {
         "tier": "con la app" if WITH_APP else "sin la app",
     },
     "layers": [{"layer": "docs", "status": "ok", "seconds": round(elapsed / 1000, 1)}],
-    "types": ["static", "doc", "tests", "source", "manual"],
+    "types": ["static", "doc", "release", "tests", "source", "manual"],
     "features": feature_order,
     "records": records,
 }

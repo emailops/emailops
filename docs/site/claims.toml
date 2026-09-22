@@ -4,990 +4,1053 @@
 # `<!-- claim:<id> -->` marker; each id has an entry here. check-docs-claims.py
 # fails if any block is unmarked, if a marker has no entry, or if the four
 # languages disagree — so "the docs are fully verified" is a checked fact, not a
-# hope. `make docs-check` runs the checks and renders the report.
+# hope. `make docs-check ARGS=--with-app` runs everything and renders the report.
 #
-# A claim has one or more checks, and passes only if all of them do:
+# THE APP IS THE GROUND TRUTH. Prefer, in this order:
 #
-#   { file = "path or glob", quoted = "text" }
-#       `text` must appear in the claim itself AND in the file. This is what ties
-#       prose to code: if either side changes, the check fails. Case-insensitive
-#       on the file side; whitespace in the claim is collapsed first.
-#       A locale file proves a LABEL exists, never that a FEATURE does — the
-#       app's own help text can be as stale as the docs. Evidence for a feature
-#       is code: src/lib/api.ts is the one path from the UI to the backend.
-#   { file = "...", has = "text" }     the file contains text (evidence the doc
-#                                       does not quote verbatim)
-#   { file = "...", lacks = "text" }   the file does not contain text
-#   { tests = ["rust::path::to::test", ...] }   existing tests that prove the
-#                                       behaviour; each must exist and pass
-#   { app = true }                     a docClaim('<id>') in sweep.mjs drives the
-#                                       real UI (make docs-check ARGS=--with-app)
-#   { manual = "why" }                 cannot be proven automatically. Reported as
-#                                       MANUAL, never as OK.
-#   { none = "why" }                   the block makes no claim of its own (a
-#                                       lead-in to a list). Reported as N/A.
+#   { app = true }        the running app shows it. A claim('<id>', …) case in
+#                         doc_claims.mjs (fresh install, locked relaunch),
+#                         doc_claims_demo.mjs (demo mailbox) or
+#                         scripts/docs_cli_claims.py (the CLI) reads the claim's
+#                         own text from the docs and checks it on screen.
+#   { release = "asset" } "download X from the latest release": the asset is on
+#                         the latest published GitHub release, and the claim
+#                         names it.
+#   { tests = [...] }     behaviour the demo cannot drive (a real Gmail server,
+#                         the keychain, an Intel Mac): the tests that prove it
+#                         must exist and pass.
+#   { file = …, quoted | has | lacks = … }
+#                         ONLY where the file is the thing itself — the cask is
+#                         what `brew --zap` removes, tauri.conf.json gates the
+#                         macOS version, release.yml is the pipeline. Text that
+#                         merely appears in the code proves nothing: a locale
+#                         string can exist and never be rendered.
+#   { manual = "why" }    nothing automatic proves it. Reported as MANUAL, never
+#                         as OK. Add one next to an app check for the part of
+#                         the claim the app check does not reach.
+#   { none = "why" }      a lead-in that makes no claim of its own (N/A).
 #
 # `fix` is what the report proposes when the claim fails.
 
-# ─────────────────────────────── _index.md ───────────────────────────────
+# ── _index.md ─────────────────────────────────────────────────────────
 
 [index-intro-1]
 checks = [
-  { file = "src-tauri/src/sync/gmail.rs", has = "impl EmailProvider for GmailClient" },
-  { file = "src-tauri/src/sync/outlook.rs", has = "impl EmailProvider for OutlookClient" },
-  { file = "src-tauri/src/sync/imap.rs", has = "impl EmailProvider for ImapClient" },
-  { file = "src-tauri/Cargo.toml", has = 'default = ["desktop", "llamacpp"' },
-  { manual = "\"By default nothing is sent to a server\" is the sum of the privacy page's claims; it is verified there, claim by claim." },
+  { manual = 'A summary of the pages below; each promise it makes is verified in its own section.' },
 ]
 
 [index-intro-2]
 checks = [
-  { file = "LICENSE", has = "Apache License" },
-  { file = "src-tauri/Cargo.toml", quoted = "Apache-2.0" },
+  { file = 'LICENSE', has = 'Apache License' },
+  { file = 'src-tauri/Cargo.toml', quoted = 'Apache-2.0' },
 ]
 
-# ─────────────────────────── installation.md ─────────────────────────────
+# ── installation.md ───────────────────────────────────────────────────
 
 [inst-system-requirements-1]
 checks = [
-  { file = "src/locales/en/auth.json", has = '"plain": "Plain email client"' },
-  { file = "src/locales/en/settings.json", has = '"openRouter": "OpenRouter (remote)"' },
+  { app = true },
 ]
 
 [inst-system-requirements-local-ai-1]
 checks = [
-  { file = "src-tauri/Cargo.toml", has = 'metal = ["llama-cpp-2/metal"]' },
-  { file = "src-tauri/Cargo.toml", has = 'vulkan = ["llama-cpp-2/vulkan"]' },
-  { file = "src-tauri/src/ai/model_catalog.rs", has = "min_ram_gb: 8," },
-  { manual = "The recommended sizes (16 GB unified, 12–16 GB VRAM) and free-disk figures are sizing advice, not values in the code. Note the first-run wizard itself says \"~5 GB disk for the default model\" (auth.json onboarding.aiChoice.useAiHardware) while this table says ~3 GB — the app and the docs disagree." },
+  { manual = 'Hardware sizing advice, not a behaviour of the app. Note the first-run wizard says "~5 GB disk for the default model" while this table says ~3 GB — the app and the docs disagree.' },
 ]
 
 [inst-system-requirements-local-ai-2]
 checks = [
-  { tests = ["ai::model_catalog::recommendation_tests::published_model_table_matches_the_catalog_in_every_language"] },
-  { file = "src-tauri/src/ai/model_catalog.rs", has = "min_ram_gb: 32," },
+  { app = true },
 ]
-fix = "If the catalog's smallest or largest model changed, update the sizing rule's 8 GB / 32 GB figures in all four languages."
 
 [inst-system-requirements-local-ai-3]
 checks = [
-  { file = "src-tauri/src/ai/model_catalog.rs", has = "Apple Silicon" },
-  { manual = "How a 16 GB Mac behaves with macOS and other apps resident is operational advice, not something the code asserts." },
+  { manual = "Operational advice about a Mac's memory, not a behaviour of the app." },
 ]
 
 [inst-system-requirements-local-ai-4]
 checks = [
-  { tests = ["ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget"] },
-  { manual = "\"Several times slower\" when a model spills to the CPU is a performance observation; no test measures it." },
+  { tests = ['ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget'] },
+  { manual = '"Several times slower" when a model spills to the CPU is a performance observation.' },
 ]
 
 [inst-system-requirements-local-ai-5]
 checks = [
-  { file = "src-tauri/src/ai/gpu_plan.rs", has = "Cpu" },
-  { manual = "That CPU-only answers take noticeably longer is a performance observation, not an assertion in code." },
+  { manual = 'That CPU-only answers take noticeably longer is a performance observation.' },
 ]
 
 [inst-system-requirements-local-ai-6]
 checks = [
-  { file = "src-tauri/src/ai/gpu_plan.rs", has = "pub fn embedded_runtime_supported(os: &str, arch: &str) -> bool" },
-  { file = "src/locales/en/settings.json", has = "requires Apple Silicon" },
+  { tests = ['ai::gpu_plan::tests::the_embedded_runtime_is_unsupported_on_intel_macs', 'ai::gpu_plan::tests::the_embedded_runtime_is_supported_on_apple_silicon'] },
 ]
 
 [inst-system-requirements-without-local-1]
 checks = [
-  { manual = "The no-local-AI minimums (2 GB RAM, 500 MB disk, 2 cores) are not measured or enforced anywhere; they need a release smoke test on minimal hardware to confirm." },
+  { manual = 'The no-local-AI minimums are not measured anywhere; they need a smoke test on minimal hardware.' },
 ]
 
 [inst-system-requirements-without-local-2]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "OpenRouter" },
-  { file = "src-tauri/src/ai/openrouter.rs", has = "openrouter.ai" },
+  { app = true },
 ]
 
 [inst-system-requirements-operating-system-1]
-checks = [ { none = "Lead-in to the list of supported operating systems." } ]
+checks = [
+  { none = 'Lead-in to the list of supported operating systems.' },
+]
 
 [inst-system-requirements-operating-system-2]
 checks = [
-  { file = "src-tauri/tauri.conf.json", has = '"minimumSystemVersion": "12.0"' },
-  { file = "homebrew/Casks/emailops.rb", has = 'depends_on macos: ">= :monterey"' },
-  { file = "Makefile", has = "--target universal-apple-darwin" },
+  { file = 'src-tauri/tauri.conf.json', has = '"minimumSystemVersion": "12.0"' },
+  { file = 'homebrew/Casks/emailops.rb', has = 'depends_on macos: ">= :monterey"' },
 ]
-fix = "If the macOS floor moved (tauri.conf.json minimumSystemVersion, cask depends_on), update the version here and in the cask in the same change."
+fix = 'If the macOS floor moved (tauri.conf.json minimumSystemVersion, cask depends_on), update the version here and in the cask in the same change.'
 
 [inst-system-requirements-operating-system-3]
 checks = [
-  { file = "scripts/build_platform.sh", has = "x86_64-pc-windows-msvc" },
-  { manual = "Windows 10 support is a platform promise: CI builds on windows-latest only, so Windows 10 itself is exercised only on the release test VMs (docs/TEST-VMS.md)." },
+  { manual = 'Windows 10/11 support is exercised only on the release test VMs (docs/TEST-VMS.md).' },
 ]
 
 [inst-system-requirements-operating-system-4]
 checks = [
-  { file = "scripts/bootstrap_platform.sh", has = "webkit2gtk-4.1" },
-  { file = "src-tauri/Cargo.toml", has = 'keyring = { version = "4"' },
+  { manual = 'The Linux runtime needs (WebKitGTK, a Secret Service keyring) are exercised only on the release test VM.' },
 ]
 
 [inst-macos-homebrew-1]
-checks = [ { file = "homebrew/README.md", quoted = "brew install --cask emailops/tap/emailops" } ]
+checks = [
+  { file = 'homebrew/README.md', quoted = 'brew install --cask emailops/tap/emailops' },
+]
 
 [inst-macos-homebrew-2]
-checks = [ { file = "homebrew/Casks/emailops.rb", has = 'cask "emailops"' } ]
+checks = [
+  { file = 'homebrew/Casks/emailops.rb', has = 'cask "emailops"' },
+]
 
 [inst-macos-direct-download-1]
-checks = [ { file = "Makefile", quoted = "EmailOps-macos.dmg" } ]
-fix = "Quote the DMG name `make dist-mac` stages (Makefile) in all four languages."
+checks = [
+  { release = 'EmailOps-macos.dmg' },
+]
+fix = 'Quote the DMG name `make dist-mac` stages (Makefile) in all four languages.'
 
 [inst-macos-direct-download-2]
-checks = [ { file = "src-tauri/tauri.conf.json", has = '"productName": "EmailOps"' } ]
+checks = [
+  { file = 'src-tauri/tauri.conf.json', has = '"productName": "EmailOps"' },
+]
 
 [inst-macos-direct-download-3]
-checks = [ { none = "A generic step (launch the app); nothing specific to verify." } ]
+checks = [
+  { none = 'A generic step (launch the app); nothing specific to verify.' },
+]
 
 [inst-macos-direct-download-4]
+# The note names no file, so no release check: one universal build (the
+# Makefile target is the build) and the Intel exclusion (the test pins it).
 checks = [
-  { file = "src-tauri/src/ai/gpu_plan.rs", has = "pub fn embedded_runtime_supported(os: &str, arch: &str) -> bool" },
-  { file = "src/locales/en/settings.json", has = "Not available on this Mac — requires Apple Silicon." },
-  { file = "Makefile", has = "--target universal-apple-darwin" },
+  { tests = ['ai::gpu_plan::tests::the_embedded_runtime_is_unsupported_on_intel_macs'] },
+  { file = 'Makefile', has = '--target universal-apple-darwin' },
 ]
 
 [inst-windows-1]
 checks = [
-  { file = "scripts/dist_platform.sh", has = 'EmailOps-windows${SUFFIX}-setup.exe' },
-  { file = "scripts/dist_platform.sh", quoted = "-setup.exe" },
+  { release = 'EmailOps-windows-setup.exe' },
 ]
-fix = "Quote the installer name scripts/dist_platform.sh stages (EmailOps-windows-setup.exe, or the .msi) in all four languages."
+fix = 'Quote the installer name scripts/dist_platform.sh stages (EmailOps-windows-setup.exe, or the .msi) in all four languages.'
 
 [inst-windows-2]
-checks = [ { none = "A generic installer step." } ]
+checks = [
+  { none = 'A generic installer step.' },
+]
 
 [inst-windows-3]
-checks = [ { none = "A generic launch step." } ]
+checks = [
+  { none = 'A generic launch step.' },
+]
 
 [inst-windows-gpu-acceleration-1]
 checks = [
-  { file = ".github/workflows/release.yml", has = 'CARGO_FEATURES: vulkan' },
-  { file = ".github/workflows/release.yml", has = 'DYNAMIC_BACKENDS: "1"' },
+  { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: vulkan' },
+  { file = '.github/workflows/release.yml', has = 'DYNAMIC_BACKENDS: "1"' },
 ]
 
 [inst-windows-gpu-acceleration-2]
 checks = [
-  { file = "docs/DECISIONS.md", has = "Vulkan" },
-  { manual = "That Vulkan covers AMD, Intel and NVIDIA through the ordinary driver is a property of Vulkan, not of this code." },
+  { manual = 'That Vulkan covers AMD, Intel and NVIDIA through the ordinary driver is a property of Vulkan.' },
 ]
 
 [inst-linux-1]
-checks = [ { file = "scripts/dist_platform.sh", quoted = "EmailOps-linux.AppImage" } ]
+checks = [
+  { release = 'EmailOps-linux.AppImage' },
+]
 
 [inst-linux-2]
-checks = [ { file = "scripts/dist_platform.sh", quoted = "EmailOps-linux.AppImage" } ]
+checks = [
+  { release = 'EmailOps-linux.AppImage' },
+]
 
 [inst-linux-gpu-acceleration-1]
 checks = [
-  { file = ".github/workflows/release.yml", has = 'CARGO_FEATURES: vulkan' },
-  { file = "scripts/dist_platform.sh", quoted = "AppImage" },
+  { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: vulkan' },
 ]
 
 [inst-linux-gpu-acceleration-2]
 checks = [
-  { file = "scripts/bootstrap_platform.sh", has = "vulkan" },
-  { manual = "Which distro package provides the Vulkan driver is packaging advice outside this repo." },
+  { manual = 'Which distro package provides the Vulkan driver is outside this repo.' },
 ]
 
 [inst-linux-keyring-required-1]
 checks = [
-  { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" },
-  { tests = ["services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password"] },
+  { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key', 'services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password'] },
 ]
 
 [inst-linux-keyring-required-2]
-checks = [ { none = "Lead-in to the list of Secret Service providers." } ]
+checks = [
+  { none = 'Lead-in to the list of Secret Service providers.' },
+]
 
 [inst-linux-keyring-required-3]
-checks = [ { manual = "GNOME Keyring's packaging and distro defaults are outside this repo." } ]
+checks = [
+  { manual = "GNOME Keyring's packaging is outside this repo." },
+]
 
 [inst-linux-keyring-required-4]
-checks = [ { manual = "KWallet's Secret Service interface is outside this repo." } ]
+checks = [
+  { manual = "KWallet's Secret Service interface is outside this repo." },
+]
 
 [inst-linux-keyring-required-5]
-checks = [ { manual = "KeePassXC's Secret Service integration is outside this repo." } ]
+checks = [
+  { manual = "KeePassXC's Secret Service integration is outside this repo." },
+]
 
 [inst-linux-keyring-required-6]
 checks = [
-  { file = "src-tauri/src/services/keychain.rs", has = "KeyringError" },
-  { manual = "That adding an account fails without an unlocked keyring needs a Linux session with no keyring; exercised only on the release test VM." },
+  { manual = 'That adding an account fails without an unlocked keyring is exercised only on the release test VM.' },
 ]
 
 [inst-linux-keyring-required-7]
-checks = [ { manual = "Distro package-manager commands are outside this repo." } ]
+checks = [
+  { manual = 'Distro package-manager commands are outside this repo.' },
+]
 
 [inst-where-data-1]
-checks = [ { file = "src-tauri/src/lib.rs", has = "app_data_dir" } ]
+checks = [
+  { app = true },
+]
 
 [inst-where-data-2]
-checks = [ { file = "src-tauri/migrations/V001__init.sql", has = "CREATE TABLE IF NOT EXISTS emails" } ]
+checks = [
+  { app = true },
+]
 
 [inst-where-data-3]
-checks = [ { file = "src-tauri/src/ai/model_manager.rs", quoted = "models" } ]
+checks = [
+  { app = true },
+]
 
 [inst-where-data-4]
-checks = [ { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" } ]
+checks = [
+  { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key', 'services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password'] },
+]
 
 [inst-where-data-5]
-checks = [ { file = "src-tauri/src/lib.rs", quoted = "EMAILOPS_DATA_DIR" } ]
+checks = [
+  { app = true },
+]
 
 [inst-uninstalling-1]
-checks = [ { manual = "What an OS uninstaller leaves behind is platform behaviour, verified on the release test VMs." } ]
+checks = [
+  { manual = 'What an OS uninstaller leaves behind is exercised only on the release test VMs.' },
+]
 
 [inst-uninstalling-2]
-checks = [ { manual = "Uninstalling runs no EmailOps code, so it cannot touch the provider; there is nothing to test beyond that." } ]
+checks = [
+  { manual = 'Uninstalling runs no EmailOps code, so it cannot touch the provider; nothing further to test.' },
+]
 
 [inst-uninstalling-macos-1]
 checks = [
-  { file = "homebrew/Casks/emailops.rb", has = "zap trash:" },
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/Application Support/com.emailops.app" },
+  { file = 'homebrew/Casks/emailops.rb', has = 'zap trash:' },
 ]
 
 [inst-uninstalling-macos-2]
 checks = [
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/Caches/com.emailops.app" },
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/HTTPStorages/com.emailops.app" },
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/Preferences/com.emailops.app.plist" },
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/Saved Application State/com.emailops.app.savedState" },
-  { file = "homebrew/Casks/emailops.rb", has = "~/Library/WebKit/com.emailops.app" },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/Application Support/com.emailops.app' },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/Caches/com.emailops.app' },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/HTTPStorages/com.emailops.app' },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/Preferences/com.emailops.app.plist' },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/Saved Application State/com.emailops.app.savedState' },
+  { file = 'homebrew/Casks/emailops.rb', has = '~/Library/WebKit/com.emailops.app' },
 ]
 fix = "Keep this list identical to the cask's zap trash: list."
 
 [inst-uninstalling-windows-1]
-checks = [ { file = "src-tauri/tauri.conf.json", has = '"identifier": "com.emailops.app"' } ]
+checks = [
+  { file = 'src-tauri/tauri.conf.json', has = '"identifier": "com.emailops.app"' },
+]
 
 [inst-uninstalling-linux-1]
-checks = [ { file = "src-tauri/tauri.conf.json", has = '"identifier": "com.emailops.app"' } ]
+checks = [
+  { file = 'src-tauri/tauri.conf.json', has = '"identifier": "com.emailops.app"' },
+]
 
 [inst-uninstalling-stored-credentials-1]
-checks = [ { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" } ]
+checks = [
+  { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key'] },
+  { manual = 'That keyring entries survive uninstalling is OS behaviour.' },
+]
 
 [inst-building-from-1]
 checks = [
-  { file = "README.md", quoted = "make dev" },
-  { file = "README.md", quoted = ".env.local" },
-  { file = "src-tauri/src/sync/oauth.rs", has = 'option_env!("EMAILOPS_GMAIL_CLIENT_ID")' },
+  { file = 'README.md', quoted = 'make dev' },
+  { file = 'README.md', quoted = '.env.local' },
+  { file = 'src-tauri/src/sync/oauth.rs', has = 'option_env!("EMAILOPS_GMAIL_CLIENT_ID")' },
 ]
 
 [inst-building-from-2]
-checks = [ { none = "Lead-in to the two build notes." } ]
+checks = [
+  { none = 'Lead-in to the two build notes.' },
+]
 
 [inst-building-from-3]
 checks = [
-  { file = ".github/workflows/release.yml", has = 'DYNAMIC_BACKENDS: "1"' },
-  { file = ".github/workflows/release.yml", has = "CARGO_FEATURES: vulkan" },
+  { file = '.github/workflows/release.yml', has = 'DYNAMIC_BACKENDS: "1"' },
+  { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: vulkan' },
 ]
 
 [inst-building-from-4]
 checks = [
-  { file = ".github/workflows/release.yml", has = "release-windows-cuda:" },
-  { file = ".github/workflows/release.yml", has = "CARGO_FEATURES: cuda" },
-  { file = "scripts/dist_platform.sh", quoted = "EmailOps-windows-cuda.msi" },
+  { release = 'EmailOps-windows-cuda.msi' },
+  { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: cuda' },
 ]
-fix = "Say which CUDA build the release publishes (release.yml release-windows-cuda) in all four languages."
+fix = 'Say which CUDA build the release publishes (release.yml release-windows-cuda) in all four languages.'
+
+# ── getting-started.md ────────────────────────────────────────────────
 
 [start-intro-1]
-checks = [ { file = "src/components/Onboarding/OnboardingWizard.tsx", has = "{step === 4 && <StepAddAccount" } ]
+checks = [
+  { app = true },
+]
 
 [start-1-ai-1]
 checks = [
-  { file = "src/locales/en/auth.json", has = "Recommended — this machine can run AI locally" },
-  { file = "src/locales/en/auth.json", has = "Recommended — no AI hardware required" },
+  { app = true },
 ]
 
 [start-1-ai-2]
-checks = [ { file = "src/locales/en/auth.json", quoted = "Use AI" } ]
-fix = "Quote the wizard option's own label (auth.json onboarding.aiChoice.useAi) in each language."
+checks = [
+  { app = true },
+]
 
 [start-1-ai-3]
 checks = [
-  { file = "src/locales/en/auth.json", quoted = "Plain email client" },
-  { file = "src/locales/en/auth.json", has = "No AI calls, ever" },
-  { file = "src/locales/en/settings.json", quoted = "AI Backend & Models" },
+  { app = true },
 ]
 
 [start-2-ai-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "In-app (local)" },
-  { file = "src/locales/en/settings.json", quoted = "Ollama (local)" },
-  { file = "src/locales/en/settings.json", quoted = "OpenRouter (remote)" },
-  { file = "src-tauri/src/ai/ollama.rs", quoted = "http://localhost:11434" },
-  { manual = "\"Opt-in, per feature\" for OpenRouter is not traced to a per-feature switch in the code." },
+  { app = true },
+  { tests = ['ai::ollama::base_url_tests::defaults_to_the_local_daemon'] },
+  { manual = 'That OpenRouter is opt-in per feature is not visible in the wizard.' },
 ]
 
 [start-2-ai-2]
 checks = [
-  { tests = [
-    "ai::model_catalog::recommendation_tests::getting_started_anchors_the_recommendation_to_a_machine_size",
-    "ai::model_catalog::recommendation_tests::published_model_table_matches_the_catalog_in_every_language",
-  ] },
-  { file = "src/components/Onboarding/StepAiBackend.tsx", has = "minRam: model.minRamGb" },
+  { app = true },
 ]
 
 [start-2-ai-3]
-checks = [ { file = "src-tauri/src/ai/model_catalog.rs", has = "unified memory" } ]
+checks = [
+  { tests = ['ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget'] },
+  { manual = 'Which memory counts on each kind of machine is hardware explanation; note that on Apple Silicon the app currently treats the GPU as a discrete card (see start-2-ai-2).' },
+]
 
 [start-2-ai-4]
 checks = [
-  { file = "src-tauri/src/ai/model_catalog.rs", quoted = "Nomic Embed Text v1.5" },
-  { file = "src-tauri/src/ai/model_catalog.rs", has = "bundled: true," },
+  { app = true },
 ]
 
 [start-3-inbox-1]
 checks = [
-  { file = "src/components/Onboarding/OnboardingWizard.tsx", has = "3: View layout (split / full-width)" },
-  { file = "src/locales/en/settings.json", quoted = "Appearance" },
-  { file = "src/i18n/resources.ts", has = "SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de']" },
+  { app = true },
 ]
 
 [start-4-connect-1]
-checks = [ { none = "Lead-in to the list of supported providers." } ]
+checks = [
+  { none = 'Lead-in to the list of supported providers.' },
+]
 
 [start-4-connect-2]
 checks = [
-  { file = "src-tauri/src/sync/oauth.rs", has = "BUNDLED_GMAIL_CLIENT_ID" },
-  { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" },
+  { app = true },
+  { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key'] },
 ]
 
 [start-4-connect-3]
 checks = [
-  { file = "src-tauri/src/sync/oauth.rs", has = "BUNDLED_OUTLOOK_CLIENT_ID" },
-  { file = "src-tauri/src/sync/outlook.rs", has = "graph.microsoft.com" },
+  { app = true },
 ]
 
 [start-4-connect-4]
 checks = [
-  { file = "src-tauri/src/sync/imap.rs", has = "impl EmailProvider for ImapClient" },
-  { file = "src-tauri/Cargo.toml", has = "lettre" },
+  { app = true },
 ]
 
 [start-4-connect-5]
 checks = [
-  { file = "src/locales/en/sidebar.json", quoted = "Add account" },
-  { file = "src/locales/en/sidebar.json", quoted = "All accounts" },
+  { app = true },
 ]
 
 [start-after-wizard-first-sync-1]
-checks = [ { manual = "First-sync duration and slice-by-slice arrival depend on the mailbox and provider; no test pins the timing." } ]
+checks = [
+  { manual = 'First-sync duration and slice-by-slice arrival depend on the provider; a real account is needed.' },
+]
 
 [start-after-wizard-first-sync-2]
 checks = [
-  { file = "src-tauri/src/sync/gmail.rs", has = 'query_parts.push(format!("after:{}", ts))' },
-  { file = "src-tauri/src/services/sync_scheduler.rs", has = "fn " },
+  { manual = 'Incremental sync needs a real provider; the demo accounts are offline.' },
 ]
 
 [start-after-wizard-first-sync-3]
-checks = [ { none = "Lead-in to what happens after the first sync." } ]
+checks = [
+  { none = 'Lead-in to what happens after the first sync.' },
+]
 
 [start-after-wizard-first-sync-4]
-checks = [ { file = "src/locales/en/settings.json", has = "Automatic priority, intent, and topic tagging." } ]
+checks = [
+  { manual = 'Classification starting after the first sync needs a real sync and a downloaded model.' },
+]
 
 [start-after-wizard-first-sync-5]
-checks = [ { file = "src/locales/en/settings.json", quoted = "AI Search" } ]
+checks = [
+  { app = true },
+]
 
 [start-after-wizard-first-sync-6]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Privacy & Security" },
-  { file = "src-tauri/src/services/password.rs", has = "argon2" },
+  { app = true },
 ]
 
 [start-after-wizard-first-sync-7]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Limit AI processing" },
-  { file = "src/locales/en/settings.json", quoted = "AI Backend & Models" },
+  { app = true },
 ]
-fix = "Quote the setting's own label (settings.json ai.ageCutoff) in each language."
+
+# ── features.md ───────────────────────────────────────────────────────
 
 [feat-intro-1]
-checks = [ { manual = "\"Everything on this page works with AI switched off\" would need an AI-off run of the whole app; the sweep runs with AI on." } ]
+checks = [
+  { app = true },
+]
 
 [feat-accounts-sync-1]
 checks = [
-  { file = "src-tauri/src/sync/gmail.rs", has = "impl EmailProvider for GmailClient" },
-  { file = "src-tauri/src/sync/outlook.rs", has = "impl EmailProvider for OutlookClient" },
-  { file = "src-tauri/src/sync/imap.rs", has = "impl EmailProvider for ImapClient" },
-  { file = "src-tauri/Cargo.toml", has = "rusqlite" },
+  { app = true },
 ]
 
 [feat-accounts-sync-2]
 checks = [
-  { file = "src/locales/en/modal.json", quoted = "Sender name" },
-  { file = "src-tauri/src/sync/gmail.rs", has = "fn pick_send_as_display_name" },
-  { manual = "That Outlook sends with Microsoft's own mailbox name is Graph behaviour, not asserted by a test here." },
+  { app = true },
+  { tests = ['sync::gmail::tests::get_profile_names_the_account_after_its_send_as_setting'] },
+  { manual = "The Sender name field in account settings, and Outlook using Microsoft's own name, are not exercised." },
 ]
 
 [feat-unified-inbox-1]
 checks = [
-  { file = "src/locales/en/sidebar.json", quoted = "All accounts" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn create_folder(" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn rename_folder(" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn delete_folder(" },
+  { app = true },
+  { manual = 'Renaming, deleting and dragging between folders are not exercised: the demo mailbox has no custom folder.' },
 ]
 
 [reading-pane-forward]
 checks = [
   { app = true },
-  { file = "src/components/EmailView/EmailView.tsx", has = "MAX_FORWARD_BYTES = 20 * 1024 * 1024" },
-  { file = "src/locales/en/*.json", quoted = "Forwarded message" },
+  { manual = 'The forwarded draft itself (no recipients, the Forwarded message header, attachments up to 20 MB, sent as a new message) is not exercised.' },
 ]
 
 [feat-smart-filters-1]
 checks = [
-  { file = "src-tauri/src/services/filters.rs", has = "domain" },
-  { file = "src-tauri/src/services/filters.rs", has = "sender" },
+  { app = true },
 ]
 
 [feat-calendar-1]
 checks = [
-  { file = "src/components/Calendar/CalendarView.tsx", has = "type CalendarViewMode = 'month' | 'week' | 'day'" },
-  { file = "src/locales/en/calendar.json", quoted = "Join" },
-  { file = "src-tauri/src/models/mod.rs", has = '"meet" | "teams" | "webex" | "zoom"' },
-  { file = "src/locales/en/settings.json", quoted = "Calendar" },
-  { manual = "That calendar sync is on by default for Gmail and Outlook is a default not pinned by a test." },
+  { app = true },
+  { manual = 'Sync on by default, the per-account switch and the notification lead time in Settings → Calendar are not exercised.' },
 ]
 
 [feat-calendar-2]
-checks = [ { manual = "Multi-calendar sync, provider colours and the legend toggles have no dedicated test or sweep step yet." } ]
+checks = [
+  { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
+]
 
 [feat-attachments-view-1]
 checks = [
-  { file = "src/components/Attachments/AttachmentViewer.tsx", has = "export function AttachmentViewer" },
-  { manual = "The export action is not exercised by any test or sweep step." },
+  { app = true },
+  { manual = 'Export (select, then Download) is not exercised.' },
 ]
 
 [feat-search-1]
 checks = [
-  { file = "src-tauri/migrations/V001__init.sql", has = "CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(" },
-  { manual = "Whether attachment contents are indexed for full-text search is not asserted by a test." },
+  { app = true },
+  { manual = 'That attachments are searched too is not exercised.' },
 ]
 
 [feat-junk-bulk-1]
 checks = [
-  { file = "src-tauri/src/services/junk/model.rs", has = "pub struct NaiveBayes" },
-  { tests = ["services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server"] },
+  { tests = ['services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server'] },
+  { manual = 'That corrections train the filter over time needs a sequence of real feedback; not exercised.' },
 ]
 
 [feat-junk-bulk-2]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Fade it in the list" } ]
+checks = [
+  { app = true },
+]
 
 [feat-junk-bulk-3]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Keep it out of the inbox" } ]
+checks = [
+  { app = true },
+]
 
 [feat-junk-bulk-4]
 checks = [
-  { tests = [
-    "services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server",
-    "services::junk::config::tests::phishing_stays_off_by_default_too",
-  ] },
-  { file = "src/locales/en/inbox.json", quoted = "Confirm junk" },
+  { app = true },
+  { tests = ['services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server'] },
+  { manual = 'Confirm junk filing a message on the server needs a real provider; the demo accounts are offline.' },
 ]
 
 [feat-privacy-security-1]
 checks = [
-  { file = "src-tauri/src/services/password.rs", has = "argon2" },
-  { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" },
-  { tests = ["db::trusted_senders::tests::add_then_check_returns_true"] },
+  { app = true },
 ]
 
 [feat-interface-1]
 checks = [
-  { file = "src/i18n/resources.ts", has = "SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de']" },
-  { file = "src-tauri/src/services/i18n.rs", has = "ai_output_language_v2" },
+  { app = true },
 ]
 
-# ─────────────────────────────── ai-features.md ──────────────────────────
+# ── ai-features.md ────────────────────────────────────────────────────
 
 [ai-intro-1]
 checks = [
-  { file = "src/locales/en/settings.json", has = "Enable AI Drafts" },
-  { manual = "\"Each one can be turned off individually\" spans every AI feature's own switch; each is covered where the feature is described below." },
+  { app = true },
 ]
 
 [ai-choosing-backend-1]
-checks = [ { file = "src/locales/en/settings.json", quoted = "AI Backend & Models" } ]
+checks = [
+  { app = true },
+]
 
 [ai-choosing-backend-2]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "In-app (local)" },
-  { file = "src-tauri/Cargo.toml", has = 'default = ["desktop", "llamacpp"' },
-  { file = "src-tauri/src/ai/gpu_plan.rs", has = "pub fn embedded_runtime_supported(os: &str, arch: &str) -> bool" },
+  { app = true },
 ]
 
 [ai-choosing-backend-3]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Ollama (local)" },
-  { file = "src-tauri/src/ai/ollama.rs", quoted = "http://localhost:11434" },
+  { app = true },
+  { tests = ['ai::ollama::base_url_tests::defaults_to_the_local_daemon'] },
 ]
 
 [ai-choosing-backend-4]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "OpenRouter (remote)" },
-  { file = "src/locales/en/settings.json", has = "Monthly Budget (USD)" },
-  { tests = ["services::ai::provider_tests::load_provider_openrouter_without_key_returns_error"] },
+  { app = true },
 ]
 
 [ai-choosing-backend-model-catalog-1]
 checks = [
-  { tests = ["ai::model_catalog::recommendation_tests::published_model_table_matches_the_catalog_in_every_language"] },
-  { file = "src-tauri/src/ai/model_manager.rs", has = "sha256" },
+  { app = true },
 ]
 
 [ai-choosing-backend-model-catalog-2]
-checks = [ { file = "src-tauri/src/ai/model_catalog.rs", has = "min_ram_gb reflects peak RAM during inference" } ]
+checks = [
+  { manual = 'Peak memory being weights plus context is an explanation of the figures, not a behaviour.' },
+]
 
 [ai-choosing-backend-model-catalog-3]
-checks = [ { file = "src-tauri/Cargo.toml", has = 'metal = ["llama-cpp-2/metal"]' } ]
+checks = [
+  { manual = 'Hardware explanation. Note the app currently treats the Apple Silicon GPU as a discrete card, not as unified memory (see start-2-ai-2).' },
+]
 
 [ai-choosing-backend-model-catalog-4]
-checks = [ { tests = ["ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget"] } ]
+checks = [
+  { tests = ['ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget'] },
+]
 
 [ai-choosing-backend-model-catalog-5]
-checks = [ { file = "src-tauri/src/ai/gpu_plan.rs", has = "Cpu" } ]
+checks = [
+  { manual = 'CPU fallback on a machine without a GPU cannot be observed on this Mac.' },
+]
 
 [ai-choosing-backend-model-catalog-6]
 checks = [
-  { file = "src/locales/en/auth.json", quoted = "Recommended" },
-  { tests = [
-    "ai::model_catalog::recommendation_tests::a_recommendation_leaves_the_machine_room_to_be_a_computer",
-    "ai::model_catalog::recommendation_tests::a_failed_ram_probe_still_uses_the_card",
-  ] },
+  { app = true },
 ]
 
 [ai-choosing-backend-performance-knobs-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Keep model loaded" },
-  { file = "src-tauri/src/ai/ollama.rs", has = 'DEFAULT_KEEP_ALIVE: &str = "30m"' },
-  { manual = "The 30-minute default is pinned for Ollama; the in-app runtime's own default is not traced to a constant." },
+  { app = true },
 ]
 
 [ai-choosing-backend-performance-knobs-2]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Context window" } ]
+checks = [
+  { app = true },
+]
 
 [ai-choosing-backend-performance-knobs-3]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Thinking mode" } ]
+checks = [
+  { app = true },
+]
 
 [ai-choosing-backend-performance-knobs-4]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Limit AI processing" } ]
-fix = "Quote the setting's own label (settings.json ai.ageCutoff) in each language."
+checks = [
+  { app = true },
+]
 
 [ai-chat-mailbox-1]
-checks = [ { manual = "Answer quality and cited sources are what the chat evals measure (make cli-eval); they are not a pass/fail docs check." } ]
+checks = [
+  { manual = 'Answer quality and cited sources are what the chat evals measure (make cli-eval), not a pass/fail docs check.' },
+]
 
 [ai-chat-mailbox-2]
 checks = [
-  { file = "src/locales/en/chat.json", has = "Using as context" },
-  { file = "src/locales/en/chat.json", has = "Don't use this thread as context" },
-  { manual = "That thread context applies to one question and is never saved onto the conversation is not pinned by a test." },
+  { app = true },
+  { manual = 'That thread context applies to one question and is never saved onto the conversation is not exercised.' },
 ]
 
 [ai-chat-mailbox-3]
-checks = [ { manual = "The per-account chat picker and per-account conversations have no test or sweep step yet." } ]
+checks = [
+  { app = true },
+  { manual = 'That each account keeps its own conversation while the app is open is not exercised.' },
+]
 
 [ai-chat-mailbox-4]
-checks = [ { file = "src-tauri/src/services/chat/routing.rs", has = "RagFirst" } ]
+checks = [
+  { app = true },
+]
 
 [ai-chat-mailbox-5]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Always RAG first" },
-  { file = "src-tauri/src/services/chat/routing.rs", has = "default: RAG first" },
+  { app = true },
 ]
 
 [ai-chat-mailbox-6]
-checks = [ { file = "src/locales/en/settings.json", has = '"routingAuto": "Auto (heuristic-routed)"' } ]
+checks = [
+  { app = true },
+]
 
 [ai-chat-mailbox-7]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Always tools first" } ]
+checks = [
+  { app = true },
+]
 
 [ai-chat-mailbox-8]
-checks = [ { file = "src-tauri/src/services/chat/routing.rs", has = "RagFirst turns carry the full tool menu too" } ]
+checks = [
+  { manual = 'That tools stay available in every routing mode is internal routing behaviour.' },
+]
 
 [ai-chat-mailbox-9]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Chat prompts" } ]
+checks = [
+  { app = true },
+]
 
 [ai-ai-drafts-1]
 checks = [
-  { file = "src/components/EmailView/EmailView.tsx", has = "AI Draft" },
-  { file = "src/locales/en/settings.json", has = 'Show the \"AI Draft\" button next to Reply All' },
+  { app = true },
 ]
 
 [ai-classification-1]
-checks = [ { file = "src/locales/en/settings.json", has = "Automatic priority, intent, and topic tagging." } ]
+checks = [
+  { app = true },
+]
 
 [ai-classification-2]
-checks = [ { none = "Lead-in to the two classification layers." } ]
+checks = [
+  { none = 'Lead-in to the two classification layers.' },
+]
 
 [ai-classification-3]
-checks = [ { file = "src-tauri/migrations/V001__init.sql", has = "classification_rules" } ]
+checks = [
+  { app = true },
+]
 
 [ai-classification-4]
-checks = [ { manual = "The editable classification prompt is a settings surface with no test or sweep step yet." } ]
+checks = [
+  { app = true },
+]
 
 [ai-classification-5]
 checks = [
-  { file = "src/locales/en/settings.json", has = "Reclassify All" },
-  { file = "src/locales/en/settings.json", has = "Classify Unclassified" },
+  { app = true },
 ]
 
 [tag-board-dimensions]
-checks = [ { app = true } ]
+checks = [
+  { app = true },
+]
 
 [ai-tag-board-2]
 checks = [
-  { file = "src/locales/en/tagboard.json", has = "hidden tags" },
-  { manual = "Attention-based block order, drag-to-reorder memory and hide-from-menu are exercised by the Tag Board oracle (tagboard_check.mjs), which is not wired into this report." },
+  { app = true },
+  { manual = 'Attention-based block order and remembered drag order are exercised by the Tag Board oracle (tagboard_check.mjs), not by this report.' },
 ]
 
 [tag-board-toolbar]
-checks = [ { app = true } ]
+checks = [
+  { app = true },
+]
 
 [ai-tag-board-4]
-checks = [ { manual = "That the board is hidden while AI is off would need an AI-off sweep run." } ]
+checks = [
+  { app = true },
+]
 
 [ai-semantic-search-1]
-# The page used to promise a "find similar" feature. None exists — no command,
-# API call or control — although the app's own AI Search help text
-# (settings.json aiSearch.categoriesHelp) still says embeddings power it.
 checks = [
-  { file = "src-tauri/src/db/embeddings.rs", has = "pub fn vec_search(" },
-  { file = "src/lib/api.ts", lacks = "similar" },
-  { file = "src/locales/en/settings.json", quoted = "AI Search" },
+  { app = true },
 ]
-fix = "If a find-similar feature ships, describe it here; until then the page must not promise one."
 
 [ai-translation-1]
 checks = [
-  { file = "src/locales/en/inbox.json", has = '"translate": "Translate"' },
-  { file = "src/components/shared/TranslateComposeControl.tsx", has = "export" },
+  { app = true },
+  { manual = 'Translate buttons on emails in another language and in the compose window are not exercised: the demo mailbox is in English.' },
 ]
 
 [ai-tasks-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "learn only from emails I wrote" },
-  { file = "src-tauri/src/services/tasks/config.rs", has = "pub extract_from_self_only: bool" },
-  { manual = "Newsletters excluded by default, the per-email cap and backfill are task-config defaults not pinned by a test." },
+  { app = true },
+  { manual = 'Newsletters being excluded by default and the per-email cap are not checked.' },
 ]
 
 [ai-memory-1]
 checks = [
-  { file = "src-tauri/src/services/memory/config.rs", has = '.get_preference("memory_enabled")' },
-  { manual = "Fact scoring, promotion past a threshold and expiry are memory-service behaviour this report does not trace to named tests yet." },
+  { app = true },
 ]
 
 [ai-lenses-1]
-checks = [ { file = "src/components/Sidebar/Sidebar.tsx", has = "| 'lenses'" } ]
+checks = [
+  { app = true },
+]
 
 [ai-turning-off-1]
 checks = [
-  { file = "src/locales/en/sidebar.json", quoted = "AI Features" },
-  { tests = ["db::ai_enabled_tests::explicit_false_is_disabled"] },
-  { file = "src/locales/en/auth.json", has = "Toggling AI off later preserves all extracted data." },
+  { app = true },
 ]
 
-# ─────────────────────────── privacy-security.md ─────────────────────────
+# ── privacy-security.md ───────────────────────────────────────────────
 
 [priv-intro-1]
-checks = [ { none = "A summary of the page; each promise in it is verified in its own section below." } ]
+checks = [
+  { none = 'A summary of the page; each promise in it is verified in its own section below.' },
+]
 
 [priv-where-data-1]
 checks = [
-  { file = "src-tauri/tauri.conf.json", has = '"identifier": "com.emailops.app"' },
-  { file = "src-tauri/src/lib.rs", has = "app_data_dir" },
+  { file = 'src-tauri/tauri.conf.json', has = '"identifier": "com.emailops.app"' },
+  { manual = 'The default location per platform is derived by Tauri from the identifier; the verification instance runs with EMAILOPS_DATA_DIR, so it does not observe the default.' },
 ]
 
 [priv-where-data-2]
-checks = [ { none = "Lead-in to what the data directory contains." } ]
+checks = [
+  { none = 'Lead-in to what the data directory contains.' },
+]
 
 [priv-where-data-3]
-# Contacts have no table of their own: they are derived from the senders and
-# recipients of the stored messages, so they live in the database either way.
 checks = [
-  { file = "src-tauri/migrations/*.sql", has = "CREATE TABLE IF NOT EXISTS emails" },
-  { file = "src-tauri/migrations/*.sql", has = "CREATE TABLE IF NOT EXISTS calendar_events" },
-  { file = "src-tauri/migrations/*.sql", has = "CREATE TABLE IF NOT EXISTS memory_facts" },
-  { file = "src-tauri/migrations/*.sql", has = "email_tags" },
+  { app = true },
 ]
 
 [priv-where-data-4]
-checks = [ { file = "src-tauri/src/ai/model_manager.rs", quoted = "models" } ]
+checks = [
+  { app = true },
+]
 
 [priv-where-data-5]
-checks = [ { file = "src-tauri/src/lib.rs", quoted = "EMAILOPS_DATA_DIR" } ]
+checks = [
+  { app = true },
+]
 
 [priv-where-data-6]
 checks = [
-  { file = "src-tauri/src/services/keychain.rs", has = "keyring_core::Entry::new" },
-  { tests = ["services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password"] },
+  { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key', 'services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password'] },
 ]
 
 [priv-there-no-1]
 checks = [
-  { file = "src-tauri/src/sync/outlook.rs", has = "graph.microsoft.com" },
-  { file = "src-tauri/src/ai/model_catalog.rs", has = "https://huggingface.co/" },
-  { file = "src-tauri/src/ai/openrouter.rs", has = "openrouter.ai" },
-  { file = "src-tauri/tauri.conf.json", lacks = '"updater"' },
-  { manual = "\"Exactly these hosts\" is a whole-program claim; it needs the proxy/tcpdump audit the page itself suggests, not a grep." },
+  { app = true },
+  { file = 'src-tauri/Cargo.toml', lacks = 'sentry' },
+  { manual = '"The app talks to exactly these hosts" is a whole-program claim; confirm with the proxy / tcpdump audit the page itself suggests.' },
 ]
 
 [priv-there-no-2]
 checks = [
-  { tests = ["services::ai::provider_tests::load_provider_openrouter_without_key_returns_error"] },
-  { file = "src/locales/en/settings.json", quoted = "AI Backend & Models" },
+  { app = true },
 ]
 
 [priv-what-emailops-1]
 checks = [
-  { tests = ["services::emails::mailbox_state::tests::mark_read_updates_the_row_and_pushes_to_the_provider"] },
-  { file = "src-tauri/src/sync/gmail.rs", has = "async fn set_read_state" },
-  { file = "src-tauri/src/sync/gmail.rs", has = "async fn trash_message" },
-  { file = "src/lib/api.ts", has = "export async function moveEmail(" },
-  { file = "src/lib/api.ts", has = "reportJunkToProvider" },
-  { file = "src/locales/en/inbox.json", quoted = "Confirm junk" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn create_folder(" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn rename_folder(" },
-  { file = "src-tauri/src/commands/emails.rs", has = "pub async fn delete_folder(" },
-  { file = "src-tauri/src/sync/provider.rs", has = "async fn create_draft(" },
+  { tests = ['services::emails::mailbox_state::tests::mark_read_updates_the_row_and_pushes_to_the_provider', 'services::emails::compose::tests::delete_draft_removes_local_and_provider_copies'] },
+  { manual = 'Moves, Confirm junk and folder changes writing to the account need a real provider; the demo accounts are offline.' },
 ]
-fix = "Every action that writes to the account must be in this table: if one was added or removed, update the rows in all four languages."
+fix = 'Every action that writes to the account must be in this table: if one was added or removed, update the rows in all four languages.'
 
 [priv-what-emailops-2]
 checks = [
-  { file = "src-tauri/src/sync/gmail.rs", has = "async fn trash_message" },
-  { file = "src-tauri/src/sync/outlook.rs", has = "deleteditems" },
-  { tests = ["services::emails::mailbox_state::tests::mark_read_survives_a_failing_push"] },
-  { manual = "IMAP delete semantics (move to Trash vs \\Deleted + EXPUNGE) are not pinned by a test, and deleting a folder removes it on the server." },
+  { tests = ['services::emails::mailbox_state::tests::mark_read_survives_a_failing_push'] },
+  { manual = 'Delete-to-Trash on each provider needs a real account; IMAP delete semantics are not pinned by a test.' },
 ]
 
 [priv-what-emailops-3]
 checks = [
-  { file = "src-tauri/src/sync/provider.rs", quoted = "utm_source=email_footer" },
-  { tests = ["sync::mime_builder::tests::footer_follows_body_language"] },
+  { tests = ['sync::mime_builder::tests::footer_follows_body_language'] },
+  { file = 'src-tauri/src/sync/provider.rs', quoted = 'utm_source=email_footer' },
 ]
 
 [priv-no-telemetry-1]
 checks = [
-  { file = "src-tauri/Cargo.toml", has = 'opentelemetry      = { version = "0.33", optional = true }' },
-  { file = "src-tauri/Cargo.toml", lacks = "sentry" },
-  { file = "package.json", lacks = "sentry" },
-  { manual = "\"No phone-home of any kind\" is a whole-program claim; confirm with the network audit the page describes." },
+  { file = 'src-tauri/Cargo.toml', has = 'opentelemetry      = { version = "0.33", optional = true }' },
+  { file = 'src-tauri/Cargo.toml', lacks = 'sentry' },
+  { file = 'package.json', lacks = 'sentry' },
+  { manual = '"No phone-home of any kind" is a whole-program claim; confirm with the network audit the page describes.' },
 ]
 
 [priv-local-ai-1]
 checks = [
-  { file = "src-tauri/Cargo.toml", has = "llama-cpp-2" },
-  { file = "src-tauri/Cargo.toml", has = 'default = ["desktop", "llamacpp"' },
+  { manual = 'In-process inference with no socket is an architecture claim; confirm with the network audit the page describes.' },
 ]
 
 [priv-local-ai-2]
-checks = [ { file = "src-tauri/src/ai/ollama.rs", has = 'OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434"' } ]
+checks = [
+  { tests = ['ai::ollama::base_url_tests::defaults_to_the_local_daemon'] },
+]
 
 [priv-protection-from-1]
-checks = [ { none = "Lead-in to the list of client-side defences." } ]
+checks = [
+  { none = 'Lead-in to the list of client-side defences.' },
+]
 
 [priv-protection-from-2]
 checks = [
-  { tests = ["db::trusted_senders::tests::add_then_check_returns_true"] },
-  { manual = "Blocking remote images until allowed, and the per-email banner, are not pinned by a test in this report." },
+  { app = true },
+  { tests = ['db::trusted_senders::tests::add_then_check_returns_true'] },
+  { manual = 'The per-email banner on a message with remote images is not exercised: no demo email loads remote images.' },
 ]
 
 [priv-protection-from-3]
-checks = [ { tests = ["services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server"] } ]
+checks = [
+  { tests = ['services::junk::architecture_tests::tests::the_detector_cannot_act_on_the_mail_server'] },
+]
 
 [priv-protection-from-4]
-checks = [ { tests = ["services::junk::config::tests::phishing_stays_off_by_default_too"] } ]
+checks = [
+  { app = true },
+]
 
 [priv-protection-from-5]
 checks = [
-  { tests = ["services::emails::html_sanitizer::tests::keeps_basic_formatting"] },
-  { file = "src/components/shared/EmailHtmlFrame.tsx", has = "DOMPurify" },
+  { tests = ['services::emails::html_sanitizer::tests::keeps_basic_formatting'] },
+  { manual = 'The frontend (DOMPurify) half of the sanitising is not exercised by a named test here.' },
 ]
 
 [priv-locking-app-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Privacy & Security" },
-  { file = "src/components/LockScreen.tsx", has = "export" },
-  { file = "src-tauri/src/services/password.rs", has = "argon2" },
+  { app = true },
 ]
 
 [priv-locking-app-2]
-checks = [ { file = "src-tauri/Cargo.toml", lacks = "sqlcipher" } ]
+checks = [
+  { app = true },
+]
 
 [priv-auditing-any-1]
-checks = [ { file = "LICENSE", has = "Apache License" } ]
+checks = [
+  { file = 'LICENSE', has = 'Apache License' },
+]
 
-# ─────────────────────────────────── cli.md ──────────────────────────────
+# ── cli.md ────────────────────────────────────────────────────────────
 
 [cli-intro-1]
-checks = [ { file = "src-tauri/src/cli/mod.rs", has = "services" } ]
+checks = [
+  { app = true },
+]
 
 [cli-intro-2]
+# The Makefile is the CLI's only release pipeline: a macOS target and nothing else.
 checks = [
-  { file = "Makefile", has = "build-cli-mac:" },
-  { file = "Makefile", lacks = "build-cli-linux" },
+  { file = 'Makefile', has = 'dist-cli-mac:' },
+  { file = 'Makefile', lacks = 'dist-cli-linux' },
+  { file = 'Makefile', lacks = 'dist-cli-windows' },
 ]
 
 [cli-install-1]
 checks = [
-  { file = "Makefile", quoted = "EmailOps-CLI-macos.dmg" },
-  { file = "scripts/build_cli_release.sh", has = 'hdiutil create -volname "EmailOps CLI"' },
+  { release = 'EmailOps-CLI-macos.dmg' },
 ]
 
 [cli-install-2]
 checks = [
-  { file = "scripts/build_cli_release.sh", has = "lipo" },
-  { file = "scripts/build_cli_release.sh", has = "codesign" },
-  { file = "scripts/build_cli_release.sh", has = "notary" },
+  { manual = 'Universal, signed and notarized: checking it means downloading the release DMG and inspecting it with lipo, codesign and spctl.' },
 ]
 
 [cli-quick-start-1]
 checks = [
-  { file = "src-tauri/src/cli/mod.rs", has = "    Accounts {" },
-  { file = "src-tauri/src/cli/mod.rs", has = "    Emails {" },
-  { file = "src-tauri/src/cli/mod.rs", has = "    Search {" },
-  { file = "src-tauri/src/cli/repl.rs", has = "pub async fn run(session: &mut CliSession)" },
+  { app = true },
+  { manual = '`chat` needs a downloaded model and is not run.' },
 ]
 
 [cli-quick-start-2]
 checks = [
-  { file = "src-tauri/src/cli/repl.rs", has = "`/account`" },
-  { file = "src-tauri/src/cli/repl.rs", has = "`/help`" },
-  { file = "src-tauri/src/cli/repl.rs", has = '"/quit"' },
+  { app = true },
 ]
 
 [cli-commands-1]
 checks = [
-  { file = "src-tauri/src/cli/mod.rs", has = "Mailbox filter: inbox | sent | spam | trash." },
-  { file = "src-tauri/src/cli/mod.rs", has = "        next: bool," },
-  { file = "src-tauri/src/cli/mod.rs", has = "    Doctor" },
-  { file = "src-tauri/src/cli/mod.rs", has = "    Embed {" },
-  { file = "src-tauri/src/cli/mod.rs", has = "    Classify {" },
+  { app = true },
 ]
 
 [cli-commands-2]
 checks = [
-  { file = "src-tauri/src/cli/mod.rs", has = "pub json: bool," },
-  { file = "src-tauri/src/cli/mod.rs", has = "pub quiet: bool," },
-  { file = "src-tauri/src/cli/mod.rs", has = "pub account: Option<String>," },
-  { file = "src-tauri/src/cli/mod.rs", has = "pub model: Option<String>," },
-  { file = "src-tauri/src/cli/mod.rs", has = "pub data_dir: Option<PathBuf>," },
+  { app = true },
 ]
 
 [cli-commands-3]
-checks = [ { file = "src-tauri/src/db/mod.rs", has = "PRAGMA journal_mode = WAL;" } ]
+checks = [
+  { manual = 'Advice about when to run heavy writes; not a behaviour to verify.' },
+]
 
 [cli-scripting-json-1]
-checks = [ { file = "src-tauri/src/cli/output.rs", has = "pub fn emit_ok" } ]
+checks = [
+  { app = true },
+]
 
 [cli-scripting-json-2]
 checks = [
-  { file = "src-tauri/src/cli/commands.rs", has = '"emails": emails' },
-  { manual = "The jq paths (.data[].subject, .data.answer) depend on the JSON shape of three commands; no test pins those shapes." },
+  { app = true },
+  { manual = "The `chat … | jq -r '.data.answer'` example needs a downloaded model and is not run." },
 ]
 
 [cli-scripting-json-3]
 checks = [
-  { file = "src-tauri/src/cli/output.rs", has = "AppError::InvalidInput(_) => 2," },
-  { file = "src-tauri/src/cli/output.rs", has = "AppError::NotFound(_) => 3," },
-  { file = "src-tauri/src/cli/output.rs", has = "AppError::Cancelled => 130," },
-  { file = "src-tauri/src/cli/output.rs", has = "=> 6," },
+  { app = true },
 ]
 
 [cli-scripting-json-4]
-checks = [ { file = "src-tauri/src/cli/config.rs", quoted = "default-account" } ]
+checks = [
+  { app = true },
+]
 
-# ─────────────────────────── troubleshooting.md ──────────────────────────
+# ── troubleshooting.md ────────────────────────────────────────────────
 
 [trbl-ai-features-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "AI Backend & Models" },
-  { file = "src-tauri/src/ai/model_manager.rs", has = "sha256" },
+  { app = true },
 ]
 
 [trbl-ai-features-2]
 checks = [
-  { file = "src-tauri/src/ai/ollama.rs", quoted = "http://localhost:11434" },
-  { manual = "`ollama pull llama3.2` / `nomic-embed-text` name Ollama's own models; which ones EmailOps needs is not pinned by a test." },
+  { app = true },
+  { tests = ['ai::ollama::base_url_tests::defaults_to_the_local_daemon'] },
+  { manual = "`ollama pull llama3.2` / `nomic-embed-text` name Ollama's own models; which ones work is not exercised." },
 ]
 
 [trbl-ai-features-3]
 checks = [
-  { file = "src-tauri/src/ai/gpu_plan.rs", has = "pub fn embedded_runtime_supported(os: &str, arch: &str) -> bool" },
-  { file = "src/locales/en/settings.json", has = "requires Apple Silicon" },
+  { tests = ['ai::gpu_plan::tests::the_embedded_runtime_is_unsupported_on_intel_macs'] },
 ]
 
 [trbl-chat-slow-1]
-checks = [ { manual = "\"Tens of seconds on a modest machine\" is a performance observation." } ]
+checks = [
+  { manual = '"Tens of seconds on a modest machine" is a performance observation.' },
+]
 
 [trbl-chat-slow-2]
-checks = [ { tests = ["ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget"] } ]
+checks = [
+  { tests = ['ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget'] },
+]
 
 [trbl-chat-slow-3]
 checks = [
-  { tests = ["ai::model_catalog::recommendation_tests::published_model_table_matches_the_catalog_in_every_language"] },
-  { file = "src-tauri/src/ai/model_catalog.rs", quoted = "Qwen 3.5 4B" },
+  { app = true },
 ]
-fix = "Name the catalog's smallest chat model here, in all four languages."
 
 [trbl-chat-slow-4]
-checks = [ { file = "src/locales/en/settings.json", quoted = "keep model loaded" } ]
+checks = [
+  { app = true },
+]
 
 [trbl-chat-slow-5]
-checks = [ { file = "src/locales/en/settings.json", quoted = "context window" } ]
+checks = [
+  { app = true },
+]
 
 [trbl-chat-slow-6]
-checks = [ { file = "src/locales/en/settings.json", quoted = "thinking mode" } ]
+checks = [
+  { app = true },
+]
 
 [trbl-gpu-used-1]
-checks = [ { file = "src-tauri/src/ai/gpu_plan.rs", quoted = "GB free — offloading all layers" } ]
+checks = [
+  { file = 'src-tauri/src/ai/gpu_plan.rs', quoted = 'GB free — offloading all layers' },
+]
 
 [trbl-gpu-used-2]
-checks = [ { file = "src-tauri/src/ai/gpu_plan.rs", has = "Cpu" } ]
+checks = [
+  { manual = 'Vulkan falling back to the CPU is only observable on Windows/Linux without a usable GPU.' },
+]
 
 [trbl-gpu-used-3]
-checks = [ { manual = "Graphics-driver advice is outside this repo." } ]
+checks = [
+  { manual = 'Graphics-driver advice is outside this repo.' },
+]
 
 [trbl-gpu-used-4]
-checks = [ { manual = "`vulkaninfo` is a Vulkan SDK tool outside this repo." } ]
+checks = [
+  { manual = '`vulkaninfo` is a Vulkan SDK tool outside this repo.' },
+]
 
 [trbl-gpu-used-5]
-checks = [ { file = "src-tauri/src/ai/gpu_plan.rs", has = "layers, rest on CPU" } ]
+checks = [
+  { file = 'src-tauri/src/ai/gpu_plan.rs', has = 'layers, rest on CPU' },
+]
 
 [trbl-gpu-used-6]
-checks = [ { manual = "What VMs and remote desktops expose is environment behaviour." } ]
+checks = [
+  { manual = 'What VMs and remote desktops expose is environment behaviour.' },
+]
 
 [trbl-search-returns-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "AI Search" },
-  { file = "src/locales/en/settings.json", has = "Only emails in these categories will be embedded" },
+  { app = true },
 ]
 
 [trbl-search-returns-2]
-checks = [ { file = "src/locales/en/settings.json", quoted = "Limit AI processing" } ]
-fix = "Quote the setting's own label (settings.json ai.ageCutoff) in each language."
+checks = [
+  { app = true },
+]
 
 [trbl-classification-tagging-1]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "auto-classify new emails" },
-  { file = "src/locales/en/settings.json", quoted = "AI Classification" },
+  { app = true },
 ]
 
 [trbl-classification-tagging-2]
-checks = [ { manual = "That no selected Gmail category means nothing is classified is not pinned by a test." } ]
+checks = [
+  { manual = 'That no selected Gmail tab means nothing is classified needs a real sync and a model.' },
+]
 
 [trbl-classification-tagging-3]
 checks = [
-  { file = "src/locales/en/settings.json", quoted = "Classify Unclassified" },
-  { file = "src/locales/en/settings.json", quoted = "Reclassify All" },
+  { app = true },
 ]
 
 [trbl-gmail-sync-1]
-checks = [ { tests = ["sync::gmail::tests::far_future_rate_limit_fails_fast_and_gates_account"] } ]
+checks = [
+  { tests = ['sync::gmail::tests::far_future_rate_limit_fails_fast_and_gates_account'] },
+]
 
 [trbl-app-locked-1]
-checks = [ { file = "src-tauri/src/services/password.rs", has = "argon2" } ]
+checks = [
+  { app = true },
+]
 
 [trbl-something-else-1]
-checks = [ { none = "Where to report a problem; nothing about the app to verify." } ]
+checks = [
+  { none = 'Where to report a problem; nothing about the app to verify.' },
+]

@@ -14,16 +14,16 @@ e-mail ne quitte jamais votre machine.
 <!-- claim:ai-choosing-backend-1 -->
 **Paramètres → IA : backend et modèles** détermine où se déroule l'inférence :
 
-- **Dans l'app (local)** — un runtime llama.cpp intégré. Rien à installer, pas de démon, pas
+- **Dans l'app** — un runtime llama.cpp intégré. Rien à installer, pas de démon, pas
   de trafic réseau. C'est le choix par défaut. Il utilise automatiquement votre GPU quand il y
   en a un — Metal sur Apple Silicon, Vulkan sous Windows et Linux — et le CPU sinon. Sur Mac,
   il exige une puce Apple Silicon (M1 ou plus récente) ; sur un Mac Intel il reste
   indisponible. <!-- claim:ai-choosing-backend-2 -->
-- **Ollama (local)** — un serveur Ollama que vous faites déjà tourner sur
+- **Ollama** — un serveur Ollama que vous faites déjà tourner sur
   `http://localhost:11434`. Utile si vous entretenez une bibliothèque de modèles partagée. À
   noter : sur un Mac Intel, Ollama ne bénéficie pas non plus d'accélération GPU, il sera donc
   lent. <!-- claim:ai-choosing-backend-3 -->
-- **OpenRouter (distant)** — une API cloud payante. Nécessite une clé d'API, gère un plafond
+- **OpenRouter** — une API cloud payante. Nécessite une clé d'API, gère un plafond
   budgétaire mensuel et envoie le contenu de vos e-mails à un tiers — elle reste donc
   désactivée tant que vous ne l'activez pas. <!-- claim:ai-choosing-backend-4 -->
 
@@ -75,8 +75,9 @@ complètes sont dans [Installation](../installation/#with-local-ai).
   réglage à baisser quand un modèle tient tout juste. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Mode raisonnement** — chain-of-thought sur les modèles compatibles. Plus lent, plus
   précis, et vous pouvez afficher ou masquer la trace. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
-- **Limiter le traitement IA** — ignore embeddings et classification
-  pour le courrier de plus de N jours. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
+- **Limiter le traitement IA** — borne ce que couvrent embeddings et classification : tous
+  les e-mails d'un compte jusqu'à une limite d'e-mails (1000 par défaut) et, pour les comptes
+  plus volumineux, seulement le courrier plus récent qu'une limite en jours (365 par défaut). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Discuter avec votre boîte
 
@@ -125,9 +126,8 @@ Les utilisateurs avancés peuvent modifier le prompt système et les prompts de 
 
 <!-- claim:ai-ai-drafts-1 -->
 Un bouton **Brouillon IA** à côté de Répondre à tous rédige une réponse ancrée dans le fil que
-vous consultez. Configurez une **persona** (une phrase sur l'identité de rédaction), un
-**style d'écriture**, ainsi que le ton et la longueur par défaut — ou remplacez tout le modèle
-de prompt. Les brouillons arrivent dans l'éditeur pour relecture avant tout envoi.
+vous consultez. Configurez une **persona** (une phrase sur l'identité de rédaction) et un
+**style d'écriture** — ou remplacez tout le modèle de prompt. Les brouillons arrivent dans l'éditeur pour relecture avant tout envoi.
 
 ## Classification {#classification}
 

@@ -14,15 +14,15 @@ keine E-Mail jemals Ihre Maschine.
 <!-- claim:ai-choosing-backend-1 -->
 **Einstellungen → KI: Backend & Modelle** legt fest, wo die Inferenz stattfindet:
 
-- **In der App (lokal)** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren, kein
+- **In der App** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren, kein
   Daemon, kein Netzwerkverkehr. Das ist der Standard. Sie nutzt automatisch Ihre GPU, wenn
   eine vorhanden ist — Metal auf Apple Silicon, Vulkan unter Windows und Linux — und sonst die
   CPU. Auf dem Mac wird Apple Silicon (M1 oder neuer) vorausgesetzt; auf einem Intel-Mac bleibt
   sie nicht verfügbar. <!-- claim:ai-choosing-backend-2 -->
-- **Ollama (lokal)** — ein Ollama-Server, den Sie bereits unter `http://localhost:11434`
+- **Ollama** — ein Ollama-Server, den Sie bereits unter `http://localhost:11434`
   betreiben. Praktisch, wenn Sie eine gemeinsame Modellbibliothek pflegen. Beachten Sie: Auf
   einem Intel-Mac erhält auch Ollama keine GPU-Beschleunigung und ist entsprechend langsam. <!-- claim:ai-choosing-backend-3 -->
-- **OpenRouter (entfernt)** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
+- **OpenRouter** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
   bleibt sie aus, bis Sie sie aktivieren. <!-- claim:ai-choosing-backend-4 -->
 
@@ -73,8 +73,9 @@ Die vollständigen Anforderungen stehen unter [Installation](../installation/#wi
   zum Verkleinern, wenn ein Modell nur knapp passt. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Denkmodus** — Chain-of-Thought bei unterstützten Modellen. Langsamer, genauer, und Sie können
   die Argumentationsspur ein- oder ausblenden. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
-- **KI-Verarbeitung begrenzen** — überspringt Embeddings und
-  Klassifizierung für E-Mails, die älter als N Tage sind. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
+- **KI-Verarbeitung begrenzen** — begrenzt, was Embeddings und Klassifizierung abdecken: alle
+  E-Mails eines Kontos bis zu einem E-Mail-Limit (standardmäßig 1000) und bei größeren Konten
+  nur E-Mails, die jünger als ein Tageslimit sind (standardmäßig 365 Tage). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Mit dem Postfach chatten
 
@@ -120,8 +121,7 @@ Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** be
 <!-- claim:ai-ai-drafts-1 -->
 Ein Button **KI-Entwurf** neben „Allen antworten“ schreibt eine Antwort, die im gerade
 geöffneten Thread verankert ist. Konfigurieren Sie eine **Persona** (ein Satz dazu, als wer
-die KI schreibt), einen **Schreibstil** sowie Standardton und -länge — oder ersetzen Sie die
-gesamte Prompt-Vorlage. Entwürfe landen im Editor, damit Sie sie vor dem Senden prüfen.
+die KI schreibt) und einen **Schreibstil** — oder ersetzen Sie die gesamte Prompt-Vorlage. Entwürfe landen im Editor, damit Sie sie vor dem Senden prüfen.
 
 ## Klassifizierung {#classification}
 

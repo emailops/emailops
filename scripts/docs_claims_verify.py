@@ -14,16 +14,17 @@ A claim's status is the conjunction of its checks:
 """
 
 import fnmatch
+import json
 import pathlib
 import re
 import subprocess
 
 from docs_claims_lib import LANGS, ROOT, blocks, front_matter, load_catalog, pages
 
-KINDS = ("file", "tests", "app", "manual", "none")
+KINDS = ("file", "tests", "app", "release", "manual", "none")
 # Method → report type. The type is how a claim was proven, so the report's
 # per-page summary reads as "how much of this page does the code vouch for".
-TYPE_OF = {"file": "source", "tests": "tests", "app": "doc", "manual": "manual", "none": "manual"}
+TYPE_OF = {"file": "source", "tests": "tests", "app": "doc", "release": "release", "manual": "manual", "none": "manual"}
 
 
 def kind(check):
@@ -77,6 +78,40 @@ def check_file(check, claim_text):
             return False, f"{where} no casa /{check['regex']}/"
         return True, f"{where} casa /{check['regex']}/"
     raise ValueError(f"file check without an assertion: {check!r}")
+
+
+_RELEASE = None
+
+
+def release_assets():
+    """Asset names of the latest published release: the ground truth for
+    "download X from the latest release". Fetched once per run."""
+    global _RELEASE
+    if _RELEASE is None:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://api.github.com/repos/emailops/emailops/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "emailops-docs-check"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.load(r)
+            _RELEASE = (data.get("tag_name", "?"), {a["name"] for a in data.get("assets", [])})
+        except Exception as e:  # offline: the check fails with the reason, never passes
+            _RELEASE = (f"sin acceso a GitHub ({type(e).__name__})", None)
+    return _RELEASE
+
+
+def check_release(check, claim_text):
+    name = check["release"]
+    if squash(name) not in squash(claim_text):
+        return False, f"la afirmación ya no cita «{name}» — actualizar el catálogo o la página"
+    tag, assets = release_assets()
+    if assets is None:
+        return False, f"no se pudo consultar la release: {tag}"
+    if name not in assets:
+        return False, f"la release {tag} no publica «{name}» (publica: {', '.join(sorted(assets))})"
+    return True, f"la release {tag} publica «{name}»"
 
 
 def run_rust_tests(names):
@@ -153,9 +188,16 @@ def evaluate(app_results):
                 else:
                     r = app_results.get(cid)
                     if r is None:
-                        results.append(("app", "fail", "la barrida no ejecutó docClaim('" + cid + "')"))
+                        results.append(("app", "fail", f"ninguna fase de la app comprobó claim:{cid}"))
+                    elif r["status"] == "skip":
+                        # Not observable here (e.g. greying out on a machine where every
+                        # model fits): not proven, so it must not read as OK.
+                        results.append(("app", "manual", r.get("detail", "")))
                     else:
                         results.append(("app", "ok" if r["status"] == "ok" else "fail", r.get("detail", "")))
+            elif k == "release":
+                ok, why = check_release(ch, block.text)
+                results.append(("release", "ok" if ok else "fail", why))
             elif k == "manual":
                 results.append(("manual", "manual", ch["manual"]))
             elif k == "none":
@@ -173,10 +215,12 @@ def evaluate(app_results):
 
         # The report type is the strongest method that ran for this claim.
         methods = [m for m, s, _ in results if s not in ("none",)]
-        order = ["app", "tests", "file", "manual", "none"]
+        order = ["app", "release", "tests", "file", "manual", "none"]
         best = next((m for m in order if m in methods), "none")
         detail = "; ".join(why for _, s, why in results if s == "fail") or "; ".join(
             why for _, _, why in results)
+        app = (app_results or {}).get(cid) or {}
         records.append({**base, "type": TYPE_OF[best], "status": status, "detail": detail,
-                        "results": results, "fix": entry.get("fix", "")})
+                        "results": results, "fix": app.get("fix") or entry.get("fix", ""),
+                        "shots": app.get("shots", [])})
     return records, test_log

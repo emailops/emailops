@@ -43,8 +43,8 @@ emailops-cli                              # no subcommand → interactive REPL
 ```
 
 <!-- claim:cli-quick-start-2 -->
-In the REPL, plain text is a chat turn (tokens stream live) and `/`-prefixed lines map onto
-the subcommands: `/search`, `/account`, `/sync`, `/help`, `/quit`.
+In the REPL every action is a `/`-prefixed command: `/chat <question>` is a chat turn (tokens
+stream live), and the rest map onto the subcommands — `/search`, `/account`, `/sync`, `/help`, `/quit`.
 
 ## Commands
 

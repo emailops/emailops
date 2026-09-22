@@ -11,7 +11,7 @@ docs/site/claims.toml saying how it is verified. This script is what makes
   readers would get a claim nothing checks (extends the four-language rule);
 - a marker has no catalogue entry, or an entry no longer has a marker;
 - an entry has no checks, or a check the runner does not understand;
-- an `app` check has no docClaim() case in sweep.mjs, or a case has no `app` entry.
+- an `app` check has no claim('id', …) case in any app phase, or a case has no `app` entry.
 
 Each end of every pairing rots on its own, and none of these show up as a
 failure anywhere else, because both halves still parse.
@@ -26,9 +26,16 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from docs_claims_lib import LANGS, ROOT, blocks, load_catalog, pages  # noqa: E402
 
-SWEEP = ROOT / ".claude/skills/verify-emailops/scripts/sweep.mjs"
-CASE = re.compile(r"docClaim\(\s*['\"]([a-z0-9-]+)['\"]")
-KINDS = {"file", "tests", "app", "manual", "none"}
+# Where app checks live: the WebDriver phases and the CLI phase. Each case is a
+# literal claim('id', …) call — never an id from a loop variable, or this guard
+# could not see it.
+APP_SOURCES = [
+    ROOT / ".claude/skills/verify-emailops/scripts/doc_claims.mjs",
+    ROOT / ".claude/skills/verify-emailops/scripts/doc_claims_demo.mjs",
+    ROOT / "scripts/docs_cli_claims.py",
+]
+CASE = re.compile(r"claim\(\s*['\"]([a-z0-9-]+)['\"]")
+KINDS = {"file", "tests", "app", "release", "manual", "none"}
 FILE_ASSERTIONS = {"quoted", "has", "lacks", "regex"}
 
 
@@ -87,11 +94,11 @@ def main() -> int:
                 app_ids.add(cid)
 
     # 5. app checks ↔ docClaim() cases
-    cases = set(CASE.findall(SWEEP.read_text(encoding="utf-8")))
+    cases = {c for src in APP_SOURCES for c in CASE.findall(src.read_text(encoding="utf-8"))}
     for cid in sorted(app_ids - cases):
-        problems.append(f"claims.toml {cid} expects an app check but sweep.mjs has no docClaim('{cid}')")
+        problems.append(f"claims.toml {cid} expects an app check but no phase has a claim('{cid}', …) case")
     for cid in sorted(cases - app_ids):
-        problems.append(f"docClaim('{cid}') in sweep.mjs has no `app` check in claims.toml")
+        problems.append(f"claim('{cid}', …) is checked in the app but claims.toml has no `app` check for it")
 
     if problems:
         print("\ndocs claim check FAILED:", file=sys.stderr)

@@ -43,8 +43,8 @@ emailops-cli                              # sin subcomando → REPL interactivo
 ```
 
 <!-- claim:cli-quick-start-2 -->
-En el REPL, el texto normal es un turno de chat (los tokens llegan en directo) y las líneas
-que empiezan por `/` corresponden a los subcomandos: `/search`, `/account`, `/sync`, `/help`,
+En el REPL toda acción es un comando que empieza por `/`: `/chat <pregunta>` es un turno de
+chat (los tokens llegan en directo) y el resto corresponden a los subcomandos — `/search`, `/account`, `/sync`, `/help`,
 `/quit`.
 
 ## Comandos

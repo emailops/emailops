@@ -14,14 +14,14 @@ your machine.
 <!-- claim:ai-choosing-backend-1 -->
 **Settings → AI Backend & Models** controls where inference happens:
 
-- **In-app (local)** — an embedded llama.cpp runtime. Nothing to install, no daemon, no
+- **In-app** — an embedded llama.cpp runtime. Nothing to install, no daemon, no
   network traffic. This is the default. It uses your GPU automatically where there is one —
   Metal on Apple Silicon, Vulkan on Windows and Linux — and the CPU where there is not. On a
   Mac it requires Apple Silicon (M1 or newer); on an Intel Mac it stays unavailable. <!-- claim:ai-choosing-backend-2 -->
-- **Ollama (local)** — an Ollama server you already run at `http://localhost:11434`. Useful
+- **Ollama** — an Ollama server you already run at `http://localhost:11434`. Useful
   if you keep a shared model library. Note that on an Intel Mac it gets no GPU acceleration
   either, so it will be slow. <!-- claim:ai-choosing-backend-3 -->
-- **OpenRouter (remote)** — a paid cloud API. Requires an API key, supports a monthly budget
+- **OpenRouter** — a paid cloud API. Requires an API key, supports a monthly budget
   cap, and sends email content to a third party — so it stays off unless you enable it. <!-- claim:ai-choosing-backend-4 -->
 
 ### The model catalog {#the-model-catalog}
@@ -70,8 +70,9 @@ rule. Full requirements are in [Installation](../installation/#with-local-ai).
   only just fits. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Thinking mode** — chain-of-thought reasoning on supported models. Slower, more accurate,
   and you can show or hide the reasoning trace. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
-- **Limit AI processing** — skip embedding and classification for mail
-  older than N days. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
+- **Limit AI processing** — caps what embedding and classification cover: every email of
+  an account up to an email limit (1000 by default), and for larger accounts only mail
+  newer than a day limit (365 days by default). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Chat with your mailbox
 
@@ -114,8 +115,8 @@ reranking) in **Settings → AI Backend & Models → Chat prompts**.
 
 <!-- claim:ai-ai-drafts-1 -->
 An **AI Draft** button next to Reply All writes a reply grounded in the thread you are
-looking at. Configure a **persona** (one sentence on who the AI writes as), a **writing
-style**, and default tone and length — or replace the whole prompt template. Drafts land in
+looking at. Configure a **persona** (one sentence on who the AI writes as) and a **writing
+style** — or replace the whole prompt template. Drafts land in
 the composer for you to review before anything is sent.
 
 ## Classification {#classification}

@@ -5,7 +5,8 @@ weight: 20
 ---
 
 <!-- claim:start-intro-1 -->
-La primera vez que abres EmailOps se ejecuta un asistente de cuatro pasos. Lleva un par de
+La primera vez que abres EmailOps se ejecuta un asistente de hasta cuatro pasos (tres si
+eliges un cliente de correo simple). Lleva un par de
 minutos, la mayor parte de ellos descargando un modelo en segundo plano.
 
 ## 1. IA sí o no
@@ -26,9 +27,9 @@ Si activaste la IA, elige dónde se ejecuta la inferencia:
 
 | Backend | Qué significa |
 |---|---|
-| **En la app (local)** | El predeterminado. Un runtime llama.cpp integrado en EmailOps. Sin demonio, sin configuración, sin red. |
-| **Ollama (local)** | Usa tu servidor Ollama existente en `http://localhost:11434`. |
-| **OpenRouter (remoto)** | Envía los prompts a una API de pago en la nube. Opcional, por función, y desactivado por defecto. |
+| **En la app** | El predeterminado. Un runtime llama.cpp integrado en EmailOps. Sin demonio, sin configuración, sin red. |
+| **Ollama** | Usa tu servidor Ollama existente en `http://localhost:11434`. |
+| **OpenRouter** | Envía los prompts a una API de pago en la nube. Opcional, por función, y desactivado por defecto. |
 
 <!-- claim:start-2-ai-2 -->
 Con el backend integrado, elige un modelo de chat del catálogo. EmailOps preselecciona el

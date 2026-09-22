@@ -14,14 +14,14 @@ ningún correo sale nunca de tu máquina.
 <!-- claim:ai-choosing-backend-1 -->
 **Ajustes → IA: backend y modelos** controla dónde ocurre la inferencia:
 
-- **En la app (local)** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
+- **En la app** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
   tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
   Apple Silicon, Vulkan en Windows y Linux — y la CPU cuando no. En Mac requiere Apple Silicon
   (M1 o posterior); en un Mac Intel permanece no disponible. <!-- claim:ai-choosing-backend-2 -->
-- **Ollama (local)** — un servidor Ollama que ya tengas en `http://localhost:11434`. Útil si
+- **Ollama** — un servidor Ollama que ya tengas en `http://localhost:11434`. Útil si
   mantienes una biblioteca de modelos compartida. Ten en cuenta que en un Mac Intel tampoco
   obtiene aceleración por GPU, así que será lento. <!-- claim:ai-choosing-backend-3 -->
-- **OpenRouter (remoto)** — una API de pago en la nube. Requiere una clave de API, admite un
+- **OpenRouter** — una API de pago en la nube. Requiere una clave de API, admite un
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
   desactivado salvo que lo actives. <!-- claim:ai-choosing-backend-4 -->
 
@@ -72,8 +72,9 @@ así que la etiqueta es un punto de partida, no una regla. Los requisitos comple
   modelo entra justo. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Modo de razonamiento** — chain-of-thought en los modelos compatibles. Más lento, más
   preciso, y puedes mostrar u ocultar la traza. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
-- **Limitar el procesado de IA** — omite embeddings y clasificación
-  para el correo con más de N días. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
+- **Limitar el procesado de IA** — acota lo que cubren los embeddings y la clasificación:
+  todos los correos de una cuenta hasta un límite de correos (1000 por defecto) y, en cuentas
+  mayores, solo el correo más reciente que un límite de días (365 por defecto). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Chatea con tu buzón
 
@@ -120,8 +121,8 @@ Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recu
 
 <!-- claim:ai-ai-drafts-1 -->
 Un botón **Borrador con IA** junto a Responder a todos redacta una respuesta basada en el hilo
-que estás viendo. Configura una **persona** (una frase sobre quién escribe), un **estilo de
-escritura** y el tono y la longitud por defecto — o sustituye toda la plantilla del prompt.
+que estás viendo. Configura una **persona** (una frase sobre quién escribe) y un **estilo de
+escritura** — o sustituye toda la plantilla del prompt.
 Los borradores aterrizan en el editor para que los revises antes de enviar nada.
 
 ## Clasificación {#classification}

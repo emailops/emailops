@@ -5,7 +5,8 @@ weight: 20
 ---
 
 <!-- claim:start-intro-1 -->
-The first time you open EmailOps a four-step wizard runs. It takes a couple of minutes, most
+The first time you open EmailOps a wizard of up to four steps runs — three if you choose a
+plain email client. It takes a couple of minutes, most
 of which is a model download in the background.
 
 ## 1. AI on or off
@@ -24,9 +25,9 @@ If you enabled AI, choose where inference happens:
 
 | Backend | What it means |
 |---|---|
-| **In-app (local)** | The default. A llama.cpp runtime embedded in EmailOps. No daemon, no setup, no network. |
-| **Ollama (local)** | Uses your existing Ollama server at `http://localhost:11434`. |
-| **OpenRouter (remote)** | Sends prompts to a paid cloud API. Opt-in, per feature, and off by default. |
+| **In-app** | The default. A llama.cpp runtime embedded in EmailOps. No daemon, no setup, no network. |
+| **Ollama** | Uses your existing Ollama server at `http://localhost:11434`. |
+| **OpenRouter** | Sends prompts to a paid cloud API. Opt-in, per feature, and off by default. |
 
 <!-- claim:start-2-ai-2 -->
 With the in-app backend, pick a chat model from the built-in catalog. EmailOps preselects the
