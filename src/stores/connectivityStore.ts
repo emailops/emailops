@@ -5,16 +5,20 @@ import * as api from '@/lib/api';
 /**
  * Hybrid connectivity tracking.
  *
- * We combine two signals:
- *   1. `navigator.onLine` (instant — fires on link-layer changes like
- *      unplugging Wi-Fi)
- *   2. Backend probe to a neutral host every 15s (authoritative — catches
- *      captive portals, broken DNS, VPN drops where `navigator.onLine` lies)
+ * We combine two signals, but they are not equals:
+ *   1. The backend probe (`app-connectivity-changed`, one per 15s) is
+ *      **authoritative**. It performs a real HTTP request from this machine,
+ *      so it catches captive portals, broken DNS and VPN drops that
+ *      `navigator.onLine` lies about — and it is the same flag the Rust sync
+ *      scheduler gates on, so the banner and the actual behaviour agree.
+ *   2. The browser `offline` event is a **hint** that buys latency: it lets us
+ *      show the banner the instant the link drops instead of up to 15s later.
  *
- * `isOnline` is the AND of both signals: any "I'm definitely offline" signal
- * wins. This biases toward showing the offline banner sooner rather than
- * later, which is what we want — a stale "online" indicator while sync
- * silently fails is worse than a brief false-positive banner.
+ * The hint may only pull us offline, never keep us there. WKWebView fires a
+ * bare `offline` on transient link changes with no matching `online` to
+ * follow, so anything that let the browser signal veto a later probe would
+ * pin the banner forever — which is exactly the bug this shape fixes. Every
+ * probe result overwrites the hint, so the worst case is one stale interval.
  *
  * Per CLAUDE.md, components must destructure reactive fields
  * (`const { isOnline } = useConnectivityStore()`); reading via
@@ -22,11 +26,9 @@ import * as api from '@/lib/api';
  * subscribe to updates.
  */
 interface ConnectivityStore {
-  /** Combined signal: navigator says online AND last probe succeeded. */
+  /** Latest probe result, or `false` while the browser hint says otherwise. */
   isOnline: boolean;
-  /** Latest browser signal, exposed for debugging / advanced UIs. */
-  navigatorOnline: boolean;
-  /** Latest backend probe result. */
+  /** Latest backend probe result, kept so `online` can restore what it knew. */
   backendOnline: boolean;
   /** Whether the initial probe has resolved. Until then, default to online so
    *  we don't flash an "Offline" banner during normal startup. */
@@ -40,7 +42,6 @@ let initInFlight: Promise<void> | null = null;
 
 export const useConnectivityStore = create<ConnectivityStore>((set) => ({
   isOnline: true,
-  navigatorOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
   backendOnline: true,
   initialized: false,
 
@@ -54,20 +55,21 @@ export const useConnectivityStore = create<ConnectivityStore>((set) => ({
       // Browser events — cheap to attach and respond instantly to OS-level
       // network changes.
       const onOnline = () => {
-        set((s) => ({ navigatorOnline: true, isOnline: s.backendOnline }));
+        // The link is back, but only the probe knows whether the internet is.
+        set((s) => ({ isOnline: s.backendOnline }));
       };
       const onOffline = () => {
-        // navigator says offline — trust it immediately. The next probe will
-        // confirm and flip backendOnline if needed.
-        set({ navigatorOnline: false, isOnline: false });
+        // Show the banner now rather than up to a probe interval later. If the
+        // event was spurious, the next probe undoes this.
+        set({ isOnline: false });
       };
       window.addEventListener('online', onOnline);
       window.addEventListener('offline', onOffline);
 
-      // Backend probe events — transitions only (the backend already de-dupes).
+      // One event per probe, so this always re-converges on the truth.
       const unlistenBackend = await listen<{ online: boolean }>('app-connectivity-changed', (event) => {
         const backendOnline = event.payload.online;
-        set((s) => ({ backendOnline, isOnline: s.navigatorOnline && backendOnline }));
+        set({ backendOnline, isOnline: backendOnline });
       });
 
       unlistenFn = () => {
@@ -80,11 +82,7 @@ export const useConnectivityStore = create<ConnectivityStore>((set) => ({
       // the first event if startup happened while offline.
       try {
         const backendOnline = await api.isOnline();
-        set((s) => ({
-          backendOnline,
-          isOnline: s.navigatorOnline && backendOnline,
-          initialized: true,
-        }));
+        set({ backendOnline, isOnline: backendOnline, initialized: true });
       } catch {
         // Backend probe failed to respond — treat as initialized but defer
         // to whatever signal we have. We don't flip `isOnline` to false here

@@ -6,8 +6,9 @@
 //!   * cached in an atomic flag readable via the `is_online` command (used by
 //!     the frontend on startup and as a defensive fallback if it misses an
 //!     event), and
-//!   * emitted as `app-connectivity-changed` Tauri events on every state
-//!     transition (online → offline or vice versa).
+//!   * emitted as an `app-connectivity-changed` Tauri event after every probe.
+//!     Every probe, not just the transitions: the front-end store has no other
+//!     way back from a spurious browser `offline` event (see `publish`).
 //!
 //! Why a probe instead of relying on `navigator.onLine`: the browser flag only
 //! reflects "the OS thinks we have a link layer", which is wrong on captive
@@ -103,12 +104,61 @@ async fn probe_once(client: &reqwest::Client, online: &Arc<AtomicBool>, app: &Ap
         Ok(resp) => resp.status().is_success() || resp.status().is_redirection(),
         Err(_) => false,
     };
-    // Use swap so we only emit on actual transitions; a long stretch of
-    // identical results doesn't spam the frontend.
-    let prev = online.swap(now_online, Ordering::Relaxed);
-    if prev != now_online {
-        if let Err(e) = app.emit("app-connectivity-changed", ConnectivityEvent { online: now_online }) {
-            crate::services::logger::log("error", "system", format!("connectivity: failed to emit event: {e}"));
-        }
+    publish(online, now_online, app);
+}
+
+/// Cache the probe result and publish it to the front end.
+///
+/// Publishes on **every** probe, not only on transitions. The front-end
+/// connectivity store treats this event as the authoritative signal, so it
+/// needs a heartbeat it can re-converge on: a browser `offline` event that
+/// never gets a matching `online` would otherwise pin the offline banner
+/// forever while this side stayed happily online and never emitted again.
+/// One event per `PROBE_INTERVAL` is not a meaningful cost.
+fn publish(online: &AtomicBool, now_online: bool, app: &AppHandle) {
+    online.store(now_online, Ordering::Relaxed);
+    if let Err(e) = app.emit("app-connectivity-changed", ConnectivityEvent { online: now_online }) {
+        crate::services::logger::log("error", "system", format!("connectivity: failed to emit event: {e}"));
+    }
+}
+
+// The stub `AppHandle` (which routes `emit` through the testable event sink)
+// only exists without the `desktop` feature — same gate as `app_handle.rs`.
+#[cfg(all(test, not(feature = "desktop")))]
+mod tests {
+    use super::*;
+    use crate::services::events::{install_for_testing, seam_test_lock};
+
+    #[test]
+    fn publishes_every_probe_so_the_frontend_can_re_converge() {
+        let _guard = seam_test_lock();
+        let sink = install_for_testing();
+        let online = AtomicBool::new(true);
+
+        publish(&online, true, &AppHandle);
+        publish(&online, true, &AppHandle);
+
+        assert_eq!(
+            sink.count("app-connectivity-changed"),
+            2,
+            "an unchanged result must still be published: it is the frontend's only heartbeat"
+        );
+    }
+
+    #[test]
+    fn publishes_the_probe_result_and_caches_it() {
+        let _guard = seam_test_lock();
+        let sink = install_for_testing();
+        let online = AtomicBool::new(true);
+
+        publish(&online, false, &AppHandle);
+
+        assert!(
+            !online.load(Ordering::Relaxed),
+            "is_online must read back the latest probe"
+        );
+        let payloads = sink.payloads_for("app-connectivity-changed");
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["online"], serde_json::json!(false));
     }
 }
