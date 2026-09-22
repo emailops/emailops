@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.9] — 2026-09-22
+
+### Added
+
+- **Ask the chat about EmailOps itself.** Questions about the app ("how do I
+  add an account?", "what are Lenses?") are answered from the guides bundled
+  with the app, with a link to the section used. The chat only draws on the
+  guides for questions about the app, never for questions about your mail.
+- **Show a chat answer's emails in the list.** A "Show in email list" button
+  under an answer puts exactly the emails it cites into the email list.
+- **New search operators.** `id:` finds one email by id and `tag:` filters by a
+  classifier tag. Long result sets page through instead of being cut off.
+
+### Changed
+
+- **Chat cites emails by link.** Answers link the email a fact comes from
+  instead of numbered `[n]` sources, and the sources listed under an answer are
+  the emails the chat's tools actually returned.
+- **Chat searches rank by tag instead of filtering on it.** A single wrong
+  classifier tag no longer hides an email from the chat, and the answer says
+  when a filter could not reach some matches.
+- **The reasoning panel reads in order.** Every step of a chat turn is shown in
+  the order it ran, and the route row says in words what was decided.
+- **Faster follow-up questions on the embedded model.** The query planner's
+  fixed prompt stays decoded between calls, so it is not re-processed on every
+  question.
+- **Newly added accounts sync first.** Small accounts are processed whole
+  before the daily AI limit applies, and a busy mailbox no longer starves an
+  account that was just added.
+- **Spam is followed both ways.** Moving mail into or out of Spam (including
+  Gmail's "Not spam") in the provider's own client is reflected locally, and
+  Spam is rechecked every 7 minutes instead of 15.
+
+### Fixed
+
+- **IMAP sync no longer marks every message as read on the server.** Bodies
+  were fetched in a way that sets the read flag, so syncing marked every
+  downloaded message as read on your phone, webmail and other clients. Gmail
+  and Outlook were not affected.
+- **Replies stay in the thread they answer**, and are addressed the way each
+  provider expects.
+- **The IMAP account address is kept separate from the server login**, so an
+  account whose login is not its email address sends and shows the right
+  address.
+- **Turning AI off turns it off everywhere.** Lenses still ran extraction with
+  AI switched off — with OpenRouter selected, that sent mail content off the
+  machine. The switch is now enforced for every AI call.
+- **Remote images stay blocked in every email preview.** The previews in
+  Tasks, Memory and Lens rows loaded remote images (tracking pixels included)
+  regardless of the privacy setting; they now follow it and the trusted-sender
+  list like the reading pane.
+- **Every one-way action can be undone.** Privacy settings list your trusted
+  senders with a way to revoke each one; the OpenRouter panel shows spend
+  against your budget with a reset; excluded Lens rows can be shown and
+  included again.
+- Re-downloading an email no longer wipes what was attached to it — tags,
+  junk verdict (including a "not junk" override), Lens rows, chat citations and
+  embeddings. Sending a message no longer does the same to its synced copy in
+  Sent.
+- Gmail batch responses are matched to their requests by Content-ID, not by
+  position.
+- The offline banner no longer stays on while sync is working.
+- The inbox refreshes again after jumping to an email from chat.
+- Settings panels no longer flicker or reset resized text boxes while a sync
+  is running.
+- Narrow compact email rows keep the subject visible.
+- Local models: malformed tool calls with a `name=` key or arguments wrapped in
+  a one-element array are repaired; "no-think" priming is chosen from the
+  model's architecture.
+
+### Security
+
+- Removed the vulnerable `extract-zip` from the dependency tree; Tauri updated
+  to 2.11.6, ammonia to 4.2.0.
+
 ## [0.6.8] — 2026-09-15
 
 ### Added
