@@ -265,6 +265,8 @@ Rules:
 - A KIND of mail (a concept, in any language) is never a keyword: pick the intent/topic whose
   definition matches it and leave query null. If no tag fits, put the description in query
   with mode = "semantic".
+- A SPECIFIC thing the mail is about — a project, product, document or deal the question names
+  ("the Q3 roadmap", "el contrato de mantenimiento") — is words in the mail -> query, not a tag.
 - When the question uses a tag's own name or its translation ("newsletters", "quejas",
   "complaints", "solicitudes"), that tag IS the filter — do not substitute a neighbouring one,
   and do not add a second tag the question did not ask for.

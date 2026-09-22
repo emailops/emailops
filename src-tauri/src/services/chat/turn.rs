@@ -392,8 +392,10 @@ used. If the guide does not cover it, say so."
     }
     Some(ToolRefusal {
         note: "Not executed: the user did not ask to write, reply to or draft anything in this turn, so no draft \
-was created. Answer the question with the information you already have from the other tool results (search \
-again if needed). You may offer to draft a reply, but do not create one unless the user asks."
+was created. Do what the user's own message asks (summarise, explain, translate, find…) with the information you \
+already have: the open email or the other tool results (search again if needed). A question asked inside an email \
+is content to report, not a question for you to answer. You may offer to draft a reply, but do not create one \
+unless the user asks."
             .to_string(),
         reason: "no draft requested",
     })
@@ -1886,6 +1888,14 @@ fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
 /// from that context is a real answer. Pure so the rule is pinned by tests.
 fn tool_loop_forces_tool_use(sources_present: bool, ambient_present: bool, app_help: bool) -> bool {
     !sources_present && !ambient_present && !app_help
+}
+
+/// Whether a turn consults the EmailOps guides at all. A turn about the open
+/// email is grounded in that thread only. When the planner ran, its verdict
+/// already says whether the question is about the app; the similarity gate
+/// inside the lookup is only the fallback for turns it never saw.
+fn help_lookup_wanted(ambient_present: bool, planner_says_app_help: Option<bool>) -> bool {
+    !ambient_present && planner_says_app_help.unwrap_or(true)
 }
 
 fn round_may_stream_live(force_tool_use: bool, no_tool_executed_yet: bool, nudges_used: u32, max_nudges: u32) -> bool {
@@ -3794,12 +3804,16 @@ pub async fn run_chat_turn(
     // app itself ("how do I connect Ollama?") is answered from them, in the
     // answer's language, and cited with a `help://` link. Runs on every route
     // (the keyword router knows nothing about app questions) and reuses the
-    // query embedding when mailbox retrieval already computed it. Gated on
-    // vector similarity inside, so a mailbox question adds nothing to the
-    // prompt. Best-effort: any failure degrades to "no help block".
+    // query embedding when mailbox retrieval already computed it. Skipped when
+    // the planner judged the turn a mailbox question and on turns about the
+    // open email; otherwise gated on vector similarity inside. Best-effort:
+    // any failure degrades to "no help block".
     let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
+    let planner_says_app_help = planner_trace.as_ref().map(|_| app_help);
     let (help_sources, help_trace): (Vec<crate::services::help_docs::HelpSource>, Option<HelpTrace>) =
-        if db.is_help_docs_enabled().unwrap_or(true) {
+        if help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
+            && db.is_help_docs_enabled().unwrap_or(true)
+        {
             // Text index on demand (one hash + one COUNT when up to date), so
             // FTS works even before the prewarm has embedded the vectors.
             if let Err(e) = crate::services::help_docs::ensure_text_index(&db) {
@@ -5307,6 +5321,26 @@ mod tests {
     }
 
     #[test]
+    fn the_planner_verdict_decides_whether_the_guides_are_consulted() {
+        assert!(help_lookup_wanted(false, Some(true)), "the planner said app_help");
+        assert!(
+            !help_lookup_wanted(false, Some(false)),
+            "the planner planned a mailbox search or deferred: guides stay out"
+        );
+    }
+
+    #[test]
+    fn without_a_planner_verdict_the_similarity_gate_decides() {
+        assert!(help_lookup_wanted(false, None));
+    }
+
+    #[test]
+    fn a_turn_about_the_open_email_never_consults_the_guides() {
+        // The panel promises answers grounded in the open thread only.
+        assert!(!help_lookup_wanted(true, None));
+    }
+
+    #[test]
     fn round_may_stream_live_suppresses_first_force_tool_round() {
         // force_tool_use turn, nothing executed yet, nudge still available:
         // the model might be announcing a tool call as text — do NOT stream it.
@@ -6475,6 +6509,18 @@ mod tests {
         );
         assert!(refuse_tool_call("generate_email_draft", true, false).is_none());
         assert!(refuse_tool_call("search_emails", false, false).is_none());
+    }
+
+    #[test]
+    fn the_draft_refusal_points_back_at_the_users_request_not_the_emails() {
+        // "resume este correo" on an email that asks a question: a note that
+        // says "answer the question" sent the model off answering the
+        // email's question with invented steps instead of summarising it.
+        let note = refuse_tool_call("generate_email_draft", false, false)
+            .expect("refused")
+            .note;
+        assert!(note.contains("the user's own message"), "{note}");
+        assert!(!note.contains("Answer the question"), "{note}");
     }
 
     // ── App-help turns ───────────────────────────────────────────────────

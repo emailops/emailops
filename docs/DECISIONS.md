@@ -1310,3 +1310,24 @@ eval).
 of these guides); restricting the lookup to the picked page (lost "add an account" when the
 planner picked the wrong page); page titles and descriptions only (did not tell the pages
 apart); the table of contents at the end of the prompt (26/30 on the planner eval, worse).
+
+## 2026-09-22 — The planner's verdict, not a similarity threshold, keeps the guides out of mail turns
+
+**Decision:** When the query planner ran on a turn, the EmailOps guides are consulted only if
+its verdict was `app_help`; a search or defer verdict means no help lookup at all. Turns about
+the open email never consult the guides. The vector-similarity gate inside the lookup stays
+only for turns the planner never saw (keyword-routed RAG turns, planner disabled). This
+narrows the 2026-09-21 entry's "the help lookup still runs on every route".
+**Context:** the 0.60 gate let two guide sections into almost every turn — "mándame la
+factura de Fly.io de marzo" (0.62), "los últimos 5 correos de metrics@…" (0.74), and a
+summary of an open email whose text happened to ask how to add an account (0.66). The
+planner already classifies every such turn, and the chat panel promises that answers with an
+open email are grounded in that thread only. The planner prompt also gained a general rule
+that a specific named thing the mail is about (a project, product, document) is `query`,
+not a tag, which closes the `no_date_window_on_a_dateless_question` cost recorded in the
+previous entry (planner eval 29/30).
+**Rejected:** raising the similarity threshold (a threshold cannot tell "how do I connect
+Ollama?" from "what did users say about Ollama?", as the 2026-09-21 entry found); keeping the guides
+on open-email turns behind the gate (it served them on the summary above). Accepted cost: an
+app question asked with an email open as context gets no guides; removing the thread from
+the context restores them.
