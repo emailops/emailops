@@ -34,13 +34,6 @@ use super::{
 /// Max conversation turns (user+assistant combined) kept in the prompt.
 const MAX_HISTORY_TURNS: usize = 6;
 
-/// Printed under the numbered Sources header. Models numbered the bullets of
-/// their own answer `[1]`, `[2]`… and the UI opened unrelated Sources; the
-/// reminder sits next to the numbers it is about, in the per-turn tail, so the
-/// cached system prefix is untouched.
-const SOURCES_CITATION_REMINDER: &str = "(Cite a fact with the number printed before the Source it came from — not \
-the position of the item in your answer. Emails you get from tools have no number: link them with email://ID.)\n";
-
 /// `Utc::now()` routed through the `Clock` seam so eval cases can pin "today"
 /// to a specific date via `services::clock::install(FixedClock::new(...))`.
 /// Production wiring leaves `SystemClock` installed, so this is identical to
@@ -269,8 +262,10 @@ from this mailbox as if they answered the question."
 before answering any factual question about the user's mailbox.)\n",
         );
     } else {
-        tail.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
-        tail.push_str(SOURCES_CITATION_REMINDER);
+        // Unnumbered on purpose: given `[1]`…`[8]`, the model numbered the
+        // bullets of its own answer with them and the UI opened unrelated
+        // emails. A fact is cited by linking its email's `id=`.
+        tail.push_str("Sources (cite each fact with a link to the email it came from: [short label](email://ID)):\n");
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
@@ -278,8 +273,7 @@ before answering any factual question about the user's mailbox.)\n",
             // `id=` lets a RAG answer link the email (`email://ID`) the same
             // way a tool result does; without it the model invented ids.
             tail.push_str(&format!(
-                "[{}] From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
-                src.citation_number,
+                "- From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
                 src.email.sender,
                 src.email.sender_email,
                 src.email.subject,
@@ -4279,7 +4273,7 @@ pub async fn run_chat_turn(
             // rows written before the loop, on disk and in the open bubble.
             let source_count = match &grounding {
                 AnswerGrounding::Sources => sources.len(),
-                AnswerGrounding::ToolEmails(ids) => match db.get_emails_by_ids(ids) {
+                AnswerGrounding::Emails(ids) => match db.get_emails_by_ids(ids) {
                     Ok(emails) => {
                         let rows: Vec<ChatMessageSource> = emails
                             .iter()
@@ -5708,7 +5702,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_includes_numbered_sources_in_final_user_message() {
+    fn prompt_includes_sources_in_final_user_message() {
         let sources = vec![
             make_scored(1, "Q1 plan", "we will ship by march"),
             make_scored(2, "Invoice", "please pay by friday"),
@@ -5718,23 +5712,38 @@ mod tests {
         // The per-turn sources block must NOT live in the system message —
         // it would invalidate the cross-turn KV prefix every turn.
         let sys = &msgs[0].1;
-        assert!(!sys.contains("[1] From: Alice"), "sources leaked into system: {sys}");
-        assert!(
-            !sys.contains("valid citation range"),
-            "sources header leaked into system"
-        );
+        assert!(!sys.contains("From: Alice"), "sources leaked into system: {sys}");
         let (last_role, last) = msgs.last().unwrap();
         assert_eq!(last_role, "user");
-        assert!(last.contains("[1] From: Alice"));
         assert!(last.contains("Subject: Q1 plan"));
-        assert!(last.contains("[2] From: Alice"));
         assert!(last.contains("Subject: Invoice"));
-        assert!(last.contains("valid citation range: [1]..[2]"));
         // The question comes AFTER the sources block, at the very end.
         let q_pos = last.rfind("when do we ship?").expect("question missing");
-        let src_pos = last.find("[2] From: Alice").expect("sources missing");
+        let src_pos = last.find("Subject: Invoice").expect("sources missing");
         assert!(q_pos > src_pos, "question must follow the sources block");
         assert!(last.trim_end().ends_with("when do we ship?"));
+    }
+
+    /// Sources are cited by link, not by number: a model given `[1]`…`[8]`
+    /// numbered the bullets of its own answer with them, and the UI opened
+    /// unrelated emails. No numbers means nothing to confuse.
+    #[test]
+    fn prompt_sources_are_unnumbered_and_ask_for_email_links() {
+        let sources = vec![
+            make_scored(1, "Q1 plan", "we ship in march"),
+            make_scored(2, "Invoice", "pay"),
+        ];
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
+        let (_, last) = msgs.last().unwrap();
+        assert!(
+            !last.contains("[1]") && !last.contains("[2]"),
+            "sources numbered: {last}"
+        );
+        assert!(!last.contains("citation range"), "numeric range advertised: {last}");
+        assert!(
+            last.contains("email://"),
+            "no link instruction next to the sources: {last}"
+        );
     }
 
     #[test]
@@ -6005,8 +6014,8 @@ mod tests {
 
     #[test]
     fn prompt_advertises_citation_contract_and_few_shots() {
-        // The new prompt rewrite must surface (a) the strict citation rule,
-        // (b) the valid citation range, and (c) at least one few-shot example.
+        // The prompt must surface the strict citation rule and at least one
+        // few-shot example, and the rule is the link contract, not numbers.
         let sources = vec![
             make_scored(1, "Kickoff", "reunión el martes 3 de marzo"),
             make_scored(2, "Proposal", "monthly fee drop to $1.5k"),
@@ -6015,10 +6024,9 @@ mod tests {
         let sys = &msgs[0].1;
         assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
         assert!(sys.contains("Example 1"), "missing few-shot examples");
-        // The per-turn valid range travels with the sources block in the
-        // final user message.
-        let last = &msgs.last().unwrap().1;
-        assert!(last.contains("valid citation range: [1]..[2]"), "missing valid range");
+        let contract = &sys[sys.find("CITATION CONTRACT").unwrap()..];
+        let contract = &contract[..contract.find("\n\n").unwrap_or(contract.len())];
+        assert!(contract.contains("email://"), "contract must ask for links: {contract}");
     }
 
     #[test]
@@ -6252,7 +6260,6 @@ mod tests {
         ];
         let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
         let (_, last) = msgs.last().unwrap();
-        assert!(last.contains("[1] From: Alice"), "numbered header kept: {last}");
         assert!(last.contains("id=e1"), "source 1 must carry its email id: {last}");
         assert!(last.contains("id=e2"), "source 2 must carry its email id: {last}");
     }

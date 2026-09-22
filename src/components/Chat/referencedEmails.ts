@@ -7,7 +7,9 @@ const EMAIL_REFERENCE = /\[(\d+)\](?!\()|email:\/\/([^\s)\]>]+)/g;
  *  markers, plus `email://` links that pass the turn's tool allowlist (the same
  *  guard `MarkdownContent` applies). Deduplicated, in order of appearance.
  *  Retrieved-but-uncited sources and the rest of `referencedEmailIds` are left
- *  out — those are what the tools returned, not what the answer points at. */
+ *  out — those are what the tools returned, not what the answer points at.
+ *  An answer that cites nothing falls back to its sources, in citation order:
+ *  the backend already narrowed them to what the turn rested on. */
 export function collectReferencedEmailIds(
   message: Pick<ChatMessage, 'content' | 'sources' | 'referencedEmailIds'>,
 ): string[] {
@@ -17,6 +19,9 @@ export function collectReferencedEmailIds(
   for (const [, citation, linkedId] of message.content.matchAll(EMAIL_REFERENCE)) {
     const id = citation ? sourceByNumber.get(Number(citation)) : allowlist.has(linkedId) ? linkedId : undefined;
     if (id) ids.add(id);
+  }
+  if (ids.size === 0) {
+    return [...message.sources].sort((a, b) => a.citationNumber - b.citationNumber).map((source) => source.emailId);
   }
   return [...ids];
 }
