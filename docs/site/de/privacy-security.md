@@ -2,6 +2,10 @@
 title: 'Datenschutz und Sicherheit'
 description: 'Wo Ihre E-Mails gespeichert werden, was Ihre Maschine verlässt, und die Schutzmechanismen gegen die E-Mails selbst.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 EmailOps ist um eine Regel herum gebaut: Ihre E-Mails bleiben auf Ihrer Maschine. Diese Seite
@@ -90,7 +94,7 @@ Der Wechsel zu Ollama hält die Inferenz ebenfalls lokal, nur in einem eigenen P
 Ihrer Maschine. Nur OpenRouter sendet Inhalte vom Gerät weg. Siehe
 [Backend wählen](../ai-features/#choosing-a-backend).
 
-## Schutz vor den E-Mails selbst
+## Schutz vor den E-Mails selbst {#protection-from-the-mail-itself}
 
 E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 
@@ -109,7 +113,7 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
   Event-Handlern und eingebetteten Objekten befreit, und zwar auf beiden Seiten der App.
   Anhänge werden nie eigenmächtig geöffnet.
 
-## Die App sperren
+## Die App sperren {#locking-the-app}
 
 Legen Sie unter **Einstellungen → Datenschutz & Sicherheit** ein **Hauptpasswort** fest, dann
 bleibt EmailOps beim Start gesperrt, bis Sie es eingeben. Es gibt keinen Wiederherstellungsweg

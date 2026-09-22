@@ -2,12 +2,16 @@
 title: 'Primeros pasos'
 description: 'El asistente inicial: elige un backend de IA, descarga un modelo y conecta tu primer buzón.'
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 La primera vez que abres EmailOps se ejecuta un asistente de cuatro pasos. Lleva un par de
 minutos, la mayor parte de ellos descargando un modelo en segundo plano.
 
-## 1. IA sí o no
+## 1. IA sí o no {#ai-on-or-off}
 
 EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
 
@@ -17,7 +21,7 @@ EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
   IA. Puedes activar la IA más tarde en **Ajustes → IA: backend y modelos**, y desactivarla
   con la misma facilidad.
 
-## 2. Backend y modelo de IA
+## 2. Backend y modelo de IA {#ai-backend-and-model}
 
 Si activaste la IA, elige dónde se ejecuta la inferencia:
 
@@ -41,7 +45,7 @@ cifra de cada modelo.
 El modelo de embeddings que impulsa la búsqueda semántica (**Nomic Embed Text v1.5**, ~80 MB)
 viene incluido dentro de la app en macOS, así que no hay nada que descargar para la búsqueda.
 
-## 3. Diseño de la bandeja
+## 3. Diseño de la bandeja {#inbox-layout}
 
 Elige cómo se distribuye el buzón — **dividido** (lista a la izquierda, mensaje a la derecha)
 o **ancho completo** (un panel cada vez). Puedes cambiarlo cuando quieras en
@@ -58,8 +62,8 @@ El último paso añade tu primer buzón. EmailOps admite:
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge o cualquier servidor
   personalizado. Introduce los datos del servidor y las credenciales directamente.
 
-Añade más cuentas cuando quieras con **Añadir cuenta** en la barra lateral. Con varias conectadas obtienes
-una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
+Añade más cuentas cuando quieras con el botón **+** junto a **Cuentas** en la barra lateral. Con
+varias conectadas obtienes una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 
 ## Después del asistente
 

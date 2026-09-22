@@ -58,3 +58,7 @@ export const useTasksEnabledStore = createBoolPrefStore('task_enabled', false);
 export const useLensesEnabledStore = createBoolPrefStore('lenses_enabled', false);
 // Mirrors `Database::is_ai_translation_enabled` on the Rust side (default on).
 export const useTranslationEnabledStore = createBoolPrefStore('ai_translation_enabled', true);
+// Mirrors `Database::is_help_docs_enabled` (default on): answer "how do I…"
+// questions about EmailOps from the bundled guides, and open the matching
+// settings tab or view when the answer cites a section.
+export const useHelpDocsEnabledStore = createBoolPrefStore('help_docs_enabled', true);

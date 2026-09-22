@@ -85,8 +85,17 @@
       "toolCallDetails": "Detalles de llamadas a herramientas",
       "retrievalDetail": "Detalle de recuperación",
       "routeMode": {
-        "rag_first": "RAG primero",
-        "tools_first": "Herramientas primero"
+        "rag_first": "busca primero en el buzón",
+        "tools_first": "sin búsqueda previa en el buzón"
+      },
+      "routeDecidedBy": "decidido por {{who}}",
+      "classifier": {
+        "heuristic": "una regla de palabras clave",
+        "heuristic_followup": "la pregunta anterior (continuación)",
+        "planner": "el planificador de consultas",
+        "forced": "un ajuste fijo",
+        "ambient": "el correo abierto",
+        "llm": "el modelo"
       },
       "phase": {
         "toolRound": "LLM · ronda de herramientas {{n}}",
@@ -99,7 +108,9 @@
         "vectorSearch": "Búsqueda vectorial",
         "ftsSearch": "Búsqueda FTS",
         "fetchMetadata": "Obtener metadatos",
-        "threadExpansion": "Expansión del hilo"
+        "threadExpansion": "Expansión del hilo",
+        "helpDocs": "Ayuda de EmailOps",
+        "rag": "Recuperación RAG"
       },
       "noCalls": "sin llamadas",
       "fallbackSkipped": "reserva (omitida)",
@@ -118,7 +129,8 @@
       "toolCallsRequested": "{{n}} llamadas a herramientas",
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "caché KV {{cached}}/{{total}} tok ({{pct}}%)",
-      "kvCacheMiss": "caché KV 0/{{total}} tok (fría)"
+      "kvCacheMiss": "caché KV 0/{{total}} tok (fría)",
+      "helpSections": "{{included}} de {{candidates}} secciones de las guías"
     }
   },
   "sources": {

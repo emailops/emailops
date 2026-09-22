@@ -85,8 +85,17 @@
       "toolCallDetails": "Tool call details",
       "retrievalDetail": "Retrieval detail",
       "routeMode": {
-        "rag_first": "RAG first",
-        "tools_first": "Tools first"
+        "rag_first": "searches the mailbox first",
+        "tools_first": "no mailbox search first"
+      },
+      "routeDecidedBy": "decided by {{who}}",
+      "classifier": {
+        "heuristic": "a keyword rule",
+        "heuristic_followup": "the previous question (follow-up)",
+        "planner": "the query planner",
+        "forced": "a fixed setting",
+        "ambient": "the open email",
+        "llm": "the model"
       },
       "phase": {
         "toolRound": "LLM · tool round {{n}}",
@@ -99,7 +108,9 @@
         "vectorSearch": "Vector search",
         "ftsSearch": "FTS search",
         "fetchMetadata": "Fetch metadata",
-        "threadExpansion": "Thread expansion"
+        "threadExpansion": "Thread expansion",
+        "helpDocs": "EmailOps help",
+        "rag": "RAG retrieval"
       },
       "noCalls": "no calls",
       "fallbackSkipped": "fallback (skipped)",
@@ -118,7 +129,8 @@
       "toolCallsRequested": "{{n}} tool calls",
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "KV cache {{cached}}/{{total}} tok ({{pct}}%)",
-      "kvCacheMiss": "KV cache 0/{{total}} tok (cold)"
+      "kvCacheMiss": "KV cache 0/{{total}} tok (cold)",
+      "helpSections": "{{included}} of {{candidates}} guide sections"
     }
   },
   "sources": {

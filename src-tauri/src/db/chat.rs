@@ -36,7 +36,9 @@ fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
     // break message loading — drop it, log, and let the UI render the message
     // without a reasoning section.
     let trace = trace_json.and_then(|s| match serde_json::from_str::<ChatTrace>(&s) {
-        Ok(t) => Some(t),
+        // Traces persisted before `steps` existed get them here, so every
+        // renderer walks the same step list for old messages too.
+        Ok(t) => Some(crate::services::chat::trace_steps::with_steps(t)),
         Err(e) => {
             crate::services::logger::log("debug", "chat", format!("dropping malformed trace JSON: {e}"));
             None
@@ -544,6 +546,41 @@ mod tests {
         let msgs = db.get_chat_messages(&conv.id).unwrap();
         let ids: Vec<&str> = msgs[0].sources.iter().map(|s| s.email_id.as_str()).collect();
         assert_eq!(ids, vec!["tool-1"], "rows 2 and 3 of the previous set must be gone");
+    }
+
+    /// A trace persisted before `steps` existed still reads back with them, so
+    /// every renderer can walk the one step list for old messages too.
+    #[test]
+    fn an_old_trace_reads_back_with_its_steps() {
+        let db = db_with_account();
+        let conv = db.create_chat_conversation("a1", "t").unwrap();
+        let msg = db.insert_chat_message(&conv.id, "assistant", "answer", None).unwrap();
+        let old = r#"{"route":{"mode":"tools_first","reason":"","classifier":"heuristic"},
+                      "toolCalls":[{"name":"search_emails","round":-1,"arguments":{},"resultPreview":"","resultChars":0,"elapsedMs":1}],
+                      "model":"m","totalElapsedMs":1,
+                      "llmCalls":[{"kind":"tool_round","round":0,"latencyMs":1}]}"#;
+        db.connection()
+            .execute(
+                "UPDATE chat_messages SET trace = ?2 WHERE id = ?1",
+                rusqlite::params![msg.id, old],
+            )
+            .unwrap();
+
+        let trace = db.get_chat_messages(&conv.id).unwrap()[0].trace.clone().expect("trace");
+
+        use crate::models::TraceStep;
+        assert!(
+            matches!(
+                trace.steps.as_slice(),
+                [
+                    TraceStep::Route,
+                    TraceStep::Tool { index: 0 },
+                    TraceStep::Llm { index: 0, .. }
+                ]
+            ),
+            "{:?}",
+            trace.steps
+        );
     }
 
     #[test]

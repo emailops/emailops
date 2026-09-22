@@ -2,6 +2,20 @@
 title: "Fonctions d'IA"
 description: "Discutez avec votre boîte, générez des réponses, classez le courrier, extrayez des tâches — le tout sur un modèle que vous contrôlez."
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 Toutes les fonctions d'IA ci-dessous passent par le backend que vous avez choisi, et chacune
@@ -59,7 +73,7 @@ station de travail verront donc des suggestions différentes. Les gros modèles 
 et tournent plus lentement : la mention est un point de départ, pas une règle. Les exigences
 complètes sont dans [Installation](../installation/#with-local-ai).
 
-### Réglages de performance
+### Réglages de performance {#performance-knobs}
 
 - **Maintenir le modèle chargé** — combien de temps le modèle reste en mémoire entre deux
   tours
@@ -73,7 +87,7 @@ complètes sont dans [Installation](../installation/#with-local-ai).
 - **Limiter le traitement IA aux courriels récents** — ignore embeddings et classification
   pour le courrier de plus de N jours.
 
-## Discuter avec votre boîte
+## Discuter avec votre boîte {#chat-with-your-mailbox}
 
 Posez vos questions en langage naturel — *« qu'a dit l'avocat à propos du contrat ? »*,
 *« résume ce fil »*, *« qui me doit encore une réponse ? »* — et obtenez une réponse citant
@@ -93,6 +107,20 @@ provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conser
 conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
 en étiez, et non à un chat vide.
 
+Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
+*« où sont stockées mes données ? »*, *« comment ajouter un compte ? »* — à partir de ces
+guides, dans votre langue et sans chercher dans votre boîte. La réponse renvoie à la section
+du guide utilisée, et suivre le lien ouvre le paramètre ou la vue correspondants. Lorsqu'un
+e-mail est ouvert comme contexte, le chat répond à partir de ce seul fil : retirez la puce
+pour poser une question sur l'application. Désactivez-le avec
+**Répondre aux questions sur EmailOps** dans **Paramètres → IA : backend et modèles** ; le
+chat ne connaît alors que votre boîte.
+
+Chaque réponse dispose d'un panneau **Afficher le raisonnement** qui liste ce qui s'est
+passé, dans l'ordre : la route suivie par la question et ce qui l'a décidée, le planificateur
+de requêtes, la recherche dans la boîte, les sections des guides utilisées, chaque appel au
+modèle avec sa durée et chaque appel d'outil avec ses arguments et son résultat.
+
 Sous le capot, le chat combine la récupération (recherche sémantique sur vos e-mails indexés)
 et des appels d'outils (interrogations directes de la base). Le mode de routage est
 configurable :
@@ -110,7 +138,7 @@ Les utilisateurs avancés peuvent modifier le prompt système et les prompts de 
 (réécriture de requête, reclassement) dans
 **Paramètres → IA : backend et modèles → Prompts du chat**.
 
-## Brouillons d'IA
+## Brouillons d'IA {#ai-drafts}
 
 Un bouton **Brouillon IA** à côté de Répondre à tous rédige une réponse ancrée dans le fil que
 vous consultez. Configurez une **persona** (une phrase sur l'identité de rédaction), un
@@ -152,7 +180,7 @@ avec le lien **Afficher les étiquettes masquées**.
 
 La barre d'outils restreint le tableau par période (**Aujourd'hui**, **Hier**, **7 derniers
 jours** ou une plage de dates personnalisée), par catégorie Gmail, par nom d'étiquette, et
-avec le même interrupteur de masquage des indésirables que la boîte de réception ; deux
+avec le même interrupteur **Masquer les indésirables** que la boîte de réception ; deux
 icônes règlent la largeur des blocs. Un clic sur une carte ouvre le fil dans le volet de
 lecture, son menu ⋮ propose les mêmes actions qu'une ligne de la boîte de réception, et
 l'icône de chat du volet de lecture démarre une conversation avec ce fil en contexte.
@@ -160,7 +188,7 @@ l'icône de chat du volet de lecture démarre une conversation avec ce fil en co
 Le tableau a besoin de la classification : il reste vide tant que le courrier n'est pas
 étiqueté, et n'apparaît pas lorsque les fonctions d'IA sont désactivées.
 
-## Recherche sémantique
+## Recherche sémantique {#semantic-search}
 
 Les e-mails sont indexés localement pour que la recherche corresponde au sens et pas seulement
 aux mots-clés — décrivez ce dont vous vous souvenez et EmailOps le retrouve. Cela alimente
@@ -168,12 +196,12 @@ aussi « trouver des messages similaires » et l'étape de récupération du cha
 catégories indexées et reconstruisez l'index de zéro après un changement de modèle
 d'embeddings, dans **Paramètres → Recherche IA**.
 
-## Traduction
+## Traduction {#translation}
 
 Des boutons de traduction apparaissent sur les e-mails rédigés dans une autre langue et dans
 la fenêtre de rédaction. Le prompt de traduction est modifiable comme les autres.
 
-## Tâches
+## Tâches {#tasks}
 
 *Expérimental.* EmailOps parcourt le courrier à la recherche d'actions, d'engagements et
 d'échéances, et les rassemble dans un panneau Tâches. Comme les vrais engagements se trouvent
@@ -182,7 +210,7 @@ j'ai écrits » existe. Vous pouvez exclure des expéditeurs et des étiquettes 
 le sont par défaut), plafonner le nombre de tâches par e-mail, limiter la profondeur
 d'extraction et traiter à la demande le courrier plus ancien.
 
-## Mémoire
+## Mémoire {#memory}
 
 *Expérimental.* Les faits que l'assistant apprend sur vos contacts, domaines et projets sont
 conservés comme contexte de long terme, pour que le chat ne reparte pas de zéro à chaque fois.
@@ -190,13 +218,13 @@ Les faits candidats sont notés et promus au-delà d'un seuil ; ceux qui obtienn
 faible expirent. Tout ce qui a été appris est consultable, et l'ensemble du sous-système
 dispose d'un interrupteur général.
 
-## Lentilles
+## Lentilles {#lenses}
 
 *Expérimental.* Des vues typées sur votre boîte — des projections structurées, enregistrées et
 extraites par l'IA (par exemple « toutes les factures avec montant et échéance ») que vous
 créez et exécutez depuis la barre latérale.
 
-## Tout désactiver
+## Tout désactiver {#turning-it-all-off}
 
 **Paramètres → IA : backend et modèles → Fonctions IA** est un interrupteur général.
 Désactivez-le et EmailOps fonctionne comme un client e-mail classique : pas de chat, pas de

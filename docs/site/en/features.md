@@ -2,6 +2,13 @@
 title: 'Standard Features'
 description: 'The email client itself: accounts, unified inbox, calendar, attachments, search and junk filtering.'
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 Everything on this page works with AI switched off. The AI layer is covered separately in
@@ -19,7 +26,7 @@ the address only. Gmail accounts start with the name from Gmail's send-as settin
 accounts with the display name you gave when connecting them. Mail sent through Outlook
 carries the name Microsoft has for the mailbox.
 
-## Unified inbox
+## Unified inbox {#unified-inbox}
 
 An **All accounts** view merges every enabled mailbox into one list, alongside the
 per-account views. Custom IMAP folders are synced too, and you can create, rename, delete
@@ -38,7 +45,7 @@ Narrow the list by domain, sender, or any classification tag — useful for tria
 client, one project or one newsletter flood at a time. With AI on, the same tags also
 feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid of blocks.
 
-## Calendar
+## Calendar {#calendar}
 
 Per-account month, week and day views for Google Calendar and Outlook. You get meeting
 reminders ahead of each event with a one-click **Join** button for Meet, Teams, Webex and
@@ -50,17 +57,31 @@ colleague shared with you shows up here the same way it does in Google or Outloo
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
 
-## Attachments view
+## Attachments view {#attachments-view}
 
-One place listing every attachment across your mail — invoices, contracts, images — with
-preview and export, instead of digging back through threads.
+One place for the attachments you care about — invoices, contracts, receipts — with preview and
+download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or
+**Create a Rule** on the empty view) and fill in:
+
+- **Rule Name** — how the rule is listed.
+- **Sender Email Pattern** — comma-separated; an exact match unless it contains `*`
+  (`*apple.com*` matches any sender containing "apple.com"). Leave it empty to match any sender.
+- **Subject Pattern** and **Filename Pattern** — `*` is a wildcard; only matching filenames are
+  collected.
+- **Tags** — comma-separated; they appear as filter buttons at the top of the view.
+
+Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
+emails after creating** to collect from the mail you already have. Select attachments to download
+them together to your Downloads folder.
 
 ## Search
 
 Full-text search over subjects, bodies, senders and attachments. With AI enabled this is
 joined by semantic search, which matches on meaning rather than exact words.
 
-## Junk and bulk mail
+## Junk and bulk mail {#junk-and-bulk-mail}
 
 EmailOps scores every incoming message locally for spam and unwanted bulk mail. No model
 and no network call is involved, and your corrections ("junk" / "not junk") train the filter
@@ -73,13 +94,13 @@ over time. You decide what happens to flagged mail:
 Neither option moves or deletes anything on the server; only an explicit **Confirm junk**
 does. An optional impersonation/phishing warning is available and off by default.
 
-## Privacy and security controls
+## Privacy and security controls {#privacy-and-security-controls}
 
 A main password locks the app on startup, remote images and tracking pixels are blocked
 until you allow them, and credentials live in the system keyring. All of it is covered in
 [Privacy & security](../privacy-security/).
 
-## Interface
+## Interface {#interface}
 
 Split or full-width inbox layout, and a UI available in English, Spanish, French and German.
 The AI's output language is set separately, so you can read the interface in one language and

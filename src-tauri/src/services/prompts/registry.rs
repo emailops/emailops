@@ -200,6 +200,10 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
         name: "topic_definitions",
         description: "One line per topic tag from your Classification settings — `name: meaning`.",
     },
+    VariableDef {
+        name: "guide_pages",
+        description: "One line per bundled user guide — `page: title — description` — so a question about EmailOps names the page that answers it.",
+    },
 ];
 
 const TRANSLATE_DETECT_VARS: &[VariableDef] = &[VariableDef {

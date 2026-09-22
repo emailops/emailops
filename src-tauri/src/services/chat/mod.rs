@@ -25,6 +25,9 @@ pub(crate) mod planner;
 mod prewarm;
 pub(crate) mod retrieval;
 mod routing;
+// The turn's trace as one ordered step list — shared by the reasoning panel,
+// the CLI and the eval report.
+pub mod trace_steps;
 mod turn;
 
 // ── Re-exports for external callers (commands/, evals/) ──────────────────────

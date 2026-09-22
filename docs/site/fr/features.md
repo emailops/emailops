@@ -2,6 +2,13 @@
 title: 'Fonctions standard'
 description: "Le client e-mail lui-même : comptes, boîte unifiée, calendrier, pièces jointes, recherche et filtrage des indésirables."
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 Tout ce qui figure sur cette page fonctionne avec l'IA désactivée. La couche d'IA est traitée
@@ -21,7 +28,7 @@ nom du paramètre « Envoyer des e-mails en tant que » de Gmail, et les comptes
 affiché indiqué lors de leur connexion. Les e-mails envoyés via Outlook portent le nom que
 Microsoft associe à la boîte.
 
-## Boîte de réception unifiée
+## Boîte de réception unifiée {#unified-inbox}
 
 La vue **Tous les comptes** fusionne chaque boîte activée en une seule liste, à côté des vues
 par compte. Les dossiers IMAP personnalisés sont également synchronisés, et vous pouvez les
@@ -43,7 +50,7 @@ traiter un client, un projet ou un déluge de newsletters à la fois. Avec l'IA 
 mêmes étiquettes alimentent aussi le [Tableau d'étiquettes](../ai-features/#tag-board), qui
 les présente sous forme de grille de blocs.
 
-## Calendrier
+## Calendrier {#calendar}
 
 Vues mois, semaine et jour par compte pour Google Agenda et Outlook. Vous recevez des rappels
 avant chaque événement, avec un bouton **Rejoindre** en un clic pour les liens Meet, Teams,
@@ -57,10 +64,28 @@ prend la couleur que lui donne son fournisseur, et la légende au-dessus de la g
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
 **Paramètres → Calendrier**.
 
-## Vue des pièces jointes
+## Vue des pièces jointes {#attachments-view}
 
-Un seul endroit qui liste toutes les pièces jointes de votre courrier — factures, contrats,
-images — avec aperçu et export, au lieu de fouiller à nouveau les fils de discussion.
+Un seul endroit pour les pièces jointes qui comptent — factures, contrats, reçus — avec aperçu
+et téléchargement, au lieu de fouiller à nouveau les fils de discussion. Ouvrez-la depuis
+**Pièces jointes** dans la barre latérale.
+
+La vue collecte les pièces jointes grâce à des **règles**, elle est donc vide au départ. Cliquez
+sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et remplissez :
+
+- **Nom de la règle** — le nom affiché dans la liste.
+- **Motif de l'expéditeur** — séparés par des virgules ; correspondance exacte sauf s'il contient
+  `*` (`*apple.com*` correspond à tout expéditeur contenant « apple.com »). Laissez vide pour
+  n'importe quel expéditeur.
+- **Motif de l'objet** et **Motif du nom de fichier** — `*` est un joker ; seuls les noms de
+  fichiers correspondants sont collectés.
+- **Étiquettes** — séparées par des virgules ; elles apparaissent comme boutons de filtre en haut
+  de la vue.
+
+Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
+fil de la synchronisation ; cochez **Appliquer aux e-mails existants après la création** pour
+collecter aussi dans le courrier déjà présent. Sélectionnez des pièces jointes pour les
+télécharger ensemble dans votre dossier Téléchargements.
 
 ## Recherche
 
@@ -68,7 +93,7 @@ Recherche plein texte sur les objets, les corps, les expéditeurs et les pièces
 l'IA activée s'y ajoute la recherche sémantique, qui correspond au sens plutôt qu'aux mots
 exacts.
 
-## Indésirables et courrier de masse
+## Indésirables et courrier de masse {#junk-and-bulk-mail}
 
 EmailOps note localement chaque message entrant pour détecter le spam et le courrier de masse
 non désiré. Aucun modèle ni appel réseau n'intervient, et vos corrections (« indésirable » /
@@ -83,14 +108,14 @@ Aucune des deux options ne déplace ni ne supprime quoi que ce soit sur le serve
 **Confirmer** explicite le fait. Un avertissement d'usurpation d'identité /
 hameçonnage est proposé en option, désactivé par défaut.
 
-## Contrôles de confidentialité et de sécurité
+## Contrôles de confidentialité et de sécurité {#privacy-and-security-controls}
 
 Un mot de passe principal verrouille l'application au démarrage, les images distantes et les
 pixels de suivi sont bloqués jusqu'à autorisation, et les identifiants résident dans le
 trousseau du système. Tout est détaillé dans
 [Confidentialité et sécurité](../privacy-security/).
 
-## Interface
+## Interface {#interface}
 
 Boîte en vue divisée ou pleine largeur, et une interface disponible en français, anglais,
 espagnol et allemand. La langue de sortie de l'IA se règle séparément : vous pouvez lire

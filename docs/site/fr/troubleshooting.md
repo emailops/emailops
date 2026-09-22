@@ -2,9 +2,15 @@
 title: 'Dépannage'
 description: "Solutions aux problèmes les plus fréquents : IA indisponible, chat lent, recherche par mots-clés uniquement, erreurs de synchronisation."
 weight: 60
+nav:
+  ai-features-are-unavailable: settings/ai
+  chat-is-slow: settings/ai
+  gpu-not-used: settings/ai
+  search-returns-keyword-results-only: settings/aisearch
+  classification-is-not-tagging-anything: settings/classification
 ---
 
-## Les fonctions d'IA sont indisponibles
+## Les fonctions d'IA sont indisponibles {#ai-features-are-unavailable}
 
 Avec le backend **intégré**, vérifiez que le modèle recommandé a fini de se télécharger dans
 **Paramètres → IA : backend et modèles**. Un téléchargement interrompu rend le modèle
@@ -23,7 +29,7 @@ Silicon (M1 ou plus récente), donc EmailOps la laisse désactivée. Utilisez Op
 place. Ollama s'installe, mais il ne bénéficie d'aucune accélération GPU sur Intel non plus :
 attendez-vous à ce qu'il soit trop lent pour être agréable.
 
-## Le chat est lent
+## Le chat est lent {#chat-is-slow}
 
 L'inférence locale prend un temps réel — sur une machine modeste, une réponse peut demander
 des dizaines de secondes. Ce qui aide, à peu près par ordre d'efficacité :
@@ -41,7 +47,7 @@ des dizaines de secondes. Ce qui aide, à peu près par ordre d'efficacité :
    tour, et c'est le premier réglage à baisser quand un modèle tient tout juste.
 5. **Désactivez le mode raisonnement**, qui échange de la vitesse contre de la précision.
 
-## Le GPU n'est pas utilisé (Windows / Linux)
+## Le GPU n'est pas utilisé (Windows / Linux) {#gpu-not-used}
 
 Le journal de l'application indique sur quel périphérique un modèle a été chargé. Un
 chargement GPU réussi ressemble à ceci :
@@ -66,7 +72,7 @@ mais plus lentement. Vérifiez, dans l'ordre :
 Les machines virtuelles et les bureaux distants n'exposent souvent aucun GPU, ce qui est
 normal.
 
-## La recherche ne renvoie que des résultats par mots-clés
+## La recherche ne renvoie que des résultats par mots-clés {#search-returns-keyword-results-only}
 
 La recherche sémantique a besoin d'embeddings. Ouvrez **Paramètres → Recherche IA**, vérifiez
 que les catégories qui vous intéressent sont sélectionnées et laissez la passe d'embeddings se
@@ -76,7 +82,7 @@ terminer. Après un changement de modèle d'embeddings, reconstruisez l'index de
 Vérifiez aussi **Limiter le traitement IA aux courriels récents** dans les réglages d'IA — le courrier plus ancien que
 cette fenêtre est délibérément ignoré.
 
-## La classification n'étiquette rien
+## La classification n'étiquette rien {#classification-is-not-tagging-anything}
 
 - Vérifiez que **Classer automatiquement les nouveaux courriels** est activé dans
   **Paramètres → Classification par IA**.

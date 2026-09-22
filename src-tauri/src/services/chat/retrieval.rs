@@ -248,6 +248,21 @@ pub async fn retrieve_context_with_trace(
     categories: &[String],
     k: usize,
 ) -> Result<(Vec<ScoredEmail>, RetrievalTrace)> {
+    let (sources, trace, _embedding) = retrieve_context_full(db, provider, account_id, query, categories, k).await?;
+    Ok((sources, trace))
+}
+
+/// [`retrieve_context_with_trace`] plus the embedding of the (possibly
+/// rewritten) query, when vector search ran. `run_chat_turn` reuses it for
+/// the EmailOps-help lookup so a turn embeds the question once.
+pub async fn retrieve_context_full(
+    db: &Arc<Database>,
+    provider: &dyn AIProvider,
+    account_id: &str,
+    query: &str,
+    categories: &[String],
+    k: usize,
+) -> Result<(Vec<ScoredEmail>, RetrievalTrace, Option<Vec<f32>>)> {
     let t_total = std::time::Instant::now();
     let cat_filter = db_category_filter(categories);
 
@@ -312,12 +327,14 @@ pub async fn retrieve_context_with_trace(
             },
         )?;
         let vs_ms = t_vs.elapsed().as_millis() as i64;
-        Ok::<(Vec<(String, f32)>, i64, i64), crate::models::error::AppError>((scores, emb_ms, vs_ms))
+        Ok::<(Vec<(String, f32)>, i64, i64, Vec<f32>), crate::models::error::AppError>((scores, emb_ms, vs_ms, emb))
     };
+    let mut query_embedding: Option<Vec<f32>> = None;
     let vector_scores: Vec<(String, f32)> = match timeout(VEC_SEARCH_TIMEOUT, vec_fut).await {
-        Ok(Ok((scores, emb_ms, vs_ms))) => {
+        Ok(Ok((scores, emb_ms, vs_ms, emb))) => {
             embedding_ms = Some(emb_ms);
             vec_search_ms = Some(vs_ms);
+            query_embedding = Some(emb);
             scores
         }
         Ok(Err(e)) => {
@@ -378,7 +395,7 @@ pub async fn retrieve_context_with_trace(
             expanded_query: expanded_query_for_trace.clone(),
             invalid_citations: -1,
         };
-        return Ok((Vec::new(), trace));
+        return Ok((Vec::new(), trace, query_embedding));
     }
 
     let vector_hits = vector_scores.len() as i32;
@@ -656,7 +673,7 @@ pub async fn retrieve_context_with_trace(
         invalid_citations: -1,
     };
 
-    Ok((results, trace))
+    Ok((results, trace, query_embedding))
 }
 
 // ── Query rewrite / HyDE ────────────────────────────────────────────────────

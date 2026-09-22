@@ -10,7 +10,8 @@
 //!     the single-runtime cache in `services::ai`), so by default it runs on the
 //!     configured chat model — `qwen3.5-4b-q4_k_m` out of the box.
 //!
-//! The planner only ever pre-seeds a search or defers; it never invents an answer.
+//! The planner only ever pre-seeds a search, defers, or flags a question about
+//! EmailOps itself (answered from the guides); it never invents an answer.
 //! Any uncertainty (unparseable output, an empty filter, a provider error, a
 //! non-search ask) falls through to `Plan::Defer` so the normal loop still runs —
 //! the fast path can only ever *save* a round, never break a turn.
@@ -26,6 +27,10 @@ pub enum Plan {
     Search(Box<SearchPlan>),
     /// Not a single email search — let the normal model tool loop handle it.
     Defer,
+    /// A question about EmailOps itself: answer it from the bundled guides,
+    /// without mailbox retrieval. Carries the guide page the planner picked
+    /// (a stem from `help_docs::corpus::PAGES`), when it named a known one.
+    AppHelp(Option<String>),
 }
 
 /// Why the planner did or did not produce a filter.
@@ -41,6 +46,8 @@ pub enum PlanOutcome {
     Search,
     /// The model explicitly asked to defer.
     Deferred,
+    /// The model said the question is about EmailOps itself.
+    AppHelp,
     /// Valid JSON, but nothing to search on.
     EmptyFilter,
     /// No JSON object in the reply.
@@ -54,6 +61,7 @@ impl PlanOutcome {
         match self {
             PlanOutcome::Search => "search",
             PlanOutcome::Deferred => "defer",
+            PlanOutcome::AppHelp => "app_help",
             PlanOutcome::EmptyFilter => "empty_filter",
             PlanOutcome::Unparseable => "unparseable",
             PlanOutcome::ProviderError => "provider_error",
@@ -258,6 +266,16 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
     if obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
         return (Plan::Defer, PlanOutcome::Deferred);
     }
+    match obj.get("app_help") {
+        Some(serde_json::Value::Bool(true)) => return (Plan::AppHelp(None), PlanOutcome::AppHelp),
+        Some(serde_json::Value::String(page)) if !page.trim().is_empty() => {
+            // An invented page keeps the verdict and loses only the page.
+            let page = page.trim().to_lowercase();
+            let known = crate::services::help_docs::corpus::PAGES.contains(&page.as_str());
+            return (Plan::AppHelp(known.then_some(page)), PlanOutcome::AppHelp);
+        }
+        _ => {}
+    }
     let str_field = |key: &str| {
         obj.get(key)
             .and_then(|v| v.as_str())
@@ -376,6 +394,7 @@ pub(crate) fn split_planner_prompt(
     // vocabulary follows Settings, not a hard-coded list.
     vars.insert("intent_definitions", TagGlossary::render_lines(&glossary.intents));
     vars.insert("topic_definitions", TagGlossary::render_lines(&glossary.topics));
+    vars.insert("guide_pages", render_guide_pages());
     // Deterministic Monday-anchored week ranges so "this week" / "last week"
     // never rely on the model's weekday arithmetic. Empty on an unparseable
     // date — the template's generic relative-date rule still applies.
@@ -412,6 +431,28 @@ pub(crate) fn split_planner_prompt(
 
 /// Where the planner prompt stops being the same for every question.
 const QUERY_PLACEHOLDER: &str = "{{query}}";
+
+/// The guides' table of contents for `{{guide_pages}}`: one line per page,
+/// `  <page>: <title> — <section>; <section>; …`, from the English guides.
+/// Section titles, not the page descriptions, are what tell the pages apart
+/// ("Connect an account" vs installing the app). Built from the binary's own
+/// guides, so it is the same on every turn and rides in the planner's cached
+/// head.
+pub(crate) fn render_guide_pages() -> String {
+    use crate::services::help_docs::corpus;
+    corpus::page_summaries("en")
+        .into_iter()
+        .map(|(page, title, _)| {
+            let sections: Vec<&str> = corpus::corpus()
+                .iter()
+                .filter(|c| c.lang == "en" && c.page == page && c.section_index > 0 && c.part == 0)
+                .map(|c| c.heading.as_str())
+                .collect();
+            format!("  {page}: {title} — {}", sections.join("; "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Thin executor: render the prompt, run ONE completion on the (already-loaded)
 /// chat provider, and parse the reply into a [`Plan`]. Never errors — a provider
@@ -479,7 +520,7 @@ mod tests {
     fn search(text: &str) -> SearchPlan {
         match parse_plan(text) {
             Plan::Search(p) => *p,
-            Plan::Defer => panic!("expected Search, got Defer for: {text}"),
+            other => panic!("expected Search, got {other:?} for: {text}"),
         }
     }
 
@@ -585,7 +626,7 @@ mod tests {
         ] {
             match parse_plan(json) {
                 Plan::Search(p) => assert!(p.has_structural_filter(), "expected structural: {json}"),
-                Plan::Defer => panic!("expected a plan for {json}"),
+                other => panic!("expected a plan for {json}, got {other:?}"),
             }
         }
     }
@@ -601,7 +642,7 @@ mod tests {
         ] {
             match parse_plan(json) {
                 Plan::Search(p) => assert!(!p.has_structural_filter(), "expected keyword-only: {json}"),
-                Plan::Defer => panic!("expected a plan for {json}"),
+                other => panic!("expected a plan for {json}, got {other:?}"),
             }
         }
     }
@@ -685,6 +726,107 @@ mod tests {
     #[test]
     fn explicit_defer_is_defer() {
         assert_eq!(parse_plan(r#"{"defer": true}"#), Plan::Defer);
+    }
+
+    // ── app help ────────────────────────────────────────────────────────
+    // A question about EmailOps itself is answered from the bundled guides;
+    // mailbox retrieval only feeds the model emails that happen to discuss
+    // the same topic. The planner already reads every question, in any
+    // language, so it is the one that says so.
+
+    #[test]
+    fn an_app_help_verdict_is_its_own_plan() {
+        assert_eq!(
+            parse_plan_detailed(r#"{"app_help": true}"#),
+            (Plan::AppHelp(None), PlanOutcome::AppHelp)
+        );
+    }
+
+    #[test]
+    fn an_app_help_verdict_survives_leading_prose_and_fences() {
+        assert_eq!(
+            parse_plan("Sure:\n```json\n{\"app_help\": true}\n```"),
+            Plan::AppHelp(None)
+        );
+    }
+
+    // The planner can also name the guide page, so the help lookup searches
+    // the right page instead of ranking sections of all of them by the words
+    // the question happens to share ("funcionalidades" appears nowhere; the
+    // AI-features page says "funciones").
+
+    #[test]
+    fn an_app_help_verdict_can_name_the_guide_page() {
+        assert_eq!(
+            parse_plan_detailed(r#"{"app_help": "ai-features"}"#),
+            (Plan::AppHelp(Some("ai-features".into())), PlanOutcome::AppHelp)
+        );
+    }
+
+    #[test]
+    fn an_unknown_page_keeps_the_verdict_without_a_page() {
+        // A model can invent a page name; that must not lose the verdict.
+        assert_eq!(parse_plan(r#"{"app_help": "settings"}"#), Plan::AppHelp(None));
+        assert_eq!(
+            parse_plan(r#"{"app_help": " AI-Features "}"#),
+            Plan::AppHelp(Some("ai-features".into()))
+        );
+    }
+
+    #[test]
+    fn an_empty_page_is_not_a_verdict() {
+        let plan = search(r#"{"app_help": "", "from": "marisol"}"#);
+        assert_eq!(plan.from.as_deref(), Some("marisol"));
+    }
+
+    #[test]
+    fn the_guide_pages_ride_in_the_cached_head() {
+        let g = TagGlossary::from_config(&ClassificationConfig {
+            enabled: true,
+            classify_previous: false,
+            intents: vec![],
+            topics: vec![],
+            categories: vec![],
+        });
+        let (head, tail) = split_planner_prompt(
+            "Pages:\n{{guide_pages}}\nQ: {{query}}",
+            "me@x.com",
+            "2026-06-30",
+            "q",
+            &g,
+        );
+        assert!(
+            head.contains("ai-features: "),
+            "static, so it belongs before the question: {head}"
+        );
+        assert_eq!(tail, "q");
+    }
+
+    #[test]
+    fn the_prompt_lists_every_guide_page() {
+        let pages = render_guide_pages();
+        for page in crate::services::help_docs::corpus::PAGES {
+            assert!(pages.contains(&format!("{page}: ")), "missing {page}: {pages}");
+        }
+        assert!(
+            pages.contains("AI features"),
+            "titles come from the English guides: {pages}"
+        );
+        // Descriptions alone did not tell the pages apart: "how do I add an
+        // account" and "use my local Ollama" both went to `installation`.
+        assert!(pages.contains("Connect an account"), "section titles listed: {pages}");
+        assert!(pages.contains("Choosing a backend"), "section titles listed: {pages}");
+    }
+
+    #[test]
+    fn a_false_app_help_flag_is_not_a_verdict() {
+        let plan = search(r#"{"app_help": false, "from": "marisol"}"#);
+        assert_eq!(plan.from.as_deref(), Some("marisol"));
+    }
+
+    #[test]
+    fn app_help_outcome_has_a_stable_label() {
+        assert_eq!(PlanOutcome::AppHelp.as_str(), "app_help");
     }
 
     #[test]

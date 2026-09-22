@@ -326,6 +326,10 @@ use std::sync::{PoisonError, RwLock};
 pub struct FakeAiProvider {
     model: String,
     embedding_model: String,
+    /// Length of the vectors `embed` returns. 8 by default (enough to rank
+    /// similarity in tests); set to 768 with [`with_embedding_dim`] when a
+    /// test writes vectors into a `vec0` table, whose dimension is fixed.
+    embedding_dim: usize,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -351,6 +355,7 @@ impl FakeAiProvider {
         Self {
             model: "fake-model".to_string(),
             embedding_model: "fake-embed-model".to_string(),
+            embedding_dim: 8,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -461,21 +466,39 @@ impl FakeAiProvider {
             .clone()
     }
 
-    /// Deterministic 8-dimensional embedding derived from a SHA-256 of `text`.
-    /// Same input → same vector; distinct inputs almost always produce distinct
-    /// vectors, which is enough for tests that need to assert similarity ranking.
-    fn deterministic_embedding(text: &str) -> Vec<f32> {
+    /// Return `dim`-dimensional vectors from `embed` / `embed_batch`.
+    pub fn with_embedding_dim(mut self, dim: usize) -> Self {
+        self.embedding_dim = dim.max(1);
+        self
+    }
+
+    /// Deterministic embedding of `self.embedding_dim` floats derived from
+    /// SHA-256 digests of `text` (one digest per 8 floats, chained with a
+    /// counter). Same input → same vector; distinct inputs almost always
+    /// produce distinct vectors, which is enough for tests that need to
+    /// assert similarity ranking.
+    fn deterministic_embedding(&self, text: &str) -> Vec<f32> {
         use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(text.as_bytes());
-        let mut out = Vec::with_capacity(8);
-        for chunk in digest.chunks(4).take(8) {
-            // SHA-256 output is exactly 32 bytes → all 8 chunks are exactly
-            // 4 bytes. `try_into()` is infallible by construction.
-            #[allow(clippy::unwrap_used)]
-            let bits = u32::from_le_bytes(chunk.try_into().unwrap());
-            // Map u32 → [-1.0, 1.0).
-            let f = (bits as f32 / u32::MAX as f32) * 2.0 - 1.0;
-            out.push(f);
+        let mut out = Vec::with_capacity(self.embedding_dim);
+        let mut counter: u32 = 0;
+        while out.len() < self.embedding_dim {
+            let mut hasher = Sha256::new();
+            hasher.update(text.as_bytes());
+            hasher.update(counter.to_le_bytes());
+            let digest = hasher.finalize();
+            for chunk in digest.chunks(4).take(8) {
+                if out.len() == self.embedding_dim {
+                    break;
+                }
+                // SHA-256 output is exactly 32 bytes → all 8 chunks are exactly
+                // 4 bytes. `try_into()` is infallible by construction.
+                #[allow(clippy::unwrap_used)]
+                let bits = u32::from_le_bytes(chunk.try_into().unwrap());
+                // Map u32 → [-1.0, 1.0).
+                let f = (bits as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                out.push(f);
+            }
+            counter += 1;
         }
         out
     }
@@ -582,7 +605,7 @@ impl AIProvider for FakeAiProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .push(text.to_string());
         Ok(EmbeddingResult {
-            embedding: Self::deterministic_embedding(text),
+            embedding: self.deterministic_embedding(text),
             tokens: 0,
             cost_usd: 0.0,
         })

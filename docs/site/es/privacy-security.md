@@ -2,6 +2,10 @@
 title: 'Privacidad y seguridad'
 description: 'Dónde se guarda tu correo, qué sale de tu máquina y los controles que te protegen del propio correo.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 EmailOps se construye sobre una regla: tu correo se queda en tu máquina. Esta página describe
@@ -89,7 +93,7 @@ Cambiar a Ollama también mantiene la inferencia local, solo que en otro proceso
 Solo OpenRouter envía contenido fuera del dispositivo. Consulta
 [elegir un backend](../ai-features/#choosing-a-backend).
 
-## Protección frente al propio correo
+## Protección frente al propio correo {#protection-from-the-mail-itself}
 
 El correo es una superficie de ataque. Las defensas del lado del cliente:
 
@@ -108,7 +112,7 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
   eventos y objetos incrustados antes de mostrarlo, en ambos lados de la app. Los adjuntos
   nunca se abren por su cuenta.
 
-## Bloquear la app
+## Bloquear la app {#locking-the-app}
 
 Define una **contraseña principal** en **Ajustes → Privacidad y seguridad** y EmailOps
 permanecerá bloqueado al arrancar hasta que la introduzcas. No hay forma de recuperarla — si

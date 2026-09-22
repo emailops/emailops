@@ -2713,41 +2713,55 @@ def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
                 continue
             _insert_thread(conn, account, thread)
             added["threads"] += 1
+    added["facts"] = append_memory_facts(conn, locale)
+    added["thread_states"] = insert_thread_states(conn, locale)
+    return added
+
+
+def _insert_memory_fact(
+    conn: sqlite3.Connection,
+    locale: Locale,
+    subject_kind: str,
+    subject_key: str,
+    fact: str,
+    company: str,
+    last_used_at: int,
+) -> None:
+    """One promoted fact plus its `memory_facts_fts` row. The app writes the
+    FTS row itself (the migration has a delete trigger only), so a fact
+    inserted without it never reaches the chat's `<memory>` header."""
     now = now_s()
+    fact_id = demo_id("fact_", locale.work.id, subject_kind, subject_key, fact)
+    conn.execute(
+        """INSERT INTO memory_facts
+           (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
+            confidence, score, status, last_used_at, created_at, updated_at,
+            domain, vigency, company)
+           VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
+                   ?, ?, ?, NULL, NULL, ?)""",
+        (fact_id, locale.work.id, subject_kind, subject_key, fact, last_used_at, now, now, company),
+    )
+    conn.execute(
+        "INSERT INTO memory_facts_fts (fact_id, fact, subject_key) VALUES (?, ?, ?)",
+        (fact_id, fact, subject_key),
+    )
+
+
+def append_memory_facts(conn: sqlite3.Connection, locale: Locale) -> int:
+    """The locale's facts an existing demo DB does not have yet."""
+    added = 0
     for subject_kind, subject_key, fact, company in locale.memory_facts:
         if conn.execute("SELECT 1 FROM memory_facts WHERE fact = ? LIMIT 1", (fact,)).fetchone():
             continue
-        conn.execute(
-            """INSERT INTO memory_facts
-               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
-                confidence, score, status, last_used_at, created_at, updated_at,
-                domain, vigency, company)
-               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
-                       ?, ?, ?, NULL, NULL, ?)""",
-            (demo_id("fact_", locale.work.id, subject_kind, subject_key, fact), locale.work.id, subject_kind, subject_key, fact, now, now, now, company),
-        )
-        added["facts"] += 1
-    added["thread_states"] = insert_thread_states(conn, locale)
+        _insert_memory_fact(conn, locale, subject_kind, subject_key, fact, company, now_s())
+        added += 1
     return added
 
 
 def insert_memory_facts(conn: sqlite3.Connection, locale: Locale) -> None:
     """A small set of promoted facts so the memory panel is non-empty."""
-    now = now_s()
     for subject_kind, subject_key, fact, company in locale.memory_facts:
-        conn.execute(
-            """INSERT INTO memory_facts
-               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
-                confidence, score, status, last_used_at, created_at, updated_at,
-                domain, vigency, company)
-               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
-                       ?, ?, ?, NULL, NULL, ?)""",
-            (
-                demo_id("fact_", locale.work.id, subject_kind, subject_key, fact),
-                locale.work.id, subject_kind, subject_key, fact,
-                now - 86400, now, now, company,
-            ),
-        )
+        _insert_memory_fact(conn, locale, subject_kind, subject_key, fact, company, now_s() - 86400)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

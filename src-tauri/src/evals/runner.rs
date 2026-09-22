@@ -100,6 +100,14 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     // ── 4. Resolve model ────────────────────────────────────────────────────
     let default_model = resolve_default_model(&db);
     eprintln!("[eval] default model = {}", default_model);
+    // The guides index the app builds at prewarm; app-help cases need it.
+    {
+        let provider = crate::services::ai::AiService::load_provider_with_model(&db, Some(&default_model))
+            .map_err(|e| EvalError::Config(format!("provider for help index: {e}")))?;
+        crate::services::help_docs::ensure_index(&db, provider.as_ref())
+            .await
+            .map_err(|e| EvalError::Config(format!("help index: {e}")))?;
+    }
 
     // ── 5. Load cases ───────────────────────────────────────────────────────
     let mut cases = load_cases(&cfg.cases_dir)?;
@@ -205,11 +213,14 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
                         None => JudgeScores::default(),
                     }
                 };
+                let passed =
+                    crate::evals::judge::case_passes(heuristics.all_passed(), &judge_scores, case, judge_enabled);
                 eprintln!(
-                    "[eval]    {} heuristic checks passed ({}/{})",
-                    if heuristics.all_passed() { "OK" } else { "FAIL" },
+                    "[eval]    {} heuristic checks passed ({}/{}){}",
+                    if passed { "OK" } else { "FAIL" },
                     heuristics.passed_count(),
-                    heuristics.total()
+                    heuristics.total(),
+                    judge_summary(&judge_scores, judge_enabled),
                 );
                 // Clean up the eval-created conversation from the benchmark DB.
                 // FK cascade removes chat_messages + chat_message_sources.
@@ -234,7 +245,8 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
                     assistant_latency_ms: None,
                     wall_elapsed_ms: 0,
                     sources_used: Vec::new(),
-                    ambient_thread: None,
+                    open_thread: None,
+                    help_sections: Vec::new(),
                 };
                 let report = HeuristicReport {
                     checks: vec![crate::evals::metrics::HeuristicCheck {
@@ -273,6 +285,31 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     )?;
     eprintln!("[eval] report written to {}", path.display());
     Ok(path)
+}
+
+/// The judge's part of a case's log line: its scores, or why there are none.
+fn judge_summary(scores: &JudgeScores, judge_enabled: bool) -> String {
+    if !judge_enabled {
+        return String::new();
+    }
+    if let Some(e) = &scores.error {
+        return format!(" · judge error: {e}");
+    }
+    let fmt = |name: &str, v: Option<f64>| v.map(|v| format!(" {name}={v:.2}"));
+    let parts: String = [
+        fmt("relevancy", scores.answer_relevancy),
+        fmt("faithfulness", scores.faithfulness),
+        fmt("ctx_relevancy", scores.contextual_relevancy),
+        fmt("ctx_recall", scores.contextual_recall),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" · judge{parts}")
+    }
 }
 
 /// Pick the preferred chat model from `user_preferences`, else a sensible default.

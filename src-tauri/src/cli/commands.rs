@@ -625,12 +625,21 @@ async fn run_chat(
     // Mirror the app's idle-time prompt-prefix prewarm before the first turn
     // so turn-1 prefill numbers match the in-app first-turn experience.
     // Best-effort: a prewarm failure just means a normal cold prefill.
-    if prewarm {
+    {
         let provider = crate::services::ai::AiService::load_provider_with_model(&session.db, Some(&model))?;
-        if let Err(e) =
-            crate::services::chat::prewarm_chat(&session.db, &registry, provider.as_ref(), &account_id).await
-        {
-            eprintln!("prewarm failed (continuing cold): {e}");
+        // Same idle-time work the app's prewarm does, always: the guides
+        // index (text + vectors) must exist before a turn can answer a
+        // question about EmailOps itself. Best-effort — a failure means the
+        // turn runs without the help block, not that it fails.
+        if let Err(e) = crate::services::help_docs::ensure_index(&session.db, provider.as_ref()).await {
+            crate::services::logger::log("warn", "ai", format!("help index failed: {e}"));
+        }
+        if prewarm {
+            if let Err(e) =
+                crate::services::chat::prewarm_chat(&session.db, &registry, provider.as_ref(), &account_id).await
+            {
+                eprintln!("prewarm failed (continuing cold): {e}");
+            }
         }
     }
 

@@ -776,36 +776,23 @@ fn dim(s: &str, color: bool) -> String {
     paint(s, "2", color)
 }
 
-/// Pretty-print the chat trace as a dim block on stderr (keeping stdout the
-/// clean answer channel). Renders route, retrieval stats, tool calls, model
-/// timings, and the (de-duplicated) retrieval sources. Called only when
-/// `chat --trace` is set in pretty mode. `color` enables ANSI dim styling (Rich
-/// terminals); Plain/piped callers pass `false` for escape-code-free output.
-pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource], color: bool) {
+/// Body lines of a `chat --trace` block: every step of the turn in execution
+/// order (the same list the reasoning panel and the eval report walk — see
+/// `services::chat::trace_steps`), then the model and the retrieval sources.
+/// Pure, so the formatting is unit-testable.
+fn format_chat_trace_lines(trace: Option<&ChatTrace>, sources: &[ChatMessageSource]) -> Vec<String> {
+    use crate::services::chat::trace_steps::{step_detail, step_label};
     let mut lines: Vec<String> = Vec::new();
     match trace {
         Some(t) => {
-            lines.push(format!(
-                "route:     {:?} ({}, {})",
-                t.route.mode, t.route.classifier, t.route.reason
-            ));
-            if let Some(r) = &t.retrieval {
-                lines.push(format!(
-                    "retrieval: {} vec + {} fts → top {} ({} ms){}",
-                    r.vector_hits,
-                    r.fts_hits,
-                    r.fused_top_k,
-                    r.elapsed_ms,
-                    if r.vector_fallback { ", vector fallback" } else { "" }
-                ));
+            for step in &t.steps {
+                lines.push(
+                    format!("{:<23} {}", step_label(t, step), step_detail(t, step))
+                        .trim_end()
+                        .to_string(),
+                );
             }
-            for tc in &t.tool_calls {
-                lines.push(format!(
-                    "tool:      {} ({} ms, {} chars)",
-                    tc.name, tc.elapsed_ms, tc.result_chars
-                ));
-            }
-            lines.push(format!("model:     {} ({} ms total)", t.model, t.total_elapsed_ms));
+            lines.push(format!("model: {} ({} ms total)", t.model, t.total_elapsed_ms));
         }
         None => lines.push("(no trace recorded)".to_string()),
     }
@@ -813,6 +800,15 @@ pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource
         lines.push("sources:".to_string());
         lines.extend(format_trace_sources(sources));
     }
+    lines
+}
+
+/// Pretty-print the chat trace as a dim block on stderr (keeping stdout the
+/// clean answer channel) — see [`format_chat_trace_lines`]. Called only when
+/// `chat --trace` is set in pretty mode. `color` enables ANSI dim styling (Rich
+/// terminals); Plain/piped callers pass `false` for escape-code-free output.
+pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource], color: bool) {
+    let lines = format_chat_trace_lines(trace, sources);
 
     eprintln!("\n{}", dim("── trace ──────────────────────────────", color));
     for line in &lines {
@@ -1008,6 +1004,40 @@ mod tests {
         assert_eq!(lines[1], "  [3] Onboarding question — Nadia");
     }
 
+    /// The CLI walks the same step list as the reasoning panel and the eval
+    /// report — route, planner, RAG, guides, each LLM round and tool — instead
+    /// of its own route/retrieval/tool subset.
+    #[test]
+    fn chat_trace_lines_walk_the_turn_steps() {
+        let trace: ChatTrace = serde_json::from_value(serde_json::json!({
+            "route": { "mode": "tools_first", "reason": "planner turned the question into a search filter", "classifier": "planner" },
+            "toolCalls": [{ "name": "search_emails", "round": -1, "arguments": {}, "resultPreview": "", "resultChars": 700, "elapsedMs": 4 }],
+            "model": "qwen", "totalElapsedMs": 2100,
+            "llmCalls": [
+                { "kind": "planner", "round": -2, "latencyMs": 219 },
+                { "kind": "tool_round", "round": 0, "latencyMs": 1800 }
+            ]
+        }))
+        .expect("trace fixture");
+        let trace = crate::services::chat::trace_steps::with_steps(trace);
+
+        let lines = format_chat_trace_lines(Some(&trace), &[source(1, "Weekly stats", "Metrics Bot")]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "route: planner          tools_first · planner turned the question into a search filter",
+                "planner                 219 ms",
+                "search_emails           4 ms · 700 chars",
+                "llm round 0             1800 ms",
+                "model: qwen (2100 ms total)",
+                "sources:",
+                "  [1] Weekly stats — Metrics Bot",
+            ]
+        );
+        assert_eq!(format_chat_trace_lines(None, &[]), vec!["(no trace recorded)"]);
+    }
+
     #[test]
     fn dim_emits_ansi_only_when_color() {
         assert_eq!(dim("x", false), "x");
@@ -1070,6 +1100,7 @@ mod tests {
             after_timestamp: None,
             before_timestamp: None,
             tag_filters: Vec::new(),
+            id_filters: Vec::new(),
         }
     }
 

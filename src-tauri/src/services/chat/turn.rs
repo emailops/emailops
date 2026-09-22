@@ -14,14 +14,14 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
     ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace,
-    ChatTraceEvent, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
+    ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
 
 use super::conversations::{derive_title, title_is_default};
 use super::retrieval::{
-    mark_relevant_region, retrieve_context_with_trace, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
+    mark_relevant_region, retrieve_context_full, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
     MAX_SOURCE_BODY_CHARS, TOP_K_SOURCES,
 };
 use super::routing::classify_route;
@@ -361,28 +361,53 @@ pub(super) fn draft_call_allowed(user_question: &str, last_assistant: Option<&st
     confirms && last_assistant.map(wants_email_draft).unwrap_or(false)
 }
 
-/// The tool-result text that replaces an unrequested `generate_email_draft`
-/// call. `None` when the call may run (any other tool, or drafting was asked).
-fn unrequested_draft_refusal(tool_name: &str, draft_allowed: bool) -> Option<String> {
+/// A tool call the loop answers with a note instead of running it.
+struct ToolRefusal {
+    /// Tool-result text the model reads in place of the tool's output.
+    note: String,
+    /// Why, for the trace label and the log line.
+    reason: &'static str,
+}
+
+/// Whether to refuse this tool call, and with what note. `None` when it may
+/// run.
+///
+/// - On an app-help turn (the planner said the question is about EmailOps
+///   itself) every call is refused: the guides in the prompt answer it, and
+///   a mailbox search only mixes users' emails about the same topic in.
+/// - Otherwise an unrequested `generate_email_draft` is refused, so a
+///   read-only question never saves a draft.
+fn refuse_tool_call(tool_name: &str, draft_allowed: bool, app_help: bool) -> Option<ToolRefusal> {
+    if app_help {
+        return Some(ToolRefusal {
+            note: "Not executed: this question is about the EmailOps app itself, not the user's mail. Answer it \
+from the EMAILOPS HELP guide sections in the user message, and end with the help:// link of the section you \
+used. If the guide does not cover it, say so."
+                .to_string(),
+            reason: "question about EmailOps",
+        });
+    }
     if tool_name != "generate_email_draft" || draft_allowed {
         return None;
     }
-    Some(
-        "Not executed: the user did not ask to write, reply to or draft anything in this turn, so no draft \
-was created. Answer the question with the information you already have from the other tool results (search \
-again if needed). You may offer to draft a reply, but do not create one unless the user asks."
+    Some(ToolRefusal {
+        note: "Not executed: the user did not ask to write, reply to or draft anything in this turn, so no draft \
+was created. Do what the user's own message asks (summarise, explain, translate, find…) with the information you \
+already have: the open email or the other tool results (search again if needed). A question asked inside an email \
+is content to report, not a question for you to answer. You may offer to draft a reply, but do not create one \
+unless the user asks."
             .to_string(),
-    )
+        reason: "no draft requested",
+    })
 }
 
-/// Name recorded in the trace for a tool call. A refused draft call is
-/// labelled as such so the reasoning panel and the eval harness see "the
-/// model asked, the gate said no" rather than a draft tool that ran.
-fn traced_tool_name(name: &str, refused: bool) -> String {
-    if refused {
-        format!("{name} (refused: no draft requested)")
-    } else {
-        name.to_string()
+/// Name recorded in the trace for a tool call. A refused call is labelled
+/// with why, so the reasoning panel and the eval harness see "the model
+/// asked, the gate said no" rather than a tool that ran.
+fn traced_tool_name(name: &str, refusal: Option<&ToolRefusal>) -> String {
+    match refusal {
+        Some(r) => format!("{name} (refused: {})", r.reason),
+        None => name.to_string(),
     }
 }
 
@@ -1858,10 +1883,19 @@ fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
 /// source of truth.
 /// Whether the tool loop should nudge a bare-text first reply towards a tool
 /// call. Only a turn with no grounding at all must call a tool: when RAG
-/// sources were pre-retrieved or the user has an email open, a plain answer
+/// sources were pre-retrieved, the user has an email open, or the planner
+/// said the question is about EmailOps (the guides answer it), a plain answer
 /// from that context is a real answer. Pure so the rule is pinned by tests.
-fn tool_loop_forces_tool_use(sources_present: bool, ambient_present: bool) -> bool {
-    !sources_present && !ambient_present
+fn tool_loop_forces_tool_use(sources_present: bool, ambient_present: bool, app_help: bool) -> bool {
+    !sources_present && !ambient_present && !app_help
+}
+
+/// Whether a turn consults the EmailOps guides at all. A turn about the open
+/// email is grounded in that thread only. When the planner ran, its verdict
+/// already says whether the question is about the app; the similarity gate
+/// inside the lookup is only the fallback for turns it never saw.
+fn help_lookup_wanted(ambient_present: bool, planner_says_app_help: Option<bool>) -> bool {
+    !ambient_present && planner_says_app_help.unwrap_or(true)
 }
 
 fn round_may_stream_live(force_tool_use: bool, no_tool_executed_yet: bool, nudges_used: u32, max_nudges: u32) -> bool {
@@ -1981,6 +2015,9 @@ async fn run_tool_loop(
     initial_messages: Vec<(String, String)>,
     preseeded_tool_calls: Option<Vec<crate::ai::provider::AiToolCall>>,
     force_tool_use: bool,
+    // The planner said the question is about EmailOps itself: every tool call
+    // is refused with a pointer back to the guides (see `refuse_tool_call`).
+    app_help: bool,
     tool_traces: &mut Vec<ToolCallTrace>,
     llm_calls: &mut Vec<LlmCallTrace>,
 ) -> ToolLoopOutcome {
@@ -2074,16 +2111,12 @@ async fn run_tool_loop(
                 // draft" / …) so the UI reflects what each call is doing.
                 emit_phase(conversation_id, message_id, phase_for_tool(name));
                 let t_tool = std::time::Instant::now();
-                let refusal = unrequested_draft_refusal(name, draft_allowed);
-                let refused = refusal.is_some();
-                let dispatched = match refusal {
-                    Some(note) => {
-                        emit_log(
-                            "info",
-                            "tool_loop: refused generate_email_draft — the user did not ask for a draft",
-                        );
+                let refusal = refuse_tool_call(name, draft_allowed, app_help);
+                let dispatched = match &refusal {
+                    Some(r) => {
+                        emit_log("info", &format!("tool_loop: refused {name} — {}", r.reason));
                         DispatchedTool {
-                            text: note,
+                            text: r.note.clone(),
                             email_refs: Vec::new(),
                             draft_refs: Vec::new(),
                             corrected_args: None,
@@ -2129,7 +2162,7 @@ async fn run_tool_loop(
                 );
 
                 tool_traces.push(ToolCallTrace {
-                    name: traced_tool_name(name, refused),
+                    name: traced_tool_name(name, refusal.as_ref()),
                     // Preseeded shortcut tools run before the LLM loop.
                     round: -1,
                     arguments: traced_args,
@@ -2453,16 +2486,12 @@ async fn run_tool_loop(
             // "Running tools" for the whole loop.
             emit_phase(conversation_id, message_id, phase_for_tool(name));
             let t_tool = std::time::Instant::now();
-            let refusal = unrequested_draft_refusal(name, draft_allowed);
-            let refused = refusal.is_some();
-            let dispatched = match refusal {
-                Some(note) => {
-                    emit_log(
-                        "info",
-                        "tool_loop: refused generate_email_draft — the user did not ask for a draft",
-                    );
+            let refusal = refuse_tool_call(name, draft_allowed, app_help);
+            let dispatched = match &refusal {
+                Some(r) => {
+                    emit_log("info", &format!("tool_loop: refused {name} — {}", r.reason));
                     DispatchedTool {
-                        text: note,
+                        text: r.note.clone(),
                         email_refs: Vec::new(),
                         draft_refs: Vec::new(),
                         corrected_args: None,
@@ -2506,7 +2535,7 @@ async fn run_tool_loop(
             // tool output for debugging — large enough for a typical thread or
             // 25-row search_emails dump, small enough to bound the JSON blob.
             tool_traces.push(ToolCallTrace {
-                name: traced_tool_name(name, refused),
+                name: traced_tool_name(name, refusal.as_ref()),
                 round: round as i32,
                 arguments: traced_args,
                 result_preview: truncate_chars(&result, 16000),
@@ -2877,6 +2906,7 @@ async fn run_thread_bound_turn(
         initial_messages,
         None,
         false,
+        false,
         &mut tool_traces,
         &mut llm_calls,
     )
@@ -3039,7 +3069,7 @@ async fn run_thread_bound_turn(
             // referenced-draft allowlist live (the `chat-trace` event is the
             // delivery hook for it). The route is synthetic: a thread-bound
             // turn is a forced tools-first short-circuit.
-            let trace = ChatTrace {
+            let trace = super::trace_steps::with_steps(ChatTrace {
                 route: RouteDecision {
                     mode: RouteMode::ToolsFirst,
                     reason: "thread-bound".to_string(),
@@ -3053,7 +3083,9 @@ async fn run_thread_bound_turn(
                 tool_loop_ms,
                 llm_streaming_ms: None,
                 llm_calls: llm_calls.clone(),
-            };
+                help: None,
+                steps: Vec::new(),
+            });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
             }
@@ -3623,6 +3655,10 @@ pub async fn run_chat_turn(
     // Trace entry for the planner LLM call, prepended to `llm_calls` below so it
     // shows in the flow timeline ahead of the tool rounds.
     let mut planner_trace: Option<LlmCallTrace> = None;
+    // Set when the planner says the question is about EmailOps itself.
+    let mut app_help = false;
+    // The guide page the planner picked for it, when it named one.
+    let mut help_page: Option<String> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
         && (route.mode == RouteMode::ToolsFirst || asked_planner)
@@ -3690,6 +3726,23 @@ pub async fn run_chat_turn(
                     }
                 }
             }
+            super::planner::Plan::AppHelp(page) => {
+                // Also on a keyword-routed turn ("why is chat slow today?"):
+                // the question is about the app, so no pre-seeded search and
+                // no mailbox retrieval — the guides answer it.
+                emit_log(
+                    "info",
+                    &format!(
+                        "planner: question about EmailOps (guide page: {}) [{plan_ms}ms]",
+                        page.as_deref().unwrap_or("any")
+                    ),
+                );
+                planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
+                route = super::routing::planner_help_route();
+                app_help = true;
+                help_page = page;
+                emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+            }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
@@ -3706,20 +3759,74 @@ pub async fn run_chat_turn(
     // final ChatTrace.
     let t_retrieve = std::time::Instant::now();
     emit_log("info", "stage: retrieve");
-    let (sources, retrieval_trace): (Vec<ScoredEmail>, Option<RetrievalTrace>) = match &route.mode {
-        RouteMode::ToolsFirst => {
-            emit_log("info", "retrieve: skipped (ToolsFirst route)");
-            (Vec::new(), None)
-        }
-        RouteMode::RagFirst => {
-            emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Retrieving);
-            match retrieve_context_with_trace(
+    let (sources, retrieval_trace, query_embedding): (Vec<ScoredEmail>, Option<RetrievalTrace>, Option<Vec<f32>>) =
+        match &route.mode {
+            RouteMode::ToolsFirst => {
+                emit_log("info", "retrieve: skipped (ToolsFirst route)");
+                (Vec::new(), None, None)
+            }
+            RouteMode::RagFirst => {
+                emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Retrieving);
+                match retrieve_context_full(
+                    &db,
+                    provider.as_ref(),
+                    &account_id,
+                    &user_question,
+                    &categories,
+                    TOP_K_SOURCES,
+                )
+                .await
+                {
+                    Ok((srcs, trace, embedding)) => {
+                        emit_log(
+                            "info",
+                            &format!(
+                                "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
+                                srcs.len(),
+                                trace.vector_hits,
+                                trace.fts_hits,
+                                trace.fused_top_k,
+                                t_retrieve.elapsed().as_millis()
+                            ),
+                        );
+                        (srcs, Some(trace), embedding)
+                    }
+                    Err(e) => {
+                        emit_log("error", &format!("retrieval error: {}", e));
+                        (Vec::new(), None, None)
+                    }
+                }
+            }
+        };
+
+    // ── 2b. EmailOps help lookup ─────────────────────────────────────────
+    // The bundled guides are a second, separate corpus: a question about the
+    // app itself ("how do I connect Ollama?") is answered from them, in the
+    // answer's language, and cited with a `help://` link. Runs on every route
+    // (the keyword router knows nothing about app questions) and reuses the
+    // query embedding when mailbox retrieval already computed it. Skipped when
+    // the planner judged the turn a mailbox question and on turns about the
+    // open email; otherwise gated on vector similarity inside. Best-effort:
+    // any failure degrades to "no help block".
+    let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
+    let planner_says_app_help = planner_trace.as_ref().map(|_| app_help);
+    let (help_sources, help_trace): (Vec<crate::services::help_docs::HelpSource>, Option<HelpTrace>) =
+        if help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
+            && db.is_help_docs_enabled().unwrap_or(true)
+        {
+            // Text index on demand (one hash + one COUNT when up to date), so
+            // FTS works even before the prewarm has embedded the vectors.
+            if let Err(e) = crate::services::help_docs::ensure_text_index(&db) {
+                emit_log("warn", &format!("help index (text) failed: {e}"));
+            }
+            match crate::services::help_docs::lookup_help(
                 &db,
                 provider.as_ref(),
-                &account_id,
                 &user_question,
-                &categories,
-                TOP_K_SOURCES,
+                query_embedding.as_deref(),
+                ai_language.as_code(),
+                crate::services::help_docs::HELP_TOP_K,
+                help_page.as_deref(),
             )
             .await
             {
@@ -3727,23 +3834,27 @@ pub async fn run_chat_turn(
                     emit_log(
                         "info",
                         &format!(
-                            "retrieve: {} sources (vec={} fts={} fused→{}) [{}ms]",
-                            srcs.len(),
-                            trace.vector_hits,
-                            trace.fts_hits,
-                            trace.fused_top_k,
-                            t_retrieve.elapsed().as_millis()
+                            "help: {} of {} guide sections pass the gate (top similarity {}, vectors={}) [{}ms]",
+                            trace.included,
+                            trace.candidates,
+                            trace
+                                .top_similarity
+                                .map(|s| format!("{s:.2}"))
+                                .unwrap_or_else(|| "n/a".to_string()),
+                            trace.vector_available,
+                            trace.elapsed_ms
                         ),
                     );
                     (srcs, Some(trace))
                 }
                 Err(e) => {
-                    emit_log("error", &format!("retrieval error: {}", e));
+                    emit_log("warn", &format!("help lookup failed: {e}"));
                     (Vec::new(), None)
                 }
             }
-        }
-    };
+        } else {
+            (Vec::new(), None)
+        };
 
     // ── 3. Persist citations + notify frontend ───────────────────────────
     // Include denormalized email metadata so the UI can render source details
@@ -3783,7 +3894,6 @@ pub async fn run_chat_turn(
     );
 
     // ── 4. Tool-call loop + streaming reply ─────────────────────────────
-    let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
     let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
     // Tools section is rendered from the registry so it stays in lockstep
     // with what `definitions(&db)` advertises to the LLM via the
@@ -3802,6 +3912,13 @@ pub async fn run_chat_turn(
         &tools_section,
         ambient_context.as_deref(),
     );
+
+    // The EmailOps-help block rides in the final user message for the same
+    // reason as the memory header below: it varies per turn, and any per-turn
+    // byte in the system message would invalidate the KV prefix.
+    if let Some(block) = crate::services::help_docs::render_help_block(&help_sources, app_help) {
+        prepend_to_final_user_message(&mut initial_messages, &block);
+    }
 
     // Inject the memory header into the final user message — but only when
     // the user has the Memory feature enabled. Disabling it in Settings
@@ -3870,7 +3987,8 @@ pub async fn run_chat_turn(
             preseeded_tool_calls,
             // A plain answer grounded in the sources or the open thread is a
             // real answer, not an "announcement" to nudge past.
-            tool_loop_forces_tool_use(!sources.is_empty(), ambient_context.is_some()),
+            tool_loop_forces_tool_use(!sources.is_empty(), ambient_context.is_some(), app_help),
+            app_help,
             &mut tool_traces,
             &mut llm_calls,
         )
@@ -4208,9 +4326,21 @@ pub async fn run_chat_turn(
             let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
             let citation_range = grounding.citation_range(sources.len());
             result.content = strip_invalid_citations(&result.content, citation_range);
+            // A guide-grounded answer that forgot its `help://` link gets the
+            // top section appended (pure rule in `help_docs::nav`).
+            if let Some(src) =
+                crate::services::help_docs::plan_help_link_fallback(&result.content, &help_sources, tool_traces.len())
+            {
+                let line = crate::services::help_docs::help_link_line(src);
+                emit_log(
+                    "info",
+                    &format!("help: answer used the guides without citing — appending {}", src.link),
+                );
+                result.content = format!("{}\n\n{line}", result.content.trim_end());
+            }
             // The live bubble holds the text as streamed; ship the cleaned
             // text over it so a stripped marker does not stay on screen as a
-            // pill until the conversation is reloaded.
+            // pill, and an appended help link shows, before any reload.
             if result.content != shipped && !result.content.trim().is_empty() {
                 crate::services::events::emit(
                     "chat-stream",
@@ -4308,6 +4438,24 @@ pub async fn run_chat_turn(
                     }
                 },
             };
+            // An answer that cites a guide section with a `nav:` target opens
+            // that part of the app — the model's own citation is the signal,
+            // so a help block the answer ignored never moves the UI.
+            if let Some((target, src)) =
+                crate::services::help_docs::plan_help_navigation(&result.content, &help_sources)
+            {
+                emit_log(
+                    "info",
+                    &format!("help: answer cites {} — opening {}", src.link, target.as_wire()),
+                );
+                crate::services::events::emit(
+                    "chat-tool-effect",
+                    tools::ToolEffect::NavigateTo {
+                        target: target.as_wire(),
+                        title: src.title(),
+                    },
+                );
+            }
             #[cfg(feature = "tracing")]
             crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
                 model: provider.model_name().to_string(),
@@ -4406,7 +4554,7 @@ pub async fn run_chat_turn(
             // ── 5. Assemble, persist, and emit the reasoning trace ─────────
             // Done after stream success so the trace reflects the full flow
             // (routing + retrieval + any tool calls + total wall-clock time).
-            let trace = ChatTrace {
+            let trace = super::trace_steps::with_steps(ChatTrace {
                 route: route.clone(),
                 retrieval: retrieval_trace.clone(),
                 tool_calls: tool_traces.clone(),
@@ -4415,7 +4563,9 @@ pub async fn run_chat_turn(
                 tool_loop_ms,
                 llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
                 llm_calls: llm_calls.clone(),
-            };
+                help: help_trace.clone(),
+                steps: Vec::new(),
+            });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
             }
@@ -5090,6 +5240,7 @@ mod tests {
             ],
             Some(vec![ai_tool_call("search_emails")]),
             true,
+            false,
             &mut tool_traces,
             &mut llm_calls,
         )
@@ -5150,16 +5301,43 @@ mod tests {
     /// the open email); only a turn with neither is nudged towards a tool call.
     #[test]
     fn tool_use_is_forced_only_on_turns_without_grounding() {
-        assert!(tool_loop_forces_tool_use(false, false));
+        assert!(tool_loop_forces_tool_use(false, false, false));
         assert!(
-            !tool_loop_forces_tool_use(true, false),
+            !tool_loop_forces_tool_use(true, false, false),
             "RAG sources can answer directly"
         );
         assert!(
-            !tool_loop_forces_tool_use(false, true),
+            !tool_loop_forces_tool_use(false, true, false),
             "the open email can answer directly"
         );
-        assert!(!tool_loop_forces_tool_use(true, true));
+        assert!(!tool_loop_forces_tool_use(true, true, false));
+    }
+
+    #[test]
+    fn an_app_help_turn_is_grounded_by_the_guides() {
+        // No mailbox sources by design, but the guide sections answer it: a
+        // nudge towards a tool only earns a call the loop then refuses.
+        assert!(!tool_loop_forces_tool_use(false, false, true));
+    }
+
+    #[test]
+    fn the_planner_verdict_decides_whether_the_guides_are_consulted() {
+        assert!(help_lookup_wanted(false, Some(true)), "the planner said app_help");
+        assert!(
+            !help_lookup_wanted(false, Some(false)),
+            "the planner planned a mailbox search or deferred: guides stay out"
+        );
+    }
+
+    #[test]
+    fn without_a_planner_verdict_the_similarity_gate_decides() {
+        assert!(help_lookup_wanted(false, None));
+    }
+
+    #[test]
+    fn a_turn_about_the_open_email_never_consults_the_guides() {
+        // The panel promises answers grounded in the open thread only.
+        assert!(!help_lookup_wanted(true, None));
     }
 
     #[test]
@@ -5658,6 +5836,7 @@ mod tests {
             ],
             Some(vec![ai_tool_call("search_emails")]),
             true,
+            false,
             &mut tool_traces,
             &mut llm_calls,
         )
@@ -6312,19 +6491,70 @@ mod tests {
 
     #[test]
     fn refused_draft_calls_are_labelled_in_the_trace() {
+        let refusal = refuse_tool_call("generate_email_draft", false, false);
         assert_eq!(
-            traced_tool_name("generate_email_draft", true),
+            traced_tool_name("generate_email_draft", refusal.as_ref()),
             "generate_email_draft (refused: no draft requested)"
         );
-        assert_eq!(traced_tool_name("search_emails", false), "search_emails");
+        assert_eq!(traced_tool_name("search_emails", None), "search_emails");
     }
 
     #[test]
     fn unrequested_draft_is_refused_with_a_model_facing_note() {
-        let note = unrequested_draft_refusal("generate_email_draft", false).expect("refused");
-        assert!(note.contains("did not ask"), "note must explain: {note}");
-        assert!(unrequested_draft_refusal("generate_email_draft", true).is_none());
-        assert!(unrequested_draft_refusal("search_emails", false).is_none());
+        let refusal = refuse_tool_call("generate_email_draft", false, false).expect("refused");
+        assert!(
+            refusal.note.contains("did not ask"),
+            "note must explain: {}",
+            refusal.note
+        );
+        assert!(refuse_tool_call("generate_email_draft", true, false).is_none());
+        assert!(refuse_tool_call("search_emails", false, false).is_none());
+    }
+
+    #[test]
+    fn the_draft_refusal_points_back_at_the_users_request_not_the_emails() {
+        // "resume este correo" on an email that asks a question: a note that
+        // says "answer the question" sent the model off answering the
+        // email's question with invented steps instead of summarising it.
+        let note = refuse_tool_call("generate_email_draft", false, false)
+            .expect("refused")
+            .note;
+        assert!(note.contains("the user's own message"), "{note}");
+        assert!(!note.contains("Answer the question"), "{note}");
+    }
+
+    // ── App-help turns ───────────────────────────────────────────────────
+    // The planner said the question is about EmailOps itself; the guides in
+    // the prompt answer it. With no mailbox sources the 4B model still went
+    // looking (recall_entity → search_emails → get_email_body, five rounds),
+    // so every tool call on such a turn is answered with a pointer back to
+    // the guides instead of running.
+
+    #[test]
+    fn an_app_help_turn_refuses_every_tool() {
+        for name in [
+            "search_emails",
+            "recall_entity",
+            "memory_search",
+            "generate_email_draft",
+        ] {
+            let refusal = refuse_tool_call(name, true, true).expect("refused on an app-help turn");
+            assert!(
+                refusal.note.contains("guide"),
+                "note must point at the guides: {}",
+                refusal.note
+            );
+            assert_eq!(
+                traced_tool_name(name, Some(&refusal)),
+                format!("{name} (refused: question about EmailOps)")
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_turn_runs_its_tools() {
+        assert!(refuse_tool_call("search_emails", true, false).is_none());
+        assert!(refuse_tool_call("recall_entity", false, false).is_none());
     }
 
     // ── Weekday in the date line ─────────────────────────────────────────

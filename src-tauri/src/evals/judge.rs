@@ -229,6 +229,16 @@ pub async fn score_with_provider(
     }
 }
 
+/// Score every requested judge metric must reach for the case to pass.
+pub const JUDGE_THRESHOLD: f64 = 0.7;
+
+/// Whether a case passes: its heuristic checks, and — when the judge ran —
+/// every judge metric it asked for at [`JUDGE_THRESHOLD`]. A judge error on a
+/// judged run is a failure: an unscored case must not read as a pass.
+pub fn case_passes(heuristics_passed: bool, scores: &JudgeScores, case: &EvalCase, judge_enabled: bool) -> bool {
+    heuristics_passed && (!judge_enabled || judge_passes(scores, case, JUDGE_THRESHOLD))
+}
+
 /// A case passes the judge when every metric it asked for scored at least
 /// `threshold`. A judge error is a failure, never a silent pass. When the case
 /// requested no metrics there is nothing to judge and this returns `true`.
@@ -257,8 +267,13 @@ fn strip_code_fence(s: &str) -> String {
     }
 }
 
+/// Chars of each source body shown to the judge — enough to check the
+/// answer's facts, bounded so 9 sources cannot blow the judge's context.
+const JUDGE_SOURCE_BODY_CHARS: usize = 1500;
+
 const JUDGE_SYSTEM: &str = "You are an evaluator for a retrieval-augmented chat assistant that \
-answers questions about a user's own emails. You will score the assistant's response on \
+answers questions about a user's own emails, and about the EmailOps app itself from its bundled \
+user guides. You will score the assistant's response on \
 several numeric metrics in [0.0, 1.0] and return them as strict JSON (no prose outside JSON). \
 Be conservative — only award high scores when the claim is clearly justified by the sources.";
 
@@ -271,12 +286,29 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     let sources = if outcome.sources_used.is_empty() {
         "(no pre-retrieved RAG sources — the assistant was routed tools-first)".to_string()
     } else {
+        // The body the model read, not just the envelope: without it every
+        // fact the answer took from an email scores as invented.
         let mut s = String::new();
         for src in &outcome.sources_used {
             s.push_str(&format!(
-                "- [{}] {} — {} <{}>\n",
-                src.citation_number, src.subject, src.sender, src.sender_email
+                "- [{}] {} — {} <{}>\n{}\n",
+                src.citation_number,
+                src.subject,
+                src.sender,
+                src.sender_email,
+                indent_lines(&truncate(&src.body_snippet, JUDGE_SOURCE_BODY_CHARS), "    "),
             ));
+        }
+        s
+    };
+
+    // An answer about the app is grounded in the bundled guides, not in mail.
+    let guide_section = if outcome.help_sections.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::from("\nEMAILOPS GUIDE SECTIONS SHOWN TO THE ASSISTANT (the app's own user guides):\n");
+        for section in &outcome.help_sections {
+            s.push_str(&format!("{}\n", indent_lines(section, "    ")));
         }
         s
     };
@@ -311,7 +343,7 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     // that thread, with no RAG sources and no tools, so without it the judge
     // reads every detail of the answer as invented.
     let open_thread_section = outcome
-        .ambient_thread
+        .open_thread
         .as_deref()
         .map(|t| {
             format!(
@@ -326,10 +358,10 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     format!(
         "QUESTION:\n{question}\n\n\
 GOLDEN REFERENCE ANSWER:\n{expected}\n\n\
-SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}{open_thread}\n\
+SOURCES SHOWN TO THE ASSISTANT:\n{sources}{tool_calls}{open_thread}{guides}\n\
 ASSISTANT RESPONSE:\n{response}\n\n\
 Score the assistant response on the following metrics only: {metrics}.\n\
-For faithfulness / contextual_* metrics, treat the SOURCES, TOOL CALLS and OPEN THREAD blocks \
+For faithfulness / contextual_* metrics, treat the SOURCES, TOOL CALLS, OPEN THREAD and EMAILOPS GUIDE SECTIONS blocks \
 (whichever are present) as valid grounding context — the assistant is allowed to ground claims on any of them.\n\
 Each score is a float in [0.0, 1.0]. If you cannot score a metric, return null for it.\n\
 Return strict JSON with this shape:\n\
@@ -346,6 +378,7 @@ Only include keys for the metrics requested; set others to null.",
         sources = sources,
         tool_calls = tool_calls_section,
         open_thread = open_thread_section,
+        guides = guide_section,
         response = outcome.assistant_content,
         metrics = metrics.join(", "),
     )
@@ -372,7 +405,7 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod judge_rule_tests {
-    use super::{build_prompt, judge_passes, parse_judge_content, JudgeScores};
+    use super::{build_prompt, case_passes, judge_passes, parse_judge_content, JudgeScores};
     use crate::evals::case_loader::{EvalCase, MetricKind};
     use crate::evals::harness::CaseOutcome;
 
@@ -383,7 +416,7 @@ mod judge_rule_tests {
         c
     }
 
-    fn outcome_with(ambient_thread: Option<&str>) -> CaseOutcome {
+    fn outcome_with(open_thread: Option<&str>) -> CaseOutcome {
         CaseOutcome {
             conversation_id: String::new(),
             conversation_title: String::new(),
@@ -394,8 +427,86 @@ mod judge_rule_tests {
             assistant_latency_ms: None,
             wall_elapsed_ms: 0,
             sources_used: Vec::new(),
-            ambient_thread: ambient_thread.map(str::to_string),
+            open_thread: open_thread.map(str::to_string),
+            help_sections: Vec::new(),
         }
+    }
+
+    // The judge scored faithfulness against source subjects and senders only,
+    // so any answer that used what an email SAID read as invented, and an
+    // answer from the bundled guides had no grounding at all.
+
+    // A case whose answer the judge scores low is a failing case, not a
+    // passing one with a footnote: "resume este correo" answered with
+    // invented setup steps passed its word checks at 0.30 / 0.10.
+
+    #[test]
+    fn a_low_judge_score_fails_the_case() {
+        let case = case_with(vec![MetricKind::AnswerRelevancy, MetricKind::Faithfulness]);
+        let low = JudgeScores {
+            answer_relevancy: Some(0.30),
+            faithfulness: Some(0.10),
+            ..Default::default()
+        };
+        assert!(!case_passes(true, &low, &case, true));
+    }
+
+    #[test]
+    fn a_judge_error_fails_the_case_only_when_the_judge_ran() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let err = JudgeScores {
+            error: Some("judge HTTP 401".into()),
+            ..Default::default()
+        };
+        assert!(!case_passes(true, &err, &case, true), "an unscored case is not a pass");
+        assert!(
+            case_passes(true, &JudgeScores::default(), &case, false),
+            "no judge: heuristics decide"
+        );
+    }
+
+    #[test]
+    fn heuristics_still_gate_a_well_judged_answer() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let good = JudgeScores {
+            faithfulness: Some(0.95),
+            ..Default::default()
+        };
+        assert!(case_passes(true, &good, &case, true));
+        assert!(!case_passes(false, &good, &case, true));
+    }
+
+    #[test]
+    fn prompt_shows_what_each_source_said() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let mut outcome = outcome_with(None);
+        outcome.sources_used = vec![crate::evals::harness::SourceSummary {
+            citation_number: 1,
+            email_id: "e1".into(),
+            subject: "Invoice May".into(),
+            sender: "Billing".into(),
+            sender_email: "billing@example.com".into(),
+            relevance_score: None,
+            body_snippet: "Servers: CPX31 x2".into(),
+        }];
+        let prompt = build_prompt(&case, &outcome);
+        assert!(prompt.contains("Invoice May"));
+        assert!(prompt.contains("Servers: CPX31 x2"), "{prompt}");
+    }
+
+    #[test]
+    fn prompt_shows_the_guide_sections_as_grounding() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let mut outcome = outcome_with(None);
+        outcome.help_sections = vec!["AI features › Choosing a backend\nOllama runs at localhost:11434.".into()];
+        let prompt = build_prompt(&case, &outcome);
+        assert!(
+            prompt.contains("EMAILOPS GUIDE SECTIONS SHOWN TO THE ASSISTANT"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("localhost:11434"));
+        let without = build_prompt(&case, &outcome_with(None));
+        assert!(!without.contains("EMAILOPS GUIDE SECTIONS SHOWN TO THE ASSISTANT"));
     }
 
     /// A turn run with an email open answers from that thread, not from RAG

@@ -1,7 +1,15 @@
 import { Fragment, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildFlow, cacheAction, formatLatency, kvCacheStats, tokensPerSecond } from '@/lib/reasoningTrace';
-import type { ChatMessage, ChatTrace, LlmCallTrace, RouteMode, ToolCallTrace } from '@/types';
+import { formatLatency, tokensPerSecond } from '@/lib/reasoningTrace';
+import type {
+  CacheAction,
+  ChatMessage,
+  ChatTrace,
+  KvCacheStats,
+  LlmCallTrace,
+  RouteMode,
+  ToolCallTrace,
+} from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
 export { formatLatency };
@@ -29,7 +37,7 @@ function ToolCallRow({ call }: { call: ToolCallTrace }) {
   const { t } = useTranslation(['chat']);
   const [open, setOpen] = useState(false);
   return (
-    <li className="text-[13px] text-gray-700 py-1">
+    <li data-testid="trace-step" className="text-[13px] text-gray-700 py-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -70,10 +78,11 @@ function ToolCallRow({ call }: { call: ToolCallTrace }) {
   );
 }
 
-/** One LLM call (tool round or final stream) — expandable to show the exact
- *  prompt that was sent and the model's response. input/output are only
- *  populated in dev builds (cfg(debug_assertions) on the backend). */
-function LlmCallRow({ call }: { call: LlmCallTrace }) {
+/** One LLM call (planner, tool round or final stream) — expandable to show the
+ *  exact prompt that was sent and the model's response. input/output are only
+ *  populated in dev builds (cfg(debug_assertions) on the backend). The cache
+ *  figures come from the step, computed once in the backend. */
+function LlmCallRow({ call, kv, action }: { call: LlmCallTrace; kv: KvCacheStats | null; action: CacheAction | null }) {
   const { t } = useTranslation(['chat']);
   const [open, setOpen] = useState(false);
   const hasIO = (call.input && call.input.length > 0) || (call.output && call.output.length > 0);
@@ -86,8 +95,6 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
           ? t('chat:reasoning.trace.phase.planner')
           : t('chat:reasoning.trace.phase.llmCall');
   const requested = call.kind === 'tool_round' ? (call.toolCallsRequested ?? 0) : 0;
-  const kv = kvCacheStats(call);
-  const action = cacheAction(call);
   // Map CacheAction.kind → an icon + a tone color shown next to the plan name.
   // Mirrors the visualizer's badges so the two surfaces share a vocabulary.
   const actionStyle: Record<string, { icon: string; tone: string }> = {
@@ -97,7 +104,7 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
     'cold-fresh': { icon: '🌱', tone: 'text-gray-600' },
   };
   return (
-    <li className="text-[13px] text-gray-700 py-1">
+    <li data-testid="trace-step" className="text-[13px] text-gray-700 py-1">
       <button
         type="button"
         onClick={() => hasIO && setOpen((v) => !v)}
@@ -175,6 +182,64 @@ function LlmCallRow({ call }: { call: LlmCallTrace }) {
   );
 }
 
+/** The guides lookup of the turn: how many sections matched, how many passed
+ *  the similarity gate, and the best similarity — the numbers to read when a
+ *  question about the app got no help block (gate too high) or a mailbox
+ *  question got one (gate too low). */
+function HelpDetail({ trace }: { trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  const h = trace.help;
+  if (!h || h.candidates === 0) {
+    return null;
+  }
+  const sim = h.topSimilarity != null ? ` · sim ${h.topSimilarity.toFixed(2)}` : '';
+  return (
+    <li data-testid="trace-step" className="py-1">
+      <div className="text-gray-900">{t('chat:reasoning.trace.step.helpDocs')}</div>
+      <div className="text-xs text-gray-700 ml-4">
+        {t('chat:reasoning.trace.helpSections', { included: h.included, candidates: h.candidates })}
+        {sim} · {formatLatency(h.elapsedMs)}
+      </div>
+    </li>
+  );
+}
+
+/** Who decided the route, in words: the backend's classifier ids
+ *  ("heuristic", "planner", "forced"…) mean nothing to a reader. */
+const ROUTE_CLASSIFIERS = ['heuristic', 'heuristic_followup', 'planner', 'forced', 'ambient', 'llm'] as const;
+
+/** How the turn was routed: whether it searched the mailbox first, who
+ *  decided that, why, and the keywords a heuristic matched. */
+function RouteRow({ trace, routeMode }: { trace: ChatTrace; routeMode: (m: RouteMode | string) => string }) {
+  const { t } = useTranslation(['chat']);
+  const classifier = trace.route.classifier;
+  const who = (ROUTE_CLASSIFIERS as readonly string[]).includes(classifier)
+    ? t(`chat:reasoning.trace.classifier.${classifier as (typeof ROUTE_CLASSIFIERS)[number]}`)
+    : classifier;
+  return (
+    <li data-testid="trace-step" className="py-1">
+      <div>
+        <span className="text-gray-600">{t('chat:reasoning.trace.route')}:</span>{' '}
+        <span className="font-medium text-gray-900">{routeMode(trace.route.mode)}</span>
+        <span className="text-gray-600"> · {t('chat:reasoning.trace.routeDecidedBy', { who })}</span>
+      </div>
+      {trace.route.reason && <div className="text-gray-700 ml-4">{trace.route.reason}</div>}
+      {trace.route.matchedKeywords.length > 0 && (
+        <div className="mt-0.5 ml-4 flex flex-wrap gap-1">
+          {trace.route.matchedKeywords.map((kw) => (
+            <span
+              key={kw}
+              className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-800"
+            >
+              {kw}
+            </span>
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
 /** Per-step retrieval timings + counts — the granular detail a developer wants
  *  when the retrieval step in the flow looks slow. */
 function RetrievalDetail({ trace }: { trace: ChatTrace }) {
@@ -221,11 +286,9 @@ function RetrievalDetail({ trace }: { trace: ChatTrace }) {
       : '';
 
   return (
-    <div>
-      <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
-        {t('chat:reasoning.trace.retrievalDetail')}
-      </div>
-      <ul className="space-y-0.5">
+    <li data-testid="trace-step" className="py-1">
+      <div className="text-gray-900">{t('chat:reasoning.trace.step.rag')}</div>
+      <ul className="space-y-0.5 ml-4">
         {steps.map((s) => (
           <li key={s.key} className="flex items-baseline gap-2">
             <span className="inline-block w-1 h-1 rounded-full bg-gray-400 mt-1" />
@@ -236,16 +299,16 @@ function RetrievalDetail({ trace }: { trace: ChatTrace }) {
           </li>
         ))}
       </ul>
-      <div className="text-gray-700 mt-0.5 ml-3">
+      <div className="text-gray-700 mt-0.5 ml-7">
         {t('chat:reasoning.trace.fused', { n: r.fusedTopK })}
         {dedup}
       </div>
       {r.categories && r.categories.length > 0 && (
-        <div className="text-gray-700 mt-0.5 ml-3">
+        <div className="text-gray-700 mt-0.5 ml-7">
           {t('chat:reasoning.trace.categories')}: {r.categories.join(', ')}
         </div>
       )}
-    </div>
+    </li>
   );
 }
 
@@ -256,7 +319,7 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
   const routeMode = (mode: RouteMode | string): string =>
     mode === 'rag_first' || mode === 'tools_first' ? t(`chat:reasoning.trace.routeMode.${mode}` as const) : mode;
 
-  const flow = buildFlow(trace);
+  const steps = trace.steps ?? [];
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-200">
@@ -281,55 +344,42 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
 
       {isOpen && (
         <div className="mt-2 space-y-3 text-[13px] text-gray-800">
-          {/* Route — mode, classifier, reason, matched keywords */}
+          {/* Flow — the turn step by step, in the order the backend built
+              (`services::chat::trace_steps`, shared with the CLI and the eval
+              report): route → planner → RAG → guides → each LLM round and the
+              tools it called → final stream. LLM rows expand to the exact
+              prompt + response (dev builds only); tool rows to arguments +
+              result preview. */}
           <div>
             <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
-              {t('chat:reasoning.trace.route')}
+              {t('chat:reasoning.trace.workflow')} · {formatLatency(trace.totalElapsedMs)}
             </div>
-            <div>
-              <span className="font-medium text-gray-900">{routeMode(trace.route.mode)}</span>
-              <span className="text-gray-600"> · {trace.route.classifier}</span>
-            </div>
-            {trace.route.reason && <div className="text-gray-700">{trace.route.reason}</div>}
-            {trace.route.matchedKeywords.length > 0 && (
-              <div className="mt-0.5 flex flex-wrap gap-1">
-                {trace.route.matchedKeywords.map((kw) => (
-                  <span
-                    key={kw}
-                    className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-800"
-                  >
-                    {kw}
-                  </span>
-                ))}
-              </div>
-            )}
+            <ul className="space-y-0.5">
+              {steps.map((step, i) => {
+                const key = `${step.type}-${i}`;
+                switch (step.type) {
+                  case 'route':
+                    return <RouteRow key={key} trace={trace} routeMode={routeMode} />;
+                  case 'retrieval':
+                    return <RetrievalDetail key={key} trace={trace} />;
+                  case 'help':
+                    return <HelpDetail key={key} trace={trace} />;
+                  case 'llm': {
+                    const call = trace.llmCalls?.[step.index];
+                    return call ? (
+                      <LlmCallRow key={key} call={call} kv={step.kvCache} action={step.cacheAction} />
+                    ) : null;
+                  }
+                  case 'tool': {
+                    const call = trace.toolCalls[step.index];
+                    return call ? <ToolCallRow key={key} call={call} /> : null;
+                  }
+                  default:
+                    return null;
+                }
+              })}
+            </ul>
           </div>
-
-          {/* Per-step retrieval breakdown */}
-          <RetrievalDetail trace={trace} />
-
-          {/* Flow — every LLM call and tool call in true execution order so the
-              turn reads top to bottom: preseeded shortcut tools → tool_round 0
-              → the tools it requested → … → final_stream. LLM rows expand to
-              the exact prompt + response (input/output only populated in dev
-              builds); tool rows expand to arguments + result preview. The
-              header carries the turn's total latency in place of the old bar. */}
-          {flow.length > 0 && (
-            <div>
-              <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
-                {t('chat:reasoning.trace.workflow')} · {formatLatency(trace.totalElapsedMs)}
-              </div>
-              <ul className="space-y-0.5">
-                {flow.map((entry) =>
-                  entry.kind === 'llm' ? (
-                    <LlmCallRow key={entry.id} call={entry.call} />
-                  ) : (
-                    <ToolCallRow key={entry.id} call={entry.call} />
-                  ),
-                )}
-              </ul>
-            </div>
-          )}
 
           {/* Model */}
           <div className="text-gray-600 text-xs">

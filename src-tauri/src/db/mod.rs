@@ -20,6 +20,7 @@ pub mod emails;
 pub mod embeddings;
 pub mod filters;
 pub mod folders;
+pub mod help_docs;
 pub mod lenses;
 pub mod memory;
 pub mod tags;
@@ -294,8 +295,8 @@ impl Database {
         Ok(())
     }
 
-    /// Re-create the vec0 virtual tables (`vec_emails`, `vec_memory_facts`)
-    /// idempotently. Required because the demo bootstrap copies prod schema
+    /// Re-create the vec0 virtual tables (`vec_emails`, `vec_memory_facts`,
+    /// `vec_help_docs`) idempotently. Required because the demo bootstrap copies prod schema
     /// but skips vec0 tables (sqlite-vec isn't loaded in stock Python sqlite3)
     /// and also copies `refinery_schema_history`, which makes refinery skip
     /// V001 on subsequent opens. Without this step the demo DB starts up
@@ -307,6 +308,9 @@ impl Database {
                  embedding float[768] distance_metric=cosine
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory_facts USING vec0(
+                 embedding float[768] distance_metric=cosine
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS vec_help_docs USING vec0(
                  embedding float[768] distance_metric=cosine
              );",
         )?;
@@ -1061,6 +1065,25 @@ mod schema_parity_tests {
         rows
     }
 
+    /// Two branches that each add "the next" migration collide on a merge.
+    /// Refinery runs both on a fresh DB, but on a DB that already applied one
+    /// of them it silently skips the other, so the collision only shows up on
+    /// existing installs.
+    #[test]
+    fn migration_versions_are_unique() {
+        let runner = embedded::migrations::runner();
+        let mut seen = std::collections::HashMap::new();
+        for m in runner.get_migrations() {
+            if let Some(other) = seen.insert(m.version(), m.name().to_string()) {
+                panic!(
+                    "migration version V{:03} is used by both `{other}` and `{}`",
+                    m.version(),
+                    m.name()
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_db_has_critical_tables() {
         let db = Database::new_for_testing().expect("create test db");
@@ -1083,6 +1106,7 @@ mod schema_parity_tests {
             "calendar_events",
             "calendar_sync_state",
             "calendars",
+            "help_doc_chunks",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),
@@ -1097,7 +1121,14 @@ mod schema_parity_tests {
         // queries silently return zero rows and tests pass for the wrong reason.
         let db = Database::new_for_testing().expect("create test db");
         let tables = names_of_kind(&db, "table");
-        for required in ["emails_fts", "memory_facts_fts", "vec_emails", "vec_memory_facts"] {
+        for required in [
+            "emails_fts",
+            "memory_facts_fts",
+            "vec_emails",
+            "vec_memory_facts",
+            "help_docs_fts",
+            "vec_help_docs",
+        ] {
             assert!(
                 tables.iter().any(|t| t == required),
                 "test DB missing required virtual table `{required}`. Tables present: {tables:?}"
@@ -1178,16 +1209,20 @@ mod schema_parity_tests {
         // idempotently on every startup.
         let db = Database::new_for_testing().expect("create test db");
         db.connection()
-            .execute_batch("DROP TABLE vec_emails; DROP TABLE vec_memory_facts;")
+            .execute_batch("DROP TABLE vec_emails; DROP TABLE vec_memory_facts; DROP TABLE vec_help_docs;")
             .expect("drop vec tables");
         let before = names_of_kind(&db, "table");
         assert!(!before.iter().any(|t| t == "vec_emails"));
         assert!(!before.iter().any(|t| t == "vec_memory_facts"));
+        assert!(!before.iter().any(|t| t == "vec_help_docs"));
 
         db.ensure_virtual_tables().expect("ensure virtual tables");
 
         let after = names_of_kind(&db, "table");
         assert!(after.iter().any(|t| t == "vec_emails"));
         assert!(after.iter().any(|t| t == "vec_memory_facts"));
+        // The guides index (V023) is a vec0 table too: a demo DB that lacks
+        // it fails every help lookup with "no such table: vec_help_docs".
+        assert!(after.iter().any(|t| t == "vec_help_docs"));
     }
 }

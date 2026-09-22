@@ -383,6 +383,22 @@ Respond with ONLY a JSON object, no markdown, no explanation:\n\
         );
     }
 
+    /// `planner::parse_plan_detailed` recognises `{"app_help": true}`; the
+    /// default planner prompt is what teaches the model to emit it.
+    #[test]
+    fn the_planner_prompt_offers_the_app_help_verdict() {
+        assert!(defaults::CHAT_QUERY_PLAN.contains(r#"{"app_help": true}"#));
+        assert!(defaults::CHAT_QUERY_PLAN.contains(r#"{"app_help": "<page>"}"#));
+        let pages = defaults::CHAT_QUERY_PLAN
+            .find("{{guide_pages}}")
+            .expect("guide pages listed");
+        let query = defaults::CHAT_QUERY_PLAN.find("{{query}}").expect("query placeholder");
+        assert!(
+            pages < query,
+            "the page list is static and must stay in the cached head"
+        );
+    }
+
     #[test]
     fn every_default_template_is_non_empty_and_uses_only_declared_vars() {
         let re = placeholder_re();

@@ -71,9 +71,10 @@ pub(crate) struct JudgeReport {
     pub scores: crate::evals::judge::JudgeScores,
 }
 
-/// Minimum score, per requested metric, for the judge to accept a case.
+/// Minimum score, per requested metric, for the judge to accept a case —
+/// shared with the `chat_eval` harness.
 #[cfg(feature = "eval")]
-pub(crate) const JUDGE_THRESHOLD: f64 = 0.7;
+pub(crate) const JUDGE_THRESHOLD: f64 = crate::evals::judge::JUDGE_THRESHOLD;
 
 #[cfg(feature = "eval")]
 #[derive(Serialize)]
@@ -168,6 +169,13 @@ pub async fn run_eval(
 
     let session_account = session.require_account()?;
     let mut case_reports: Vec<CaseReport> = Vec::with_capacity(selected.len());
+
+    // Build the guides index (text + vectors) once up front, as the app's
+    // prewarm does, so the app-help cases see the same corpus a user would.
+    {
+        let provider = crate::services::ai::AiService::load_provider_with_model(&session.db, Some(&session.model))?;
+        crate::services::help_docs::ensure_index(&session.db, provider.as_ref()).await?;
+    }
 
     // The judge runs on the app's own provider (embedded llama.cpp by default);
     // with the same model as the chat it shares the loaded weights.

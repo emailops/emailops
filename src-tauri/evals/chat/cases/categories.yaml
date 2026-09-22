@@ -317,7 +317,9 @@
   tier: smoke
   expected_answer_contains_any: ["Ramírez", "Pérez", "cuál", "qué Juan"]
   expected_tools_not_called: ["generate_email_draft"]
-  expected_output: "Hay dos remitentes llamados Juan: Juan Ramírez (Ramírez Design, presupuesto para las ilustraciones de la landing de EmailOps: 900 EUR, dos rondas de revisión, entrega en dos semanas) y Juan Pérez (te pide dejar las llaves de repuesto al conserje el viernes). ¿Cuál de los dos quieres que resuma? Enlaces email:// a ambos."
+  # Two senders are called Juan. Asking which one is ideal, but summarising one
+  # of them faithfully is also an accepted answer (product decision 22/09/2026).
+  expected_output: "A faithful summary of the email from ONE sender called Juan, linked with email:// — for example Juan Ramírez (Ramírez Design): quote for three illustrations for the EmailOps landing page, 900 EUR, two revision rounds, delivery in two weeks. Summarising only one Juan is a complete answer. Mentioning that a second Juan exists (Juan Pérez, spare keys for the concierge on Friday) or asking which one the user means is optional, never required."
   metrics: [answer_relevancy, faithfulness]
 
 - id: oos_capital_peru
@@ -327,9 +329,10 @@
   tier: smoke
   expected_tools_not_called: ["search_emails", "generate_email_draft"]
   expected_answer_not_contains: ["search_emails", "list_open_threads"]
-  # The assistant is scoped to the mailbox: declining (with or without naming
-  # Lima) is the expected shape, inventing an email about it is not.
-  expected_output: "That is general knowledge, not something in your mailbox, so it is outside what I can answer here (the answer is Lima). Ask me about your emails, drafts or calendar if you need help there."
+  # A general-knowledge question: answering it directly or declining it are
+  # both accepted (product decision 22/09/2026); searching the mailbox or
+  # inventing an email about it is not.
+  expected_output: "Either of these is a correct answer. (a) A direct answer: the capital of Peru is Lima. (b) Declining: that is general knowledge, not something in your mailbox (the answer is Lima); ask me about your emails, drafts or calendar."
   # Faithfulness is meaningless here: there is no mailbox context to be faithful to.
   metrics: [answer_relevancy]
 

@@ -1,0 +1,175 @@
+# Questions about EmailOps itself — answered from the bundled user guides
+# (`docs/site/<lang>/*.md`) through the "EmailOps help" lookup in
+# `services/help_docs`, not from the mailbox.
+#
+# WHAT THESE ASSERT
+# - The answer cites a guide section: it carries a `help://` link, which is
+#   the only way the help block reaches the user (the citation is also what
+#   drives the `navigateTo` effect — no link, no navigation).
+# - The answer names a fact that lives only in the guide (the Ollama port, the
+#   data directory, the VRAM rule), so an answer produced from the mailbox or
+#   from the model's own memory fails.
+# - No mailbox search ran: a question about the app must not spend a round on
+#   `search_emails` and must not end in "I could not find this in your inbox".
+# - The answer is grounded in the guides, asserted on the trace rather than on
+#   the text: the help lookup served a section of the expected guide page
+#   (`expected_help_pages_any`) and mailbox RAG fed the model no email
+#   (`expected_no_email_sources`). The `help://` anchor alone cannot prove it —
+#   the turn appends a link whenever any guide section rode in the prompt, and
+#   the demo mailbox holds user emails asking the same questions.
+# - The mirror case: a mailbox question about a demo sender gets NO help link
+#   even though the guides mention chat, drafts and calendars — the similarity
+#   gate (`HELP_MIN_SIMILARITY`) keeps the guides out of ordinary turns.
+#
+# The four languages exercise the language swap: the corpus is indexed in
+# en/es/fr/de and a hit on any of them is served in the answer's language.
+# The `help://<lang>/…` link therefore follows the AI output language, not the
+# language of the question, so the checks pin the scheme rather than the code.
+#
+# Synthetic by construction: nothing here comes from a real mailbox.
+
+- id: app_help_ollama_en
+  question: "how do I make EmailOps use my local Ollama instead of the built-in model?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features", "getting-started"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["11434", "Ollama (local)", "AI Backend"]
+  expected_answer_not_contains: ["could not find this in your inbox", "no puedo encontrar"]
+  expected_output: "Open Settings → AI Backend & Models and pick Ollama (local); EmailOps then uses the Ollama server you already run at http://localhost:11434. Make sure the daemon is running and a model is pulled. See AI features › Choosing a backend."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: app_help_model_es
+  question: "¿cómo cambio el modelo de IA que usa EmailOps?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features", "getting-started"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["Qwen", "catálogo", "catalog", "AI Backend", "Backend"]
+  expected_output: "En Ajustes → AI Backend & Models eliges el backend y el modelo de chat del catálogo integrado (Qwen 3.5 4B es el recomendado). Los modelos demasiado grandes para tu memoria aparecen atenuados. Ver Funciones de IA › El catálogo de modelos."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: app_help_data_location_de
+  question: "Wo speichert EmailOps meine Daten auf dem Rechner?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: full
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["privacy-security", "installation"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["com.emailops.app", "Application Support", "APPDATA", ".local/share", "SQLite"]
+  expected_output: "Alles liegt im Anwendungsdatenverzeichnis deines Systems (macOS: ~/Library/Application Support/com.emailops.app, Windows: %APPDATA%\\com.emailops.app, Linux: ~/.local/share/com.emailops.app): eine SQLite-Datenbank und ein models/-Ordner. Zugangsdaten liegen im System-Schlüsselbund. Siehe Datenschutz & Sicherheit › Wo deine Daten gespeichert werden."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: app_help_slow_chat_fr
+  question: "pourquoi le chat d'EmailOps est-il si lent, et comment l'accélérer ?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: full
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["troubleshooting", "ai-features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["VRAM", "plus petit", "smaller model", "contexte", "context window", "Keep model loaded", "modèle chargé", "thinking", "réflexion"]
+  expected_output: "Vérifiez d'abord que le modèle tient dans la mémoire (VRAM sur Windows/Linux, mémoire unifiée sur Apple Silicon), sinon prenez un modèle plus petit ; augmentez « Garder le modèle chargé », réduisez la fenêtre de contexte et désactivez le mode réflexion. Voir Dépannage › Le chat est lent."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: app_help_lenses_en
+  question: "how do I turn on Lenses in EmailOps?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: full
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["Experimental", "experimental", "Settings", "sidebar"]
+  expected_output: "Lenses are an experimental feature: enable them in Settings → Lenses, then create and run individual lenses from the Lenses entry in the sidebar. See AI features › Lenses."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# A question about a whole page: every chunk is one section, so the lookup
+# served two unrelated sections and the answer said the guide did not list the
+# AI features. The page intro now carries the section outline.
+- id: app_help_ai_features_overview_es
+  question: "que funcionalidades de ia tiene emailops"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["ai-features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  # Features only the ai-features outline names — not the installation page.
+  expected_answer_contains_any: ["Lentes", "Lenses", "Tablero de etiquetas", "Tag Board"]
+  expected_answer_not_contains: ["no detalla", "does not detail", "no incluye", "not included"]
+  expected_output: "EmailOps tiene chat con tu buzón, borradores con IA, clasificación, tablero de etiquetas, búsqueda semántica, traducción, tareas, memoria y lentes, todo sobre el backend que elijas. Ver Funciones de IA."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The guide described the attachments view in one sentence and never said it
+# is filled by rules, so the answer said there were no instructions.
+- id: app_help_attachments_rules_es
+  question: "como configuro la vista de adjuntos"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["features"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["regla", "rule"]
+  expected_output: "La vista de adjuntos se llena con reglas: pulsa Gestionar reglas, define patrones de remitente, asunto y nombre de archivo y etiquetas, y marca Aplicar a los correos existentes para recopilar lo que ya tienes. Ver Funciones › Vista de adjuntos."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The guide named an "Add account" button; the app has a + next to Accounts.
+- id: app_help_add_account_es
+  question: "como añado una nueva cuenta"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["getting-started"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://", "+"]
+  expected_output: "Pulsa el botón + junto a Cuentas en la barra lateral y elige Gmail, Outlook o IMAP/SMTP. Ver Primeros pasos › Conectar una cuenta."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# Mirror case: a mailbox question must not pull the guides into the answer.
+# Marisol Vega is the demo persona's logistics client (synthetic data).
+- id: app_help_mailbox_question_stays_mailbox
+  question: "what did Marisol say about the production bug?"
+  account: "ulises@emailopslabs.dev"
+  category: single_fact
+  tier: smoke
+  expected_answer_not_contains: ["help://"]
+  # Grounded in the mailbox: a numbered source citation or an email:// chip.
+  # Not pinned to the chip alone — the 4B model drops `email://` on some
+  # runs (see user_queries.yaml's note), and that flakiness is not what this
+  # case guards.
+  expected_answer_contains_any: ["email://", "[1]", "[2]", "[3]"]
+  expected_output: "Marisol Vega reported the production bug in the Faro Logistics dashboard thread and asked for a fix timeline; the answer links her email."
+  metrics:
+    - answer_relevancy
+    - faithfulness
