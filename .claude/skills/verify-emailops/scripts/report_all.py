@@ -182,7 +182,9 @@ dirty = meta.get("dirty") or []
 gc = counts(records)
 
 PRIVATE = bool(meta.get("private"))
-TITLE = "Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps"
+# A run that is not the full verification (the docs check) names itself in meta.
+TITLE = meta.get("title") or ("Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps")
+EYEBROW = meta.get("eyebrow") or ("Verificación privada" if PRIVATE else "Verificación completa")
 page = f'''<title>{TITLE}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -234,7 +236,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 <ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
 </nav>
 <main id="top">
-<div class="eyebrow">{"Verificación privada" if PRIVATE else "Verificación completa"} · {E(meta.get("tier", ""))}</div>
+<div class="eyebrow">{E(EYEBROW)} · {E(meta.get("tier", ""))}</div>
 <h1>{TITLE}</h1>
 {'<p class="evalmeta" style="border-color:var(--fail)"><b>Privado.</b> Casos de <code>private-evals/</code> sobre un snapshot del buzón real: remitentes, asuntos y respuestas son datos personales. No publicar ni compartir.</p>' if PRIVATE else ''}
 <p class="muted">Todas las capas de prueba en una pasada, atribuidas por feature. Inicio {E(meta.get("started", ""))}, fin {E(meta.get("finished", ""))}.</p>

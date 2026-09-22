@@ -161,6 +161,8 @@ else:
 
 data = {
     "meta": {
+        "title": "Verificación de documentación de EmailOps",
+        "eyebrow": "Documentación",
         "commit": sh("git rev-parse --short HEAD")[1],
         "branch": sh("git rev-parse --abbrev-ref HEAD")[1],
         "tier": "with-app" if WITH_APP else "rápido",
