@@ -8,11 +8,15 @@
 #
 # THE APP IS THE GROUND TRUTH. Prefer, in this order:
 #
-#   { app = true }        the running app shows it. A claim('<id>', …) case in
+#   { app = true }        the running app shows it. claim('<id>', …) cases in
 #                         doc_claims.mjs (fresh install, locked relaunch),
 #                         doc_claims_demo.mjs (demo mailbox) or
-#                         scripts/docs_cli_claims.py (the CLI) reads the claim's
-#                         own text from the docs and checks it on screen.
+#                         scripts/docs_cli_claims.py (the CLI) read the expected
+#                         value from the claim's own text and check the app;
+#                         each case quotes the sentences it proves (`covers`).
+#   { generated = "test" } a reference table rewritten from code between
+#                         <!-- generated:name --> markers (make docs-gen); the
+#                         test fails when the markdown and the code disagree.
 #   { release = "asset" } "download X from the latest release": the asset is on
 #                         the latest published GitHub release, and the claim
 #                         names it.
@@ -25,10 +29,18 @@
 #                         macOS version, release.yml is the pipeline. Text that
 #                         merely appears in the code proves nothing: a locale
 #                         string can exist and never be rendered.
-#   { manual = "why" }    nothing automatic proves it. Reported as MANUAL, never
-#                         as OK. Add one next to an app check for the part of
-#                         the claim the app check does not reach.
-#   { none = "why" }      a lead-in that makes no claim of its own (N/A).
+#   { judge = "question", evidence = ["file:…"], visual = true }
+#                         the agent judges it against the evidence (maintain-docs
+#                         step 2); shown as [AGT], apart from deterministic checks.
+#   { manual = "why" }    nothing automatic proves it: yellow, with the reason.
+#   { none = "why" }      a lead-in that makes no claim of its own.
+#
+# Any check may take `covers = ["…"]`: the sentences it proves, quoted as the
+# reader sees them. A passing check without `covers` does not make its block
+# green (it cannot vouch for sentences it never names) — except `quoted` and
+# `release`, which cover the sentence they quote, and `generated`, which covers
+# the table rows. `manual` and `none` without `covers` apply to the whole block.
+# `how` overrides the report's description of how a check validates.
 #
 # `fix` is what the report proposes when the claim fails.
 
@@ -557,6 +569,7 @@ checks = [
 
 [ai-choosing-backend-model-catalog-1]
 checks = [
+  { generated = "ai::model_catalog::recommendation_tests::published_model_table_is_generated_from_the_catalog" },
   { app = true },
 ]
 

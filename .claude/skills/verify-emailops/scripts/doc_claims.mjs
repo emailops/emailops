@@ -24,7 +24,13 @@ import path from 'node:path';
 const [phase, outDir] = process.argv.slice(2);
 if (!phase || !outDir) { console.error('usage: doc_claims.mjs fresh|locked|demo <out_dir>'); process.exit(2); }
 fs.mkdirSync(outDir, { recursive: true });
-const CLAIMS = JSON.parse(fs.readFileSync(process.env.CLAIMS_JSON, 'utf8'));
+// Reads of a claim's text are recorded, so the report can tell a case that
+// took its expectation from the docs from one that typed it in.
+const CLAIM_TEXT = JSON.parse(fs.readFileSync(process.env.CLAIMS_JSON, 'utf8'));
+const reads = new Set();
+const CLAIMS = new Proxy(CLAIM_TEXT, {
+  get: (t, k) => { if (typeof k === 'string') reads.add(k); return t[k]; },
+});
 const DATA_DIR = process.env.DATA_DIR || '';
 const port = Number(process.env.TAURI_WEBDRIVER_PORT || 4445);
 const b = await remote({ hostname: '127.0.0.1', port, path: '/', capabilities: {}, logLevel: 'error' });
@@ -75,35 +81,68 @@ async function labelsVisible(claimId, { except = [], only = null } = {}) {
 }
 
 // ── results ────────────────────────────────────────────────────────────────
-// A claim may be checked on several screens; it passes only if every part does.
-const results = new Map();
-async function claim(id, name, fn, fix = '') {
-  if (!(id in CLAIMS)) throw new Error(`doc_claims.mjs checks claim:${id}, which the docs no longer have`);
-  const rec = results.get(id) || { claim: id, parts: [], shots: [], fix };
+// One record per case ("part"); a claim may have several, on several screens.
+//
+//   claim(id, name, { covers, how, proof, fix }, async ({ doc }) => …)
+//
+//   covers  the sentences of the claim this case verifies, quoted as the reader
+//           sees them (no ** or `). Everything it does not quote stays yellow in
+//           the report. A quote the docs no longer contain fails the case.
+//   how     one sentence, in Spanish, of how the case validates — shown on hover.
+//   proof   'behaviour' (default) or 'label' when the case only sees a text on
+//           screen; a label is not proof the feature works, so it stays yellow.
+//   doc     the claim's text: doc.text, doc.match(re), doc.number(re), doc.bold().
+//           The expected value must come from here, not be typed into the case.
+//
+// The old form claim(id, name, fn, fix) still runs, and reports as "does not
+// say what it covers".
+const parts = [];
+const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+function docOf(id) {
+  const text = () => norm(CLAIMS[id]).replace(/\*\*|`/g, '');
+  const match = (re) => {
+    const m = text().match(re);
+    if (!m) throw new Error(`the docs no longer match ${re} — update the case`);
+    return m;
+  };
+  return {
+    get text() { return text(); },
+    match,
+    number: (re) => { const v = match(re)[1].toLowerCase(); return WORDS[v] ?? Number(v); },
+    bold: () => bold(id),
+  };
+}
+function callerLine() {
+  const frame = new Error().stack.split('\n').slice(2).find((l) => !/\bclaim\b \(/.test(l) && /doc_claims/.test(l)) || '';
+  const m = frame.match(/(doc_claims[\w_]*\.mjs):(\d+)/);
+  return m ? `.claude/skills/verify-emailops/scripts/${m[1]}:${m[2]}` : '';
+}
+async function claim(id, name, a, b, c) {
+  const [opts, fn, fix] = typeof a === 'function' ? [{}, a, b || ''] : [a || {}, b, c || a?.fix || ''];
+  if (!(id in CLAIM_TEXT)) throw new Error(`doc_claims.mjs checks claim:${id}, which the docs no longer have`);
+  const where = callerLine();
+  reads.clear();
   let status = 'ok', detail;
   try {
-    detail = await fn();
+    detail = await fn({ doc: docOf(id) });
     if (typeof detail === 'string' && detail.startsWith('FAIL:')) status = 'fail';
     if (typeof detail === 'string' && detail.startsWith('SKIP:')) status = 'skip';
   } catch (e) {
     status = 'fail'; detail = `FAIL: ${e.message.split('\n')[0]}`;
   }
-  rec.parts.push({ name, status, detail: String(detail) });
-  rec.shots.push(await shot(`${id}-${name}`));
-  if (fix) rec.fix = fix;
-  results.set(id, rec);
+  const readDoc = reads.has(id);
+  const screenText = (await screen().catch(() => '')).slice(0, 2000);
+  parts.push({
+    claim: id, name, tag: 'APP', status, detail: String(detail).replace(/^(FAIL|SKIP): /, ''),
+    covers: opts.covers || null, how: opts.how || '', proof: opts.proof || 'behaviour',
+    read_doc: readDoc, where, fix, screen: screenText, shots: [await shot(`${id}-${name}`)],
+  });
   console.log(`${status.toUpperCase().padEnd(4)} ${id} / ${name}: ${String(detail).slice(0, 150)}`);
 }
 const ok = (cond, good, bad) => (cond ? good : `FAIL: ${bad}`);
 function write() {
-  const out = [...results.values()].map((r) => {
-    const failed = r.parts.filter((p) => p.status === 'fail');
-    const status = failed.length ? 'fail' : r.parts.every((p) => p.status === 'skip') ? 'skip' : 'ok';
-    const detail = (failed.length ? failed : r.parts).map((p) => `${p.name}: ${p.detail.replace(/^(FAIL|SKIP): /, '')}`).join(' · ');
-    return { claim: r.claim, status, detail, shots: r.shots, fix: status === 'fail' ? r.fix : '', page: '' };
-  });
-  fs.writeFileSync(path.join(outDir, `${phase}.json`), JSON.stringify(out, null, 2));
-  console.log(`\n${out.length} claims, ${out.filter((r) => r.status === 'fail').length} failing → ${outDir}/${phase}.json`);
+  fs.writeFileSync(path.join(outDir, `${phase}.json`), JSON.stringify(parts, null, 2));
+  console.log(`\n${parts.length} cases, ${parts.filter((r) => r.status === 'fail').length} failing → ${outDir}/${phase}.json`);
 }
 
 // ── settings helpers ───────────────────────────────────────────────────────

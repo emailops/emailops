@@ -30,6 +30,7 @@ your machine.
 The in-app backend downloads models from a curated catalog, each pinned to a verified
 checksum:
 
+<!-- generated:model-catalog -->
 | Model | Download size | Memory EmailOps asks for |
 |---|---|---|
 | Qwen 3.5 4B | ~3.0 GB | 8 GB |
@@ -39,6 +40,7 @@ checksum:
 | Qwen 3.5 27B | ~17.6 GB | 24 GB |
 | Qwen 3.6 35B A3B | ~22.4 GB | 32 GB |
 | Nomic Embed Text v1.5 *(embeddings, bundled)* | ~84 MB | 1 GB |
+<!-- /generated:model-catalog -->
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
 The right-hand column is the memory EmailOps asks for before it offers a model — a

@@ -31,6 +31,7 @@ ningún correo sale nunca de tu máquina.
 El backend integrado descarga modelos de un catálogo curado, cada uno fijado a un checksum
 verificado:
 
+<!-- generated:model-catalog -->
 | Modelo | Tamaño de descarga | Memoria que pide EmailOps |
 |---|---|---|
 | Qwen 3.5 4B | ~3,0 GB | 8 GB |
@@ -40,6 +41,7 @@ verificado:
 | Qwen 3.5 27B | ~17,6 GB | 24 GB |
 | Qwen 3.6 35B A3B | ~22,4 GB | 32 GB |
 | Nomic Embed Text v1.5 *(embeddings, incluido)* | ~84 MB | 1 GB |
+<!-- /generated:model-catalog -->
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
 La columna de la derecha es la memoria que EmailOps pide antes de ofrecer un modelo — un

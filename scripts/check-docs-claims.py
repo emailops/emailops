@@ -11,7 +11,9 @@ docs/site/claims.toml saying how it is verified. This script is what makes
   readers would get a claim nothing checks (extends the four-language rule);
 - a marker has no catalogue entry, or an entry no longer has a marker;
 - an entry has no checks, or a check the runner does not understand;
-- an `app` check has no claim('id', …) case in any app phase, or a case has no `app` entry.
+- an `app` check has no claim('id', …) case in any app phase, or a case has no `app` entry;
+- a check's `covers` quotes text its block no longer contains;
+- the generated regions (<!-- generated:name -->) differ between languages.
 
 Each end of every pairing rots on its own, and none of these show up as a
 failure anywhere else, because both halves still parse.
@@ -24,7 +26,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from docs_claims_lib import LANGS, ROOT, blocks, load_catalog, pages  # noqa: E402
+from docs_claims_lib import LANGS, ROOT, blocks, load_catalog, locate, pages  # noqa: E402
 
 # Where app checks live: the WebDriver phases and the CLI phase. Each case is a
 # literal claim('id', …) call — never an id from a loop variable, or this guard
@@ -35,7 +37,8 @@ APP_SOURCES = [
     ROOT / "scripts/docs_cli_claims.py",
 ]
 CASE = re.compile(r"claim\(\s*['\"]([a-z0-9-]+)['\"]")
-KINDS = {"file", "tests", "app", "release", "manual", "none"}
+KINDS = {"file", "tests", "app", "release", "generated", "judge", "manual", "none"}
+GENERATED = re.compile(r"^<!--\s*generated:([a-z0-9-]+)\s*-->$", re.M)
 FILE_ASSERTIONS = {"quoted", "has", "lacks", "regex"}
 
 
@@ -68,6 +71,14 @@ def main() -> int:
                 )
                 problems.append(f"{lang}/{p.name}: markers differ from en ({detail})")
 
+    # 2b. generated regions are the same in every language
+    for p in pages("en"):
+        want = GENERATED.findall(p.read_text(encoding="utf-8"))
+        for lang in LANGS[1:]:
+            other = ROOT / "docs/site" / lang / p.name
+            if other.exists() and GENERATED.findall(other.read_text(encoding="utf-8")) != want:
+                problems.append(f"{lang}/{p.name}: generated regions differ from en ({', '.join(want) or 'none'})")
+
     # 3. markers ↔ catalogue
     marked = {c for ids in en.values() for c in ids if c}
     catalog = load_catalog()
@@ -77,6 +88,7 @@ def main() -> int:
         problems.append(f"claims.toml entry {cid} has no marker in the docs")
 
     # 4. entries are well formed
+    by_id = {b.claim: b for p in pages("en") for b in blocks(p) if b.claim}
     app_ids = set()
     for cid, entry in catalog.items():
         checks = entry.get("checks") or []
@@ -92,6 +104,9 @@ def main() -> int:
                 problems.append(f"claims.toml {cid}: file check needs one of {sorted(FILE_ASSERTIONS)}")
             if k == "app":
                 app_ids.add(cid)
+            for c in ch.get("covers", []):
+                if cid in by_id and not locate(by_id[cid], c):
+                    problems.append(f"claims.toml {cid}: covers «{c}», which the block no longer says")
 
     # 5. app checks ↔ docClaim() cases
     cases = {c for src in APP_SOURCES for c in CASE.findall(src.read_text(encoding="utf-8"))}

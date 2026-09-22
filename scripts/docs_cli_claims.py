@@ -4,7 +4,8 @@
 The CLI is part of the app, so the ground truth for the CLI page is the
 binary itself, run against a copy of the demo data dir (config writes must not
 touch the DB `make verify` uses). Writes <out_dir>/cli.json in the shape
-doc_claims.mjs uses: [{claim, status, detail, shots, fix}].
+doc_claims.mjs uses: one record per case, with the sentences it covers (see
+claim() below and the header of doc_claims.mjs).
 
 Usage: docs_cli_claims.py <cli binary> <demo data dir> <out_dir>
 """
@@ -22,7 +23,19 @@ from docs_claims_lib import blocks, pages  # noqa: E402
 
 CLI, DEMO, OUT = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 OUT.mkdir(parents=True, exist_ok=True)
-CLAIMS = {b.claim: b.text for p in pages("en") for b in blocks(p) if b.claim}
+
+
+class _Recorded(dict):
+    """The claims' text, recording which ones a case read: a case that never
+    reads its claim has its expectation typed in, and the report says so."""
+    reads = set()
+
+    def __getitem__(self, k):
+        self.reads.add(k)
+        return super().__getitem__(k)
+
+
+CLAIMS = _Recorded({b.claim: b.text for p in pages("en") for b in blocks(p) if b.claim})
 
 work = pathlib.Path(tempfile.mkdtemp(prefix="docs-cli-"))
 for f in DEMO.glob("emailops.db*"):
@@ -44,18 +57,23 @@ def envelope(*args):
         return rc, {"_raw": out[-400:], "_err": err[-400:]}
 
 
-results = {}
+parts = []
 
 
-def claim(cid, name, fn, fix=""):
+def claim(cid, name, fn, fix="", covers=None, how="", proof="behaviour"):
+    """One case. covers/how/proof mean what they mean in doc_claims.mjs."""
     if cid not in CLAIMS:
         raise SystemExit(f"docs_cli_claims.py checks claim:{cid}, which the docs no longer have")
+    import inspect
+    where = f"scripts/docs_cli_claims.py:{inspect.stack()[1].lineno}"
+    CLAIMS.reads.clear()
     try:
         ok, detail = fn()
     except Exception as e:  # a crashed check is a failed check, with its reason
         ok, detail = False, f"{type(e).__name__}: {e}"
-    rec = results.setdefault(cid, {"claim": cid, "parts": [], "fix": fix})
-    rec["parts"].append({"name": name, "ok": ok, "detail": detail})
+    parts.append({"claim": cid, "name": name, "tag": "CLI", "status": "ok" if ok else "fail", "detail": detail,
+                  "covers": covers, "how": how, "proof": proof, "read_doc": cid in CLAIMS.reads,
+                  "where": where, "fix": fix if not ok else "", "shots": []})
     print(f"{'OK  ' if ok else 'FAIL'} {cid} / {name}: {detail[:150]}")
 
 
@@ -238,16 +256,6 @@ def default_account():
 
 claim("cli-scripting-json-4", "cuenta por defecto", default_account)
 
-out = []
-for r in results.values():
-    failed = [p for p in r["parts"] if not p["ok"]]
-    out.append({
-        "claim": r["claim"],
-        "status": "fail" if failed else "ok",
-        "detail": " · ".join(f"{p['name']}: {p['detail']}" for p in (failed or r["parts"])),
-        "shots": [],
-        "fix": r["fix"] if failed else "",
-    })
-(OUT / "cli.json").write_text(json.dumps(out, ensure_ascii=False, indent=2))
+(OUT / "cli.json").write_text(json.dumps(parts, ensure_ascii=False, indent=2))
 shutil.rmtree(work, ignore_errors=True)
-print(f"\n{len(out)} claims, {sum(o['status'] == 'fail' for o in out)} failing → {OUT}/cli.json")
+print(f"\n{len(parts)} cases, {sum(o['status'] == 'fail' for o in parts)} failing → {OUT}/cli.json")

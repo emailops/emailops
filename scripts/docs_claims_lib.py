@@ -33,6 +33,9 @@ LINE_MARKER = re.compile(r"^<!--\s*claim:([a-z0-9-]+)\s*-->$")
 TRAILING_MARKER = re.compile(r"\s*<!--\s*claim:([a-z0-9-]+)\s*-->\s*$")
 LIST_ITEM = re.compile(r"^(?:[-*]|\d+\.)\s")
 HEADING = re.compile(r"^#{1,6}\s")
+# Brackets a region rewritten from code (make docs-gen). Layout only: the
+# parser reads it as a blank line, so a lead-in still owns the table inside.
+GENERATED_MARKER = re.compile(r"^<!--\s*/?generated:[a-z0-9-]+\s*-->$")
 
 
 class Block:
@@ -75,9 +78,13 @@ def front_matter(path):
     return out
 
 
-def blocks(path):
-    """Parse one page into blocks, in reading order."""
-    raw = path.read_text(encoding="utf-8").splitlines()
+def blocks(path, with_headings=False):
+    """Parse one page into blocks, in reading order.
+
+    with_headings also emits the headings, as Block("heading") with a
+    `level`, for renderers that lay the page out; the claim guard leaves it
+    off because a heading states nothing and carries no marker."""
+    raw = ["" if GENERATED_MARKER.match(l.strip()) else l for l in path.read_text(encoding="utf-8").splitlines()]
     i = 0
     if raw and raw[0] == "---":
         i = raw.index("---", 1) + 1
@@ -106,6 +113,10 @@ def blocks(path):
             heading = re.sub(r"\s*\{#[a-z0-9-]+\}\s*$", "", line.lstrip("#").strip())
             if line.startswith("## "):
                 section = heading
+            if with_headings:
+                h = Block("heading", i + 1, [heading], heading, None, section)
+                h.level = len(line) - len(line.lstrip("#"))
+                out.append(h)
             pending = None
             i += 1
             continue
@@ -192,6 +203,118 @@ def blocks(path):
             i = j
         pending = None
     return out
+
+
+# ── fragments: the unit a check covers and the report colours ───────────────
+# A block states several things; a check that proves one sentence must not
+# make the whole paragraph read as verified. So a block splits into fragments —
+# a sentence, a table row, a code block — and every check says which ones it
+# covers, by quoting the text it verifies (see locate()).
+
+class Fragment:
+    def __init__(self, kind, text, prefix=""):
+        self.kind = kind      # text | header | row | code
+        self.text = text      # the markdown source, as written
+        self.prefix = prefix  # the list bullet in front of an item's first fragment
+
+    def __repr__(self):
+        return f"<{self.kind} {self.text[:40]!r}>"
+
+
+ABBREVIATIONS = ("e.g", "i.e", "etc", "vs", "cf", "approx")
+# Sentence end: . ! or ? (plus any closing markup), then whitespace, then
+# something that can open a sentence. A lowercase word after the stop is a
+# continuation ("3.5 GB. in" never happens in the docs; "e.g. on" does).
+SENTENCE_END = re.compile(r"[.!?](?:\*\*|\*|`|\)|»|\")*(?=\s+[A-Z0-9`*\[(¿¡«\"])")
+
+
+def sentences(text):
+    out, start = [], 0
+    for m in SENTENCE_END.finditer(text):
+        word = text[start : m.start()].split()[-1:] or [""]
+        if word[0].lower().lstrip("(*`").endswith(ABBREVIATIONS):
+            continue
+        out.append(text[start : m.end()].strip())
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def fragments(block):
+    """Split a block into fragments, in reading order."""
+    lines = list(block.lines)
+    prefix = ""
+    if block.kind == "item":
+        m = LIST_ITEM.match(lines[0])
+        prefix = m.group(0)
+        lines = [lines[0][m.end():]] + [l.strip() for l in lines[1:]]
+    out, i, text = [], 0, []
+
+    def flush():
+        joined = "\n".join(l.rstrip() for l in text).strip()
+        text.clear()
+        for s in sentences(joined) if joined else []:
+            out.append(Fragment("text", s))
+
+    while i < len(lines):
+        s = lines[i].strip()
+        if s.startswith("```"):
+            flush()
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith("```"):
+                j += 1
+            out.append(Fragment("code", "\n".join(l.strip() if block.kind == "item" else l
+                                                  for l in lines[i : j + 1])))
+            i = j + 1
+        elif s.startswith("|"):
+            flush()
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                rows.append(lines[i].strip())
+                i += 1
+            for n, r in enumerate(rows):
+                if re.fullmatch(r"\|[\s:|-]+\|", r):
+                    continue  # the |---| separator is layout, not content
+                out.append(Fragment("header" if n == 0 else "row", r))
+        elif not s:
+            flush()
+            i += 1
+        else:
+            text.append(lines[i])
+            i += 1
+    flush()
+    if out and prefix:
+        out[0].prefix = prefix
+    return out
+
+
+def plain(md):
+    """What a reader sees of a markdown span: no emphasis, code ticks or link
+    targets, whitespace squashed. Checks quote the docs in this form."""
+    s = re.sub(r"<!--.*?-->", "", md, flags=re.S)
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"\*\*|`|(?<![\w*])\*(?=\S)|(?<=\S)\*(?![\w*])|^>\s?", "", s, flags=re.M)
+    return " ".join(s.split())
+
+
+def locate(block, phrase):
+    """Indices of the fragments a quoted phrase overlaps; [] if it is not in
+    the block (the check is quoting text the docs no longer contain)."""
+    frs = fragments(block)
+    spans, text = [], ""
+    for f in frs:
+        t = plain(f.text)
+        start = len(text) + (1 if text else 0)
+        text = f"{text} {t}" if text else t
+        spans.append((start, len(text)))
+    needle = plain(phrase)
+    at = text.find(needle) if needle else -1
+    if at < 0:
+        return []
+    end = at + len(needle)
+    return [n for n, (a, b) in enumerate(spans) if a < end and at < b]
 
 
 def load_catalog():

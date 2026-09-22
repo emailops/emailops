@@ -1,6 +1,6 @@
 ---
 name: maintain-docs
-description: Keep EmailOps' published documentation true as the app changes — every paragraph, list item, table and code block of the docs is a catalogued claim (docs/site/claims.toml) verified by running the app itself — a fresh install, a locked relaunch, the demo mailbox and the CLI — or, where the app cannot show it, against the published release, the tests, or explicitly marked manual; run the checks, fix what fails (in all four languages), catalogue any new prose, and report it with an HTML run showing each claim and its result. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
+description: Keep EmailOps' published documentation true as the app changes — every paragraph, list item, table and code block of the docs is a catalogued claim (docs/site/claims.toml) verified by running the app itself — a fresh install, a locked relaunch, the demo mailbox and the CLI — or, where the app cannot show it, against the published release, the tests, or explicitly marked manual; run the checks, fix what fails (in all four languages), catalogue any new prose, and report it with an HTML run that renders the docs themselves, every sentence coloured green (validated), yellow (not validatable or not validated yet) or red (wrong) and tagged with how it was checked; where no deterministic check reaches, the agent judges the sentence against the evidence the app run collected. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
 
@@ -55,7 +55,7 @@ same as it being true of the app a reader installs: a locale string can exist
 and never be rendered (the docs quoted "In-app (local)"; the UI says "In-app"),
 a default can be pinned in one backend and not the other. So `--with-app` is
 the verification, and the fast pass is a pre-flight — it marks every app check
-as pending (MANUAL), never as OK. Run `--with-app` before a release and after
+as pending (yellow), never as validated. Run `--with-app` before a release and after
 any change a user could see.
 
 `--with-app` drives the app in four phases (`scripts/check_docs_app.sh`):
@@ -67,21 +67,35 @@ any change a user could see.
 | `demo` | the synthetic demo mailbox | reading pane, unified inbox, calendar, attachments, tasks, memory, tag board, chat, AI Search |
 | `cli` | `emailops-cli` on a copy of the demo DB | every command, flag, exit code and JSON shape the CLI page shows; the REPL through a pseudo-terminal |
 
-The report groups claims by page. Each row quotes the claim, says how it was
-proven, and — when it fails — why, what edit it expects, and the screenshots
-the app showed. A claim is filed under the strongest method that ran:
+**The report is the docs, coloured.** One section per page: a summary table
+(fragments per kind of validation × colour), the recommended actions, then the
+page as a reader sees it. Every **fragment** — a sentence, a table row, a code
+block — is coloured and ends in one tag per validation that covers it; hover a
+tag for how it was checked, the evidence, and what to do:
 
-| Type in the report | How the claim is proven | On failure |
-|---|---|---|
-| **Comprobado en la app** | a `claim('<id>', …)` case reads the claim's text from the docs and checks it on screen | the app changed, **or the page was always wrong** — decide which before editing |
-| **Release publicada** | the asset is on the latest GitHub release and the claim names it | the release stopped publishing it, or the page names the wrong file |
-| **Tests código que comprueban eso** | named tests prove behaviour the demo cannot drive (a real Gmail server, the keychain, an Intel Mac) | the behaviour changed, or the test was renamed |
-| **Código fuente** | only where the file *is* the thing: the cask, `tauri.conf.json`, `release.yml`, `LICENSE` | the file changed and the page did not |
-| **Sin prueba automática** | nothing automatic can prove it (performance, third-party behaviour, "no phone-home") | shown as **MANUAL** with its reason — never counted as OK |
+| Tag | How the fragment is checked |
+|---|---|
+| `[APP]` | a `claim('<id>', …)` case drives the app (fresh install, locked relaunch, demo mailbox) |
+| `[CLI]` | a case in `scripts/docs_cli_claims.py` runs `emailops-cli` |
+| `[TST]` | named tests prove behaviour the demo cannot drive (a real Gmail server, the keychain, an Intel Mac) |
+| `[COD]` | only where the file *is* the thing: the cask, `tauri.conf.json`, `release.yml`, `LICENSE` |
+| `[GEN]` | the table is generated from code (`make docs-gen`; `crate::docs_sourcegen`) |
+| `[REL]` | the asset is on the latest GitHub release |
+| `[AGT]` | the agent's judgment on the evidence (step 2) |
+| `[MAN]` | manual, with its reason; or the fragment asserts nothing |
+| `[SIN]` | nothing covers it |
+
+**Green is earned per sentence.** A fragment is green only when a check that
+*quotes it* passes — `covers` in the case or catalog entry — and, for app
+cases, the case read its expected value from the docs and tested behaviour.
+Yellow says why not: the check does not declare what it covers, its
+expectation is typed into the case, it only saw a label, manual, pending, or
+nothing covers it. Red: a check that covers it fails, a check quotes text the
+page no longer has, or the agent contradicts it.
 
 A claim can combine an app check with a `manual` entry for the part the app
-check does not reach ("renaming folders is not exercised: the demo has none").
-Then it reads MANUAL, which is the honest answer, not OK.
+check does not reach ("renaming folders is not exercised: the demo has none"),
+with `covers` naming the sentences each one is about.
 
 Plus the structural guards, which vouch for the claims as a set:
 
@@ -97,7 +111,37 @@ found the docs right and the app wrong twice: the model recommendation on a
 16 GB Mac, and the Junk settings being unreachable without AI. Report those to
 the developer; do not bend the page to match a bug.
 
-## 2. Coverage — the part no script can do
+## 2. Judge what the checks do not reach
+
+After a `--with-app` run, pack the evidence and judge the yellow fragments:
+
+```bash
+uv run --no-project python scripts/docs_judge_pack.py <run dir>   # → <run>/judge/packets.json
+```
+
+Each packet is one sentence, its block, the screens the app showed while that
+block's cases ran (and the files a `judge` catalog entry names). Read every
+packet and write `<run>/judge/judgments.json` in the format documented at the
+top of `docs_judge_pack.py`, then fold it in:
+
+```bash
+bash scripts/check_docs.sh --render <run dir>
+```
+
+Rules for judging:
+
+- **Evidence first.** `supported` needs a quote from the evidence that shows
+  the sentence is true; put it in `evidence`. No quote, no `supported`.
+- **`insufficient` before guessing.** A screen that does not show the thing is
+  not proof either way.
+- **`contradicted` needs the contradicting quote and the edit** (`fix`). It
+  turns the fragment red and goes to step 4, where a human decides.
+- Name the judging model in `model`. The report shows `[AGT]` verdicts as the
+  agent's, apart from deterministic checks.
+- A sentence the agent keeps having to judge is a case waiting to be written:
+  prefer adding a deterministic check (step 5) over re-judging it every release.
+
+## 3. Coverage — the part no script can do
 
 The checks prove that what the docs *say* is true. They cannot notice what the
 docs **fail to say**. A page can be perfectly accurate about the old feature
@@ -115,7 +159,7 @@ Read the diff for signals, each with the page it touches:
 
 | Change | Docs to revisit |
 |---|---|
-| Model added, resized or retired (`ai/model_catalog.rs`) | `ai-features.md` table ×4 — the contract test fails first |
+| Model added, resized or retired (`ai/model_catalog.rs`) | `make docs-gen` regenerates the `ai-features.md` table ×4; review the prose around it |
 | New settings tab (`SettingsTab` in `SettingsDialog.tsx`) | the `**Settings → …**` path ×4 |
 | New sidebar view (`ViewMode` in `Sidebar.tsx`) | `features.md` / `ai-features.md` ×4 |
 | New CLI subcommand or flag (`cli/mod.rs`) | `cli.md` ×4 and `docs/cli.md` |
@@ -136,7 +180,7 @@ Also check, each release:
 - **Public website** (`getemailops.com`, a separate Hugo repo) — report what
   its download/feature copy needs. Do not commit or push there.
 
-## 3. Fix
+## 4. Fix
 
 Apply the corrections, prose included, in all four languages. When writing
 es/fr/de, open `src/locales/<lang>/` and copy the label — do not translate it
@@ -147,9 +191,9 @@ the app regressed (fix the app, with a regression test — that is a bug, not a
 docs task), or the page over-claimed (fix the page). The report's proposed fix
 assumes the page is wrong because that is the common case; it is not a verdict.
 
-Re-run step 1 until green.
+Re-run step 1 until nothing is red.
 
-## 4. Cataloguing new or changed prose
+## 5. Cataloguing new or changed prose
 
 `check-docs-claims.py` fails the commit the moment a block has no marker, so
 this is not optional:
@@ -158,16 +202,33 @@ this is not optional:
    line above a paragraph, table or code block; at the end of the **last** line
    of a list item (the first line can sit inside a `**bold span**` that wraps).
 2. Add `[some-id]` to `docs/site/claims.toml`. **Default to `{ app = true }`**:
-   if a reader could see it in the app, the app is where it gets checked. Fall
-   back, in order, to `release`, `tests`, a `file` that *is* the thing, and only
-   then `manual` with an honest reason. See the file header.
-3. For an app check, add a literal `claim('some-id', 'what', async () => …)` in
-   the phase that reaches that screen: `doc_claims.mjs` (fresh install / locked),
-   `doc_claims_demo.mjs` (demo mailbox) or `scripts/docs_cli_claims.py` (CLI).
-   Read what to look for from the claim itself — `labelsVisible('some-id')`
-   checks every bold span of the claim on screen; `CLAIMS['some-id']` is the
-   text — so the check follows the sentence instead of a copy of it. Never loop
-   over ids: the completeness guard only sees literal ids.
+   if a reader could see it in the app, the app is where it gets checked. A
+   reference table belongs in a generated region (`{ generated = "<test>" }`).
+   Fall back, in order, to `release`, `tests`, a `file` that *is* the thing, and
+   only then `manual` with an honest reason. Give every non-app check `covers`
+   for the sentences it proves. See the file header.
+3. For an app check, add a literal case in the phase that reaches that screen:
+   `doc_claims.mjs` (fresh install / locked), `doc_claims_demo.mjs` (demo mailbox)
+   or `scripts/docs_cli_claims.py` (CLI):
+
+   ```js
+   await claim('some-id', 'what', {
+     covers: ['the exact words it verifies'],   // as the reader sees them: no ** or `
+     how: 'Una frase: qué pantalla abre, qué lee y con qué lo compara.',
+     proof: 'behaviour',                        // 'label' if it only sees a text
+   }, async ({ doc }) => {
+     const n = doc.number(/up to (\w+) steps/);  // expected value FROM the docs
+     …
+   });
+   ```
+
+   The expected value comes from `doc` (`doc.text`, `doc.match`, `doc.number`,
+   `doc.bold`) — a case that never reads its claim is reported as a fixed
+   expectation. Test the behaviour, not the help text: change the setting and
+   observe the effect where that is cheap. Sentences a case does not quote stay
+   yellow; cover them with another case, a `manual` entry with `covers`, or
+   leave them to the agent. Never loop over ids: the completeness guard only
+   sees literal ids.
 4. Ground selectors in the live DOM first (`VERIFY_DATA_DIR=<empty dir>` gives a
    fresh instance; see `verify-emailops`). Pick toggles by the label of their
    row, never "the first toggle": the sidebar has its own.
@@ -175,10 +236,10 @@ this is not optional:
    `make docs-check ARGS="--with-app"`.
 
 When a `manual` claim becomes observable — a screen gains data, a phase learns
-to reach it — upgrade it. The MANUAL count in the report is the honest size of
+to reach it — upgrade it. The yellow count in the report is the honest size of
 what is still taken on trust.
 
-## 5. Report
+## 6. Report
 
 Chat-style, as `fix-ai-bug` does. Cover: what was checked and at which layer;
 what was broken and why (code moved, or prose was always wrong); what was

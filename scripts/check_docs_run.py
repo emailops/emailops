@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Verify every claim the published docs make and write results.json.
 
-Driven by scripts/check_docs.sh, which renders the JSON with the verify report
-renderer — the same record shape as `make verify`, so the docs report gets the
-per-page grouping, inline failures, screenshots and previous-run delta for free.
+Driven by scripts/check_docs.sh; scripts/docs_report.py renders the JSON as
+the docs themselves, each fragment coloured by what validated it.
 
-One record per claim (docs/site/claims.toml), grouped by page, typed by how
-it was proven: against the running app, by existing tests, against source,
-or not provable automatically (MANUAL — never counted as OK). Plus the
-structural guards, which vouch for the claims as a set: parity across the four
-languages, quoted labels, quoted paths, and completeness (every block of every
-page is a catalogued claim).
+Three sources of validation, merged per fragment (docs_claims_verify.py):
+the structural guards (parity, labels, paths, completeness — they vouch for
+the docs as a set and head the report), the catalog checks in
+docs/site/claims.toml, and the app itself — four phases driven by
+scripts/check_docs_app.sh, one record per case. The agent's judgments
+(judge/judgments.json in the run dir) are merged in when present.
+
+CHECK_DOCS_RENDER_ONLY=1 re-evaluates an existing run dir without driving the
+app again: the app records under <run>/app are reused, so the judgments the
+agent adds after a run can be folded into the report.
 """
 
+import datetime
 import json
 import os
 import pathlib
@@ -21,14 +25,14 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from docs_claims_lib import pages  # noqa: E402
-from docs_claims_verify import evaluate, page_title  # noqa: E402
+from docs_claims_verify import evaluate  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUN = pathlib.Path(os.environ["CHECK_DOCS_RUN"])
 WITH_APP = os.environ.get("CHECK_DOCS_WITH_APP") == "1"
-STRUCTURE = "Estructura de la doc"
-records = []
+RENDER_ONLY = os.environ.get("CHECK_DOCS_RENDER_ONLY") == "1"
+PHASES = ("fresh", "locked", "demo", "cli")
+structure = []
 
 
 def sh(cmd, timeout=1800):
@@ -50,116 +54,82 @@ def first_problem(out):
     return out.splitlines()[-1][:200] if out.splitlines() else ""
 
 
-def add(feature, typ, name, status, detail="", ms=None, desc="", **evidence):
-    records.append(
-        {
-            "feature": feature,
-            "type": typ,
-            "name": name,
-            "status": status,
-            "detail": detail,
-            "duration_ms": ms,
-            "desc": desc,
-            "evidence": {k: v for k, v in evidence.items() if v},
-        }
-    )
-
-
-# ── structure: the guards that vouch for the claims as a set ────────────────
+# ── structure: the guards that vouch for the docs as a set ──────────────────
 STATIC = [
-    ("estructura en los 4 idiomas", "bash scripts/check-docs-parity.sh",
-     "Mismas páginas, mismos weights de sidebar y mismas anclas {#id} en en/es/fr/de",
-     "alinear páginas, weight o anclas entre idiomas"),
-    ("etiquetas de UI citadas", "bash scripts/check-docs-labels.sh",
-     "Cada etiqueta que los docs mandan pulsar existe literal en src/locales/<lang>/",
-     "citar la cadena real de src/locales/<lang>/ en lugar de parafrasearla"),
-    ("rutas de fichero citadas", "uv run --no-project scripts/check-docs-paths.py",
-     "Cada ruta del repo entre backticks resuelve a un fichero que existe",
-     "corregir la ruta, o añadirla a ALLOWED_UNRESOLVED si vive en otro repo"),
-    ("cobertura completa de la doc", "uv run --no-project scripts/check-docs-claims.py",
-     "Cada párrafo, viñeta, tabla y bloque de código lleva un marcador de afirmación, igual en los 4 idiomas, y cada marcador tiene su comprobación en claims.toml",
-     "marcar el bloque nuevo y catalogarlo en docs/site/claims.toml"),
+    ("Estructura en los 4 idiomas", "bash scripts/check-docs-parity.sh",
+     "Mismas páginas, mismos weights de sidebar y mismas anclas {#id} en en/es/fr/de.",
+     "Alinear páginas, weight o anclas entre idiomas."),
+    ("Etiquetas de UI citadas", "bash scripts/check-docs-labels.sh",
+     "Cada etiqueta que la doc manda pulsar existe literal en src/locales/<lang>/.",
+     "Citar la cadena real de src/locales/<lang>/ en lugar de parafrasearla."),
+    ("Rutas de fichero citadas", "uv run --no-project scripts/check-docs-paths.py",
+     "Cada ruta del repo entre backticks resuelve a un fichero que existe.",
+     "Corregir la ruta, o añadirla a ALLOWED_UNRESOLVED si vive en otro repo."),
+    ("Cobertura completa de la doc", "uv run --no-project scripts/check-docs-claims.py",
+     "Cada párrafo, viñeta, tabla y bloque de código lleva un marcador, igual en los 4 idiomas, y cada marcador tiene su entrada en claims.toml.",
+     "Marcar el bloque nuevo y catalogarlo en docs/site/claims.toml."),
 ]
 for name, cmd, desc, fix in STATIC:
     t0 = time.time()
     rc, out = sh(cmd)
-    add(STRUCTURE, "static", name, "ok" if rc == 0 else "fail",
-        "" if rc == 0 else first_problem(out), int((time.time() - t0) * 1000),
-        desc=f"{desc} · Comando: {cmd}",
-        claim=desc, trace="" if rc == 0 else out[-4000:], proposed_fix="" if rc == 0 else fix)
+    structure.append({"name": name, "status": "ok" if rc == 0 else "fail", "how": desc, "cmd": cmd,
+                      "detail": "" if rc == 0 else first_problem(out), "fix": "" if rc == 0 else fix,
+                      "trace": "" if rc == 0 else out[-4000:], "ms": int((time.time() - t0) * 1000)})
 
-# ── the app, when asked: the ground truth ───────────────────────────────────
-# Four phases (fresh install, locked relaunch, demo mailbox, CLI); a claim
-# checked in several passes only if it passes in all of them.
-app_results = None
-if WITH_APP:
-    app_dir = RUN / "app"
+# ── the app: the ground truth ───────────────────────────────────────────────
+app_dir = RUN / "app"
+ran = RENDER_ONLY and app_dir.exists() or WITH_APP
+if WITH_APP and not RENDER_ONLY:
     rc, out = sh(f"bash scripts/check_docs_app.sh {app_dir}", timeout=3600)
     (RUN / "app.log").write_text(out)
-    app_results = {}
-    for phase in ("fresh", "locked", "demo", "cli"):
+app_parts = {}
+if ran:
+    log = (RUN / "app.log").read_text() if (RUN / "app.log").exists() else ""
+    for phase in PHASES:
         f = app_dir / f"{phase}.json"
         if not f.exists():
-            add(STRUCTURE, "doc", f"fase {phase} de la app", "fail", "la fase no dejó resultados", trace=out[-4000:])
+            structure.append({"name": f"Fase «{phase}» de la app", "status": "fail", "how": "La fase debe dejar sus resultados.",
+                              "detail": "la fase no dejó resultados", "fix": "Ver app.log.", "trace": log[-4000:], "cmd": ""})
             continue
         for r in json.loads(f.read_text()):
             if r["claim"] == "__launch__":
-                add(STRUCTURE, "doc", f"fase {phase} de la app", "fail", r["detail"], trace=out[-4000:])
+                structure.append({"name": f"Fase «{phase}» de la app", "status": "fail", "how": "La instancia debe arrancar.",
+                                  "detail": r["detail"], "fix": "Ver app.log.", "trace": log[-4000:], "cmd": ""})
                 continue
-            prev = app_results.get(r["claim"])
-            shots = [str(app_dir / s) for s in r.get("shots", [])]
-            if prev is None:
-                app_results[r["claim"]] = {**r, "shots": shots}
-            else:
-                order = {"fail": 2, "ok": 1, "skip": 0}
-                worst = max(prev["status"], r["status"], key=lambda s: order[s])
-                app_results[r["claim"]] = {
-                    "claim": r["claim"], "status": worst,
-                    "detail": f"{prev['detail']} · {phase}: {r['detail']}",
-                    "shots": prev["shots"] + shots,
-                    "fix": prev.get("fix") or r.get("fix", ""),
-                }
+            r["shots"] = [f"app/{s}" for s in r.get("shots", []) if (app_dir / s).exists()]
+            r["phase"] = phase
+            app_parts.setdefault(r["claim"], []).append(r)
 
-# ── every claim ─────────────────────────────────────────────────────────────
-t0 = time.time()
-claim_records, test_log = evaluate(app_results)
-MARK = {"ok": "✓", "fail": "✗", "manual": "○ manual", "none": "— sin afirmación", "pending": "… pendiente"}
-for r in claim_records:
-    lines = [f"{MARK.get(s, s)}  {why}" for _, s, why in r["results"]]
-    fix = ""
-    if r["status"] == "fail":
-        fix = r.get("fix") or (
-            "Corregir el párrafo en los 4 idiomas para que diga lo que hace el código, "
-            "o actualizar su entrada en docs/site/claims.toml si el código cambió a propósito."
-        )
-    # Evidence for a failure or a manual call: the screens the app showed.
-    shots = [s for s in r.get("shots", []) if pathlib.Path(s).exists()] if r["status"] in ("fail", "info") else []
-    add(r["feature"], r["type"], r["name"], r["status"], r["detail"],
-        desc=f"{r['page']}:{r['line']}", claim=r["claim"], page=r["page"],
-        trace="\n".join(lines), proposed_fix=fix, shots=shots)
-elapsed = int((time.time() - t0) * 1000)
+judgments = []
+jf = RUN / "judge" / "judgments.json"
+if jf.exists():
+    judgments = json.loads(jf.read_text())
 
-feature_order = [STRUCTURE] + [page_title(p) for p in pages("en")]
+pages, test_log = evaluate(app_parts, ran, judgments)
 data = {
     "meta": {
         "title": "Verificación de documentación de EmailOps",
-        "eyebrow": "Documentación",
-        "info_label": "Manual",
         "commit": sh("git rev-parse --short HEAD")[1],
         "branch": sh("git rev-parse --abbrev-ref HEAD")[1],
-        "tier": "con la app" if WITH_APP else "sin la app",
+        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "with_app": bool(ran),
+        "judged": bool(judgments),
     },
-    "layers": [{"layer": "docs", "status": "ok", "seconds": round(elapsed / 1000, 1)}],
-    "types": ["static", "doc", "release", "tests", "source", "manual"],
-    "features": feature_order,
-    "records": records,
+    "structure": structure,
+    "pages": pages,
 }
 (RUN / "results.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
 (RUN / "tests.log").write_text(test_log)
 
-fails = [r for r in records if r["status"] == "fail"]
-by = {s: sum(1 for r in records if r["status"] == s) for s in ("ok", "fail", "info", "skip")}
-print(f"{len(records)} casos — {by['ok']} ok, {by['fail']} fallos, {by['info']} manuales, {by['skip']} sin afirmación")
-for r in fails:
-    print(f"  FALLO  {r['name']}: {r['detail'][:160]}")
-sys.exit(1 if fails else 0)
+frags = [f for p in pages for it in p["items"] for f in it.get("fragments", []) if f["color"] != "none"]
+by = {c: sum(1 for f in frags if f["color"] == c) for c in ("green", "yellow", "red")}
+bad = [s for s in structure if s["status"] == "fail"]
+print(f"{len(frags)} fragmentos — {by['green']} verdes, {by['yellow']} amarillos, {by['red']} rojos"
+      + (f"; {len(bad)} guardas de estructura en rojo" if bad else ""))
+for p in pages:
+    for it in p["items"]:
+        for f in it.get("fragments", []):
+            if f["color"] == "red":
+                why = next((v["detail"] for v in f["validations"] if v["state"] in ("fail", "contradicted")), "")
+                print(f"  ROJO  {p['page']} [{it['claim']}] {f['text'][:70]!r}: {why[:120]}")
+sys.exit(1 if by["red"] or bad else 0)

@@ -33,6 +33,7 @@ e-mail ne quitte jamais votre machine.
 Le backend intégré télécharge les modèles depuis un catalogue sélectionné, chacun épinglé à
 une somme de contrôle vérifiée :
 
+<!-- generated:model-catalog -->
 | Modèle | Taille de téléchargement | Mémoire exigée par EmailOps |
 |---|---|---|
 | Qwen 3.5 4B | ~3,0 Go | 8 Go |
@@ -42,6 +43,7 @@ une somme de contrôle vérifiée :
 | Qwen 3.5 27B | ~17,6 Go | 24 Go |
 | Qwen 3.6 35B A3B | ~22,4 Go | 32 Go |
 | Nomic Embed Text v1.5 *(embeddings, inclus)* | ~84 Mo | 1 Go |
+<!-- /generated:model-catalog -->
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
 La colonne de droite est la mémoire qu'EmailOps exige avant de proposer un modèle — une marge

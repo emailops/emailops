@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check model-memory
+.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -344,6 +344,10 @@ verify:
 # HTML report, case by case, under src-tauri/reports/docs/. See .claude/skills/maintain-docs/.
 docs-check:
 	bash scripts/check_docs.sh $(ARGS)
+
+# Rewrite the reference tables in docs/site that are generated from code (all 4 languages).
+docs-gen:
+	UPDATE_DOCS=1 cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib -- is_generated_from
 
 # Measured peak memory per chat model, as quoted in the docs' model catalog.
 model-memory:

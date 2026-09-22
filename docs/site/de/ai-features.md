@@ -32,6 +32,7 @@ keine E-Mail jemals Ihre Maschine.
 Das integrierte Backend lädt Modelle aus einem kuratierten Katalog, jedes auf eine geprüfte
 Prüfsumme festgelegt:
 
+<!-- generated:model-catalog -->
 | Modell | Downloadgröße | Von EmailOps verlangter Speicher |
 |---|---|---|
 | Qwen 3.5 4B | ~3,0 GB | 8 GB |
@@ -41,6 +42,7 @@ Prüfsumme festgelegt:
 | Qwen 3.5 27B | ~17,6 GB | 24 GB |
 | Qwen 3.6 35B A3B | ~22,4 GB | 32 GB |
 | Nomic Embed Text v1.5 *(Embeddings, mitgeliefert)* | ~84 MB | 1 GB |
+<!-- /generated:model-catalog -->
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
 Die rechte Spalte ist der Speicher, den EmailOps verlangt, bevor es ein Modell anbietet — ein

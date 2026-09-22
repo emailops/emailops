@@ -17,12 +17,9 @@ data = json.loads(src.read_text())
 meta, layers, records = data["meta"], data["layers"], data["records"]
 features = data["features"]; types = data["types"]
 def E(s): return html.escape(str(s)).replace("\ufffd", "&#xFFFD;")  # numbers and None land here too; a model's garbled byte stays visible as an entity
-TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "doc": "La afirmación se comprueba manejando la app real: instalación limpia, bloqueo, buzón demo y CLI", "release": "Los assets de la última release publicada en GitHub", "tests": "Tests del repo que prueban el comportamiento que la doc describe", "source": "La afirmación se contrasta con el código, la configuración o los scripts de release", "manual": "Nada automático puede probarla: se revisa a mano, y el motivo va en cada caso", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
-TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "doc": "Comprobado en la app", "release": "Release publicada", "tests": "Tests código que comprueban eso", "source": "Código fuente", "manual": "Sin prueba automática", "static": "Calidad estática", "perf": "Rendimiento"}
+TYPE_HINT = {"unit": "Funciones puras y componentes aislados: cargo test (lib) y vitest", "integration": "src-tauri/tests/integration.rs contra FakeEmailProvider y BD en memoria", "contract": "Paridad de esquema, sobre JSON de la CLI, paridad i18n, serialización", "e2e": "Barrida WebDriver sobre la app real con BD demo (sweep.mjs)", "ui": "Medidas de layout y controles nativos en la app real", "oracle": "UI ↔ backend ↔ SQL sobre la BD demo (tagboard_check.mjs)", "eval": "Casos de chat con el modelo local, validados por métricas heurísticas", "static": "tsc, biome, clippy, fmt, literales i18n, auditorías", "perf": "Presupuestos de tiempo de features.json"}
+TYPE_LABEL = {"unit": "Unitarios", "integration": "Integración", "contract": "Contrato", "e2e": "End to end", "ui": "UI", "oracle": "Oráculo (UI ↔ backend ↔ BD)", "eval": "Evals de IA", "static": "Calidad estática", "perf": "Rendimiento"}
 STATUS_LABEL = {"ok": "OK", "fail": "FALLO", "skip": "N/A", "info": "INFO"}
-INFO_WORD = "Info"  # a run may rename the "info" status in meta (the docs check calls it Manual)
-if meta.get("info_label"):
-    INFO_WORD = meta["info_label"]; STATUS_LABEL["info"] = meta["info_label"].upper()
 slug = lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 # ---------- previous run for the delta ----------
@@ -47,7 +44,7 @@ def summary_table(rows, first_col):
         hint = TYPE_HINT.get(next((k for k, v in TYPE_LABEL.items() if v == label), ""), "")
         cell = (f'<a href="#{anchor}" title="{E(hint)}">{E(label)}</a>' if anchor else f'<span title="{E(hint)}">{E(label)}</span>') if hint else (f'<a href="#{anchor}">{E(label)}</a>' if anchor else E(label))
         body += f'<tr class="{cls}"><td>{cell}</td><td>{total}</td><td class="ok">{c["ok"]}</td><td class="fail">{c["fail"] or ""}</td><td class="skip">{c["skip"] or ""}</td><td class="info">{c["info"] or ""}</td></tr>'
-    return f'<table class="sum"><thead><tr><th>{first_col}</th><th>Total</th><th>OK</th><th>Fallos</th><th>N/A</th><th>{INFO_WORD}</th></tr></thead><tbody>{body}</tbody></table>'
+    return f'<table class="sum"><thead><tr><th>{first_col}</th><th>Total</th><th>OK</th><th>Fallos</th><th>N/A</th><th>Info</th></tr></thead><tbody>{body}</tbody></table>'
 
 def img(path):
     p = pathlib.Path(path)
@@ -80,12 +77,6 @@ def evidence(r):
         if ev.get("ai_trace") is not None:
             parts.append(f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>')
     if ev.get("expect"): parts.append(f'<p><span class="lbl">Esperado</span>{E(ev["expect"])}</p>')
-    # A failed doc claim has two possible culprits — the app changed, or the
-    # page was always wrong — so the case says which edit it expects rather
-    # than leaving the reader to guess from an assertion message.
-    if ev.get("proposed_fix"):
-        page = f' <span class="muted">({E(ev["page"])} ×4 idiomas)</span>' if ev.get("page") else ""
-        parts.append(f'<p class="fix"><span class="lbl">Corrección propuesta</span>{E(ev["proposed_fix"])}{page}</p>')
     if ev.get("trace"): parts.append(f'<details open><summary>Traza</summary><pre>{E(ev["trace"])}</pre></details>')
     if ev.get("log_tail"): parts.append(f'<details><summary>Últimas líneas de app.log</summary><pre>{E(ev["log_tail"])}</pre></details>')
     for s in ev.get("shots") or []: parts.append(img(s))
@@ -100,8 +91,6 @@ def rows_html(rs, expand_fail=True):
         name_cell = f'<span class="hint" title="{E(hint)}">{E(r["name"])}</span>' if hint else E(r["name"])
         cat = (r.get("evidence") or {}).get("category")  # chat eval cases: what the question exercises
         if cat: name_cell += f' <span class="muted">· {E(cat)}</span>'
-        claim = (r.get("evidence") or {}).get("claim")  # docs check: the sentence being verified
-        if claim: name_cell += f'<blockquote class="claim">{E(claim)}</blockquote>'
         model = (r.get("evidence") or {}).get("model") if per_row_model(r) else None
         det = E(r["detail"] or "") + (f' <span class="muted">· modelo {E(model)}</span>' if model else "")
         out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
@@ -187,9 +176,7 @@ dirty = meta.get("dirty") or []
 gc = counts(records)
 
 PRIVATE = bool(meta.get("private"))
-# A run that is not the full verification (the docs check) names itself in meta.
-TITLE = meta.get("title") or ("Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps")
-EYEBROW = meta.get("eyebrow") or ("Verificación privada" if PRIVATE else "Verificación completa")
+TITLE = "Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps"
 page = f'''<title>{TITLE}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -212,8 +199,6 @@ h2{{font-size:20px;font-weight:600;margin:44px 0 10px;padding-top:8px;border-top
 h3{{font-size:15px;font-weight:600;margin:24px 0 8px}}
 a{{color:var(--accent)}} .up{{font-size:12px;font-weight:400;margin-left:8px}}
 .muted{{color:var(--muted);font-weight:400;font-size:.92em}} .lbl{{display:inline-block;min-width:88px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}}
-blockquote.claim{{margin:4px 0 2px;padding:2px 0 2px 10px;border-left:2px solid var(--line);color:var(--muted);font-size:.92em;white-space:pre-line}}
-.fix{{border-left:3px solid var(--accent);padding:6px 0 6px 10px;margin:8px 0}} .fix .lbl{{min-width:auto;margin-right:8px}}
 .eyebrow{{text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--muted);font-weight:500}}
 .meta{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 24px;margin:16px 0;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}}
 .meta dt{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}} .meta dd{{margin:2px 0 0;font-family:"IBM Plex Mono",monospace;font-size:13px;word-break:break-all}}
@@ -242,7 +227,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 <ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
 </nav>
 <main id="top">
-<div class="eyebrow">{E(EYEBROW)} · {E(meta.get("tier", ""))}</div>
+<div class="eyebrow">{"Verificación privada" if PRIVATE else "Verificación completa"} · {E(meta.get("tier", ""))}</div>
 <h1>{TITLE}</h1>
 {'<p class="evalmeta" style="border-color:var(--fail)"><b>Privado.</b> Casos de <code>private-evals/</code> sobre un snapshot del buzón real: remitentes, asuntos y respuestas son datos personales. No publicar ni compartir.</p>' if PRIVATE else ''}
 <p class="muted">Todas las capas de prueba en una pasada, atribuidas por feature. Inicio {E(meta.get("started", ""))}, fin {E(meta.get("finished", ""))}.</p>
@@ -258,7 +243,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
   <div class="tile ok"><span class="eyebrow">OK</span><b>{gc["ok"]}</b></div>
   <div class="tile fail"><span class="eyebrow">Fallos</span><b>{gc["fail"]}</b></div>
   <div class="tile skip"><span class="eyebrow">N/A</span><b>{gc["skip"]}</b></div>
-  <div class="tile"><span class="eyebrow">{INFO_WORD}</span><b>{gc["info"]}</b></div>
+  <div class="tile"><span class="eyebrow">Info</span><b>{gc["info"]}</b></div>
 </div>
 
 <h2 id="resumen">Resumen global</h2>

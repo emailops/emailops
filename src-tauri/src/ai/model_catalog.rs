@@ -629,13 +629,11 @@ mod recommendation_tests {
     }
 
     // ── Contract: the published docs quote this catalog ──────────────────────
-    // docs/site/<lang>/ai-features.md renders the catalog as a table, and
-    // getting-started.md names the model the first-run wizard recommends. Both
-    // are hand-written prose on getemailops.com, with no way to notice the
-    // catalog moving underneath them — so a model added, resized or retired
-    // here must fail below rather than in a user's download.
-
-    const DOC_LANGS: [&str; 4] = ["en", "es", "fr", "de"];
+    // docs/site/<lang>/ai-features.md renders the catalog as a table, generated
+    // from CATALOG (see crate::docs_sourcegen), and getting-started.md names the
+    // model the first-run wizard recommends, in hand-written prose. A model
+    // added, resized or retired here must fail below rather than in a user's
+    // download.
 
     fn published_doc(lang: &str, page: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -654,78 +652,53 @@ mod recommendation_tests {
         }
     }
 
-    /// Fold a translated cell onto the English spelling. A decimal comma and
-    /// the French Go/Mo units are presentation; the number is the same.
-    fn fold_locale_number(cell: &str) -> String {
-        cell.replace(',', ".").replace("Go", "GB").replace("Mo", "MB")
-    }
-
-    /// The contiguous Markdown table holding `anchor`, minus its header and
-    /// separator rows. Located by content rather than by position so adding a
-    /// paragraph above it does not silently start testing a different table.
-    fn table_containing(md: &str, anchor: &str) -> Vec<Vec<String>> {
-        let lines: Vec<&str> = md.lines().collect();
-        let hit = lines
-            .iter()
-            .position(|l| l.starts_with('|') && l.contains(anchor))
-            .unwrap_or_else(|| panic!("no table row mentions {anchor}"));
-        let mut start = hit;
-        while start > 0 && lines[start - 1].starts_with('|') {
-            start -= 1;
+    /// The catalog table as `lang` prints it: chat models as a ladder by the
+    /// memory they ask for (then by download), the embedding model last.
+    fn catalog_table(lang: &str) -> String {
+        use crate::docs_sourcegen::{localized_decimal, unit};
+        let (header, embedding) = match lang {
+            "en" => (
+                ["Model", "Download size", "Memory EmailOps asks for"],
+                "embeddings, bundled",
+            ),
+            "es" => (
+                ["Modelo", "Tamaño de descarga", "Memoria que pide EmailOps"],
+                "embeddings, incluido",
+            ),
+            "fr" => (
+                ["Modèle", "Taille de téléchargement", "Mémoire exigée par EmailOps"],
+                "embeddings, inclus",
+            ),
+            "de" => (
+                ["Modell", "Downloadgröße", "Von EmailOps verlangter Speicher"],
+                "Embeddings, mitgeliefert",
+            ),
+            other => panic!("no catalog table header for {other}"),
+        };
+        let mut models: Vec<&CatalogModel> = CATALOG.iter().collect();
+        models.sort_by_key(|m| (m.kind == ModelKind::Embedding, m.min_ram_gb, m.size_bytes));
+        let mut out = format!("| {} |\n|---|---|---|\n", header.join(" | "));
+        for m in models {
+            let name = match m.kind {
+                ModelKind::Embedding => format!("{} *({embedding})*", m.display_name),
+                ModelKind::Chat => m.display_name.to_string(),
+            };
+            let size = published_size(m.size_bytes);
+            let (num, u) = size.trim_start_matches('~').split_once(' ').expect("size has a unit");
+            out.push_str(&format!(
+                "| {name} | ~{} {} | {} {} |\n",
+                localized_decimal(lang, num),
+                unit(lang, u),
+                m.min_ram_gb,
+                unit(lang, "GB")
+            ));
         }
-        let mut end = hit;
-        while end + 1 < lines.len() && lines[end + 1].starts_with('|') {
-            end += 1;
-        }
-        lines[start..=end]
-            .iter()
-            .filter(|l| !l.contains("---"))
-            .skip(1) // header
-            .map(|l| {
-                l.trim()
-                    .trim_matches('|')
-                    .split('|')
-                    .map(|c| fold_locale_number(c.trim()))
-                    .collect()
-            })
-            .collect()
+        out
     }
 
     #[test]
-    fn published_model_table_matches_the_catalog_in_every_language() {
-        for lang in DOC_LANGS {
-            let md = published_doc(lang, "ai-features.md");
-            let rows = table_containing(&md, CATALOG[0].display_name);
-            assert_eq!(
-                rows.len(),
-                CATALOG.len(),
-                "{lang}/ai-features.md lists {} models, the catalog has {}",
-                rows.len(),
-                CATALOG.len()
-            );
-            // Matched by name, not position: the table is ordered by memory so
-            // it reads as a ladder, while CATALOG order encodes which entry is
-            // the curated pick at a given size. Both orders are deliberate and
-            // neither should be forced to follow the other.
-            for model in CATALOG {
-                let row = rows
-                    .iter()
-                    .find(|r| r[0].contains(model.display_name))
-                    .unwrap_or_else(|| panic!("{lang}/ai-features.md does not list {}", model.display_name));
-                assert_eq!(
-                    row[1],
-                    published_size(model.size_bytes),
-                    "{lang}/ai-features.md quotes the wrong download size for {}",
-                    model.display_name
-                );
-                assert_eq!(
-                    row[2],
-                    format!("{} GB", model.min_ram_gb),
-                    "{lang}/ai-features.md quotes the wrong memory floor for {}",
-                    model.display_name
-                );
-            }
-        }
+    fn published_model_table_is_generated_from_the_catalog() {
+        crate::docs_sourcegen::ensure_all("ai-features.md", "model-catalog", catalog_table);
     }
 
     #[test]
