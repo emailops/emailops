@@ -1331,3 +1331,18 @@ Ollama?" from "what did users say about Ollama?", as the 2026-09-21 entry found)
 on open-email turns behind the gate (it served them on the summary above). Accepted cost: an
 app question asked with an email open as context gets no guides; removing the thread from
 the context restores them.
+
+## 2026-09-22 — Chat may answer general knowledge and pick one of two same-named senders
+
+**Decision:** An out-of-scope general-knowledge question ("what is the capital of Peru?") may
+be answered directly or declined; both pass. "resume el correo de Juan" with two senders
+called Juan may ask which one or summarise one of them faithfully; both pass. What still
+fails is searching the mailbox for a general question, inventing an email, or creating a
+draft. The chat system prompt is unchanged.
+**Context:** with the judge now able to fail a case, `oos_capital_peru` and
+`oos_juan_ambiguous` failed on both the 4B and the 35B reference model: the goldens asked
+for a refusal and a clarifying question, and both models answered instead. The answers were
+correct and faithful.
+**Rejected:** changing the chat system prompt to decline general knowledge and ask for
+clarification on ambiguous names (moves replies on every route for behaviour the developer
+does not need).
