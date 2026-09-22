@@ -506,10 +506,47 @@ checks = [
   { manual = 'Export (select, then Download) is not exercised.' },
 ]
 
+
+[feat-attachments-view-2]
+checks = [
+  { app = true },
+]
+
+[feat-attachments-view-3]
+checks = [
+  { app = true },
+]
+
+[feat-attachments-view-4]
+checks = [
+  { app = true },
+]
+
+[feat-attachments-view-5]
+checks = [
+  { app = true },
+]
+
+[feat-attachments-view-6]
+checks = [
+  { app = true },
+]
+
+[feat-attachments-view-7]
+checks = [
+  { app = true },
+]
+
 [feat-search-1]
 checks = [
   { app = true },
   { manual = 'That attachments are searched too is not exercised.' },
+]
+
+
+[feat-search-2]
+checks = [
+  { app = true },
 ]
 
 [feat-junk-bulk-1]
@@ -667,6 +704,17 @@ checks = [
 ]
 
 [ai-chat-mailbox-9]
+checks = [
+  { app = true },
+]
+
+
+[ai-chat-mailbox-10]
+checks = [
+  { app = true },
+]
+
+[ai-chat-mailbox-11]
 checks = [
   { app = true },
 ]

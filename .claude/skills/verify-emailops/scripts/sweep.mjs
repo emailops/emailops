@@ -247,13 +247,13 @@ await step('Chat', 'pregunta y respuesta', 'una pregunta recibe respuesta con fu
   const before = await bodyText();
   await type('textarea[placeholder^="Ask about your emails"]', 'Which clients are asking about Ollama?'); await click('button=Send');
   let t = '', got = false; const t0 = Date.now();
-  // Done when the bubble shows its sources footer ("N sources used" / "Sources") or its token count, and nothing is still streaming.
-  while (Date.now() - t0 < 120000) { await sleep(5000); t = await bodyText(); if ((/sources used|Sources|tokens/i.test(t.replace(before, ''))) && !/Waiting for reply/.test(t)) { got = true; break; } }
+  // Done when the bubble shows its sources footer ("1 source used" / "N sources used" / "Sources") or its token count, and nothing is still streaming.
+  while (Date.now() - t0 < 120000) { await sleep(5000); t = await bodyText(); if ((/sources? used|Sources|tokens/i.test(t.replace(before, ''))) && !/Waiting for reply/.test(t)) { got = true; break; } }
   const secs = Math.round((Date.now() - t0) / 1000);
   const answer = t.split('\n').filter(l => /Ollama|Kwame/.test(l) && !before.includes(l)).slice(0, 3).join(' / ');
   return ok(got, `${secs} s; ${answer || 'respuesta sin mención explícita a Ollama'}`, `sin respuesta tras ${secs} s`);
 });
-await step('Chat', 'nuevo chat', 'New chat vacía la conversación', async () => { await click('aria/New chat'); await sleep(1200); return ok(!/sources used|Sources/i.test(await bodyText()), 'conversación nueva', 'la respuesta anterior sigue visible'); });
+await step('Chat', 'nuevo chat', 'New chat vacía la conversación', async () => { await click('aria/New chat'); await sleep(1200); return ok(!/sources? used|Sources/i.test(await bodyText()), 'conversación nueva', 'la respuesta anterior sigue visible'); });
 await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y "Open chat panel" en la cabecera del inbox lo vuelve a acoplar', async () => {
   if (!(await exists('aria/Close chat panel'))) { await click('button=Inbox'); await sleep(1000); }
   // The docked state is a persisted pref (`chat_panel_open`), so a previous run can leave it closed: dock it first.

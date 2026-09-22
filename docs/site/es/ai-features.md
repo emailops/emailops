@@ -2,6 +2,20 @@
 title: 'Funciones de IA'
 description: 'Chatea con tu buzón, genera respuestas, clasifica correo, extrae tareas — todo con un modelo que tú controlas.'
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 <!-- claim:ai-intro-1 -->
@@ -23,7 +37,8 @@ ningún correo sale nunca de tu máquina.
   obtiene aceleración por GPU, así que será lento. <!-- claim:ai-choosing-backend-3 -->
 - **OpenRouter** — una API de pago en la nube. Requiere una clave de API, admite un
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
-  desactivado salvo que lo actives. <!-- claim:ai-choosing-backend-4 -->
+  desactivado salvo que lo actives. Su panel muestra lo gastado en el periodo actual frente a
+  ese tope, con **Iniciar un periodo nuevo** para poner la cuenta a cero. <!-- claim:ai-choosing-backend-4 -->
 
 ### El catálogo de modelos {#the-model-catalog}
 
@@ -65,7 +80,7 @@ trabajo verán sugerencias distintas. Los modelos más grandes responden mejor y
 así que la etiqueta es un punto de partida, no una regla. Los requisitos completos están en
 [Instalación](../installation/#with-local-ai).
 
-### Ajustes de rendimiento
+### Ajustes de rendimiento {#performance-knobs}
 
 - **Mantener el modelo cargado** — cuánto tiempo permanece el modelo en memoria entre turnos
   (30 minutos por defecto). Valores más altos evitan la recarga lenta; `0` lo descarga de
@@ -79,12 +94,14 @@ así que la etiqueta es un punto de partida, no una regla. Los requisitos comple
   todos los correos de una cuenta hasta un límite de correos (1000 por defecto) y, en cuentas
   mayores, solo el correo más reciente que un límite de días (365 por defecto). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
-## Chatea con tu buzón
+## Chatea con tu buzón {#chat-with-your-mailbox}
 
 <!-- claim:ai-chat-mailbox-1 -->
 Pregunta en lenguaje natural — *"¿qué dijo el abogado sobre el contrato?"*, *"resume este
 hilo"*, *"¿quién me debe todavía una respuesta?"* — y obtén una respuesta con los correos de
-origen citados. Las respuestas llegan en streaming según se generan.
+origen citados. Las respuestas llegan en streaming según se generan. **Ver en la lista de
+correos**, bajo una respuesta, pone en la lista exactamente los correos que cita, para que
+puedas abrirlos y trabajarlos.
 
 <!-- claim:ai-chat-mailbox-2 -->
 El chat vive en un panel redimensionable acoplado a la derecha de la bandeja, así que puedes
@@ -100,6 +117,21 @@ El chat busca en una cuenta cada vez, y un selector indica cuál — de modo que
 nunca sale en silencio del buzón equivocado. Cada cuenta mantiene su propia conversación
 mientras la aplicación siga abierta, así que cambiar de cuenta te devuelve donde lo dejaste
 y no a un chat en blanco.
+
+<!-- claim:ai-chat-mailbox-10 -->
+El chat también responde preguntas sobre el propio EmailOps — *"¿cómo conecto Ollama?"*,
+*"¿dónde se guardan mis datos?"*, *"¿qué muestra el Tablero de etiquetas?"* — a partir de estas guías, en
+tu idioma y sin buscar en tu buzón. La respuesta enlaza la sección de la guía que ha usado, y
+al seguir el enlace se abre el ajuste o la vista correspondiente. Con un correo abierto como
+contexto, el chat responde solo desde ese hilo, así que quita el chip para preguntar por la
+app. Puedes desactivarlo con **Responder preguntas sobre EmailOps** en
+**Ajustes → IA: backend y modelos**; entonces el chat solo conoce tu buzón.
+
+<!-- claim:ai-chat-mailbox-11 -->
+Cada respuesta tiene un panel **Mostrar razonamiento** que enumera lo que ha pasado, en
+orden: qué ruta ha seguido la pregunta y qué lo ha decidido, el planificador de consultas, la
+búsqueda en el buzón, las secciones de las guías usadas, cada llamada al modelo con sus
+tiempos y cada llamada a herramientas con sus argumentos y su resultado.
 
 <!-- claim:ai-chat-mailbox-4 -->
 Por dentro, el chat combina recuperación (búsqueda semántica sobre tu correo indexado) con
@@ -120,7 +152,7 @@ Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recu
 (reescritura de consulta, reordenación) en
 **Ajustes → IA: backend y modelos → Prompts del chat**.
 
-## Borradores con IA
+## Borradores con IA {#ai-drafts}
 
 <!-- claim:ai-ai-drafts-1 -->
 Un botón **Borrador con IA** junto a Responder a todos redacta una respuesta basada en el hilo
@@ -177,7 +209,7 @@ una conversación con ese hilo como contexto.
 El tablero necesita la clasificación: está vacío hasta que el correo tiene etiquetas y no se
 muestra con las funciones de IA desactivadas.
 
-## Búsqueda semántica
+## Búsqueda semántica {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
 Los correos se indexan localmente para que la búsqueda case por significado y no solo por
@@ -185,13 +217,13 @@ palabras clave — describe lo que recuerdas y EmailOps lo encuentra. Esto tambi
 reconstruye el índice desde cero tras cambiar el modelo de embeddings, en
 **Ajustes → Búsqueda con IA**.
 
-## Traducción
+## Traducción {#translation}
 
 <!-- claim:ai-translation-1 -->
 Aparecen botones de traducción en los correos escritos en otro idioma y en la ventana de
 redacción. El prompt de traducción es editable como los demás.
 
-## Tareas
+## Tareas {#tasks}
 
 <!-- claim:ai-tasks-1 -->
 *Experimental.* EmailOps revisa el correo en busca de acciones, compromisos y fechas límite y
@@ -201,7 +233,7 @@ remitentes y etiquetas (las newsletters se excluyen por defecto), limitar las ta
 correo, acotar hasta dónde llega la extracción hacia atrás y procesar correo antiguo bajo
 demanda.
 
-## Memoria
+## Memoria {#memory}
 
 <!-- claim:ai-memory-1 -->
 *Experimental.* Los hechos que el asistente aprende sobre tus contactos, dominios y proyectos
@@ -210,14 +242,15 @@ hechos candidatos se puntúan y se promocionan al superar un umbral; los de baja
 caducan. Todo lo aprendido es inspeccionable, y el subsistema entero tiene un interruptor
 general.
 
-## Lentes
+## Lentes {#lenses}
 
 <!-- claim:ai-lenses-1 -->
 *Experimental.* Vistas tipadas sobre tu buzón — proyecciones estructuradas, guardadas y
 extraídas por IA (piensa en "todas las facturas con importe y vencimiento") que creas y
-ejecutas desde la barra lateral.
+ejecutas desde la barra lateral. Una fila que excluyes desaparece de la vista; **Ver filas
+excluidas** las vuelve a mostrar para que puedas incluir alguna de nuevo.
 
-## Apagarlo todo
+## Apagarlo todo {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
 **Ajustes → IA: backend y modelos → Funciones de IA** es un interruptor general.

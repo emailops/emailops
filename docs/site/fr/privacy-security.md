@@ -2,6 +2,10 @@
 title: 'Confidentialité et sécurité'
 description: "Où votre courrier est stocké, ce qui quitte votre machine, et les protections contre le courrier lui-même."
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 <!-- claim:priv-intro-1 -->
@@ -107,7 +111,7 @@ Passer à Ollama garde également l'inférence en local, simplement dans un proc
 votre machine. Seul OpenRouter envoie du contenu hors de l'appareil. Voir
 [choisir un backend](../ai-features/#choosing-a-backend).
 
-## Protection contre le courrier lui-même
+## Protection contre le courrier lui-même {#protection-from-the-mail-itself}
 
 <!-- claim:priv-protection-from-1 -->
 L'e-mail est une surface d'attaque. Les défenses côté client :
@@ -115,7 +119,10 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
 - **Blocage du contenu distant** — images externes, pixels de suivi et autres ressources
   distantes sont bloqués jusqu'à autorisation. Une bannière par e-mail permet de les charger
   une fois, ou vous pouvez faire confiance à un expéditeur de façon permanente. C'est ce qui
-  empêche un expéditeur de savoir quand et combien de fois vous avez ouvert un message. <!-- claim:priv-protection-from-2 -->
+  empêche un expéditeur de savoir quand et combien de fois vous avez ouvert un message.
+  **Paramètres → Confidentialité et sécurité**
+  liste, par compte, les expéditeurs à qui vous avez fait
+  confiance, avec **Révoquer** qui rebloque leurs images. <!-- claim:priv-protection-from-2 -->
 - **Notation des indésirables et du courrier de masse** — chaque message est noté localement
   pour le spam et le courrier de masse non désiré. Vos corrections
   (« indésirable » / « légitime ») l'entraînent. Le courrier signalé est estompé ou masqué,
@@ -127,7 +134,7 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
   d'événements et objets embarqués avant affichage, des deux côtés de l'application. Les
   pièces jointes ne sont jamais ouvertes à votre place. <!-- claim:priv-protection-from-5 -->
 
-## Verrouiller l'application
+## Verrouiller l'application {#locking-the-app}
 
 <!-- claim:priv-locking-app-1 -->
 Définissez un **mot de passe principal** dans **Paramètres → Confidentialité et sécurité** et

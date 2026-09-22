@@ -2,6 +2,10 @@
 title: 'Privacy & security'
 description: 'Where your mail is stored, what leaves your machine, and the controls that protect you from the mail itself.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 <!-- claim:priv-intro-1 -->
@@ -103,7 +107,7 @@ Switching to Ollama keeps inference local too, just in a separate process on you
 Only OpenRouter sends content off the device. See
 [choosing a backend](../ai-features/#choosing-a-backend).
 
-## Protection from the mail itself
+## Protection from the mail itself {#protection-from-the-mail-itself}
 
 <!-- claim:priv-protection-from-1 -->
 Email is an attack surface. The client-side defences:
@@ -111,7 +115,8 @@ Email is an attack surface. The client-side defences:
 - **Remote content blocking** — external images, tracking pixels and other remote resources
   are blocked until you allow them. A per-email banner lets you load them once, or you can
   trust a specific sender permanently. This is what stops senders learning when and how often
-  you opened a message. <!-- claim:priv-protection-from-2 -->
+  you opened a message. **Settings → Privacy & Security** lists the senders you trusted,
+  per account, with a **Revoke** control that blocks their images again. <!-- claim:priv-protection-from-2 -->
 - **Junk and bulk scoring** — every message is scored locally for spam and unwanted bulk
   mail. Your "junk" / "not junk" corrections train it. Flagged mail is faded or hidden, never
   deleted or moved on the server unless you explicitly confirm. <!-- claim:priv-protection-from-3 -->
@@ -122,7 +127,7 @@ Email is an attack surface. The client-side defences:
   objects before it is displayed, on both sides of the app. Attachments are never opened on
   your behalf. <!-- claim:priv-protection-from-5 -->
 
-## Locking the app
+## Locking the app {#locking-the-app}
 
 <!-- claim:priv-locking-app-1 -->
 Set a **main password** in **Settings → Privacy & Security** and EmailOps stays locked on

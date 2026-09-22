@@ -2,6 +2,10 @@
 title: 'Datenschutz und Sicherheit'
 description: 'Wo Ihre E-Mails gespeichert werden, was Ihre Maschine verlässt, und die Schutzmechanismen gegen die E-Mails selbst.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 <!-- claim:priv-intro-1 -->
@@ -106,7 +110,7 @@ Der Wechsel zu Ollama hält die Inferenz ebenfalls lokal, nur in einem eigenen P
 Ihrer Maschine. Nur OpenRouter sendet Inhalte vom Gerät weg. Siehe
 [Backend wählen](../ai-features/#choosing-a-backend).
 
-## Schutz vor den E-Mails selbst
+## Schutz vor den E-Mails selbst {#protection-from-the-mail-itself}
 
 <!-- claim:priv-protection-from-1 -->
 E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
@@ -114,7 +118,9 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 - **Blockieren entfernter Inhalte** — externe Bilder, Tracking-Pixel und andere entfernte
   Ressourcen werden blockiert, bis Sie sie erlauben. Ein Hinweisbalken je E-Mail lädt sie
   einmalig, oder Sie vertrauen einem bestimmten Absender dauerhaft. Das verhindert, dass
-  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben. <!-- claim:priv-protection-from-2 -->
+  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben. **Einstellungen →
+  Datenschutz & Sicherheit** listet je Konto die Absender auf, denen Sie vertraut haben, mit
+  **Widerrufen**, das deren Bilder wieder blockiert. <!-- claim:priv-protection-from-2 -->
 - **Junk- und Massenbewertung** — jede Nachricht wird lokal auf Spam und unerwünschte
   Massen-E-Mails bewertet. Ihre Korrekturen („Junk“ / „kein Junk“) trainieren sie. Markierte
   Post wird abgeschwächt oder ausgeblendet, aber nie auf dem Server gelöscht oder verschoben,
@@ -126,7 +132,7 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
   Event-Handlern und eingebetteten Objekten befreit, und zwar auf beiden Seiten der App.
   Anhänge werden nie eigenmächtig geöffnet. <!-- claim:priv-protection-from-5 -->
 
-## Die App sperren
+## Die App sperren {#locking-the-app}
 
 <!-- claim:priv-locking-app-1 -->
 Legen Sie unter **Einstellungen → Datenschutz & Sicherheit** ein **Hauptpasswort** fest, dann

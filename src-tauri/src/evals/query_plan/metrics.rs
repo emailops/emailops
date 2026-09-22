@@ -5,7 +5,7 @@
 // is answerable without another model.
 
 use crate::evals::query_plan::case_loader::PlanCase;
-use crate::services::chat::planner::SearchPlan;
+use crate::services::chat::planner::{PlanOutcome, SearchPlan};
 
 /// A case must account for every field the plan sets: each one changes the
 /// search that runs, so "the case never mentioned it" is not a pass. A field
@@ -100,6 +100,41 @@ fn render_expected(value: &serde_yaml::Value) -> String {
     }
 }
 
+/// Score one case against the planner's whole verdict. An app-help verdict
+/// carries no plan, like a defer, so only the outcome tells them apart: an
+/// app-help case wants that verdict, and any other case fails on it.
+pub fn evaluate_outcome(
+    case: &PlanCase,
+    planned: PlannedOutcome<'_>,
+    outcome: PlanOutcome,
+    help_page: Option<&str>,
+) -> PlanReport {
+    let is_app_help = outcome == PlanOutcome::AppHelp;
+    if case.expect_app_help || is_app_help {
+        let verdict_ok = case.expect_app_help && is_app_help;
+        let expected = if case.expect_app_help {
+            "a question about EmailOps (app_help)"
+        } else if case.expect_defer {
+            "defer to the tool loop"
+        } else {
+            "a search plan"
+        };
+        let mut checks = vec![FieldCheck::verdict("app_help", expected, outcome.as_str(), verdict_ok)];
+        if verdict_ok && !case.expect_help_page_any.is_empty() {
+            let page_ok = help_page.is_some_and(|p| case.expect_help_page_any.iter().any(|want| want == p));
+            checks.push(FieldCheck::verdict(
+                "page",
+                &case.expect_help_page_any.join(" | "),
+                help_page.unwrap_or("(none)"),
+                page_ok,
+            ));
+        }
+        let passed = checks.iter().all(FieldCheck::passed);
+        return PlanReport { checks, passed };
+    }
+    evaluate(case, planned)
+}
+
 /// Score one case against the plan the model produced.
 pub fn evaluate(case: &PlanCase, planned: PlannedOutcome<'_>) -> PlanReport {
     let mut checks = Vec::new();
@@ -184,7 +219,7 @@ mod tests {
     fn plan(json: &str) -> SearchPlan {
         match parse_plan_detailed(json).0 {
             Plan::Search(p) => *p,
-            Plan::Defer => panic!("expected a plan for {json}"),
+            other => panic!("expected a plan for {json}, got {other:?}"),
         }
     }
 
@@ -279,6 +314,62 @@ mod tests {
         let c = case("id: x\nquestion: q\nexpect_defer: true\n");
         assert!(evaluate(&c, None).passed);
         assert!(!evaluate(&c, Some(&plan(r#"{"from": "x"}"#))).passed);
+    }
+
+    // ── app help ────────────────────────────────────────────────────────
+    // An app-help verdict carries no plan, just like a defer, so `evaluate`
+    // alone cannot tell them apart. The outcome can: a question about
+    // EmailOps must be flagged as such, and a mailbox or draft question must
+    // never be, or it loses its mailbox context.
+
+    #[test]
+    fn an_app_help_case_wants_the_app_help_verdict() {
+        let c = case("id: x\nquestion: q\nexpect_app_help: true\n");
+        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, None).passed);
+
+        let report = evaluate_outcome(&c, None, PlanOutcome::Deferred, None);
+        assert!(!report.passed);
+        assert_eq!(report.checks[0].actual, "defer");
+    }
+
+    #[test]
+    fn a_defer_case_fails_on_an_app_help_verdict() {
+        let c = case("id: x\nquestion: q\nexpect_defer: true\n");
+        assert!(evaluate_outcome(&c, None, PlanOutcome::Deferred, None).passed);
+        assert!(!evaluate_outcome(&c, None, PlanOutcome::AppHelp, None).passed);
+    }
+
+    #[test]
+    fn a_search_case_fails_on_an_app_help_verdict() {
+        let c = case("id: x\nquestion: q\nexpect:\n  from: marisol\n");
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None);
+        assert!(!report.passed);
+        assert_eq!(report.checks[0].actual, "app_help");
+    }
+
+    #[test]
+    fn a_search_case_still_scores_its_fields() {
+        let c = case("id: x\nquestion: q\nexpect:\n  from: marisol\n");
+        let p = plan(r#"{"from": "Marisol"}"#);
+        assert!(evaluate_outcome(&c, Some(&p), PlanOutcome::Search, None).passed);
+    }
+
+    // The planner also names the guide page; a case can pin which pages
+    // answer the question.
+
+    #[test]
+    fn an_app_help_case_scores_the_page_it_names() {
+        let c =
+            case("id: x\nquestion: q\nexpect_app_help: true\nexpect_help_page_any: [ai-features, getting-started]\n");
+        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("ai-features")).passed);
+
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("troubleshooting"));
+        assert!(!report.passed);
+        let page = report.checks.iter().find(|c| c.field == "page").expect("page row");
+        assert_eq!(page.actual, "troubleshooting");
+
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None);
+        assert!(!report.passed, "a verdict without a page misses the expected page");
     }
 
     #[test]

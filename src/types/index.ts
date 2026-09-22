@@ -672,6 +672,20 @@ export interface LlmCallTrace {
   output?: string | null;
 }
 
+/** Mirrors `HelpTrace` on the Rust side: the guides lookup of one turn. */
+export interface HelpTrace {
+  /** Language the sections were served in. */
+  lang: string;
+  /** Distinct sections FTS + vector search returned before the gate. */
+  candidates: number;
+  /** Sections that passed the similarity gate and rode in the prompt. */
+  included: number;
+  topSimilarity?: number | null;
+  vectorAvailable: boolean;
+  elapsedMs: number;
+  chunkIds?: string[];
+}
+
 export interface ChatTrace {
   route: RouteDecision;
   retrieval?: RetrievalTrace | null;
@@ -685,7 +699,36 @@ export interface ChatTrace {
   llmStreamingMs?: number | null;
   /** Per-LLM-call latency breakdown — each tool round + the final stream. */
   llmCalls?: LlmCallTrace[];
+  /** What the EmailOps-help lookup (bundled guides) did this turn. */
+  help?: HelpTrace | null;
+  /** The turn in execution order, built by the backend
+   *  (`services::chat::trace_steps`) — the one ordering the reasoning panel,
+   *  the CLI and the eval report all walk. */
+  steps: TraceStep[];
 }
+
+/** Mirrors `KvCacheStats`: prompt tokens served from the KV cache. */
+export interface KvCacheStats {
+  cached: number;
+  total: number;
+  /** Whole-number percentage served from cache. */
+  pct: number;
+}
+
+/** Mirrors `CacheAction`: what one LLM call did to the prompt cache. */
+export interface CacheAction {
+  kind: 'extend' | 'anchor-hit' | 'wiped' | 'cold-fresh';
+  /** One-line explanation (English, from the backend). */
+  detail: string;
+}
+
+/** Mirrors `TraceStep`. `llm` / `tool` index into `llmCalls` / `toolCalls`. */
+export type TraceStep =
+  | { type: 'route' }
+  | { type: 'retrieval' }
+  | { type: 'help' }
+  | { type: 'llm'; index: number; kvCache: KvCacheStats | null; cacheAction: CacheAction | null }
+  | { type: 'tool'; index: number };
 
 export interface ChatRenamedEvent {
   conversationId: string;

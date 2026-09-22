@@ -129,6 +129,26 @@ export default (h) => async function demoCases() {
     return ok(hits >= 1, `buscar «Ollama» (solo en un cuerpo) encuentra ${hits} correo(s)`, 'la búsqueda de texto no encuentra nada en los cuerpos');
   });
 
+  await claim('feat-search-2', 'operadores', {
+    covers: ['| from:ana | sender address or name |', '| subject:invoice | subject line |', '| tag:newsletter / tag:intent=request | a classifier tag, optionally within one facet |'],
+    partial: 'to:, before:/after: e id: no se ejecutan aquí',
+    how: 'Lee los operadores de la tabla y los ejecuta en el buscador del buzón demo con un valor tomado de la propia demo: cada búsqueda debe devolver menos hilos que la bandeja completa y alguno.',
+  }, async ({ doc }) => {
+    doc.match(/narrowed with operators/);
+    await view('Inbox');
+    const all = await rowCount();
+    const probes = [['from:', 'nadia'], ['subject:', 'ollama'], ['tag:', 'newsletter']];
+    const results = [];
+    for (const [op, value] of probes) {
+      await search(`${op}${value}`);
+      results.push([`${op}${value}`, await rowCount()]);
+    }
+    await search('');
+    const bad = results.filter(([, n]) => !(n > 0 && n < all));
+    return ok(!bad.length, results.map(([q, n]) => `${q} → ${n}`).join(', ') + ` (bandeja: ${all})`,
+      `no acotan la lista: ${bad.map(([q, n]) => `${q} → ${n}`).join(', ')} (bandeja: ${all})`);
+  });
+
   // ── reading pane ───────────────────────────────────────────────────────
   await view('Inbox');
   await openThread('Nadia Brunner');
@@ -180,6 +200,21 @@ export default (h) => async function demoCases() {
       `panel: ${all.includes('Close chat panel') || all.includes('Open chat panel')}, vista completa: ${all.includes('Open full chat view')}, tirador: ${geo.handle}`);
   });
   await view('Chat');
+  await claim('ai-chat-mailbox-11', 'panel de razonamiento', {
+    covers: ['Every answer has a Show reasoning panel that lists what happened, in order: which route the question took and what decided it, the query planner, the mailbox search, the guide sections used, each model call with its timing, and each tool call with its arguments and result.'],
+    partial: 'el detalle depende de la traza guardada en la conversación demo',
+    how: 'Abre la conversación guardada del buzón demo y despliega el panel que nombra la doc («Show reasoning») bajo una respuesta: debe listar la ruta y las llamadas con sus tiempos.',
+  }, async ({ doc }) => {
+    const label = doc.match(/a (Show reasoning) panel/)[1];
+    const opened = await js((l) => {
+      const el = [...document.querySelectorAll('button,[role=button],summary')].find((e) => e.offsetParent && e.innerText.trim().startsWith(l));
+      el?.click();
+      return !!el;
+    }, label);
+    await sleep(900);
+    const panel = await screen();
+    return ok(opened && /route|ruta|tool|ms\b/i.test(panel), `«${label}» despliega la traza de la respuesta`, opened ? 'el panel no muestra la traza' : `no hay «${label}» bajo la respuesta`);
+  });
   await claim('ai-chat-mailbox-3', 'selector de cuenta', {
     covers: ['a picker names which one'], partial: 'que la búsqueda se limite a esa cuenta necesita un modelo descargado',
     how: 'Abre el chat y comprueba que muestra el nombre de la cuenta sobre la que responde.',
@@ -219,10 +254,11 @@ export default (h) => async function demoCases() {
   });
   await view('Attachments');
   await claim('feat-attachments-view-1', 'vista y previsualización', {
-    covers: ['One place listing every attachment across your mail'], partial: 'la exportación no se ejecuta',
-    how: 'Abre la vista Attachments del buzón demo, lee cuántos adjuntos lista y abre un PDF: debe previsualizarse con la opción «Open Externally».',
+    covers: ['One place for the attachments you care about — invoices, contracts, receipts — with preview and download, instead of digging back through threads.', 'Open it from Attachments in the sidebar.'],
+    partial: 'la descarga no se ejecuta',
+    how: 'Abre la vista Attachments desde la barra lateral del buzón demo, lee cuántos adjuntos lista y abre un PDF: debe previsualizarse con la opción «Open Externally».',
   }, async ({ doc }) => {
-    doc.match(/listing every attachment/);
+    doc.match(/listing|attachments you care about/);
     const s = await screen();
     const count = Number(/Attachments\s*\((\d+)\)/.exec(s)?.[1] || 0);
     // The innermost element naming a file, then its clickable row: the first match
@@ -235,8 +271,64 @@ export default (h) => async function demoCases() {
     await sleep(1500);
     const after = await buttons();
     await b.keys('Escape').catch(() => {});
+    await sleep(600);
     return ok(count > 0 && after.some((x) => /Open Externally/.test(x)), `${count} adjuntos en un sitio; se abren para previsualizar`, 'no se listan o no se abren');
   });
+  await claim('feat-attachments-view-2', 'reglas', {
+    covers: ['Click Manage Rules (or Create a Rule on the empty view) and fill in:'],
+    partial: 'que la vista empiece vacía no se observa: el buzón demo ya trae reglas',
+    how: 'Pulsa «Manage Rules» en la vista Attachments y comprueba que abre el formulario de reglas.',
+  }, async ({ doc }) => {
+    const label = doc.match(/Click (Manage Rules)/)[1];
+    await press(label);
+    await sleep(1200);
+    const dialog = await screen();
+    return ok(/Rule Name|Sender Email Pattern/.test(dialog), `«${label}» abre el formulario de reglas`, `«${label}» no abre el formulario`);
+  });
+  const ruleForm = await screen();
+  await claim('feat-attachments-view-3', 'nombre', {
+    covers: bold('feat-attachments-view-3'), proof: 'label',
+    how: 'Comprueba que los campos que nombra la doc están en el formulario de reglas de adjuntos. Que el patrón filtre de verdad necesita correo nuevo entrando.',
+  }, async () => {
+    const fields = bold('feat-attachments-view-3');
+    const missing = fields.filter((f) => !ruleForm.includes(f));
+    return ok(!missing.length, `${fields.join(', ')} en el formulario`, `falta: ${missing.join(', ')}`);
+  });
+  await claim('feat-attachments-view-4', 'remitente', {
+    covers: bold('feat-attachments-view-4'), proof: 'label',
+    how: 'Comprueba que los campos que nombra la doc están en el formulario de reglas de adjuntos. Que el patrón filtre de verdad necesita correo nuevo entrando.',
+  }, async () => {
+    const fields = bold('feat-attachments-view-4');
+    const missing = fields.filter((f) => !ruleForm.includes(f));
+    return ok(!missing.length, `${fields.join(', ')} en el formulario`, `falta: ${missing.join(', ')}`);
+  });
+  await claim('feat-attachments-view-5', 'asunto y fichero', {
+    covers: bold('feat-attachments-view-5'), proof: 'label',
+    how: 'Comprueba que los campos que nombra la doc están en el formulario de reglas de adjuntos. Que el patrón filtre de verdad necesita correo nuevo entrando.',
+  }, async () => {
+    const fields = bold('feat-attachments-view-5');
+    const missing = fields.filter((f) => !ruleForm.includes(f));
+    return ok(!missing.length, `${fields.join(', ')} en el formulario`, `falta: ${missing.join(', ')}`);
+  });
+  await claim('feat-attachments-view-6', 'etiquetas', {
+    covers: bold('feat-attachments-view-6'), proof: 'label',
+    how: 'Comprueba que los campos que nombra la doc están en el formulario de reglas de adjuntos. Que el patrón filtre de verdad necesita correo nuevo entrando.',
+  }, async () => {
+    const fields = bold('feat-attachments-view-6');
+    const missing = fields.filter((f) => !ruleForm.includes(f));
+    return ok(!missing.length, `${fields.join(', ')} en el formulario`, `falta: ${missing.join(', ')}`);
+  });
+  await claim('feat-attachments-view-7', 'aplicar a lo existente', {
+    covers: ['tick Apply to existing emails after creating to collect from the mail you already have'], proof: 'label',
+    how: 'Comprueba que el formulario de reglas ofrece aplicar la regla al correo ya sincronizado.',
+  }, async ({ doc }) => {
+    doc.match(/Apply to existing emails/);
+    return ok(/Apply to existing emails/.test(ruleForm), 'el formulario ofrece aplicar la regla a lo ya sincronizado', 'no lo ofrece');
+  });
+  await b.keys('Escape').catch(() => {});
+  await sleep(800);
+  await press('Cancel').catch(() => {});
+  await sleep(600);
   await view('Tasks');
   await claim('ai-tasks-1', 'panel', {
     covers: ['collects them in a Tasks panel'], partial: 'la extracción necesita un modelo; aquí se ven las tareas ya extraídas del buzón demo',

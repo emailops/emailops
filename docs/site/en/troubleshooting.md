@@ -2,9 +2,15 @@
 title: 'Troubleshooting'
 description: 'Fixes for the problems people hit most: AI unavailable, slow chat, keyword-only search, sync errors.'
 weight: 60
+nav:
+  ai-features-are-unavailable: settings/ai
+  chat-is-slow: settings/ai
+  gpu-not-used: settings/ai
+  search-returns-keyword-results-only: settings/aisearch
+  classification-is-not-tagging-anything: settings/classification
 ---
 
-## AI features are unavailable
+## AI features are unavailable {#ai-features-are-unavailable}
 
 <!-- claim:trbl-ai-features-1 -->
 With the **in-app** backend, check that the recommended model finished downloading in
@@ -26,7 +32,7 @@ On an **Intel Mac** the in-app AI cannot run at all — it needs an Apple Silico
 newer), so EmailOps keeps it switched off. Use OpenRouter instead. Ollama will install, but it
 gets no GPU acceleration on Intel either, so expect it to be too slow to be pleasant.
 
-## Chat is slow
+## Chat is slow {#chat-is-slow}
 
 <!-- claim:trbl-chat-slow-1 -->
 Local inference takes real time — on a modest machine, a chat answer can take tens of
@@ -44,7 +50,7 @@ seconds. Things that help, in rough order of effect:
    what to reduce first when a model only just fits. <!-- claim:trbl-chat-slow-5 -->
 5. **Turn off thinking mode**, which trades speed for accuracy. <!-- claim:trbl-chat-slow-6 -->
 
-## The GPU is not being used (Windows / Linux)
+## The GPU is not being used (Windows / Linux) {#gpu-not-used}
 
 <!-- claim:trbl-gpu-used-1 -->
 The app log says which device a model was loaded onto. A working GPU load looks like:
@@ -67,7 +73,7 @@ fell back to the CPU — the app still works, just slower. Check, in order:
 <!-- claim:trbl-gpu-used-6 -->
 Virtual machines and remote desktops frequently expose no GPU at all, which is expected.
 
-## Search returns keyword results only
+## Search returns keyword results only {#search-returns-keyword-results-only}
 
 <!-- claim:trbl-search-returns-1 -->
 Semantic search needs embeddings. Open **Settings → AI Search**, check that the categories
@@ -78,7 +84,7 @@ model, rebuild the index from the same screen.
 Also check **Limit AI processing** in AI settings — mail older than that window is skipped
 deliberately.
 
-## Classification is not tagging anything
+## Classification is not tagging anything {#classification-is-not-tagging-anything}
 
 - Confirm **auto-classify new emails** is on in **Settings → AI Classification**. <!-- claim:trbl-classification-tagging-1 -->
 - Check which Gmail categories are selected; if none are, nothing gets classified. <!-- claim:trbl-classification-tagging-2 -->

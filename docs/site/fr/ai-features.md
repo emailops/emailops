@@ -2,6 +2,20 @@
 title: "Fonctions d'IA"
 description: "Discutez avec votre boîte, générez des réponses, classez le courrier, extrayez des tâches — le tout sur un modèle que vous contrôlez."
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 <!-- claim:ai-intro-1 -->
@@ -25,7 +39,9 @@ e-mail ne quitte jamais votre machine.
   lent. <!-- claim:ai-choosing-backend-3 -->
 - **OpenRouter** — une API cloud payante. Nécessite une clé d'API, gère un plafond
   budgétaire mensuel et envoie le contenu de vos e-mails à un tiers — elle reste donc
-  désactivée tant que vous ne l'activez pas. <!-- claim:ai-choosing-backend-4 -->
+  désactivée tant que vous ne l'activez pas. Son panneau affiche les dépenses de la période en
+  cours face à ce plafond, avec **Démarrer une nouvelle période** pour remettre le compteur à
+  zéro. <!-- claim:ai-choosing-backend-4 -->
 
 ### Le catalogue de modèles {#the-model-catalog}
 
@@ -67,7 +83,7 @@ station de travail verront donc des suggestions différentes. Les gros modèles 
 et tournent plus lentement : la mention est un point de départ, pas une règle. Les exigences
 complètes sont dans [Installation](../installation/#with-local-ai).
 
-### Réglages de performance
+### Réglages de performance {#performance-knobs}
 
 - **Maintenir le modèle chargé** — combien de temps le modèle reste en mémoire entre deux
   tours
@@ -82,12 +98,14 @@ complètes sont dans [Installation](../installation/#with-local-ai).
   les e-mails d'un compte jusqu'à une limite d'e-mails (1000 par défaut) et, pour les comptes
   plus volumineux, seulement le courrier plus récent qu'une limite en jours (365 par défaut). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
-## Discuter avec votre boîte
+## Discuter avec votre boîte {#chat-with-your-mailbox}
 
 <!-- claim:ai-chat-mailbox-1 -->
 Posez vos questions en langage naturel — *« qu'a dit l'avocat à propos du contrat ? »*,
 *« résume ce fil »*, *« qui me doit encore une réponse ? »* — et obtenez une réponse citant
 les e-mails sources. Les réponses arrivent en flux au fur et à mesure de leur génération.
+**Afficher dans la liste des e-mails**, sous une réponse, place dans la liste exactement les
+e-mails qu'elle cite, pour que vous puissiez les ouvrir et les traiter.
 
 <!-- claim:ai-chat-mailbox-2 -->
 Le chat occupe un panneau redimensionnable ancré à droite de la boîte de réception : vous
@@ -104,6 +122,22 @@ Le chat interroge un compte à la fois, et un sélecteur indique lequel — une 
 provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conserve sa propre
 conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
 en étiez, et non à un chat vide.
+
+<!-- claim:ai-chat-mailbox-10 -->
+Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
+*« où sont stockées mes données ? »*, *« que montre le tableau des étiquettes ? »* — à partir de ces
+guides, dans votre langue et sans chercher dans votre boîte. La réponse renvoie à la section
+du guide utilisée, et suivre le lien ouvre le paramètre ou la vue correspondants. Lorsqu'un
+e-mail est ouvert comme contexte, le chat répond à partir de ce seul fil : retirez la puce
+pour poser une question sur l'application. Désactivez-le avec
+**Répondre aux questions sur EmailOps** dans **Paramètres → IA : backend et modèles** ; le
+chat ne connaît alors que votre boîte.
+
+<!-- claim:ai-chat-mailbox-11 -->
+Chaque réponse dispose d'un panneau **Afficher le raisonnement** qui liste ce qui s'est
+passé, dans l'ordre : la route suivie par la question et ce qui l'a décidée, le planificateur
+de requêtes, la recherche dans la boîte, les sections des guides utilisées, chaque appel au
+modèle avec sa durée et chaque appel d'outil avec ses arguments et son résultat.
 
 <!-- claim:ai-chat-mailbox-4 -->
 Sous le capot, le chat combine la récupération (recherche sémantique sur vos e-mails indexés)
@@ -125,7 +159,7 @@ Les utilisateurs avancés peuvent modifier le prompt système et les prompts de 
 (réécriture de requête, reclassement) dans
 **Paramètres → IA : backend et modèles → Prompts du chat**.
 
-## Brouillons d'IA
+## Brouillons d'IA {#ai-drafts}
 
 <!-- claim:ai-ai-drafts-1 -->
 Un bouton **Brouillon IA** à côté de Répondre à tous rédige une réponse ancrée dans le fil que
@@ -182,7 +216,7 @@ l'icône de chat du volet de lecture démarre une conversation avec ce fil en co
 Le tableau a besoin de la classification : il reste vide tant que le courrier n'est pas
 étiqueté, et n'apparaît pas lorsque les fonctions d'IA sont désactivées.
 
-## Recherche sémantique
+## Recherche sémantique {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
 Les e-mails sont indexés localement pour que la recherche corresponde au sens et pas seulement
@@ -190,13 +224,13 @@ aux mots-clés — décrivez ce dont vous vous souvenez et EmailOps le retrouve.
 catégories indexées et reconstruisez l'index de zéro après un changement de modèle
 d'embeddings, dans **Paramètres → Recherche IA**.
 
-## Traduction
+## Traduction {#translation}
 
 <!-- claim:ai-translation-1 -->
 Des boutons de traduction apparaissent sur les e-mails rédigés dans une autre langue et dans
 la fenêtre de rédaction. Le prompt de traduction est modifiable comme les autres.
 
-## Tâches
+## Tâches {#tasks}
 
 <!-- claim:ai-tasks-1 -->
 *Expérimental.* EmailOps parcourt le courrier à la recherche d'actions, d'engagements et
@@ -206,7 +240,7 @@ j'ai écrits » existe. Vous pouvez exclure des expéditeurs et des étiquettes 
 le sont par défaut), plafonner le nombre de tâches par e-mail, limiter la profondeur
 d'extraction et traiter à la demande le courrier plus ancien.
 
-## Mémoire
+## Mémoire {#memory}
 
 <!-- claim:ai-memory-1 -->
 *Expérimental.* Les faits que l'assistant apprend sur vos contacts, domaines et projets sont
@@ -215,14 +249,15 @@ Les faits candidats sont notés et promus au-delà d'un seuil ; ceux qui obtienn
 faible expirent. Tout ce qui a été appris est consultable, et l'ensemble du sous-système
 dispose d'un interrupteur général.
 
-## Lentilles
+## Lentilles {#lenses}
 
 <!-- claim:ai-lenses-1 -->
 *Expérimental.* Des vues typées sur votre boîte — des projections structurées, enregistrées et
 extraites par l'IA (par exemple « toutes les factures avec montant et échéance ») que vous
-créez et exécutez depuis la barre latérale.
+créez et exécutez depuis la barre latérale. Une ligne exclue disparaît de la vue ; **Afficher
+les lignes exclues** les réaffiche pour que vous puissiez en réintégrer une.
 
-## Tout désactiver
+## Tout désactiver {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
 **Paramètres → IA : backend et modèles → Fonctions IA** est un interrupteur général.

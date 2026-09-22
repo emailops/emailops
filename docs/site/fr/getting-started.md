@@ -2,6 +2,10 @@
 title: 'Premiers pas'
 description: "L'assistant de premier lancement : choisir un backend d'IA, télécharger un modèle et connecter votre première boîte."
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 <!-- claim:start-intro-1 -->
@@ -9,7 +13,7 @@ Au premier lancement d'EmailOps, un assistant d'au plus quatre étapes se décle
 vous choisissez un client de messagerie simple). Comptez quelques
 minutes, dont l'essentiel est le téléchargement d'un modèle en arrière-plan.
 
-## 1. IA activée ou non
+## 1. IA activée ou non {#ai-on-or-off}
 
 <!-- claim:start-1-ai-1 -->
 EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Choisissez :
@@ -20,7 +24,7 @@ EmailOps inspecte votre matériel et recommande d'activer ou non l'IA locale. Ch
   effectué. Vous pourrez activer l'IA plus tard dans **Paramètres → IA : backend et modèles**,
   et la désactiver tout aussi facilement. <!-- claim:start-1-ai-3 -->
 
-## 2. Backend et modèle d'IA
+## 2. Backend et modèle d'IA {#ai-backend-and-model}
 
 <!-- claim:start-2-ai-1 -->
 Si vous avez activé l'IA, choisissez où se déroule l'inférence :
@@ -52,7 +56,7 @@ Le modèle d'embeddings qui alimente la recherche sémantique (**Nomic Embed Tex
 ~80 Mo) est livré dans l'application sur macOS : il n'y a rien à télécharger pour la
 recherche.
 
-## 3. Disposition de la boîte
+## 3. Disposition de la boîte {#inbox-layout}
 
 <!-- claim:start-3-inbox-1 -->
 Choisissez la disposition — **divisée** (liste à gauche, message à droite) ou **pleine
@@ -71,10 +75,9 @@ La dernière étape ajoute votre première boîte. EmailOps prend en charge :
   Saisissez directement les paramètres du serveur et les identifiants. <!-- claim:start-4-connect-4 -->
 
 <!-- claim:start-4-connect-5 -->
-Ajoutez d'autres comptes quand vous voulez avec **Ajouter un compte** dans la barre
-latérale. Avec plusieurs
-comptes connectés, vous obtenez une boîte unifiée « Tous les comptes » en plus des vues par
-compte.
+Ajoutez d'autres comptes quand vous voulez avec le bouton **+** à côté de **Comptes** dans la
+barre latérale. Avec plusieurs comptes connectés, vous obtenez une boîte unifiée « Tous les
+comptes » en plus des vues par compte.
 
 ## Après l'assistant
 

@@ -771,6 +771,59 @@ pub enum RouteMode {
     ToolsFirst,
 }
 
+/// One section (or part of a long section) of the bundled user guides
+/// (`docs/site/<lang>/<page>.md`), the unit the chat's "EmailOps help"
+/// retrieval indexes and cites. Produced by `services::help_docs::corpus`
+/// from the markdown embedded in the binary, persisted to `help_doc_chunks`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HelpChunk {
+    /// `"<lang>/<page>#<section_index>.<part>"` — stable across rebuilds.
+    pub chunk_id: String,
+    pub lang: String,
+    pub page: String,
+    /// Position of the section in the page. Identical across the four
+    /// languages (the docs parity check pins heading counts), so it is the
+    /// key used to swap a hit for its sibling in the UI language.
+    pub section_index: i32,
+    /// 0 for a section that fit in one chunk; 0..n when it was split.
+    pub part: i32,
+    /// Heading anchor: the explicit `{#id}` when the heading has one (those
+    /// are shared across languages), otherwise a slug of the heading text.
+    /// Empty for the page intro.
+    pub anchor: String,
+    pub page_title: String,
+    pub heading: String,
+    pub content: String,
+    /// Where the app should navigate when an answer cites this section
+    /// (`"settings/<tab>"` or `"view/<mode>"`), from the page's `nav:` front
+    /// matter. `None` for sections with no natural place in the UI.
+    pub nav_target: Option<String>,
+}
+
+/// What the help lookup did on a chat turn — the counterpart of
+/// [`RetrievalTrace`] for the guides corpus, shown in the reasoning panel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HelpTrace {
+    /// Language the sources were served in.
+    pub lang: String,
+    /// Distinct sections that came back from FTS + vector before the gate.
+    pub candidates: i32,
+    /// Sections that passed the similarity gate and rode in the prompt.
+    pub included: i32,
+    /// Best cosine similarity among the candidates, when vector search ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_similarity: Option<f32>,
+    /// False when the corpus had no embeddings for the active model yet and
+    /// the lookup fell back to FTS only.
+    pub vector_available: bool,
+    pub elapsed_ms: i64,
+    /// `chunk_id`s that rode in the prompt, in citation order.
+    #[serde(default)]
+    pub chunk_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteDecision {
@@ -958,6 +1011,67 @@ pub struct ChatTrace {
     /// call plus the final stream, so the UI can show each individually.
     #[serde(default)]
     pub llm_calls: Vec<LlmCallTrace>,
+    /// What the EmailOps-help lookup (bundled guides) did this turn. `None`
+    /// when the feature is off or the turn short-circuited before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<HelpTrace>,
+    /// The turn in execution order — the one ordering every renderer (the
+    /// reasoning panel, `emailops-cli chat --trace`, the eval report) walks.
+    /// Built by `services::chat::trace_steps::plan_steps`; filled when the turn
+    /// finishes and again when an older trace is read back without it.
+    #[serde(default)]
+    pub steps: Vec<TraceStep>,
+}
+
+/// One step of a turn, in execution order. `Llm` and `Tool` point into
+/// `ChatTrace::llm_calls` / `tool_calls`; the other steps read their own
+/// block of the trace (`route`, `retrieval`, `help`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TraceStep {
+    Route,
+    Retrieval,
+    Help,
+    #[serde(rename_all = "camelCase")]
+    Llm {
+        index: usize,
+        /// Prompt tokens served from the KV cache, when the provider reports it.
+        kv_cache: Option<KvCacheStats>,
+        /// What the call did to the prompt cache, when the provider reports it.
+        cache_action: Option<CacheAction>,
+    },
+    Tool {
+        index: usize,
+    },
+}
+
+/// KV-cache reuse for one LLM call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KvCacheStats {
+    /// Prompt tokens served from the reused prefix.
+    pub cached: u32,
+    /// Prompt tokens in the call.
+    pub total: u32,
+    /// Whole-number percentage served from cache.
+    pub pct: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CacheActionKind {
+    Extend,
+    AnchorHit,
+    Wiped,
+    ColdFresh,
+}
+
+/// What one LLM call did to the prompt cache, with a one-line explanation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheAction {
+    pub kind: CacheActionKind,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

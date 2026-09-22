@@ -2,9 +2,15 @@
 title: 'Resolución de problemas'
 description: 'Soluciones a lo que más se encuentra la gente: IA no disponible, chat lento, búsqueda solo por palabras clave, errores de sincronización.'
 weight: 60
+nav:
+  ai-features-are-unavailable: settings/ai
+  chat-is-slow: settings/ai
+  gpu-not-used: settings/ai
+  search-returns-keyword-results-only: settings/aisearch
+  classification-is-not-tagging-anything: settings/classification
 ---
 
-## Las funciones de IA no están disponibles
+## Las funciones de IA no están disponibles {#ai-features-are-unavailable}
 
 <!-- claim:trbl-ai-features-1 -->
 Con el backend **integrado**, comprueba que el modelo recomendado terminó de descargarse en
@@ -26,7 +32,7 @@ En un **Mac Intel** la IA integrada no puede ejecutarse: necesita un chip Apple 
 posterior), así que EmailOps la mantiene desactivada. Usa OpenRouter en su lugar. Ollama se
 instala, pero en Intel tampoco obtiene aceleración por GPU, así que resultará demasiado lento.
 
-## El chat va lento
+## El chat va lento {#chat-is-slow}
 
 <!-- claim:trbl-chat-slow-1 -->
 La inferencia local lleva su tiempo — en una máquina modesta, una respuesta de chat puede
@@ -44,7 +50,7 @@ tardar decenas de segundos. Lo que ayuda, más o menos por orden de efecto:
    es lo primero que conviene reducir cuando un modelo entra justo. <!-- claim:trbl-chat-slow-5 -->
 5. **Desactiva el modo de razonamiento**, que cambia velocidad por precisión. <!-- claim:trbl-chat-slow-6 -->
 
-## No se está usando la GPU (Windows / Linux)
+## No se está usando la GPU (Windows / Linux) {#gpu-not-used}
 
 <!-- claim:trbl-gpu-used-1 -->
 El registro de la app indica en qué dispositivo se cargó un modelo. Una carga correcta en GPU
@@ -70,7 +76,7 @@ en silencio a la CPU — la app sigue funcionando, solo que más lenta. Comprueb
 Las máquinas virtuales y los escritorios remotos a menudo no exponen ninguna GPU, y eso es lo
 esperable.
 
-## La búsqueda solo devuelve resultados por palabras clave
+## La búsqueda solo devuelve resultados por palabras clave {#search-returns-keyword-results-only}
 
 <!-- claim:trbl-search-returns-1 -->
 La búsqueda semántica necesita embeddings. Abre **Ajustes → Búsqueda con IA**, comprueba que
@@ -82,7 +88,7 @@ pantalla.
 Revisa también **Limitar el procesado de IA** en los ajustes de IA — el correo más antiguo que
 esa ventana se omite a propósito.
 
-## La clasificación no etiqueta nada
+## La clasificación no etiqueta nada {#classification-is-not-tagging-anything}
 
 - Confirma que **Clasificar nuevos correos automáticamente** está activado en
   **Ajustes → Clasificación con IA**. <!-- claim:trbl-classification-tagging-1 -->

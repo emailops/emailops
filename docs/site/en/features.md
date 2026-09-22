@@ -2,6 +2,13 @@
 title: 'Standard Features'
 description: 'The email client itself: accounts, unified inbox, calendar, attachments, search and junk filtering.'
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -22,7 +29,7 @@ the address only. Gmail accounts start with the name from Gmail's send-as settin
 accounts with the display name you gave when connecting them. Mail sent through Outlook
 carries the name Microsoft has for the mailbox.
 
-## Unified inbox
+## Unified inbox {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
 An **All accounts** view merges every enabled mailbox into one list, alongside the
@@ -44,7 +51,7 @@ Narrow the list by domain, sender, or any classification tag — useful for tria
 client, one project or one newsletter flood at a time. With AI on, the same tags also
 feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid of blocks.
 
-## Calendar
+## Calendar {#calendar}
 
 <!-- claim:feat-calendar-1 -->
 Per-account month, week and day views for Google Calendar and Outlook. You get meeting
@@ -58,11 +65,27 @@ colleague shared with you shows up here the same way it does in Google or Outloo
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
 
-## Attachments view
+## Attachments view {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->
-One place listing every attachment across your mail — invoices, contracts, images — with
-preview and export, instead of digging back through threads.
+One place for the attachments you care about — invoices, contracts, receipts — with preview and
+download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+<!-- claim:feat-attachments-view-2 -->
+The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or
+**Create a Rule** on the empty view) and fill in:
+
+- **Rule Name** — how the rule is listed. <!-- claim:feat-attachments-view-3 -->
+- **Sender Email Pattern** — comma-separated; an exact match unless it contains `*`
+  (`*apple.com*` matches any sender containing "apple.com"). Leave it empty to match any sender. <!-- claim:feat-attachments-view-4 -->
+- **Subject Pattern** and **Filename Pattern** — `*` is a wildcard; only matching filenames are
+  collected. <!-- claim:feat-attachments-view-5 -->
+- **Tags** — comma-separated; they appear as filter buttons at the top of the view. <!-- claim:feat-attachments-view-6 -->
+
+<!-- claim:feat-attachments-view-7 -->
+Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
+emails after creating** to collect from the mail you already have. Select attachments to download
+them together to your Downloads folder.
 
 ## Search
 
@@ -70,7 +93,19 @@ preview and export, instead of digging back through threads.
 Full-text search over subjects, bodies, senders and attachments. With AI enabled this is
 joined by semantic search, which matches on meaning rather than exact words.
 
-## Junk and bulk mail
+<!-- claim:feat-search-2 -->
+Searches can be narrowed with operators, on their own or next to free text:
+
+| Operator | Matches |
+|---|---|
+| `from:ana` | sender address or name |
+| `to:ana` | recipient |
+| `subject:invoice` | subject line |
+| `before:2026-09-01` / `after:2026-09-01` | received date |
+| `id:<email id>` | one specific email |
+| `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
+
+## Junk and bulk mail {#junk-and-bulk-mail}
 
 <!-- claim:feat-junk-bulk-1 -->
 EmailOps scores every incoming message locally for spam and unwanted bulk mail. No model
@@ -85,14 +120,14 @@ over time. You decide what happens to flagged mail:
 Neither option moves or deletes anything on the server; only an explicit **Confirm junk**
 does. An optional impersonation/phishing warning is available and off by default.
 
-## Privacy and security controls
+## Privacy and security controls {#privacy-and-security-controls}
 
 <!-- claim:feat-privacy-security-1 -->
 A main password locks the app on startup, remote images and tracking pixels are blocked
 until you allow them, and credentials live in the system keyring. All of it is covered in
 [Privacy & security](../privacy-security/).
 
-## Interface
+## Interface {#interface}
 
 <!-- claim:feat-interface-1 -->
 Split or full-width inbox layout, and a UI available in English, Spanish, French and German.

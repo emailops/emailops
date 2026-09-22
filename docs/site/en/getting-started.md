@@ -2,6 +2,10 @@
 title: 'Getting started'
 description: 'The first-run wizard: choose an AI backend, download a model and connect your first mailbox.'
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 <!-- claim:start-intro-1 -->
@@ -9,7 +13,7 @@ The first time you open EmailOps a wizard of up to four steps runs — three if 
 plain email client. It takes a couple of minutes, most
 of which is a model download in the background.
 
-## 1. AI on or off
+## 1. AI on or off {#ai-on-or-off}
 
 <!-- claim:start-1-ai-1 -->
 EmailOps inspects your hardware and recommends whether to enable local AI. Pick:
@@ -18,7 +22,7 @@ EmailOps inspects your hardware and recommends whether to enable local AI. Pick:
 - **Plain email client** — no model is downloaded and no AI call is ever made. You can turn
   AI on later in **Settings → AI Backend & Models**, and turn it off again just as easily. <!-- claim:start-1-ai-3 -->
 
-## 2. AI backend and model
+## 2. AI backend and model {#ai-backend-and-model}
 
 <!-- claim:start-2-ai-1 -->
 If you enabled AI, choose where inference happens:
@@ -47,7 +51,7 @@ model.
 The embedding model that powers semantic search (**Nomic Embed Text v1.5**, ~80 MB) ships
 inside the app on macOS, so there is nothing to download for search.
 
-## 3. Inbox layout
+## 3. Inbox layout {#inbox-layout}
 
 <!-- claim:start-3-inbox-1 -->
 Choose how the mailbox is laid out — **split** (list on the left, message on the right) or
@@ -66,8 +70,8 @@ The last step adds your first mailbox. EmailOps supports:
   the server details and credentials directly. <!-- claim:start-4-connect-4 -->
 
 <!-- claim:start-4-connect-5 -->
-Add more accounts any time with **Add account** in the sidebar. With several connected you get a
-unified "All accounts" inbox on top of the per-account views.
+Add more accounts any time with the **+** button next to **Accounts** in the sidebar. With several
+connected you get a unified "All accounts" inbox on top of the per-account views.
 
 ## After the wizard
 

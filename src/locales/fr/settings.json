@@ -86,6 +86,8 @@
     "routingAlwaysRag": "Toujours RAG en premier (par défaut)",
     "routingAuto": "Auto (routage heuristique)",
     "routingAlwaysTools": "Toujours les outils en premier",
+    "helpDocs": "Répondre aux questions sur EmailOps",
+    "helpDocsHelp": "Le chat répond aux questions « comment faire… » sur l’application à partir des guides intégrés, renvoie à la section et ouvre le réglage ou la vue correspondants. Désactivé : le chat ne connaît que votre boîte.",
     "keepAlive": "Maintenir le modèle chargé (minutes)",
     "keepAliveHelpStart": "Durée pendant laquelle le modèle local reste en RAM entre les tours de chat. Des valeurs élevées évitent le rechargement lent du GGUF — au prix de la mémoire. Utilisez",
     "keepAliveHelpMiddle": "pour le maintenir indéfiniment, ou",

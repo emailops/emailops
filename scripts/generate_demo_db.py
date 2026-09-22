@@ -973,6 +973,63 @@ PERSONAL_THREADS_EN: list[Thread] = [
            days_ago=8),
 ]
 
+# A product whose store mail (shipping notices, review requests, carrier
+# updates) names it far more often than the vendor's own support mail does.
+# Asking for the vendor's support addresses pre-retrieves the store mail as
+# numbered sources, while the addresses only surface through a tool search —
+# the shape behind the `kelvo_support_addresses` chat eval (tool-found emails
+# cited with numbers that belong to unrelated sources).
+PERSONAL_THREADS_EN += [
+    Thread("Nordmart", "ship-confirm@nordmart.example",
+           "Shipped: \"Kelvo AP-300 Air Purifier\"", "updates",
+           [("them",
+             "Your order containing 'Kelvo AP-300 Air Purifier' has shipped and "
+             "will arrive Thursday. Track your package in Your Orders.")],
+           days_ago=40),
+    Thread("Nordmart Reviews", "reviews@nordmart.example",
+           "Ulises, did the 'Kelvo AP-300 Air Purifier' meet your expectations?",
+           "updates",
+           [("them",
+             "Tell other customers what you think of the Kelvo AP-300 Air "
+             "Purifier. Rate it in one tap.")],
+           days_ago=30),
+    Thread("Kelvo Support", "support@kelvo-home.example",
+           "Your recall claim is approved - see details", "updates",
+           [("them",
+             "Hello Ulises,\n\nWe're happy to let you know that your recall claim "
+             "for the AP-300 is approved. Click here to place your free "
+             "replacement order; the discount is applied at checkout.\n\nIf you "
+             "have any issues, reply to this message and our support team will "
+             "help.\n\nKelvo Support")],
+           days_ago=21),
+    Thread("Kelvo-EU", "support@kelvo-home.example",
+           "Order KV20417 confirmed", "updates",
+           [("them",
+             "Thanks for your order KV20417 (AP-300 replacement, EU warehouse). "
+             "We'll email you when it ships.")],
+           days_ago=20),
+    Thread("Lena @Kelvo", "care@kelvo.example.eu",
+           "Recall Support Update: Expected delivery time", "updates",
+           [("them",
+             "Hi Ulises,\n\nA quick update on your replacement: our EU warehouse "
+             "is running about two weeks behind, so order KV20417 will ship "
+             "later than planned. Reply here with any question.\n\nLena, Kelvo "
+             "customer care")],
+           days_ago=15),
+    Thread("ParcelHub", "no-reply@parcelhub.example",
+           "Your Kelvo EU order KV20417 has shipped", "updates",
+           [("them",
+             "Good news: your Kelvo EU order KV20417 is on its way. Expected "
+             "delivery in 3-5 business days.")],
+           days_ago=6),
+    Thread("ParcelHub", "no-reply@parcelhub.example",
+           "Your Kelvo EU order KV20417 is waiting for carrier pickup", "updates",
+           [("them",
+             "Your Kelvo EU order KV20417 has been processed and is waiting for "
+             "pickup by the carrier.")],
+           days_ago=7),
+]
+
 
 # First contacts too old for the AI window. Classification only runs over
 # emails inside `ai_max_email_count` / `ai_max_email_age_days`, so a mailbox
@@ -2656,41 +2713,55 @@ def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
                 continue
             _insert_thread(conn, account, thread)
             added["threads"] += 1
+    added["facts"] = append_memory_facts(conn, locale)
+    added["thread_states"] = insert_thread_states(conn, locale)
+    return added
+
+
+def _insert_memory_fact(
+    conn: sqlite3.Connection,
+    locale: Locale,
+    subject_kind: str,
+    subject_key: str,
+    fact: str,
+    company: str,
+    last_used_at: int,
+) -> None:
+    """One promoted fact plus its `memory_facts_fts` row. The app writes the
+    FTS row itself (the migration has a delete trigger only), so a fact
+    inserted without it never reaches the chat's `<memory>` header."""
     now = now_s()
+    fact_id = demo_id("fact_", locale.work.id, subject_kind, subject_key, fact)
+    conn.execute(
+        """INSERT INTO memory_facts
+           (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
+            confidence, score, status, last_used_at, created_at, updated_at,
+            domain, vigency, company)
+           VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
+                   ?, ?, ?, NULL, NULL, ?)""",
+        (fact_id, locale.work.id, subject_kind, subject_key, fact, last_used_at, now, now, company),
+    )
+    conn.execute(
+        "INSERT INTO memory_facts_fts (fact_id, fact, subject_key) VALUES (?, ?, ?)",
+        (fact_id, fact, subject_key),
+    )
+
+
+def append_memory_facts(conn: sqlite3.Connection, locale: Locale) -> int:
+    """The locale's facts an existing demo DB does not have yet."""
+    added = 0
     for subject_kind, subject_key, fact, company in locale.memory_facts:
         if conn.execute("SELECT 1 FROM memory_facts WHERE fact = ? LIMIT 1", (fact,)).fetchone():
             continue
-        conn.execute(
-            """INSERT INTO memory_facts
-               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
-                confidence, score, status, last_used_at, created_at, updated_at,
-                domain, vigency, company)
-               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
-                       ?, ?, ?, NULL, NULL, ?)""",
-            (demo_id("fact_", locale.work.id, subject_kind, subject_key, fact), locale.work.id, subject_kind, subject_key, fact, now, now, now, company),
-        )
-        added["facts"] += 1
-    added["thread_states"] = insert_thread_states(conn, locale)
+        _insert_memory_fact(conn, locale, subject_kind, subject_key, fact, company, now_s())
+        added += 1
     return added
 
 
 def insert_memory_facts(conn: sqlite3.Connection, locale: Locale) -> None:
     """A small set of promoted facts so the memory panel is non-empty."""
-    now = now_s()
     for subject_kind, subject_key, fact, company in locale.memory_facts:
-        conn.execute(
-            """INSERT INTO memory_facts
-               (id, account_id, subject_kind, subject_key, fact, source, source_email_id,
-                confidence, score, status, last_used_at, created_at, updated_at,
-                domain, vigency, company)
-               VALUES (?, ?, ?, ?, ?, 'extraction', NULL, 0.9, 1.0, 'promoted',
-                       ?, ?, ?, NULL, NULL, ?)""",
-            (
-                demo_id("fact_", locale.work.id, subject_kind, subject_key, fact),
-                locale.work.id, subject_kind, subject_key, fact,
-                now - 86400, now, now, company,
-            ),
-        )
+        _insert_memory_fact(conn, locale, subject_kind, subject_key, fact, company, now_s() - 86400)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

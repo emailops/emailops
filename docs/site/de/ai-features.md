@@ -2,6 +2,20 @@
 title: 'KI-Funktionen'
 description: 'Mit dem Postfach chatten, Antworten erzeugen, E-Mails klassifizieren, Aufgaben extrahieren — alles auf einem Modell, das Sie kontrollieren.'
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 <!-- claim:ai-intro-1 -->
@@ -24,7 +38,8 @@ keine E-Mail jemals Ihre Maschine.
   einem Intel-Mac erhält auch Ollama keine GPU-Beschleunigung und ist entsprechend langsam. <!-- claim:ai-choosing-backend-3 -->
 - **OpenRouter** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
-  bleibt sie aus, bis Sie sie aktivieren. <!-- claim:ai-choosing-backend-4 -->
+  bleibt sie aus, bis Sie sie aktivieren. Ihr Bereich zeigt die Ausgaben des laufenden
+  Zeitraums gegenüber diesem Limit, mit **Neuen Zeitraum starten** zum Zurücksetzen. <!-- claim:ai-choosing-backend-4 -->
 
 ### Der Modellkatalog {#the-model-catalog}
 
@@ -66,7 +81,7 @@ Laptop und eine Workstation sehen deshalb unterschiedliche Vorschläge. Größer
 antworten besser und laufen langsamer — die Markierung ist ein Ausgangspunkt, keine Regel.
 Die vollständigen Anforderungen stehen unter [Installation](../installation/#with-local-ai).
 
-### Leistungsstellschrauben
+### Leistungsstellschrauben {#performance-knobs}
 
 - **Modell geladen halten** — wie lange das Modell zwischen zwei Anfragen im Speicher bleibt
   (Standard 30 Minuten). Höhere Werte ersparen das langsame Nachladen; `0` entlädt es sofort
@@ -80,12 +95,14 @@ Die vollständigen Anforderungen stehen unter [Installation](../installation/#wi
   E-Mails eines Kontos bis zu einem E-Mail-Limit (standardmäßig 1000) und bei größeren Konten
   nur E-Mails, die jünger als ein Tageslimit sind (standardmäßig 365 Tage). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
-## Mit dem Postfach chatten
+## Mit dem Postfach chatten {#chat-with-your-mailbox}
 
 <!-- claim:ai-chat-mailbox-1 -->
 Fragen Sie in natürlicher Sprache — *„Was hat der Anwalt zum Vertrag gesagt?“*, *„Fasse diesen
 Thread zusammen“*, *„Wer schuldet mir noch eine Antwort?“* — und erhalten Sie eine Antwort mit
 Angabe der Quell-E-Mails. Die Antworten erscheinen im Stream, während sie erzeugt werden.
+**In der E-Mail-Liste anzeigen** unter einer Antwort stellt genau die zitierten E-Mails in die
+E-Mail-Liste, damit Sie sie öffnen und abarbeiten können.
 
 <!-- claim:ai-chat-mailbox-2 -->
 Der Chat sitzt in einem größenveränderlichen Panel rechts neben dem Posteingang, sodass Sie
@@ -101,6 +118,21 @@ Der Chat durchsucht immer ein Konto, und eine Auswahl benennt welches — so sta
 Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigene
 Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also dorthin zurück,
 wo Sie aufgehört haben, und nicht zu einem leeren Chat.
+
+<!-- claim:ai-chat-mailbox-10 -->
+Der Chat beantwortet auch Fragen zu EmailOps selbst — *„Wie verbinde ich Ollama?“*, *„Wo
+werden meine Daten gespeichert?“*, *„Was zeigt das Tag Board?“* — aus diesen Anleitungen,
+in Ihrer Sprache und ohne das Postfach zu durchsuchen. Die Antwort verlinkt den verwendeten
+Abschnitt, und der Link öffnet die passende Einstellung oder Ansicht. Ist eine E-Mail als
+Kontext geöffnet, antwortet der Chat nur aus diesem Thread — entfernen Sie den Chip, um nach
+der App zu fragen. Abschalten lässt sich das mit **Fragen zu EmailOps beantworten** unter
+**Einstellungen → KI: Backend & Modelle**; dann kennt der Chat nur Ihr Postfach.
+
+<!-- claim:ai-chat-mailbox-11 -->
+Jede Antwort hat ein Panel **Begründung anzeigen**, das der Reihe nach auflistet, was
+passiert ist: welche Route die Frage genommen hat und was das entschieden hat, den
+Abfrageplaner, die Postfachsuche, die verwendeten Anleitungsabschnitte, jeden Modellaufruf mit
+seiner Dauer und jeden Tool-Aufruf mit Argumenten und Ergebnis.
 
 <!-- claim:ai-chat-mailbox-4 -->
 Unter der Haube kombiniert der Chat Retrieval (semantische Suche über Ihre indexierten
@@ -119,7 +151,7 @@ Kontext abgerufen wird.
 Fortgeschrittene können den System-Prompt und die Retrieval-Prompts (Query-Umschreibung,
 Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** bearbeiten.
 
-## KI-Entwürfe
+## KI-Entwürfe {#ai-drafts}
 
 <!-- claim:ai-ai-drafts-1 -->
 Ein Button **KI-Entwurf** neben „Allen antworten“ schreibt eine Antwort, die im gerade
@@ -176,7 +208,7 @@ startet eine Unterhaltung mit diesem Thread als Kontext.
 Das Board braucht die Klassifizierung: Es bleibt leer, bis E-Mails gekennzeichnet sind, und
 wird bei ausgeschalteten KI-Funktionen nicht angezeigt.
 
-## Semantische Suche
+## Semantische Suche {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
 E-Mails werden lokal eingebettet, damit die Suche nach Bedeutung statt nur nach Stichwörtern
@@ -184,13 +216,13 @@ trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das
 **Einstellungen → KI-Suche**, welche Kategorien eingebettet werden, und bauen Sie den Index
 nach einem Wechsel des Embedding-Modells von Grund auf neu.
 
-## Übersetzung
+## Übersetzung {#translation}
 
 <!-- claim:ai-translation-1 -->
 Bei E-Mails in einer anderen Sprache und im Verfassen-Fenster erscheinen
 Übersetzen-Schaltflächen. Der Übersetzungs-Prompt ist wie die anderen bearbeitbar.
 
-## Aufgaben
+## Aufgaben {#tasks}
 
 <!-- claim:ai-tasks-1 -->
 *Experimentell.* EmailOps durchsucht E-Mails nach Handlungspunkten, Zusagen und Fristen und
@@ -200,7 +232,7 @@ können Absender und Kennzeichnungen ausschließen (Newsletter sind standardmä�
 ausgeschlossen), Aufgaben pro E-Mail begrenzen, den Rückblickzeitraum einschränken und ältere
 E-Mails bei Bedarf nacharbeiten lassen.
 
-## Gedächtnis
+## Gedächtnis {#memory}
 
 <!-- claim:ai-memory-1 -->
 *Experimentell.* Fakten, die der Assistent über Ihre Kontakte, Domains und Projekte lernt,
@@ -208,14 +240,15 @@ werden als Langzeitkontext gespeichert, damit der Chat nicht jedes Mal bei null 
 Kandidaten-Fakten werden bewertet und ab einem Schwellenwert übernommen; schlecht bewertete
 laufen aus. Alles Gelernte ist einsehbar, und das gesamte Teilsystem hat einen Hauptschalter.
 
-## Linsen
+## Linsen {#lenses}
 
 <!-- claim:ai-lenses-1 -->
 *Experimentell.* Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
 strukturierte Projektionen (etwa „alle Rechnungen mit Betrag und Fälligkeit“), die Sie in der
-Seitenleiste anlegen und ausführen.
+Seitenleiste anlegen und ausführen. Eine ausgeschlossene Zeile bleibt aus der Sicht; **Ausgeschlossene
+Zeilen anzeigen** holt sie zurück, sodass Sie eine wieder aufnehmen können.
 
-## Alles abschalten
+## Alles abschalten {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
 **Einstellungen → KI: Backend & Modelle → KI-Funktionen** ist ein Hauptschalter. Schalten Sie

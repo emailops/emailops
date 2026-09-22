@@ -6,15 +6,13 @@ import { useLogStore } from '@/stores/logStore';
 import type { ClassificationConfig } from '@/types';
 import { type ClassificationRulePrefill, ClassificationRulesTab } from './ClassificationRulesTab';
 import { PromptEditorBlock } from './PromptEditorBlock';
+import { SettingsPanel } from './SettingsPanel';
 
 export type { ClassificationRulePrefill };
 
 interface ClassificationSettingsProps {
-  onClose: () => void;
   activeAccountId: string | null;
   prefill?: ClassificationRulePrefill | null;
-  /** When true, render without the overlay + header chrome so it can be hosted inside a tabbed Settings dialog. */
-  embedded?: boolean;
 }
 
 const ALL_CATEGORIES = [
@@ -58,12 +56,7 @@ const DEFAULT_TOPICS = [
   'security',
 ];
 
-export function ClassificationSettings({
-  onClose,
-  activeAccountId,
-  prefill,
-  embedded = false,
-}: ClassificationSettingsProps) {
+export function ClassificationSettings({ activeAccountId, prefill }: ClassificationSettingsProps) {
   const { t } = useTranslation(['common', 'settings']);
   const [config, setConfig] = useState<ClassificationConfig | null>(null);
   const [intentsText, setIntentsText] = useState('');
@@ -162,59 +155,29 @@ export function ClassificationSettings({
   const intents = [...new Set([...(config?.intents ?? []), ...DEFAULT_INTENTS])];
   const topics = [...new Set([...(config?.topics ?? []), ...DEFAULT_TOPICS])];
 
-  // Wrap children so this component can be rendered either as its own modal
-  // (legacy callers) or embedded inside the tabbed SettingsDialog.
-  const Shell = ({ children, compact = false }: { children: React.ReactNode; compact?: boolean }) =>
-    embedded ? (
-      <div className="flex flex-col flex-1 min-h-0 w-full overflow-y-auto p-6">{children}</div>
-    ) : (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-        <div
-          className={
-            compact
-              ? 'bg-[#252526] border border-gray-700 rounded-lg p-6 w-full max-w-2xl'
-              : 'bg-[#252526] border border-gray-700 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto'
-          }
-        >
-          {children}
-        </div>
-      </div>
-    );
-
   if (loading && !config && !error) {
     return (
-      <Shell compact>
+      <SettingsPanel>
         <p className="text-gray-400">{t('settings:classification.loading')}</p>
-      </Shell>
+      </SettingsPanel>
     );
   }
 
   if (!config && error) {
     return (
-      <Shell compact>
+      <SettingsPanel>
         <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>
         <button onClick={loadConfig} className="px-4 py-2 bg-primary-600 text-white rounded text-sm">
           {t('common:actions.retry')}
         </button>
-      </Shell>
+      </SettingsPanel>
     );
   }
 
   if (!config) return null;
 
   return (
-    <Shell>
-      {!embedded && (
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-100">{t('settings:classification.title')}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200 p-1">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
-
+    <SettingsPanel>
       {/* Tabs */}
       <div className="flex gap-1 mb-4 border-b border-gray-700">
         <button
@@ -402,6 +365,6 @@ export function ClassificationSettings({
           onError={setError}
         />
       )}
-    </Shell>
+    </SettingsPanel>
   );
 }

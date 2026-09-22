@@ -1054,6 +1054,31 @@ to triage the failures.
 unattended job committing onto whatever branch was checked out, and competing for the GPU with
 any EmailOps instance left open.
 
+## 2026-09-17 — The chat answers questions about EmailOps itself from the bundled guides, via RAG
+
+**Decision:** The published user guides (`docs/site/<lang>/*.md`, all four languages) are
+compiled into the binary and indexed — FTS5 plus sqlite-vec, in the same shape as the
+mailbox and memory corpora — so an ordinary chat turn can answer "how do I…" questions about
+the app from them. The guides are a second, separate retrieval source: they never mix with
+mailbox ranking, enter the prompt only past a vector-similarity gate, are served in the
+answer's language (a hit on any language swaps for its sibling section), and are cited with
+a `help://<lang>/<page>#<anchor>` link that opens the public docs page. When the answer cites
+a section whose front matter carries a `nav:` target, the app opens that Settings tab or view
+(`ToolEffect::NavigateTo`, from the model's citation, never from the lookup alone).
+**Context:** The chat knew nothing about the app: "how do I connect Ollama?" went through
+mailbox retrieval and ended in "not found" or an invented menu. The guides already existed
+in four languages with stable heading anchors, so they are the single source of truth — a
+stale guide is now a wrong chat answer, and the docs README says so. Per-turn content stays
+out of the system prompt (KV-prefix cache); the block rides in the final user message like
+the memory header. The `nav:` map is keyed on the language-invariant anchor ids and checked
+for parity across languages by `scripts/check-docs-parity.sh` and a unit test.
+**Rejected:** A keyword router plus a lexical `app_help` tool — a keyword list in four
+languages is brittle, and a tool adds prompt cost on every turn while RAG reuses the query
+embedding the mailbox retrieval already computes. Putting the guides in the system prompt —
+about 9k tokens per turn on an 8k-token local context. Indexing only the UI language —
+the developer chose all four so a question in one language finds the section whatever
+language it is asked in. Navigating whenever the lookup matched — a false positive of the
+gate would move the user's screen; the answer's own citation is the safer signal.
 ## 2026-09-17 — Chat states its single-account scope instead of searching every account
 
 **Decision:** The chat system prompt names the one mailbox the turn can search, tells the
@@ -1181,6 +1206,146 @@ asking llama.cpp for the metadata after the model is loaded (the decision is nee
 that must not pay for a multi-GB mmap, and it would put the rule behind the `llamacpp`
 feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
 setting (makes the user responsible for a detail the file already states).
+
+## 2026-09-21 — A tool turn's sources are the emails the tools returned; bare `[n]` only cites pre-retrieved Sources
+
+**Decision:** A bare `[n]` opens the n-th numbered Source, so it is rendered only on turns
+where no tool handed the model an email. On a turn where a tool did (`search_emails`,
+`get_email_body`, `get_thread`, …), the message's sources become the emails the tools
+returned — the ones the answer links first, then the rest in tool order — replacing the
+pre-retrieved rows on disk and in the open bubble, every bare `[n]` is stripped, and the
+answer's citations are its `email://ID` links (`plan_answer_grounding`). The prompt still
+tells the model to link tool results with `email://` and to keep `[n]` for numbered
+Sources, and `relink_self_numbered_citations` turns a self-numbered marker into a link when
+the answer defines it; but neither is relied on for correctness.
+**Context:** the UI resolved every bare `[n]` to the n-th pre-retrieved Source. When the
+fact came from a tool result — which carries an `id=` but no number — Qwen 3.6 35B
+numbered the bullets of its own answer `[1]`, `[2]`…, so a correct support address opened an
+unrelated shipping notice. A prompt-only fix (the CITATION CONTRACT rewrite plus a reminder
+under the Sources header) was measured on the demo DB, 54 chat cases, greedy decoding: it
+raised tool turns with `email://` links from 22/34 to 26/36 and fixed `kelvo_support_addresses`
+(`[1][2][2]` → two links), but `pc_priya_address` still answered `… [1]` for a fact in Source
+`[6]` on both prompts, and the developer's real mailbox still got `[1][2][3]` in bullet
+order with no links. Self-numbering survives the instruction, so the fix had to stop
+depending on the model: on those two sweeps bare `[n]` appeared on 2–3 of ~35 tool turns
+and was wrong in the self-numbered ones, while 22–26 of them carried `email://` links —
+the links are the citation mechanism that works on tool turns, and the tool-returned
+emails are the honest "sources used" list (the pre-retrieved rows were rarely what the
+answer drew on). Correct source-number citations on a tool turn (`mem_borgbase_customer_number`
+cited `[1] [2] [8] [9]` rightly once) are lost with the rule; that answer keeps its
+`attachment://` links and its sources panel lists the four opened invoices.
+**Rejected:** numbering tool results into the same citation space (`[9]`, `[10]`… in every
+tool's output and the Sources panel) — the model ignored the numbers already in front of it
+(`pc_priya_address`: `[1]` for Source `[6]`), so this adds format and cache churn without
+making `[n]` trustworthy; resolving a tool turn's `[n]` against the tool-returned list — the
+model's numbering follows its own bullets, not the tool order, so this only moves the wrong
+pill; keeping `[n]` on a tool turn unless the markers read `1..k` in order — a pattern gate
+that still lets a skipped number (`[1] [3]`) open the wrong email; a post-processor that
+guesses the right Source from the cited sentence (matching an address against senders) — a
+heuristic that only covers the shapes it was written for, and a wrong guess is worse than
+no citation.
+
+## 2026-09-22 — Chat answers cite by `email://` link only; linked emails are the sources
+
+**Decision:** The RAG Sources block is no longer numbered (each line keeps its `id=`) and
+the CITATION CONTRACT asks for a `[short label](email://ID)` link on every fact, whether
+the email came from the Sources or from a tool; bare `[n]` markers are never requested.
+`plan_answer_grounding` makes the emails an answer links its sources (link order, each
+once); an answer that links nothing falls back to the emails the tools returned, and with
+none of those the pre-retrieved Sources stay. The "show emails in list" button falls back
+to the message sources when the answer cites nothing. This supersedes the 2026-09-21 rule
+that kept `[n]` for RAG-only turns.
+**Context:** numbers were the root of the wrong-source citations — Qwen 3.6 35B numbered
+the bullets of its own answer and the UI opened unrelated emails. An opaque id cannot be
+mistaken for a bullet position, and linking gives the sources panel the emails the answer
+actually rests on instead of everything a tool returned. Full chat sweep (53 cases,
+qwen3.6-35b-a3b-ud-q4_k_xl, demo DB), before → after: passes 49 → 49; answers with no
+citation 20 → 17; answers with a bare `[n]` 3 → 0; answers with an `email://` link
+32 → 36. The two cases that flipped to fail (`demo_draft_link_emitted`,
+`at_fastmail_receipts`) failed on the old code too when re-run (1/3 vs 2/3, 1/3 vs 0/3).
+**Rejected:** keeping `[n]` for RAG-only turns (the model self-numbers there as well,
+and two citation schemes in one contract are what confused it); numbering tool results
+into the Sources (the model ignored numbers it was given); an empty sources panel when
+nothing is linked (the button would disappear and the user loses the only route to the
+emails behind the answer).
+
+## 2026-09-21 — The query planner decides when a chat question is about EmailOps itself
+
+**Decision:** A question about the app (how to use, set up or fix EmailOps, its settings,
+models or data) is recognised by the chat query planner, which answers `{"app_help": true}`.
+That turn skips mailbox retrieval and is answered from the bundled guides; the help lookup
+still runs on every route. A question about mail that mentions the app stays a mail search.
+**Context:** app questions went through RAG-first retrieval, so 8-9 mailbox emails rode in
+the prompt next to the guide sections — in the demo mailbox, users asking the very same
+question — and the answer mixed both. The `help://` link in the answer hid it, because the
+turn appends one whenever any guide section was included. The planner already reads every
+question in any language, costs no extra model call on those turns, and its verdict is
+measurable in `query_plan_eval`.
+**Rejected:** skipping the mailbox whenever the help lookup outscores the best email
+(cheapest, but a similarity threshold cannot tell "how do I connect Ollama?" from "what did
+users say about Ollama?"); keeping both corpora and only asserting the guide is cited first
+(accepts the mixing the change set out to remove); a keyword list of app terms (fails on
+paraphrase and on every language the list does not cover).
+
+## 2026-09-22 — The query planner names the guide page; the page is a preference
+
+**Decision:** The planner's app-help verdict can name a guide page
+(`{"app_help": "<page>"}`), picked from a table of contents generated from the English
+guides (page title plus section titles, ~370 tokens, static, in the planner's cached head).
+The help lookup then serves that page's intro (which lists its sections) and best section,
+plus the two best sections from the other pages — never the picked page alone.
+**Context:** sections were ranked only by bm25 over words shared with the question.
+"que funcionalidades de ia tiene emailops" matched nothing specific ("funcionalidades"
+appears in no guide; "de"/"ia" are too short for FTS) and got two "local AI" sections;
+"cómo cambio el modelo" landed on troubleshooting. The planner reads the question in any
+language. It still picks the wrong page now and then ("añado una nueva cuenta" →
+installation), which is why the global ranking keeps two slots: the right section there was
+its second hit. Cost: up to four guide sections (~1.8k tokens) in the user message of an
+app-help turn, and a planner prompt ~370 tokens longer. Known open cost: with the table of
+contents in the prompt the planner drops `query` on "when did Marisol first write to me
+about the logistics dashboard?" (`no_date_window_on_a_dateless_question` in the planner
+eval).
+**Rejected:** ordering sections by vector similarity when bm25 is weak (measured: it served
+"Privacy › Local AI by default" and "Turning it all off" — the embeddings misrank sections
+of these guides); restricting the lookup to the picked page (lost "add an account" when the
+planner picked the wrong page); page titles and descriptions only (did not tell the pages
+apart); the table of contents at the end of the prompt (26/30 on the planner eval, worse).
+
+## 2026-09-22 — The planner's verdict, not a similarity threshold, keeps the guides out of mail turns
+
+**Decision:** When the query planner ran on a turn, the EmailOps guides are consulted only if
+its verdict was `app_help`; a search or defer verdict means no help lookup at all. Turns about
+the open email never consult the guides. The vector-similarity gate inside the lookup stays
+only for turns the planner never saw (keyword-routed RAG turns, planner disabled). This
+narrows the 2026-09-21 entry's "the help lookup still runs on every route".
+**Context:** the 0.60 gate let two guide sections into almost every turn — "mándame la
+factura de Fly.io de marzo" (0.62), "los últimos 5 correos de metrics@…" (0.74), and a
+summary of an open email whose text happened to ask how to add an account (0.66). The
+planner already classifies every such turn, and the chat panel promises that answers with an
+open email are grounded in that thread only. The planner prompt also gained a general rule
+that a specific named thing the mail is about (a project, product, document) is `query`,
+not a tag, which closes the `no_date_window_on_a_dateless_question` cost recorded in the
+previous entry (planner eval 29/30).
+**Rejected:** raising the similarity threshold (a threshold cannot tell "how do I connect
+Ollama?" from "what did users say about Ollama?", as the 2026-09-21 entry found); keeping the guides
+on open-email turns behind the gate (it served them on the summary above). Accepted cost: an
+app question asked with an email open as context gets no guides; removing the thread from
+the context restores them.
+
+## 2026-09-22 — Chat may answer general knowledge and pick one of two same-named senders
+
+**Decision:** An out-of-scope general-knowledge question ("what is the capital of Peru?") may
+be answered directly or declined; both pass. "resume el correo de Juan" with two senders
+called Juan may ask which one or summarise one of them faithfully; both pass. What still
+fails is searching the mailbox for a general question, inventing an email, or creating a
+draft. The chat system prompt is unchanged.
+**Context:** with the judge now able to fail a case, `oos_capital_peru` and
+`oos_juan_ambiguous` failed on both the 4B and the 35B reference model: the goldens asked
+for a refusal and a clarifying question, and both models answered instead. The answers were
+correct and faithful.
+**Rejected:** changing the chat system prompt to decline general knowledge and ask for
+clarification on ambiguous names (moves replies on every route for behaviour the developer
+does not need).
 
 ## 2026-09-22 — Published docs are verified against the app, sentence by sentence
 

@@ -63,6 +63,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
 import { useEmailStore } from '@/stores/emailStore';
 import {
+  useHelpDocsEnabledStore,
   useLensesEnabledStore,
   useMemoryEnabledStore,
   useTasksEnabledStore,
@@ -181,6 +182,7 @@ function AppInner() {
     refresh: refreshLensesEnabled,
   } = useLensesEnabledStore();
   const { refresh: refreshTranslationEnabled } = useTranslationEnabledStore();
+  const { refresh: refreshHelpDocsEnabled } = useHelpDocsEnabledStore();
   const setTasksEnabled = useCallback(
     (v: boolean) => {
       setTasksEnabledRaw(v).catch((err) => console.error('Failed to persist task_enabled', err));
@@ -453,6 +455,7 @@ function AppInner() {
     refreshTasksEnabled().catch((err) => console.error('Failed to load task_enabled pref', err));
     refreshLensesEnabled().catch((err) => console.error('Failed to load lenses_enabled pref', err));
     refreshTranslationEnabled().catch((err) => console.error('Failed to load ai_translation_enabled pref', err));
+    refreshHelpDocsEnabled().catch((err) => console.error('Failed to load help_docs_enabled pref', err));
   }, [refreshAi, refreshMemoriesEnabled, refreshTasksEnabled, refreshLensesEnabled, refreshTranslationEnabled]);
 
   // Decide whether to show the onboarding wizard. Existing users (anyone with
@@ -844,6 +847,11 @@ function AppInner() {
           // created but the user keeps seeing the chat panel and the draft
           // looks like a silent no-op.
           navigateToInbox: () => setViewMode('inbox'),
+          // "How do I…" answers that cite a guide section open the matching
+          // Settings tab or view (`ToolEffect::NavigateTo`). Both targets are
+          // re-validated in the dispatcher against the typed allowlists.
+          openSettingsTab: (tab) => setSettingsTab(tab),
+          navigateToView: (view) => setViewMode(view),
           log: addLog,
         });
       }),

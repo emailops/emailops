@@ -85,8 +85,17 @@
       "toolCallDetails": "Détails des appels d'outils",
       "retrievalDetail": "Détail de la récupération",
       "routeMode": {
-        "rag_first": "RAG d'abord",
-        "tools_first": "Outils d'abord"
+        "rag_first": "cherche d'abord dans la boîte",
+        "tools_first": "sans recherche préalable dans la boîte"
+      },
+      "routeDecidedBy": "décidé par {{who}}",
+      "classifier": {
+        "heuristic": "une règle de mots-clés",
+        "heuristic_followup": "la question précédente (suite)",
+        "planner": "le planificateur de requêtes",
+        "forced": "un réglage fixe",
+        "ambient": "l'e-mail ouvert",
+        "llm": "le modèle"
       },
       "phase": {
         "toolRound": "LLM · tour d'outils {{n}}",
@@ -99,7 +108,9 @@
         "vectorSearch": "Recherche vectorielle",
         "ftsSearch": "Recherche FTS",
         "fetchMetadata": "Récupérer les métadonnées",
-        "threadExpansion": "Expansion du fil"
+        "threadExpansion": "Expansion du fil",
+        "helpDocs": "Aide EmailOps",
+        "rag": "Recherche RAG"
       },
       "noCalls": "aucun appel",
       "fallbackSkipped": "repli (ignoré)",
@@ -118,7 +129,8 @@
       "toolCallsRequested": "{{n}} appels d'outils",
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "cache KV {{cached}}/{{total}} tok ({{pct}} %)",
-      "kvCacheMiss": "cache KV 0/{{total}} tok (froid)"
+      "kvCacheMiss": "cache KV 0/{{total}} tok (froid)",
+      "helpSections": "{{included}} sur {{candidates}} sections des guides"
     }
   },
   "sources": {

@@ -2,9 +2,15 @@
 title: 'Fehlerbehebung'
 description: 'Lösungen für die häufigsten Probleme: KI nicht verfügbar, langsamer Chat, nur Stichwortsuche, Synchronisierungsfehler.'
 weight: 60
+nav:
+  ai-features-are-unavailable: settings/ai
+  chat-is-slow: settings/ai
+  gpu-not-used: settings/ai
+  search-returns-keyword-results-only: settings/aisearch
+  classification-is-not-tagging-anything: settings/classification
 ---
 
-## KI-Funktionen sind nicht verfügbar
+## KI-Funktionen sind nicht verfügbar {#ai-features-are-unavailable}
 
 <!-- claim:trbl-ai-features-1 -->
 Prüfen Sie beim **integrierten** Backend unter **Einstellungen → KI: Backend & Modelle**, ob
@@ -27,7 +33,7 @@ Apple-Silicon-Chip (M1 oder neuer), daher lässt EmailOps sie deaktiviert. Verwe
 stattdessen OpenRouter. Ollama lässt sich zwar installieren, erhält auf Intel aber ebenfalls
 keine GPU-Beschleunigung und ist damit zu langsam, um Freude zu machen.
 
-## Der Chat ist langsam
+## Der Chat ist langsam {#chat-is-slow}
 
 <!-- claim:trbl-chat-slow-1 -->
 Lokale Inferenz braucht echte Zeit — auf einer bescheidenen Maschine kann eine Chat-Antwort
@@ -46,7 +52,7 @@ Dutzende Sekunden dauern. Was hilft, grob nach Wirkung sortiert:
    Anfrage und ist das Erste, was man reduziert, wenn ein Modell nur knapp passt. <!-- claim:trbl-chat-slow-5 -->
 5. **Schalten Sie den Denkmodus aus**, der Geschwindigkeit gegen Genauigkeit tauscht. <!-- claim:trbl-chat-slow-6 -->
 
-## Die GPU wird nicht genutzt (Windows / Linux)
+## Die GPU wird nicht genutzt (Windows / Linux) {#gpu-not-used}
 
 <!-- claim:trbl-gpu-used-1 -->
 Das Protokoll der App nennt das Gerät, auf das ein Modell geladen wurde. Ein erfolgreicher
@@ -74,7 +80,7 @@ nach:
 Virtuelle Maschinen und Remote-Desktops stellen häufig gar keine GPU bereit, was zu erwarten
 ist.
 
-## Die Suche liefert nur Stichwort-Treffer
+## Die Suche liefert nur Stichwort-Treffer {#search-returns-keyword-results-only}
 
 <!-- claim:trbl-search-returns-1 -->
 Die semantische Suche braucht Embeddings. Öffnen Sie **Einstellungen → KI-Suche**, prüfen Sie,
@@ -87,7 +93,7 @@ Prüfen Sie außerdem **KI-Verarbeitung begrenzen** in den
 KI-Einstellungen — ältere E-Mails werden
 bewusst übersprungen.
 
-## Die Klassifizierung kennzeichnet nichts
+## Die Klassifizierung kennzeichnet nichts {#classification-is-not-tagging-anything}
 
 - Prüfen Sie, ob **neue E-Mails automatisch klassifizieren** unter
   **Einstellungen → KI-Klassifikation** aktiv ist. <!-- claim:trbl-classification-tagging-1 -->

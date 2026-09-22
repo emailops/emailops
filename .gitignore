@@ -126,6 +126,10 @@ src-tauri/tests/fixtures/cassettes/raw/
 # `git status` stays readable on main; redundant (harmlessly) once the iOS
 # branch merges. Deliberately NOT ignoring gen/apple wholesale: the Xcode
 # project, entitlements and Assets.xcassets next to these ARE tracked there.
+# Tauri regenerates a per-platform capability schema on every build. The macOS one
+# is tracked (the developer's platform); the Linux one only appears on a Linux
+# build/test run and would otherwise show up as an untracked file every time.
+src-tauri/gen/schemas/linux-schema.json
 src-tauri/gen/apple/build/
 src-tauri/gen/apple/Externals/
 src-tauri/gen/apple/assets/

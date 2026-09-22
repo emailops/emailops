@@ -2,6 +2,20 @@
 title: 'AI features'
 description: 'Chat with your mailbox, generate replies, classify mail, extract tasks — all running on a model you control.'
 weight: 40
+nav:
+  choosing-a-backend: settings/ai
+  the-model-catalog: settings/ai
+  performance-knobs: settings/ai
+  chat-with-your-mailbox: view/chat
+  ai-drafts: settings/aidrafts
+  classification: settings/classification
+  tag-board: view/tagboard
+  semantic-search: settings/aisearch
+  translation: settings/aitranslation
+  tasks: settings/tasks
+  memory: settings/memory
+  lenses: settings/lenses
+  turning-it-all-off: settings/ai
 ---
 
 <!-- claim:ai-intro-1 -->
@@ -21,8 +35,10 @@ your machine.
 - **Ollama** — an Ollama server you already run at `http://localhost:11434`. Useful
   if you keep a shared model library. Note that on an Intel Mac it gets no GPU acceleration
   either, so it will be slow. <!-- claim:ai-choosing-backend-3 -->
-- **OpenRouter** — a paid cloud API. Requires an API key, supports a monthly budget
-  cap, and sends email content to a third party — so it stays off unless you enable it. <!-- claim:ai-choosing-backend-4 -->
+- **OpenRouter (remote)** — a paid cloud API. Requires an API key, supports a monthly budget
+  cap, and sends email content to a third party — so it stays off unless you enable it. Its
+  panel shows what the current period has spent against that cap, with **Start a new period**
+  to reset the count. <!-- claim:ai-choosing-backend-4 -->
 
 ### The model catalog {#the-model-catalog}
 
@@ -64,7 +80,7 @@ that fits comfortably. A laptop and a workstation will therefore see different s
 Bigger models answer better and run slower, so the badge is a starting point rather than a
 rule. Full requirements are in [Installation](../installation/#with-local-ai).
 
-### Performance knobs
+### Performance knobs {#performance-knobs}
 
 - **Keep model loaded** — how long the model stays resident between turns (default 30
   minutes). Higher values skip the slow reload; `0` evicts it immediately and frees the
@@ -78,12 +94,14 @@ rule. Full requirements are in [Installation](../installation/#with-local-ai).
   an account up to an email limit (1000 by default), and for larger accounts only mail
   newer than a day limit (365 days by default). <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
-## Chat with your mailbox
+## Chat with your mailbox {#chat-with-your-mailbox}
 
 <!-- claim:ai-chat-mailbox-1 -->
 Ask questions in natural language — *"what did the lawyer say about the contract?"*,
 *"summarise this thread"*, *"who still owes me an answer?"* — and get an answer with the
-source emails cited. Answers stream in as they are generated.
+source emails cited. Answers stream in as they are generated. **Show in email list**, under
+an answer, puts exactly the emails it cites into the email list, so you can open and work
+through them.
 
 <!-- claim:ai-chat-mailbox-2 -->
 Chat lives in a resizable panel docked to the right of the inbox, so you can keep reading
@@ -98,6 +116,21 @@ Chat searches one account at a time, and a picker names which one — so an answ
 silently drawn from the wrong mailbox. Each account keeps its own conversation for as long
 as the app is open, so switching accounts returns you to where you left off rather than to
 a blank chat.
+
+<!-- claim:ai-chat-mailbox-10 -->
+Chat also answers questions about EmailOps itself — *"how do I connect Ollama?"*, *"where is
+my data stored?"*, *"what does the Tag Board show?"* — from these guides, in your language,
+without searching your mailbox. The answer links the guide section it used, and following
+the link opens the matching setting or view. With an email open as context, chat answers
+from that thread only, so remove the chip to ask about the app. Turn this off with
+**Answer questions about EmailOps** in **Settings → AI Backend & Models**; chat then only
+knows your mailbox.
+
+<!-- claim:ai-chat-mailbox-11 -->
+Every answer has a **Show reasoning** panel that lists what happened, in order: which route
+the question took and what decided it, the query planner, the mailbox search, the guide
+sections used, each model call with its timing, and each tool call with its arguments and
+result.
 
 <!-- claim:ai-chat-mailbox-4 -->
 Under the hood, chat combines retrieval (semantic search over your embedded mail) with
@@ -115,7 +148,7 @@ the answer.
 Advanced users can edit the system prompt and the retrieval prompts (query rewriting,
 reranking) in **Settings → AI Backend & Models → Chat prompts**.
 
-## AI drafts
+## AI drafts {#ai-drafts}
 
 <!-- claim:ai-ai-drafts-1 -->
 An **AI Draft** button next to Reply All writes a reply grounded in the thread you are
@@ -169,20 +202,20 @@ pane starts a conversation with that thread as context.
 The board needs classification: it is empty until mail has been tagged, and it is not shown
 while AI features are off.
 
-## Semantic search
+## Semantic search {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
 Emails are embedded locally so search can match meaning, not just keywords — describe what
 you remember and EmailOps finds it. This also powers the retrieval step in chat. Pick which categories get embedded, and rebuild the index from scratch after
 changing the embedding model, in **Settings → AI Search**.
 
-## Translation
+## Translation {#translation}
 
 <!-- claim:ai-translation-1 -->
 Translate buttons appear on emails written in another language and in the compose window.
 The translation prompt is editable like the others.
 
-## Tasks
+## Tasks {#tasks}
 
 <!-- claim:ai-tasks-1 -->
 *Experimental.* EmailOps scans mail for action items, commitments and deadlines and collects
@@ -191,7 +224,7 @@ a "learn only from emails I wrote" mode. You can exclude senders and tags (newsl
 excluded by default), cap tasks per email, limit how far back extraction goes, and backfill
 older mail on demand.
 
-## Memory
+## Memory {#memory}
 
 <!-- claim:ai-memory-1 -->
 *Experimental.* Facts the assistant learns about your contacts, domains and projects are
@@ -199,14 +232,15 @@ stored as long-term context so chat does not start from zero every time. Candida
 scored and promoted past a threshold; low-scoring ones expire. Everything it has learned is
 inspectable, and the whole subsystem has a master off switch.
 
-## Lenses
+## Lenses {#lenses}
 
 <!-- claim:ai-lenses-1 -->
 *Experimental.* Schema-typed views over your mailbox — saved, AI-extracted structured
 projections (think "all invoices with amount and due date") that you create and run from the
-sidebar.
+sidebar. A row you exclude stays out of the view; **Show excluded rows** brings them back into
+sight so you can include one again.
 
-## Turning it all off
+## Turning it all off {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
 **Settings → AI Backend & Models → AI Features** is a master switch. Turn it off and

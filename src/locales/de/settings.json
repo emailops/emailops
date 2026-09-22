@@ -86,6 +86,8 @@
     "routingAlwaysRag": "Immer RAG zuerst (Standard)",
     "routingAuto": "Auto (heuristisch geroutet)",
     "routingAlwaysTools": "Immer Tools zuerst",
+    "helpDocs": "Fragen zu EmailOps beantworten",
+    "helpDocsHelp": "Der Chat beantwortet „Wie mache ich…“-Fragen zur App aus den integrierten Anleitungen, verlinkt den Abschnitt und öffnet die passende Einstellung oder Ansicht. Aus: Der Chat kennt nur dein Postfach.",
     "keepAlive": "Modell geladen halten (Minuten)",
     "keepAliveHelpStart": "Wie lange das lokale Modell zwischen Chat-Runden im RAM bleibt. Höhere Werte sparen das langsame GGUF-Nachladen — auf Kosten des Speichers. Nutze",
     "keepAliveHelpMiddle": ", um es dauerhaft zu fixieren, oder",

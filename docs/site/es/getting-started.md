@@ -2,6 +2,10 @@
 title: 'Primeros pasos'
 description: 'El asistente inicial: elige un backend de IA, descarga un modelo y conecta tu primer buzón.'
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 <!-- claim:start-intro-1 -->
@@ -9,7 +13,7 @@ La primera vez que abres EmailOps se ejecuta un asistente de hasta cuatro pasos 
 eliges un cliente de correo simple). Lleva un par de
 minutos, la mayor parte de ellos descargando un modelo en segundo plano.
 
-## 1. IA sí o no
+## 1. IA sí o no {#ai-on-or-off}
 
 <!-- claim:start-1-ai-1 -->
 EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
@@ -20,7 +24,7 @@ EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
   IA. Puedes activar la IA más tarde en **Ajustes → IA: backend y modelos**, y desactivarla
   con la misma facilidad. <!-- claim:start-1-ai-3 -->
 
-## 2. Backend y modelo de IA
+## 2. Backend y modelo de IA {#ai-backend-and-model}
 
 <!-- claim:start-2-ai-1 -->
 Si activaste la IA, elige dónde se ejecuta la inferencia:
@@ -51,7 +55,7 @@ cifra de cada modelo.
 El modelo de embeddings que impulsa la búsqueda semántica (**Nomic Embed Text v1.5**, ~80 MB)
 viene incluido dentro de la app en macOS, así que no hay nada que descargar para la búsqueda.
 
-## 3. Diseño de la bandeja
+## 3. Diseño de la bandeja {#inbox-layout}
 
 <!-- claim:start-3-inbox-1 -->
 Elige cómo se distribuye el buzón — **dividido** (lista a la izquierda, mensaje a la derecha)
@@ -71,8 +75,8 @@ El último paso añade tu primer buzón. EmailOps admite:
   personalizado. Introduce los datos del servidor y las credenciales directamente. <!-- claim:start-4-connect-4 -->
 
 <!-- claim:start-4-connect-5 -->
-Añade más cuentas cuando quieras con **Añadir cuenta** en la barra lateral. Con varias conectadas obtienes
-una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
+Añade más cuentas cuando quieras con el botón **+** junto a **Cuentas** en la barra lateral. Con
+varias conectadas obtienes una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 
 ## Después del asistente
 

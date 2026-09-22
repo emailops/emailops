@@ -1,0 +1,40 @@
+# A `[n]` citation must point at the email the fact came from.
+#
+# WHAT BROKE
+# The UI resolves a bare `[n]` to the n-th pre-retrieved source. Emails found
+# through a tool (`search_emails`, `get_email_body`) carry an `id=` but no
+# number, yet the CITATION CONTRACT asked for an `[n]` on every claim "from a
+# numbered source or a tool result". The model numbered the tool-found emails
+# itself (`[1]`, `[2]`, even writing `[1](email://<the right id>)` at the end),
+# so a correct support address rendered as a citation of an unrelated shipping
+# notice — the answer looked hallucinated although every fact was real.
+#
+# WHY THIS CASE WORKS ON THE DEMO DB
+# The personal account holds a product ("Kelvo AP-300") whose store and carrier
+# mail names it far more often than the vendor's support mail does, so the
+# pre-retrieved sources are mostly shipping notices and review requests while
+# the support addresses (support@kelvo-home.example, care@kelvo.example.eu)
+# surface through a search. The question is in Spanish and the mail in English,
+# as in the report that motivated it.
+#
+# WHAT THIS ASSERTS
+# Both addresses are in the answer, and every bare `[n]` it keeps resolves to a
+# source whose subject is one of the vendor's support emails — never to the
+# store or carrier mail. An answer that links the emails with `email://`
+# instead of numbering them passes.
+- id: kelvo_support_addresses
+  question: "mi purificador Kelvo se ha roto, encuéntrame direcciones de soporte"
+  account: "ulises@fastmail.com"
+  category: people_companies
+  tier: full
+  expected_answer_contains:
+    - "support@kelvo-home.example"
+    - "care@kelvo.example.eu"
+  expected_cited_subjects:
+    - "recall claim is approved"
+    - "order kv20417 confirmed"
+    - "recall support update"
+  expected_output: "Two Kelvo support addresses: support@kelvo-home.example (it approved the AP-300 recall claim and confirmed replacement order KV20417) and care@kelvo.example.eu (Kelvo customer care, which wrote about the EU replacement's delivery delay). Each email is linked as email://."
+  metrics:
+    - answer_relevancy
+    - faithfulness

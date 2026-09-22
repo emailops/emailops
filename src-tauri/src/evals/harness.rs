@@ -126,10 +126,15 @@ pub struct CaseOutcome {
     /// Wall-clock time inside the harness (turn dispatch + DB readback).
     pub wall_elapsed_ms: i64,
     pub sources_used: Vec<SourceSummary>,
-    /// Text of the open thread the turn ran against (`ambient_thread_id`), the
-    /// same block the model saw. It is the answer's grounding when the case
-    /// used neither RAG sources nor tools, so the judge gets it too.
-    pub ambient_thread: Option<String>,
+    /// Text of the email the turn ran against — the bound thread (`thread_id`)
+    /// or the open one (`ambient_thread_id`) — the same block the model saw.
+    /// It is the answer's grounding when the case used neither RAG sources nor
+    /// tools, so the judge and the report get it too.
+    pub open_thread: Option<String>,
+    /// The guide sections the turn's help lookup served, as
+    /// `"<Page › Heading>\n<content>"` — the grounding of an answer about the
+    /// app, which the judge must see like any other source.
+    pub help_sections: Vec<String>,
 }
 
 /// Lightweight view of a `ChatMessageSource` for the report.
@@ -351,19 +356,41 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         })
         .collect();
 
-    // Same lookup the turn made: the thread under its own account when the
-    // case names one, else under the account the chat ran on.
-    let ambient_thread = match ambient_thread_id.as_deref() {
-        Some(thread_id) => {
-            let (context, _subject) = crate::services::chat::build_thread_context(
+    // The email the turn ran against, the same block the model saw: the
+    // thread the conversation is bound to, or the open ("ambient") one under
+    // its own account when the case names one.
+    let open_thread = match (bound_thread.as_deref(), ambient_thread_id.as_deref()) {
+        (Some(thread_id), _) => Some(crate::services::chat::build_thread_context(&db, account_id, thread_id)?.0),
+        (None, Some(thread_id)) => Some(
+            crate::services::chat::build_thread_context(
                 &db,
                 ambient_owner.as_deref().unwrap_or(account_id),
                 thread_id,
-            )?;
-            Some(context)
-        }
-        None => None,
+            )?
+            .0,
+        ),
+        (None, None) => None,
     };
+
+    // The trace keeps only the ids of the guide sections the turn served.
+    let help_ids: Vec<String> = assistant
+        .trace
+        .as_ref()
+        .and_then(|t| t.help.as_ref())
+        .map(|h| h.chunk_ids.clone())
+        .unwrap_or_default();
+    let help_sections = db
+        .get_help_chunks_by_chunk_ids(&help_ids)?
+        .into_iter()
+        .map(|c| {
+            let title = if c.heading == c.page_title {
+                c.page_title
+            } else {
+                format!("{} › {}", c.page_title, c.heading)
+            };
+            format!("{title}\n{}", c.content)
+        })
+        .collect();
 
     Ok(CaseOutcome {
         conversation_id: conv.id,
@@ -375,7 +402,8 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         assistant_latency_ms: assistant.latency_ms,
         wall_elapsed_ms,
         sources_used,
-        ambient_thread,
+        open_thread,
+        help_sections,
     })
 }
 

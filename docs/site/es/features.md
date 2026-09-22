@@ -2,6 +2,13 @@
 title: 'Funciones estándar'
 description: 'El cliente de correo en sí: cuentas, bandeja unificada, calendario, adjuntos, búsqueda y filtrado de correo basura.'
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -23,7 +30,7 @@ vacío para enviar solo con la dirección. Las cuentas de Gmail empiezan con el 
 configuración «Enviar como» de Gmail, y las IMAP con el nombre visible que indicaste al
 conectarlas. El correo enviado por Outlook lleva el nombre que Microsoft tiene para el buzón.
 
-## Bandeja unificada
+## Bandeja unificada {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
 La vista **Todas las cuentas** fusiona cada buzón activo en una sola lista, junto a las vistas
@@ -47,7 +54,7 @@ despachar un cliente, un proyecto o una avalancha de newsletters de una vez. Con
 activada, esas mismas etiquetas alimentan el [Tablero de etiquetas](../ai-features/#tag-board),
 que las muestra como una cuadrícula de bloques.
 
-## Calendario
+## Calendario {#calendar}
 
 <!-- claim:feat-calendar-1 -->
 Vistas de mes, semana y día por cuenta para Google Calendar y Outlook. Recibes recordatorios
@@ -63,11 +70,30 @@ Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sob
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
 **Ajustes → Calendario**.
 
-## Vista de adjuntos
+## Vista de adjuntos {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->
-Un único sitio con todos los adjuntos de tu correo — facturas, contratos, imágenes — con
-vista previa y exportación, en lugar de bucear otra vez en los hilos.
+Un único sitio con los adjuntos que te importan — facturas, contratos, recibos — con vista
+previa y descarga, en lugar de bucear otra vez en los hilos. Ábrela desde **Adjuntos** en la
+barra lateral.
+
+<!-- claim:feat-attachments-view-2 -->
+La vista recopila adjuntos mediante **reglas**, así que empieza vacía. Pulsa **Gestionar
+reglas** (o **Crear una regla** en la vista vacía) y rellena:
+
+- **Nombre de la regla** — cómo aparece en la lista. <!-- claim:feat-attachments-view-3 -->
+- **Patrón del remitente** — separados por coma; coincidencia exacta salvo que lleve `*`
+  (`*apple.com*` coincide con cualquier remitente que contenga "apple.com"). Déjalo vacío para
+  cualquier remitente. <!-- claim:feat-attachments-view-4 -->
+- **Patrón del asunto** y **Patrón del nombre de archivo** — `*` es un comodín; solo se
+  recopilan los nombres de archivo que coinciden. <!-- claim:feat-attachments-view-5 -->
+- **Etiquetas** — separadas por coma; aparecen como botones de filtro arriba de la vista. <!-- claim:feat-attachments-view-6 -->
+
+<!-- claim:feat-attachments-view-7 -->
+Tienen que coincidir todos los patrones que rellenes. Las reglas se aplican al correo nuevo
+según se sincroniza; marca **Aplicar a los correos existentes después de crear** para recopilar
+también del correo que ya tienes. Selecciona adjuntos para descargarlos juntos en tu carpeta de
+Descargas.
 
 ## Búsqueda
 
@@ -75,7 +101,19 @@ vista previa y exportación, en lugar de bucear otra vez en los hilos.
 Búsqueda de texto completo en asuntos, cuerpos, remitentes y adjuntos. Con la IA activada se
 suma la búsqueda semántica, que encuentra por significado en vez de por palabras exactas.
 
-## Correo basura y masivo
+<!-- claim:feat-search-2 -->
+Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
+
+| Operador | Busca por |
+|---|---|
+| `from:ana` | dirección o nombre del remitente |
+| `to:ana` | destinatario |
+| `subject:factura` | asunto |
+| `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
+| `id:<id del correo>` | un correo concreto |
+| `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
+
+## Correo basura y masivo {#junk-and-bulk-mail}
 
 <!-- claim:feat-junk-bulk-1 -->
 EmailOps puntúa localmente cada mensaje entrante en busca de spam y correo masivo no deseado.
@@ -90,14 +128,14 @@ es basura") entrenan el filtro con el tiempo. Tú decides qué pasa con el corre
 Ninguna de las dos opciones mueve ni borra nada en el servidor; solo lo hace un **Confirmar
 basura** explícito. Hay un aviso opcional de suplantación/phishing, desactivado por defecto.
 
-## Controles de privacidad y seguridad
+## Controles de privacidad y seguridad {#privacy-and-security-controls}
 
 <!-- claim:feat-privacy-security-1 -->
 Una contraseña principal bloquea la app al arrancar, las imágenes remotas y los píxeles de
 seguimiento se bloquean hasta que los permitas, y las credenciales viven en el llavero del
 sistema. Todo ello se detalla en [Privacidad y seguridad](../privacy-security/).
 
-## Interfaz
+## Interfaz {#interface}
 
 <!-- claim:feat-interface-1 -->
 Bandeja en vista dividida o a ancho completo, y una interfaz disponible en español, inglés,

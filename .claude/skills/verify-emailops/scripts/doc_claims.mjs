@@ -713,8 +713,29 @@ async function afterWizard() {
     await press('Ollama'); const ol = await screen(); await press('In-app');
     return ok(!missing.length && /Chat Model .*Embedding Model/.test(ol), 'Ollama se elige y pide sus modelos', 'no se puede elegir Ollama');
   }, 'Quote the backend exactly as Settings → AI Backend & Models shows it, in all four languages.');
+  await claim('ai-chat-mailbox-10', 'preguntas sobre la app', {
+    covers: ['Turn this off with Answer questions about EmailOps in Settings → AI Backend & Models; chat then only knows your mailbox.'],
+    how: 'Comprueba que el ajuste que nombra la doc («Answer questions about EmailOps») es un interruptor en Ajustes → AI Backend & Models.',
+  }, async ({ doc }) => {
+    const label = doc.match(/Turn this off with (.+?) in Settings/)[1];
+    const isSwitch = await js((l) => [...document.querySelectorAll('button[aria-pressed],button[aria-checked],[role=switch],input[type=checkbox]')]
+      .filter((e) => e.offsetParent).some((e) => {
+        let row = e.parentElement;
+        for (let i = 0; i < 5 && row && !row.innerText.includes(l); i++) row = row.parentElement;
+        return row && row.innerText.includes(l) && row.innerText.length < 400;
+      }), label);
+    return ok(ai.includes(label) && isSwitch, `«${label}» es un interruptor en AI Backend & Models`, `«${label}»: ${ai.includes(label) ? 'presente sin interruptor' : 'no está'}`);
+  });
+  await claim('ai-choosing-backend-4', 'gasto del periodo', {
+    covers: ['Its panel shows what the current period has spent against that cap, with Start a new period to reset the count.'], proof: 'label',
+    how: 'Elige OpenRouter en Ajustes → AI Backend & Models y comprueba que su panel muestra el gasto del periodo frente al presupuesto y ofrece «Start a new period». Sin clave no se puede gastar nada, así que el contador no se prueba.',
+  }, async ({ doc }) => {
+    const label = doc.match(/with (Start a new period)/)[1];
+    await press('OpenRouter'); const or = await screen(); await press('In-app');
+    return ok(or.includes(label) && /Monthly Budget/.test(or), `el panel de OpenRouter muestra el presupuesto y «${label}»`, `falta «${label}» o el presupuesto`);
+  });
   await claim('ai-choosing-backend-4', 'clave y presupuesto', {
-    covers: ['OpenRouter — a paid cloud API.', 'Requires an API key, supports a monthly budget cap'], proof: 'label',
+    covers: ['OpenRouter (remote) — a paid cloud API.', 'Requires an API key, supports a monthly budget cap'], proof: 'label',
     how: 'Elige OpenRouter en Ajustes → AI Backend & Models y comprueba que el formulario pide una clave de API y ofrece un presupuesto mensual. Que el presupuesto se aplique no se prueba sin una clave.',
   }, async () => {
     const { missing } = await labelsVisible('ai-choosing-backend-4');

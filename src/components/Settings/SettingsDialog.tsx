@@ -208,14 +208,9 @@ export function SettingsDialog({
 
           {tab === 'appearance' && <AppearancePanel currentLayout={currentLayout} onChangeLayout={onChangeLayout} />}
           {tab === 'calendar' && <CalendarSettings />}
-          {tab === 'ai' && <AiSettings onClose={onClose} embedded />}
+          {tab === 'ai' && <AiSettings />}
           {tab === 'classification' && (
-            <ClassificationSettings
-              onClose={onClose}
-              activeAccountId={effectiveAccountId}
-              prefill={classificationPrefill ?? null}
-              embedded
-            />
+            <ClassificationSettings activeAccountId={effectiveAccountId} prefill={classificationPrefill ?? null} />
           )}
           {/* No account prop: the panel reports on every connected mailbox, not
               on whichever one the rest of the app has selected. */}

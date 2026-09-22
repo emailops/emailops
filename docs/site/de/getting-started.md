@@ -2,6 +2,10 @@
 title: 'Erste Schritte'
 description: 'Der Einrichtungsassistent: KI-Backend wählen, ein Modell herunterladen und das erste Postfach verbinden.'
 weight: 20
+nav:
+  ai-on-or-off: settings/ai
+  ai-backend-and-model: settings/ai
+  inbox-layout: settings/appearance
 ---
 
 <!-- claim:start-intro-1 -->
@@ -9,7 +13,7 @@ Beim ersten Start von EmailOps läuft ein Assistent mit bis zu vier Schritten (d
 einen einfachen E-Mail-Client wählen). Er dauert ein paar
 Minuten, größtenteils für einen Modell-Download im Hintergrund.
 
-## 1. KI an oder aus
+## 1. KI an oder aus {#ai-on-or-off}
 
 <!-- claim:start-1-ai-1 -->
 EmailOps prüft Ihre Hardware und empfiehlt, ob lokale KI aktiviert werden soll. Wählen Sie:
@@ -20,7 +24,7 @@ EmailOps prüft Ihre Hardware und empfiehlt, ob lokale KI aktiviert werden soll.
   gemacht. Sie können die KI später unter **Einstellungen → KI: Backend & Modelle** einschalten
   und ebenso leicht wieder aus. <!-- claim:start-1-ai-3 -->
 
-## 2. KI-Backend und Modell
+## 2. KI-Backend und Modell {#ai-backend-and-model}
 
 <!-- claim:start-2-ai-1 -->
 Wenn Sie die KI aktiviert haben, wählen Sie, wo die Inferenz stattfindet:
@@ -51,7 +55,7 @@ der System-RAM, wenn keine GPU vorhanden ist. Der
 Das Embedding-Modell hinter der semantischen Suche (**Nomic Embed Text v1.5**, ~80 MB) ist
 unter macOS in der App enthalten — für die Suche gibt es also nichts herunterzuladen.
 
-## 3. Layout des Posteingangs
+## 3. Layout des Posteingangs {#inbox-layout}
 
 <!-- claim:start-3-inbox-1 -->
 Wählen Sie die Aufteilung — **geteilt** (Liste links, Nachricht rechts) oder **volle Breite**
@@ -70,8 +74,8 @@ Der letzte Schritt fügt Ihr erstes Postfach hinzu. EmailOps unterstützt:
   Server. Serverdaten und Zugangsdaten direkt eingeben. <!-- claim:start-4-connect-4 -->
 
 <!-- claim:start-4-connect-5 -->
-Weitere Konten fügen Sie jederzeit über **Konto hinzufügen** in der Seitenleiste hinzu. Mit mehreren
-verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereinten Posteingang
+Weitere Konten fügen Sie jederzeit über die Schaltfläche **+** neben **Konten** in der Seitenleiste
+hinzu. Mit mehreren verbundenen Konten erhalten Sie zusätzlich zu den Einzelansichten einen vereinten Posteingang
 „Alle Konten“.
 
 ## Nach dem Assistenten

@@ -2,6 +2,13 @@
 title: 'Fonctions standard'
 description: "Le client e-mail lui-même : comptes, boîte unifiée, calendrier, pièces jointes, recherche et filtrage des indésirables."
 weight: 30
+nav:
+  unified-inbox: view/inbox
+  calendar: view/calendar
+  attachments-view: view/attachments
+  junk-and-bulk-mail: settings/junk
+  privacy-and-security-controls: settings/privacy
+  interface: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -24,7 +31,7 @@ nom du paramètre « Envoyer des e-mails en tant que » de Gmail, et les comptes
 affiché indiqué lors de leur connexion. Les e-mails envoyés via Outlook portent le nom que
 Microsoft associe à la boîte.
 
-## Boîte de réception unifiée
+## Boîte de réception unifiée {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
 La vue **Tous les comptes** fusionne chaque boîte activée en une seule liste, à côté des vues
@@ -49,7 +56,7 @@ traiter un client, un projet ou un déluge de newsletters à la fois. Avec l'IA 
 mêmes étiquettes alimentent aussi le [Tableau d'étiquettes](../ai-features/#tag-board), qui
 les présente sous forme de grille de blocs.
 
-## Calendrier
+## Calendrier {#calendar}
 
 <!-- claim:feat-calendar-1 -->
 Vues mois, semaine et jour par compte pour Google Agenda et Outlook. Vous recevez des rappels
@@ -65,11 +72,31 @@ prend la couleur que lui donne son fournisseur, et la légende au-dessus de la g
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
 **Paramètres → Calendrier**.
 
-## Vue des pièces jointes
+## Vue des pièces jointes {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->
-Un seul endroit qui liste toutes les pièces jointes de votre courrier — factures, contrats,
-images — avec aperçu et export, au lieu de fouiller à nouveau les fils de discussion.
+Un seul endroit pour les pièces jointes qui comptent — factures, contrats, reçus — avec aperçu
+et téléchargement, au lieu de fouiller à nouveau les fils de discussion. Ouvrez-la depuis
+**Pièces jointes** dans la barre latérale.
+
+<!-- claim:feat-attachments-view-2 -->
+La vue collecte les pièces jointes grâce à des **règles**, elle est donc vide au départ. Cliquez
+sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et remplissez :
+
+- **Nom de la règle** — le nom affiché dans la liste. <!-- claim:feat-attachments-view-3 -->
+- **Motif de l'expéditeur** — séparés par des virgules ; correspondance exacte sauf s'il contient
+  `*` (`*apple.com*` correspond à tout expéditeur contenant « apple.com »). Laissez vide pour
+  n'importe quel expéditeur. <!-- claim:feat-attachments-view-4 -->
+- **Motif de l'objet** et **Motif du nom de fichier** — `*` est un joker ; seuls les noms de
+  fichiers correspondants sont collectés. <!-- claim:feat-attachments-view-5 -->
+- **Étiquettes** — séparées par des virgules ; elles apparaissent comme boutons de filtre en haut
+  de la vue. <!-- claim:feat-attachments-view-6 -->
+
+<!-- claim:feat-attachments-view-7 -->
+Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
+fil de la synchronisation ; cochez **Appliquer aux e-mails existants après la création** pour
+collecter aussi dans le courrier déjà présent. Sélectionnez des pièces jointes pour les
+télécharger ensemble dans votre dossier Téléchargements.
 
 ## Recherche
 
@@ -78,7 +105,19 @@ Recherche plein texte sur les objets, les corps, les expéditeurs et les pièces
 l'IA activée s'y ajoute la recherche sémantique, qui correspond au sens plutôt qu'aux mots
 exacts.
 
-## Indésirables et courrier de masse
+<!-- claim:feat-search-2 -->
+Les recherches se précisent avec des opérateurs, seuls ou à côté de texte libre :
+
+| Opérateur | Recherche |
+|---|---|
+| `from:ana` | adresse ou nom de l'expéditeur |
+| `to:ana` | destinataire |
+| `subject:facture` | objet |
+| `before:2026-09-01` / `after:2026-09-01` | date de réception |
+| `id:<id du courriel>` | un courriel précis |
+| `tag:newsletter` / `tag:intent=request` | une étiquette du classifieur, éventuellement dans une facette |
+
+## Indésirables et courrier de masse {#junk-and-bulk-mail}
 
 <!-- claim:feat-junk-bulk-1 -->
 EmailOps note localement chaque message entrant pour détecter le spam et le courrier de masse
@@ -95,7 +134,7 @@ Aucune des deux options ne déplace ni ne supprime quoi que ce soit sur le serve
 **Confirmer** explicite le fait. Un avertissement d'usurpation d'identité /
 hameçonnage est proposé en option, désactivé par défaut.
 
-## Contrôles de confidentialité et de sécurité
+## Contrôles de confidentialité et de sécurité {#privacy-and-security-controls}
 
 <!-- claim:feat-privacy-security-1 -->
 Un mot de passe principal verrouille l'application au démarrage, les images distantes et les
@@ -103,7 +142,7 @@ pixels de suivi sont bloqués jusqu'à autorisation, et les identifiants réside
 trousseau du système. Tout est détaillé dans
 [Confidentialité et sécurité](../privacy-security/).
 
-## Interface
+## Interface {#interface}
 
 <!-- claim:feat-interface-1 -->
 Boîte en vue divisée ou pleine largeur, et une interface disponible en français, anglais,

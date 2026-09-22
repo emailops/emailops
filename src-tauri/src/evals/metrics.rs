@@ -7,7 +7,7 @@
 use regex::Regex;
 
 use crate::evals::case_loader::EvalCase;
-use crate::evals::harness::CaseOutcome;
+use crate::evals::harness::{CaseOutcome, SourceSummary};
 use crate::evals::EvalResult;
 use crate::models::ChatTrace;
 
@@ -108,6 +108,25 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if !case.expected_help_pages_any.is_empty() {
+        checks.push(check_help_pages_any(
+            &case.expected_help_pages_any,
+            outcome.assistant_trace.as_ref(),
+        ));
+    }
+
+    if case.expected_no_email_sources {
+        checks.push(check_no_email_sources(&outcome.sources_used));
+    }
+
+    if !case.expected_cited_subjects.is_empty() {
+        checks.push(check_cited_subjects(
+            &case.expected_cited_subjects,
+            &outcome.assistant_content,
+            &outcome.sources_used,
+        ));
+    }
+
     if let Some(pattern) = case.expected_title_pattern.as_deref() {
         checks.push(check_title_pattern(pattern, &outcome.conversation_title)?);
     }
@@ -169,6 +188,57 @@ fn check_tools_not_called(forbidden: &[String], trace: Option<&ChatTrace>) -> He
             "no forbidden tool was invoked".into()
         } else {
             format!("forbidden tool calls: {}", violations.join(", "))
+        },
+    }
+}
+
+/// Assert that the help lookup served at least one section of one of `pages`
+/// (guide file stems, e.g. `ai-features`). Chunk ids are `<lang>/<page>#…`,
+/// and the lookup serves sections in the AI output language, so the page is
+/// matched regardless of language.
+fn check_help_pages_any(pages: &[String], trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let served: Vec<String> = trace
+        .and_then(|t| t.help.as_ref())
+        .map(|h| h.chunk_ids.clone())
+        .unwrap_or_default();
+    let page_of = |chunk_id: &str| -> Option<String> {
+        let (_, rest) = chunk_id.split_once('/')?;
+        Some(rest.split('#').next().unwrap_or(rest).to_string())
+    };
+    let passed = served.iter().any(|id| page_of(id).is_some_and(|p| pages.contains(&p)));
+
+    HeuristicCheck {
+        name: "help_pages_any".into(),
+        passed,
+        expected: format!("a guide section from any of: {}", pages.join(", ")),
+        actual: if served.is_empty() {
+            "<no guide section served>".into()
+        } else {
+            served.join(", ")
+        },
+        detail: if passed {
+            "the help lookup served an expected guide page".into()
+        } else {
+            "the answer was not grounded in the expected guide page".into()
+        },
+    }
+}
+
+/// Assert that no mailbox email was fed to the model as a RAG source — a
+/// question about the app must be answered from the guides, not from an
+/// email that happens to discuss the same topic.
+fn check_no_email_sources(sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
+    let passed = sources.is_empty();
+    HeuristicCheck {
+        name: "no_email_sources".into(),
+        passed,
+        expected: "0 email sources".into(),
+        actual: format!("{} email sources", sources.len()),
+        detail: if passed {
+            "mailbox RAG fed nothing to the model".into()
+        } else {
+            let ids: Vec<&str> = sources.iter().take(5).map(|s| s.email_id.as_str()).collect();
+            format!("mailbox RAG fed emails to the model: {}", ids.join(", "))
         },
     }
 }
@@ -359,6 +429,61 @@ fn check_tool_args_not_contains(expected: &[String], tool_calls: &[crate::models
     }
 }
 
+/// Every citation — a bare `[n]`, resolved to the n-th source the way the UI
+/// does, or an `email://ID` link, resolved to the source with that id — must
+/// name a source whose subject contains one of `expected` (case-insensitive).
+/// Catches an answer whose facts are right but whose citations point the user
+/// at an unrelated email. An answer without citations passes; whether it is
+/// grounded at all is the other anchors' job.
+fn check_cited_subjects(expected: &[String], content: &str, sources: &[SourceSummary]) -> HeuristicCheck {
+    static LINK_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let link_re = LINK_RE.get_or_init(|| Regex::new(r"\]\(email://([^)\s]+)\)").unwrap());
+    let wanted: Vec<String> = expected.iter().map(|s| s.to_lowercase()).collect();
+    let mut cited: Vec<String> = Vec::new();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut record = |marker: String, subject: Option<&str>| {
+        let label = format!("{marker} → {}", subject.unwrap_or("<no source>"));
+        let ok = subject.is_some_and(|s| {
+            let s = s.to_lowercase();
+            wanted.iter().any(|w| s.contains(w))
+        });
+        if !ok {
+            wrong.push(label.clone());
+        }
+        cited.push(label);
+    };
+    for n in crate::services::chat::bare_citation_numbers(content) {
+        let subject = sources
+            .iter()
+            .find(|s| usize::try_from(s.citation_number).ok() == Some(n))
+            .map(|s| s.subject.as_str());
+        record(format!("[{n}]"), subject);
+    }
+    for cap in link_re.captures_iter(content) {
+        let id = &cap[1];
+        let subject = sources.iter().find(|s| s.email_id == id).map(|s| s.subject.as_str());
+        record(format!("email://{id}"), subject);
+    }
+    let passed = wrong.is_empty();
+    HeuristicCheck {
+        name: "cited_subjects".into(),
+        passed,
+        expected: format!("every citation names one of: {}", expected.join(", ")),
+        actual: if cited.is_empty() {
+            "<no citations>".into()
+        } else {
+            truncate(&cited.join(" | "), 300)
+        },
+        detail: if passed {
+            "every citation resolves to an expected source".into()
+        } else {
+            format!("citations resolve to unexpected sources: {}", wrong.join(" | "))
+        },
+    }
+}
+
 fn check_title_pattern(pattern: &str, title: &str) -> EvalResult<HeuristicCheck> {
     let re = Regex::new(pattern)?;
     let passed = re.is_match(title);
@@ -453,8 +578,67 @@ mod tests {
             total_elapsed_ms: 0,
             tool_loop_ms: 0,
             llm_streaming_ms: None,
+            help: None,
             llm_calls: vec![],
+            steps: vec![],
         }
+    }
+
+    // ── help grounding ──────────────────────────────────────────────────
+    // An app question is answered from the guides. The answer text cannot
+    // prove it: the turn appends a `help://` link whenever any guide section
+    // rode in the prompt, and mailbox RAG runs alongside the help lookup, so
+    // a reply built from a user's email about the same topic still passes the
+    // answer anchors. The trace records both corpora, so assert on it.
+
+    fn trace_with_help(chunk_ids: &[&str]) -> ChatTrace {
+        let mut trace = trace_with(vec![]);
+        trace.help = Some(crate::models::HelpTrace {
+            included: chunk_ids.len() as i32,
+            chunk_ids: chunk_ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        });
+        trace
+    }
+
+    #[test]
+    fn help_pages_passes_when_a_section_of_an_expected_page_was_served() {
+        let trace = trace_with_help(&["en/troubleshooting#1.0", "en/ai-features#2.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn help_pages_ignores_the_language_of_the_served_section() {
+        let trace = trace_with_help(&["es/ai-features#2.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn help_pages_fails_when_only_other_pages_were_served() {
+        let trace = trace_with_help(&["en/troubleshooting#1.0"]);
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace));
+        assert!(!check.passed);
+        assert!(check.actual.contains("en/troubleshooting#1.0"), "{}", check.actual);
+    }
+
+    #[test]
+    fn help_pages_fails_when_the_help_lookup_did_not_run() {
+        let check = check_help_pages_any(&["ai-features".to_string()], Some(&trace_with(vec![])));
+        assert!(!check.passed);
+    }
+
+    #[test]
+    fn no_email_sources_passes_when_nothing_from_the_mailbox_was_fed() {
+        assert!(check_no_email_sources(&[]).passed);
+    }
+
+    #[test]
+    fn no_email_sources_fails_when_mailbox_rag_fed_the_prompt() {
+        let check = check_no_email_sources(&[source(1, "demo_1", ""), source(2, "demo_2", "")]);
+        assert!(!check.passed);
+        assert!(check.actual.contains('2'), "{}", check.actual);
     }
 
     // ── tools_not_called ────────────────────────────────────────────────
@@ -585,5 +769,102 @@ mod tests {
         // the positive check's job to catch, not this one's.
         let check = check_tool_args_not_contains(&["\"limit\":5".to_string()], &[]);
         assert!(check.passed);
+    }
+
+    // ── expected_cited_subjects ─────────────────────────────────────────────
+    //
+    // The UI resolves a bare `[n]` to the n-th pre-retrieved source. A model
+    // that found its evidence through a tool (whose results carry no number)
+    // numbered those emails itself, so `[1]` rendered as an unrelated shipping
+    // notice while the answer's facts came from the vendor's support mail.
+
+    fn source(n: i32, email_id: &str, subject: &str) -> SourceSummary {
+        SourceSummary {
+            citation_number: n,
+            email_id: email_id.into(),
+            subject: subject.into(),
+            sender: String::new(),
+            sender_email: String::new(),
+            relevance_score: None,
+            body_snippet: String::new(),
+        }
+    }
+
+    fn shop_then_support_sources() -> Vec<SourceSummary> {
+        vec![
+            source(1, "eml-ship", "Your order has shipped"),
+            source(2, "eml-review", "How was your recent purchase?"),
+            source(3, "eml-claim", "Your warranty claim is approved"),
+        ]
+    }
+
+    #[test]
+    fn cited_subjects_fails_when_a_citation_resolves_to_an_unrelated_source() {
+        let answer = "Write to help@vendor.example [1].\n\n[1](email://eml-claim)";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(!check.passed, "{check:?}");
+        assert!(
+            check.detail.contains("[1]"),
+            "detail names the citation: {}",
+            check.detail
+        );
+    }
+
+    #[test]
+    fn cited_subjects_passes_when_every_citation_resolves_to_an_expected_source() {
+        let answer = "Write to help@vendor.example [3].";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn cited_subjects_ignores_numbered_link_labels() {
+        // `[1](email://…)` is a link to the email it names, not a source citation.
+        let answer = "Write to help@vendor.example [1](email://eml-claim).";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn cited_subjects_passes_when_the_answer_has_no_citations() {
+        let answer = "Write to [help@vendor.example](email://eml-claim).";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn cited_subjects_resolves_an_email_link_through_the_sources() {
+        // On a tool turn the sources are the emails the tools returned and the
+        // answer cites them with `email://` links — a link to the shipping
+        // notice is as wrong as a `[1]` that opened it.
+        let answer = "Write to [help@vendor.example](email://eml-ship).";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(!check.passed, "{check:?}");
+        assert!(
+            check.detail.contains("eml-ship"),
+            "detail names the link: {}",
+            check.detail
+        );
+    }
+
+    #[test]
+    fn cited_subjects_passes_when_every_link_resolves_to_an_expected_source() {
+        let answer = "Write to [help@vendor.example](email://eml-claim) [3].";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn cited_subjects_fails_on_a_link_to_an_email_outside_the_sources() {
+        let answer = "Write to [help@vendor.example](email://eml-unknown).";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(!check.passed, "{check:?}");
+    }
+
+    #[test]
+    fn cited_subjects_fails_on_a_citation_with_no_source() {
+        let answer = "Write to help@vendor.example [7].";
+        let check = check_cited_subjects(&["warranty claim".to_string()], answer, &shop_then_support_sources());
+        assert!(!check.passed, "{check:?}");
     }
 }

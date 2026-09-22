@@ -2,6 +2,10 @@
 title: 'Privacidad y seguridad'
 description: 'Dónde se guarda tu correo, qué sale de tu máquina y los controles que te protegen del propio correo.'
 weight: 45
+nav:
+  where-your-data-is-stored: settings/privacy
+  protection-from-the-mail-itself: settings/privacy
+  locking-the-app: settings/privacy
 ---
 
 <!-- claim:priv-intro-1 -->
@@ -105,7 +109,7 @@ Cambiar a Ollama también mantiene la inferencia local, solo que en otro proceso
 Solo OpenRouter envía contenido fuera del dispositivo. Consulta
 [elegir un backend](../ai-features/#choosing-a-backend).
 
-## Protección frente al propio correo
+## Protección frente al propio correo {#protection-from-the-mail-itself}
 
 <!-- claim:priv-protection-from-1 -->
 El correo es una superficie de ataque. Las defensas del lado del cliente:
@@ -113,7 +117,9 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
 - **Bloqueo de contenido remoto** — las imágenes externas, los píxeles de seguimiento y otros
   recursos remotos se bloquean hasta que los permitas. Un aviso por correo te deja cargarlos
   una vez, o puedes confiar en un remitente concreto de forma permanente. Esto es lo que
-  impide que el remitente sepa cuándo y cuántas veces abriste un mensaje. <!-- claim:priv-protection-from-2 -->
+  impide que el remitente sepa cuándo y cuántas veces abriste un mensaje. **Ajustes → Privacidad y
+  seguridad** lista los remitentes en los que confiaste, por cuenta, con un control
+  **Revocar** que vuelve a bloquear sus imágenes. <!-- claim:priv-protection-from-2 -->
 - **Puntuación de basura y correo masivo** — cada mensaje se puntúa localmente para detectar
   spam y correo masivo no deseado. Tus correcciones ("es basura" / "no es basura") lo
   entrenan. El correo marcado se atenúa u oculta, nunca se borra ni se mueve en el servidor
@@ -125,7 +131,7 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
   eventos y objetos incrustados antes de mostrarlo, en ambos lados de la app. Los adjuntos
   nunca se abren por su cuenta. <!-- claim:priv-protection-from-5 -->
 
-## Bloquear la app
+## Bloquear la app {#locking-the-app}
 
 <!-- claim:priv-locking-app-1 -->
 Define una **contraseña principal** en **Ajustes → Privacidad y seguridad** y EmailOps
