@@ -48,7 +48,11 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
-type TabSpec = { id: SettingsTab; experimental?: boolean };
+// `needsAi`: the tab configures something that only exists with a model loaded,
+// so it is hidden while the master AI switch is off. Junk is deliberately not
+// one of them — the detector is local and model-free and scores every sync
+// whether AI is on or not, so its settings must stay reachable.
+type TabSpec = { id: SettingsTab; experimental?: boolean; needsAi?: boolean };
 
 // IDs only. Labels and descriptions are pulled from i18n (`settings.tabs.*`)
 // at render time so they re-render on language switch without re-mounting
@@ -57,14 +61,14 @@ const ALL_TABS: TabSpec[] = [
   { id: 'appearance' },
   { id: 'calendar' },
   { id: 'ai' },
-  { id: 'classification' },
+  { id: 'classification', needsAi: true },
   { id: 'junk' },
-  { id: 'tasks', experimental: true },
-  { id: 'memory', experimental: true },
-  { id: 'lenses', experimental: true },
-  { id: 'aidrafts' },
-  { id: 'aitranslation' },
-  { id: 'aisearch' },
+  { id: 'tasks', experimental: true, needsAi: true },
+  { id: 'memory', experimental: true, needsAi: true },
+  { id: 'lenses', experimental: true, needsAi: true },
+  { id: 'aidrafts', needsAi: true },
+  { id: 'aitranslation', needsAi: true },
+  { id: 'aisearch', needsAi: true },
   { id: 'privacy' },
 ];
 
@@ -88,18 +92,11 @@ export function SettingsDialog({
   // sidebar visibility flags (`tasksEnabled` / `memoriesEnabled`) are still
   // wired in so the panels can drive them.
   //
-  // The master AI switch (`useAiStore`) hides the AI-feature tabs entirely
-  // when off — only Appearance / AI Backend & Models / Privacy remain so the
-  // user can re-enable AI from the AI tab.
+  // The master AI switch (`useAiStore`) hides the tabs marked `needsAi` when
+  // off. AI Backend & Models stays so the user can re-enable AI from there.
   const { t } = useTranslation(['common', 'settings']);
   const { enabled: aiEnabled } = useAiStore();
-  const visibleTabs = useMemo(
-    () =>
-      aiEnabled
-        ? ALL_TABS
-        : ALL_TABS.filter((t) => t.id === 'appearance' || t.id === 'calendar' || t.id === 'ai' || t.id === 'privacy'),
-    [aiEnabled],
-  );
+  const visibleTabs = useMemo(() => (aiEnabled ? ALL_TABS : ALL_TABS.filter((t) => !t.needsAi)), [aiEnabled]);
   const [tab, setTab] = useState<SettingsTab>(() =>
     visibleTabs.some((t) => t.id === initialTab) ? initialTab : 'appearance',
   );
