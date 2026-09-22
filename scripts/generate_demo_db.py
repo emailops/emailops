@@ -973,6 +973,63 @@ PERSONAL_THREADS_EN: list[Thread] = [
            days_ago=8),
 ]
 
+# A product whose store mail (shipping notices, review requests, carrier
+# updates) names it far more often than the vendor's own support mail does.
+# Asking for the vendor's support addresses pre-retrieves the store mail as
+# numbered sources, while the addresses only surface through a tool search —
+# the shape behind the `kelvo_support_addresses` chat eval (tool-found emails
+# cited with numbers that belong to unrelated sources).
+PERSONAL_THREADS_EN += [
+    Thread("Nordmart", "ship-confirm@nordmart.example",
+           "Shipped: \"Kelvo AP-300 Air Purifier\"", "updates",
+           [("them",
+             "Your order containing 'Kelvo AP-300 Air Purifier' has shipped and "
+             "will arrive Thursday. Track your package in Your Orders.")],
+           days_ago=40),
+    Thread("Nordmart Reviews", "reviews@nordmart.example",
+           "Ulises, did the 'Kelvo AP-300 Air Purifier' meet your expectations?",
+           "updates",
+           [("them",
+             "Tell other customers what you think of the Kelvo AP-300 Air "
+             "Purifier. Rate it in one tap.")],
+           days_ago=30),
+    Thread("Kelvo Support", "support@kelvo-home.example",
+           "Your recall claim is approved - see details", "updates",
+           [("them",
+             "Hello Ulises,\n\nWe're happy to let you know that your recall claim "
+             "for the AP-300 is approved. Click here to place your free "
+             "replacement order; the discount is applied at checkout.\n\nIf you "
+             "have any issues, reply to this message and our support team will "
+             "help.\n\nKelvo Support")],
+           days_ago=21),
+    Thread("Kelvo-EU", "support@kelvo-home.example",
+           "Order KV20417 confirmed", "updates",
+           [("them",
+             "Thanks for your order KV20417 (AP-300 replacement, EU warehouse). "
+             "We'll email you when it ships.")],
+           days_ago=20),
+    Thread("Lena @Kelvo", "care@kelvo.example.eu",
+           "Recall Support Update: Expected delivery time", "updates",
+           [("them",
+             "Hi Ulises,\n\nA quick update on your replacement: our EU warehouse "
+             "is running about two weeks behind, so order KV20417 will ship "
+             "later than planned. Reply here with any question.\n\nLena, Kelvo "
+             "customer care")],
+           days_ago=15),
+    Thread("ParcelHub", "no-reply@parcelhub.example",
+           "Your Kelvo EU order KV20417 has shipped", "updates",
+           [("them",
+             "Good news: your Kelvo EU order KV20417 is on its way. Expected "
+             "delivery in 3-5 business days.")],
+           days_ago=6),
+    Thread("ParcelHub", "no-reply@parcelhub.example",
+           "Your Kelvo EU order KV20417 is waiting for carrier pickup", "updates",
+           [("them",
+             "Your Kelvo EU order KV20417 has been processed and is waiting for "
+             "pickup by the carrier.")],
+           days_ago=7),
+]
+
 
 # First contacts too old for the AI window. Classification only runs over
 # emails inside `ai_max_email_count` / `ai_max_email_age_days`, so a mailbox

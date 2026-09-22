@@ -358,6 +358,40 @@ impl Database {
         Ok(())
     }
 
+    /// Replace a message's sources wholesale — the tool turn's grounding
+    /// supersedes the pre-retrieved Sources written before the tool loop ran.
+    pub fn replace_chat_message_sources(&self, message_id: &str, sources: &[ChatMessageSource]) -> Result<()> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM chat_message_sources WHERE message_id = ?1",
+            params![message_id],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO chat_message_sources
+                    (message_id, citation_number, email_id, relevance_score,
+                     subject, sender, sender_email, email_timestamp, body_excerpt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for src in sources {
+                stmt.execute(params![
+                    message_id,
+                    src.citation_number,
+                    src.email_id,
+                    src.relevance_score,
+                    src.subject,
+                    src.sender,
+                    src.sender_email,
+                    src.timestamp,
+                    src.body_excerpt,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Fetch all messages (with citations attached) for a conversation, oldest first.
     pub fn get_chat_messages(&self, conversation_id: &str) -> Result<Vec<ChatMessage>> {
         let conn = self.reader();
@@ -474,6 +508,42 @@ mod tests {
             )
             .unwrap();
         db
+    }
+
+    #[test]
+    fn replace_chat_message_sources_drops_the_previous_rows() {
+        use crate::models::ChatMessageSource;
+        let db = db_with_account();
+        let conv = db.create_chat_conversation("a1", "t").unwrap();
+        let msg = db.insert_chat_message(&conv.id, "assistant", "answer", None).unwrap();
+        for email_id in ["rag-1", "rag-2", "rag-3", "tool-1"] {
+            db.connection()
+                .execute(
+                    "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                                         recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'a1',?1,'s','v','v@ex.com','ex.com','[]','[]','snip',100,0,'primary',0)",
+                    rusqlite::params![email_id],
+                )
+                .unwrap();
+        }
+        let row = |n: i32, email_id: &str| ChatMessageSource {
+            citation_number: n,
+            email_id: email_id.into(),
+            relevance_score: None,
+            subject: format!("subject {email_id}"),
+            sender: String::new(),
+            sender_email: String::new(),
+            timestamp: 0,
+            body_excerpt: None,
+        };
+        db.insert_chat_message_sources(&msg.id, &[row(1, "rag-1"), row(2, "rag-2"), row(3, "rag-3")])
+            .unwrap();
+
+        db.replace_chat_message_sources(&msg.id, &[row(1, "tool-1")]).unwrap();
+
+        let msgs = db.get_chat_messages(&conv.id).unwrap();
+        let ids: Vec<&str> = msgs[0].sources.iter().map(|s| s.email_id.as_str()).collect();
+        assert_eq!(ids, vec!["tool-1"], "rows 2 and 3 of the previous set must be gone");
     }
 
     #[test]

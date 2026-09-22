@@ -27,8 +27,8 @@ use super::retrieval::{
 use super::routing::classify_route;
 use super::tools;
 use super::{
-    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, strip_invalid_citations,
-    strip_tool_call_markup, truncate_chars,
+    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, plan_answer_grounding,
+    relink_self_numbered_citations, strip_invalid_citations, strip_tool_call_markup, truncate_chars, AnswerGrounding,
 };
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
@@ -262,7 +262,10 @@ from this mailbox as if they answered the question."
 before answering any factual question about the user's mailbox.)\n",
         );
     } else {
-        tail.push_str(&format!("Sources (valid citation range: [1]..[{}]):\n", sources.len()));
+        // Unnumbered on purpose: given `[1]`…`[8]`, the model numbered the
+        // bullets of its own answer with them and the UI opened unrelated
+        // emails. A fact is cited by linking its email's `id=`.
+        tail.push_str("Sources (cite each fact with a link to the email it came from: [short label](email://ID)):\n");
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
@@ -270,8 +273,7 @@ before answering any factual question about the user's mailbox.)\n",
             // `id=` lets a RAG answer link the email (`email://ID`) the same
             // way a tool result does; without it the model invented ids.
             tail.push_str(&format!(
-                "[{}] From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
-                src.citation_number,
+                "- From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
                 src.email.sender,
                 src.email.sender_email,
                 src.email.subject,
@@ -787,6 +789,19 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
     Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
 }
 
+/// Rewrite a leading `{"name="x"` (Qwen 3.6 typing `=` for `":"`) into
+/// `{"name":"x"`; any other shape is returned unchanged. Mirrors the runtime
+/// parser's repair, which lives behind the llamacpp feature.
+fn repair_name_equals(inner: &str) -> std::borrow::Cow<'_, str> {
+    let body = inner.trim_start();
+    match body.strip_prefix('{').map(str::trim_start) {
+        Some(rest) if rest.starts_with("\"name=\"") => {
+            std::borrow::Cow::Owned(format!("{{\"name\":\"{}", &rest["\"name=\"".len()..]))
+        }
+        _ => std::borrow::Cow::Borrowed(inner),
+    }
+}
+
 /// Parse the JSON body of a `<tool_call>{…}</tool_call>` block (Qwen 3.6's
 /// shape, as opposed to the `<function=>` Hermes form). Mirrors the leniency
 /// of the runtime's native Qwen parser: hoists a `name` nested inside
@@ -798,6 +813,8 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
 fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
     use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
+    let inner = repair_name_equals(inner);
+    let inner = inner.as_ref();
     let value = parse_first_json_value(inner)
         .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))?;
     let obj = value.as_object()?;
@@ -3834,6 +3851,7 @@ pub async fn run_chat_turn(
         mut aggregated_email_refs,
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
+        tool_email_refs,
     ) = {
         emit_log("info", "stage: tool_loop");
         emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
@@ -3869,9 +3887,9 @@ pub async fn run_chat_turn(
         );
         // Numbered sources are citable with `email://` as well as tool results.
         let mut email_refs = source_email_ids(&sources);
-        for id in outcome.aggregated_email_refs {
-            if !email_refs.contains(&id) {
-                email_refs.push(id);
+        for id in &outcome.aggregated_email_refs {
+            if !email_refs.contains(id) {
+                email_refs.push(id.clone());
             }
         }
         (
@@ -3882,6 +3900,9 @@ pub async fn run_chat_turn(
             email_refs,
             outcome.aggregated_draft_refs,
             outcome.answer_streamed_live,
+            // Tool-returned emails only: they decide the answer's grounding
+            // (see `plan_answer_grounding`).
+            outcome.aggregated_email_refs,
         )
     };
 
@@ -3938,6 +3959,10 @@ pub async fn run_chat_turn(
                 // markers despite the CITATION CONTRACT — strip any that fall
                 // outside the retrieved source range BEFORE emitting so the user
                 // never sees them. count_invalid_citations later then reports 0.
+                // Relink first: a self-numbered marker the answer defines as a
+                // tool-found email becomes a link to it instead of pointing at
+                // (or, past the range, being stripped from) the Sources.
+                let answer = relink_self_numbered_citations(&answer, &source_email_ids(&sources));
                 let answer = strip_invalid_citations(&answer, sources.len());
                 // Contradiction guard: the model answered "no emails found"
                 // even though the tool results above DO contain emails
@@ -4172,8 +4197,35 @@ pub async fn run_chat_turn(
             // before persisting so a re-render after reload shows the cleaned-up
             // text. The direct-answer path already stripped earlier; this catches
             // the live-streaming path (and is a cheap no-op when nothing leaked).
+            let shipped = result.content.clone();
             result.content = strip_tool_call_markup(&result.content);
-            result.content = strip_invalid_citations(&result.content, sources.len());
+            result.content = relink_self_numbered_citations(&result.content, &source_email_ids(&sources));
+            // On a tool turn the tool-returned emails are the answer's
+            // sources and a bare `[n]` means nothing against them — the
+            // model numbered its own bullets — so every marker goes; the
+            // `email://` links (relinked just above where the answer
+            // defined a number) are the turn's citations.
+            let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
+            let citation_range = grounding.citation_range(sources.len());
+            result.content = strip_invalid_citations(&result.content, citation_range);
+            // The live bubble holds the text as streamed; ship the cleaned
+            // text over it so a stripped marker does not stay on screen as a
+            // pill until the conversation is reloaded.
+            if result.content != shipped && !result.content.trim().is_empty() {
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: result.content.clone(),
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                        replace: Some(true),
+                    },
+                );
+            }
             // Robustness net: still no answer text after the synthesis retry
             // (or a direct answer that stripped to nothing). Ship a localized
             // rephrase hint instead of a silently blank bubble, and emit it as
@@ -4216,6 +4268,46 @@ pub async fn run_chat_turn(
             if let Err(e) = db.update_chat_message_referenced_drafts(&assistant_message_id, &aggregated_draft_refs) {
                 emit_log("error", &format!("failed to persist draft refs: {}", e));
             }
+            // A tool turn's sources are the emails the tools returned, the
+            // ones the answer links first. They supersede the pre-retrieved
+            // rows written before the loop, on disk and in the open bubble.
+            let source_count = match &grounding {
+                AnswerGrounding::Sources => sources.len(),
+                AnswerGrounding::Emails(ids) => match db.get_emails_by_ids(ids) {
+                    Ok(emails) => {
+                        let rows: Vec<ChatMessageSource> = emails
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| ChatMessageSource {
+                                citation_number: i as i32 + 1,
+                                email_id: e.id.clone(),
+                                relevance_score: None,
+                                subject: e.subject.clone(),
+                                sender: e.sender.clone(),
+                                sender_email: e.sender_email.clone(),
+                                timestamp: e.timestamp,
+                                body_excerpt: (!e.snippet.is_empty()).then(|| e.snippet.clone()),
+                            })
+                            .collect();
+                        if let Err(e) = db.replace_chat_message_sources(&assistant_message_id, &rows) {
+                            emit_log("error", &format!("failed to persist tool-turn sources: {}", e));
+                        }
+                        crate::services::events::emit(
+                            "chat-sources",
+                            ChatSourcesEvent {
+                                message_id: assistant_message_id.clone(),
+                                conversation_id: conversation_id.clone(),
+                                sources: rows.clone(),
+                            },
+                        );
+                        rows.len()
+                    }
+                    Err(e) => {
+                        emit_log("error", &format!("failed to load tool-turn sources: {}", e));
+                        sources.len()
+                    }
+                },
+            };
             #[cfg(feature = "tracing")]
             crate::ai::tracing::driver().record_chat_turn(crate::ai::tracing::ChatTurnTrace {
                 model: provider.model_name().to_string(),
@@ -4295,15 +4387,14 @@ pub async fn run_chat_turn(
             let invalid_citations = if result.content.trim().is_empty() {
                 -1
             } else {
-                count_invalid_citations(&result.content, sources.len())
+                count_invalid_citations(&result.content, citation_range)
             };
             if invalid_citations > 0 {
                 emit_log(
                     "warn",
                     &format!(
                         "answer contains {} citation(s) outside the source range 1..={}",
-                        invalid_citations,
-                        sources.len()
+                        invalid_citations, citation_range
                     ),
                 );
             }
@@ -4361,7 +4452,7 @@ pub async fn run_chat_turn(
                     "reply complete ({}, {:.1}s, {} sources)",
                     tokens_str,
                     latency_ms as f64 / 1000.0,
-                    sources.len()
+                    source_count
                 ),
             );
             Ok(())
@@ -5611,7 +5702,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_includes_numbered_sources_in_final_user_message() {
+    fn prompt_includes_sources_in_final_user_message() {
         let sources = vec![
             make_scored(1, "Q1 plan", "we will ship by march"),
             make_scored(2, "Invoice", "please pay by friday"),
@@ -5621,23 +5712,38 @@ mod tests {
         // The per-turn sources block must NOT live in the system message —
         // it would invalidate the cross-turn KV prefix every turn.
         let sys = &msgs[0].1;
-        assert!(!sys.contains("[1] From: Alice"), "sources leaked into system: {sys}");
-        assert!(
-            !sys.contains("valid citation range"),
-            "sources header leaked into system"
-        );
+        assert!(!sys.contains("From: Alice"), "sources leaked into system: {sys}");
         let (last_role, last) = msgs.last().unwrap();
         assert_eq!(last_role, "user");
-        assert!(last.contains("[1] From: Alice"));
         assert!(last.contains("Subject: Q1 plan"));
-        assert!(last.contains("[2] From: Alice"));
         assert!(last.contains("Subject: Invoice"));
-        assert!(last.contains("valid citation range: [1]..[2]"));
         // The question comes AFTER the sources block, at the very end.
         let q_pos = last.rfind("when do we ship?").expect("question missing");
-        let src_pos = last.find("[2] From: Alice").expect("sources missing");
+        let src_pos = last.find("Subject: Invoice").expect("sources missing");
         assert!(q_pos > src_pos, "question must follow the sources block");
         assert!(last.trim_end().ends_with("when do we ship?"));
+    }
+
+    /// Sources are cited by link, not by number: a model given `[1]`…`[8]`
+    /// numbered the bullets of its own answer with them, and the UI opened
+    /// unrelated emails. No numbers means nothing to confuse.
+    #[test]
+    fn prompt_sources_are_unnumbered_and_ask_for_email_links() {
+        let sources = vec![
+            make_scored(1, "Q1 plan", "we ship in march"),
+            make_scored(2, "Invoice", "pay"),
+        ];
+        let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
+        let (_, last) = msgs.last().unwrap();
+        assert!(
+            !last.contains("[1]") && !last.contains("[2]"),
+            "sources numbered: {last}"
+        );
+        assert!(!last.contains("citation range"), "numeric range advertised: {last}");
+        assert!(
+            last.contains("email://"),
+            "no link instruction next to the sources: {last}"
+        );
     }
 
     #[test]
@@ -5908,8 +6014,8 @@ mod tests {
 
     #[test]
     fn prompt_advertises_citation_contract_and_few_shots() {
-        // The new prompt rewrite must surface (a) the strict citation rule,
-        // (b) the valid citation range, and (c) at least one few-shot example.
+        // The prompt must surface the strict citation rule and at least one
+        // few-shot example, and the rule is the link contract, not numbers.
         let sources = vec![
             make_scored(1, "Kickoff", "reunión el martes 3 de marzo"),
             make_scored(2, "Proposal", "monthly fee drop to $1.5k"),
@@ -5918,10 +6024,9 @@ mod tests {
         let sys = &msgs[0].1;
         assert!(sys.contains("CITATION CONTRACT"), "missing citation contract section");
         assert!(sys.contains("Example 1"), "missing few-shot examples");
-        // The per-turn valid range travels with the sources block in the
-        // final user message.
-        let last = &msgs.last().unwrap().1;
-        assert!(last.contains("valid citation range: [1]..[2]"), "missing valid range");
+        let contract = &sys[sys.find("CITATION CONTRACT").unwrap()..];
+        let contract = &contract[..contract.find("\n\n").unwrap_or(contract.len())];
+        assert!(contract.contains("email://"), "contract must ask for links: {contract}");
     }
 
     #[test]
@@ -6155,7 +6260,6 @@ mod tests {
         ];
         let msgs = build_prompt(&sources, &[], "when do we ship?", "en", "", tpl(), "");
         let (_, last) = msgs.last().unwrap();
-        assert!(last.contains("[1] From: Alice"), "numbered header kept: {last}");
         assert!(last.contains("id=e1"), "source 1 must carry its email id: {last}");
         assert!(last.contains("id=e2"), "source 2 must carry its email id: {last}");
     }
@@ -6800,6 +6904,21 @@ Preséntalos en una tabla markdown …";
         assert_eq!(
             calls[0].function.arguments,
             serde_json::json!({"unread":true,"order":"oldest","limit":1})
+        );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_repairs_an_equals_after_the_name_key() {
+        // Qwen 3.6 35B emission: `"name="x"` for `"name":"x"`. Mirrors the
+        // runtime parser's repair.
+        let text =
+            "<tool_call>{\"name=\"search_emails\",\"arguments\":{\"from\":\"kelvo\",\"limit\":25}}\n</tool_call>";
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(
+            calls[0].function.arguments,
+            serde_json::json!({"from":"kelvo","limit":25})
         );
     }
 
