@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
+.PHONY: eval-plan eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -364,7 +364,11 @@ audit:
 # Clean build artifacts
 clean:
 	rm -rf dist/
-	cargo clean --manifest-path src-tauri/Cargo.toml
+	bash scripts/build_target.sh clean
+
+# Point src-tauri/target at the Time Machine-excluded /Volumes/Build (no-op without it)
+link-target:
+	bash scripts/build_target.sh link
 
 # Install git hooks
 hooks:
