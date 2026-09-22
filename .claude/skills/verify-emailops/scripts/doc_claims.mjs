@@ -731,16 +731,17 @@ async function afterWizard() {
     how: 'Elige OpenRouter en Ajustes → AI Backend & Models y comprueba que su panel muestra el gasto del periodo frente al presupuesto y ofrece «Start a new period». Sin clave no se puede gastar nada, así que el contador no se prueba.',
   }, async ({ doc }) => {
     const label = doc.match(/with (Start a new period)/)[1];
-    await press('OpenRouter'); const or = await screen(); await press('In-app');
+    await press(bold('ai-choosing-backend-4')[0].replace(/\s*\([^)]*\)\s*$/, '')); const or = await screen(); await press('In-app');
     return ok(or.includes(label) && /Monthly Budget/.test(or), `el panel de OpenRouter muestra el presupuesto y «${label}»`, `falta «${label}» o el presupuesto`);
   });
   await claim('ai-choosing-backend-4', 'clave y presupuesto', {
     covers: ['OpenRouter (remote) — a paid cloud API.', 'Requires an API key, supports a monthly budget cap'], proof: 'label',
-    how: 'Elige OpenRouter en Ajustes → AI Backend & Models y comprueba que el formulario pide una clave de API y ofrece un presupuesto mensual. Que el presupuesto se aplique no se prueba sin una clave.',
+    how: 'Elige el backend que nombra la doc en Ajustes → AI Backend & Models y comprueba que el formulario pide una clave de API y ofrece un presupuesto mensual. «(remote)» es una aclaración de la doc, no parte del nombre en la app.',
   }, async () => {
-    const { missing } = await labelsVisible('ai-choosing-backend-4');
-    await press('OpenRouter'); const or = await screen(); await press('In-app');
-    return ok(!missing.length && /API Key/i.test(or) && /Monthly Budget/.test(or), 'OpenRouter pide clave de API y admite presupuesto mensual', 'falta clave o presupuesto');
+    const named = bold('ai-choosing-backend-4')[0].replace(/\s*\([^)]*\)\s*$/, '');
+    await press(named); const or = await screen(); await press('In-app');
+    return ok(ai.includes(named) && /API Key/i.test(or) && /Monthly Budget/.test(or),
+      `«${named}» pide clave de API y admite presupuesto mensual`, `«${named}»: falta la clave o el presupuesto`);
   });
   await claim('inst-system-requirements-without-local-2', 'IA remota', {
     covers: ['AI switched on but routed to OpenRouter'], proof: 'label',

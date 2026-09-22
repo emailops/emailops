@@ -43,22 +43,26 @@ export default (h) => async function demoCases() {
   await view('Inbox');
   const side = await buttons();
   await claim('start-4-connect-5', 'añadir cuenta', {
-    covers: ['Add more accounts any time with Add account in the sidebar.'],
-    how: 'Pulsa el control «Add account» (el texto en negrita de la doc) de la barra lateral del buzón demo y comprueba que abre el alta de cuenta con Gmail e IMAP; luego la cierra sin añadir nada.',
-  }, async () => {
-    const [label] = bold('start-4-connect-5');
-    const clicked = await js((l) => {
-      const el = [...document.querySelectorAll('button,[role=button]')].find((e) => e.offsetParent && (e.title === l || e.getAttribute('aria-label') === l || e.innerText.trim() === l));
+    covers: ['Add more accounts any time with the + button next to Accounts in the sidebar.'],
+    how: 'Busca en la barra lateral, junto al encabezado «Accounts», un botón sin texto (el icono +) y lo pulsa: debe abrir el alta de cuenta con Gmail e IMAP. Luego la cierra sin añadir nada.',
+  }, async ({ doc }) => {
+    doc.match(/\+ button next to Accounts/);
+    const found = await js(() => {
+      const head = [...document.querySelectorAll('*')].find((e) => e.offsetParent && e.children.length <= 2 && /^ACCOUNTS$/i.test(e.innerText.trim()));
+      let row = head;
+      for (let i = 0; i < 3 && row && !row.querySelector('button'); i++) row = row.parentElement;
+      const el = row && [...row.querySelectorAll('button,[role=button]')].find((e) => e.offsetParent && !e.innerText.trim());
       el?.click();
-      return !!el;
-    }, label);
-    if (!clicked) return `FAIL: la barra lateral no tiene «${label}»`;
-    await sleep(1200);
+      return el ? (el.title || el.getAttribute('aria-label') || '') : null;
+    });
+    if (found === null) return 'FAIL: no hay un botón de icono junto al encabezado «Accounts»';
+    await sleep(1400);
     const dialog = await screen();
     await b.keys('Escape').catch(() => {});
     await sleep(600);
     await press('Cancel').catch(() => {});
-    return ok(/Gmail/.test(dialog) && /IMAP/.test(dialog), `«${label}» abre el alta de cuenta`, `«${label}» no abre el alta de cuenta`);
+    await sleep(600);
+    return ok(/Gmail/.test(dialog) && /IMAP/.test(dialog), `el botón «${found}» junto a Accounts abre el alta de cuenta`, `el botón «${found}» no abre el alta de cuenta`);
   });
   // Each account's newest threads, then the unified list: it must interleave them.
   const perAccount = {};
@@ -130,23 +134,33 @@ export default (h) => async function demoCases() {
   });
 
   await claim('feat-search-2', 'operadores', {
-    covers: ['| from:ana | sender address or name |', '| subject:invoice | subject line |', '| tag:newsletter / tag:intent=request | a classifier tag, optionally within one facet |'],
-    partial: 'to:, before:/after: e id: no se ejecutan aquí',
-    how: 'Lee los operadores de la tabla y los ejecuta en el buscador del buzón demo con un valor tomado de la propia demo: cada búsqueda debe devolver menos hilos que la bandeja completa y alguno.',
+    covers: ['| from:ana | sender address or name |', '| subject:invoice | subject line |',
+             '| before:2026-09-01 / after:2026-09-01 | received date |',
+             '| tag:newsletter / tag:intent=request | a classifier tag, optionally within one facet |'],
+    partial: 'to: e id: no se ejecutan: en el buzón demo todo va dirigido al usuario y los ids no se ven en pantalla',
+    how: 'Ejecuta cada operador de la tabla en el buscador del buzón demo con un valor tomado de la propia demo y compara los hilos que devuelve con los de la bandeja sin filtrar: deben ser un subconjunto estricto (y una fecha imposible, ninguno).',
   }, async ({ doc }) => {
     doc.match(/narrowed with operators/);
     await view('Inbox');
-    const all = await rowCount();
-    const probes = [['from:', 'nadia'], ['subject:', 'ollama'], ['tag:', 'newsletter']];
+    const all = (await rowTexts()).length;
+    // The list is virtualised, so a filtered result set is not a subset of the
+    // rows on screen: check what each operator promises instead.
+    const probes = [
+      ['from:nadia', (rows) => rows.length > 0 && rows.every((t) => /nadia/i.test(t))],
+      ['subject:ollama', (rows) => rows.length > 0 && rows.every((t) => /ollama/i.test(t))],
+      ['tag:intent=request', (rows) => rows.length > 0 && rows.length < all],
+      ['after:2030-01-01', (rows) => rows.length === 0],
+    ];
     const results = [];
-    for (const [op, value] of probes) {
-      await search(`${op}${value}`);
-      results.push([`${op}${value}`, await rowCount()]);
+    for (const [q, good] of probes) {
+      await search(q);
+      const rows = await rowTexts();
+      results.push([q, rows.length, good(rows)]);
     }
     await search('');
-    const bad = results.filter(([, n]) => !(n > 0 && n < all));
+    const bad = results.filter(([, , good]) => !good);
     return ok(!bad.length, results.map(([q, n]) => `${q} → ${n}`).join(', ') + ` (bandeja: ${all})`,
-      `no acotan la lista: ${bad.map(([q, n]) => `${q} → ${n}`).join(', ')} (bandeja: ${all})`);
+      `no filtran como promete la tabla: ${bad.map(([q, n]) => `${q} → ${n}`).join(', ')} (bandeja: ${all})`);
   });
 
   // ── reading pane ───────────────────────────────────────────────────────
@@ -203,17 +217,21 @@ export default (h) => async function demoCases() {
   await claim('ai-chat-mailbox-11', 'panel de razonamiento', {
     covers: ['Every answer has a Show reasoning panel that lists what happened, in order: which route the question took and what decided it, the query planner, the mailbox search, the guide sections used, each model call with its timing, and each tool call with its arguments and result.'],
     partial: 'el detalle depende de la traza guardada en la conversación demo',
-    how: 'Abre la conversación guardada del buzón demo y despliega el panel que nombra la doc («Show reasoning») bajo una respuesta: debe listar la ruta y las llamadas con sus tiempos.',
+    how: 'Abre una conversación guardada del buzón demo y despliega bajo la respuesta el panel que nombra la doc («Show reasoning»): debe listar la ruta seguida y los tiempos.',
   }, async ({ doc }) => {
     const label = doc.match(/a (Show reasoning) panel/)[1];
+    await js(() => [...document.querySelectorAll('button,[role=button]')]
+      .filter((e) => e.offsetParent && e.innerText.trim().length > 12 && e.innerText.length < 120 && /\?$/.test(e.innerText.trim())).pop()?.click());
+    await sleep(2200);
     const opened = await js((l) => {
       const el = [...document.querySelectorAll('button,[role=button],summary')].find((e) => e.offsetParent && e.innerText.trim().startsWith(l));
       el?.click();
       return !!el;
     }, label);
-    await sleep(900);
+    await sleep(1200);
     const panel = await screen();
-    return ok(opened && /route|ruta|tool|ms\b/i.test(panel), `«${label}» despliega la traza de la respuesta`, opened ? 'el panel no muestra la traza' : `no hay «${label}» bajo la respuesta`);
+    return ok(opened && /route|ruta|tool|herramienta|\d+(\.\d+)?s\b/i.test(panel), `«${label}» despliega la traza de la respuesta`,
+      opened ? 'el panel no muestra la traza' : `no hay «${label}» bajo la respuesta`);
   });
   await claim('ai-chat-mailbox-3', 'selector de cuenta', {
     covers: ['a picker names which one'], partial: 'que la búsqueda se limite a esa cuenta necesita un modelo descargado',
@@ -277,13 +295,17 @@ export default (h) => async function demoCases() {
   await claim('feat-attachments-view-2', 'reglas', {
     covers: ['Click Manage Rules (or Create a Rule on the empty view) and fill in:'],
     partial: 'que la vista empiece vacía no se observa: el buzón demo ya trae reglas',
-    how: 'Pulsa «Manage Rules» en la vista Attachments y comprueba que abre el formulario de reglas.',
+    how: 'Pulsa «Manage Rules» en la vista Attachments y luego «Create a Rule»: debe aparecer el formulario de regla nueva.',
   }, async ({ doc }) => {
-    const label = doc.match(/Click (Manage Rules)/)[1];
-    await press(label);
+    const [manage, create] = doc.match(/Click (Manage Rules) \(or (Create a Rule)/).slice(1);
+    await press(manage);
     await sleep(1200);
-    const dialog = await screen();
-    return ok(/Rule Name|Sender Email Pattern/.test(dialog), `«${label}» abre el formulario de reglas`, `«${label}» no abre el formulario`);
+    const panel = await screen();
+    await press(create).catch(() => {});
+    await sleep(1400);
+    const form = await screen();
+    return ok(panel.includes(create) && /New Rule/.test(form), `«${manage}» abre las reglas y «${create}» el formulario`,
+      `«${manage}»: ${panel.includes(create) ? 'abre las reglas pero' : 'no abre las reglas y'} «${create}» no da formulario`);
   });
   const ruleForm = await screen();
   await claim('feat-attachments-view-3', 'nombre', {
@@ -325,10 +347,9 @@ export default (h) => async function demoCases() {
     doc.match(/Apply to existing emails/);
     return ok(/Apply to existing emails/.test(ruleForm), 'el formulario ofrece aplicar la regla a lo ya sincronizado', 'no lo ofrece');
   });
-  await b.keys('Escape').catch(() => {});
-  await sleep(800);
   await press('Cancel').catch(() => {});
-  await sleep(600);
+  await b.keys('Escape').catch(() => {});
+  await sleep(900);
   await view('Tasks');
   await claim('ai-tasks-1', 'panel', {
     covers: ['collects them in a Tasks panel'], partial: 'la extracción necesita un modelo; aquí se ven las tareas ya extraídas del buzón demo',
