@@ -131,14 +131,14 @@ impl Tool for ListCalendarEventsTool {
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\"), and for any question about WHEN something scheduled is or was — never search_emails for those. Called with no range it lists the past week and the next one."
+        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\") — never search_emails for those."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "since": { "type": "string", "description": "ISO date (YYYY-MM-DD) — start of the range. With no since/until/days the tool lists the last 7 days and the next 7." },
+                "since": { "type": "string", "description": "ISO date (YYYY-MM-DD) — start of the range. Defaults to now." },
                 "until": { "type": "string", "description": "ISO date (YYYY-MM-DD) — exclusive end of the range." },
                 "days": { "type": "integer", "description": "Days ahead from now when since/until are omitted (default 7, max 60)." }
             },
