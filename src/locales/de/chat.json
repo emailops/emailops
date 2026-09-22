@@ -100,7 +100,8 @@
         "ftsSearch": "FTS-Suche",
         "fetchMetadata": "Metadaten abrufen",
         "threadExpansion": "Thread-Erweiterung",
-        "helpDocs": "EmailOps-Hilfe"
+        "helpDocs": "EmailOps-Hilfe",
+        "rag": "RAG-Abruf"
       },
       "noCalls": "keine Aufrufe",
       "fallbackSkipped": "Fallback (übersprungen)",

@@ -100,7 +100,8 @@
         "ftsSearch": "Recherche FTS",
         "fetchMetadata": "Récupérer les métadonnées",
         "threadExpansion": "Expansion du fil",
-        "helpDocs": "Aide EmailOps"
+        "helpDocs": "Aide EmailOps",
+        "rag": "Recherche RAG"
       },
       "noCalls": "aucun appel",
       "fallbackSkipped": "repli (ignoré)",

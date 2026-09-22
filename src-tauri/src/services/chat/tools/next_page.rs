@@ -140,6 +140,7 @@ mod tests {
             llm_streaming_ms: None,
             llm_calls: Vec::new(),
             help: None,
+            steps: Vec::new(),
         });
         message
     }

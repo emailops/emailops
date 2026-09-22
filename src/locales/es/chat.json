@@ -100,7 +100,8 @@
         "ftsSearch": "Búsqueda FTS",
         "fetchMetadata": "Obtener metadatos",
         "threadExpansion": "Expansión del hilo",
-        "helpDocs": "Ayuda de EmailOps"
+        "helpDocs": "Ayuda de EmailOps",
+        "rag": "Recuperación RAG"
       },
       "noCalls": "sin llamadas",
       "fallbackSkipped": "reserva (omitida)",

@@ -3059,7 +3059,7 @@ async fn run_thread_bound_turn(
             // referenced-draft allowlist live (the `chat-trace` event is the
             // delivery hook for it). The route is synthetic: a thread-bound
             // turn is a forced tools-first short-circuit.
-            let trace = ChatTrace {
+            let trace = super::trace_steps::with_steps(ChatTrace {
                 route: RouteDecision {
                     mode: RouteMode::ToolsFirst,
                     reason: "thread-bound".to_string(),
@@ -3074,7 +3074,8 @@ async fn run_thread_bound_turn(
                 llm_streaming_ms: None,
                 llm_calls: llm_calls.clone(),
                 help: None,
-            };
+                steps: Vec::new(),
+            });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
             }
@@ -4539,7 +4540,7 @@ pub async fn run_chat_turn(
             // ── 5. Assemble, persist, and emit the reasoning trace ─────────
             // Done after stream success so the trace reflects the full flow
             // (routing + retrieval + any tool calls + total wall-clock time).
-            let trace = ChatTrace {
+            let trace = super::trace_steps::with_steps(ChatTrace {
                 route: route.clone(),
                 retrieval: retrieval_trace.clone(),
                 tool_calls: tool_traces.clone(),
@@ -4549,7 +4550,8 @@ pub async fn run_chat_turn(
                 llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
                 llm_calls: llm_calls.clone(),
                 help: help_trace.clone(),
-            };
+                steps: Vec::new(),
+            });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
             }

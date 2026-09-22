@@ -580,6 +580,7 @@ mod tests {
             llm_streaming_ms: None,
             help: None,
             llm_calls: vec![],
+            steps: vec![],
         }
     }
 

@@ -10,7 +10,7 @@ use serde::Serialize;
 use tera::{Context, Tera};
 
 use crate::evals::case_loader::EvalCase;
-use crate::evals::harness::{CaseOutcome, SourceSummary};
+use crate::evals::harness::CaseOutcome;
 use crate::evals::judge::JudgeScores;
 use crate::evals::metrics::HeuristicReport;
 use crate::evals::EvalResult;
@@ -36,37 +36,16 @@ struct CaseView {
     latency_ms: i64,
     wall_elapsed_ms: i64,
     token_count: Option<i32>,
-    /// Execution path of the turn on one line — see [`flow_line`].
+    /// Execution path of the turn on one line — see [`flow_summary`].
     flow: Option<String>,
     /// The email the turn ran against (bound or open thread), as the model saw it.
     open_thread: Option<String>,
-    retrieval: Option<RetrievalView>,
-    /// Guide sections the help lookup served, `"<Page › Heading>\n<content>"`.
-    help_sections: Vec<String>,
-    tool_calls: Vec<ToolCallView>,
+    /// Every step of the turn with what it read or produced — see [`step_views`].
+    steps: Vec<StepView>,
     heuristics: Vec<CheckView>,
     metric_rows: Vec<MetricRowView>,
-    sources: Vec<SourceView>,
     judge_error: Option<String>,
     judge_rationale: Option<String>,
-}
-
-#[derive(Serialize)]
-struct RetrievalView {
-    vector_hits: i32,
-    fts_hits: i32,
-    fused_top_k: i32,
-    elapsed_ms: i64,
-    vector_fallback: bool,
-}
-
-#[derive(Serialize)]
-struct ToolCallView {
-    name: String,
-    arguments_json: String,
-    result_preview: String,
-    result_chars: i32,
-    elapsed_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -84,17 +63,6 @@ struct MetricRowView {
     score_pct: Option<i32>,
     score_label: String,
     score_class: String,
-}
-
-#[derive(Serialize)]
-struct SourceView {
-    citation_number: i32,
-    email_id: String,
-    subject: String,
-    sender: String,
-    sender_email: String,
-    score: Option<f32>,
-    body_snippet: String,
 }
 
 #[derive(Serialize)]
@@ -184,30 +152,8 @@ fn avg_pct(vals: &[f64]) -> Option<i32> {
 
 fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
     let trace = rc.outcome.assistant_trace.as_ref();
-    let flow = trace.map(flow_line);
-
-    let retrieval = trace.and_then(|t| t.retrieval.as_ref()).map(|r| RetrievalView {
-        vector_hits: r.vector_hits,
-        fts_hits: r.fts_hits,
-        fused_top_k: r.fused_top_k,
-        elapsed_ms: r.elapsed_ms,
-        vector_fallback: r.vector_fallback,
-    });
-
-    let tool_calls = trace
-        .map(|t| {
-            t.tool_calls
-                .iter()
-                .map(|tc| ToolCallView {
-                    name: tc.name.clone(),
-                    arguments_json: serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into()),
-                    result_preview: tc.result_preview.clone(),
-                    result_chars: tc.result_chars,
-                    elapsed_ms: tc.elapsed_ms,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let flow = trace.map(flow_summary);
+    let steps = trace.map(|t| step_views(t, rc.outcome)).unwrap_or_default();
 
     let heuristics = rc
         .heuristics
@@ -228,21 +174,6 @@ fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
     push_metric(&mut metric_rows, "contextual_relevancy", rc.judge.contextual_relevancy);
     push_metric(&mut metric_rows, "contextual_recall", rc.judge.contextual_recall);
 
-    let sources = rc
-        .outcome
-        .sources_used
-        .iter()
-        .map(|s: &SourceSummary| SourceView {
-            citation_number: s.citation_number,
-            email_id: s.email_id.clone(),
-            subject: s.subject.clone(),
-            sender: s.sender.clone(),
-            sender_email: s.sender_email.clone(),
-            score: s.relevance_score,
-            body_snippet: s.body_snippet.clone(),
-        })
-        .collect();
-
     CaseView {
         id: rc.case.id.clone(),
         question: rc.case.question.clone(),
@@ -256,12 +187,9 @@ fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
         token_count: rc.outcome.assistant_token_count,
         flow,
         open_thread: rc.outcome.open_thread.clone(),
-        retrieval,
-        help_sections: rc.outcome.help_sections.clone(),
-        tool_calls,
+        steps,
         heuristics,
         metric_rows,
-        sources,
         judge_error: rc.judge.error.clone(),
         judge_rationale: rc.judge.rationale.clone(),
     }
@@ -430,8 +358,7 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
   </div>
   <div class="tc-body">
 
-    {# Sections follow the flow line: the email in context, mailbox RAG and
-       its sources, the guide sections, then the tool calls. #}
+    {# The email in context, then the turn step by step (trace_steps). #}
     {% if c.open_thread %}
     <div class="section">
       <div class="section-label">Open email (context the model had)</div>
@@ -441,56 +368,15 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
     </div>
     {% endif %}
 
-    {% if c.retrieval %}
+    {% if c.steps | length > 0 %}
     <div class="section">
-      <div class="section-label">RAG retrieval</div>
-      <div class="retr-stats">
-        <span><strong>vector:</strong> {{ c.retrieval.vector_hits }}</span>
-        <span><strong>fts:</strong> {{ c.retrieval.fts_hits }}</span>
-        <span><strong>fused top-k:</strong> {{ c.retrieval.fused_top_k }}</span>
-        <span><strong>time:</strong> {{ c.retrieval.elapsed_ms }}ms</span>
-      </div>
-      {% if c.retrieval.vector_fallback %}<div class="warning">vector search fell back to FTS-only</div>{% endif %}
-    </div>
-    {% endif %}
-
-    {% if c.sources | length > 0 %}
-    <div class="section">
-      <div class="section-label">Sources (RAG context fed to model)</div>
-      <ul class="sources">
-        {% for s in c.sources %}
-        <li>
-          <strong>[{{ s.citation_number }}] {{ s.sender }} &lt;{{ s.sender_email }}&gt; — {{ s.subject }}</strong>
-          {% if s.score %}<span style="color:var(--text-muted);font-size:0.72rem"> · score {{ s.score | round(precision=4) }}</span>{% endif %}
-          {% if s.body_snippet %}
-          <details style="margin-top:0.35rem;">
-            <summary style="cursor:pointer;font-size:0.76rem;color:var(--text-muted);user-select:none;">chunk fed to model ({{ s.body_snippet | length }} chars) — click to expand</summary>
-            <pre style="margin:0.3rem 0 0;padding:0.5rem 0.6rem;background:#0b1020;color:#d9e2f3;font-size:0.74rem;border-radius:6px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;">{{ s.body_snippet }}</pre>
-          </details>
-          {% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-
-    {% if c.help_sections | length > 0 %}
-    <div class="section">
-      <div class="section-label">Guide sections (EmailOps help fed to model)</div>
-      {% for h in c.help_sections %}
-      <pre style="margin:0.3rem 0 0;padding:0.5rem 0.6rem;background:#0b1020;color:#d9e2f3;font-size:0.74rem;border-radius:6px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;">{{ h }}</pre>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if c.tool_calls | length > 0 %}
-    <div class="section">
-      <div class="section-label">Tool calls</div>
-      {% for tc in c.tool_calls %}
+      <div class="section-label">Trace</div>
+      {% for st in c.steps %}
       <div class="tool-call">
-        <div class="tool-head"><span>{{ tc.name }}</span><span>{{ tc.elapsed_ms }}ms · {{ tc.result_chars }} chars</span></div>
-        <div class="tool-args mono">{{ tc.arguments_json }}</div>
-        <details class="tool-result"><summary>result ({{ tc.result_chars }} chars) — click to expand</summary><pre>{{ tc.result_preview }}</pre></details>
+        <div class="tool-head"><span>{{ st.label }}</span><span>{{ st.detail }}</span></div>
+        {% for b in st.blocks %}
+        <details class="tool-result"><summary>{{ b.title }}</summary><pre>{{ b.text }}</pre></details>
+        {% endfor %}
       </div>
       {% endfor %}
     </div>
@@ -544,194 +430,196 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
 </html>
 "###;
 
-/// One-line summary of the path a turn actually took, for the report header of
-/// each case: `heuristic → planner → search_emails → llm round 0 → llm round 1`.
-///
-/// Reading a case used to mean cross-referencing three blocks (route, tool
-/// calls, LLM calls) to answer "did this go through the planner, or did the
-/// model pick the tool itself?". The line is assembled from the persisted
-/// trace, in execution order: the classifier that decided the route, then the
-/// planner and retrieval when they ran, then every tool call and model round.
-pub(crate) fn flow_line(trace: &ChatTrace) -> String {
-    // Round numbers order the timeline: the planner is -2, pre-seeded shortcut
-    // tools -1, the tool loop 0.., and the final stream is emitted last.
-    let mut steps: Vec<(i32, u8, String)> = Vec::new();
-    // The classifier carries the signal it fired on, so the line answers
-    // "why this route?" without a separate block.
-    let classifier = if trace.route.matched_keywords.is_empty() {
-        trace.route.classifier.clone()
-    } else {
-        format!(
-            "{} (matched: {})",
-            trace.route.classifier,
-            trace.route.matched_keywords.join(", ")
-        )
-    };
-    // "route:" keeps the classifier apart from the planner call that follows
-    // it — both are named "planner" on a turn the planner decided.
-    steps.push((i32::MIN, 0, format!("route: {classifier}")));
-    // Mailbox RAG and the guides lookup run after the planner (round -2) and
-    // before any tool: same round, later kind.
-    if trace.retrieval.is_some() {
-        steps.push((-2, 3, "RAG retrieval".to_string()));
-    }
-    if let Some(help) = trace.help.as_ref().filter(|h| h.included > 0) {
-        steps.push((-2, 4, format!("guides ({} sections)", help.included)));
-    }
-    for call in &trace.llm_calls {
-        let label = match call.kind.as_str() {
-            "planner" => "planner".to_string(),
-            "final_stream" => "answer".to_string(),
-            _ => format!("llm round {}", call.round),
-        };
-        // The final stream carries round -1 but always runs last.
-        let order = if call.kind == "final_stream" {
-            i32::MAX
-        } else {
-            call.round
-        };
-        steps.push((order, 2, label));
-    }
-    for tool in &trace.tool_calls {
-        steps.push((tool.round, 1, tool.name.clone()));
-    }
-    steps.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    steps
-        .into_iter()
-        .map(|(_, _, label)| label)
+/// One-line summary of the path a turn took, for the header of each case:
+/// `route: planner → planner → RAG retrieval → llm round 0 → answer`. The
+/// labels and their order come from `services::chat::trace_steps`, the same
+/// list the reasoning panel and `emailops-cli chat --trace` walk.
+pub(crate) fn flow_summary(trace: &ChatTrace) -> String {
+    trace
+        .steps
+        .iter()
+        .map(|s| crate::services::chat::trace_steps::step_label(trace, s))
         .collect::<Vec<_>>()
         .join(" → ")
 }
 
+/// One expandable block under a step: a source, a guide section, a prompt.
+#[derive(Serialize, Debug, PartialEq)]
+struct StepBlock {
+    title: String,
+    text: String,
+}
+
+/// One row of the report's trace: what ran, the numbers behind it, and what
+/// it read or produced.
+#[derive(Serialize, Debug)]
+struct StepView {
+    label: String,
+    detail: String,
+    blocks: Vec<StepBlock>,
+}
+
+/// The turn's steps with their content attached. The trace carries ids and
+/// numbers; the case outcome carries the RAG sources and guide sections the
+/// model actually read, so both are passed in.
+fn step_views(trace: &ChatTrace, outcome: &CaseOutcome) -> Vec<StepView> {
+    use crate::models::TraceStep;
+    use crate::services::chat::trace_steps::{step_detail, step_label};
+    trace
+        .steps
+        .iter()
+        .map(|step| {
+            let blocks = match step {
+                TraceStep::Retrieval => outcome
+                    .sources_used
+                    .iter()
+                    .map(|s| StepBlock {
+                        title: format!(
+                            "[{}] {} <{}> — {}",
+                            s.citation_number, s.sender, s.sender_email, s.subject
+                        ),
+                        text: s.body_snippet.clone(),
+                    })
+                    .collect(),
+                TraceStep::Help => outcome
+                    .help_sections
+                    .iter()
+                    .map(|h| StepBlock {
+                        title: h.lines().next().unwrap_or_default().to_string(),
+                        text: h.clone(),
+                    })
+                    .collect(),
+                TraceStep::Llm { index, .. } => trace
+                    .llm_calls
+                    .get(*index)
+                    .map(|c| {
+                        [("input", &c.input), ("output", &c.output)]
+                            .into_iter()
+                            .filter_map(|(title, text)| {
+                                text.as_ref().map(|t| StepBlock {
+                                    title: title.to_string(),
+                                    text: t.clone(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                TraceStep::Tool { index } => trace
+                    .tool_calls
+                    .get(*index)
+                    .map(|t| {
+                        vec![
+                            StepBlock {
+                                title: "arguments".into(),
+                                text: serde_json::to_string_pretty(&t.arguments).unwrap_or_else(|_| "{}".into()),
+                            },
+                            StepBlock {
+                                title: format!("result ({} chars)", t.result_chars),
+                                text: t.result_preview.clone(),
+                            },
+                        ]
+                    })
+                    .unwrap_or_default(),
+                TraceStep::Route => Vec::new(),
+            };
+            StepView {
+                label: step_label(trace, step),
+                detail: step_detail(trace, step),
+                blocks,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
-mod flow_line_tests {
+mod step_view_tests {
     use super::*;
+    use crate::evals::harness::SourceSummary;
 
-    fn trace(classifier: &str, retrieval: bool, llm: Vec<(&str, i32)>, tools: Vec<(&str, i32)>) -> ChatTrace {
-        // Built through serde so the fixture only names the fields this test
-        // cares about; everything else takes its `#[serde(default)]`.
-        let llm_calls: Vec<serde_json::Value> = llm
-            .into_iter()
-            .map(|(kind, round)| serde_json::json!({ "kind": kind, "round": round, "latencyMs": 1 }))
-            .collect();
-        let tool_calls: Vec<serde_json::Value> = tools
-            .into_iter()
-            .map(|(name, round)| {
-                serde_json::json!({
-                    "name": name,
-                    "round": round,
-                    "arguments": {},
-                    "resultPreview": "",
-                    "resultChars": 0,
-                    "elapsedMs": 1,
-                })
-            })
-            .collect();
-        let mut value = serde_json::json!({
-            "route": { "mode": "tools_first", "reason": "", "classifier": classifier },
-            "toolCalls": tool_calls,
-            "model": "m",
-            "totalElapsedMs": 1,
-            "toolLoopMs": 1,
-            "llmCalls": llm_calls,
-        });
-        if retrieval {
-            value["retrieval"] = serde_json::json!({
-                "vectorHits": 20,
-                "ftsHits": 30,
-                "fusedTopK": 10,
-                "elapsedMs": 330,
-                "ftsSearchMs": 298,
-                "fetchMs": 0,
-                "expansionMs": 0,
-            });
+    fn outcome(sources: Vec<SourceSummary>, help_sections: Vec<String>) -> CaseOutcome {
+        CaseOutcome {
+            conversation_id: String::new(),
+            conversation_title: String::new(),
+            assistant_message_id: String::new(),
+            assistant_content: String::new(),
+            assistant_trace: None,
+            assistant_token_count: None,
+            assistant_latency_ms: None,
+            wall_elapsed_ms: 0,
+            sources_used: sources,
+            open_thread: None,
+            help_sections,
         }
-        serde_json::from_value(value).expect("trace fixture")
+    }
+
+    fn trace() -> ChatTrace {
+        let t: ChatTrace = serde_json::from_value(serde_json::json!({
+            "route": { "mode": "rag_first", "reason": "", "classifier": "planner" },
+            "retrieval": { "vectorHits": 20, "ftsHits": 30, "fusedTopK": 9, "elapsedMs": 7, "ftsSearchMs": 1, "fetchMs": 0, "expansionMs": 0 },
+            "help": { "lang": "en", "candidates": 24, "included": 1, "vectorAvailable": true, "elapsedMs": 7, "chunkIds": ["en/ai-features#1.0"] },
+            "toolCalls": [{ "name": "get_thread", "round": 0, "arguments": {"thread_id": "t1"}, "resultPreview": "6 messages", "resultChars": 10, "elapsedMs": 2 }],
+            "model": "m", "totalElapsedMs": 1,
+            "llmCalls": [
+                { "kind": "planner", "round": -2, "latencyMs": 200 },
+                { "kind": "tool_round", "round": 0, "latencyMs": 900, "toolCallsRequested": 1, "input": "prompt", "output": "call get_thread" },
+                { "kind": "final_stream", "round": -1, "latencyMs": 3000 }
+            ]
+        }))
+        .expect("trace fixture");
+        crate::services::chat::trace_steps::with_steps(t)
     }
 
     #[test]
-    fn the_classifier_carries_what_the_heuristic_matched() {
-        // The route block used to spell this out in its own section; the line
-        // has to say which signal fired or it loses that.
-        let mut t = trace("heuristic", false, vec![("tool_round", 0)], vec![]);
-        t.route.matched_keywords = vec!["recibi".to_string()];
-        assert_eq!(flow_line(&t), "route: heuristic (matched: recibi) → llm round 0");
+    fn the_flow_summary_joins_the_step_labels_in_execution_order() {
+        assert_eq!(
+            flow_summary(&trace()),
+            "route: planner → planner → RAG retrieval → guides (1 of 24 sections) → llm round 0 → get_thread → answer"
+        );
+    }
 
-        t.route.matched_keywords = vec!["hoy".to_string(), "2026".to_string()];
+    #[test]
+    fn each_step_carries_what_it_read_or_produced() {
+        let source = SourceSummary {
+            citation_number: 1,
+            email_id: "e1".into(),
+            subject: "Invoice".into(),
+            sender: "Billing".into(),
+            sender_email: "billing@example.com".into(),
+            relevance_score: None,
+            body_snippet: "Servers: CPX31".into(),
+        };
+        let views = step_views(
+            &trace(),
+            &outcome(
+                vec![source],
+                vec!["AI features › Choosing a backend\nOllama at :11434".into()],
+            ),
+        );
+        let by_label = |l: &str| views.iter().find(|v| v.label == l).expect(l);
+
+        assert_eq!(
+            by_label("RAG retrieval").blocks,
+            [StepBlock {
+                title: "[1] Billing <billing@example.com> — Invoice".into(),
+                text: "Servers: CPX31".into()
+            }]
+        );
+        assert_eq!(
+            by_label("guides (1 of 24 sections)").blocks[0].title,
+            "AI features › Choosing a backend"
+        );
+        let round = by_label("llm round 0");
+        assert_eq!(
+            round.blocks.iter().map(|b| b.title.as_str()).collect::<Vec<_>>(),
+            ["input", "output"]
+        );
+        assert_eq!(round.detail, "900 ms · 1 tool call");
+        let tool = by_label("get_thread");
         assert!(
-            flow_line(&t).starts_with("route: heuristic (matched: hoy, 2026)"),
+            tool.blocks[0].text.contains("\"thread_id\": \"t1\""),
             "{}",
-            flow_line(&t)
+            tool.blocks[0].text
         );
-    }
-
-    #[test]
-    fn a_classifier_with_nothing_matched_stays_bare() {
-        let t = trace("planner", false, vec![("planner", -2)], vec![]);
-        assert_eq!(flow_line(&t), "route: planner → planner");
-    }
-
-    #[test]
-    fn a_planned_search_reads_in_execution_order() {
-        let t = trace(
-            "planner",
-            false,
-            vec![("planner", -2), ("tool_round", 0), ("tool_round", 1)],
-            vec![("search_emails", 0)],
-        );
-        assert_eq!(
-            flow_line(&t),
-            "route: planner → planner → search_emails → llm round 0 → llm round 1"
-        );
-    }
-
-    #[test]
-    fn a_rag_turn_shows_the_retrieval_it_paid_for() {
-        let t = trace("heuristic", true, vec![("tool_round", 0)], vec![]);
-        assert_eq!(flow_line(&t), "route: heuristic → RAG retrieval → llm round 0");
-    }
-
-    #[test]
-    fn the_final_stream_closes_the_line_whatever_round_it_carries() {
-        let t = trace(
-            "heuristic",
-            false,
-            vec![("tool_round", 0), ("final_stream", -1)],
-            vec![("get_thread", 0)],
-        );
-        assert_eq!(flow_line(&t), "route: heuristic → get_thread → llm round 0 → answer");
-    }
-
-    #[test]
-    fn a_shortcut_tool_precedes_the_first_model_round() {
-        let t = trace("heuristic", false, vec![("tool_round", 0)], vec![("search_emails", -1)]);
-        assert_eq!(flow_line(&t), "route: heuristic → search_emails → llm round 0");
-    }
-
-    // The planner decides first, and retrieval runs on its verdict: the line
-    // used to read "planner → retrieval → planner", with the route label and
-    // the planner call looking like one step repeated around the retrieval.
-    #[test]
-    fn retrieval_follows_the_planner_that_decided_it() {
-        let t = trace("planner", true, vec![("planner", -2), ("tool_round", 0)], vec![]);
-        assert_eq!(flow_line(&t), "route: planner → planner → RAG retrieval → llm round 0");
-    }
-
-    #[test]
-    fn guide_sections_the_turn_served_show_after_retrieval() {
-        let mut t = trace("planner", true, vec![("planner", -2), ("tool_round", 0)], vec![]);
-        t.help = Some(crate::models::HelpTrace {
-            included: 2,
-            ..Default::default()
-        });
-        assert_eq!(
-            flow_line(&t),
-            "route: planner → planner → RAG retrieval → guides (2 sections) → llm round 0"
-        );
-        t.help = Some(crate::models::HelpTrace::default());
-        assert!(
-            !flow_line(&t).contains("guides"),
-            "a lookup that served nothing is not a step"
-        );
+        assert_eq!(tool.blocks[1].title, "result (10 chars)");
     }
 }

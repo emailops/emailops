@@ -1015,6 +1015,63 @@ pub struct ChatTrace {
     /// when the feature is off or the turn short-circuited before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<HelpTrace>,
+    /// The turn in execution order — the one ordering every renderer (the
+    /// reasoning panel, `emailops-cli chat --trace`, the eval report) walks.
+    /// Built by `services::chat::trace_steps::plan_steps`; filled when the turn
+    /// finishes and again when an older trace is read back without it.
+    #[serde(default)]
+    pub steps: Vec<TraceStep>,
+}
+
+/// One step of a turn, in execution order. `Llm` and `Tool` point into
+/// `ChatTrace::llm_calls` / `tool_calls`; the other steps read their own
+/// block of the trace (`route`, `retrieval`, `help`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TraceStep {
+    Route,
+    Retrieval,
+    Help,
+    #[serde(rename_all = "camelCase")]
+    Llm {
+        index: usize,
+        /// Prompt tokens served from the KV cache, when the provider reports it.
+        kv_cache: Option<KvCacheStats>,
+        /// What the call did to the prompt cache, when the provider reports it.
+        cache_action: Option<CacheAction>,
+    },
+    Tool {
+        index: usize,
+    },
+}
+
+/// KV-cache reuse for one LLM call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KvCacheStats {
+    /// Prompt tokens served from the reused prefix.
+    pub cached: u32,
+    /// Prompt tokens in the call.
+    pub total: u32,
+    /// Whole-number percentage served from cache.
+    pub pct: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CacheActionKind {
+    Extend,
+    AnchorHit,
+    Wiped,
+    ColdFresh,
+}
+
+/// What one LLM call did to the prompt cache, with a one-line explanation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheAction {
+    pub kind: CacheActionKind,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
