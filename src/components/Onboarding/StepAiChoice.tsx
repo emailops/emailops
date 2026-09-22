@@ -35,6 +35,8 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
   const ramCopy = {
     ram: String(capability?.totalRamGb ?? 0),
     minRam: String(capability?.minRamGbForLocalAi ?? 0),
+    // Decimal GB with one place, the way the model catalog and the docs print it.
+    minDisk: ((capability?.minDownloadBytesForLocalAi ?? 0) / 1e9).toFixed(1),
   };
 
   const handleContinue = async () => {
