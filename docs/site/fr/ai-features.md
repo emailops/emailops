@@ -107,6 +107,20 @@ provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conser
 conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
 en étiez, et non à un chat vide.
 
+Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
+*« où sont stockées mes données ? »*, *« comment ajouter un compte ? »* — à partir de ces
+guides, dans votre langue et sans chercher dans votre boîte. La réponse renvoie à la section
+du guide utilisée, et suivre le lien ouvre le paramètre ou la vue correspondants. Lorsqu'un
+e-mail est ouvert comme contexte, le chat répond à partir de ce seul fil : retirez la puce
+pour poser une question sur l'application. Désactivez-le avec
+**Répondre aux questions sur EmailOps** dans **Paramètres → IA : backend et modèles** ; le
+chat ne connaît alors que votre boîte.
+
+Chaque réponse dispose d'un panneau **Afficher le raisonnement** qui liste ce qui s'est
+passé, dans l'ordre : la route suivie par la question et ce qui l'a décidée, le planificateur
+de requêtes, la recherche dans la boîte, les sections des guides utilisées, chaque appel au
+modèle avec sa durée et chaque appel d'outil avec ses arguments et son résultat.
+
 Sous le capot, le chat combine la récupération (recherche sémantique sur vos e-mails indexés)
 et des appels d'outils (interrogations directes de la base). Le mode de routage est
 configurable :
@@ -166,7 +180,7 @@ avec le lien **Afficher les étiquettes masquées**.
 
 La barre d'outils restreint le tableau par période (**Aujourd'hui**, **Hier**, **7 derniers
 jours** ou une plage de dates personnalisée), par catégorie Gmail, par nom d'étiquette, et
-avec le même interrupteur de masquage des indésirables que la boîte de réception ; deux
+avec le même interrupteur **Masquer les indésirables** que la boîte de réception ; deux
 icônes règlent la largeur des blocs. Un clic sur une carte ouvre le fil dans le volet de
 lecture, son menu ⋮ propose les mêmes actions qu'une ligne de la boîte de réception, et
 l'icône de chat du volet de lecture démarre une conversation avec ce fil en contexte.

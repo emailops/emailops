@@ -100,6 +100,19 @@ silently drawn from the wrong mailbox. Each account keeps its own conversation f
 as the app is open, so switching accounts returns you to where you left off rather than to
 a blank chat.
 
+Chat also answers questions about EmailOps itself — *"how do I connect Ollama?"*, *"where is
+my data stored?"*, *"how do I add an account?"* — from these guides, in your language,
+without searching your mailbox. The answer links the guide section it used, and following
+the link opens the matching setting or view. With an email open as context, chat answers
+from that thread only, so remove the chip to ask about the app. Turn this off with
+**Answer questions about EmailOps** in **Settings → AI Backend & Models**; chat then only
+knows your mailbox.
+
+Every answer has a **Show reasoning** panel that lists what happened, in order: which route
+the question took and what decided it, the query planner, the mailbox search, the guide
+sections used, each model call with its timing, and each tool call with its arguments and
+result.
+
 Under the hood, chat combines retrieval (semantic search over your embedded mail) with
 tool calls (direct lookups against the database). The routing mode is configurable:
 

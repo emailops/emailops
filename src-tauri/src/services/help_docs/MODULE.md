@@ -37,7 +37,10 @@ an answer cites a guide section.
 - `services/retrieval` — `fuse_rrf`
 - `ai/provider.rs` — `AIProvider::embed` / `embed_batch`
 - `services/chat/turn.rs` is the only caller: lookup after mailbox retrieval, block
-  prepended to the final user message, `ToolEffect::NavigateTo` after the answer
+  prepended to the final user message, `ToolEffect::NavigateTo` after the answer. It
+  decides whether to look up at all (`help_lookup_wanted`): never on a turn about the open
+  email; when the query planner ran, only on its `app_help` verdict; otherwise the
+  similarity gate above decides
 
 ## Public surface
 

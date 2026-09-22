@@ -104,6 +104,19 @@ Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigen
 Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also dorthin zurück,
 wo Sie aufgehört haben, und nicht zu einem leeren Chat.
 
+Der Chat beantwortet auch Fragen zu EmailOps selbst — *„Wie verbinde ich Ollama?“*, *„Wo
+werden meine Daten gespeichert?“*, *„Wie füge ich ein Konto hinzu?“* — aus diesen Anleitungen,
+in Ihrer Sprache und ohne das Postfach zu durchsuchen. Die Antwort verlinkt den verwendeten
+Abschnitt, und der Link öffnet die passende Einstellung oder Ansicht. Ist eine E-Mail als
+Kontext geöffnet, antwortet der Chat nur aus diesem Thread — entfernen Sie den Chip, um nach
+der App zu fragen. Abschalten lässt sich das mit **Fragen zu EmailOps beantworten** unter
+**Einstellungen → KI: Backend & Modelle**; dann kennt der Chat nur Ihr Postfach.
+
+Jede Antwort hat ein Panel **Begründung anzeigen**, das der Reihe nach auflistet, was
+passiert ist: welche Route die Frage genommen hat und was das entschieden hat, den
+Abfrageplaner, die Postfachsuche, die verwendeten Anleitungsabschnitte, jeden Modellaufruf mit
+seiner Dauer und jeden Tool-Aufruf mit Argumenten und Ergebnis.
+
 Unter der Haube kombiniert der Chat Retrieval (semantische Suche über Ihre indexierten
 E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus ist
 einstellbar:
@@ -160,7 +173,7 @@ und holen Sie ausgeblendete Tags über den Link **Ausgeblendete Tags anzeigen** 
 
 Die Werkzeugleiste grenzt das Board nach Zeitraum ein (**Heute**, **Gestern**, **Letzte 7
 Tage** oder ein eigener Datumsbereich), nach Gmail-Kategorie, nach Tag-Name und mit
-demselben Schalter zum Ausblenden von Junk wie im Posteingang; zwei Symbole legen die
+demselben Schalter **Spam-Nachrichten ausblenden** wie im Posteingang; zwei Symbole legen die
 Blockbreite fest. Ein Klick auf eine Karte öffnet den Thread im Lesebereich, ihr ⋮-Menü
 bietet dieselben Aktionen wie eine Zeile im Posteingang, und das Chat-Symbol im Lesebereich
 startet eine Unterhaltung mit diesem Thread als Kontext.
