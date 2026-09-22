@@ -389,7 +389,7 @@
     "regenerateConfirm": "Regenerar los embeddings borra los vectores existentes. ¿Continuar?",
     "selectAccount": "Selecciona una cuenta para configurar la búsqueda con IA.",
     "categoriesTitle": "Categorías para embeddings",
-    "categoriesHelp": "Solo los correos en estas categorías se incrustarán para la búsqueda semántica. Los embeddings impulsan \"encontrar similares\" y la búsqueda en lenguaje natural por todo tu buzón. Deja solo Principal seleccionado para mantener el índice pequeño y rápido; añade más categorías si quieres que la búsqueda cubra boletines, social o promociones.",
+    "categoriesHelp": "Solo los correos en estas categorías se incrustarán para la búsqueda semántica. Los embeddings impulsan la búsqueda en lenguaje natural por todo tu buzón y el paso de recuperación del chat. Deja solo Principal seleccionado para mantener el índice pequeño y rápido; añade más categorías si quieres que la búsqueda cubra boletines, social o promociones.",
     "noCategoriesWarn": "Sin categorías seleccionadas — no se incrustarán nuevos correos.",
     "rebuildTitle": "Reconstruir índice de búsqueda",
     "rebuildHelp": "Elimina todos los embeddings de esta cuenta y los regenera desde cero. Úsalo tras cambiar el modelo de embeddings o las categorías de arriba. Se ejecuta en segundo plano y procesa todo el buzón por lotes; el progreso aparece en el panel de salida.",

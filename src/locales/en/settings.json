@@ -389,7 +389,7 @@
     "regenerateConfirm": "Regenerating embeddings clears existing vectors. Continue?",
     "selectAccount": "Select an account to configure AI Search.",
     "categoriesTitle": "Embedding categories",
-    "categoriesHelp": "Only emails in these categories will be embedded for semantic search. Embeddings power \"find similar\" and natural-language search across your mailbox. Leave only Primary selected to keep the index small and fast; add more categories if you want search to cover newsletters, social, or promotions.",
+    "categoriesHelp": "Only emails in these categories will be embedded for semantic search. Embeddings power natural-language search across your mailbox and the retrieval step in chat. Leave only Primary selected to keep the index small and fast; add more categories if you want search to cover newsletters, social, or promotions.",
     "noCategoriesWarn": "No categories selected — no new emails will be embedded.",
     "rebuildTitle": "Rebuild search index",
     "rebuildHelp": "Deletes every embedding for this account and regenerates them from scratch. Use this after changing the embedding model or the categories above. Runs in the background and processes the entire mailbox in batches; progress appears in the output panel.",
