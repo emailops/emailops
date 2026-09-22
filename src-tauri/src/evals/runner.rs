@@ -213,11 +213,14 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
                         None => JudgeScores::default(),
                     }
                 };
+                let passed =
+                    crate::evals::judge::case_passes(heuristics.all_passed(), &judge_scores, case, judge_enabled);
                 eprintln!(
-                    "[eval]    {} heuristic checks passed ({}/{})",
-                    if heuristics.all_passed() { "OK" } else { "FAIL" },
+                    "[eval]    {} heuristic checks passed ({}/{}){}",
+                    if passed { "OK" } else { "FAIL" },
                     heuristics.passed_count(),
-                    heuristics.total()
+                    heuristics.total(),
+                    judge_summary(&judge_scores, judge_enabled),
                 );
                 // Clean up the eval-created conversation from the benchmark DB.
                 // FK cascade removes chat_messages + chat_message_sources.
@@ -242,7 +245,7 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
                     assistant_latency_ms: None,
                     wall_elapsed_ms: 0,
                     sources_used: Vec::new(),
-                    ambient_thread: None,
+                    open_thread: None,
                     help_sections: Vec::new(),
                 };
                 let report = HeuristicReport {
@@ -282,6 +285,31 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     )?;
     eprintln!("[eval] report written to {}", path.display());
     Ok(path)
+}
+
+/// The judge's part of a case's log line: its scores, or why there are none.
+fn judge_summary(scores: &JudgeScores, judge_enabled: bool) -> String {
+    if !judge_enabled {
+        return String::new();
+    }
+    if let Some(e) = &scores.error {
+        return format!(" · judge error: {e}");
+    }
+    let fmt = |name: &str, v: Option<f64>| v.map(|v| format!(" {name}={v:.2}"));
+    let parts: String = [
+        fmt("relevancy", scores.answer_relevancy),
+        fmt("faithfulness", scores.faithfulness),
+        fmt("ctx_relevancy", scores.contextual_relevancy),
+        fmt("ctx_recall", scores.contextual_recall),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" · judge{parts}")
+    }
 }
 
 /// Pick the preferred chat model from `user_preferences`, else a sensible default.

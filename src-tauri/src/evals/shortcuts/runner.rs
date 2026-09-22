@@ -286,7 +286,7 @@ async fn run_variant(
         assistant_latency_ms: assistant.latency_ms,
         wall_elapsed_ms,
         sources_used,
-        ambient_thread: None,
+        open_thread: None,
         // Shortcuts are mailbox fast paths; they never serve the guides.
         help_sections: Vec::new(),
     })

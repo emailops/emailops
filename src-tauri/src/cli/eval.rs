@@ -71,9 +71,10 @@ pub(crate) struct JudgeReport {
     pub scores: crate::evals::judge::JudgeScores,
 }
 
-/// Minimum score, per requested metric, for the judge to accept a case.
+/// Minimum score, per requested metric, for the judge to accept a case —
+/// shared with the `chat_eval` harness.
 #[cfg(feature = "eval")]
-pub(crate) const JUDGE_THRESHOLD: f64 = 0.7;
+pub(crate) const JUDGE_THRESHOLD: f64 = crate::evals::judge::JUDGE_THRESHOLD;
 
 #[cfg(feature = "eval")]
 #[derive(Serialize)]

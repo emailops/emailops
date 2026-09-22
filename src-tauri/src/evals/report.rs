@@ -38,7 +38,11 @@ struct CaseView {
     token_count: Option<i32>,
     /// Execution path of the turn on one line — see [`flow_line`].
     flow: Option<String>,
+    /// The email the turn ran against (bound or open thread), as the model saw it.
+    open_thread: Option<String>,
     retrieval: Option<RetrievalView>,
+    /// Guide sections the help lookup served, `"<Page › Heading>\n<content>"`.
+    help_sections: Vec<String>,
     tool_calls: Vec<ToolCallView>,
     heuristics: Vec<CheckView>,
     metric_rows: Vec<MetricRowView>,
@@ -130,7 +134,8 @@ pub fn render(
     let mut case_views: Vec<CaseView> = Vec::with_capacity(cases.len());
     for rc in cases {
         total += 1;
-        let overall_pass = rc.heuristics.all_passed();
+        let overall_pass =
+            crate::evals::judge::case_passes(rc.heuristics.all_passed(), rc.judge, rc.case, judge_enabled);
         if overall_pass {
             passed += 1;
         }
@@ -250,7 +255,9 @@ fn build_case_view(rc: &ReportCase<'_>, overall_pass: bool) -> CaseView {
         wall_elapsed_ms: rc.outcome.wall_elapsed_ms,
         token_count: rc.outcome.assistant_token_count,
         flow,
+        open_thread: rc.outcome.open_thread.clone(),
         retrieval,
+        help_sections: rc.outcome.help_sections.clone(),
         tool_calls,
         heuristics,
         metric_rows,
@@ -423,9 +430,20 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
   </div>
   <div class="tc-body">
 
+    {# Sections follow the flow line: the email in context, mailbox RAG and
+       its sources, the guide sections, then the tool calls. #}
+    {% if c.open_thread %}
+    <div class="section">
+      <div class="section-label">Open email (context the model had)</div>
+      <details open><summary style="cursor:pointer;font-size:0.76rem;color:var(--text-muted);user-select:none;">{{ c.open_thread | length }} chars</summary>
+        <pre style="margin:0.3rem 0 0;padding:0.5rem 0.6rem;background:#0b1020;color:#d9e2f3;font-size:0.74rem;border-radius:6px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;">{{ c.open_thread }}</pre>
+      </details>
+    </div>
+    {% endif %}
+
     {% if c.retrieval %}
     <div class="section">
-      <div class="section-label">Retrieval</div>
+      <div class="section-label">RAG retrieval</div>
       <div class="retr-stats">
         <span><strong>vector:</strong> {{ c.retrieval.vector_hits }}</span>
         <span><strong>fts:</strong> {{ c.retrieval.fts_hits }}</span>
@@ -433,19 +451,6 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
         <span><strong>time:</strong> {{ c.retrieval.elapsed_ms }}ms</span>
       </div>
       {% if c.retrieval.vector_fallback %}<div class="warning">vector search fell back to FTS-only</div>{% endif %}
-    </div>
-    {% endif %}
-
-    {% if c.tool_calls | length > 0 %}
-    <div class="section">
-      <div class="section-label">Tool calls</div>
-      {% for tc in c.tool_calls %}
-      <div class="tool-call">
-        <div class="tool-head"><span>{{ tc.name }}</span><span>{{ tc.elapsed_ms }}ms · {{ tc.result_chars }} chars</span></div>
-        <div class="tool-args mono">{{ tc.arguments_json }}</div>
-        <details class="tool-result"><summary>result ({{ tc.result_chars }} chars) — click to expand</summary><pre>{{ tc.result_preview }}</pre></details>
-      </div>
-      {% endfor %}
     </div>
     {% endif %}
 
@@ -466,6 +471,28 @@ const REPORT_TEMPLATE: &str = r###"<!DOCTYPE html>
         </li>
         {% endfor %}
       </ul>
+    </div>
+    {% endif %}
+
+    {% if c.help_sections | length > 0 %}
+    <div class="section">
+      <div class="section-label">Guide sections (EmailOps help fed to model)</div>
+      {% for h in c.help_sections %}
+      <pre style="margin:0.3rem 0 0;padding:0.5rem 0.6rem;background:#0b1020;color:#d9e2f3;font-size:0.74rem;border-radius:6px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;">{{ h }}</pre>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if c.tool_calls | length > 0 %}
+    <div class="section">
+      <div class="section-label">Tool calls</div>
+      {% for tc in c.tool_calls %}
+      <div class="tool-call">
+        <div class="tool-head"><span>{{ tc.name }}</span><span>{{ tc.elapsed_ms }}ms · {{ tc.result_chars }} chars</span></div>
+        <div class="tool-args mono">{{ tc.arguments_json }}</div>
+        <details class="tool-result"><summary>result ({{ tc.result_chars }} chars) — click to expand</summary><pre>{{ tc.result_preview }}</pre></details>
+      </div>
+      {% endfor %}
     </div>
     {% endif %}
 
@@ -540,9 +567,16 @@ pub(crate) fn flow_line(trace: &ChatTrace) -> String {
             trace.route.matched_keywords.join(", ")
         )
     };
-    steps.push((i32::MIN, 0, classifier));
+    // "route:" keeps the classifier apart from the planner call that follows
+    // it — both are named "planner" on a turn the planner decided.
+    steps.push((i32::MIN, 0, format!("route: {classifier}")));
+    // Mailbox RAG and the guides lookup run after the planner (round -2) and
+    // before any tool: same round, later kind.
     if trace.retrieval.is_some() {
-        steps.push((-3, 1, "retrieval".to_string()));
+        steps.push((-2, 3, "RAG retrieval".to_string()));
+    }
+    if let Some(help) = trace.help.as_ref().filter(|h| h.included > 0) {
+        steps.push((-2, 4, format!("guides ({} sections)", help.included)));
     }
     for call in &trace.llm_calls {
         let label = match call.kind.as_str() {
@@ -621,11 +655,11 @@ mod flow_line_tests {
         // has to say which signal fired or it loses that.
         let mut t = trace("heuristic", false, vec![("tool_round", 0)], vec![]);
         t.route.matched_keywords = vec!["recibi".to_string()];
-        assert_eq!(flow_line(&t), "heuristic (matched: recibi) → llm round 0");
+        assert_eq!(flow_line(&t), "route: heuristic (matched: recibi) → llm round 0");
 
         t.route.matched_keywords = vec!["hoy".to_string(), "2026".to_string()];
         assert!(
-            flow_line(&t).starts_with("heuristic (matched: hoy, 2026)"),
+            flow_line(&t).starts_with("route: heuristic (matched: hoy, 2026)"),
             "{}",
             flow_line(&t)
         );
@@ -634,7 +668,7 @@ mod flow_line_tests {
     #[test]
     fn a_classifier_with_nothing_matched_stays_bare() {
         let t = trace("planner", false, vec![("planner", -2)], vec![]);
-        assert_eq!(flow_line(&t), "planner → planner");
+        assert_eq!(flow_line(&t), "route: planner → planner");
     }
 
     #[test]
@@ -647,14 +681,14 @@ mod flow_line_tests {
         );
         assert_eq!(
             flow_line(&t),
-            "planner → planner → search_emails → llm round 0 → llm round 1"
+            "route: planner → planner → search_emails → llm round 0 → llm round 1"
         );
     }
 
     #[test]
     fn a_rag_turn_shows_the_retrieval_it_paid_for() {
         let t = trace("heuristic", true, vec![("tool_round", 0)], vec![]);
-        assert_eq!(flow_line(&t), "heuristic → retrieval → llm round 0");
+        assert_eq!(flow_line(&t), "route: heuristic → RAG retrieval → llm round 0");
     }
 
     #[test]
@@ -665,12 +699,39 @@ mod flow_line_tests {
             vec![("tool_round", 0), ("final_stream", -1)],
             vec![("get_thread", 0)],
         );
-        assert_eq!(flow_line(&t), "heuristic → get_thread → llm round 0 → answer");
+        assert_eq!(flow_line(&t), "route: heuristic → get_thread → llm round 0 → answer");
     }
 
     #[test]
     fn a_shortcut_tool_precedes_the_first_model_round() {
         let t = trace("heuristic", false, vec![("tool_round", 0)], vec![("search_emails", -1)]);
-        assert_eq!(flow_line(&t), "heuristic → search_emails → llm round 0");
+        assert_eq!(flow_line(&t), "route: heuristic → search_emails → llm round 0");
+    }
+
+    // The planner decides first, and retrieval runs on its verdict: the line
+    // used to read "planner → retrieval → planner", with the route label and
+    // the planner call looking like one step repeated around the retrieval.
+    #[test]
+    fn retrieval_follows_the_planner_that_decided_it() {
+        let t = trace("planner", true, vec![("planner", -2), ("tool_round", 0)], vec![]);
+        assert_eq!(flow_line(&t), "route: planner → planner → RAG retrieval → llm round 0");
+    }
+
+    #[test]
+    fn guide_sections_the_turn_served_show_after_retrieval() {
+        let mut t = trace("planner", true, vec![("planner", -2), ("tool_round", 0)], vec![]);
+        t.help = Some(crate::models::HelpTrace {
+            included: 2,
+            ..Default::default()
+        });
+        assert_eq!(
+            flow_line(&t),
+            "route: planner → planner → RAG retrieval → guides (2 sections) → llm round 0"
+        );
+        t.help = Some(crate::models::HelpTrace::default());
+        assert!(
+            !flow_line(&t).contains("guides"),
+            "a lookup that served nothing is not a step"
+        );
     }
 }

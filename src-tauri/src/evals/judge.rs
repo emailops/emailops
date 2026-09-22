@@ -229,6 +229,16 @@ pub async fn score_with_provider(
     }
 }
 
+/// Score every requested judge metric must reach for the case to pass.
+pub const JUDGE_THRESHOLD: f64 = 0.7;
+
+/// Whether a case passes: its heuristic checks, and — when the judge ran —
+/// every judge metric it asked for at [`JUDGE_THRESHOLD`]. A judge error on a
+/// judged run is a failure: an unscored case must not read as a pass.
+pub fn case_passes(heuristics_passed: bool, scores: &JudgeScores, case: &EvalCase, judge_enabled: bool) -> bool {
+    heuristics_passed && (!judge_enabled || judge_passes(scores, case, JUDGE_THRESHOLD))
+}
+
 /// A case passes the judge when every metric it asked for scored at least
 /// `threshold`. A judge error is a failure, never a silent pass. When the case
 /// requested no metrics there is nothing to judge and this returns `true`.
@@ -333,7 +343,7 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     // that thread, with no RAG sources and no tools, so without it the judge
     // reads every detail of the answer as invented.
     let open_thread_section = outcome
-        .ambient_thread
+        .open_thread
         .as_deref()
         .map(|t| {
             format!(
@@ -395,7 +405,7 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod judge_rule_tests {
-    use super::{build_prompt, judge_passes, parse_judge_content, JudgeScores};
+    use super::{build_prompt, case_passes, judge_passes, parse_judge_content, JudgeScores};
     use crate::evals::case_loader::{EvalCase, MetricKind};
     use crate::evals::harness::CaseOutcome;
 
@@ -406,7 +416,7 @@ mod judge_rule_tests {
         c
     }
 
-    fn outcome_with(ambient_thread: Option<&str>) -> CaseOutcome {
+    fn outcome_with(open_thread: Option<&str>) -> CaseOutcome {
         CaseOutcome {
             conversation_id: String::new(),
             conversation_title: String::new(),
@@ -417,7 +427,7 @@ mod judge_rule_tests {
             assistant_latency_ms: None,
             wall_elapsed_ms: 0,
             sources_used: Vec::new(),
-            ambient_thread: ambient_thread.map(str::to_string),
+            open_thread: open_thread.map(str::to_string),
             help_sections: Vec::new(),
         }
     }
@@ -425,6 +435,46 @@ mod judge_rule_tests {
     // The judge scored faithfulness against source subjects and senders only,
     // so any answer that used what an email SAID read as invented, and an
     // answer from the bundled guides had no grounding at all.
+
+    // A case whose answer the judge scores low is a failing case, not a
+    // passing one with a footnote: "resume este correo" answered with
+    // invented setup steps passed its word checks at 0.30 / 0.10.
+
+    #[test]
+    fn a_low_judge_score_fails_the_case() {
+        let case = case_with(vec![MetricKind::AnswerRelevancy, MetricKind::Faithfulness]);
+        let low = JudgeScores {
+            answer_relevancy: Some(0.30),
+            faithfulness: Some(0.10),
+            ..Default::default()
+        };
+        assert!(!case_passes(true, &low, &case, true));
+    }
+
+    #[test]
+    fn a_judge_error_fails_the_case_only_when_the_judge_ran() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let err = JudgeScores {
+            error: Some("judge HTTP 401".into()),
+            ..Default::default()
+        };
+        assert!(!case_passes(true, &err, &case, true), "an unscored case is not a pass");
+        assert!(
+            case_passes(true, &JudgeScores::default(), &case, false),
+            "no judge: heuristics decide"
+        );
+    }
+
+    #[test]
+    fn heuristics_still_gate_a_well_judged_answer() {
+        let case = case_with(vec![MetricKind::Faithfulness]);
+        let good = JudgeScores {
+            faithfulness: Some(0.95),
+            ..Default::default()
+        };
+        assert!(case_passes(true, &good, &case, true));
+        assert!(!case_passes(false, &good, &case, true));
+    }
 
     #[test]
     fn prompt_shows_what_each_source_said() {
