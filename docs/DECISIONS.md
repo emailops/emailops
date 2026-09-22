@@ -1219,3 +1219,27 @@ that still lets a skipped number (`[1] [3]`) open the wrong email; a post-proces
 guesses the right Source from the cited sentence (matching an address against senders) — a
 heuristic that only covers the shapes it was written for, and a wrong guess is worse than
 no citation.
+
+## 2026-09-22 — Chat answers cite by `email://` link only; linked emails are the sources
+
+**Decision:** The RAG Sources block is no longer numbered (each line keeps its `id=`) and
+the CITATION CONTRACT asks for a `[short label](email://ID)` link on every fact, whether
+the email came from the Sources or from a tool; bare `[n]` markers are never requested.
+`plan_answer_grounding` makes the emails an answer links its sources (link order, each
+once); an answer that links nothing falls back to the emails the tools returned, and with
+none of those the pre-retrieved Sources stay. The "show emails in list" button falls back
+to the message sources when the answer cites nothing. This supersedes the 2026-09-21 rule
+that kept `[n]` for RAG-only turns.
+**Context:** numbers were the root of the wrong-source citations — Qwen 3.6 35B numbered
+the bullets of its own answer and the UI opened unrelated emails. An opaque id cannot be
+mistaken for a bullet position, and linking gives the sources panel the emails the answer
+actually rests on instead of everything a tool returned. Full chat sweep (53 cases,
+qwen3.6-35b-a3b-ud-q4_k_xl, demo DB), before → after: passes 49 → 49; answers with no
+citation 20 → 17; answers with a bare `[n]` 3 → 0; answers with an `email://` link
+32 → 36. The two cases that flipped to fail (`demo_draft_link_emitted`,
+`at_fastmail_receipts`) failed on the old code too when re-run (1/3 vs 2/3, 1/3 vs 0/3).
+**Rejected:** keeping `[n]` for RAG-only turns (the model self-numbers there as well,
+and two citation schemes in one contract are what confused it); numbering tool results
+into the Sources (the model ignored numbers it was given); an empty sources panel when
+nothing is linked (the button would disappear and the user loses the only route to the
+emails behind the answer).
