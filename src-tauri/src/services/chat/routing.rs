@@ -344,7 +344,7 @@ pub(super) fn planner_route(planned_search: bool) -> RouteDecision {
 pub(super) fn planner_help_route() -> RouteDecision {
     RouteDecision {
         mode: RouteMode::ToolsFirst,
-        reason: "planner: a question about EmailOps itself, answered from the guides".to_string(),
+        reason: "a question about EmailOps itself, answered from the guides".to_string(),
         matched_keywords: Vec::new(),
         classifier: "planner".to_string(),
     }

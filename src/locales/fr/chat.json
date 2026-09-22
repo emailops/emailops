@@ -85,8 +85,17 @@
       "toolCallDetails": "Détails des appels d'outils",
       "retrievalDetail": "Détail de la récupération",
       "routeMode": {
-        "rag_first": "RAG d'abord",
-        "tools_first": "Outils d'abord"
+        "rag_first": "cherche d'abord dans la boîte",
+        "tools_first": "sans recherche préalable dans la boîte"
+      },
+      "routeDecidedBy": "décidé par {{who}}",
+      "classifier": {
+        "heuristic": "une règle de mots-clés",
+        "heuristic_followup": "la question précédente (suite)",
+        "planner": "le planificateur de requêtes",
+        "forced": "un réglage fixe",
+        "ambient": "l'e-mail ouvert",
+        "llm": "le modèle"
       },
       "phase": {
         "toolRound": "LLM · tour d'outils {{n}}",

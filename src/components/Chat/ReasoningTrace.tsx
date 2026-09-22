@@ -204,16 +204,24 @@ function HelpDetail({ trace }: { trace: ChatTrace }) {
   );
 }
 
-/** How the turn was routed: mode, the classifier that decided it, why, and
- *  the keywords a heuristic matched. */
+/** Who decided the route, in words: the backend's classifier ids
+ *  ("heuristic", "planner", "forced"…) mean nothing to a reader. */
+const ROUTE_CLASSIFIERS = ['heuristic', 'heuristic_followup', 'planner', 'forced', 'ambient', 'llm'] as const;
+
+/** How the turn was routed: whether it searched the mailbox first, who
+ *  decided that, why, and the keywords a heuristic matched. */
 function RouteRow({ trace, routeMode }: { trace: ChatTrace; routeMode: (m: RouteMode | string) => string }) {
   const { t } = useTranslation(['chat']);
+  const classifier = trace.route.classifier;
+  const who = (ROUTE_CLASSIFIERS as readonly string[]).includes(classifier)
+    ? t(`chat:reasoning.trace.classifier.${classifier as (typeof ROUTE_CLASSIFIERS)[number]}`)
+    : classifier;
   return (
     <li data-testid="trace-step" className="py-1">
       <div>
-        <span className="text-gray-600">{t('chat:reasoning.trace.route')}</span>{' '}
+        <span className="text-gray-600">{t('chat:reasoning.trace.route')}:</span>{' '}
         <span className="font-medium text-gray-900">{routeMode(trace.route.mode)}</span>
-        <span className="text-gray-600"> · {trace.route.classifier}</span>
+        <span className="text-gray-600"> · {t('chat:reasoning.trace.routeDecidedBy', { who })}</span>
       </div>
       {trace.route.reason && <div className="text-gray-700 ml-4">{trace.route.reason}</div>}
       {trace.route.matchedKeywords.length > 0 && (

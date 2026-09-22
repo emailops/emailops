@@ -85,8 +85,17 @@
       "toolCallDetails": "Detalles de llamadas a herramientas",
       "retrievalDetail": "Detalle de recuperación",
       "routeMode": {
-        "rag_first": "RAG primero",
-        "tools_first": "Herramientas primero"
+        "rag_first": "busca primero en el buzón",
+        "tools_first": "sin búsqueda previa en el buzón"
+      },
+      "routeDecidedBy": "decidido por {{who}}",
+      "classifier": {
+        "heuristic": "una regla de palabras clave",
+        "heuristic_followup": "la pregunta anterior (continuación)",
+        "planner": "el planificador de consultas",
+        "forced": "un ajuste fijo",
+        "ambient": "el correo abierto",
+        "llm": "el modelo"
       },
       "phase": {
         "toolRound": "LLM · ronda de herramientas {{n}}",

@@ -85,8 +85,17 @@
       "toolCallDetails": "Details der Tool-Aufrufe",
       "retrievalDetail": "Abrufdetails",
       "routeMode": {
-        "rag_first": "RAG zuerst",
-        "tools_first": "Tools zuerst"
+        "rag_first": "durchsucht zuerst das Postfach",
+        "tools_first": "ohne vorherige Postfachsuche"
+      },
+      "routeDecidedBy": "entschieden von {{who}}",
+      "classifier": {
+        "heuristic": "einer Stichwortregel",
+        "heuristic_followup": "der vorherigen Frage (Folgefrage)",
+        "planner": "dem Abfrageplaner",
+        "forced": "einer festen Einstellung",
+        "ambient": "der geöffneten E-Mail",
+        "llm": "dem Modell"
       },
       "phase": {
         "toolRound": "LLM · Tool-Runde {{n}}",

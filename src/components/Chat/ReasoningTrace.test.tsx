@@ -73,6 +73,15 @@ describe('ReasoningSection', () => {
     expect(r[4]).toContain('search_emails');
   });
 
+  // "Route Tools first · planner" read as jargon: the row now says what the
+  // route does and who decided it, each in words.
+  it('names who decided the route instead of printing the raw classifier', () => {
+    openPanel(trace());
+    const route = rows()[0];
+    expect(route).toContain('routeDecidedBy');
+    expect(route).not.toMatch(/·\s*planner/);
+  });
+
   it('shows the KV-cache figures the step carries', () => {
     // The planner call itself reports no cache numbers; only the step does.
     openPanel(trace());
