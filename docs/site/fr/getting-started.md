@@ -37,9 +37,9 @@ le plus grand modèle que votre machine peut faire tourner confortablement : la 
 dépend donc de la mémoire détectée — sur une machine de 16 Go c'est **Qwen 3.5 4B**, environ
 3 Go à télécharger et moins de 4 Go de mémoire pendant qu'il répond ; une machine plus généreuse se
 voit proposer un modèle plus grand du même catalogue. Tous les modèles recommandés prennent en
-charge les appels d'outils dont dépend le chat. Les modèles trop volumineux pour la mémoire de
-votre système sont grisés. Le téléchargement se poursuit en arrière-plan — vous pouvez
-continuer l'assistant.
+charge les appels d'outils dont dépend le chat. Le téléchargement affiche sa progression sur place ; **Continuer** reste désactivé tant que le
+modèle de chat n'est pas téléchargé, ou jusqu'à ce que vous choisissiez un fichier déjà présent
+avec **Utiliser un fichier existant…**.
 
 <!-- claim:start-2-ai-3 -->
 La mémoire qui compte dépend de la machine : **mémoire unifiée** sur un Mac Apple Silicon, la

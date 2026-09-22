@@ -8,8 +8,9 @@ weight: 60
 
 <!-- claim:trbl-ai-features-1 -->
 Con el backend **integrado**, comprueba que el modelo recomendado terminó de descargarse en
-**Ajustes → IA: backend y modelos**. Una descarga interrumpida deja el modelo inservible —
-bórralo y descárgalo otra vez.
+**Ajustes → IA: backend y modelos**. Una descarga interrumpida nunca se
+usa como modelo: vuelve a lanzarla desde la misma pantalla y continúa donde se quedó; una
+descarga que no supera la verificación se descarta automáticamente.
 
 <!-- claim:trbl-ai-features-2 -->
 Si cambiaste a **Ollama**, asegúrate de que el demonio está en marcha y accesible en

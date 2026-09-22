@@ -8,8 +8,9 @@ weight: 60
 
 <!-- claim:trbl-ai-features-1 -->
 With the **in-app** backend, check that the recommended model finished downloading in
-**Settings → AI Backend & Models**. An interrupted download leaves the model unusable —
-remove it and download it again.
+**Settings → AI Backend & Models**. An interrupted download is never
+used as a model: start it again from the same screen and it resumes where it stopped, and a
+download that fails verification is discarded automatically.
 
 <!-- claim:trbl-ai-features-2 -->
 If you switched to **Ollama**, make sure the daemon is running and reachable at

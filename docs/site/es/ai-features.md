@@ -14,8 +14,8 @@ ningún correo sale nunca de tu máquina.
 <!-- claim:ai-choosing-backend-1 -->
 **Ajustes → IA: backend y modelos** controla dónde ocurre la inferencia:
 
-- **En la app** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
-  tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
+- **En la app** — un runtime llama.cpp integrado. Nada que instalar y sin demonio; una vez
+  descargado el modelo, responder no genera tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
   Apple Silicon, Vulkan en Windows y Linux — y la CPU cuando no. En Mac requiere Apple Silicon
   (M1 o posterior); en un Mac Intel permanece no disponible. <!-- claim:ai-choosing-backend-2 -->
 - **Ollama** — un servidor Ollama que ya tengas en `http://localhost:11434`. Útil si
@@ -58,7 +58,6 @@ caber depende de tu hardware:
 - **Sin GPU** — la RAM del sistema, en la CPU. Funciona; solo que más lento. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
 <!-- claim:ai-choosing-backend-model-catalog-6 -->
-Los modelos demasiado grandes para la memoria de tu sistema aparecen atenuados en el selector.
 Un modelo lleva la etiqueta **Recomendado**, elegida para la máquina en la que estás: EmailOps
 mira la memoria del sistema y, si tienes una tarjeta gráfica dedicada, también su memoria, y
 sugiere el modelo más grande que quepa con holgura. Por eso un portátil y una estación de

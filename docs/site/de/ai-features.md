@@ -14,8 +14,8 @@ keine E-Mail jemals Ihre Maschine.
 <!-- claim:ai-choosing-backend-1 -->
 **Einstellungen → KI: Backend & Modelle** legt fest, wo die Inferenz stattfindet:
 
-- **In der App** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren, kein
-  Daemon, kein Netzwerkverkehr. Das ist der Standard. Sie nutzt automatisch Ihre GPU, wenn
+- **In der App** — eine eingebettete llama.cpp-Laufzeit. Nichts zu installieren und kein Daemon;
+  sobald das Modell heruntergeladen ist, erzeugt das Antworten keinen Netzwerkverkehr. Das ist der Standard. Sie nutzt automatisch Ihre GPU, wenn
   eine vorhanden ist — Metal auf Apple Silicon, Vulkan unter Windows und Linux — und sonst die
   CPU. Auf dem Mac wird Apple Silicon (M1 oder neuer) vorausgesetzt; auf einem Intel-Mac bleibt
   sie nicht verfügbar. <!-- claim:ai-choosing-backend-2 -->
@@ -59,7 +59,6 @@ passen muss, hängt von Ihrer Hardware ab:
 - **Keine GPU** — System-RAM, auf der CPU. Es funktioniert; es ist nur langsamer. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
 <!-- claim:ai-choosing-backend-model-catalog-6 -->
-Modelle, die für Ihren Systemspeicher zu groß sind, erscheinen in der Auswahl ausgegraut.
 Ein Modell trägt die Markierung **Empfohlen**, ausgewählt für die Maschine, an der Sie sitzen:
 EmailOps betrachtet den Systemspeicher und, sofern eine dedizierte Grafikkarte vorhanden ist,
 auch deren Speicher, und schlägt dann das größte Modell vor, das bequem hineinpasst. Ein

@@ -8,8 +8,9 @@ weight: 60
 
 <!-- claim:trbl-ai-features-1 -->
 Prüfen Sie beim **integrierten** Backend unter **Einstellungen → KI: Backend & Modelle**, ob
-das empfohlene Modell fertig heruntergeladen wurde. Ein abgebrochener Download macht das
-Modell unbrauchbar — entfernen Sie es und laden Sie es erneut.
+das empfohlene Modell fertig heruntergeladen wurde. Ein abgebrochener Download wird nie
+als Modell verwendet: Starten Sie ihn im selben Bildschirm erneut, dann setzt er dort fort, wo er
+aufgehört hat; ein Download, der die Prüfung nicht besteht, wird automatisch verworfen.
 
 <!-- claim:trbl-ai-features-2 -->
 Wenn Sie zu **Ollama** gewechselt sind, stellen Sie sicher, dass der Daemon läuft und unter

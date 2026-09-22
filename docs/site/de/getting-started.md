@@ -37,8 +37,9 @@ Modell vor, das Ihre Maschine bequem ausführen kann — die Empfehlung hängt a
 Arbeitsspeicher ab: auf einer 16-GB-Maschine ist das **Qwen 3.5 4B**, rund 3 GB Download und
 unter 4 GB Arbeitsspeicher während der Antwort; eine größere Maschine bekommt ein größeres Modell aus
 demselben Katalog angeboten. Alle empfohlenen Modelle unterstützen die Tool-Aufrufe, auf die
-der Chat angewiesen ist. Modelle, die für Ihren Systemspeicher zu groß sind, werden ausgegraut.
-Der Download läuft im Hintergrund — Sie können im Assistenten weitermachen.
+der Chat angewiesen ist. Der Download zeigt seinen Fortschritt direkt an; **Weiter** bleibt deaktiviert, bis das
+Chat-Modell fertig heruntergeladen ist oder Sie mit **Vorhandene Datei verwenden…** eine Datei
+wählen, die Sie bereits haben.
 
 <!-- claim:start-2-ai-3 -->
 Welcher Speicher zählt, hängt von der Maschine ab: **Unified Memory** auf einem Apple-Silicon-

@@ -37,8 +37,9 @@ modelo más grande que tu máquina puede mover con holgura, así que la recomend
 la memoria que encuentre: en una máquina de 16 GB es **Qwen 3.5 4B**, unos 3 GB de descarga y
 menos de 4 GB de memoria mientras responde; una máquina más amplia recibe un modelo mayor
 del mismo catálogo. Todos los modelos recomendados admiten las llamadas a herramientas de las
-que depende el chat. Los modelos demasiado grandes para la memoria de tu sistema aparecen
-atenuados. La descarga corre en segundo plano — puedes seguir con el asistente.
+que depende el chat. La descarga muestra su progreso en el mismo paso; **Continuar** sigue deshabilitado hasta
+que el modelo de chat termina de descargarse, o hasta que eliges un archivo que ya tienes con
+**Usar archivo existente…**.
 
 <!-- claim:start-2-ai-3 -->
 La memoria que cuenta depende de la máquina: **memoria unificada** en un Mac con Apple

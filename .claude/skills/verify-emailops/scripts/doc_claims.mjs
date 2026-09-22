@@ -58,6 +58,8 @@ async function press(text) {
   if (!ok) throw new Error(`no clickable «${text}» on screen`);
   await sleep(900);
 }
+const buttons = () => js(() => [...document.querySelectorAll('button,[role=button]')].filter((e) => e.offsetParent)
+  .map((e) => (e.innerText.trim() || e.getAttribute('aria-label') || e.title || '').replace(/\s+/g, ' ')));
 const buttonState = (text) => js((t) => {
   const el = [...document.querySelectorAll('button')].find((e) => e.offsetParent !== null && e.innerText.trim() === t);
   return el ? (el.disabled ? 'disabled' : 'enabled') : 'missing';
@@ -371,44 +373,15 @@ async function wizard() {
     const n = (await js(() => document.body.innerText.match(/\nRecommended\n/g)?.length || 0));
     return ok(n === 1, 'un único modelo con «Recommended»', `${n} modelos llevan «Recommended»`);
   });
-  await claim('ai-choosing-backend-model-catalog-6', 'atenuado', {
-    covers: ['Models too large for your system memory are greyed out in the picker.'],
-    how: 'Busca en el selector los modelos cuyo mínimo supera la memoria de esta máquina y comprueba que su fila está deshabilitada o atenuada; si en esta máquina caben todos, no se puede observar.',
-  }, async ({ doc }) => {
-    doc.match(/greyed out/);
-    const ramGb = os.totalmem() / 1024 ** 3;
-    const rows = await catalogRows();
-    const tooBig = rows.filter((r) => r.ram > ramGb).map((r) => r.name);
-    if (!tooBig.length) return `SKIP: con ${Math.round(ramGb)} GB ningún modelo excede la memoria; el atenuado no se puede observar en esta máquina`;
-    const dimmed = await js((names) => names.filter((n) => {
-      const el = [...document.querySelectorAll('button,[role=button],li,div')].find((e) => e.offsetParent && e.innerText.trim().startsWith(n) && e.innerText.length < 200);
-      if (!el) return false;
-      const st = getComputedStyle(el);
-      return el.disabled || el.getAttribute('aria-disabled') === 'true' || +st.opacity < 0.9 || /opacity-|cursor-not-allowed/.test(el.className);
-    }), tooBig);
-    return ok(dimmed.length === tooBig.length, `${tooBig.join(', ')} aparecen atenuados`, `no aparecen atenuados: ${tooBig.filter((n) => !dimmed.includes(n)).join(', ')}`);
-  }, 'The picker shows every model, including those above this machine\'s memory, with nothing greyed out. Either grey them out in the wizard and in Settings → AI Backend & Models, or drop the sentence in all four languages.');
-  await claim('start-2-ai-2', 'atenuado', {
-    covers: ['Models too large for your system memory are greyed out.'],
-    how: 'El mismo control que el caso «atenuado» del catálogo: los modelos que no caben en la memoria de esta máquina deben aparecer atenuados en el paso 2.',
-  }, async ({ doc }) => {
-    doc.match(/greyed out/);
-    const ramGb = os.totalmem() / 1024 ** 3;
-    const tooBig = (await catalogRows()).filter((r) => r.ram > ramGb).map((r) => r.name);
-    if (!tooBig.length) return `SKIP: con ${Math.round(ramGb)} GB ningún modelo excede la memoria`;
-    const dimmed = await js((names) => names.filter((n) => {
-      const el = [...document.querySelectorAll('button,[role=button],li,div')].find((e) => e.offsetParent && e.innerText.trim().startsWith(n) && e.innerText.length < 200);
-      const st = el && getComputedStyle(el);
-      return el && (el.disabled || el.getAttribute('aria-disabled') === 'true' || +st.opacity < 0.9 || /opacity-|cursor-not-allowed/.test(el.className));
-    }), tooBig);
-    return ok(dimmed.length === tooBig.length, `${tooBig.join(', ')} atenuados`, `sin atenuar: ${tooBig.filter((n) => !dimmed.includes(n)).join(', ')}`);
-  }, 'The picker shows every model, including those above this machine\'s memory, with nothing greyed out. Either grey them out in the wizard and in Settings → AI Backend & Models, or drop the sentence in all four languages.');
   await claim('start-2-ai-2', 'Continue bloqueado sin modelo', {
-    covers: ['With the in-app backend, pick a chat model from the built-in catalog.'],
-    how: 'En el paso 2 con In-app y sin ningún modelo elegido, comprueba que «Continue» está deshabilitado: hay que elegir un modelo del catálogo.',
-  }, async ({ doc }) => {
-    doc.match(/pick a chat model from the built-in catalog/);
-    return ok((await buttonState('Continue')) === 'disabled', 'no se puede continuar sin elegir modelo', 'Continue está habilitado sin modelo');
+    covers: ['With the in-app backend, pick a chat model from the built-in catalog.', 'Continue stays disabled until the chat model has finished downloading, or until you pick a file you already have with Use existing file…'],
+    how: 'En el paso 2 con In-app y sin ningún modelo de chat en disco, comprueba que el botón que nombra la doc («Continue») está deshabilitado y que cada modelo ofrece la alternativa que nombra la doc («Use existing file…»).',
+  }, async () => {
+    const [cont, existing] = bold('start-2-ai-2').filter((l) => !/Qwen/.test(l));
+    const offersExisting = (await buttons()).filter((x) => x === existing).length > 0;
+    return ok((await buttonState(cont)) === 'disabled' && offersExisting,
+      `«${cont}» deshabilitado sin modelo; «${existing}» disponible`,
+      `«${cont}»: ${await buttonState(cont)}; «${existing}»: ${offersExisting ? 'sí' : 'no'}`);
   });
 
   // Plain path: fewer steps, layout, then account.
@@ -898,12 +871,12 @@ async function afterWizard() {
     doc.match(/output language is set separately/);
     return ok(/AI output language/.test(ai) && !/AI output language/.test(plainTabs), 'el idioma de la IA se ajusta aparte', 'no hay idioma de salida de la IA');
   });
-  await claim('trbl-ai-features-1', 'descarga y borrado', {
-    covers: ['check that the recommended model finished downloading in Settings → AI Backend & Models', 'remove it and download it again'], proof: 'label',
-    how: 'Comprueba que el catálogo de AI Backend & Models ofrece descargar y borrar modelos.',
+  await claim('trbl-ai-features-1', 'descarga', {
+    covers: ['check that the recommended model finished downloading in Settings → AI Backend & Models', 'start it again from the same screen'], proof: 'label',
+    how: 'Comprueba que el catálogo de AI Backend & Models muestra qué modelos están descargados y ofrece descargarlos. Que la descarga se reanude la cubre el juicio del agente sobre el código.',
   }, async ({ doc }) => {
-    doc.match(/remove it and download it again/);
-    return ok(/Download/.test(ai) && /Delete/.test(ai), 'los modelos se descargan y borran desde AI Backend & Models', 'no hay descarga o borrado');
+    doc.match(/start it again from the same screen/);
+    return ok(/Download/.test(ai) && /Downloaded/.test(ai), 'el catálogo marca lo descargado y ofrece descargar', 'no');
   });
   await claim('trbl-ai-features-2', 'Ollama', {
     covers: ['If you switched to Ollama'],

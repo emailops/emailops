@@ -14,8 +14,8 @@ e-mail ne quitte jamais votre machine.
 <!-- claim:ai-choosing-backend-1 -->
 **Paramètres → IA : backend et modèles** détermine où se déroule l'inférence :
 
-- **Dans l'app** — un runtime llama.cpp intégré. Rien à installer, pas de démon, pas
-  de trafic réseau. C'est le choix par défaut. Il utilise automatiquement votre GPU quand il y
+- **Dans l'app** — un runtime llama.cpp intégré. Rien à installer et pas de démon ; une fois
+  le modèle téléchargé, répondre ne génère aucun trafic réseau. C'est le choix par défaut. Il utilise automatiquement votre GPU quand il y
   en a un — Metal sur Apple Silicon, Vulkan sous Windows et Linux — et le CPU sinon. Sur Mac,
   il exige une puce Apple Silicon (M1 ou plus récente) ; sur un Mac Intel il reste
   indisponible. <!-- claim:ai-choosing-backend-2 -->
@@ -60,7 +60,6 @@ tenir dépend de votre matériel :
 - **Sans GPU** — la RAM système, sur le CPU. Cela fonctionne ; c'est simplement plus lent. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
 <!-- claim:ai-choosing-backend-model-catalog-6 -->
-Les modèles trop volumineux pour la mémoire de votre système sont grisés dans le sélecteur.
 Un modèle porte la mention **Recommandé**, choisie pour la machine que vous utilisez :
 EmailOps examine la mémoire système et, si vous avez une carte graphique dédiée, sa mémoire
 également, puis propose le plus grand modèle qui tient confortablement. Un portable et une

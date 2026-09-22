@@ -14,8 +14,8 @@ your machine.
 <!-- claim:ai-choosing-backend-1 -->
 **Settings → AI Backend & Models** controls where inference happens:
 
-- **In-app** — an embedded llama.cpp runtime. Nothing to install, no daemon, no
-  network traffic. This is the default. It uses your GPU automatically where there is one —
+- **In-app** — an embedded llama.cpp runtime. Nothing to install and no daemon; once
+  the model is downloaded, answering makes no network traffic. This is the default. It uses your GPU automatically where there is one —
   Metal on Apple Silicon, Vulkan on Windows and Linux — and the CPU where there is not. On a
   Mac it requires Apple Silicon (M1 or newer); on an Intel Mac it stays unavailable. <!-- claim:ai-choosing-backend-2 -->
 - **Ollama** — an Ollama server you already run at `http://localhost:11434`. Useful
@@ -57,7 +57,7 @@ on your hardware:
 - **No GPU** — system RAM, on the CPU. It works; it is just slower. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
 <!-- claim:ai-choosing-backend-model-catalog-6 -->
-Models too large for your system memory are greyed out in the picker. One model carries a
+One model carries a
 **Recommended** badge, chosen for the machine you are on: EmailOps looks at your system memory
 and, if you have a discrete graphics card, at its memory too, then suggests the largest model
 that fits comfortably. A laptop and a workstation will therefore see different suggestions.

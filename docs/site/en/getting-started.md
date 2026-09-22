@@ -34,9 +34,8 @@ With the in-app backend, pick a chat model from the built-in catalog. EmailOps p
 largest model your machine can comfortably run, so the recommendation depends on the memory
 it finds — on a 16 GB machine that is **Qwen 3.5 4B**, about 3 GB to download and under
 4 GB of memory while it answers; a roomier machine is offered a larger model from the same catalog.
-Every recommended model supports the tool-calling that chat relies on. Models too large for
-your system memory are greyed out. The download runs in the background — you can carry on
-with the wizard.
+Every recommended model supports the tool-calling that chat relies on. The download shows its progress in place; **Continue** stays disabled until the chat model
+has finished downloading, or until you pick a file you already have with **Use existing file…**.
 
 <!-- claim:start-2-ai-3 -->
 The memory that counts depends on the machine: **unified memory** on an Apple Silicon Mac,

@@ -8,8 +8,9 @@ weight: 60
 
 <!-- claim:trbl-ai-features-1 -->
 Avec le backend **intégré**, vérifiez que le modèle recommandé a fini de se télécharger dans
-**Paramètres → IA : backend et modèles**. Un téléchargement interrompu rend le modèle
-inutilisable — supprimez-le et téléchargez-le à nouveau.
+**Paramètres → IA : backend et modèles**. Un téléchargement interrompu n'est
+jamais utilisé comme modèle : relancez-le depuis le même écran et il reprend là où il s'était
+arrêté ; un téléchargement qui échoue à la vérification est supprimé automatiquement.
 
 <!-- claim:trbl-ai-features-2 -->
 Si vous êtes passé à **Ollama**, assurez-vous que le démon tourne et est joignable sur
