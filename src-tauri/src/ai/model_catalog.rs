@@ -711,9 +711,7 @@ mod recommendation_tests {
                 let row = rows
                     .iter()
                     .find(|r| r[0].contains(model.display_name))
-                    .unwrap_or_else(|| {
-                        panic!("{lang}/ai-features.md does not list {}", model.display_name)
-                    });
+                    .unwrap_or_else(|| panic!("{lang}/ai-features.md does not list {}", model.display_name));
                 assert_eq!(
                     row[1],
                     published_size(model.size_bytes),
@@ -737,8 +735,7 @@ mod recommendation_tests {
         // names one model flatly is wrong for most readers, so the published
         // sentence must tie the model it names to the memory it assumes.
         let md = published_doc("en", "getting-started.md");
-        let anchor = regex::Regex::new(r"on a (\d+) GB machine that is \*\*([^*]+)\*\*")
-            .expect("static pattern");
+        let anchor = regex::Regex::new(r"on a (\d+) GB machine that is \*\*([^*]+)\*\*").expect("static pattern");
         let found = anchor.captures(&md).unwrap_or_else(|| {
             panic!(
                 "getting-started.md must anchor its recommendation, e.g. \

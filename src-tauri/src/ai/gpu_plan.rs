@@ -40,11 +40,25 @@ pub enum RawDeviceType {
 ///
 /// ggml reports Apple Silicon's Metal device as a plain `Gpu`, but its memory
 /// is the machine's RAM. Treating it as discrete would apply a VRAM budget to a
-/// pool that has none and needlessly cap offload on exactly the platform where
-/// full offload is both correct and fastest — so the backend name is consulted,
-/// not just the type.
-pub fn classify_device(backend: &str, raw: RawDeviceType) -> DeviceKind {
-    if backend.eq_ignore_ascii_case("metal") {
+/// pool that has none, cap offload on exactly the platform where full offload
+/// is both correct and fastest, and count the GPU's working set as extra memory
+/// when recommending a model.
+///
+/// `unified_memory` is the hardware's own answer when the platform can give one
+/// (Metal's `hasUnifiedMemory`; see `llama_cpp::runtime`), and it wins: ggml's
+/// generic device properties carry no such field, and the backend name has
+/// already changed once under us ("Metal" → "MTL"), silently sending every Apple
+/// Silicon Mac down the discrete-card path. Without an answer, the name is the
+/// fallback, under both spellings.
+pub fn classify_device(backend: &str, raw: RawDeviceType, unified_memory: Option<bool>) -> DeviceKind {
+    if matches!(raw, RawDeviceType::Gpu | RawDeviceType::IntegratedGpu) {
+        match unified_memory {
+            Some(true) => return DeviceKind::Unified,
+            Some(false) => return DeviceKind::Discrete,
+            None => {}
+        }
+    }
+    if backend.eq_ignore_ascii_case("metal") || backend.eq_ignore_ascii_case("mtl") {
         return DeviceKind::Unified;
     }
     match raw {
@@ -381,15 +395,51 @@ mod tests {
         // The regression guard for Apple Silicon: ggml types Metal as `Gpu`,
         // and classifying it as discrete would cap offload on the one platform
         // where full offload is correct.
-        assert_eq!(classify_device("Metal", RawDeviceType::Gpu), DeviceKind::Unified);
-        assert_eq!(classify_device("metal", RawDeviceType::Gpu), DeviceKind::Unified);
+        assert_eq!(classify_device("Metal", RawDeviceType::Gpu, None), DeviceKind::Unified);
+        assert_eq!(classify_device("metal", RawDeviceType::Gpu, None), DeviceKind::Unified);
+    }
+
+    #[test]
+    fn metal_is_unified_under_the_name_current_ggml_gives_it() {
+        // ggml renamed the Metal backend "MTL" (GGML_METAL_NAME), with devices
+        // "MTL0". Matching only "metal" sent every Apple Silicon GPU down the
+        // discrete-card path, where its working set was budgeted as VRAM on
+        // top of system RAM.
+        assert_eq!(classify_device("MTL", RawDeviceType::Gpu, None), DeviceKind::Unified);
+        assert_eq!(classify_device("mtl", RawDeviceType::Gpu, None), DeviceKind::Unified);
+    }
+
+    #[test]
+    fn the_hardware_saying_unified_memory_overrides_the_backend_name() {
+        // The real characteristic wins over any name: backends get renamed,
+        // shared memory does not stop being shared.
+        assert_eq!(
+            classify_device("SomeFutureName", RawDeviceType::Gpu, Some(true)),
+            DeviceKind::Unified
+        );
+    }
+
+    #[test]
+    fn the_hardware_saying_dedicated_memory_is_discrete() {
+        assert_eq!(
+            classify_device("Vulkan", RawDeviceType::Gpu, Some(false)),
+            DeviceKind::Discrete
+        );
+    }
+
+    #[test]
+    fn an_apple_silicon_gpu_adds_no_vram_budget() {
+        // The user-visible bug: a 16 GB Mac was recommended a model needing
+        // 16 GB, because its Metal working set (~11 GB) counted as a card.
+        let metal = device(classify_device("MTL", RawDeviceType::Gpu, Some(true)), 11);
+        assert_eq!(discrete_vram_budget(&[metal]), None);
     }
 
     #[test]
     fn discrete_backends_are_budgeted() {
         for backend in ["CUDA", "Vulkan", "ROCm"] {
             assert_eq!(
-                classify_device(backend, RawDeviceType::Gpu),
+                classify_device(backend, RawDeviceType::Gpu, None),
                 DeviceKind::Discrete,
                 "{backend} has its own VRAM"
             );
@@ -447,16 +497,19 @@ mod tests {
     #[test]
     fn integrated_gpus_share_system_ram() {
         assert_eq!(
-            classify_device("Vulkan", RawDeviceType::IntegratedGpu),
+            classify_device("Vulkan", RawDeviceType::IntegratedGpu, None),
             DeviceKind::Unified
         );
     }
 
     #[test]
     fn cpu_and_unknown_devices_are_never_offload_targets() {
-        assert_eq!(classify_device("CPU", RawDeviceType::Cpu), DeviceKind::Cpu);
-        assert_eq!(classify_device("BLAS", RawDeviceType::Accelerator), DeviceKind::Other);
-        assert_eq!(classify_device("???", RawDeviceType::Unknown), DeviceKind::Other);
+        assert_eq!(classify_device("CPU", RawDeviceType::Cpu, None), DeviceKind::Cpu);
+        assert_eq!(
+            classify_device("BLAS", RawDeviceType::Accelerator, None),
+            DeviceKind::Other
+        );
+        assert_eq!(classify_device("???", RawDeviceType::Unknown, None), DeviceKind::Other);
 
         // `best_device` must ignore both.
         let devices = vec![

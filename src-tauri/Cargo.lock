@@ -1768,6 +1768,7 @@ dependencies = [
  "mailparse",
  "native-tls",
  "oauth2",
+ "objc2",
  "open",
  "opentelemetry",
  "opentelemetry-otlp",

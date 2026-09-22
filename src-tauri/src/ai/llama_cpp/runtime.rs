@@ -318,6 +318,12 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
     use crate::ai::gpu_plan::{classify_device, GpuDevice, RawDeviceType};
     use llama_cpp_2::LlamaBackendDeviceType as Ty;
 
+    // The hardware's own answer to "is this memory shared with the CPU?". On
+    // macOS the only GPU backend ggml builds is Metal, so Metal's answer is the
+    // answer for every GPU device in the list; elsewhere there is none and
+    // classify_device falls back to ggml's type and the backend name.
+    let unified = metal_has_unified_memory();
+
     llama_cpp_2::list_llama_ggml_backend_devices()
         .into_iter()
         .map(|d| {
@@ -328,8 +334,9 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
                 Ty::Accelerator => RawDeviceType::Accelerator,
                 Ty::Unknown => RawDeviceType::Unknown,
             };
+            let gpu = matches!(raw, RawDeviceType::Gpu | RawDeviceType::IntegratedGpu);
             GpuDevice {
-                kind: classify_device(&d.backend, raw),
+                kind: classify_device(&d.backend, raw, if gpu { unified } else { None }),
                 name: d.name,
                 backend: d.backend,
                 memory_free: d.memory_free as u64,
@@ -337,6 +344,38 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
             }
         })
         .collect()
+}
+
+/// Whether this Mac's GPU shares memory with the CPU, as Metal itself reports it.
+///
+/// ggml knows this (`has_unified_memory`, read from the same property) but its
+/// generic device properties do not carry it, and it types the Metal device as
+/// a plain `Gpu`; without asking here, the only clue left is the backend name,
+/// which ggml has already renamed once ("Metal" → "MTL").
+#[cfg(target_os = "macos")]
+fn metal_has_unified_memory() -> Option<bool> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+
+    #[link(name = "Metal", kind = "framework")]
+    extern "C" {
+        fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
+    }
+
+    // SAFETY: MTLCreateSystemDefaultDevice takes no arguments and returns either
+    // nil (no Metal device) or a +1 retained id<MTLDevice> under the Create rule;
+    // Retained takes that ownership and releases it on drop.
+    let device = unsafe { Retained::from_raw(MTLCreateSystemDefaultDevice()) }?;
+    // SAFETY: hasUnifiedMemory is a BOOL property every MTLDevice implements
+    // (macOS 10.15+, below this app's 12.0 floor), taking no arguments.
+    let unified: bool = unsafe { msg_send![&*device, hasUnifiedMemory] };
+    Some(unified)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn metal_has_unified_memory() -> Option<bool> {
+    None
 }
 
 /// The device list for planning decisions made outside the loader — currently
