@@ -206,6 +206,9 @@ können Absender und Kennzeichnungen ausschließen (Newsletter sind standardmä�
 ausgeschlossen), Aufgaben pro E-Mail begrenzen, den Rückblickzeitraum einschränken und ältere
 E-Mails bei Bedarf nacharbeiten lassen.
 
+Aktivieren Sie sie unter **Einstellungen → KI-Aufgaben** mit **Aufgaben aus E-Mails
+extrahieren**; gefundene Aufgaben erscheinen unter **Aufgaben** in der Seitenleiste.
+
 ## Gedächtnis {#memory}
 
 *Experimentell.* Fakten, die der Assistent über Ihre Kontakte, Domains und Projekte lernt,
@@ -213,12 +216,18 @@ werden als Langzeitkontext gespeichert, damit der Chat nicht jedes Mal bei null 
 Kandidaten-Fakten werden bewertet und ab einem Schwellenwert übernommen; schlecht bewertete
 laufen aus. Alles Gelernte ist einsehbar, und das gesamte Teilsystem hat einen Hauptschalter.
 
+Aktivieren Sie es unter **Einstellungen → KI-Gedächtnis** mit **Dem Assistenten erlauben, sich
+Fakten zu merken**; Gelerntes steht unter **Gedächtnis** in der Seitenleiste.
+
 ## Linsen {#lenses}
 
 *Experimentell.* Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
 strukturierte Projektionen (etwa „alle Rechnungen mit Betrag und Fälligkeit“), die Sie in der
 Seitenleiste anlegen und ausführen. Eine ausgeschlossene Zeile bleibt aus der Sicht; **Ausgeschlossene
 Zeilen anzeigen** holt sie zurück, sodass Sie eine wieder aufnehmen können.
+
+Aktivieren Sie sie unter **Einstellungen → KI-Linsen** und legen Sie einzelne Linsen dann über
+den Eintrag **Linsen** in der Seitenleiste an und führen Sie sie aus.
 
 ## Alles abschalten {#turning-it-all-off}
 
