@@ -40,6 +40,23 @@ pub(crate) fn resolve_window(args: &Value, now: i64) -> (i64, i64) {
     }
 }
 
+/// Days a rangeless call also looks back, so "when was / is the X?" can find
+/// an event that already happened this week.
+const LOOKBACK_DAYS: i64 = 7;
+
+/// The window of past events a call also lists: `[now - 7d, now)`, only when
+/// the call gave no range at all (`since`, `until` or `days`). An explicit
+/// range is taken literally.
+pub(crate) fn lookback_window(args: &Value, now: i64) -> Option<(i64, i64)> {
+    let has_range = ["since", "until", "days"].iter().any(|k| args.get(*k).is_some());
+    (!has_range).then_some((now - LOOKBACK_DAYS * 86_400, now))
+}
+
+/// Closes every non-empty result: nothing in it is an email, and a model that
+/// links every item otherwise invents an `email://` id and drops the time.
+const NO_LINK_NOTE: &str =
+    "(calendar events have no email:// link — give each one's day, time and title as plain text)\n";
+
 /// First line of every calendar result: today's date in the user's zone.
 /// Anchors "today"/"tomorrow" right next to the events — the model called
 /// tomorrow's first event "hoy" when the only date it had was in the prompt.
@@ -86,6 +103,16 @@ fn format_event_line(event: &crate::models::CalendarEvent) -> String {
     line
 }
 
+/// Up to `MAX_EVENTS` event lines, then a count of the ones left out.
+fn push_event_lines(out: &mut String, events: &[crate::models::CalendarEvent]) {
+    for event in events.iter().take(MAX_EVENTS) {
+        out.push_str(&format_event_line(event));
+    }
+    if events.len() > MAX_EVENTS {
+        out.push_str(&format!("(+{} more events not shown)\n", events.len() - MAX_EVENTS));
+    }
+}
+
 #[async_trait]
 impl Tool for ListCalendarEventsTool {
     fn name(&self) -> &'static str {
@@ -97,14 +124,14 @@ impl Tool for ListCalendarEventsTool {
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\") — never search_emails for those."
+        "list the user's calendar events for a date range. Use it for ANY question about meetings, events, appointments or \"my calendar\" (\"reunión\", \"cita\", \"evento\", \"calendario\", \"meeting\"), and for any question about WHEN something scheduled is or was — never search_emails for those. Called with no range it lists the past week and the next one."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "since": { "type": "string", "description": "ISO date (YYYY-MM-DD) — start of the range. Defaults to now." },
+                "since": { "type": "string", "description": "ISO date (YYYY-MM-DD) — start of the range. With no since/until/days the tool lists the last 7 days and the next 7." },
                 "until": { "type": "string", "description": "ISO date (YYYY-MM-DD) — exclusive end of the range." },
                 "days": { "type": "integer", "description": "Days ahead from now when since/until are omitted (default 7, max 60)." }
             },
@@ -155,19 +182,30 @@ impl Tool for ListCalendarEventsTool {
             Ok(events) => events,
             Err(e) => return Ok(ToolOutput::text(format!("Calendar error: {e}"))),
         };
-        if events.is_empty() {
+        let past = match lookback_window(&args, now) {
+            Some((from, to)) => match ctx.db.list_visible_calendar_events(ctx.account_id, from, to) {
+                Ok(past) => past,
+                Err(e) => return Ok(ToolOutput::text(format!("Calendar error: {e}"))),
+            },
+            None => Vec::new(),
+        };
+        if events.is_empty() && past.is_empty() {
             return Ok(ToolOutput::text(format!(
                 "{}No calendar events in this period.",
                 today_header(now)
             )));
         }
         let mut out = today_header(now);
-        for event in events.iter().take(MAX_EVENTS) {
-            out.push_str(&format_event_line(event));
+        if !past.is_empty() {
+            out.push_str(&format!("Already happened (last {LOOKBACK_DAYS} days):\n"));
+            push_event_lines(&mut out, &past);
+            out.push_str("Upcoming:\n");
+            if events.is_empty() {
+                out.push_str("(none)\n");
+            }
         }
-        if events.len() > MAX_EVENTS {
-            out.push_str(&format!("(+{} more events not shown)\n", events.len() - MAX_EVENTS));
-        }
+        push_event_lines(&mut out, &events);
+        out.push_str(NO_LINK_NOTE);
         Ok(ToolOutput::text(out))
     }
 }
@@ -211,7 +249,103 @@ mod tests {
         assert_eq!(end - start, 7 * 86_400);
     }
 
+    // ── lookback_window (pure) ─────────────────────────────────────────────
+
+    #[test]
+    fn a_rangeless_call_also_looks_back_a_week() {
+        assert_eq!(lookback_window(&json!({}), NOW), Some((NOW - 7 * 86_400, NOW)));
+    }
+
+    #[test]
+    fn an_explicit_range_gets_no_lookback() {
+        assert_eq!(lookback_window(&json!({"since": "2026-07-27"}), NOW), None);
+        assert_eq!(lookback_window(&json!({"until": "2026-07-27"}), NOW), None);
+        assert_eq!(lookback_window(&json!({"days": 3}), NOW), None);
+    }
+
     // ── execute (against the in-memory DB) ─────────────────────────────────
+
+    /// "cuándo es la demo del sprint" called the tool with no range and got
+    /// only the next 7 days, so a demo held three days ago read as missing.
+    #[tokio::test]
+    async fn a_rangeless_call_lists_last_weeks_events_apart_from_upcoming_ones() {
+        let db = std::sync::Arc::new(Database::new_for_testing().expect("db"));
+        seed_gmail_account(&db, "acc1");
+        let now = chrono::Utc::now().timestamp();
+        db.upsert_calendar_events(&[
+            event("acc1", "past", now - 3 * 86_400),
+            event("acc1", "next", now + 3_600),
+        ])
+        .expect("seed");
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc1",
+            categories: &[],
+            page: None,
+        };
+        let text = ListCalendarEventsTool
+            .execute(&ctx, json!({}))
+            .await
+            .expect("execute")
+            .text;
+        let past_header = text.find("Already happened").expect("past section");
+        let upcoming_header = text.find("Upcoming").expect("upcoming section");
+        let past = text.find("Meeting past").expect("past event listed");
+        let next = text.find("Meeting next").expect("upcoming event listed");
+        assert!(
+            past_header < past && past < upcoming_header && upcoming_header < next,
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_range_lists_only_that_range() {
+        let db = std::sync::Arc::new(Database::new_for_testing().expect("db"));
+        seed_gmail_account(&db, "acc1");
+        let now = chrono::Utc::now().timestamp();
+        db.upsert_calendar_events(&[
+            event("acc1", "past", now - 3 * 86_400),
+            event("acc1", "next", now + 3_600),
+        ])
+        .expect("seed");
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc1",
+            categories: &[],
+            page: None,
+        };
+        let text = ListCalendarEventsTool
+            .execute(&ctx, json!({"days": 2}))
+            .await
+            .expect("execute")
+            .text;
+        assert!(!text.contains("Meeting past"), "{text}");
+        assert!(!text.contains("Already happened"), "{text}");
+        assert!(text.contains("Meeting next"), "{text}");
+    }
+
+    /// Events are not emails: with nothing to link, the answer came back as
+    /// a bare `[title](email://eml-123)` with an invented id and no time.
+    #[tokio::test]
+    async fn listed_events_carry_a_note_that_they_have_no_email_link() {
+        let db = std::sync::Arc::new(Database::new_for_testing().expect("db"));
+        seed_gmail_account(&db, "acc1");
+        let now = chrono::Utc::now().timestamp();
+        db.upsert_calendar_events(&[event("acc1", "ev1", now + 3_600)])
+            .expect("seed");
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc1",
+            categories: &[],
+            page: None,
+        };
+        let text = ListCalendarEventsTool
+            .execute(&ctx, json!({}))
+            .await
+            .expect("execute")
+            .text;
+        assert!(text.contains("no email:// link"), "{text}");
+    }
 
     #[test]
     fn prompt_summary_claims_meeting_questions_only_when_the_tool_is_offered() {

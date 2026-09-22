@@ -57,6 +57,23 @@ fn now_local() -> chrono::NaiveDateTime {
     now_utc().naive_utc() + chrono::Duration::seconds(crate::services::clock::utc_offset_secs() as i64)
 }
 
+/// The seven days after `today`, each with its weekday, so the model reads
+/// "pasado mañana" or "el jueves" off a list instead of counting days itself.
+pub(crate) fn next_days_line(today: chrono::NaiveDate) -> String {
+    (1..=7)
+        .map(|n| {
+            let day = today + chrono::Duration::days(n);
+            let label = day.format("%a %Y-%m-%d");
+            match n {
+                1 => format!("{label} (tomorrow)"),
+                2 => format!("{label} (day after tomorrow)"),
+                _ => label.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
@@ -247,6 +264,7 @@ from this mailbox as if they answered the question."
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("user_identity", user_identity);
     tpl_vars.insert("tools_section", tools_section.to_string());
@@ -2852,6 +2870,7 @@ async fn run_thread_bound_turn(
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
     // Empty rather than omitted, for the same reason: the identity block only
@@ -6288,6 +6307,25 @@ mod tests {
         );
     }
 
+    /// "¿qué tengo pasado mañana?" on a Tuesday was asked of the calendar as
+    /// Wednesday: the prompt gave today and tomorrow only, so every other
+    /// relative day was the model's own (wrong) arithmetic.
+    #[test]
+    fn next_days_line_names_the_coming_week_with_weekdays() {
+        let tuesday = chrono::NaiveDate::from_ymd_opt(2026, 9, 22).expect("date");
+        let line = next_days_line(tuesday);
+        assert!(
+            line.starts_with("Wed 2026-09-23 (tomorrow), Thu 2026-09-24 (day after tomorrow), Fri 2026-09-25"),
+            "{line}"
+        );
+        assert!(line.ends_with("Tue 2026-09-29"), "{line}");
+    }
+
+    #[test]
+    fn the_chat_system_prompt_lists_the_coming_days() {
+        assert!(crate::services::prompts::defaults::CHAT_SYSTEM.contains("{{next_days}}"));
+    }
+
     #[test]
     fn thread_bound_binds_every_chat_system_placeholder() {
         // `prompts::render` leaves unknown placeholders INTACT (prompts/mod.rs),
@@ -6304,6 +6342,10 @@ mod tests {
         vars.insert("today", "2026-01-01".to_string());
         vars.insert("tomorrow", "2026-01-02".to_string());
         vars.insert("weekday", "Thursday".to_string());
+        vars.insert(
+            "next_days",
+            next_days_line(chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("date")),
+        );
         vars.insert("language_instruction", "Reply in Spanish.".to_string());
         vars.insert("tools_section", String::new());
         vars.insert("user_identity", String::new());
