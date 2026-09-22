@@ -16,6 +16,11 @@ db="$demo_dir/emailops.db"
 if [ ! -f "$db" ]; then
   echo "[demo] no demo DB found — building one"
   make "$db_target"
+elif [ scripts/generate_demo_db.py -nt "$db" ]; then
+  # A DB built before the generator last changed lacks its new threads, and
+  # the eval cases written against them fail on a stale DB, not on the model.
+  echo "[demo] generate_demo_db.py is newer than the demo DB — rebuilding"
+  make "$db_target"
 fi
 
 if ! sqlite3 "$db" "SELECT 1 FROM embedding_chunks LIMIT 1;" 2>/dev/null | grep -q 1; then

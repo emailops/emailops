@@ -33,7 +33,7 @@ What it does, and why each part exists:
   `vite.config.ts` pins 1420 with `strictPort`, so without the override a second instance
   cannot start while the developer's own `make dev` is up. Ports and dirs come from
   `VERIFY_PORT` / `VERIFY_DATA_DIR` if you need another pair.
-- Builds the demo DB + embeddings first if missing (`scripts/ensure_demo_db.sh`). The demo
+- Builds the demo DB + embeddings first if missing, and rebuilds them when `scripts/generate_demo_db.py` is newer than the DB (`scripts/ensure_demo_db.sh`). The demo
   persona is synthetic: two IMAP accounts, `ulises@emailopslabs.dev` (id `demo-acct-work`)
   and `ulises@fastmail.com` (`demo-acct-personal`), 79 emails, onboarding already completed.
 - Refuses to start if port 1421 is taken, if another `emailops` process already holds the
