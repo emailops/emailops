@@ -193,6 +193,9 @@ interface EmailStore {
   focusEmailId: string | null;
   /** True after navigateToEmail — disables category filtering until next explicit inbox action */
   navigationMode: boolean;
+  /** True only while navigateToEmail is loading its list — fetchEmails stands
+   *  aside so it cannot overwrite the list being built around the focused email. */
+  navigationInFlight: boolean;
   /** One-shot flag — next fetchEmails call is a no-op (used when search results are pre-seeded) */
   skipNextFetch: boolean;
   currentFetchId: number;
@@ -277,6 +280,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   searchQuery: null,
   focusEmailId: null,
   navigationMode: false,
+  navigationInFlight: false,
   skipNextFetch: false,
   currentFetchId: 0,
   loadMoreLock: false,
@@ -395,8 +399,11 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   setActiveTab: (tabId) => set({ activeTabId: tabId ?? null }),
 
   fetchEmails: async (accountId, filter, selectedCategories, silent = false, mailbox) => {
-    // Skip if navigateToEmail is in progress — it manages its own fetching
-    if (get().navigationMode) return;
+    // Skip while navigateToEmail is loading — it manages its own fetching.
+    // Not on navigationMode: that flag outlives the navigation (it keeps the
+    // category filter off the navigated list), and gating on it swallowed
+    // every later search or filter until the account changed.
+    if (get().navigationInFlight) return;
 
     // Skip if results were pre-seeded via applySearchResults
     if (get().skipNextFetch) {
@@ -609,6 +616,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       searchQuery: null,
       focusEmailId: emailId,
       navigationMode: true,
+      navigationInFlight: true,
     });
 
     try {
@@ -640,6 +648,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         isLoading: false,
         hasMore: emails.length < totalCount,
         loadMoreLock: false,
+        navigationInFlight: false,
         selectedEmail: email,
         threadEmails: [],
         isLoadingThread: true,
@@ -659,7 +668,13 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       }
     } catch (error) {
       if (get().currentFetchId === fetchId) {
-        set({ error: errorText(error), isLoading: false, isLoadingThread: false, navigationMode: false });
+        set({
+          error: errorText(error),
+          isLoading: false,
+          isLoadingThread: false,
+          navigationMode: false,
+          navigationInFlight: false,
+        });
       }
     }
   },
@@ -720,6 +735,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       isLoading: false,
       skipNextFetch: true,
       currentFetchId: state.currentFetchId + 1,
+      // The bumped fetchId makes an in-flight navigateToEmail bail out
+      // before it clears its own flag; the list is ours now.
+      navigationInFlight: false,
     }));
   },
   clearSearchQuery: () => set({ searchQuery: null }),
@@ -740,6 +758,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       searchQuery: null,
       focusEmailId: null,
       navigationMode: false,
+      navigationInFlight: false,
       skipNextFetch: false,
       loadMoreLock: false,
       tabs: [],
