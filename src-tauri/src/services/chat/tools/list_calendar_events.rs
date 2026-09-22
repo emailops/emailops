@@ -73,14 +73,21 @@ fn format_event_line(event: &crate::models::CalendarEvent) -> String {
     use chrono::TimeZone;
     let when = if event.is_all_day {
         match chrono::Local.timestamp_opt(event.start_time, 0).single() {
-            Some(dt) => format!("{} all-day", dt.format("%a %Y-%m-%d")),
+            Some(dt) => format!("{} all-day", dt.format("%A %Y-%m-%d")),
             None => "unknown-date".to_string(),
         }
     } else {
         let start = chrono::Local.timestamp_opt(event.start_time, 0).single();
         let end = chrono::Local.timestamp_opt(event.end_time, 0).single();
         match (start, end) {
-            (Some(s), Some(e)) => format!("{}\u{2013}{}", s.format("%a %Y-%m-%d %H:%M"), e.format("%H:%M")),
+            // Full weekday and "to", not "Thu … 09:30–10:15": the model
+            // named the wrong weekday and took the end time for the start.
+            (Some(s), Some(e)) => format!(
+                "{} {} to {}",
+                s.format("%A %Y-%m-%d"),
+                s.format("%H:%M"),
+                e.format("%H:%M")
+            ),
             _ => "unknown-time".to_string(),
         }
     };
@@ -385,9 +392,24 @@ mod tests {
         let expected = chrono::Local
             .timestamp_opt(start, 0)
             .single()
-            .map(|dt| format!("- {}", dt.format("%a %Y-%m-%d")))
+            .map(|dt| format!("- {}", dt.format("%A %Y-%m-%d")))
             .expect("local time");
         assert!(line.starts_with(&expected), "expected `{expected}…`, got: {line}");
+    }
+
+    /// "09:30–10:15" came back as a meeting "at 10:15": the model took the
+    /// end of the dash range for the start.
+    #[test]
+    fn event_lines_spell_out_start_and_end() {
+        use chrono::TimeZone;
+        let start = 1_789_016_400;
+        let line = format_event_line(&event("acc", "e1", start));
+        let (s, e) = (
+            chrono::Local.timestamp_opt(start, 0).single().expect("local"),
+            chrono::Local.timestamp_opt(start + 1_800, 0).single().expect("local"),
+        );
+        let expected = format!("{} to {}", s.format("%H:%M"), e.format("%H:%M"));
+        assert!(line.contains(&expected), "expected `{expected}`, got: {line}");
     }
 
     fn event(account_id: &str, id: &str, start: i64) -> CalendarEvent {

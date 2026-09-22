@@ -1176,6 +1176,32 @@ fn repair_missing_email_id(
     Some(next)
 }
 
+/// Most edits between a miscopied `email_id` and the result it was meant to
+/// be. Ids are long hex strings, so two slips still leave one clear match.
+const MAX_EMAIL_ID_EDITS: usize = 2;
+
+/// Deterministically repair an `email_id` the model miscopied from a tool
+/// result (observed: `…f9e99306` written as `…f9e9306`, so the draft tool
+/// answered "email not found" and the turn gave up). When the id is not one
+/// this turn's results listed and exactly ONE listed id is within
+/// `MAX_EMAIL_ID_EDITS`, swap it in. Returns the wrong id when it did.
+fn repair_mangled_email_id(args: &mut serde_json::Value, available_refs: &[String]) -> Option<String> {
+    let wrong = args.get("email_id")?.as_str()?.trim().to_string();
+    if wrong.is_empty() || available_refs.contains(&wrong) {
+        return None;
+    }
+    let mut close = available_refs
+        .iter()
+        .filter(|r| crate::services::junk::lookalike::edit_distance(r, &wrong) <= MAX_EMAIL_ID_EDITS);
+    let right = close.next()?.clone();
+    if close.next().is_some() {
+        return None;
+    }
+    args.as_object_mut()?
+        .insert("email_id".to_string(), serde_json::Value::String(right));
+    Some(wrong)
+}
+
 /// Deterministically repair a `generate_email_draft` call that dropped
 /// `instructions`: pass the user's own request instead, so what they asked
 /// the draft to say ("proposing a call next week") reaches the generator.
@@ -2444,6 +2470,15 @@ async fn run_tool_loop(
                     &format!(
                         "tool_loop: search_emails had no filters — injected address from the question ({})",
                         truncate_chars(&tc.function.arguments.to_string(), 200)
+                    ),
+                );
+            }
+            if let Some(wrong) = repair_mangled_email_id(&mut tc.function.arguments, &aggregated_email_refs) {
+                emit_log(
+                    "info",
+                    &format!(
+                        "tool_loop: {} email_id {wrong} matched no result — corrected to the one it resembles",
+                        tc.function.name
                     ),
                 );
             }
@@ -5045,6 +5080,36 @@ mod tests {
         // route it through synthesis rather than emitting an empty bubble.
         let messages = vec![ai_msg("user", "hola"), ai_msg("assistant", "   ")];
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    /// The draft for Kwame failed with "email not found": the model copied
+    /// `demo_9470b630f9e99306` from the search result as `…f9e9306`.
+    #[test]
+    fn a_miscopied_email_id_is_corrected_to_the_one_result_it_resembles() {
+        let refs = vec!["demo_9470b630f9e99306".to_string(), "demo_1111aaaa2222bbbb".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_9470b630f9e9306" });
+        assert_eq!(
+            repair_mangled_email_id(&mut args, &refs).as_deref(),
+            Some("demo_9470b630f9e9306")
+        );
+        assert_eq!(args["email_id"], "demo_9470b630f9e99306");
+    }
+
+    #[test]
+    fn a_known_or_unrecognisable_email_id_is_left_alone() {
+        let refs = vec!["demo_9470b630f9e99306".to_string()];
+        let mut known = serde_json::json!({ "email_id": "demo_9470b630f9e99306" });
+        assert_eq!(repair_mangled_email_id(&mut known, &refs), None);
+        let mut other = serde_json::json!({ "email_id": "demo_ffffffffffffffff" });
+        assert_eq!(repair_mangled_email_id(&mut other, &refs), None);
+        assert_eq!(other["email_id"], "demo_ffffffffffffffff");
+    }
+
+    #[test]
+    fn an_email_id_close_to_two_results_is_ambiguous_and_left_alone() {
+        let refs = vec!["demo_aaaa1".to_string(), "demo_aaaa2".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_aaaa" });
+        assert_eq!(repair_mangled_email_id(&mut args, &refs), None);
     }
 
     /// "write an email to Kwame proposing a call next week" drafted with only

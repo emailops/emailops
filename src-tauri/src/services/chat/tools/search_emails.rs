@@ -102,6 +102,24 @@ fn no_match_message(account_email: &str, prefix: &str, parenthetical: Option<&st
     }
 }
 
+/// The zero-result line for this call, plus a pointer to the calendar when
+/// the account has one: a question about something scheduled searched the
+/// mailbox, found nothing and gave up while the event sat in the calendar.
+fn empty_result(ctx: &ToolCtx<'_>, prefix: &str, parenthetical: Option<&str>) -> String {
+    let mut out = no_match_message(&scoped_account_email(ctx), prefix, parenthetical);
+    let has_calendar = ctx.db.get_account(ctx.account_id).ok().flatten().is_some_and(|a| {
+        crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
+            && ctx.db.calendar_enabled(&a.id).unwrap_or(false)
+    });
+    if has_calendar {
+        out.push_str(
+            " If the question is about a meeting or another scheduled event, list_calendar_events checks \
+the user's calendar.",
+        );
+    }
+    out
+}
+
 /// How many candidates the semantic ranker is asked for when other filters
 /// still have to be applied on top of it: meaning-ranked hits are cheap to
 /// over-fetch and a sender or date filter can discard most of them.
@@ -605,8 +623,8 @@ showing recent matches without since/until instead)\n",
                             return Ok(ToolOutput::text_with_email_refs(out, ids(emails)));
                         }
                         Ok(_) => {
-                            return Ok(ToolOutput::text(no_match_message(
-                                &scoped_account_email(ctx),
+                            return Ok(ToolOutput::text(empty_result(
+                                ctx,
                                 "",
                                 Some("also tried without the date window"),
                             )));
@@ -634,11 +652,7 @@ showing recent matches without since/until instead)\n",
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
-                Ok(ToolOutput::text(no_match_message(
-                    &scoped_account_email(ctx),
-                    mode_note.unwrap_or_default(),
-                    None,
-                )))
+                Ok(ToolOutput::text(empty_result(ctx, mode_note.unwrap_or_default(), None)))
             }
         }
     }
@@ -709,8 +723,8 @@ impl SearchEmailsTool {
         kept.extend(rest);
         kept.truncate(limit as usize);
         if kept.is_empty() {
-            return Ok(ToolOutput::text(no_match_message(
-                &scoped_account_email(ctx),
+            return Ok(ToolOutput::text(empty_result(
+                ctx,
                 "",
                 Some("semantic search; try other words, or drop a filter"),
             )));
@@ -1130,6 +1144,40 @@ different one)"
             "empty result must name the mailbox it searched: {}",
             out.text
         );
+    }
+
+    /// "cuándo es la demo del sprint" searched the mailbox, found nothing and
+    /// asked the user for context: the demo was on the calendar all along.
+    #[tokio::test]
+    async fn zero_results_point_to_the_calendar_when_the_account_has_one() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@acme.com', 'Test', 0),
+                        ('imap', 'imap', 'me@imap.test', 'Test', 0)",
+                [],
+            )
+            .unwrap();
+        let categories: Vec<String> = Vec::new();
+        for (account, expect_hint) in [("acct", true), ("imap", false)] {
+            let ctx = ToolCtx {
+                db: &db,
+                account_id: account,
+                categories: &categories,
+                page: None,
+            };
+            let out = SearchEmailsTool
+                .execute(&ctx, json!({"query": "demo", "limit": 5}))
+                .await
+                .expect("tool ran");
+            assert_eq!(
+                out.text.contains("list_calendar_events"),
+                expect_hint,
+                "{account}: {}",
+                out.text
+            );
+        }
     }
 
     #[tokio::test]
