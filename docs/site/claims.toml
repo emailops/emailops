@@ -360,7 +360,7 @@ checks = [
 [start-2-ai-3]
 checks = [
   { tests = ['ai::gpu_plan::tests::the_roomiest_discrete_card_sets_the_budget'] },
-  { manual = 'Which memory counts on each kind of machine is hardware explanation; note that on Apple Silicon the app currently treats the GPU as a discrete card (see start-2-ai-2).' },
+  { manual = 'Which memory counts on each kind of machine is hardware explanation; the recommendation that follows from it is checked in the app (start-2-ai-2).' },
 ]
 
 [start-2-ai-4]
@@ -566,7 +566,7 @@ checks = [
 
 [ai-choosing-backend-model-catalog-3]
 checks = [
-  { manual = 'Hardware explanation. Note the app currently treats the Apple Silicon GPU as a discrete card, not as unified memory (see start-2-ai-2).' },
+  { manual = 'Hardware explanation; that the app budgets Apple Silicon as unified memory is pinned by ai::gpu_plan tests and checked in the app through the recommendation (start-2-ai-2).' },
 ]
 
 [ai-choosing-backend-model-catalog-4]

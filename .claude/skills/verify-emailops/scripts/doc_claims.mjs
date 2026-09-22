@@ -291,10 +291,15 @@ async function afterWizard() {
       'sin IA no hay chat en la barra lateral', 'el chat sigue disponible con la IA apagada');
   });
   const plainTabs = await tab('Appearance');
-  await claim('feat-intro-1', 'ajustes sin IA', async () => ok(/Junk Spam, impersonation/.test(plainTabs),
-    'los ajustes de correo no deseado están disponibles sin IA',
-    'con la IA apagada no existe la pestaña Junk, así que las opciones de correo no deseado que describe esta página no se pueden elegir'),
-  'Either expose the Junk settings without AI (the detector uses no model), or say on this page that junk handling needs AI switched on.');
+  await claim('feat-intro-1', 'ajustes sin IA', async () => {
+    // The tab list sits above the panel, so read the whole dialog, then open the
+    // tab: present is not enough, its choices must be there to make.
+    const listed = /Junk Spam, impersonation/.test(await screen());
+    if (!listed) return 'FAIL: con la IA apagada no existe la pestaña Junk, así que las opciones de correo no deseado que describe esta página no se pueden elegir';
+    const junk = await tab('Junk');
+    return ok(junk.includes('Fade it in the list') && junk.includes('Keep it out of the inbox'),
+      'sin IA, la pestaña Junk ofrece «Fade it in the list» y «Keep it out of the inbox»', 'la pestaña Junk aparece pero sin sus opciones');
+  }, 'Either expose the Junk settings without AI (the detector uses no model), or say on this page that junk handling needs AI switched on.');
   await claim('feat-interface-1', 'idiomas y diseño', async () => {
     const want = ['English', 'Español', 'Français', 'Deutsch', 'Split view', 'Full-width list'].filter((l) => !plainTabs.includes(l));
     return ok(!want.length, 'cuatro idiomas y dos diseños', `falta: ${want.join(', ')}`);
