@@ -116,7 +116,9 @@ pub fn build_header(db: &Arc<Database>, account_id: &str, query: &str) -> Result
             }
             matched
         };
-        let mut s = format!("Awaiting your reply: {} threads\n", awaiting_user.len());
+        // The list above is capped; the count must not be.
+        let total = db.count_open_threads(account_id, "user")?;
+        let mut s = format!("Awaiting your reply: {total} threads\n");
         for t in &relevant {
             let line = t.summary.clone().unwrap_or_else(|| format!("thread {}", t.thread_id));
             s.push_str(&format!("  - {}\n", one_line(&line)));
@@ -284,6 +286,20 @@ mod tests {
         assert!(out.contains("Awaiting your reply: 1"));
         assert!(out.contains("Invoice Q1"));
         assert!(out.ends_with("</memory>\n"));
+    }
+
+    /// "who am I still owing a reply to?" came back as "10 threads" with 18
+    /// open: the count was the length of a list capped at 10.
+    #[test]
+    fn header_counts_every_thread_awaiting_the_user() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("a1");
+        for i in 0..12 {
+            db.upsert_thread_state(&mk_state(&format!("thread-{i}"), "user", "Question"))
+                .unwrap();
+        }
+        let out = build_header(&db, "a1", "").unwrap().unwrap();
+        assert!(out.contains("Awaiting your reply: 12 threads"), "{out}");
     }
 
     #[test]
