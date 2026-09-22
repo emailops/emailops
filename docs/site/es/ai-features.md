@@ -35,7 +35,8 @@ ningún correo sale nunca de tu máquina.
   obtiene aceleración por GPU, así que será lento.
 - **OpenRouter (remoto)** — una API de pago en la nube. Requiere una clave de API, admite un
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
-  desactivado salvo que lo actives.
+  desactivado salvo que lo actives. Su panel muestra lo gastado en el periodo actual frente a
+  ese tope, con **Iniciar un periodo nuevo** para poner la cuenta a cero.
 
 ### El catálogo de modelos {#the-model-catalog}
 
@@ -88,7 +89,9 @@ así que la etiqueta es un punto de partida, no una regla. Los requisitos comple
 
 Pregunta en lenguaje natural — *"¿qué dijo el abogado sobre el contrato?"*, *"resume este
 hilo"*, *"¿quién me debe todavía una respuesta?"* — y obtén una respuesta con los correos de
-origen citados. Las respuestas llegan en streaming según se generan.
+origen citados. Las respuestas llegan en streaming según se generan. **Ver en la lista de
+correos**, bajo una respuesta, pone en la lista exactamente los correos que cita, para que
+puedas abrirlos y trabajarlos.
 
 El chat vive en un panel redimensionable acoplado a la derecha de la bandeja, así que puedes
 seguir leyendo mientras preguntas; también hay una vista a pantalla completa para sesiones
@@ -215,7 +218,8 @@ general.
 
 *Experimental.* Vistas tipadas sobre tu buzón — proyecciones estructuradas, guardadas y
 extraídas por IA (piensa en "todas las facturas con importe y vencimiento") que creas y
-ejecutas desde la barra lateral.
+ejecutas desde la barra lateral. Una fila que excluyes desaparece de la vista; **Ver filas
+excluidas** las vuelve a mostrar para que puedas incluir alguna de nuevo.
 
 ## Apagarlo todo {#turning-it-all-off}
 

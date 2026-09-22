@@ -89,6 +89,17 @@ Downloads-Ordner herunterzuladen.
 Volltextsuche über Betreff, Inhalt, Absender und Anhänge. Mit aktivierter KI kommt die
 semantische Suche hinzu, die nach Bedeutung statt nach exakten Wörtern sucht.
 
+Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
+
+| Operator | Sucht nach |
+|---|---|
+| `from:ana` | Absenderadresse oder -name |
+| `to:ana` | Empfänger |
+| `subject:rechnung` | Betreff |
+| `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
+| `id:<E-Mail-ID>` | eine bestimmte E-Mail |
+| `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
+
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 
 EmailOps bewertet jede eingehende Nachricht lokal auf Spam und unerwünschte Massen-E-Mails.

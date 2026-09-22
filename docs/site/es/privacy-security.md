@@ -100,7 +100,9 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
 - **Bloqueo de contenido remoto** — las imágenes externas, los píxeles de seguimiento y otros
   recursos remotos se bloquean hasta que los permitas. Un aviso por correo te deja cargarlos
   una vez, o puedes confiar en un remitente concreto de forma permanente. Esto es lo que
-  impide que el remitente sepa cuándo y cuántas veces abriste un mensaje.
+  impide que el remitente sepa cuándo y cuántas veces abriste un mensaje. **Ajustes → Privacidad y
+  seguridad** lista los remitentes en los que confiaste, por cuenta, con un control
+  **Revocar** que vuelve a bloquear sus imágenes.
 - **Puntuación de basura y correo masivo** — cada mensaje se puntúa localmente para detectar
   spam y correo masivo no deseado. Tus correcciones ("es basura" / "no es basura") lo
   entrenan. El correo marcado se atenúa u oculta, nunca se borra ni se mueve en el servidor

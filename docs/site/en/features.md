@@ -81,6 +81,17 @@ them together to your Downloads folder.
 Full-text search over subjects, bodies, senders and attachments. With AI enabled this is
 joined by semantic search, which matches on meaning rather than exact words.
 
+Searches can be narrowed with operators, on their own or next to free text:
+
+| Operator | Matches |
+|---|---|
+| `from:ana` | sender address or name |
+| `to:ana` | recipient |
+| `subject:invoice` | subject line |
+| `before:2026-09-01` / `after:2026-09-01` | received date |
+| `id:<email id>` | one specific email |
+| `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
+
 ## Junk and bulk mail {#junk-and-bulk-mail}
 
 EmailOps scores every incoming message locally for spam and unwanted bulk mail. No model

@@ -36,7 +36,8 @@ keine E-Mail jemals Ihre Maschine.
   einem Intel-Mac erhält auch Ollama keine GPU-Beschleunigung und ist entsprechend langsam.
 - **OpenRouter (entfernt)** — eine kostenpflichtige Cloud-API. Erfordert einen API-Schlüssel,
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
-  bleibt sie aus, bis Sie sie aktivieren.
+  bleibt sie aus, bis Sie sie aktivieren. Ihr Bereich zeigt die Ausgaben des laufenden
+  Zeitraums gegenüber diesem Limit, mit **Neuen Zeitraum starten** zum Zurücksetzen.
 
 ### Der Modellkatalog {#the-model-catalog}
 
@@ -90,6 +91,8 @@ Die vollständigen Anforderungen stehen unter [Installation](../installation/#wi
 Fragen Sie in natürlicher Sprache — *„Was hat der Anwalt zum Vertrag gesagt?“*, *„Fasse diesen
 Thread zusammen“*, *„Wer schuldet mir noch eine Antwort?“* — und erhalten Sie eine Antwort mit
 Angabe der Quell-E-Mails. Die Antworten erscheinen im Stream, während sie erzeugt werden.
+**In der E-Mail-Liste anzeigen** unter einer Antwort stellt genau die zitierten E-Mails in die
+E-Mail-Liste, damit Sie sie öffnen und abarbeiten können.
 
 Der Chat sitzt in einem größenveränderlichen Panel rechts neben dem Posteingang, sodass Sie
 beim Fragen weiterlesen können; für längere Sitzungen gibt es zusätzlich eine
@@ -214,7 +217,8 @@ laufen aus. Alles Gelernte ist einsehbar, und das gesamte Teilsystem hat einen H
 
 *Experimentell.* Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
 strukturierte Projektionen (etwa „alle Rechnungen mit Betrag und Fälligkeit“), die Sie in der
-Seitenleiste anlegen und ausführen.
+Seitenleiste anlegen und ausführen. Eine ausgeschlossene Zeile bleibt aus der Sicht; **Ausgeschlossene
+Zeilen anzeigen** holt sie zurück, sodass Sie eine wieder aufnehmen können.
 
 ## Alles abschalten {#turning-it-all-off}
 

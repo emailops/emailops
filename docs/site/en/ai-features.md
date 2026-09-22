@@ -34,7 +34,9 @@ your machine.
   if you keep a shared model library. Note that on an Intel Mac it gets no GPU acceleration
   either, so it will be slow.
 - **OpenRouter (remote)** — a paid cloud API. Requires an API key, supports a monthly budget
-  cap, and sends email content to a third party — so it stays off unless you enable it.
+  cap, and sends email content to a third party — so it stays off unless you enable it. Its
+  panel shows what the current period has spent against that cap, with **Start a new period**
+  to reset the count.
 
 ### The model catalog {#the-model-catalog}
 
@@ -86,7 +88,9 @@ rule. Full requirements are in [Installation](../installation/#with-local-ai).
 
 Ask questions in natural language — *"what did the lawyer say about the contract?"*,
 *"summarise this thread"*, *"who still owes me an answer?"* — and get an answer with the
-source emails cited. Answers stream in as they are generated.
+source emails cited. Answers stream in as they are generated. **Show in email list**, under
+an answer, puts exactly the emails it cites into the email list, so you can open and work
+through them.
 
 Chat lives in a resizable panel docked to the right of the inbox, so you can keep reading
 while you ask; there is also a full-page view for longer sessions. With an email open the
@@ -203,7 +207,8 @@ inspectable, and the whole subsystem has a master off switch.
 
 *Experimental.* Schema-typed views over your mailbox — saved, AI-extracted structured
 projections (think "all invoices with amount and due date") that you create and run from the
-sidebar.
+sidebar. A row you exclude stays out of the view; **Show excluded rows** brings them back into
+sight so you can include one again.
 
 ## Turning it all off {#turning-it-all-off}
 

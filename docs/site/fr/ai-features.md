@@ -37,7 +37,9 @@ e-mail ne quitte jamais votre machine.
   lent.
 - **OpenRouter (distant)** — une API cloud payante. Nécessite une clé d'API, gère un plafond
   budgétaire mensuel et envoie le contenu de vos e-mails à un tiers — elle reste donc
-  désactivée tant que vous ne l'activez pas.
+  désactivée tant que vous ne l'activez pas. Son panneau affiche les dépenses de la période en
+  cours face à ce plafond, avec **Démarrer une nouvelle période** pour remettre le compteur à
+  zéro.
 
 ### Le catalogue de modèles {#the-model-catalog}
 
@@ -92,6 +94,8 @@ complètes sont dans [Installation](../installation/#with-local-ai).
 Posez vos questions en langage naturel — *« qu'a dit l'avocat à propos du contrat ? »*,
 *« résume ce fil »*, *« qui me doit encore une réponse ? »* — et obtenez une réponse citant
 les e-mails sources. Les réponses arrivent en flux au fur et à mesure de leur génération.
+**Afficher dans la liste des e-mails**, sous une réponse, place dans la liste exactement les
+e-mails qu'elle cite, pour que vous puissiez les ouvrir et les traiter.
 
 Le chat occupe un panneau redimensionnable ancré à droite de la boîte de réception : vous
 pouvez continuer à lire tout en posant vos questions, et une vue plein écran reste
@@ -222,7 +226,8 @@ dispose d'un interrupteur général.
 
 *Expérimental.* Des vues typées sur votre boîte — des projections structurées, enregistrées et
 extraites par l'IA (par exemple « toutes les factures avec montant et échéance ») que vous
-créez et exécutez depuis la barre latérale.
+créez et exécutez depuis la barre latérale. Une ligne exclue disparaît de la vue ; **Afficher
+les lignes exclues** les réaffiche pour que vous puissiez en réintégrer une.
 
 ## Tout désactiver {#turning-it-all-off}
 

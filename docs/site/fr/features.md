@@ -93,6 +93,17 @@ Recherche plein texte sur les objets, les corps, les expéditeurs et les pièces
 l'IA activée s'y ajoute la recherche sémantique, qui correspond au sens plutôt qu'aux mots
 exacts.
 
+Les recherches se précisent avec des opérateurs, seuls ou à côté de texte libre :
+
+| Opérateur | Recherche |
+|---|---|
+| `from:ana` | adresse ou nom de l'expéditeur |
+| `to:ana` | destinataire |
+| `subject:facture` | objet |
+| `before:2026-09-01` / `after:2026-09-01` | date de réception |
+| `id:<id du courriel>` | un courriel précis |
+| `tag:newsletter` / `tag:intent=request` | une étiquette du classifieur, éventuellement dans une facette |
+
 ## Indésirables et courrier de masse {#junk-and-bulk-mail}
 
 EmailOps note localement chaque message entrant pour détecter le spam et le courrier de masse

@@ -101,7 +101,9 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 - **Blockieren entfernter Inhalte** — externe Bilder, Tracking-Pixel und andere entfernte
   Ressourcen werden blockiert, bis Sie sie erlauben. Ein Hinweisbalken je E-Mail lädt sie
   einmalig, oder Sie vertrauen einem bestimmten Absender dauerhaft. Das verhindert, dass
-  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben.
+  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben. **Einstellungen →
+  Datenschutz & Sicherheit** listet je Konto die Absender auf, denen Sie vertraut haben, mit
+  **Widerrufen**, das deren Bilder wieder blockiert.
 - **Junk- und Massenbewertung** — jede Nachricht wird lokal auf Spam und unerwünschte
   Massen-E-Mails bewertet. Ihre Korrekturen („Junk“ / „kein Junk“) trainieren sie. Markierte
   Post wird abgeschwächt oder ausgeblendet, aber nie auf dem Server gelöscht oder verschoben,

@@ -103,6 +103,9 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
   distantes sont bloqués jusqu'à autorisation. Une bannière par e-mail permet de les charger
   une fois, ou vous pouvez faire confiance à un expéditeur de façon permanente. C'est ce qui
   empêche un expéditeur de savoir quand et combien de fois vous avez ouvert un message.
+  **Paramètres → Confidentialité et sécurité**
+  liste, par compte, les expéditeurs à qui vous avez fait
+  confiance, avec **Révoquer** qui rebloque leurs images.
 - **Notation des indésirables et du courrier de masse** — chaque message est noté localement
   pour le spam et le courrier de masse non désiré. Vos corrections
   (« indésirable » / « légitime ») l'entraînent. Le courrier signalé est estompé ou masqué,

@@ -89,6 +89,17 @@ Descargas.
 Búsqueda de texto completo en asuntos, cuerpos, remitentes y adjuntos. Con la IA activada se
 suma la búsqueda semántica, que encuentra por significado en vez de por palabras exactas.
 
+Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
+
+| Operador | Busca por |
+|---|---|
+| `from:ana` | dirección o nombre del remitente |
+| `to:ana` | destinatario |
+| `subject:factura` | asunto |
+| `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
+| `id:<id del correo>` | un correo concreto |
+| `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
+
 ## Correo basura y masivo {#junk-and-bulk-mail}
 
 EmailOps puntúa localmente cada mensaje entrante en busca de spam y correo masivo no deseado.

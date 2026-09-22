@@ -98,7 +98,8 @@ Email is an attack surface. The client-side defences:
 - **Remote content blocking** — external images, tracking pixels and other remote resources
   are blocked until you allow them. A per-email banner lets you load them once, or you can
   trust a specific sender permanently. This is what stops senders learning when and how often
-  you opened a message.
+  you opened a message. **Settings → Privacy & Security** lists the senders you trusted,
+  per account, with a **Revoke** control that blocks their images again.
 - **Junk and bulk scoring** — every message is scored locally for spam and unwanted bulk
   mail. Your "junk" / "not junk" corrections train it. Flagged mail is faded or hidden, never
   deleted or moved on the server unless you explicitly confirm.
