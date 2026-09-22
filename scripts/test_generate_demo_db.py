@@ -69,5 +69,56 @@ class NoUnseededRandomnessLeaksBackIn(unittest.TestCase):
         )
 
 
+class MemoryFactsAreSearchable(unittest.TestCase):
+    """The app keeps `memory_facts_fts` in step from Rust (the migration has a
+    delete trigger only), so rows written straight into `memory_facts` are
+    invisible to the chat's `<memory>` header. The demo facts sat there
+    unindexed and `mem_borgbase_customer_number` failed on every run."""
+
+    def _db(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """CREATE TABLE memory_facts (
+                 id TEXT PRIMARY KEY, account_id TEXT, subject_kind TEXT, subject_key TEXT,
+                 fact TEXT, source TEXT, source_email_id TEXT, confidence REAL, score REAL,
+                 status TEXT, last_used_at INTEGER, created_at INTEGER, updated_at INTEGER,
+                 domain TEXT, vigency TEXT, company TEXT)"""
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE memory_facts_fts USING fts5("
+            "fact_id UNINDEXED, fact, subject_key, tokenize='porter unicode61')"
+        )
+        return conn
+
+    def _indexed(self, conn, term):
+        return [
+            row[0]
+            for row in conn.execute(
+                "SELECT f.fact FROM memory_facts f JOIN memory_facts_fts fts ON fts.fact_id = f.id "
+                "WHERE memory_facts_fts MATCH ?",
+                (f'"{term}"',),
+            )
+        ]
+
+    def test_every_seeded_fact_is_indexed(self):
+        conn = self._db()
+        gen.insert_memory_facts(conn, gen.LOCALE_EN)
+        facts = conn.execute("SELECT COUNT(*) FROM memory_facts").fetchone()[0]
+        indexed = conn.execute("SELECT COUNT(*) FROM memory_facts_fts").fetchone()[0]
+        self.assertGreater(facts, 0)
+        self.assertEqual(indexed, facts)
+        self.assertTrue(any("BB-48213" in f for f in self._indexed(conn, "BorgBase")))
+
+    def test_facts_appended_to_an_existing_db_are_indexed(self):
+        conn = self._db()
+        gen.append_memory_facts(conn, gen.LOCALE_EN)
+        facts = conn.execute("SELECT COUNT(*) FROM memory_facts").fetchone()[0]
+        indexed = conn.execute("SELECT COUNT(*) FROM memory_facts_fts").fetchone()[0]
+        self.assertGreater(facts, 0)
+        self.assertEqual(indexed, facts)
+
+
 if __name__ == "__main__":
     unittest.main()
