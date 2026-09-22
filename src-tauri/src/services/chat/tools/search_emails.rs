@@ -31,10 +31,15 @@ fn total_count_note(shown: usize, offset: i32, total: i32) -> Option<String> {
     } else {
         total.to_string()
     };
+    // "muéstrame los últimos 5 correos de X" listed 5 and never said there
+    // were 13: the total has to be something to say, not just a range.
     let tail = if last < total {
-        "call next_page for the next ones, or narrow with since/until, from, or a keyword"
+        format!(
+            "tell the user there are {total_text} in total; call next_page for the next ones, or narrow with \
+since/until, from, or a keyword"
+        )
     } else {
-        "this is the last page"
+        "this is the last page".to_string()
     };
     Some(format!(
         "(showing {first}-{last} of {total_text} matching threads — {tail})"
@@ -770,7 +775,7 @@ mod tests {
         assert_eq!(
             total_count_note(25, 0, 156).as_deref(),
             Some(
-                "(showing 1-25 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+                "(showing 1-25 of 156 matching threads — tell the user there are 156 in total; call next_page for the next ones, or narrow with since/until, from, or a keyword)"
             )
         );
     }
@@ -780,7 +785,7 @@ mod tests {
         assert_eq!(
             total_count_note(25, 25, 156).as_deref(),
             Some(
-                "(showing 26-50 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+                "(showing 26-50 of 156 matching threads — tell the user there are 156 in total; call next_page for the next ones, or narrow with since/until, from, or a keyword)"
             )
         );
     }
