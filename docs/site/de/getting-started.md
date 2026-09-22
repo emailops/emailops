@@ -35,7 +35,7 @@ Wenn Sie die KI aktiviert haben, wählen Sie, wo die Inferenz stattfindet:
 Wählen Sie beim eingebauten Backend ein Chat-Modell aus dem Katalog. EmailOps wählt das größte
 Modell vor, das Ihre Maschine bequem ausführen kann — die Empfehlung hängt also vom gefundenen
 Arbeitsspeicher ab: auf einer 16-GB-Maschine ist das **Qwen 3.5 4B**, rund 3 GB Download und
-etwa 8 GB Arbeitsspeicher zum Ausführen; eine größere Maschine bekommt ein größeres Modell aus
+unter 4 GB Arbeitsspeicher während der Antwort; eine größere Maschine bekommt ein größeres Modell aus
 demselben Katalog angeboten. Alle empfohlenen Modelle unterstützen die Tool-Aufrufe, auf die
 der Chat angewiesen ist. Modelle, die für Ihren Systemspeicher zu groß sind, werden ausgegraut.
 Der Download läuft im Hintergrund — Sie können im Assistenten weitermachen.

@@ -27,8 +27,8 @@ Uno de los requisitos más importante para ejecutar la IA local es la memoria di
 
 <!-- claim:inst-system-requirements-local-ai-2 -->
 **Regla de dimensionado:** el modelo tiene que caber entero en la memoria en la que se
-ejecuta. El **Qwen 3.5 4B** predeterminado necesita unos 8 GB; el modelo más grande del
-catálogo pide 32 GB. La cifra de cada modelo está en el
+ejecuta. El **Qwen 3.5 4B** predeterminado necesita unos 8 GB para que la app lo ofrezca (mientras
+responde usa menos de 4 GB); el modelo más grande del catálogo pide 32 GB. La cifra de cada modelo está en el
 [catálogo de modelos](../ai-features/#the-model-catalog).
 
 - **Apple Silicon** tiene memoria unificada — la GPU direcciona el mismo bloque que la CPU,

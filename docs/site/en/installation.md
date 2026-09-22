@@ -29,7 +29,8 @@ another:
 
 <!-- claim:inst-system-requirements-local-ai-2 -->
 **Sizing rule:** the model has to fit, whole, in whatever memory it runs in. The default
-**Qwen 3.5 4B** needs about 8 GB; the largest model in the catalog wants 32 GB. Every model's
+**Qwen 3.5 4B** needs about 8 GB before the app offers it (it uses under 4 GB while
+answering); the largest model in the catalog wants 32 GB. Every model's
 figure is in the [model catalog](../ai-features/#the-model-catalog).
 
 - **Apple Silicon** has unified memory — the GPU addresses the same pool as the CPU, so the

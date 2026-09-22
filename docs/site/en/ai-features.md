@@ -30,7 +30,7 @@ your machine.
 The in-app backend downloads models from a curated catalog, each pinned to a verified
 checksum:
 
-| Model | Download size | Memory needed to run it |
+| Model | Download size | Memory EmailOps asks for |
 |---|---|---|
 | Qwen 3.5 4B | ~3.0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4.6 GB | 12 GB |
@@ -41,9 +41,11 @@ checksum:
 | Nomic Embed Text v1.5 *(embeddings, bundled)* | ~84 MB | 1 GB |
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
-The right-hand column is peak memory while answering — weights plus the context window —
-which is always more than the download. **Which** memory it has to fit in depends on your
-hardware:
+The right-hand column is the memory EmailOps asks for before it offers a model — a
+deliberately generous margin, not what the model uses. Measured peak while answering, at the
+context size a 16 GB Mac gets: about 3.7 GB for Qwen 3.5 4B, 4.3 GB for its 8-bit build,
+5.6 GB for Qwen 3.5 9B and 7.1 GB for Gemma 4 12B. **Which** memory it has to fit in depends
+on your hardware:
 
 - **Apple Silicon** — unified memory, shared between CPU and GPU, reached through Metal.
   Compare the figure against your Mac's total memory. <!-- claim:ai-choosing-backend-model-catalog-3 -->

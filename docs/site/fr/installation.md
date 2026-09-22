@@ -29,8 +29,8 @@ de mémoire ou d'un autre :
 
 <!-- claim:inst-system-requirements-local-ai-2 -->
 **Règle de dimensionnement :** le modèle doit tenir, en entier, dans la mémoire où il
-s'exécute. Le **Qwen 3.5 4B** par défaut demande environ 8 Go ; le plus gros modèle du
-catalogue en réclame 32. Le chiffre de chaque modèle figure dans le
+s'exécute. Le **Qwen 3.5 4B** par défaut demande environ 8 Go pour que l'app le propose (il en utilise
+moins de 4 pendant qu'il répond) ; le plus gros modèle du catalogue en réclame 32. Le chiffre de chaque modèle figure dans le
 [catalogue de modèles](../ai-features/#the-model-catalog).
 
 - **Apple Silicon** dispose d'une mémoire unifiée — le GPU adresse le même pool que le CPU, le

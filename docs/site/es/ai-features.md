@@ -31,7 +31,7 @@ ningún correo sale nunca de tu máquina.
 El backend integrado descarga modelos de un catálogo curado, cada uno fijado a un checksum
 verificado:
 
-| Modelo | Tamaño de descarga | Memoria necesaria para ejecutarlo |
+| Modelo | Tamaño de descarga | Memoria que pide EmailOps |
 |---|---|---|
 | Qwen 3.5 4B | ~3,0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4,6 GB | 12 GB |
@@ -42,9 +42,11 @@ verificado:
 | Nomic Embed Text v1.5 *(embeddings, incluido)* | ~84 MB | 1 GB |
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
-La columna de la derecha es la memoria máxima durante la respuesta — pesos más la ventana de
-contexto — que siempre es mayor que la descarga. **En qué** memoria debe caber depende de tu
-hardware:
+La columna de la derecha es la memoria que EmailOps pide antes de ofrecer un modelo — un
+margen holgado a propósito, no lo que el modelo consume. El pico medido durante la respuesta,
+con el contexto que recibe un Mac de 16 GB: unos 3,7 GB para Qwen 3.5 4B, 4,3 GB para su
+versión de 8 bits, 5,6 GB para Qwen 3.5 9B y 7,1 GB para Gemma 4 12B. **En qué** memoria debe
+caber depende de tu hardware:
 
 - **Apple Silicon** — memoria unificada, compartida entre CPU y GPU, a través de Metal.
   Compara la cifra con la memoria total de tu Mac. <!-- claim:ai-choosing-backend-model-catalog-3 -->

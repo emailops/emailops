@@ -32,8 +32,8 @@ If you enabled AI, choose where inference happens:
 <!-- claim:start-2-ai-2 -->
 With the in-app backend, pick a chat model from the built-in catalog. EmailOps preselects the
 largest model your machine can comfortably run, so the recommendation depends on the memory
-it finds — on a 16 GB machine that is **Qwen 3.5 4B**, about 3 GB to download and roughly
-8 GB of memory to run; a roomier machine is offered a larger model from the same catalog.
+it finds — on a 16 GB machine that is **Qwen 3.5 4B**, about 3 GB to download and under
+4 GB of memory while it answers; a roomier machine is offered a larger model from the same catalog.
 Every recommended model supports the tool-calling that chat relies on. Models too large for
 your system memory are greyed out. The download runs in the background — you can carry on
 with the wizard.

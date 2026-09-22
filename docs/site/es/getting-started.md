@@ -35,7 +35,7 @@ Si activaste la IA, elige dónde se ejecuta la inferencia:
 Con el backend integrado, elige un modelo de chat del catálogo. EmailOps preselecciona el
 modelo más grande que tu máquina puede mover con holgura, así que la recomendación depende de
 la memoria que encuentre: en una máquina de 16 GB es **Qwen 3.5 4B**, unos 3 GB de descarga y
-aproximadamente 8 GB de memoria para ejecutarse; una máquina más amplia recibe un modelo mayor
+menos de 4 GB de memoria mientras responde; una máquina más amplia recibe un modelo mayor
 del mismo catálogo. Todos los modelos recomendados admiten las llamadas a herramientas de las
 que depende el chat. Los modelos demasiado grandes para la memoria de tu sistema aparecen
 atenuados. La descarga corre en segundo plano — puedes seguir con el asistente.

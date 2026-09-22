@@ -562,7 +562,7 @@ checks = [
 
 [ai-choosing-backend-model-catalog-2]
 checks = [
-  { manual = 'Peak memory being weights plus context is an explanation of the figures, not a behaviour.' },
+  { manual = 'Measured peak memory per model depends on the machine; re-measure with `make model-memory` on a 16 GB Mac. That the column is the threshold the app enforces is checked in the app (ai-choosing-backend-model-catalog-1).' },
 ]
 
 [ai-choosing-backend-model-catalog-3]

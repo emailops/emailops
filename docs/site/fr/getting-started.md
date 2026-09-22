@@ -35,7 +35,7 @@ Si vous avez activé l'IA, choisissez où se déroule l'inférence :
 Avec le backend intégré, choisissez un modèle de chat dans le catalogue. EmailOps présélectionne
 le plus grand modèle que votre machine peut faire tourner confortablement : la recommandation
 dépend donc de la mémoire détectée — sur une machine de 16 Go c'est **Qwen 3.5 4B**, environ
-3 Go à télécharger et à peu près 8 Go de mémoire pour tourner ; une machine plus généreuse se
+3 Go à télécharger et moins de 4 Go de mémoire pendant qu'il répond ; une machine plus généreuse se
 voit proposer un modèle plus grand du même catalogue. Tous les modèles recommandés prennent en
 charge les appels d'outils dont dépend le chat. Les modèles trop volumineux pour la mémoire de
 votre système sont grisés. Le téléchargement se poursuit en arrière-plan — vous pouvez

@@ -32,7 +32,7 @@ keine E-Mail jemals Ihre Maschine.
 Das integrierte Backend lädt Modelle aus einem kuratierten Katalog, jedes auf eine geprüfte
 Prüfsumme festgelegt:
 
-| Modell | Downloadgröße | Benötigter Speicher zur Ausführung |
+| Modell | Downloadgröße | Von EmailOps verlangter Speicher |
 |---|---|---|
 | Qwen 3.5 4B | ~3,0 GB | 8 GB |
 | Qwen 3.5 4B Q8 | ~4,6 GB | 12 GB |
@@ -43,9 +43,11 @@ Prüfsumme festgelegt:
 | Nomic Embed Text v1.5 *(Embeddings, mitgeliefert)* | ~84 MB | 1 GB |
 
 <!-- claim:ai-choosing-backend-model-catalog-2 -->
-Die rechte Spalte ist der Spitzenspeicher während der Antwort — Gewichte plus Kontextfenster —
-und damit stets mehr als der Download. **In welchen** Speicher es passen muss, hängt von Ihrer
-Hardware ab:
+Die rechte Spalte ist der Speicher, den EmailOps verlangt, bevor es ein Modell anbietet — ein
+bewusst großzügiger Puffer, nicht der tatsächliche Verbrauch. Gemessene Spitze während einer
+Antwort, mit dem Kontext eines 16-GB-Macs: rund 3,7 GB für Qwen 3.5 4B, 4,3 GB für die
+8-Bit-Variante, 5,6 GB für Qwen 3.5 9B und 7,1 GB für Gemma 4 12B. **In welchen** Speicher es
+passen muss, hängt von Ihrer Hardware ab:
 
 - **Apple Silicon** — Unified Memory, geteilt zwischen CPU und GPU, angesprochen über Metal.
   Vergleichen Sie den Wert mit dem Gesamtspeicher Ihres Macs. <!-- claim:ai-choosing-backend-model-catalog-3 -->

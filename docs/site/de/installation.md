@@ -29,8 +29,8 @@ um die eine oder die andere Art von Speicher:
 
 <!-- claim:inst-system-requirements-local-ai-2 -->
 **Faustregel:** Das Modell muss vollständig in den Speicher passen, in dem es läuft. Das
-voreingestellte **Qwen 3.5 4B** braucht rund 8 GB; das größte Modell im Katalog verlangt
-32 GB. Den Wert für jedes Modell finden Sie im
+voreingestellte **Qwen 3.5 4B** braucht rund 8 GB, damit die App es anbietet (beim Antworten
+nutzt es unter 4 GB); das größte Modell im Katalog verlangt 32 GB. Den Wert für jedes Modell finden Sie im
 [Modellkatalog](../ai-features/#the-model-catalog).
 
 - **Apple Silicon** hat Unified Memory — die GPU adressiert denselben Pool wie die CPU, zu
