@@ -8,6 +8,21 @@ use crate::services::emails;
 
 pub struct GenerateEmailDraftTool;
 
+/// Chars of the saved draft's body shown to the model — enough to confirm
+/// what the draft says without paying for the whole body in the prompt.
+const DRAFT_EXCERPT_CHARS: usize = 400;
+
+/// ` body="…"` with the start of the draft on one line, so the model can
+/// tell the user what the draft says instead of a bare "Draft saved".
+fn body_excerpt_line(body: &str) -> String {
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut excerpt: String = flat.chars().take(DRAFT_EXCERPT_CHARS).collect();
+    if flat.chars().count() > DRAFT_EXCERPT_CHARS {
+        excerpt.push('…');
+    }
+    format!(" body=\"{excerpt}\"")
+}
+
 #[async_trait]
 impl Tool for GenerateEmailDraftTool {
     fn name(&self) -> &'static str {
@@ -235,10 +250,11 @@ async fn generate_reply_draft(
             // confirmation as `[label](draft://DRAFT_ID)`. Without this the
             // model only sees the subject and the chars count.
             let text = format!(
-                "Reply draft saved: id={} subject=\"{}\" ({} chars). Composer is opening.",
+                "Reply draft saved: id={} subject=\"{}\" ({} chars){}. Composer is opening.",
                 draft_id,
                 draft.subject,
-                draft.body.len()
+                draft.body.len(),
+                body_excerpt_line(&draft.body)
             );
             ToolOutput {
                 text,
@@ -297,11 +313,12 @@ async fn generate_new_draft(ctx: &ToolCtx<'_>, to: &[String], subject: &str, ins
         Ok(draft) => {
             let draft_id = draft.id.clone();
             let text = format!(
-                "New draft saved: id={} subject=\"{}\" → {} ({} chars). Composer is opening.",
+                "New draft saved: id={} subject=\"{}\" → {} ({} chars){}. Composer is opening.",
                 draft_id,
                 draft.subject,
                 draft.to_addresses.join(", "),
                 draft.body.len(),
+                body_excerpt_line(&draft.body),
             );
             ToolOutput {
                 text,
@@ -339,6 +356,22 @@ mod tests {
 
     use super::*;
     use crate::db::Database;
+
+    /// "write an email to Kwame proposing a call next week" was confirmed as a
+    /// bare "Draft saved" — the model never saw what the draft said, so it
+    /// could not tell the user the call was proposed.
+    #[test]
+    fn saved_draft_text_shows_an_excerpt_of_the_body() {
+        let text = body_excerpt_line("Hi Kwame,\n\nCould we have a call next week?\n\nBest");
+        assert!(text.contains("Could we have a call next week?"), "{text}");
+        assert!(!text.contains('\n'), "one line: {text}");
+    }
+
+    #[test]
+    fn saved_draft_excerpt_is_bounded() {
+        let text = body_excerpt_line(&"word ".repeat(500));
+        assert!(text.chars().count() < DRAFT_EXCERPT_CHARS + 40, "{}", text.len());
+    }
 
     fn ctx_with_db<'a>(db: &'a Arc<Database>, account_id: &'static str) -> ToolCtx<'a> {
         ToolCtx {

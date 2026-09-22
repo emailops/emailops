@@ -1176,6 +1176,30 @@ fn repair_missing_email_id(
     Some(next)
 }
 
+/// Deterministically repair a `generate_email_draft` call that dropped
+/// `instructions`: pass the user's own request instead, so what they asked
+/// the draft to say ("proposing a call next week") reaches the generator.
+///
+/// Only when this message is itself a draft request (`wants_email_draft`) —
+/// a bare "sí" carries no content. Returns true when the args were modified.
+fn repair_missing_draft_instructions(args: &mut serde_json::Value, user_question: &str) -> bool {
+    let has_instructions = args
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    if has_instructions || !wants_email_draft(user_question) {
+        return false;
+    }
+    let Some(obj) = args.as_object_mut() else {
+        return false;
+    };
+    obj.insert(
+        "instructions".to_string(),
+        serde_json::Value::String(user_question.trim().to_string()),
+    );
+    true
+}
+
 /// Canonical, argument-order-independent key for a tool call (`name|args`), so
 /// two calls that differ only in JSON key order are recognised as the same.
 /// Used by the tool loop to spot a model re-issuing an identical call instead
@@ -2421,6 +2445,14 @@ async fn run_tool_loop(
                         "tool_loop: search_emails had no filters — injected address from the question ({})",
                         truncate_chars(&tc.function.arguments.to_string(), 200)
                     ),
+                );
+            }
+            if tc.function.name == "generate_email_draft"
+                && repair_missing_draft_instructions(&mut tc.function.arguments, user_question)
+            {
+                emit_log(
+                    "info",
+                    "tool_loop: generate_email_draft had no instructions — passed the user's request",
                 );
             }
             if tc.function.name == "get_email_body" {
@@ -5013,6 +5045,33 @@ mod tests {
         // route it through synthesis rather than emitting an empty bubble.
         let messages = vec![ai_msg("user", "hola"), ai_msg("assistant", "   ")];
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
+    }
+
+    /// "write an email to Kwame proposing a call next week" drafted with only
+    /// `email_id`: the call proposal never reached the draft generator.
+    #[test]
+    fn draft_repair_passes_the_users_request_as_instructions() {
+        let q = "write an email to Kwame proposing a call next week about his Ollama question";
+        let mut args = serde_json::json!({ "email_id": "e1" });
+        assert!(repair_missing_draft_instructions(&mut args, q));
+        assert_eq!(args["instructions"], q);
+    }
+
+    #[test]
+    fn draft_repair_keeps_instructions_the_model_wrote() {
+        let mut args = serde_json::json!({ "email_id": "e1", "instructions": "keep it short" });
+        assert!(!repair_missing_draft_instructions(&mut args, "write a reply to Kwame"));
+        assert_eq!(args["instructions"], "keep it short");
+    }
+
+    /// A bare confirmation carries no content; the request it confirms was
+    /// in an earlier turn the model already read.
+    #[test]
+    fn draft_repair_skips_a_bare_confirmation() {
+        for q in ["sí", "ok, hazlo", "yes please"] {
+            let mut args = serde_json::json!({ "email_id": "e1", "instructions": "  " });
+            assert!(!repair_missing_draft_instructions(&mut args, q), "{q}");
+        }
     }
 
     #[test]
