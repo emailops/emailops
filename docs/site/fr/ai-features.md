@@ -108,7 +108,7 @@ conversation tant que l'application reste ouverte : changer de compte vous ramè
 en étiez, et non à un chat vide.
 
 Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
-*« où sont stockées mes données ? »*, *« comment ajouter un compte ? »* — à partir de ces
+*« où sont stockées mes données ? »*, *« que montre le tableau des étiquettes ? »* — à partir de ces
 guides, dans votre langue et sans chercher dans votre boîte. La réponse renvoie à la section
 du guide utilisée, et suivre le lien ouvre le paramètre ou la vue correspondants. Lorsqu'un
 e-mail est ouvert comme contexte, le chat répond à partir de ce seul fil : retirez la puce

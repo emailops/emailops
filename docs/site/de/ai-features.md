@@ -105,7 +105,7 @@ Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also do
 wo Sie aufgehört haben, und nicht zu einem leeren Chat.
 
 Der Chat beantwortet auch Fragen zu EmailOps selbst — *„Wie verbinde ich Ollama?“*, *„Wo
-werden meine Daten gespeichert?“*, *„Wie füge ich ein Konto hinzu?“* — aus diesen Anleitungen,
+werden meine Daten gespeichert?“*, *„Was zeigt das Tag Board?“* — aus diesen Anleitungen,
 in Ihrer Sprache und ohne das Postfach zu durchsuchen. Die Antwort verlinkt den verwendeten
 Abschnitt, und der Link öffnet die passende Einstellung oder Ansicht. Ist eine E-Mail als
 Kontext geöffnet, antwortet der Chat nur aus diesem Thread — entfernen Sie den Chip, um nach

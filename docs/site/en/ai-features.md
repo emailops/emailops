@@ -101,7 +101,7 @@ as the app is open, so switching accounts returns you to where you left off rath
 a blank chat.
 
 Chat also answers questions about EmailOps itself — *"how do I connect Ollama?"*, *"where is
-my data stored?"*, *"how do I add an account?"* — from these guides, in your language,
+my data stored?"*, *"what does the Tag Board show?"* — from these guides, in your language,
 without searching your mailbox. The answer links the guide section it used, and following
 the link opens the matching setting or view. With an email open as context, chat answers
 from that thread only, so remove the chip to ask about the app. Turn this off with
