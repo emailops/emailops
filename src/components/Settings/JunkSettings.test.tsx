@@ -213,9 +213,9 @@ describe('JunkSettings', () => {
   });
 
   it('scrolls its own content with the same padding as every other settings panel', async () => {
-    // Every sibling panel owns a `overflow-y-auto flex-1 px-6 py-5` container;
-    // SettingsDialog gives the tab body no padding of its own. Without it the
-    // controls sit flush against the dialog edge and a long panel cannot scroll.
+    // SettingsDialog gives the tab body no padding or scrolling of its own —
+    // <SettingsPanel> supplies both. Without them the controls sit flush against
+    // the dialog edge and a long panel cannot scroll.
     await mount();
 
     const scroller = container.querySelector('.overflow-y-auto');

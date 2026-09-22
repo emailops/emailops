@@ -15,52 +15,7 @@ import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
 import { type AiConfigState, DEFAULT_ROUTING_MODE, isRoutingMode, type RoutingMode } from './AiSettings/types';
-
-interface AiSettingsProps {
-  onClose: () => void;
-  /** When true, render without the overlay + header chrome so it can be hosted inside a tabbed Settings dialog. */
-  embedded?: boolean;
-}
-
-/**
- * Header close affordance. Module-scoped for the same reason as {@link Shell} —
- * a render-body component would remount on every parent render.
- */
-function CloseButton({ onClose }: { onClose: () => void }) {
-  return (
-    <button onClick={onClose} className="text-gray-400 hover:text-gray-200 p-1">
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-      </svg>
-    </button>
-  );
-}
-
-/**
- * Wrap the settings body so it can render either as its own modal (legacy
- * callers) or embedded inside the tabbed SettingsDialog.
- *
- * Embedded mode uses `flex-1 min-h-0` (NOT `h-full`) so the flex algorithm
- * allocates the remaining height inside SettingsDialog's panel column — sibling
- * header + this panel share the column. With `h-full` the panel overflows the
- * parent and the footer's Save/Test buttons get clipped beneath the dialog edge.
- *
- * Defined at module scope, NOT inside `AiSettings`: a component declared in the
- * render body gets a fresh identity every render, so React would unmount and
- * remount this whole subtree (and reset the body's scroll position) on every
- * state change.
- */
-function Shell({ embedded, children }: { embedded: boolean; children: React.ReactNode }) {
-  return embedded ? (
-    <div className="flex flex-col flex-1 min-h-0 w-full">{children}</div>
-  ) : (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
-        {children}
-      </div>
-    </div>
-  );
-}
+import { SettingsPanel } from './SettingsPanel';
 
 /**
  * AI configuration screen. Owns provider selection, model + key state,
@@ -68,7 +23,7 @@ function Shell({ embedded, children }: { embedded: boolean; children: React.Reac
  * output language, chat prompts). Provider-specific UI lives in panel
  * sub-components under ./AiSettings/.
  */
-export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
+export function AiSettings() {
   const { t } = useTranslation(['common', 'settings']);
   // Master AI enable/disable — drives whether any AI command runs and whether
   // AI surfaces show up in the UI. Stored in `user_preferences.ai_enabled`.
@@ -481,27 +436,15 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
 
   if (loading && !config) {
     return (
-      <Shell embedded={embedded}>
-        {!embedded && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton onClose={onClose} />
-          </div>
-        )}
+      <SettingsPanel>
         <p className="text-gray-400 text-sm p-6">{t('common:state.loading')}</p>
-      </Shell>
+      </SettingsPanel>
     );
   }
 
   if (!config) {
     return (
-      <Shell embedded={embedded}>
-        {!embedded && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton onClose={onClose} />
-          </div>
-        )}
+      <SettingsPanel>
         <div className="p-6">
           {error && (
             <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>
@@ -513,165 +456,154 @@ export function AiSettings({ onClose, embedded = false }: AiSettingsProps) {
             {t('common:actions.retry')}
           </button>
         </div>
-      </Shell>
+      </SettingsPanel>
     );
   }
 
   return (
     <>
-      <Shell embedded={embedded}>
-        {!embedded && (
-          /* Header */
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
-            <h2 className="text-lg font-semibold text-gray-100">{t('settings:ai.title')}</h2>
-            <CloseButton onClose={onClose} />
-          </div>
-        )}
-
-        {/* Scrollable body */}
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-          {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
-          {success && (
-            <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
-          )}
-
-          {/* ── Master AI toggle ────────────────────────────────────────────── */}
-          <section className="p-4 rounded-lg border border-gray-700 bg-[#2a2a2b]">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-gray-100">{t('settings:ai.features')}</h3>
-                <p className="text-xs text-gray-400 mt-1">{t('settings:ai.featuresHelp')}</p>
-              </div>
+      <SettingsPanel
+        // Save/Test write provider config that has no effect while the
+        // master switch is off, so the footer is only meaningful when AI is on.
+        footer={
+          aiEnabled && (
+            <div className="px-6 py-4 border-t border-gray-700 flex gap-2 flex-shrink-0">
               <button
-                type="button"
-                onClick={() => {
-                  if (aiEnabled) {
-                    setConfirmDisable(true);
-                  } else {
-                    void setAiEnabled(true);
-                  }
-                }}
-                aria-pressed={aiEnabled}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  aiEnabled ? 'bg-primary-600' : 'bg-gray-600'
-                }`}
+                onClick={handleTest}
+                disabled={testing || !config.model}
+                className="px-4 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    aiEnabled ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
+                {testing ? t('settings:ai.testing') : t('settings:ai.test')}
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50"
+              >
+                {saving ? t('common:state.saving') : t('common:actions.save')}
               </button>
             </div>
-          </section>
+          )
+        }
+      >
+        {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+        {success && (
+          <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+        )}
 
-          {/* When the master switch is off, hide every AI-specific control
-              below. The toggle above stays visible so the user can re-enable. */}
-          {aiEnabled && (
-            <>
-              {/* ── Backend selector ────────────────────────────────────────────── */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">{t('settings:ai.backend')}</label>
-                <div className="flex gap-2">
-                  <ProviderTab
-                    active={config.provider === 'llamacpp'}
-                    label={t('settings:ai.providerEmbeddedLabel')}
-                    description={t('settings:ai.providerEmbeddedDesc')}
-                    disabled={embeddedAvailable === false}
-                    disabledReason={t('settings:ai.providerEmbeddedUnavailable')}
-                    onClick={() => handleProviderChange('llamacpp')}
-                  />
-                  <ProviderTab
-                    active={config.provider === 'ollama'}
-                    label={t('settings:ai.providerOllamaLabel')}
-                    description={t('settings:ai.providerOllamaDesc')}
-                    onClick={() => handleProviderChange('ollama')}
-                  />
-                  <ProviderTab
-                    active={config.provider === 'openrouter'}
-                    label={t('settings:ai.providerOpenRouterLabel')}
-                    description={t('settings:ai.providerOpenRouterDesc')}
-                    onClick={() => handleProviderChange('openrouter')}
-                  />
-                </div>
-              </div>
-
-              {config.provider === 'llamacpp' && (
-                <EmbeddedPanel
-                  config={config}
-                  setConfig={setConfig}
-                  catalog={catalog}
-                  downloads={downloads}
-                  onSelectModel={handleSelectCatalogModel}
-                  onDownload={(id) => void handleDownload(id)}
-                  onCancel={(id) => void handleCancel(id)}
-                  onDelete={(m) => void handleDelete(m)}
-                />
-              )}
-
-              {config.provider === 'ollama' && (
-                <OllamaPanel
-                  config={config}
-                  setConfig={setConfig}
-                  ollamaModels={ollamaModels}
-                  ollamaEmbedModels={ollamaEmbedModels}
-                />
-              )}
-
-              {config.provider === 'openrouter' && (
-                <OpenRouterPanel config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={setApiKey} />
-              )}
-
-              {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
-              <AiSharedPreferences
-                routingMode={routingMode}
-                onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
-                keepAliveMinutes={keepAliveMinutes}
-                onKeepAliveChange={setKeepAliveMinutes}
-                aiMaxEmailCount={aiMaxEmailCount}
-                onMaxEmailCountChange={setAiMaxEmailCount}
-                aiMaxEmailAgeDays={aiMaxEmailAgeDays}
-                onMaxEmailAgeDaysChange={setAiMaxEmailAgeDays}
-                nCtx={nCtx}
-                onNCtxChange={setNCtx}
-                showContextWindow={config.provider === 'llamacpp'}
-                aiOutputLanguage={aiOutputLanguage}
-                onOutputLanguageChange={setAiOutputLanguage}
-                helpDocsEnabled={helpDocsEnabled}
-                onHelpDocsEnabledChange={(v) => {
-                  setHelpDocsEnabled(v).catch((err) =>
-                    addLog('error', 'ai', `Failed to save help_docs_enabled: ${err}`),
-                  );
-                }}
+        {/* ── Master AI toggle ────────────────────────────────────────────── */}
+        <section className="p-4 rounded-lg border border-gray-700 bg-[#2a2a2b]">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-gray-100">{t('settings:ai.features')}</h3>
+              <p className="text-xs text-gray-400 mt-1">{t('settings:ai.featuresHelp')}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (aiEnabled) {
+                  setConfirmDisable(true);
+                } else {
+                  void setAiEnabled(true);
+                }
+              }}
+              aria-pressed={aiEnabled}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                aiEnabled ? 'bg-primary-600' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  aiEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
               />
-
-              {/* ── Chat prompts (system + advanced retrieval prompts) ──────────── */}
-              <ChatPromptsSection />
-            </>
-          )}
-        </div>
-
-        {/* Footer — only meaningful when AI is on. Save/Test write provider
-            config that has no effect while the master switch is off. */}
-        {aiEnabled && (
-          <div className="px-6 py-4 border-t border-gray-700 flex gap-2 flex-shrink-0">
-            <button
-              onClick={handleTest}
-              disabled={testing || !config.model}
-              className="px-4 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {testing ? t('settings:ai.testing') : t('settings:ai.test')}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50"
-            >
-              {saving ? t('common:state.saving') : t('common:actions.save')}
             </button>
           </div>
+        </section>
+
+        {/* When the master switch is off, hide every AI-specific control
+            below. The toggle above stays visible so the user can re-enable. */}
+        {aiEnabled && (
+          <>
+            {/* ── Backend selector ────────────────────────────────────────────── */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">{t('settings:ai.backend')}</label>
+              <div className="flex gap-2">
+                <ProviderTab
+                  active={config.provider === 'llamacpp'}
+                  label={t('settings:ai.providerEmbeddedLabel')}
+                  description={t('settings:ai.providerEmbeddedDesc')}
+                  disabled={embeddedAvailable === false}
+                  disabledReason={t('settings:ai.providerEmbeddedUnavailable')}
+                  onClick={() => handleProviderChange('llamacpp')}
+                />
+                <ProviderTab
+                  active={config.provider === 'ollama'}
+                  label={t('settings:ai.providerOllamaLabel')}
+                  description={t('settings:ai.providerOllamaDesc')}
+                  onClick={() => handleProviderChange('ollama')}
+                />
+                <ProviderTab
+                  active={config.provider === 'openrouter'}
+                  label={t('settings:ai.providerOpenRouterLabel')}
+                  description={t('settings:ai.providerOpenRouterDesc')}
+                  onClick={() => handleProviderChange('openrouter')}
+                />
+              </div>
+            </div>
+
+            {config.provider === 'llamacpp' && (
+              <EmbeddedPanel
+                config={config}
+                setConfig={setConfig}
+                catalog={catalog}
+                downloads={downloads}
+                onSelectModel={handleSelectCatalogModel}
+                onDownload={(id) => void handleDownload(id)}
+                onCancel={(id) => void handleCancel(id)}
+                onDelete={(m) => void handleDelete(m)}
+              />
+            )}
+
+            {config.provider === 'ollama' && (
+              <OllamaPanel
+                config={config}
+                setConfig={setConfig}
+                ollamaModels={ollamaModels}
+                ollamaEmbedModels={ollamaEmbedModels}
+              />
+            )}
+
+            {config.provider === 'openrouter' && (
+              <OpenRouterPanel config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={setApiKey} />
+            )}
+
+            {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
+            <AiSharedPreferences
+              routingMode={routingMode}
+              onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
+              keepAliveMinutes={keepAliveMinutes}
+              onKeepAliveChange={setKeepAliveMinutes}
+              aiMaxEmailCount={aiMaxEmailCount}
+              onMaxEmailCountChange={setAiMaxEmailCount}
+              aiMaxEmailAgeDays={aiMaxEmailAgeDays}
+              onMaxEmailAgeDaysChange={setAiMaxEmailAgeDays}
+              nCtx={nCtx}
+              onNCtxChange={setNCtx}
+              showContextWindow={config.provider === 'llamacpp'}
+              aiOutputLanguage={aiOutputLanguage}
+              onOutputLanguageChange={setAiOutputLanguage}
+              helpDocsEnabled={helpDocsEnabled}
+              onHelpDocsEnabledChange={(v) => {
+                setHelpDocsEnabled(v).catch((err) => addLog('error', 'ai', `Failed to save help_docs_enabled: ${err}`));
+              }}
+            />
+
+            {/* ── Chat prompts (system + advanced retrieval prompts) ──────────── */}
+            <ChatPromptsSection />
+          </>
         )}
-      </Shell>
+      </SettingsPanel>
       {confirmDisable && (
         <ConfirmDisableDialog
           onCancel={() => setConfirmDisable(false)}

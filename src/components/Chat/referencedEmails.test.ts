@@ -23,9 +23,21 @@ describe('collectReferencedEmailIds', () => {
     expect(ids).toEqual(['b', 'a']);
   });
 
-  it('ignores retrieved sources the answer never cites', () => {
-    const ids = collectReferencedEmailIds({ content: 'No markers here.', sources: [source('a', 1)] });
-    expect(ids).toEqual([]);
+  it('keeps uncited sources out when the answer cites something', () => {
+    const ids = collectReferencedEmailIds({
+      content: 'See [one](email://b).',
+      sources: [source('a', 1), source('b', 2)],
+      referencedEmailIds: ['a', 'b'],
+    });
+    expect(ids).toEqual(['b']);
+  });
+
+  it('falls back to the message sources, in order, when the answer cites nothing', () => {
+    const ids = collectReferencedEmailIds({
+      content: 'Write to help@vendor.example.',
+      sources: [source('b', 2), source('a', 1)],
+    });
+    expect(ids).toEqual(['a', 'b']);
   });
 
   it('adds allowlisted email:// links from the answer, without duplicates', () => {

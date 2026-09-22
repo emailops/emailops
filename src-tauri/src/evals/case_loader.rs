@@ -188,6 +188,14 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_no_email_sources: bool,
 
+    /// Case-insensitive subject substrings: every bare `[n]` citation in the
+    /// answer must resolve to a numbered source whose subject contains one of
+    /// them — the way the UI resolves it. Catches right facts pinned to the
+    /// wrong email (a tool-found email cited by a number that belongs to an
+    /// unrelated pre-retrieved source).
+    #[serde(default)]
+    pub expected_cited_subjects: Vec<String>,
+
     /// Regex pattern the auto-derived conversation title must match.
     #[serde(default)]
     pub expected_title_pattern: Option<String>,

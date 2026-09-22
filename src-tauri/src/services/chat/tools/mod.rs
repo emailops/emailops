@@ -492,18 +492,27 @@ pub(crate) fn coerce_args_to_schema(args: &mut serde_json::Value, schema: &serde
 /// Models sometimes nest the whole argument object under one extra key (Qwen
 /// 3.6 35B used the schema's own `parameters`). When the arguments are a lone
 /// key the schema does not declare, holding a non-empty object whose keys the
-/// schema all declares, lift that inner object. Anything else is left for the
-/// tool's own validation.
+/// schema all declares, lift that inner object. The same goes for a
+/// one-element array holding such an object (`[{"from":"x"}]`, also Qwen 3.6
+/// 35B). Anything else is left for the tool's own validation.
 pub(crate) fn unwrap_nested_args(args: &mut serde_json::Value, schema: &serde_json::Value) {
     let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
         return;
     };
-    let lifted = match args.as_object().map(|obj| (obj.len(), obj.iter().next())) {
-        Some((1, Some((key, serde_json::Value::Object(inner)))))
-            if !props.contains_key(key) && !inner.is_empty() && inner.keys().all(|k| props.contains_key(k)) =>
-        {
-            inner.clone()
-        }
+    let declared = |inner: &serde_json::Map<String, serde_json::Value>| {
+        !inner.is_empty() && inner.keys().all(|k| props.contains_key(k))
+    };
+    let lifted = match args {
+        serde_json::Value::Object(obj) => match (obj.len(), obj.iter().next()) {
+            (1, Some((key, serde_json::Value::Object(inner)))) if !props.contains_key(key) && declared(inner) => {
+                inner.clone()
+            }
+            _ => return,
+        },
+        serde_json::Value::Array(items) => match items.as_slice() {
+            [serde_json::Value::Object(inner)] if declared(inner) => inner.clone(),
+            _ => return,
+        },
         _ => return,
     };
     *args = serde_json::Value::Object(lifted);
@@ -1633,6 +1642,44 @@ mod tests {
             &arg(serde_json::json!({ "parameters": { "unread": true, "order": "oldest", "limit": 1 } })),
         );
         assert!(out.contains("id=e2") && !out.contains("id=e1"), "{out}");
+    }
+
+    /// Qwen 3.6 35B wrapped its arguments in a one-element array:
+    /// `search_emails([{"from":"Rafael",…}])`. The tool saw no filter and
+    /// rejected the call, and the turn asked the user to clarify instead.
+    #[test]
+    fn dispatch_unwraps_arguments_wrapped_in_a_one_element_array() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(&db, "e1", "acc", "t1", "Ana", "ana@example.com", "Uno", "a", t + 100);
+        seed_email(&db, "e2", "acc", "t2", "Bea", "bea@example.com", "Dos", "b", t + 200);
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!([{ "from": "ana@example.com", "limit": 5 }])),
+        );
+        assert!(out.contains("id=e1") && !out.contains("id=e2"), "{out}");
+    }
+
+    #[test]
+    fn unwrap_nested_args_leaves_arrays_that_are_not_one_declared_object() {
+        let schema = serde_json::json!({ "type": "object", "properties": {
+            "from": { "type": "string" },
+            "limit": { "type": "integer" },
+        }});
+        for untouched in [
+            serde_json::json!([{ "from": "a" }, { "from": "b" }]),
+            serde_json::json!([{ "sender": "a" }]),
+            serde_json::json!([]),
+            serde_json::json!(["a"]),
+        ] {
+            let mut args = untouched.clone();
+            unwrap_nested_args(&mut args, &schema);
+            assert_eq!(args, untouched);
+        }
     }
 
     #[test]

@@ -1207,6 +1207,68 @@ that must not pay for a multi-GB mmap, and it would put the rule behind the `lla
 feature gate where the CI fast jobs cannot test it); a user-facing "disable thinking"
 setting (makes the user responsible for a detail the file already states).
 
+## 2026-09-21 — A tool turn's sources are the emails the tools returned; bare `[n]` only cites pre-retrieved Sources
+
+**Decision:** A bare `[n]` opens the n-th numbered Source, so it is rendered only on turns
+where no tool handed the model an email. On a turn where a tool did (`search_emails`,
+`get_email_body`, `get_thread`, …), the message's sources become the emails the tools
+returned — the ones the answer links first, then the rest in tool order — replacing the
+pre-retrieved rows on disk and in the open bubble, every bare `[n]` is stripped, and the
+answer's citations are its `email://ID` links (`plan_answer_grounding`). The prompt still
+tells the model to link tool results with `email://` and to keep `[n]` for numbered
+Sources, and `relink_self_numbered_citations` turns a self-numbered marker into a link when
+the answer defines it; but neither is relied on for correctness.
+**Context:** the UI resolved every bare `[n]` to the n-th pre-retrieved Source. When the
+fact came from a tool result — which carries an `id=` but no number — Qwen 3.6 35B
+numbered the bullets of its own answer `[1]`, `[2]`…, so a correct support address opened an
+unrelated shipping notice. A prompt-only fix (the CITATION CONTRACT rewrite plus a reminder
+under the Sources header) was measured on the demo DB, 54 chat cases, greedy decoding: it
+raised tool turns with `email://` links from 22/34 to 26/36 and fixed `kelvo_support_addresses`
+(`[1][2][2]` → two links), but `pc_priya_address` still answered `… [1]` for a fact in Source
+`[6]` on both prompts, and the developer's real mailbox still got `[1][2][3]` in bullet
+order with no links. Self-numbering survives the instruction, so the fix had to stop
+depending on the model: on those two sweeps bare `[n]` appeared on 2–3 of ~35 tool turns
+and was wrong in the self-numbered ones, while 22–26 of them carried `email://` links —
+the links are the citation mechanism that works on tool turns, and the tool-returned
+emails are the honest "sources used" list (the pre-retrieved rows were rarely what the
+answer drew on). Correct source-number citations on a tool turn (`mem_borgbase_customer_number`
+cited `[1] [2] [8] [9]` rightly once) are lost with the rule; that answer keeps its
+`attachment://` links and its sources panel lists the four opened invoices.
+**Rejected:** numbering tool results into the same citation space (`[9]`, `[10]`… in every
+tool's output and the Sources panel) — the model ignored the numbers already in front of it
+(`pc_priya_address`: `[1]` for Source `[6]`), so this adds format and cache churn without
+making `[n]` trustworthy; resolving a tool turn's `[n]` against the tool-returned list — the
+model's numbering follows its own bullets, not the tool order, so this only moves the wrong
+pill; keeping `[n]` on a tool turn unless the markers read `1..k` in order — a pattern gate
+that still lets a skipped number (`[1] [3]`) open the wrong email; a post-processor that
+guesses the right Source from the cited sentence (matching an address against senders) — a
+heuristic that only covers the shapes it was written for, and a wrong guess is worse than
+no citation.
+
+## 2026-09-22 — Chat answers cite by `email://` link only; linked emails are the sources
+
+**Decision:** The RAG Sources block is no longer numbered (each line keeps its `id=`) and
+the CITATION CONTRACT asks for a `[short label](email://ID)` link on every fact, whether
+the email came from the Sources or from a tool; bare `[n]` markers are never requested.
+`plan_answer_grounding` makes the emails an answer links its sources (link order, each
+once); an answer that links nothing falls back to the emails the tools returned, and with
+none of those the pre-retrieved Sources stay. The "show emails in list" button falls back
+to the message sources when the answer cites nothing. This supersedes the 2026-09-21 rule
+that kept `[n]` for RAG-only turns.
+**Context:** numbers were the root of the wrong-source citations — Qwen 3.6 35B numbered
+the bullets of its own answer and the UI opened unrelated emails. An opaque id cannot be
+mistaken for a bullet position, and linking gives the sources panel the emails the answer
+actually rests on instead of everything a tool returned. Full chat sweep (53 cases,
+qwen3.6-35b-a3b-ud-q4_k_xl, demo DB), before → after: passes 49 → 49; answers with no
+citation 20 → 17; answers with a bare `[n]` 3 → 0; answers with an `email://` link
+32 → 36. The two cases that flipped to fail (`demo_draft_link_emitted`,
+`at_fastmail_receipts`) failed on the old code too when re-run (1/3 vs 2/3, 1/3 vs 0/3).
+**Rejected:** keeping `[n]` for RAG-only turns (the model self-numbers there as well,
+and two citation schemes in one contract are what confused it); numbering tool results
+into the Sources (the model ignored numbers it was given); an empty sources panel when
+nothing is linked (the button would disappear and the user loses the only route to the
+emails behind the answer).
+
 ## 2026-09-21 — The query planner decides when a chat question is about EmailOps itself
 
 **Decision:** A question about the app (how to use, set up or fix EmailOps, its settings,

@@ -219,6 +219,10 @@
   category: people_companies
   tier: full
   expected_answer_contains: ["priya@nimbus-notes.app"]
+  # The address comes from a search_emails row; the model wrote "[1]" after
+  # it and the UI opened Source [1], an unrelated Plane notification. Every
+  # citation the answer keeps must name Priya's email.
+  expected_cited_subjects: ["freelance help with an on-device ai feature"]
   expected_output: "El correo de Priya Nair es priya@nimbus-notes.app; te escribió el 15 de septiembre de 2025 sobre ayuda freelance con una función de IA en el dispositivo (email://)."
   metrics: [answer_relevancy, faithfulness]
 
