@@ -4,14 +4,17 @@ description: "Scriptez et automatisez votre boîte depuis le terminal, avec une 
 weight: 50
 ---
 
+<!-- claim:cli-intro-1 -->
 `emailops-cli` pilote le même moteur local que l'application de bureau — votre courrier, vos
 comptes, votre IA locale — depuis un terminal. Il lit la base de données que l'application a
 déjà synchronisée : pas de configuration séparée, pas de seconde copie de votre courrier.
 
+<!-- claim:cli-intro-2 -->
 macOS uniquement pour l'instant.
 
 ## Installation
 
+<!-- claim:cli-install-1 -->
 Téléchargez `EmailOps-CLI-macos.dmg` depuis la
 [dernière version](https://github.com/emailops/emailops/releases/latest), montez-le et placez
 le binaire dans votre `PATH` :
@@ -24,11 +27,13 @@ hdiutil detach /Volumes/EmailOps\ CLI
 emailops-cli doctor    # vérifie qu'il voit vos données et vos comptes
 ```
 
+<!-- claim:cli-install-2 -->
 Le binaire est universel (Apple Silicon + Intel), signé et notarié : Gatekeeper le laisse
 passer sans invite.
 
 ## Démarrage rapide
 
+<!-- claim:cli-quick-start-1 -->
 ```bash
 emailops-cli accounts                     # quels comptes sont connectés
 emailops-cli emails --limit 10            # les 10 e-mails les plus récents
@@ -37,12 +42,14 @@ emailops-cli chat "qu'a dit Acme à propos du contrat ?"
 emailops-cli                              # sans sous-commande → REPL interactif
 ```
 
+<!-- claim:cli-quick-start-2 -->
 Dans le REPL, le texte simple constitue un tour de chat (les jetons arrivent en direct) et les
 lignes préfixées par `/` correspondent aux sous-commandes : `/search`, `/account`, `/sync`,
 `/help`, `/quit`.
 
 ## Commandes
 
+<!-- claim:cli-commands-1 -->
 | Commande | Rôle |
 |---|---|
 | `accounts` | Liste les comptes configurés |
@@ -56,14 +63,17 @@ lignes préfixées par `/` correspondent aux sous-commandes : `/search`, `/accou
 | `embed [--batch N]` | Génère les embeddings de recherche |
 | `doctor` | Rapport d'état en lecture seule (base, comptes, configuration IA) |
 
+<!-- claim:cli-commands-2 -->
 Les options globales fonctionnent avant ou après la sous-commande : `--json`, `--quiet`,
 `--account <id|email>`, `--model <modèle>`, `--data-dir <dossier>`.
 
+<!-- claim:cli-commands-3 -->
 Les commandes de lecture sont sûres pendant que l'application est ouverte. Les écritures
 lourdes (`sync`, `classify`, `embed`) valent mieux application fermée.
 
 ## Scripter avec `--json`
 
+<!-- claim:cli-scripting-json-1 -->
 Avec `--json`, chaque commande écrit exactement une enveloppe sur stdout — même forme en cas
 de succès ou d'échec — tandis que les journaux partent sur stderr :
 
@@ -72,6 +82,7 @@ de succès ou d'échec — tandis que les journaux partent sur stderr :
 { "ok": false, "data": null, "error": { "code": "not_found", "message": "…", "params": {} } }
 ```
 
+<!-- claim:cli-scripting-json-2 -->
 ```bash
 # Objets des 20 e-mails les plus récents
 emailops-cli emails --limit 20 --json | jq -r '.data[].subject'
@@ -83,11 +94,13 @@ emailops-cli chat "résume mes e-mails non lus" --json | jq -r '.data.answer'
 emailops-cli search "from:ana facture" --json | jq -r '.data[] | [.sender, .subject] | @tsv'
 ```
 
+<!-- claim:cli-scripting-json-3 -->
 Les codes de sortie sont regroupés selon ce qu'il y a à faire : `0` succès, `2` entrée
 invalide, `3` introuvable, `4` authentification, `5` réseau/synchronisation, `6` IA, `130`
 annulé, `1` tout le reste — les scripts peuvent donc se baser sur le code plutôt que d'analyser
 du texte.
 
+<!-- claim:cli-scripting-json-4 -->
 Si vous avez plusieurs comptes, enregistrez-en un par défaut au lieu de répéter `--account` :
 
 ```bash

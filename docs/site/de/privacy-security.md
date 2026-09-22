@@ -4,12 +4,14 @@ description: 'Wo Ihre E-Mails gespeichert werden, was Ihre Maschine verlässt, u
 weight: 45
 ---
 
+<!-- claim:priv-intro-1 -->
 EmailOps ist um eine Regel herum gebaut: Ihre E-Mails bleiben auf Ihrer Maschine. Diese Seite
 beschreibt konkret, was das bedeutet — wo Daten geschrieben werden, welche Netzwerkaufrufe es
 gibt und welche Schutzfunktionen Sie einschalten können.
 
 ## Wo Ihre Daten gespeichert werden {#where-your-data-is-stored}
 
+<!-- claim:priv-where-data-1 -->
 Alles liegt im Anwendungsdatenverzeichnis Ihres Betriebssystems:
 
 | Plattform | Ort |
@@ -18,16 +20,19 @@ Alles liegt im Anwendungsdatenverzeichnis Ihres Betriebssystems:
 | Windows | `%APPDATA%\com.emailops.app` |
 | Linux | `~/.local/share/com.emailops.app` |
 
+<!-- claim:priv-where-data-2 -->
 Darin:
 
 - **Eine SQLite-Datenbank** — Nachrichten, Threads, Kontakte, Kalendertermine,
   Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. Das ist die einzige
-  Kopie, die EmailOps führt.
-- **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben.
+  Kopie, die EmailOps führt. <!-- claim:priv-where-data-3 -->
+- **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
 
+<!-- claim:priv-where-data-5 -->
 Zeigen Sie `EMAILOPS_DATA_DIR` vor dem Start woanders hin, um einen anderen Ort zu verwenden —
 ein zweites Profil oder ein verschlüsseltes Volume.
 
+<!-- claim:priv-where-data-6 -->
 **Zugangsdaten liegen nicht dort.** OAuth-Tokens und IMAP-Passwörter gehen in den
 Anmeldeinformationsspeicher des Systems: macOS-Schlüsselbund, Windows-
 Anmeldeinformationsverwaltung oder ein Secret-Service-Schlüsselbund unter Linux. Sie werden
@@ -35,6 +40,7 @@ nie in eine Konfigurationsdatei geschrieben und überstehen das Deinstallieren d
 
 ## Es gibt keinen EmailOps-Server
 
+<!-- claim:priv-there-no-1 -->
 Es gibt kein Konto zum Anlegen, keine Registrierung und kein von uns betriebenes Backend — es
 gibt also keinen Ort, an den Ihre E-Mails hochgeladen werden könnten, und nichts, das
 kompromittiert werden könnte. Die App spricht genau mit diesen Zielen, die alle benennbar
@@ -47,26 +53,33 @@ sind:
 | Hugging Face | Nur während des Downloads eines von Ihnen gewählten KI-Modells | Nein |
 | OpenRouter | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 
+<!-- claim:priv-there-no-2 -->
 Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
 **Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
 
 ## Was EmailOps in Ihrem Postfach verändert
 
+<!-- claim:priv-what-emailops-1 -->
 Das meiste, was EmailOps tut, ist rein lesend: Es lädt Ihre E-Mails herunter und hält eine
-lokale Kopie. Zwei Aktionen greifen bewusst auf das Konto zurück, damit das, was Sie hier tun,
+lokale Kopie. Einige Aktionen greifen bewusst auf das Konto zurück, damit das, was Sie hier tun,
 auch überall sonst zu sehen ist:
 
 | Aktion | Wirkung auf das Konto |
 |---|---|
 | Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert (Gmail) |
 | Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gmail) und bleibt dort 30 Tage wiederherstellbar |
+| Eine Nachricht in einen anderen Ordner verschieben, oder **Als Spam bestätigen** | Die Nachricht wird auch im Konto verschoben — Als Spam bestätigen legt sie im Spam-Ordner des Anbieters ab |
+| Einen Ordner anlegen, umbenennen oder löschen | Der Ordner ändert sich auch im Konto |
+| Einen Entwurf speichern | Der Entwurf wird in den Entwürfen des Kontos gespeichert |
 
+<!-- claim:priv-what-emailops-2 -->
 EmailOps löscht eine Nachricht nie endgültig: Löschungen gehen immer in den Papierkorb,
 niemals in ein hartes Löschen. Der Lesestatus wird zuerst lokal gesetzt, damit die App offline
 funktioniert; das Konto zieht im Hintergrund nach. Alles andere — Labels, Filter, Ordner, die
 Sie nicht angefasst haben — bleibt genau so, wie es ist.
 
+<!-- claim:priv-what-emailops-3 -->
 Jede Nachricht, die Sie aus EmailOps senden, endet mit einer kurzen Zeile „Gesendet mit
 EmailOps“, die auf getemailops.com verlinkt. Der Link trägt `utm_source=email_footer`; das
 teilt der Analyse der Website nur mit, dass ein Besuch aus einer E-Mail-Fußzeile kam, und
@@ -74,6 +87,7 @@ enthält nichts, was Sie oder den Empfänger identifiziert.
 
 ## Keine Telemetrie
 
+<!-- claim:priv-no-telemetry-1 -->
 Die App sammelt keine Nutzungsstatistiken, sendet keine Absturzberichte und ruft in
 veröffentlichten Builds in keiner Form „nach Hause“. Es gibt kein Opt-out, weil es nichts
 abzuwählen gibt. (Der Quellbaum enthält eine optionale OpenTelemetry-Tracing-Funktion für die
@@ -81,41 +95,46 @@ lokale Entwicklung; sie wird aus jedem Release-Build herauskompiliert.)
 
 ## Standardmäßig lokale KI
 
+<!-- claim:priv-local-ai-1 -->
 Das voreingestellte Backend führt Modelle im selben Prozess über eine eingebettete
 llama.cpp-Laufzeit aus. Kein Daemon, kein lokaler Server, kein Netzwerk-Socket — das Modell
 liest Ihre E-Mails aus dem Prozess, der sie ohnehin schon hat. Klassifizierung, Entwürfe,
 Embeddings, Chat sowie Aufgaben- und Gedächtnis-Extraktion laufen alle dort.
 
+<!-- claim:priv-local-ai-2 -->
 Der Wechsel zu Ollama hält die Inferenz ebenfalls lokal, nur in einem eigenen Prozess auf
 Ihrer Maschine. Nur OpenRouter sendet Inhalte vom Gerät weg. Siehe
 [Backend wählen](../ai-features/#choosing-a-backend).
 
 ## Schutz vor den E-Mails selbst
 
+<!-- claim:priv-protection-from-1 -->
 E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 
 - **Blockieren entfernter Inhalte** — externe Bilder, Tracking-Pixel und andere entfernte
   Ressourcen werden blockiert, bis Sie sie erlauben. Ein Hinweisbalken je E-Mail lädt sie
   einmalig, oder Sie vertrauen einem bestimmten Absender dauerhaft. Das verhindert, dass
-  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben.
+  Absender erfahren, wann und wie oft Sie eine Nachricht geöffnet haben. <!-- claim:priv-protection-from-2 -->
 - **Junk- und Massenbewertung** — jede Nachricht wird lokal auf Spam und unerwünschte
   Massen-E-Mails bewertet. Ihre Korrekturen („Junk“ / „kein Junk“) trainieren sie. Markierte
   Post wird abgeschwächt oder ausgeblendet, aber nie auf dem Server gelöscht oder verschoben,
-  außer Sie bestätigen es ausdrücklich.
+  außer Sie bestätigen es ausdrücklich. <!-- claim:priv-protection-from-3 -->
 - **Warnungen vor Identitätsmissbrauch** — eine optionale Prüfung, die Nachrichten markiert,
   die scheinbar von jemand anderem stammen. Standardmäßig aus, denn es ist die einzige
-  Prüfung, die einem Absender Betrug unterstellt, und sie hat die dünnste Beweislage.
+  Prüfung, die einem Absender Betrug unterstellt, und sie hat die dünnste Beweislage. <!-- claim:priv-protection-from-4 -->
 - **Bereinigtes Rendering** — das HTML der Nachrichten wird vor der Anzeige von Skripten,
   Event-Handlern und eingebetteten Objekten befreit, und zwar auf beiden Seiten der App.
-  Anhänge werden nie eigenmächtig geöffnet.
+  Anhänge werden nie eigenmächtig geöffnet. <!-- claim:priv-protection-from-5 -->
 
 ## Die App sperren
 
+<!-- claim:priv-locking-app-1 -->
 Legen Sie unter **Einstellungen → Datenschutz & Sicherheit** ein **Hauptpasswort** fest, dann
 bleibt EmailOps beim Start gesperrt, bis Sie es eingeben. Es gibt keinen Wiederherstellungsweg
 — wenn Sie es vergessen, installieren Sie neu gegen ein frisches Datenverzeichnis und
 synchronisieren erneut von Ihrem Anbieter.
 
+<!-- claim:priv-locking-app-2 -->
 Zur Klarheit, was das leistet: Es sperrt die Anwendung, es verschlüsselt die Datenbank
 **nicht**. Wer Zugriff auf Ihr entsperrtes Benutzerkonto und das Datenverzeichnis hat, kann
 die SQLite-Datei direkt lesen. Wenn das zu Ihrem Bedrohungsmodell gehört, nutzen Sie
@@ -124,6 +143,7 @@ Linux — das ist das richtige Werkzeug dafür.
 
 ## All das überprüfen
 
+<!-- claim:priv-auditing-any-1 -->
 EmailOps steht unter Apache-2.0 und wird offen entwickelt. Die Aussagen auf dieser Seite sind
 anhand des Quellcodes auf
 [github.com/emailops/emailops](https://github.com/emailops/emailops) überprüfbar, und das

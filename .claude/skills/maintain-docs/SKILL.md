@@ -1,6 +1,6 @@
 ---
 name: maintain-docs
-description: Keep EmailOps' published documentation true as the app changes — run the doc guards and doc↔code contract tests, drive the docClaim() cases against the real UI, then fix what they find (in all four languages) and report it with an HTML run. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
+description: Keep EmailOps' published documentation true as the app changes — every paragraph, list item, table and code block of the docs is a catalogued claim (docs/site/claims.toml) verified against the code, existing tests or the running app, or explicitly marked manual; run the checks, fix what fails (in all four languages), catalogue any new prose, and report it with an HTML run showing each claim and its result. Covers docs/site/{en,es,fr,de}, README.md, ROADMAP.md, a DECISIONS.md prompt and a website-copy notice. Use before cutting a release (the release skill's Phase 5d calls this), after landing a feature or fix that changes a view, setting, CLI flag, model or user-visible string, when `make docs-check` reports failures, or whenever the developer asks whether the docs are still accurate.
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
 
@@ -18,6 +18,13 @@ written had an untouched `.md` and a changed source file. This skill is the
 upkeep loop. The unit of work is the **claim** — something the docs assert
 about the app — and every claim leaves either proven, corrected, or explicitly
 recorded as unverifiable.
+
+**The docs are fully catalogued.** Every paragraph, list item, table and code
+block in `docs/site/en/*.md` carries a `<!-- claim:id -->` marker (the same
+markers, on the same blocks, in es/fr/de), and every id has an entry in
+`docs/site/claims.toml` saying how it is verified. `check-docs-claims.py` fails
+on any unmarked block, so new prose cannot slip in unverified — it runs in
+pre-commit.
 
 ## Rules that apply throughout
 
@@ -49,16 +56,30 @@ a release and whenever a change touched the UI; the fast pass marks the
 app-driven claims as skipped rather than omitting them, so it never reads as
 "all clear" while testing less.
 
-What each layer proves, and what a failure means:
+The report groups claims by page. Each row quotes the claim, says how it was
+proven, and — when it fails — why and what edit it expects. A claim is proven
+one of four ways, and the report files it under the strongest that ran:
 
-| Layer | Proves | On failure |
+| Type in the report | How the claim is proven | On failure |
+|---|---|---|
+| **Comprobado en la app** | a `docClaim()` in sweep.mjs drives the real UI (`--with-app`) | the app changed, **or the page was always wrong** — decide which before editing |
+| **Tests existentes** | named Rust tests that prove the behaviour exist and pass | the behaviour changed, or the test was renamed |
+| **Código fuente** | a `quoted` literal is in both the claim and the code/config/release script, or the code has/lacks something | the code moved, or the page was edited past what the catalogue quotes |
+| **Sin prueba automática** | nothing automatic can prove it (performance, third-party behaviour, whole-program promises like "no phone-home") | shown as **MANUAL** with its reason — never counted as OK |
+
+Plus the structural guards, which vouch for the claims as a set:
+
+| Guard | Proves | On failure |
 |---|---|---|
 | `check-docs-parity.sh` | same pages, sidebar weights and `{#anchors}` in all four languages | a language is missing a page or an anchor a cross-page link targets |
 | `check-docs-labels.sh` | every UI label the docs tell you to click exists verbatim in that language's locale | the app renamed a control, or a translation paraphrased it |
 | `check-docs-paths.py` | every repo path quoted in any `.md` resolves | a file moved or was deleted and the prose did not follow |
-| `check-docs-claims.py` | every `<!-- claim:id -->` has a `docClaim()` and vice versa, in all four languages | a paragraph was rewritten past its marker, or a case was renamed |
-| contract tests | `ai-features.md` / `getting-started.md` match `model_catalog.rs` | a model was added, resized or retired without touching the published figures |
-| `doc` claims | the app still does what a marked paragraph promises | the app changed, **or the page was always wrong** — decide which before editing |
+| `check-docs-claims.py` | every block is marked in all four languages, every marker is catalogued, every `app` check has its `docClaim()` | new prose was added uncatalogued, or a marker was lost in a translation |
+
+**A locale string proves a label, never a feature.** The app's own help text can
+be as stale as the docs — it still promised a "find similar" feature that does
+not exist. Evidence for a feature is code: `src/lib/api.ts` is the one path from
+the UI to the backend.
 
 ## 2. Coverage — the part no script can do
 
@@ -112,23 +133,29 @@ assumes the page is wrong because that is the common case; it is not a verdict.
 
 Re-run step 1 until green.
 
-## 4. Adding a claim
+## 4. Cataloguing new or changed prose
 
-Worth doing when a paragraph tells the reader a control exists or is named
-something specific, on a screen the sweep already visits — the marginal cost is
-then one assertion, not an app launch.
+`check-docs-claims.py` fails the commit the moment a block has no marker, so
+this is not optional:
 
-1. Put `<!-- claim:some-id -->` on the line before the paragraph, in **all four**
-   languages.
-2. Add a `docClaim('some-id', feature, page, expect, fix, fn)` in
-   `.claude/skills/verify-emailops/scripts/sweep.mjs`, next to the existing
-   steps for that screen so it reuses the navigation already done.
-3. `uv run --no-project scripts/check-docs-claims.py` to confirm the pairing.
+1. Mark the block in **all four** languages: `<!-- claim:some-id -->` on its own
+   line above a paragraph, table or code block; at the end of the **last** line
+   of a list item (the first line can sit inside a `**bold span**` that wraps).
+2. Add `[some-id]` to `docs/site/claims.toml` with the strongest check that
+   applies — see the file header for the forms. Prefer, in order: an existing
+   test that proves the behaviour; a `quoted` literal shared by the claim and the
+   code; an `app` check; and only then `manual` with an honest reason. `none` is
+   for lead-ins that make no claim of their own.
+3. For an `app` check, add `docClaim('some-id', feature, page, expect, fix, fn)`
+   in `.claude/skills/verify-emailops/scripts/sweep.mjs`, next to the steps for
+   that screen so it reuses the navigation already done. Ground selectors in the
+   live DOM first (`$V wd find 'button=…'`, see `verify-emailops`) — the first
+   run of a claim is as likely to expose a bad selector as a bad page.
+4. `uv run --no-project scripts/check-docs-claims.py`, then `make docs-check`.
 
-Ground every selector in the live DOM first rather than guessing
-(`$V wd find 'button=…'`, see the `verify-emailops` skill). `fix` is shown in
-the report when the claim fails: say which paragraph to edit and in which
-languages.
+When a `manual` claim becomes provable — a test lands, a sweep step is added —
+upgrade its entry. The count of MANUAL rows in the report is the honest size of
+what is still taken on trust.
 
 ## 5. Report
 

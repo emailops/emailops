@@ -44,9 +44,10 @@ async function step(feature, name, expect, fn) {
 const ok = (cond, good, bad) => cond ? good : `FAIL: ${bad}`;
 
 // A claim the published docs make about the UI. `id` matches a
-// `<!-- claim:id -->` marker in docs/site/<lang>/<page>; check-docs-claims.sh
-// fails if either side loses the other, so a claim cannot be quietly orphaned
-// by rewriting the paragraph it guards. `fix` is what the report shows when the
+// `<!-- claim:id -->` marker in docs/site/<lang>/<page> and an entry with
+// `{ app = true }` in docs/site/claims.toml; check-docs-claims.py fails if any
+// of the three loses the others, so a claim cannot be quietly orphaned by
+// rewriting the paragraph it guards. `fix` is what the report shows when the
 // app and the page disagree: the page is as likely to be the wrong one, and a
 // bare assertion failure does not say which.
 // Recorded as a normal sweep step under a `doc:` name so it rides the existing

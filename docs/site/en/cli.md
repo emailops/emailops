@@ -4,14 +4,17 @@ description: 'Script and automate your inbox from the terminal, with stable JSON
 weight: 50
 ---
 
+<!-- claim:cli-intro-1 -->
 `emailops-cli` drives the same local engine as the desktop app — your mail, your accounts,
 your local AI — from a terminal. It reads the database the app already synced, so there is no
 separate setup and no second copy of your mail.
 
+<!-- claim:cli-intro-2 -->
 Currently macOS only.
 
 ## Install
 
+<!-- claim:cli-install-1 -->
 Download `EmailOps-CLI-macos.dmg` from the
 [latest release](https://github.com/emailops/emailops/releases/latest), mount it and put the
 binary on your `PATH`:
@@ -24,11 +27,13 @@ hdiutil detach /Volumes/EmailOps\ CLI
 emailops-cli doctor    # confirms it sees your data and accounts
 ```
 
+<!-- claim:cli-install-2 -->
 The binary is universal (Apple Silicon + Intel), signed and notarized, so Gatekeeper lets it
 through without a prompt.
 
 ## Quick start
 
+<!-- claim:cli-quick-start-1 -->
 ```bash
 emailops-cli accounts                     # which accounts are connected
 emailops-cli emails --limit 10            # 10 most recent emails
@@ -37,11 +42,13 @@ emailops-cli chat "what did Acme say about the contract?"
 emailops-cli                              # no subcommand → interactive REPL
 ```
 
+<!-- claim:cli-quick-start-2 -->
 In the REPL, plain text is a chat turn (tokens stream live) and `/`-prefixed lines map onto
 the subcommands: `/search`, `/account`, `/sync`, `/help`, `/quit`.
 
 ## Commands
 
+<!-- claim:cli-commands-1 -->
 | Command | Purpose |
 |---|---|
 | `accounts` | List configured accounts |
@@ -55,14 +62,17 @@ the subcommands: `/search`, `/account`, `/sync`, `/help`, `/quit`.
 | `embed [--batch N]` | Generate search embeddings |
 | `doctor` | Read-only readiness report (database, accounts, AI config) |
 
+<!-- claim:cli-commands-2 -->
 Global flags work before or after the subcommand: `--json`, `--quiet`,
 `--account <id|email>`, `--model <model>`, `--data-dir <dir>`.
 
+<!-- claim:cli-commands-3 -->
 Read commands are safe to run while the app is open. Heavy writes (`sync`, `classify`,
 `embed`) are best run with the app closed.
 
 ## Scripting with `--json`
 
+<!-- claim:cli-scripting-json-1 -->
 With `--json` every command prints exactly one envelope on stdout — same shape on success or
 failure — while logs go to stderr:
 
@@ -71,6 +81,7 @@ failure — while logs go to stderr:
 { "ok": false, "data": null, "error": { "code": "not_found", "message": "…", "params": {} } }
 ```
 
+<!-- claim:cli-scripting-json-2 -->
 ```bash
 # Subjects of the 20 most recent emails
 emailops-cli emails --limit 20 --json | jq -r '.data[].subject'
@@ -82,10 +93,12 @@ emailops-cli chat "summarize my unread mail" --json | jq -r '.data.answer'
 emailops-cli search "from:ana invoice" --json | jq -r '.data[] | [.sender, .subject] | @tsv'
 ```
 
+<!-- claim:cli-scripting-json-3 -->
 Exit codes are grouped by what you would do about them: `0` success, `2` invalid input,
 `3` not found, `4` auth, `5` network/sync, `6` AI, `130` cancelled, `1` anything else — so
 scripts can branch on the code rather than parsing text.
 
+<!-- claim:cli-scripting-json-4 -->
 If you have more than one account, save a default instead of repeating `--account`:
 
 ```bash

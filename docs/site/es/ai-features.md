@@ -4,27 +4,30 @@ description: 'Chatea con tu buzón, genera respuestas, clasifica correo, extrae 
 weight: 40
 ---
 
+<!-- claim:ai-intro-1 -->
 Todas las funciones de IA de abajo se ejecutan mediante el backend que hayas elegido, y cada
 una puede desactivarse por separado. Con el backend integrado predeterminado, ningún prompt ni
 ningún correo sale nunca de tu máquina.
 
 ## Elegir un backend {#choosing-a-backend}
 
+<!-- claim:ai-choosing-backend-1 -->
 **Ajustes → IA: backend y modelos** controla dónde ocurre la inferencia:
 
 - **En la app (local)** — un runtime llama.cpp integrado. Nada que instalar, sin demonio, sin
   tráfico de red. Es el predeterminado. Usa tu GPU automáticamente cuando la hay — Metal en
   Apple Silicon, Vulkan en Windows y Linux — y la CPU cuando no. En Mac requiere Apple Silicon
-  (M1 o posterior); en un Mac Intel permanece no disponible.
+  (M1 o posterior); en un Mac Intel permanece no disponible. <!-- claim:ai-choosing-backend-2 -->
 - **Ollama (local)** — un servidor Ollama que ya tengas en `http://localhost:11434`. Útil si
   mantienes una biblioteca de modelos compartida. Ten en cuenta que en un Mac Intel tampoco
-  obtiene aceleración por GPU, así que será lento.
+  obtiene aceleración por GPU, así que será lento. <!-- claim:ai-choosing-backend-3 -->
 - **OpenRouter (remoto)** — una API de pago en la nube. Requiere una clave de API, admite un
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
-  desactivado salvo que lo actives.
+  desactivado salvo que lo actives. <!-- claim:ai-choosing-backend-4 -->
 
 ### El catálogo de modelos {#the-model-catalog}
 
+<!-- claim:ai-choosing-backend-model-catalog-1 -->
 El backend integrado descarga modelos de un catálogo curado, cada uno fijado a un checksum
 verificado:
 
@@ -38,17 +41,19 @@ verificado:
 | Qwen 3.6 35B A3B | ~22,4 GB | 32 GB |
 | Nomic Embed Text v1.5 *(embeddings, incluido)* | ~84 MB | 1 GB |
 
+<!-- claim:ai-choosing-backend-model-catalog-2 -->
 La columna de la derecha es la memoria máxima durante la respuesta — pesos más la ventana de
 contexto — que siempre es mayor que la descarga. **En qué** memoria debe caber depende de tu
 hardware:
 
 - **Apple Silicon** — memoria unificada, compartida entre CPU y GPU, a través de Metal.
-  Compara la cifra con la memoria total de tu Mac.
+  Compara la cifra con la memoria total de tu Mac. <!-- claim:ai-choosing-backend-model-catalog-3 -->
 - **Una GPU en Windows o Linux** — la **VRAM** de la tarjeta, no la RAM del sistema, a través
   de Vulkan. Una tarjeta de 8 GB ejecuta la fila de 8 GB y nada por encima, por mucha RAM que
-  tenga la máquina.
-- **Sin GPU** — la RAM del sistema, en la CPU. Funciona; solo que más lento.
+  tenga la máquina. <!-- claim:ai-choosing-backend-model-catalog-4 -->
+- **Sin GPU** — la RAM del sistema, en la CPU. Funciona; solo que más lento. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
+<!-- claim:ai-choosing-backend-model-catalog-6 -->
 Los modelos demasiado grandes para la memoria de tu sistema aparecen atenuados en el selector.
 Un modelo lleva la etiqueta **Recomendado**, elegida para la máquina en la que estás: EmailOps
 mira la memoria del sistema y, si tienes una tarjeta gráfica dedicada, también su memoria, y
@@ -61,21 +66,23 @@ así que la etiqueta es un punto de partida, no una regla. Los requisitos comple
 
 - **Mantener el modelo cargado** — cuánto tiempo permanece el modelo en memoria entre turnos
   (30 minutos por defecto). Valores más altos evitan la recarga lenta; `0` lo descarga de
-  inmediato y libera la memoria para otras apps.
+  inmediato y libera la memoria para otras apps. <!-- claim:ai-choosing-backend-performance-knobs-1 -->
 - **Ventana de contexto** — cuántos tokens puede atender el modelo por turno. Más grande cabe
   más correo recuperado y cuesta más memoria — es lo primero que conviene bajar cuando un
-  modelo entra justo.
+  modelo entra justo. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Modo de razonamiento** — chain-of-thought en los modelos compatibles. Más lento, más
-  preciso, y puedes mostrar u ocultar la traza.
-- **Limitar el procesado de IA a correos recientes** — omite embeddings y clasificación
-  para el correo con más de N días.
+  preciso, y puedes mostrar u ocultar la traza. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
+- **Limitar el procesado de IA** — omite embeddings y clasificación
+  para el correo con más de N días. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Chatea con tu buzón
 
+<!-- claim:ai-chat-mailbox-1 -->
 Pregunta en lenguaje natural — *"¿qué dijo el abogado sobre el contrato?"*, *"resume este
 hilo"*, *"¿quién me debe todavía una respuesta?"* — y obtén una respuesta con los correos de
 origen citados. Las respuestas llegan en streaming según se generan.
 
+<!-- claim:ai-chat-mailbox-2 -->
 El chat vive en un panel redimensionable acoplado a la derecha de la bandeja, así que puedes
 seguir leyendo mientras preguntas; también hay una vista a pantalla completa para sesiones
 más largas. Con un correo abierto, el panel ofrece ese hilo como contexto mediante un chip
@@ -84,29 +91,34 @@ sobre el resto del buzón (*"¿qué me ha llegado hoy?"*) sigue buscando en él.
 aplica a una sola pregunta y nunca se guarda en la conversación, así que puedes moverte entre
 correos dentro de un mismo chat.
 
+<!-- claim:ai-chat-mailbox-3 -->
 El chat busca en una cuenta cada vez, y un selector indica cuál — de modo que una respuesta
 nunca sale en silencio del buzón equivocado. Cada cuenta mantiene su propia conversación
 mientras la aplicación siga abierta, así que cambiar de cuenta te devuelve donde lo dejaste
 y no a un chat en blanco.
 
+<!-- claim:ai-chat-mailbox-4 -->
 Por dentro, el chat combina recuperación (búsqueda semántica sobre tu correo indexado) con
 llamadas a herramientas (consultas directas a la base de datos). El modo de enrutado es
 configurable:
 
-- **Siempre RAG primero** — el predeterminado; recupera contexto y luego responde.
-- **Auto** — una heurística decide en cada pregunta si recupera contexto antes.
+- **Siempre RAG primero** — el predeterminado; recupera contexto y luego responde. <!-- claim:ai-chat-mailbox-5 -->
+- **Auto** — una heurística decide en cada pregunta si recupera contexto antes. <!-- claim:ai-chat-mailbox-6 -->
 - **Siempre herramientas primero** — se salta la recuperación y empieza por las consultas
-  estructuradas.
+  estructuradas. <!-- claim:ai-chat-mailbox-7 -->
 
+<!-- claim:ai-chat-mailbox-8 -->
 En todos los modos las herramientas siguen disponibles; el modo solo decide si se recupera
 contexto antes de responder.
 
+<!-- claim:ai-chat-mailbox-9 -->
 Los usuarios avanzados pueden editar el prompt del sistema y los prompts de recuperación
 (reescritura de consulta, reordenación) en
 **Ajustes → IA: backend y modelos → Prompts del chat**.
 
 ## Borradores con IA
 
+<!-- claim:ai-ai-drafts-1 -->
 Un botón **Borrador con IA** junto a Responder a todos redacta una respuesta basada en el hilo
 que estás viendo. Configura una **persona** (una frase sobre quién escribe), un **estilo de
 escritura** y el tono y la longitud por defecto — o sustituye toda la plantilla del prompt.
@@ -114,17 +126,20 @@ Los borradores aterrizan en el editor para que los revises antes de enviar nada.
 
 ## Clasificación {#classification}
 
+<!-- claim:ai-classification-1 -->
 Cada correo entrante se etiqueta en tres ejes — **prioridad**, **intención** y **tema** — de
 modo que la bandeja se ordena prácticamente sola y los filtros inteligentes tienen algo por lo
 que filtrar.
 
+<!-- claim:ai-classification-2 -->
 La clasificación funciona en dos capas:
 
 1. Las **Reglas** casan patrones de remitente o asunto (`*@*.beehiiv.com`, `*factura*`) y
-   asignan etiquetas al instante, sin llamar al modelo.
+   asignan etiquetas al instante, sin llamar al modelo. <!-- claim:ai-classification-3 -->
 2. **El modelo** se ocupa de todo lo que las reglas no cubren, con un prompt de instrucciones
-   que puedes editar.
+   que puedes editar. <!-- claim:ai-classification-4 -->
 
+<!-- claim:ai-classification-5 -->
 Tú controlas qué categorías de Gmail se clasifican, puedes reclasificar todo tras cambiar el
 prompt y puedes ponerte al día con el correo sin clasificar cuando quieras.
 
@@ -137,6 +152,7 @@ entrada) convierte esas etiquetas en un tablero. Elige una dimensión — **Empr
 con sus hilos; en **Todas las cuentas** hay un bloque por cuenta y etiqueta. Cada hilo está
 en un único bloque, bajo la etiqueta de su mensaje clasificado más reciente.
 
+<!-- claim:ai-tag-board-2 -->
 Los bloques se ordenan por la atención que recibe realmente cada etiqueta — cuánto respondes
 y lees sus hilos, con más peso para la actividad reciente — y las promociones y
 notificaciones quedan al final. Los filtros inteligentes del menú lateral siguen el mismo
@@ -153,24 +169,27 @@ bloques. Al pulsar una tarjeta el hilo se abre en el panel de lectura, su menú 
 mismas acciones que una fila de la bandeja, y el icono de chat del panel de lectura inicia
 una conversación con ese hilo como contexto.
 
+<!-- claim:ai-tag-board-4 -->
 El tablero necesita la clasificación: está vacío hasta que el correo tiene etiquetas y no se
 muestra con las funciones de IA desactivadas.
 
 ## Búsqueda semántica
 
+<!-- claim:ai-semantic-search-1 -->
 Los correos se indexan localmente para que la búsqueda case por significado y no solo por
-palabras clave — describe lo que recuerdas y EmailOps lo encuentra. Esto también impulsa
-"buscar similares" y el paso de recuperación del chat. Elige qué categorías se indexan y
+palabras clave — describe lo que recuerdas y EmailOps lo encuentra. Esto también impulsa el paso de recuperación del chat. Elige qué categorías se indexan y
 reconstruye el índice desde cero tras cambiar el modelo de embeddings, en
 **Ajustes → Búsqueda con IA**.
 
 ## Traducción
 
+<!-- claim:ai-translation-1 -->
 Aparecen botones de traducción en los correos escritos en otro idioma y en la ventana de
 redacción. El prompt de traducción es editable como los demás.
 
 ## Tareas
 
+<!-- claim:ai-tasks-1 -->
 *Experimental.* EmailOps revisa el correo en busca de acciones, compromisos y fechas límite y
 los reúne en un panel de Tareas. Como los compromisos reales suelen estar en lo que **tú**
 escribiste, existe un modo "aprender solo de los correos que he escrito". Puedes excluir
@@ -180,6 +199,7 @@ demanda.
 
 ## Memoria
 
+<!-- claim:ai-memory-1 -->
 *Experimental.* Los hechos que el asistente aprende sobre tus contactos, dominios y proyectos
 se guardan como contexto a largo plazo, para que el chat no empiece de cero cada vez. Los
 hechos candidatos se puntúan y se promocionan al superar un umbral; los de baja puntuación
@@ -188,12 +208,14 @@ general.
 
 ## Lentes
 
+<!-- claim:ai-lenses-1 -->
 *Experimental.* Vistas tipadas sobre tu buzón — proyecciones estructuradas, guardadas y
 extraídas por IA (piensa en "todas las facturas con importe y vencimiento") que creas y
 ejecutas desde la barra lateral.
 
 ## Apagarlo todo
 
+<!-- claim:ai-turning-off-1 -->
 **Ajustes → IA: backend y modelos → Funciones de IA** es un interruptor general.
 Desactívalo y EmailOps funciona como un cliente de correo normal: sin chat, sin clasificación,
 sin embeddings, sin ningún modelo cargado. Tus datos locales de IA se conservan por si vuelves

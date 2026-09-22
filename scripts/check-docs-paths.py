@@ -30,7 +30,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWED_UNRESOLVED = {
     "docs/site/README.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
     "homebrew/README.md:../homebrew-tap/Casks/emailops.rb": "lives in the emailops/homebrew-tap repo",
-    "tools/kv_viz/README.md:src-tauri/reports/bench/kv_xconv_*.json": "generated at run time into gitignored reports/",
     # A worked example of adding a draft-review feature. The files are
     # deliberately fictional; the skill teaches the shape, not these paths.
     ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/commands/review.rs": "illustrative example",
@@ -38,7 +37,6 @@ ALLOWED_UNRESOLVED = {
     ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/services/emails/review.rs": "illustrative example",
     ".claude/skills/build-ai-feature/SKILL.md:src-tauri/examples/draft_review_eval.rs": "illustrative example",
     ".claude/skills/build-ai-feature/SKILL.md:src/components/Settings/AiReviewSettings.tsx": "illustrative example",
-    ".claude/skills/build-ai-feature/SKILL.md:private-evals/draft_review/cases.yaml": "illustrative example",
 }
 
 # Source and config files only. Binary artefacts (png, icns, gguf) are
@@ -100,28 +98,85 @@ def resolves(candidate: str, md_dir: pathlib.Path, tracked: list[str]) -> bool:
     return any(p.endswith(f"/{candidate}") for p in tracked)
 
 
+def _check_ignore(paths: list[str]) -> list[str]:
+    """`git check-ignore` over a batch. Git aborts the whole batch (exit 128)
+    on one bad pathspec — a path through a symlink — so a failed batch is
+    retried one path at a time rather than silently answering "none ignored"."""
+    def ask(batch):
+        return subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "--no-index", "--stdin"],
+            input="\n".join(batch), capture_output=True, text=True,
+        )
+    r = ask(paths)
+    if r.returncode in (0, 1):
+        return r.stdout.splitlines()
+    return [p for p in paths if ask([p]).returncode == 0]
+
+
+def ignored_by_git(candidates: set[str]) -> set[str]:
+    """Paths under gitignored locations are generated artefacts (reports,
+    build output). Whether one exists depends on what last ran on this
+    machine, so checking them would make this guard pass on one checkout and
+    fail on the next. They are skipped, not resolved.
+
+    Asked level by level (`a/`, then `a/b/`, …) in one batch per depth, and a
+    path drops out as soon as a prefix is ignored. That matters twice: git
+    aborts a whole batch on a pathspec "beyond a symbolic link" (reports/verify
+    has a `current-full` symlink), and `--no-index` answers for directories a
+    fresh clone does not have yet.
+    """
+    pending = set(candidates)
+    ignored: set[str] = set()
+    depth = 1
+    while pending:
+        prefixes = {}
+        for c in pending:
+            parts = c.split("/")
+            if depth < len(parts):
+                prefixes.setdefault("/".join(parts[:depth]) + "/", set()).add(c)
+            elif depth == len(parts):
+                prefixes.setdefault(c, set()).add(c)
+        if not prefixes:
+            break
+        for hit in _check_ignore(sorted(prefixes)):
+            ignored |= prefixes.get(hit, set())
+        pending -= ignored
+        pending = {c for c in pending if len(c.split("/")) > depth}
+        depth += 1
+    return ignored
+
+
 def main() -> int:
     problems = []
     checked = 0
     used: set[str] = set()
     tracked = git_ls()
 
+    # First pass: collect candidates, so gitignored ones can be asked about at once.
+    found = []
     for md in tracked_markdown():
         rel_md = md.relative_to(ROOT).as_posix()
         for span in quoted_spans(md.read_text(encoding="utf-8", errors="replace")):
             candidate = span.strip()
             if PLACEHOLDER.search(candidate) or "://" in candidate:
                 continue
-            if not CANDIDATE.match(candidate):
-                continue
-            checked += 1
-            if resolves(candidate, md.parent, tracked):
-                continue
-            key = f"{rel_md}:{candidate}"
-            if key in ALLOWED_UNRESOLVED:
-                used.add(key)
-                continue
-            problems.append(f"{rel_md}: `{candidate}` does not exist")
+            if CANDIDATE.match(candidate):
+                found.append((md, rel_md, candidate))
+    # `../x.md` is relative to the quoting file and outside git's pathspec
+    # rules; it is never a generated artefact, so it is not asked about.
+    generated = ignored_by_git({c for _, _, c in found if not c.startswith('.')})
+
+    for md, rel_md, candidate in found:
+        if candidate in generated:
+            continue
+        checked += 1
+        if resolves(candidate, md.parent, tracked):
+            continue
+        key = f"{rel_md}:{candidate}"
+        if key in ALLOWED_UNRESOLVED:
+            used.add(key)
+            continue
+        problems.append(f"{rel_md}: `{candidate}` does not exist")
 
     # An exception that no longer applies is the same rot one level up: it
     # sits there implying a path is checked-and-excused when the reference has

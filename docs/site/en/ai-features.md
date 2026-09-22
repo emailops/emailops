@@ -4,26 +4,29 @@ description: 'Chat with your mailbox, generate replies, classify mail, extract t
 weight: 40
 ---
 
+<!-- claim:ai-intro-1 -->
 Every AI feature below runs through whichever backend you selected, and each one can be
 turned off individually. With the default in-app backend, no prompt or email ever leaves
 your machine.
 
 ## Choosing a backend {#choosing-a-backend}
 
+<!-- claim:ai-choosing-backend-1 -->
 **Settings → AI Backend & Models** controls where inference happens:
 
 - **In-app (local)** — an embedded llama.cpp runtime. Nothing to install, no daemon, no
   network traffic. This is the default. It uses your GPU automatically where there is one —
   Metal on Apple Silicon, Vulkan on Windows and Linux — and the CPU where there is not. On a
-  Mac it requires Apple Silicon (M1 or newer); on an Intel Mac it stays unavailable.
+  Mac it requires Apple Silicon (M1 or newer); on an Intel Mac it stays unavailable. <!-- claim:ai-choosing-backend-2 -->
 - **Ollama (local)** — an Ollama server you already run at `http://localhost:11434`. Useful
   if you keep a shared model library. Note that on an Intel Mac it gets no GPU acceleration
-  either, so it will be slow.
+  either, so it will be slow. <!-- claim:ai-choosing-backend-3 -->
 - **OpenRouter (remote)** — a paid cloud API. Requires an API key, supports a monthly budget
-  cap, and sends email content to a third party — so it stays off unless you enable it.
+  cap, and sends email content to a third party — so it stays off unless you enable it. <!-- claim:ai-choosing-backend-4 -->
 
 ### The model catalog {#the-model-catalog}
 
+<!-- claim:ai-choosing-backend-model-catalog-1 -->
 The in-app backend downloads models from a curated catalog, each pinned to a verified
 checksum:
 
@@ -37,17 +40,19 @@ checksum:
 | Qwen 3.6 35B A3B | ~22.4 GB | 32 GB |
 | Nomic Embed Text v1.5 *(embeddings, bundled)* | ~84 MB | 1 GB |
 
+<!-- claim:ai-choosing-backend-model-catalog-2 -->
 The right-hand column is peak memory while answering — weights plus the context window —
 which is always more than the download. **Which** memory it has to fit in depends on your
 hardware:
 
 - **Apple Silicon** — unified memory, shared between CPU and GPU, reached through Metal.
-  Compare the figure against your Mac's total memory.
+  Compare the figure against your Mac's total memory. <!-- claim:ai-choosing-backend-model-catalog-3 -->
 - **A GPU on Windows or Linux** — the card's **VRAM**, not your system RAM, reached through
   Vulkan. An 8 GB card runs the 8 GB row and nothing above it, however much RAM the machine
-  has.
-- **No GPU** — system RAM, on the CPU. It works; it is just slower.
+  has. <!-- claim:ai-choosing-backend-model-catalog-4 -->
+- **No GPU** — system RAM, on the CPU. It works; it is just slower. <!-- claim:ai-choosing-backend-model-catalog-5 -->
 
+<!-- claim:ai-choosing-backend-model-catalog-6 -->
 Models too large for your system memory are greyed out in the picker. One model carries a
 **Recommended** badge, chosen for the machine you are on: EmailOps looks at your system memory
 and, if you have a discrete graphics card, at its memory too, then suggests the largest model
@@ -59,21 +64,23 @@ rule. Full requirements are in [Installation](../installation/#with-local-ai).
 
 - **Keep model loaded** — how long the model stays resident between turns (default 30
   minutes). Higher values skip the slow reload; `0` evicts it immediately and frees the
-  memory for other apps.
+  memory for other apps. <!-- claim:ai-choosing-backend-performance-knobs-1 -->
 - **Context window** — how many tokens the model can attend to per turn. Larger fits more
   retrieved email, and costs more memory — this is the knob to turn down first when a model
-  only just fits.
+  only just fits. <!-- claim:ai-choosing-backend-performance-knobs-2 -->
 - **Thinking mode** — chain-of-thought reasoning on supported models. Slower, more accurate,
-  and you can show or hide the reasoning trace.
-- **Limit AI processing to recent emails** — skip embedding and classification for mail
-  older than N days.
+  and you can show or hide the reasoning trace. <!-- claim:ai-choosing-backend-performance-knobs-3 -->
+- **Limit AI processing** — skip embedding and classification for mail
+  older than N days. <!-- claim:ai-choosing-backend-performance-knobs-4 -->
 
 ## Chat with your mailbox
 
+<!-- claim:ai-chat-mailbox-1 -->
 Ask questions in natural language — *"what did the lawyer say about the contract?"*,
 *"summarise this thread"*, *"who still owes me an answer?"* — and get an answer with the
 source emails cited. Answers stream in as they are generated.
 
+<!-- claim:ai-chat-mailbox-2 -->
 Chat lives in a resizable panel docked to the right of the inbox, so you can keep reading
 while you ask; there is also a full-page view for longer sessions. With an email open the
 panel offers that thread as context via a removable chip: questions about that email are
@@ -81,26 +88,31 @@ answered from the thread, while a question about the rest of your mailbox (*"wha
 today?"*) still searches it. That context applies to a single question and is never saved
 onto the conversation, so you can move between emails inside one chat.
 
+<!-- claim:ai-chat-mailbox-3 -->
 Chat searches one account at a time, and a picker names which one — so an answer is never
 silently drawn from the wrong mailbox. Each account keeps its own conversation for as long
 as the app is open, so switching accounts returns you to where you left off rather than to
 a blank chat.
 
+<!-- claim:ai-chat-mailbox-4 -->
 Under the hood, chat combines retrieval (semantic search over your embedded mail) with
 tool calls (direct lookups against the database). The routing mode is configurable:
 
-- **Always RAG first** — the default; retrieve context, then answer.
-- **Auto** — a heuristic decides per question whether to retrieve first.
-- **Always tools first** — skip retrieval and start from structured lookups.
+- **Always RAG first** — the default; retrieve context, then answer. <!-- claim:ai-chat-mailbox-5 -->
+- **Auto** — a heuristic decides per question whether to retrieve first. <!-- claim:ai-chat-mailbox-6 -->
+- **Always tools first** — skip retrieval and start from structured lookups. <!-- claim:ai-chat-mailbox-7 -->
 
+<!-- claim:ai-chat-mailbox-8 -->
 In every mode the tools stay available; the mode only decides whether retrieval runs before
 the answer.
 
+<!-- claim:ai-chat-mailbox-9 -->
 Advanced users can edit the system prompt and the retrieval prompts (query rewriting,
 reranking) in **Settings → AI Backend & Models → Chat prompts**.
 
 ## AI drafts
 
+<!-- claim:ai-ai-drafts-1 -->
 An **AI Draft** button next to Reply All writes a reply grounded in the thread you are
 looking at. Configure a **persona** (one sentence on who the AI writes as), a **writing
 style**, and default tone and length — or replace the whole prompt template. Drafts land in
@@ -108,16 +120,19 @@ the composer for you to review before anything is sent.
 
 ## Classification {#classification}
 
+<!-- claim:ai-classification-1 -->
 Every incoming email is tagged along three axes — **priority**, **intent** and **topic** —
 so the inbox effectively sorts itself and smart filters have something to filter on.
 
+<!-- claim:ai-classification-2 -->
 Classification works in two layers:
 
 1. **Rules** match on sender or subject patterns (`*@*.beehiiv.com`, `*invoice*`) and assign
-   tags instantly, with no model call.
+   tags instantly, with no model call. <!-- claim:ai-classification-3 -->
 2. **The model** handles everything the rules do not, using an instruction prompt you can
-   edit.
+   edit. <!-- claim:ai-classification-4 -->
 
+<!-- claim:ai-classification-5 -->
 You control which Gmail categories are classified, can reclassify everything after changing
 the prompt, and can catch up on unclassified mail on demand.
 
@@ -130,6 +145,7 @@ tag value becomes a block listing its threads; in **All accounts** you get one b
 account and tag. A thread sits in exactly one block, under the tag of its most recent
 classified message.
 
+<!-- claim:ai-tag-board-2 -->
 Blocks are ordered by how much attention a tag actually gets — how often you reply to and
 read its threads, weighted towards recent activity — with promotions and notifications
 ranked last. The smart filters in the sidebar follow the same order. Drag blocks to reorder
@@ -144,23 +160,26 @@ as the inbox; two icons set the block width. Clicking a card opens the thread in
 pane, its ⋮ menu offers the same actions as an inbox row, and the chat icon in the reading
 pane starts a conversation with that thread as context.
 
+<!-- claim:ai-tag-board-4 -->
 The board needs classification: it is empty until mail has been tagged, and it is not shown
 while AI features are off.
 
 ## Semantic search
 
+<!-- claim:ai-semantic-search-1 -->
 Emails are embedded locally so search can match meaning, not just keywords — describe what
-you remember and EmailOps finds it. This also powers "find similar" and the retrieval step
-in chat. Pick which categories get embedded, and rebuild the index from scratch after
+you remember and EmailOps finds it. This also powers the retrieval step in chat. Pick which categories get embedded, and rebuild the index from scratch after
 changing the embedding model, in **Settings → AI Search**.
 
 ## Translation
 
+<!-- claim:ai-translation-1 -->
 Translate buttons appear on emails written in another language and in the compose window.
 The translation prompt is editable like the others.
 
 ## Tasks
 
+<!-- claim:ai-tasks-1 -->
 *Experimental.* EmailOps scans mail for action items, commitments and deadlines and collects
 them in a Tasks panel. Because real commitments usually live in what **you** wrote, there is
 a "learn only from emails I wrote" mode. You can exclude senders and tags (newsletters are
@@ -169,6 +188,7 @@ older mail on demand.
 
 ## Memory
 
+<!-- claim:ai-memory-1 -->
 *Experimental.* Facts the assistant learns about your contacts, domains and projects are
 stored as long-term context so chat does not start from zero every time. Candidate facts are
 scored and promoted past a threshold; low-scoring ones expire. Everything it has learned is
@@ -176,12 +196,14 @@ inspectable, and the whole subsystem has a master off switch.
 
 ## Lenses
 
+<!-- claim:ai-lenses-1 -->
 *Experimental.* Schema-typed views over your mailbox — saved, AI-extracted structured
 projections (think "all invoices with amount and due date") that you create and run from the
 sidebar.
 
 ## Turning it all off
 
+<!-- claim:ai-turning-off-1 -->
 **Settings → AI Backend & Models → AI Features** is a master switch. Turn it off and
 EmailOps runs as a plain email client: no chat, no classification, no embeddings, no model
 loaded. Your existing local AI data is preserved in case you switch it back on.
