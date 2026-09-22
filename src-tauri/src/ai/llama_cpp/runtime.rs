@@ -59,8 +59,10 @@ static GEMMA4_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 use tokio::sync::{Mutex, Semaphore};
 
 /// How often the idle-eviction background task wakes up to check if loaded
-/// models have been unused long enough to drop.
-const EVICTION_POLL_INTERVAL_SECS: u64 = 60;
+/// models have been unused long enough to drop. Short, so a keep-alive of `0`
+/// ("free it after use") frees the memory within seconds of the answer; each
+/// wake-up is two atomic loads.
+const EVICTION_POLL_INTERVAL_SECS: u64 = 10;
 
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -476,7 +478,8 @@ impl LlamaCppRuntime {
         runtime
     }
 
-    /// Override the idle-eviction window. 0 pins the model forever.
+    /// Override the idle-eviction window, as `services::ai::keep_alive_from_pref`
+    /// reads it: `KEEP_ALIVE_FOREVER` pins the model, `0` frees it after use.
     pub fn set_keep_alive_secs(&self, secs: u32) {
         self.keep_alive_secs.store(secs, Ordering::Relaxed);
     }
@@ -551,12 +554,8 @@ impl LlamaCppRuntime {
                 };
 
                 let keep_alive = runtime.keep_alive_secs.load(Ordering::Relaxed);
-                if keep_alive == 0 {
-                    continue; // eviction disabled
-                }
-
                 let idle = now_secs().saturating_sub(runtime.last_used.load(Ordering::Relaxed));
-                if idle < keep_alive as i64 {
+                if !crate::services::ai::should_evict(keep_alive, idle) {
                     continue;
                 }
 
