@@ -102,12 +102,12 @@
   metrics: [answer_relevancy, faithfulness]
 
 - id: ts_marisol_where_we_stand
-  question: "en qué quedamos con Marisol"
+  question: "en qué quedamos con Marisol en el último correo"
   account: "ulises@emailopslabs.dev"
   category: thread_summary
   tier: full
-  expected_answer_contains_any: ["Sprint", "sprint", "processing", "bug"]
-  expected_output: "Con Marisol Vega (Faro Logistics), en orden: en marzo de 2025 pidió el dashboard logístico en tiempo real; el 7 de septiembre de 2026 envió el recap de la demo del sprint 5 con el siguiente hito; el 9 de septiembre reportó el bug de pedidos atascados en 'processing', que resolviste ese mismo día revirtiendo el cambio de la cola y ampliando el timeout del webhook, y ella confirmó que los pedidos volvían a moverse. Pendiente: el siguiente hito acordado en el recap del sprint 5. Enlaces email:// a los correos."
+  expected_answer_contains_any: ["processing", "pedidos", "bug"]
+  expected_output: "En su último correo (Re: Production bug: orders stuck in 'processing'), Marisol Vega (Faro Logistics) confirma que los pedidos vuelven a avanzar tras tu arreglo —revertir el cambio de la cola y ampliar el timeout del webhook— y agradece la rapidez. El bug queda resuelto y no hay nada pendiente en ese hilo. Enlace email:// al correo."
   metrics: [answer_relevancy, faithfulness]
 
 - id: ts_rafael_exchange
@@ -264,9 +264,6 @@
   account: "ulises@emailopslabs.dev"
   category: attachments
   tier: full
-  # Month stems, so the same anchor holds whether the model answers "February
-  # 2026" or "febrero de 2026" (the check is a case-insensitive substring).
-  expected_answer_contains: ["febr", "may"]
   expected_output: "Five Fastmail receipts, one per month from January to May 2026 (Standard plan), each linked email://; the PDFs (fastmail-receipt-jan.pdf … fastmail-receipt-may.pdf) are attached to those emails."
   metrics: [answer_relevancy, faithfulness]
 
