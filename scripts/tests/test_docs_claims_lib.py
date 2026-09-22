@@ -31,6 +31,21 @@ def test_a_sentence_may_wrap_over_several_source_lines():
     assert texts(b) == ["The first time you open EmailOps a wizard\nruns.", "It is short."]
 
 
+def test_a_quote_splits_across_its_prefixed_lines():
+    b = para("> **Intel Macs:** one download. The AI is\n> the exception.", kind="quote")
+    assert texts(b) == ["**Intel Macs:** one download.", "The AI is\nthe exception."]
+
+
+def test_a_sentence_may_start_with_a_lowercase_product_name():
+    b = para("It uses the credential store. macOS ships one.")
+    assert texts(b) == ["It uses the credential store.", "macOS ships one."]
+
+
+def test_a_quoted_question_inside_a_sentence_does_not_end_it():
+    b = para('Even a vague question ("what came in today?") still searches it. Done.')
+    assert texts(b) == ['Even a vague question ("what came in today?") still searches it.', "Done."]
+
+
 def test_bold_and_code_spans_do_not_hide_a_sentence_boundary():
     b = para("Open **Settings → AI**. Then pick `qwen`. Done.")
     assert texts(b) == ["Open **Settings → AI**.", "Then pick `qwen`.", "Done."]

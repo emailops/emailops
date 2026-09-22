@@ -2,10 +2,10 @@
 """Pack the evidence for the agent to judge what no deterministic check proves.
 
 Reads a docs-check run (results.json) and writes <run>/judge/packets.json: one
-packet per yellow fragment for which there is something to judge against —
-the screens the app showed while its cases for that block ran, or the files a
-`judge` entry in docs/site/claims.toml names. Fragments with no evidence at
-all are left out: a judgment without evidence is a guess.
+packet per block, listing the block's yellow sentences to judge and, once, the
+evidence to judge them against — the screens the app showed while the block's
+cases ran, or the files a `judge` entry in docs/site/claims.toml names. Blocks
+with no evidence at all are left out: a judgment without evidence is a guess.
 
 The agent running the maintain-docs skill reads the packets and writes
 <run>/judge/judgments.json:
@@ -55,13 +55,11 @@ def packets(results, app_parts, catalog):
             if not screens and not files:
                 continue
             block = " ".join(plain(f["text"]) for f in it["fragments"] if f["kind"] != "header")
-            for f in it["fragments"]:
-                if f["color"] != "yellow":
-                    continue
-                if any(v["state"] in ("manual", "none") for v in f["validations"]) and not judge:
-                    continue  # accepted as not validatable; judge it only when the catalog asks
-                out.append({"claim": cid, "page": page["page"], "sentence": plain(f["text"]),
-                            "block": block, "question": " ".join(ch["judge"] for ch in judge),
+            sentences = [plain(f["text"]) for f in it["fragments"] if f["color"] == "yellow" and (
+                judge or not any(v["state"] in ("manual", "none") for v in f["validations"]))]
+            if sentences:  # manual/none ones are accepted as they are unless the catalog asks
+                out.append({"claim": cid, "page": page["page"], "sentences": sentences, "block": block,
+                            "question": " ".join(ch["judge"] for ch in judge),
                             "app_evidence": screens, "files": files})
     return out
 
@@ -79,8 +77,8 @@ def main():
     got = packets(results, app_parts, load_catalog())
     (run / "judge").mkdir(exist_ok=True)
     (run / "judge" / "packets.json").write_text(json.dumps(got, ensure_ascii=False, indent=1))
-    claims = len({p["claim"] for p in got})
-    print(f"{len(got)} fragmentos para juzgar en {claims} bloques → {run}/judge/packets.json")
+    n = sum(len(p["sentences"]) for p in got)
+    print(f"{n} frases para juzgar en {len(got)} bloques → {run}/judge/packets.json")
 
 
 if __name__ == "__main__":

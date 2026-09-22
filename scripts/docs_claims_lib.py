@@ -223,9 +223,10 @@ class Fragment:
 
 ABBREVIATIONS = ("e.g", "i.e", "etc", "vs", "cf", "approx")
 # Sentence end: . ! or ? (plus any closing markup), then whitespace, then
-# something that can open a sentence. A lowercase word after the stop is a
-# continuation ("3.5 GB. in" never happens in the docs; "e.g. on" does).
-SENTENCE_END = re.compile(r"[.!?](?:\*\*|\*|`|\)|»|\")*(?=\s+[A-Z0-9`*\[(¿¡«\"])")
+# something that can open a sentence — lowercase included ("… store. macOS
+# ships one"). Abbreviations ("e.g. on") are the exception, filtered below;
+# decimals ("3.5") have no space after the stop.
+SENTENCE_END = re.compile(r"[.!?](?:\*\*|\*|`|\)|»|\")*(?=\s+[A-Za-z0-9`*\[(¿¡«\"])")
 
 
 def sentences(text):
@@ -234,6 +235,9 @@ def sentences(text):
         word = text[start : m.start()].split()[-1:] or [""]
         if word[0].lower().lstrip("(*`").endswith(ABBREVIATIONS):
             continue
+        after = text[m.end():].lstrip()[:1]
+        if after.islower() and text[m.start()] in "?!":
+            continue  # a quoted question mid-sentence: ("what came in today?") still…
         out.append(text[start : m.end()].strip())
         start = m.end()
     tail = text[start:].strip()
@@ -245,6 +249,8 @@ def sentences(text):
 def fragments(block):
     """Split a block into fragments, in reading order."""
     lines = list(block.lines)
+    if block.kind == "quote":
+        lines = [re.sub(r"^\s*>\s?", "", l) for l in lines]
     prefix = ""
     if block.kind == "item":
         m = LIST_ITEM.match(lines[0])

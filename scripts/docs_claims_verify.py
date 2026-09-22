@@ -183,10 +183,12 @@ def spread(block, covers):
     return sorted(idx), missing
 
 
-def app_validations(block, parts, ran):
-    """The app cases for one block → [(indices, validation)]."""
+def app_validations(block, parts, ran, complete=True):
+    """The app cases for one block → [(indices, validation)]. `complete` is
+    False when only some app phases ran (DOCS_PHASES): a block no case reached
+    may belong to a phase that was skipped, so it is pending, not failing."""
     everything, _ = spread(block, None)
-    if not ran:
+    if not ran or (not parts and not complete):
         return [(everything, validation(
             "APP", "pending", "Se comprueba manejando la app; esta ejecución no la lanzó.",
             fix="Ejecutar make docs-check ARGS=--with-app."))]
@@ -215,6 +217,9 @@ def app_validations(block, parts, ran):
             state, fix = "skip", "No se puede observar en esta máquina; revisarlo a mano o en otra máquina."
         elif not p.get("read_doc", True):
             state, fix = "fixed", f"Leer el valor esperado del texto de la doc en {where}, no fijarlo en el caso."
+        elif p.get("partial"):
+            state, fix = "partial", (f"El caso solo prueba parte de la frase ({p['partial']}); cubrir el resto con "
+                                     f"otro caso, una entrada manual o el juicio del agente ({where}).")
         elif p.get("proof") == "label":
             state, fix = "label", (f"El caso solo ve que el texto aparece en la app; probar el comportamiento "
                                    f"que describe la frase ({where}).")
@@ -337,7 +342,7 @@ def fragment_model(block, validations):
     return out
 
 
-def evaluate(app_parts, ran, judgments=()):
+def evaluate(app_parts, ran, judgments=(), complete=True):
     """app_parts: {claim id: [part, …]} from the app phases; ran: whether the
     app was driven at all. → (pages, test log)."""
     catalog = load_catalog()
@@ -363,7 +368,7 @@ def evaluate(app_parts, ran, judgments=()):
             else:
                 v = catalog_validations(b, entry, check_file, test_status)
                 if any("app" in ch for ch in entry.get("checks", [])) or app_parts.get(b.claim):
-                    v += app_validations(b, app_parts.get(b.claim, []), ran)
+                    v += app_validations(b, app_parts.get(b.claim, []), ran, complete)
                 v += judge_validations(b, by_claim.get(b.claim, []))
             items.append({"kind": b.kind, "claim": b.claim, "line": b.start, "fragments": fragment_model(b, v)})
         out.append({"page": page.name, "title": page_title(page), "items": items})

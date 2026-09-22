@@ -119,10 +119,13 @@ After a `--with-app` run, pack the evidence and judge the yellow fragments:
 uv run --no-project python scripts/docs_judge_pack.py <run dir>   # → <run>/judge/packets.json
 ```
 
-Each packet is one sentence, its block, the screens the app showed while that
-block's cases ran (and the files a `judge` catalog entry names). Read every
-packet and write `<run>/judge/judgments.json` in the format documented at the
-top of `docs_judge_pack.py`, then fold it in:
+Each packet is one block: its yellow sentences, the whole block for context,
+and the screens the app showed while that block's cases ran (plus the files a
+`judge` catalog entry names). Read every packet and write one judgment per
+sentence to `<run>/judge/judgments.json`, in the format documented at the top
+of `docs_judge_pack.py` (`sentence` verbatim from the packet). With many
+packets, split them across subagents and merge their judgments. Then fold them
+in:
 
 ```bash
 bash scripts/check_docs.sh --render <run dir>

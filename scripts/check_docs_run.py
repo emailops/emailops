@@ -31,7 +31,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUN = pathlib.Path(os.environ["CHECK_DOCS_RUN"])
 WITH_APP = os.environ.get("CHECK_DOCS_WITH_APP") == "1"
 RENDER_ONLY = os.environ.get("CHECK_DOCS_RENDER_ONLY") == "1"
-PHASES = ("fresh", "locked", "demo", "cli")
+PHASES = tuple(os.environ.get("DOCS_PHASES", "fresh locked demo cli").split())
 structure = []
 
 
@@ -105,7 +105,8 @@ jf = RUN / "judge" / "judgments.json"
 if jf.exists():
     judgments = json.loads(jf.read_text())
 
-pages, test_log = evaluate(app_parts, ran, judgments)
+complete = set(PHASES) >= {"fresh", "locked", "demo", "cli"}
+pages, test_log = evaluate(app_parts, ran, judgments, complete)
 data = {
     "meta": {
         "title": "Verificación de documentación de EmailOps",

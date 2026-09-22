@@ -13,6 +13,7 @@
 # leftover instance would hold the port and the next run would refuse to start.
 #
 # Usage: scripts/check_docs_app.sh <out_dir>
+#        DOCS_PHASES="fresh locked" scripts/check_docs_app.sh <out_dir>   # a subset, while iterating
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,8 +34,12 @@ claims = {b.claim: b.text for p in L.pages("en") for b in L.blocks(p) if b.claim
 pathlib.Path(sys.argv[1]).write_text(json.dumps(claims))
 PY
 
+PHASES="${DOCS_PHASES:-fresh locked demo cli}"
+wants() { case " $PHASES " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
 phase() {  # phase <name> <data dir or ""> <run dir>
   local name="$1" data="$2" run="$3"
+  wants "$name" || return 0
   echo "── $name ──"
   if VERIFY_DATA_DIR="${data:-$PWD/.emailops-demo-data}" VERIFY_RUN_DIR="$run" bash "$V" launch; then
     CLAIMS_JSON="$OUT/claims.json" DATA_DIR="$data" node "$DC" "$name" "$OUT" \
@@ -50,6 +55,7 @@ phase locked "$FRESH" "$OUT/locked-run"
 rm -rf "$FRESH"
 phase demo   ""       "$OUT/demo-run"
 
+wants cli || exit 0
 echo "── cli ──"
 cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --features cli --bin emailops-cli --quiet \
   && uv run --no-project python scripts/docs_cli_claims.py src-tauri/target/debug/emailops-cli .emailops-demo-data "$OUT"

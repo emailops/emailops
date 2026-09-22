@@ -27,7 +27,7 @@ def test_colour_rules():
     assert color([{"state": "ok"}, {"state": "fail"}]) == "red"
     assert color([{"state": "supported"}]) == "green"
     assert color([{"state": "contradicted"}]) == "red"
-    for s in ("label", "fixed", "undeclared", "manual", "none", "pending", "skip", "insufficient"):
+    for s in ("label", "fixed", "undeclared", "partial", "manual", "none", "pending", "skip", "insufficient"):
         assert color([{"state": s}]) == "yellow", s
     assert color([]) == "yellow"
 
@@ -66,8 +66,19 @@ def test_a_label_only_proof_is_yellow():
     assert states(model)[0] == ["label"]
 
 
+def test_a_case_that_proves_only_part_of_a_sentence_is_yellow():
+    model = fragment_model(BLOCK, app_validations(BLOCK, [part(partial="the step count only")], ran=True))
+    assert states(model)[0] == ["partial"]
+    assert "the step count only" in model[0]["validations"][0]["fix"]
+
+
 def test_app_checks_that_did_not_run_are_pending_over_the_block():
     model = fragment_model(BLOCK, app_validations(BLOCK, [], ran=False))
+    assert states(model) == [["pending"], ["pending"]]
+
+
+def test_an_app_check_is_pending_when_only_some_phases_ran():
+    model = fragment_model(BLOCK, app_validations(BLOCK, [], ran=True, complete=False))
     assert states(model) == [["pending"], ["pending"]]
 
 

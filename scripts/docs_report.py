@@ -37,7 +37,8 @@ TAGS = {
 STATE = {
     "ok": "Validado", "fail": "Falla", "label": "Solo se vio el texto, no el comportamiento",
     "fixed": "Expectativa fijada en el caso, no leída de la doc",
-    "undeclared": "La comprobación pasa, pero no declara qué frases cubre", "manual": "Revisión manual",
+    "undeclared": "La comprobación pasa, pero no declara qué frases cubre",
+    "partial": "Solo prueba parte de la frase", "manual": "Revisión manual",
     "none": "Sin afirmación verificable", "pending": "No ejecutado en esta pasada",
     "skip": "No observable en esta máquina", "supported": "El agente lo respalda",
     "contradicted": "El agente lo contradice", "insufficient": "Evidencia insuficiente para el agente",
@@ -46,7 +47,7 @@ COLOR_OF = {"ok": "green", "supported": "green", "fail": "red", "contradicted": 
 COLORS = ("green", "yellow", "red")
 COLOR_LABEL = {"green": "Verde", "yellow": "Amarillo", "red": "Rojo"}
 # Yellow states that call for work; manual and none are accepted as they are.
-ACTION_ORDER = ["red", "insufficient", "label", "fixed", "undeclared", "skip", "SIN", "pending"]
+ACTION_ORDER = ["red", "insufficient", "partial", "label", "fixed", "undeclared", "skip", "SIN", "pending"]
 
 
 def E(s):
@@ -143,7 +144,7 @@ def actions(page, pi=0):
                 add("pending", "", "Ejecutar make docs-check ARGS=--with-app para validar contra la app.", fid)
             elif s == "insufficient":
                 add(s, fid, f"«{excerpt(f)}»: {v['fix'] or STATE[s]}", fid)
-            elif s in ("label", "fixed", "undeclared", "skip"):
+            elif s in ("label", "fixed", "undeclared", "skip", "partial"):
                 add(s, v["where"], f"{STATE[s]} — {v['fix'] or ''} ({v['where']})".replace(" ()", ""), fid)
     return sorted(groups.values(), key=lambda g: ACTION_ORDER.index(g["kind"]))
 
