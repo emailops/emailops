@@ -51,7 +51,9 @@
     "tone": "Tono",
     "toneFormal": "Formal",
     "toneCasual": "Informal",
-    "toneFriendly": "Amigable"
+    "toneFriendly": "Amigable",
+    "instructionPlaceholder": "Dile a la IA qué responder (opcional), p. ej. acepta pero propón el jueves",
+    "regenerate": "Regenerar"
   },
   "feedback": {
     "general": {
@@ -93,5 +95,11 @@
     "subject": "Asunto",
     "to": "Para",
     "cc": "Cc"
+  },
+  "sendWarnings": {
+    "missingAttachment": "El mensaje menciona un adjunto, pero no hay ningún archivo adjunto.",
+    "unfilledPlaceholder": "Quedan huecos por rellenar: {{items}}",
+    "review": "Revisar",
+    "sendAnyway": "Enviar igualmente"
   }
 }
