@@ -60,7 +60,7 @@
       "invalidDomain": "„{{value}}“ ist keine gültige Domain (erwartet wird etwa „stripe.com“).",
       "invalidEmail": "„{{value}}“ ist keine gültige E-Mail-Adresse."
     },
-    "keywordPlaceholder": "z. B. Rechnung",
+    "keywordPlaceholder": "z. B. Angebot OR Kostenvoranschlag",
     "foldersFilter": "Ordner filtern…"
   },
   "prompt": {
@@ -115,8 +115,11 @@
       "cadence": "Rhythmus",
       "cancel_url": "Kündigungslink",
       "client": "Kunde",
+      "company": "Firma",
       "confidence": "Konfidenz",
       "confirmation_code": "Bestätigungsnr.",
+      "contact_email": "E-Mail",
+      "contact_name": "Name",
       "currency": "Währung",
       "days_overdue": "Tage überfällig",
       "days_silent": "Tage ohne Antwort",
@@ -127,6 +130,7 @@
       "newsletter": "Newsletter",
       "next_renewal": "Nächste Verlängerung",
       "paid": "Bezahlt",
+      "phone": "Telefon",
       "priority_guess": "Priorität",
       "promise": "Zusage",
       "provider": "Anbieter",
@@ -134,6 +138,7 @@
       "received_date": "Erhalten",
       "recipient": "Empfänger",
       "reference": "Referenz",
+      "request_type": "Art",
       "sender_name": "Von",
       "sent_date": "Gesendet",
       "service": "Dienst",
@@ -235,5 +240,43 @@
     "progress": "{{processed}} von {{total}} verarbeitet ({{pct}} %)",
     "runningShort": "Läuft…",
     "runningProgress": "Läuft… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "Warten auf Antwort",
+      "description": "Gesendete E-Mails mit einer Frage, auf die niemand geantwortet hat."
+    },
+    "promises_made": {
+      "name": "Zusagen",
+      "description": "Was du in gesendeten E-Mails zugesagt hast."
+    },
+    "invoices_received": {
+      "name": "Erhaltene Rechnungen",
+      "description": "Rechnungen und Forderungen an dich."
+    },
+    "invoices_sent": {
+      "name": "Gesendete Rechnungen",
+      "description": "Rechnungen, die du an Kunden geschickt hast."
+    },
+    "travel": {
+      "name": "Reisen",
+      "description": "Flüge, Hotels, Mietwagen und andere Reisebestätigungen."
+    },
+    "subscriptions": {
+      "name": "Abonnements",
+      "description": "Wiederkehrende SaaS-Rechnungen und Verlängerungen."
+    },
+    "wise_transfers": {
+      "name": "Wise-Überweisungen",
+      "description": "Internationale Zahlungen über Wise."
+    },
+    "newsletter_digest": {
+      "name": "Newsletter-Übersicht",
+      "description": "Einzeilige Zusammenfassungen aktueller Newsletter."
+    },
+    "contact_form_leads": {
+      "name": "Kontaktformular-Anfragen",
+      "description": "Personen, die dir über das Kontaktformular deiner Website geschrieben haben."
+    }
   }
 }

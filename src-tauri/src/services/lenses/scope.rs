@@ -341,6 +341,32 @@ mod tests {
     }
 
     #[test]
+    fn uppercase_or_in_the_keyword_query_matches_either_term() {
+        // `escape_fts_query` keeps bare words, so FTS5's own `OR` operator
+        // survives: "quote OR estimate" is a disjunction, not three ANDed words.
+        let db = Database::new_for_testing().expect("db");
+        insert_email(&db, "a", "acct1", "inbox", 100);
+        insert_email(&db, "b", "acct1", "inbox", 200);
+        insert_email(&db, "c", "acct1", "inbox", 300);
+        let conn = db.connection();
+        for (id, subject) in [("a", "Need a quote"), ("b", "Rough estimate please"), ("c", "Lunch")] {
+            conn.execute(
+                "INSERT INTO emails_fts (email_id, subject, sender, body) VALUES (?1, ?2, '', '')",
+                rusqlite::params![id, subject],
+            )
+            .expect("index");
+        }
+        drop(conn);
+
+        let scope = LensScope {
+            query: Some("quote OR estimate".into()),
+            ..Default::default()
+        };
+        let ids = evaluate(&db, &scope).unwrap();
+        assert_eq!(ids, vec!["b".to_string(), "a".to_string()]);
+    }
+
+    #[test]
     fn direction_outbound_filters_to_sent_mailbox() {
         let db = Database::new_for_testing().expect("db");
         insert_email(&db, "in1", "acct1", "inbox", 100);

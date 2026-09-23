@@ -114,6 +114,10 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
 
   if (!open) return null;
 
+  // Built-in template names come from the backend in English; localize them by
+  // key, falling back to the backend text for a template the locales lack.
+  const templateName = (tpl: LensTemplate) => t(`lenses:templates.${tpl.key}.name`, { defaultValue: tpl.name });
+
   const toggleInArray = (list: string[], v: string, setter: (next: string[]) => void) => {
     setter(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   };
@@ -237,7 +241,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     setError(null);
     setSubmitting(true);
     try {
-      const lens = await api.createLensFromTemplate(tpl.key, undefined, templateAccountId || undefined);
+      const lens = await api.createLensFromTemplate(tpl.key, templateName(tpl), templateAccountId || undefined);
       await refreshLenses();
       onCreated(lens);
     } catch (err) {
@@ -334,8 +338,10 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   >
                     <span className="text-xl leading-none">{tpl.icon}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-gray-100">{tpl.name}</span>
-                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">{tpl.description}</span>
+                      <span className="block truncate font-medium text-gray-100">{templateName(tpl)}</span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">
+                        {t(`lenses:templates.${tpl.key}.description`, { defaultValue: tpl.description })}
+                      </span>
                     </span>
                   </button>
                 ))}

@@ -60,7 +60,7 @@
       "invalidDomain": "« {{value}} » n'est pas un domaine valide (attendu : quelque chose comme « stripe.com »).",
       "invalidEmail": "« {{value}} » n'est pas une adresse e-mail valide."
     },
-    "keywordPlaceholder": "ex. facture",
+    "keywordPlaceholder": "ex. devis OR tarif",
     "foldersFilter": "Filtrer les dossiers…"
   },
   "prompt": {
@@ -115,8 +115,11 @@
       "cadence": "Fréquence",
       "cancel_url": "Lien d'annulation",
       "client": "Client",
+      "company": "Entreprise",
       "confidence": "Confiance",
       "confirmation_code": "N° de confirmation",
+      "contact_email": "E-mail",
+      "contact_name": "Nom",
       "currency": "Devise",
       "days_overdue": "Jours de retard",
       "days_silent": "Jours sans réponse",
@@ -127,6 +130,7 @@
       "newsletter": "Newsletter",
       "next_renewal": "Prochain renouvellement",
       "paid": "Payé",
+      "phone": "Téléphone",
       "priority_guess": "Priorité",
       "promise": "Engagement",
       "provider": "Fournisseur",
@@ -134,6 +138,7 @@
       "received_date": "Reçu",
       "recipient": "Destinataire",
       "reference": "Référence",
+      "request_type": "Type",
       "sender_name": "De",
       "sent_date": "Envoyé",
       "service": "Service",
@@ -235,5 +240,43 @@
     "progress": "{{processed}} sur {{total}} traités ({{pct}} %)",
     "runningShort": "En cours…",
     "runningProgress": "En cours… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "En attente de réponse",
+      "description": "E-mails envoyés où vous avez posé une question restée sans réponse."
+    },
+    "promises_made": {
+      "name": "Engagements pris",
+      "description": "Ce que vous vous êtes engagé à faire dans vos e-mails envoyés."
+    },
+    "invoices_received": {
+      "name": "Factures reçues",
+      "description": "Factures et relevés qui vous sont adressés."
+    },
+    "invoices_sent": {
+      "name": "Factures envoyées",
+      "description": "Factures que vous avez envoyées à vos clients."
+    },
+    "travel": {
+      "name": "Voyages",
+      "description": "Vols, hôtels, voitures et autres confirmations de voyage."
+    },
+    "subscriptions": {
+      "name": "Abonnements",
+      "description": "Factures SaaS récurrentes et renouvellements."
+    },
+    "wise_transfers": {
+      "name": "Virements Wise",
+      "description": "Paiements internationaux reçus via Wise."
+    },
+    "newsletter_digest": {
+      "name": "Résumé des newsletters",
+      "description": "Résumés en une ligne des newsletters récentes."
+    },
+    "contact_form_leads": {
+      "name": "Contacts du formulaire web",
+      "description": "Personnes qui vous ont écrit via le formulaire de contact de votre site."
+    }
   }
 }

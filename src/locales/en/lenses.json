@@ -60,7 +60,7 @@
       "invalidDomain": "\"{{value}}\" is not a valid domain (expected something like \"stripe.com\").",
       "invalidEmail": "\"{{value}}\" is not a valid email address."
     },
-    "keywordPlaceholder": "e.g. invoice",
+    "keywordPlaceholder": "e.g. quote OR estimate",
     "foldersFilter": "Filter folders…"
   },
   "prompt": {
@@ -115,8 +115,11 @@
       "cadence": "Cadence",
       "cancel_url": "Cancel link",
       "client": "Client",
+      "company": "Company",
       "confidence": "Confidence",
       "confirmation_code": "Confirmation #",
+      "contact_email": "Email",
+      "contact_name": "Name",
       "currency": "Currency",
       "days_overdue": "Days overdue",
       "days_silent": "Days silent",
@@ -127,6 +130,7 @@
       "newsletter": "Newsletter",
       "next_renewal": "Next renewal",
       "paid": "Paid",
+      "phone": "Phone",
       "priority_guess": "Priority",
       "promise": "Promise",
       "provider": "Provider",
@@ -134,6 +138,7 @@
       "received_date": "Received",
       "recipient": "Recipient",
       "reference": "Reference",
+      "request_type": "Type",
       "sender_name": "From",
       "sent_date": "Sent",
       "service": "Service",
@@ -235,5 +240,43 @@
     "progress": "{{processed}} of {{total}} processed ({{pct}}%)",
     "runningShort": "Running…",
     "runningProgress": "Running… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "Awaiting reply",
+      "description": "Outbound emails where you asked something and got no answer."
+    },
+    "promises_made": {
+      "name": "Promises made",
+      "description": "Things you committed to do in outbound emails."
+    },
+    "invoices_received": {
+      "name": "Invoices received",
+      "description": "Bills and invoices addressed to you."
+    },
+    "invoices_sent": {
+      "name": "Invoices sent",
+      "description": "Invoices you have sent to clients."
+    },
+    "travel": {
+      "name": "Travel",
+      "description": "Flights, hotels, cars, and other travel confirmations."
+    },
+    "subscriptions": {
+      "name": "Subscriptions",
+      "description": "Recurring SaaS bills and renewals."
+    },
+    "wise_transfers": {
+      "name": "Wise transfers",
+      "description": "Cross-border payments via Wise."
+    },
+    "newsletter_digest": {
+      "name": "Newsletter digest",
+      "description": "One-line summaries of recent newsletters."
+    },
+    "contact_form_leads": {
+      "name": "Contact form leads",
+      "description": "People who wrote in through your website's contact form."
+    }
   }
 }

@@ -331,7 +331,12 @@ fn validate_against_schema(
 
     let mut out = serde_json::Map::new();
     for col in &schema.columns {
-        let val = obj.get(&col.key).cloned().unwrap_or(serde_json::Value::Null);
+        let val = match obj.get(&col.key) {
+            // Small models spell "no value" as the string "null".
+            Some(serde_json::Value::String(t)) if t.trim().eq_ignore_ascii_case("null") => serde_json::Value::Null,
+            Some(v) => v.clone(),
+            None => serde_json::Value::Null,
+        };
 
         if val.is_null() {
             // Store null and continue — even for 'required' columns.
@@ -768,6 +773,28 @@ mod tests {
         assert_eq!(coerced["vendor"], "Acme");
         assert!(coerced["amount"].is_null());
         assert!(coerced["status"].is_null());
+    }
+
+    #[test]
+    fn validate_treats_the_text_null_as_a_missing_value() {
+        // Small local models answer "null" (a string) for fields they cannot
+        // fill; stored as-is it shows up in the table as the word "null" and,
+        // on a unique-key column, merges every such row into one.
+        let schema = LensSchema {
+            columns: vec![LensColumn {
+                key: "contact_email".into(),
+                label: "Email".into(),
+                column_type: LensColumnType::Email,
+                description: "".into(),
+                enum_values: None,
+                required: false,
+                is_unique_key: true,
+            }],
+        };
+        for text in ["null", "NULL", " null "] {
+            let coerced = validate_against_schema(&json!({ "contact_email": text }), &schema).unwrap();
+            assert!(coerced["contact_email"].is_null(), "{text:?} should become null");
+        }
     }
 
     #[test]
