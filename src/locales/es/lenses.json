@@ -60,7 +60,8 @@
       "invalidDomain": "\"{{value}}\" no es un dominio válido (se espera algo como \"stripe.com\").",
       "invalidEmail": "\"{{value}}\" no es una dirección de correo válida."
     },
-    "keywordPlaceholder": "p. ej. presupuesto"
+    "keywordPlaceholder": "p. ej. presupuesto",
+    "foldersFilter": "Filtrar carpetas…"
   },
   "prompt": {
     "placeholder": "Describe qué extraer de cada correo…"

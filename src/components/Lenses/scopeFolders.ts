@@ -32,3 +32,13 @@ export function folderChips(folders: Folder[], selected: string[]): FolderChip[]
 export function withoutFolderMailboxes(mailboxes: string[]): string[] {
   return mailboxes.filter((m) => !m.startsWith(FOLDER_PREFIX));
 }
+
+/** Chips to render: selected ones first (always, whatever the filter says, so
+ *  a long list never buries the current scope), then the unselected ones whose
+ *  label contains `query`, case-insensitively. */
+export function visibleFolderChips(chips: FolderChip[], selected: string[], query: string): FolderChip[] {
+  const needle = query.trim().toLowerCase();
+  const picked = chips.filter((c) => selected.includes(c.value));
+  const rest = chips.filter((c) => !selected.includes(c.value) && c.label.toLowerCase().includes(needle));
+  return [...picked, ...rest];
+}

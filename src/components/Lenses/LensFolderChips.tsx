@@ -10,7 +10,10 @@ import type { Folder } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 
-import { folderChips } from './scopeFolders';
+import { folderChips, visibleFolderChips } from './scopeFolders';
+
+/** Above this many folders the list gets a filter field. */
+const FILTER_THRESHOLD = 10;
 
 interface LensFolderChipsProps {
   /** '' = all accounts. */
@@ -23,10 +26,12 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
   const { t } = useTranslation(['lenses']);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     setFolders([]);
     setLoadError(null);
+    setQuery('');
     if (!accountId) return;
     let cancelled = false;
     api
@@ -48,6 +53,8 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
 
   const chips = folderChips(folders, selected);
   if (chips.length === 0 && !loadError) return null;
+  const showFilter = folders.length > FILTER_THRESHOLD;
+  const visible = visibleFolderChips(chips, selected, showFilter ? query : '');
 
   return (
     <div className="space-y-1">
@@ -55,8 +62,20 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
       {loadError && (
         <p className="text-[10px] text-red-400">{t('lenses:scope.foldersLoadError', { error: loadError })}</p>
       )}
-      <div className="flex flex-wrap gap-1.5">
-        {chips.map((chip) => (
+      {showFilter && (
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('lenses:scope.foldersFilter')}
+          aria-label={t('lenses:scope.foldersFilter')}
+          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+        />
+      )}
+      {/* ~4 rows of chips; a long folder list scrolls here instead of pushing
+          the rest of the scope form off-screen. */}
+      <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+        {visible.map((chip) => (
           <button
             key={chip.value}
             type="button"

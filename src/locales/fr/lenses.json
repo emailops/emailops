@@ -60,7 +60,8 @@
       "invalidDomain": "« {{value}} » n'est pas un domaine valide (attendu : quelque chose comme « stripe.com »).",
       "invalidEmail": "« {{value}} » n'est pas une adresse e-mail valide."
     },
-    "keywordPlaceholder": "ex. facture"
+    "keywordPlaceholder": "ex. facture",
+    "foldersFilter": "Filtrer les dossiers…"
   },
   "prompt": {
     "placeholder": "Décrivez ce qu'il faut extraire de chaque e-mail…"

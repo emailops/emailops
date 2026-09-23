@@ -59,6 +59,24 @@ describe('LensFolderChips', () => {
     expect(onToggle).toHaveBeenCalledWith('folder:INBOX.Quotes');
   });
 
+  it('offers a filter only when the account has more than ten folders', async () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      id: `f${i}`,
+      accountId: 'acc-1',
+      serverPath: `Folder${i}`,
+      displayName: `Folder${i}`,
+      role: '',
+      delimiter: '.',
+    }));
+    vi.mocked(api.getFolders).mockResolvedValue(many);
+    await render('acc-1', []);
+    expect(container.querySelector('input[aria-label="lenses:scope.foldersFilter"]')).not.toBeNull();
+
+    vi.mocked(api.getFolders).mockResolvedValue(many.slice(0, 10));
+    await render('acc-2', []);
+    expect(container.querySelector('input[aria-label="lenses:scope.foldersFilter"]')).toBeNull();
+  });
+
   it('asks for an account instead of listing folders across all accounts', async () => {
     await render('', []);
     expect(api.getFolders).not.toHaveBeenCalled();

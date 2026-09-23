@@ -60,7 +60,8 @@
       "invalidDomain": "\"{{value}}\" is not a valid domain (expected something like \"stripe.com\").",
       "invalidEmail": "\"{{value}}\" is not a valid email address."
     },
-    "keywordPlaceholder": "e.g. invoice"
+    "keywordPlaceholder": "e.g. invoice",
+    "foldersFilter": "Filter folders…"
   },
   "prompt": {
     "placeholder": "Describe what to extract from each email…"

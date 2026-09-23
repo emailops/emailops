@@ -60,7 +60,8 @@
       "invalidDomain": "„{{value}}“ ist keine gültige Domain (erwartet wird etwa „stripe.com“).",
       "invalidEmail": "„{{value}}“ ist keine gültige E-Mail-Adresse."
     },
-    "keywordPlaceholder": "z. B. Rechnung"
+    "keywordPlaceholder": "z. B. Rechnung",
+    "foldersFilter": "Ordner filtern…"
   },
   "prompt": {
     "placeholder": "Beschreibe, was aus jeder E-Mail extrahiert werden soll…"
