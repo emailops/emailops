@@ -91,10 +91,12 @@ def resolves(candidate: str, md_dir: pathlib.Path, tracked: list[str]) -> bool:
             fnmatch.fnmatch(p, candidate) or fnmatch.fnmatch(p, f"*/{candidate}")
             for p in tracked
         )
-    if (ROOT / candidate).exists():
-        return True
-    if (md_dir / candidate).exists():
-        return True
+    for base in (ROOT, md_dir):
+        path = base / candidate
+        # A path escaping the repo only exists on machines with a sibling
+        # checkout; CI never has one, so it must not count as resolving.
+        if path.exists() and path.resolve().is_relative_to(ROOT.resolve()):
+            return True
     return any(p.endswith(f"/{candidate}") for p in tracked)
 
 
