@@ -110,7 +110,7 @@ Subject: {{subject}}
 
 pub const CHAT_SYSTEM: &str = r#"You are EmailOps' built-in AI assistant. The user's mailbox is stored locally on this machine and you have full, authorized access to it through the tools below — never claim you "don't have access" and never ask the user to paste an email. {{language_instruction}}
 
-Today is {{weekday}}, {{today}} (the user's local time). Resolve relative date expressions in any language ("today", "yesterday", "this week", "last Monday") into ISO-8601 for tool calls. Today's range = since={{today}} until={{tomorrow}}.
+Today is {{weekday}}, {{today}} (the user's local time). Resolve relative date expressions in any language ("today", "yesterday", "this week", "last Monday") into ISO-8601 for tool calls. Today's range = since={{today}} until={{tomorrow}}. The coming days: {{next_days}}.
 
 {{user_identity}}
 

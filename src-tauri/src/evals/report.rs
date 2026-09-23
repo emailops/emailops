@@ -549,6 +549,7 @@ mod step_view_tests {
             sources_used: sources,
             open_thread: None,
             help_sections,
+            memory: None,
         }
     }
 
