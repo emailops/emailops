@@ -253,6 +253,12 @@
     "src/stores/updateStore.test.ts::load() leaves null when the backend reports no update": "Comprueba que load() deja el estado en null cuando el backend indica que no hay actualización disponible.",
     "src/stores/updateStore.test.ts::load() drops updates whose url is not a github release page": "Comprueba que load() descarta la actualización si su url no apunta a una página de release de GitHub, evitando enlaces de actualización no confiables.",
     "src/stores/updateStore.test.ts::load() swallows command failures (purely informational surface)": "Comprueba que load() no propaga el error si el comando del backend falla, ya que la comprobación de actualizaciones es solo informativa.",
-    "src/stores/updateStore.test.ts::setAvailable replaces the current value": "Comprueba que setAvailable sobrescribe el valor actual de actualización disponible en el store."
+    "src/stores/updateStore.test.ts::setAvailable replaces the current value": "Comprueba que setAvailable sobrescribe el valor actual de actualización disponible en el store.",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::drops a dark-scheme media rule and keeps the plain rules": "Comprueba que el bridge elimina las reglas @media (prefers-color-scheme: dark) del email y conserva las reglas normales, para que el texto no pase a blanco sobre el panel claro.",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::drops a dark-scheme rule combined with other features": "Comprueba que también se elimina una regla dark combinada con otras condiciones (hover, pointer).",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::keeps the other branches of a comma-separated media list": "Comprueba que en una lista de media separada por comas solo se quita la rama dark y se conservan las demás (p. ej. max-width).",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::drops dark-scheme rules nested inside another grouping rule": "Comprueba que las reglas dark anidadas dentro de otra regla de agrupación también se eliminan.",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::leaves light-scheme and unrelated media rules untouched": "Comprueba que las reglas light y las media queries no relacionadas con el esquema de color quedan intactas.",
+    "src/components/shared/EmailHtmlFrame.colorScheme.test.ts::pins the frame document to the light scheme so system colours resolve light": "Comprueba que el CSS base del frame fija color-scheme: light only, para que Canvas/CanvasText y los controles nativos se resuelvan en claro con el sistema en modo oscuro."
   }
 }
