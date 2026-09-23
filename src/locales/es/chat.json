@@ -176,7 +176,7 @@
     "expand": "Abrir vista completa del chat",
     "resize": "Redimensionar el panel de chat",
     "conversationPicker": "Cambiar de conversación",
-    "emptyHint": "Pregunta sobre el correo que tienes abierto, o sobre cualquier cosa de tu bandeja.",
+    "emptyHint": "Pregunta sobre el correo que tienes abierto, sobre cualquier cosa de tu bandeja, o sobre cómo hacer algo en EmailOps.",
     "context": {
       "using": "Usando como contexto",
       "remove": "No usar este hilo como contexto",

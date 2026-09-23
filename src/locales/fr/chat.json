@@ -176,7 +176,7 @@
     "expand": "Ouvrir la vue complète du chat",
     "resize": "Redimensionner le panneau de chat",
     "conversationPicker": "Changer de conversation",
-    "emptyHint": "Posez une question sur le courriel ouvert, ou sur n'importe quoi dans votre boîte.",
+    "emptyHint": "Posez une question sur le courriel ouvert, sur n'importe quoi dans votre boîte, ou sur comment faire quelque chose dans EmailOps.",
     "context": {
       "using": "Utilisé comme contexte",
       "remove": "Ne pas utiliser ce fil comme contexte",

@@ -176,7 +176,7 @@
     "expand": "Vollständige Chat-Ansicht öffnen",
     "resize": "Chat-Panel skalieren",
     "conversationPicker": "Unterhaltung wechseln",
-    "emptyHint": "Frag zur geöffneten E-Mail oder zu allem in deinem Posteingang.",
+    "emptyHint": "Frag zur geöffneten E-Mail, zu allem in deinem Posteingang oder dazu, wie man etwas in EmailOps macht.",
     "context": {
       "using": "Wird als Kontext verwendet",
       "remove": "Diesen Thread nicht als Kontext verwenden",

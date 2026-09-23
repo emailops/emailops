@@ -176,7 +176,7 @@
     "expand": "Open full chat view",
     "resize": "Resize chat panel",
     "conversationPicker": "Switch conversation",
-    "emptyHint": "Ask about the email you have open, or anything in your inbox.",
+    "emptyHint": "Ask about the email you have open, anything in your inbox, or how to do something in EmailOps.",
     "context": {
       "using": "Using as context",
       "remove": "Don't use this thread as context",

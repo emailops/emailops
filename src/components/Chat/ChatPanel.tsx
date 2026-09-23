@@ -198,7 +198,7 @@ export function ChatPanel({
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {showEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500">
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm leading-relaxed text-gray-500">
             {t('chat:panel.emptyHint')}
           </div>
         ) : isLoadingMessages ? (
