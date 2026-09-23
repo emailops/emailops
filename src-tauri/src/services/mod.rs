@@ -16,6 +16,7 @@ pub mod emails;
 pub mod embeddings;
 pub mod events;
 pub mod filters;
+pub mod forms;
 pub mod help_docs;
 pub mod i18n;
 pub mod junk;

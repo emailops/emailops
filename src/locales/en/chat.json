@@ -57,7 +57,12 @@
     "streaming": "Generating…",
     "stopped": "Generation stopped",
     "error": "Something went wrong",
-    "retry": "Retry"
+    "retry": "Retry",
+    "wrong": "This answer isn't right",
+    "wrongPrompt": "What was wrong with it?",
+    "wrongPlaceholder": "e.g. those emails are from September, not August",
+    "wrongSubmit": "Try again",
+    "rejected": "Marked as wrong — retried below."
   },
   "processing": {
     "routing": "Routing…",

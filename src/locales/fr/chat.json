@@ -57,7 +57,12 @@
     "streaming": "Génération…",
     "stopped": "Génération arrêtée",
     "error": "Une erreur s'est produite",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "wrong": "Cette réponse n'est pas correcte",
+    "wrongPrompt": "Qu'est-ce qui n'allait pas ?",
+    "wrongPlaceholder": "p. ex. ces e-mails datent de septembre, pas d’août",
+    "wrongSubmit": "Réessayer",
+    "rejected": "Marquée comme incorrecte — nouvelle tentative ci-dessous."
   },
   "processing": {
     "routing": "Routage…",

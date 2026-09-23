@@ -753,6 +753,43 @@ impl ChatMessage {
     }
 }
 
+// ── Per-turn view context ──────────────────────────────────────────────────
+
+/// What the user has on screen, passed per turn by the chat panel.
+///
+/// Ephemeral by design, exactly like `context_thread_id`: a conversation is
+/// never converted into a "settings conversation", and moving between views
+/// inside one conversation just changes what the next turn sees. Validated in
+/// `services::chat::view_context` before it can reach a prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatViewContext {
+    /// `view/<name>`, `settings/<tab>`, or `form/<form id>` when a fillable
+    /// form is open. Anything else is ignored.
+    pub token: String,
+    /// The values already in the open form, so "añade una columna de IVA"
+    /// edits what is on screen instead of starting over. Only meaningful when
+    /// `token` names a form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_values: Option<serde_json::Value>,
+}
+
+/// The user pressed "this answer is wrong" and said why.
+///
+/// A correction runs as an ORDINARY new turn — same route, same tools, same
+/// retrieval — with one short instruction prepended to the user message. The
+/// rejected answer is deliberately left in the conversation: replacing it would
+/// destroy the evidence of what went wrong, and the model reads it in history
+/// anyway, which is what makes "no, esos son de septiembre" actionable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCorrection {
+    /// The assistant message the user marked wrong.
+    pub rejected_message_id: String,
+    /// What the user said was wrong with it, in their own words.
+    pub reason: String,
+}
+
 // ── Reasoning trace ────────────────────────────────────────────────────────
 
 /// Which retrieval/tool path the router picked for a given chat turn.

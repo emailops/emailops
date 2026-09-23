@@ -51,6 +51,20 @@ export interface ModalProps {
   bodyClassName?: string;
   /** z-index for stacking; defaults to 50. Pass 60 to overlay another modal. */
   zIndex?: number;
+  /**
+   * Leave the rest of the app visible and usable: no dim backdrop, no pointer
+   * trap, and the dialog stays clear of the right-docked chat panel.
+   *
+   * Used when the chat is driving the dialog — filling a form from chat is a
+   * conversation, so the panel has to stay on screen and accept the next
+   * message ("no, esa columna es un importe"). A normal modal would cover it
+   * and swallow every click.
+   *
+   * The clearance comes from the `--chat-dock-width` CSS variable that `App`
+   * keeps in sync with the dock's persisted width, so the dialog never has to
+   * know whether the panel is open or how wide the user dragged it.
+   */
+  nonBlocking?: boolean;
 }
 
 export function Modal({
@@ -66,6 +80,7 @@ export function Modal({
   children,
   bodyClassName,
   zIndex = 50,
+  nonBlocking = false,
 }: ModalProps) {
   const { t } = useTranslation(['common']);
   // Escape-to-close. Bound to window so focused inputs don't swallow it.
@@ -80,24 +95,35 @@ export function Modal({
 
   const handleBackdrop = useCallback(
     (e: React.MouseEvent) => {
-      if (disableBackdropClose) return;
+      // A non-blocking dialog has no backdrop to click: the pointer goes
+      // through to whatever is behind it, which is the point.
+      if (disableBackdropClose || nonBlocking) return;
       if (e.target === e.currentTarget) onClose();
     },
-    [disableBackdropClose, onClose],
+    [disableBackdropClose, nonBlocking, onClose],
   );
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center bg-black/60 p-4"
-      style={{ zIndex }}
+      data-testid="modal-overlay"
+      className={
+        nonBlocking
+          ? 'pointer-events-none fixed inset-y-0 left-0 flex items-center justify-center p-4'
+          : 'fixed inset-0 flex items-center justify-center bg-black/60 p-4'
+      }
+      // `right` clears the docked chat panel so it stays fully visible; 0 when
+      // the panel is closed (the variable is unset) or the modal is blocking.
+      style={nonBlocking ? { zIndex, right: 'var(--chat-dock-width, 0px)' } : { zIndex }}
       onClick={handleBackdrop}
       role="dialog"
-      aria-modal="true"
+      aria-modal={nonBlocking ? undefined : 'true'}
     >
       <div
-        className={`${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl`}
+        className={`${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl${
+          nonBlocking ? ' pointer-events-auto' : ''
+        }`}
       >
         {title !== undefined && (
           <div className="flex items-start justify-between gap-4 border-b border-gray-700 px-6 py-4">

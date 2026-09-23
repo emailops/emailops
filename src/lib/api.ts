@@ -1297,6 +1297,21 @@ export async function sendChatMessage(
    * context.
    */
   contextAccountId?: string | null,
+  /**
+   * What the user has on screen this turn: `view/<mode>`, `settings/<tab>`, or
+   * `form/<form id>` plus that form's current values. Lets "esto"/"aquí"
+   * resolve, and lets "añade una columna de IVA" edit the form in front of the
+   * user. The backend re-validates the token against its own allowlists, so an
+   * unknown one is dropped rather than prompted.
+   */
+  contextView?: ChatViewContext | null,
+  /**
+   * Set when the user pressed "this answer is wrong" and said why. The backend
+   * runs an ordinary new turn with a short correction instruction prepended to
+   * the user message, so the wrong answer stays visible in the history and the
+   * retry is steered by what the user actually objected to.
+   */
+  correction?: ChatCorrection | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1304,7 +1319,25 @@ export async function sendChatMessage(
     categories,
     contextThreadId: contextThreadId ?? null,
     contextAccountId: contextAccountId ?? null,
+    contextView: contextView ?? null,
+    correction: correction ?? null,
   });
+}
+
+/** Mirrors `models::ChatCorrection` on the Rust side. */
+export interface ChatCorrection {
+  /** The assistant message the user marked wrong. */
+  rejectedMessageId: string;
+  /** What the user said was wrong with it, in their own words. */
+  reason: string;
+}
+
+/** Mirrors `models::ChatViewContext` on the Rust side. */
+export interface ChatViewContext {
+  /** `view/<mode>`, `settings/<tab>`, or `form/<form id>`. */
+  token: string;
+  /** The values already in the open form. Only meaningful for a `form/` token. */
+  formValues?: Record<string, unknown> | null;
 }
 
 /**

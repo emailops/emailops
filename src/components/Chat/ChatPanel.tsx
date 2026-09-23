@@ -11,6 +11,7 @@ import {
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
+import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
@@ -60,10 +61,15 @@ export function ChatPanel({
     createConversation,
     selectConversation,
     sendMessage,
+    retryWithCorrection,
+    rejectedMessageIds,
     loadCategoriesPref,
     categoriesLoaded,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
+  // What the user has on screen, sent with each turn so "esto" / "aquí"
+  // resolve and an open form can be edited from here.
+  const viewContext = useChatViewContext();
 
   // Whether the offered context is armed. Keyed by thread so moving to another
   // thread re-arms it — a dismissal applies to the thread it was made on, not
@@ -79,6 +85,10 @@ export function ChatPanel({
   const contextOffer = planChatContextOffer(context, accountId, isConversationThreadBound(messages));
   const offeredContext = contextOffer.kind === 'offered' ? contextOffer.context : null;
   const contextActive = offeredContext !== null && dismissedContextKey !== contextKey;
+  // The thread binding for this turn. Hoisted so the retry path sends the same
+  // grounding the rejected answer was produced with — retrying a thread-bound
+  // answer against the whole mailbox would "fix" it by changing the question.
+  const turnContext = chatTurnContext(offeredContext, contextActive);
 
   useEffect(() => {
     if (!categoriesLoaded) void loadCategoriesPref();
@@ -112,8 +122,7 @@ export function ChatPanel({
     // The thread's OWN account travels with it — in unified mode it differs
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
-    const turnContext = chatTurnContext(offeredContext, contextActive);
-    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null);
+    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null, viewContext);
   };
 
   const header = (
@@ -204,6 +213,17 @@ export function ChatPanel({
             accountId={accountId}
             onOpenEmail={onNavigateToInbox}
             onShowEmailsInList={onShowEmailsInList}
+            onRejectMessage={(messageId, reason) =>
+              void retryWithCorrection(
+                messageId,
+                reason,
+                turnContext?.threadId ?? null,
+                turnContext?.accountId ?? null,
+                viewContext,
+              )
+            }
+            rejectedMessageIds={rejectedMessageIds}
+            isSending={isSending}
           />
         )}
         {error && <div className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}

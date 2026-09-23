@@ -204,6 +204,43 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
         name: "guide_pages",
         description: "One line per bundled user guide — `page: title — description` — so a question about EmailOps names the page that answers it.",
     },
+    VariableDef {
+        name: "form_catalog",
+        description: "One line per fillable app form — `id: what it creates` — so a request to create something routes to the form instead of the tool loop.",
+    },
+    VariableDef {
+        name: "open_form",
+        description: "Names the form you currently have open on screen, so \"add a column for VAT\" is recognised as editing it. Empty when no form is open.",
+    },
+];
+
+const FORMS_FILL_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "language",
+        description: "The language every human-readable value the model writes must be in — your AI output language.",
+    },
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD, for resolving relative dates into field values.",
+    },
+    VariableDef {
+        name: "form_id",
+        description: "Id of the form being filled, from the forms registry (e.g. `lens.create`).",
+    },
+    VariableDef {
+        name: "fields",
+        description:
+            "The form's field definitions as JSON — key, kind, allowed options and a description written for the model.",
+    },
+    VariableDef {
+        name: "current_values",
+        description:
+            "The values already on screen when the user is editing an open form, as JSON — empty for a fresh form.",
+    },
+    VariableDef {
+        name: "request",
+        description: "The user's request in their own words.",
+    },
 ];
 
 const TRANSLATE_DETECT_VARS: &[VariableDef] = &[VariableDef {
@@ -314,6 +351,15 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_QUERY_PLAN,
         variables: CHAT_QUERY_PLAN_VARS,
+    },
+    PromptDef {
+        id: "forms.fill",
+        label: "Chat — form filling",
+        description: "Turns a request like \"create a lens tracking supplier invoices\" into the fields of the matching app form, for you to review before saving.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::FORMS_FILL,
+        variables: FORMS_FILL_VARS,
     },
 ];
 

@@ -1346,3 +1346,71 @@ correct and faithful.
 **Rejected:** changing the chat system prompt to decline general knowledge and ask for
 clarification on ambiguous names (moves replies on every route for behaviour the developer
 does not need).
+
+## 2026-09-23 — The chat fills app forms; the planner routes to them, the user saves them
+
+**Decision:** A request to create something the app has a form for ("crea una lens
+para seguir las facturas de mis proveedores") is recognised by the chat query planner,
+which answers `{"form": "<id>"}` — a fourth verdict alongside `search` / `defer` /
+`app_help`. That turn short-circuits: no retrieval, no tool loop, one focused
+completion fills the form's fields, and the frontend opens the real form with the
+values in it for the user to review and save. Forms are declared once in
+`services::forms::registry` (`FormDef` + typed `FieldDef`s whose descriptions are
+written for the model); Create Lens is the pilot. The filler never writes anything —
+a fill is a proposal, and only the form's own Save button creates a lens.
+**Context:** the same request previously landed on `app_help` and was answered with a
+tutorial telling the user to do by hand what they had just asked for. Running the fill
+as its own one-shot completion (the `plan_search` shape, scratch sequence,
+`cache_prompt=false`) keeps the ~700 tokens of field definitions out of the chat system
+prompt entirely: the only per-turn cost is the forms catalog, one `id: summary` line per
+form (<600 chars, asserted) in the planner's cached head. Measured on
+`qwen3.5-4b-q4_k_m`: 7/7 `form_fill_eval` cases pass, ~9.4s per fill, including typed
+columns (`currency`/`date`/`enum`), restraint (no invented scope filters) and editing a
+form already on screen.
+**Rejected:** *a `fill_form` chat tool* — `is_available` gates per install, not per turn,
+so its schema would tax every unrelated turn's prompt budget; *a dedicated system prompt
+selected by the route* — `ai/llama_cpp/actor.rs` names a route flip as an explicit
+`ColdPrefill` cause, so two system texts would wipe the KV anchor on every switch within
+a conversation; *applying the values directly* — settings and lenses are the user's to
+create, and a model that mis-scoped a lens would have created it before they saw it.
+
+## 2026-09-23 — The chat is told what is on screen; a form on screen is a hint, never a gate
+
+**Decision:** Every turn from the chat panel carries a validated view token —
+`view/<mode>`, `settings/<tab>`, or `form/<form id>` plus that form's current values —
+rendered as one line in the FINAL USER MESSAGE. An open form additionally reaches the
+query planner as a per-call hint, so "añade una columna para el IVA" is recognised as a
+form request at all. But the planner still decides *whether* a turn is a form turn; the
+open form only decides *which* form (`view_context::resolve_target_form`).
+The Create Lens dialog opens non-blocking (`Modal`'s `nonBlocking`, clearing the dock via
+a `--chat-dock-width` CSS variable) so the chat stays visible and usable while the user
+reviews what the model wrote.
+**Context:** the panel is docked beside the app, so "esto", "aquí" and "añade una
+columna" refer to whatever is on screen; without it those turns were unanswerable. The
+gate distinction is the 2026-09-14 routing lesson applied to a new signal: with a form
+up, "qué correos tengo hoy" must still be an ordinary mailbox turn. A blocking modal
+would have covered the panel and swallowed every click, which defeats the feature.
+**Rejected:** *putting the view line in the system prompt* — it changes on every
+navigation, so the cached anchor would cold-prefill every turn; *letting an open form
+force a fill turn* — pinned by a unit test
+(`an_open_form_never_turns_an_ordinary_question_into_a_fill`); *threading the dock width
+as a prop* — the dialogs that need it mount in unrelated subtrees, and it would couple
+every form to the chat panel.
+
+## 2026-09-23 — A wrong answer is corrected by a new turn, not by replacing it
+
+**Decision:** Every finished assistant answer carries a "this answer isn't right"
+control. It asks what was wrong, then runs an **ordinary new turn** — same route, same
+tools, same retrieval — with one `CORRECTION:` block prepended to the user message,
+naming the objection and quoting the rejected answer. The rejected answer stays in the
+conversation, marked. Nothing is persisted beyond the conversation.
+**Context:** a one-click thumbs-down tells the model nothing it can act on; the whole
+value is in the specific objection ("esos correos son de septiembre, no de agosto"). The
+wrong answer is deliberately kept: the model reads it in history, which is what makes the
+objection actionable, and deleting it would destroy the evidence of what went wrong. A
+correction is not a new mode because what was wrong is usually the answer, not the path
+to it.
+**Rejected:** *regenerating in place* — loses the evidence and the history the correction
+refers to; *persisting rejections to a table for later eval graduation* — the developer
+declined it as scope for now, so the reason steers the retry and is then discarded;
+*a correction-specific route or prompt* — the answer was wrong, not the route.

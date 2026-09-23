@@ -4,6 +4,7 @@ import { prewarmChat } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
+import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { ConversationList } from './ConversationList';
@@ -50,11 +51,16 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
     renameConversation,
     deleteConversation,
     sendMessage,
+    retryWithCorrection,
+    rejectedMessageIds,
     loadCategoriesPref,
     categoriesLoaded,
     selectedCategories,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
+  // What the user has on screen, sent with each turn so "esto" / "aquí"
+  // resolve and an open form can be edited from here.
+  const viewContext = useChatViewContext();
   // Prefill plumbing for shortcut chips that ask the user to finish the
   // sentence (e.g. "Write a draft for …") instead of auto-sending. The
   // nonce lets us re-apply the same text after another click — useState
@@ -108,7 +114,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
       }
     }
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
-    await sendMessage(content);
+    await sendMessage(content, null, null, viewContext);
   };
 
   if (!accountId) {
@@ -206,6 +212,11 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
                   accountId={accountId}
                   onOpenEmail={onNavigateToInbox}
                   onShowEmailsInList={onShowEmailsInList}
+                  onRejectMessage={(messageId, reason) =>
+                    void retryWithCorrection(messageId, reason, null, null, viewContext)
+                  }
+                  rejectedMessageIds={rejectedMessageIds}
+                  isSending={isSending}
                 />
               )}
               {error && <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>}

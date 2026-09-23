@@ -272,6 +272,11 @@ Rules:
   and do not add a second tag the question did not ask for.
 - Meetings, appointments, calendar, agenda, events ("qué reuniones tengo hoy") are answered by
   the calendar tool, not by an email search -> {"defer": true}.
+- A request to CREATE something the app has a form for, in any language ("crea una lens de
+  facturas") -> {"form": "<id>"} from the list below, and nothing else. Asking HOW to create
+  it ("cómo creo una lens") is app_help, not a form.
+  Forms:
+{{form_catalog}}
 - If the question is about EmailOps itself — how to use, set up or fix the app, its settings,
   features, AI models or where it keeps its data — and not about the user's mail, output exactly
   {"app_help": "<page>"} with the guide page below that answers it, and nothing else; use
@@ -291,6 +296,7 @@ Example: "quejas de clientes en 2025" -> {"intent": "complaint", "since": "2025-
 Output ONLY the JSON object — no prose, no markdown fences.
 
 Question: {{query}}
+{{open_form}}
 JSON:"#;
 
 // ── Translation ─────────────────────────────────────────────────────────────
@@ -326,3 +332,37 @@ User question: {{user_question}}
 Candidates:
 {{candidates}}
 "#;
+
+// ── Forms ───────────────────────────────────────────────────────────────────
+
+/// Fill one app form from a natural-language request.
+///
+/// Runs as its own focused one-shot completion (see `services::forms::filler`),
+/// so none of this — and none of a form's field definitions — ever enters the
+/// chat system prompt or touches the chat KV prefix.
+///
+/// The split point for `complete_with_prefix` is `{{form_id}}`: everything
+/// above it is identical on every call and stays resident in the one-shot
+/// prefix slot; everything below is the per-call part.
+pub const FORMS_FILL: &str = r#"You fill in one form of an email client, from the user's request, as JSON.
+
+Rules:
+- Output ONLY a JSON object whose keys are the field keys below. No prose, no markdown fences.
+- Use a key only when the request implies a value for it. Omit everything else — never invent
+  a plausible-sounding value the user did not ask for, and never emit a key that is not listed.
+- A field of kind "enum" or "enumList" accepts ONLY the listed options, spelled exactly as listed.
+- A field of kind "objectList" takes an array of objects built from its own sub-fields.
+- Write every human-readable value (names, labels, descriptions, prompts) in {{language}}.
+- Today is {{today}}.
+- When CURRENT VALUES are given, the user is editing a form already open on screen: start from
+  those values and return the WHOLE object with your changes applied, not just the changed keys.
+
+Form: {{form_id}}
+Fields:
+{{fields}}
+
+CURRENT VALUES:
+{{current_values}}
+
+Request: {{request}}
+JSON:"#;

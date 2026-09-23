@@ -350,9 +350,8 @@ async fn chat_turn(session: &mut CliSession, question: String, trace: bool) -> R
         model,
         history,
         categories,
-        // Headless REPL — no main view to take ambient thread context from.
-        None,
-        None,
+        // Headless REPL — no main view to take ambient thread or view context from.
+        crate::services::chat::TurnContext::default(),
     )
     .await?;
 

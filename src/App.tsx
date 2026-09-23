@@ -69,6 +69,7 @@ import {
   useTasksEnabledStore,
   useTranslationEnabledStore,
 } from '@/stores/featureToggleStore';
+import { useFormFillStore } from '@/stores/formFillStore';
 import { useJunkStore } from '@/stores/junkStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
@@ -79,6 +80,7 @@ import { useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
 import { useUpdateStore } from '@/stores/updateStore';
+import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
   ActiveFilter,
   CalendarEvent,
@@ -224,6 +226,15 @@ function AppInner() {
   const [accountSettingsAccountId, setAccountSettingsAccountId] = useState<string | null>(null);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+
+  // Publish what the user is looking at so the chat can resolve "esto" / "aquí"
+  // against it. A Settings tab is the more specific thing when it is open, so
+  // it wins over the view behind it — the same precedence an open FORM has
+  // over both (registered by the form component itself, see viewContextStore).
+  const setBaseView = useViewContextStore((s) => s.setBaseView);
+  useEffect(() => {
+    setBaseView(settingsTab ? `settings/${settingsTab}` : `view/${viewMode}`);
+  }, [viewMode, settingsTab, setBaseView]);
   const [classificationRulePrefill, setClassificationRulePrefill] = useState<ClassificationRulePrefill | null>(null);
   const [rulePrefill, setRulePrefill] = useState<RuleFormPrefill | null>(null);
   const [selectedCategories, setSelectedCategories] = usePersistedPref<Set<EmailCategory>>(
@@ -852,6 +863,14 @@ function AppInner() {
           // re-validated in the dispatcher against the typed allowlists.
           openSettingsTab: (tab) => setSettingsTab(tab),
           navigateToView: (view) => setViewMode(view),
+          // A form the chat filled: park the values where the owning component
+          // picks them up, then switch to the view that hosts it. The dialog
+          // opens non-blocking, so the chat panel stays visible and usable
+          // while the user reviews what the model wrote.
+          openFilledForm: (formId, values, missingRequired) => {
+            useFormFillStore.getState().setFilledForm(formId, values, missingRequired);
+            if (formId === 'lens.create') setViewMode('lenses');
+          },
           log: addLog,
         });
       }),

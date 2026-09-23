@@ -57,7 +57,12 @@
     "streaming": "Generando…",
     "stopped": "Generación detenida",
     "error": "Algo ha salido mal",
-    "retry": "Reintentar"
+    "retry": "Reintentar",
+    "wrong": "La respuesta no es correcta",
+    "wrongPrompt": "¿Qué ha fallado?",
+    "wrongPlaceholder": "p. ej. esos correos son de septiembre, no de agosto",
+    "wrongSubmit": "Reintentar",
+    "rejected": "Marcada como incorrecta — reintentada abajo."
   },
   "processing": {
     "routing": "Enrutando…",

@@ -307,13 +307,15 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         model.to_string(),
         history,
         categories,
-        // Ambient view context. Normally absent — a case drives the retrieval
-        // pipeline and there is no open view — but a case may set
-        // `ambient_thread_id` to reproduce the chat panel's context chip,
-        // including the cross-account shape where the thread belongs to an
-        // account other than the one the chat runs on.
-        ambient_thread_id.clone(),
-        ambient_owner.clone(),
+        // A case may set `ambient_thread_id` to reproduce the chat panel's
+        // context chip, including the cross-account shape where the thread
+        // belongs to an account other than the one the chat runs on. Nothing
+        // else: a headless case has no view on screen and never retries.
+        chat::TurnContext {
+            ambient_thread_id: ambient_thread_id.clone(),
+            ambient_account_id: ambient_owner.clone(),
+            ..Default::default()
+        },
     )
     .await?;
 

@@ -57,7 +57,12 @@
     "streaming": "Wird generiert…",
     "stopped": "Generierung gestoppt",
     "error": "Etwas ist schiefgelaufen",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "wrong": "Diese Antwort ist nicht richtig",
+    "wrongPrompt": "Was war daran falsch?",
+    "wrongPlaceholder": "z. B. diese E-Mails sind von September, nicht von August",
+    "wrongSubmit": "Erneut versuchen",
+    "rejected": "Als falsch markiert — unten erneut versucht."
   },
   "processing": {
     "routing": "Route bestimmen…",

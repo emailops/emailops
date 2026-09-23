@@ -3413,6 +3413,27 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
     }
 }
 
+/// The per-turn context the chat panel supplies alongside the question.
+///
+/// Every field here is ephemeral by contract: none of it is persisted onto the
+/// conversation, and all of it renders into the FINAL USER MESSAGE, never the
+/// system prompt — a per-turn byte in the system message invalidates the
+/// llama.cpp KV prefix for every later turn.
+#[derive(Debug, Clone, Default)]
+pub struct TurnContext {
+    /// Thread the user has open in the main view, offered as ambient context.
+    pub ambient_thread_id: Option<String>,
+    /// Account owning `ambient_thread_id`, when the caller knows it. Not
+    /// assumed to equal the chat's account: in unified mode the panel runs on
+    /// one account while the open thread can belong to any of them.
+    pub ambient_account_id: Option<String>,
+    /// What the user has on screen (`view/…`, `settings/…`, `form/<id>`) plus
+    /// the values of an open form.
+    pub view: Option<crate::models::ChatViewContext>,
+    /// Set when this turn is a retry of an answer the user marked wrong.
+    pub correction: Option<crate::models::ChatCorrection>,
+}
+
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
@@ -3424,13 +3445,32 @@ pub async fn run_chat_turn(
     model: String,
     history: Vec<ChatMessage>,
     categories: Vec<String>,
-    ambient_thread_id: Option<String>,
-    // Account owning `ambient_thread_id`, when the caller knows it. See
-    // `ChatTurnMode::AmbientThread` for why this cannot be assumed to equal
-    // `account_id`.
-    ambient_account_id: Option<String>,
+    // Everything the panel knows about this one turn that is not the question:
+    // the thread on screen, the view on screen, and whether this is a retry of
+    // an answer the user rejected. Grouped so the signature stops growing a
+    // parameter per feature.
+    context: TurnContext,
 ) -> Result<()> {
     let turn_start = std::time::Instant::now();
+
+    // Destructured back into locals so the body below reads unchanged.
+    let ambient_thread_id = context.ambient_thread_id.clone();
+    let ambient_account_id = context.ambient_account_id.clone();
+
+    // Validated once: an unrecognised token is dropped here and can never
+    // reach a prompt (see `view_context`).
+    let view_ctx = context
+        .view
+        .as_ref()
+        .and_then(|v| super::view_context::parse_view_context(&v.token));
+    let open_form_id = view_ctx
+        .as_ref()
+        .and_then(super::view_context::ViewContext::open_form_id);
+    let context_form_values = context
+        .view
+        .as_ref()
+        .and_then(|v| v.form_values.clone())
+        .unwrap_or_else(|| serde_json::json!({}));
 
     // Build the configured AI provider from DB preferences, but let the
     // per-turn `model` argument (CLI `--model`, REPL `/model`, eval case model)
@@ -3659,6 +3699,9 @@ pub async fn run_chat_turn(
     let mut app_help = false;
     // The guide page the planner picked for it, when it named one.
     let mut help_page: Option<String> = None;
+    // The app form the planner asked us to fill. `Some` short-circuits the
+    // whole turn right after the planner — see the block below the match.
+    let mut form_to_fill: Option<&'static crate::services::forms::FormDef> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
         && (route.mode == RouteMode::ToolsFirst || asked_planner)
@@ -3675,6 +3718,10 @@ pub async fn run_chat_turn(
             &today,
             &user_question,
             &glossary,
+            open_form_id,
+            // Only forms whose feature is switched on: routing to a disabled
+            // one would spend a turn opening a view the user cannot reach.
+            &crate::services::forms::registry::catalog(&db),
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -3743,6 +3790,17 @@ pub async fn run_chat_turn(
                 help_page = page;
                 emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
             }
+            super::planner::Plan::FormFill(form_id) => {
+                // "crea una lens de facturas": there is nothing to retrieve and
+                // no tool to call — one focused completion fills the form and
+                // the frontend opens it. Handled below, outside this match, so
+                // the borrow on `route`/`planner_trace` ends first.
+                emit_log("info", &format!("planner: fill form {form_id} [{plan_ms}ms]"));
+                planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
+                route = super::routing::planner_help_route();
+                form_to_fill = super::view_context::resolve_target_form(Some(form_id), open_form_id)
+                    .and_then(|id| crate::services::forms::registry::lookup_available(&db, id));
+            }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
@@ -3752,6 +3810,28 @@ pub async fn run_chat_turn(
                 }
             }
         }
+    }
+
+    // ── 1b. Fill an app form and stop ───────────────────────────────────
+    // A `form` verdict means the user asked to CREATE something the app has a
+    // form for. Nothing below this point applies: no sources to retrieve, no
+    // tools to call, no answer to synthesise — the form itself is the answer.
+    if let Some(form) = form_to_fill {
+        let today = now_local().format("%Y-%m-%d").to_string();
+        let language = crate::services::i18n::resolve_ai_language(&db)?;
+        return super::form_turn::run_form_fill_turn(
+            &db,
+            provider.as_ref(),
+            &conversation_id,
+            &assistant_message_id,
+            form,
+            language,
+            &today,
+            &context_form_values,
+            &user_question,
+            turn_start,
+        )
+        .await;
     }
 
     // ── 2. Retrieve sources (skipped entirely when route == ToolsFirst) ─
@@ -3912,6 +3992,33 @@ pub async fn run_chat_turn(
         &tools_section,
         ambient_context.as_deref(),
     );
+
+    // What the user has on screen, so "esto" / "aquí" resolve. Same placement
+    // rule as everything else in this block: per-turn content goes in the final
+    // user message, never the system message, or the KV prefix is invalidated
+    // on every navigation. Skipped on an ambient-thread turn — the OPEN EMAIL
+    // block already names what the user is looking at, and two "you are looking
+    // at X" statements in one prompt is one too many.
+    if ambient_context.is_none() {
+        if let Some(ctx) = view_ctx.as_ref() {
+            prepend_to_final_user_message(&mut initial_messages, &super::view_context::view_context_line(ctx));
+        }
+    }
+
+    // A retry of an answer the user rejected. Prepended AFTER the view line so
+    // it ends up closest to the question — a small model weights the end of the
+    // prompt most, and the correction is the thing it must not ignore.
+    if let Some(correction) = context.correction.as_ref() {
+        let rejected = db
+            .get_chat_messages(&conversation_id)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| m.id == correction.rejected_message_id)
+            .map(|m| m.content);
+        if let Some(block) = super::correction::render_correction_block(correction, rejected.as_deref()) {
+            prepend_to_final_user_message(&mut initial_messages, &block);
+        }
+    }
 
     // The EmailOps-help block rides in the final user message for the same
     // reason as the memory header below: it varies per turn, and any per-turn
