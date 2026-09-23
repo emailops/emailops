@@ -51,7 +51,9 @@
     "tone": "Tone",
     "toneFormal": "Formal",
     "toneCasual": "Casual",
-    "toneFriendly": "Friendly"
+    "toneFriendly": "Friendly",
+    "instructionPlaceholder": "Tell the AI what to say (optional), e.g. accept but propose Thursday",
+    "regenerate": "Regenerate"
   },
   "feedback": {
     "general": {
@@ -93,5 +95,11 @@
     "subject": "Subject",
     "to": "To",
     "cc": "Cc"
+  },
+  "sendWarnings": {
+    "missingAttachment": "The message mentions an attachment, but nothing is attached.",
+    "unfilledPlaceholder": "There are unfilled placeholders: {{items}}",
+    "review": "Review",
+    "sendAnyway": "Send anyway"
   }
 }

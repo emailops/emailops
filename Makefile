@@ -655,6 +655,13 @@ eval-snapshot:
 	  EVAL_SNAPSHOT_DB="$(EVAL_SNAPSHOT_DB)" \
 	  bash scripts/eval_snapshot.sh
 
+# Draft eval only (real reply pairs from the snapshot). Needs ACCOUNT=<email>.
+#   make eval-draft MODEL=qwen3.5-4b-q4_k_m ACCOUNT=me@example.com EVAL_DRAFT_N=10 [JUDGE_MODEL=…]
+.PHONY: eval-draft
+eval-draft:
+	MODEL="$(MODEL)" PROVIDER="$(PROVIDER)" ACCOUNT="$(ACCOUNT)" EVAL_DRAFT_N="$(EVAL_DRAFT_N)" JUDGE_MODEL="$(JUDGE_MODEL)" \
+	  EVAL_SNAPSHOT_DB="$(EVAL_SNAPSHOT_DB)" bash scripts/eval_draft.sh
+
 eval-all:
 	@if [ -z "$(MODEL)" ]; then \
 		echo "ERROR: MODEL is required. Example: make eval-all MODEL=qwen3.5-4b-q4_k_m"; \

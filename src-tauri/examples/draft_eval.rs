@@ -68,6 +68,12 @@ struct Args {
     /// Output directory. Created if missing.
     #[arg(long)]
     out: Option<PathBuf>,
+
+    /// Judge with this model (same provider) instead of the model under test,
+    /// so runs of different generators are scored by the same judge. Drafts
+    /// are all generated first, then judged.
+    #[arg(long)]
+    judge_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +98,9 @@ struct CaseResult {
     sources: Vec<DraftSource>,
     char_ratio: f32,
     word_overlap: f32,
+    /// Phrases claiming something was attached or sent — a draft can do
+    /// neither, so each one is a false statement if sent unedited.
+    action_claims: Vec<String>,
     elapsed_ms: u128,
     scores: Option<JudgeScores>,
     error: Option<String>,
@@ -182,19 +191,13 @@ async fn run(
             Ok(result) => {
                 let elapsed = started.elapsed().as_millis();
                 let predicted = result.body.clone();
+                let action_claims = find_action_claims(&predicted);
                 let char_ratio = if pair.ground_truth.is_empty() {
                     0.0
                 } else {
                     predicted.chars().count() as f32 / pair.ground_truth.chars().count() as f32
                 };
                 let word_overlap = compute_word_overlap(&predicted, &pair.ground_truth);
-                let scores = match judge_draft(&ai, &pair.inbound, &pair.ground_truth, &predicted).await {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        eprintln!("[draft_eval] judge error: {}", e);
-                        None
-                    }
-                };
                 results.push(CaseResult {
                     case_id: format!("case_{:02}", i + 1),
                     thread_id: pair.inbound.thread_id.clone(),
@@ -207,8 +210,9 @@ async fn run(
                     sources: result.sources,
                     char_ratio,
                     word_overlap,
+                    action_claims,
                     elapsed_ms: elapsed,
-                    scores,
+                    scores: None,
                     error: None,
                 });
             }
@@ -226,11 +230,49 @@ async fn run(
                     sources: vec![],
                     char_ratio: 0.0,
                     word_overlap: 0.0,
+                    action_claims: vec![],
                     elapsed_ms: started.elapsed().as_millis(),
                     scores: None,
                     error: Some(e.to_string()),
                 });
             }
+        }
+    }
+
+    // ── Judge pass ────────────────────────────────────────────────────────
+    let judge_label = args.judge_model.clone().unwrap_or_else(|| ai_config.model.clone());
+    let judge_ai = match &args.judge_model {
+        Some(m) => AiService::with_provider(db.clone(), AiService::build_provider(&db, &ai_config.provider, m)?),
+        None => ai,
+    };
+    eprintln!("[draft_eval] judging with {}", judge_label);
+    for (result, pair) in results.iter_mut().zip(&pairs) {
+        if result.error.is_some() {
+            continue;
+        }
+        let inbound_body = match db.get_email_body(&pair.inbound.id) {
+            Ok(b) => emailops_lib::services::thread_clean::clean_email_body(&b, 3000),
+            Err(e) => {
+                eprintln!("[draft_eval] inbound body unavailable ({}); judging on the preview", e);
+                String::new()
+            }
+        };
+        let inbound_body = if inbound_body.trim().is_empty() {
+            pair.inbound.snippet.clone()
+        } else {
+            inbound_body
+        };
+        match judge_draft(
+            &judge_ai,
+            &pair.inbound,
+            &inbound_body,
+            &pair.ground_truth,
+            &result.predicted,
+        )
+        .await
+        {
+            Ok(scores) => result.scores = Some(scores),
+            Err(e) => eprintln!("[draft_eval] judge error: {}", e),
         }
     }
 
@@ -299,9 +341,16 @@ fn sample_reply_pairs(
                 .filter(|m| !user_email.is_empty() && !m.sender_email.eq_ignore_ascii_case(user_email))
                 .max_by_key(|m| m.timestamp);
             let Some(inbound) = inbound else { continue };
+            // Two sent replies to the same inbound would score one case twice.
+            if pairs.iter().any(|p| p.inbound.id == inbound.id) {
+                continue;
+            }
 
             let truth_body = db.get_email_body(&sent.id).unwrap_or_default();
-            let truth_plain = html_to_plain(&truth_body);
+            // Score against what the user actually typed: strip the quoted
+            // thread, forwarded blocks and signature (and decode entities),
+            // or long quotes distort length_fit and the overlap metric.
+            let truth_plain = emailops_lib::services::thread_clean::clean_email_body(&truth_body, usize::MAX);
             let truth_trim = truth_plain.trim();
             // Filter out auto-replies, one-liners, or essay-length replies — they
             // skew the judge in obvious ways without measuring anything useful.
@@ -348,6 +397,7 @@ fn resolve_account_id(db: &Arc<Database>, hint: Option<&str>) -> Result<String, 
 async fn judge_draft(
     ai: &AiService,
     inbound: &Email,
+    inbound_body: &str,
     ground_truth: &str,
     predicted: &str,
 ) -> Result<JudgeScores, Box<dyn std::error::Error>> {
@@ -377,30 +427,38 @@ AI_DRAFT
 "#,
         sender = inbound.sender,
         subject = inbound.subject,
-        inbound_body = truncate(&inbound.snippet, 1500),
+        inbound_body = truncate(inbound_body, 3000),
         ground_truth = truncate(ground_truth, 2000),
         predicted = truncate(predicted, 2000),
     );
 
-    let response = ai
-        .complete(
-            &prompt,
-            "draft_eval_judge",
-            Some(CompletionOptions {
-                temperature: Some(0.0),
-                max_tokens: Some(300),
-                think: Some(false),
-            }),
-        )
-        .await?;
+    // Small judges occasionally answer with prose or nothing; one retry
+    // recovers most of those instead of dropping the case from the averages.
+    let mut last_err = String::new();
+    for _attempt in 0..2 {
+        let response = ai
+            .complete(
+                &prompt,
+                "draft_eval_judge",
+                Some(CompletionOptions {
+                    temperature: Some(0.0),
+                    max_tokens: Some(400),
+                    think: Some(false),
+                }),
+            )
+            .await?;
+        match parse_judge_json(&response) {
+            Ok(scores) => return Ok(scores),
+            Err(e) => {
+                last_err = format!("{} (raw head: {:?})", e, response.chars().take(120).collect::<String>());
+                eprintln!("[draft_eval] judge parse failed, retrying: {}", last_err);
+            }
+        }
+    }
+    Err(last_err.into())
+}
 
-    // Extract a JSON object from the response — models sometimes wrap in
-    // explanation or markdown fences. We find the first '{' / last '}' pair.
-    let trimmed = response.trim();
-    let start = trimmed.find('{').ok_or("judge response had no JSON object")?;
-    let end = trimmed.rfind('}').ok_or("judge response had no JSON object")?;
-    let json_slice = &trimmed[start..=end];
-
+fn parse_judge_json(response: &str) -> Result<JudgeScores, String> {
     #[derive(serde::Deserialize)]
     struct Raw {
         style_match: u8,
@@ -410,8 +468,40 @@ AI_DRAFT
         #[serde(default)]
         comment: String,
     }
-    let raw: Raw = serde_json::from_str(json_slice)
-        .map_err(|e| format!("failed to parse judge JSON: {} (raw: {:?})", e, json_slice))?;
+
+    // Extract a JSON object from the response — models sometimes wrap in
+    // explanation or markdown fences. We find the first '{' / last '}' pair.
+    let trimmed = response.trim();
+    let start = trimmed.find('{').ok_or("judge response had no JSON object")?;
+    let parsed = trimmed
+        .rfind('}')
+        .filter(|&end| end > start)
+        .and_then(|end| serde_json::from_str::<Raw>(&trimmed[start..=end]).ok());
+    // A rambling comment can run past max_tokens and leave the object
+    // unclosed; the four scores come first, so read them by key instead.
+    let raw = match parsed {
+        Some(raw) => raw,
+        None => {
+            let score = |key: &str| -> Result<u8, String> {
+                let needle = format!("\"{key}\"");
+                let at = trimmed.find(&needle).ok_or(format!("judge JSON missing {key}"))?;
+                trimmed[at + needle.len()..]
+                    .trim_start_matches([':', ' '])
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u8>()
+                    .map_err(|e| format!("judge JSON bad {key}: {e}"))
+            };
+            Raw {
+                style_match: score("style_match")?,
+                completeness: score("completeness")?,
+                tone_fit: score("tone_fit")?,
+                length_fit: score("length_fit")?,
+                comment: String::new(),
+            }
+        }
+    };
 
     let clamp = |v: u8| v.clamp(1, 5);
     Ok(JudgeScores {
@@ -431,24 +521,33 @@ fn truncate(s: &str, max: usize) -> String {
     format!("{}…", cut)
 }
 
-fn html_to_plain(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for c in html.chars() {
-        if c == '<' {
-            in_tag = true;
-            continue;
-        }
-        if c == '>' {
-            in_tag = false;
-            out.push(' ');
-            continue;
-        }
-        if !in_tag {
-            out.push(c);
-        }
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+/// Phrases (EN/ES) that claim an attachment or a send already happened.
+const ACTION_CLAIM_PHRASES: [&str; 16] = [
+    "te adjunto",
+    "adjunto el",
+    "adjunto la",
+    "adjunto los",
+    "adjunto las",
+    "adjunto este",
+    "aquí tienes",
+    "te envío",
+    "ya te envi",
+    "ya te he enviado",
+    "please find attached",
+    "i've attached",
+    "i have attached",
+    "attached is",
+    "attached you",
+    "enclosed",
+];
+
+fn find_action_claims(draft: &str) -> Vec<String> {
+    let lower = draft.to_lowercase();
+    ACTION_CLAIM_PHRASES
+        .iter()
+        .filter(|p| lower.contains(*p))
+        .map(|p| p.to_string())
+        .collect()
 }
 
 /// Lightweight token overlap (Jaccard on lowercased ≥3-char tokens). Useful
@@ -500,6 +599,12 @@ fn render_markdown(results: &[CaseResult], provider: &str, model: &str) -> Strin
         let comp = avg(|s| s.completeness);
         let tone = avg(|s| s.tone_fit);
         let length = avg(|s| s.length_fit);
+        let claims = results.iter().filter(|r| !r.action_claims.is_empty()).count();
+        s.push_str(&format!(
+            "- Drafts claiming an attachment/send: {} / {}\n\n",
+            claims,
+            results.len()
+        ));
         s.push_str("## Aggregate scores (1–5)\n\n");
         s.push_str("| style_match | completeness | tone_fit | length_fit | mean |\n");
         s.push_str("|---|---|---|---|---|\n");

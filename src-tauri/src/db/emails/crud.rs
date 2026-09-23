@@ -426,6 +426,48 @@ impl Database {
         }
     }
 
+    /// The user's own messages in past threads where `correspondent_email`
+    /// also wrote — how the user usually writes to that person. Newest first,
+    /// strictly before `before_ts`, excluding `exclude_thread_id` (the thread
+    /// being answered). Driven by the sender index, then `thread_id`.
+    pub fn get_user_replies_to_correspondent(
+        &self,
+        account_id: &str,
+        correspondent_email: &str,
+        exclude_thread_id: &str,
+        before_ts: i64,
+        limit: usize,
+    ) -> Result<Vec<Email>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM emails
+             WHERE account_id = ?1 AND is_deleted = 0
+               AND (is_sent = 1 OR mailbox = 'sent')
+               AND thread_id != ?3 AND timestamp < ?4
+               AND thread_id IN (
+                   SELECT thread_id FROM emails
+                   WHERE account_id = ?1 AND sender_email = ?2 COLLATE NOCASE AND is_deleted = 0)
+             ORDER BY timestamp DESC
+             LIMIT ?5",
+            EMAIL_COLUMNS
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                account_id,
+                correspondent_email,
+                exclude_thread_id,
+                before_ts,
+                limit as i64
+            ],
+            row_to_email,
+        )?;
+        let mut result = Vec::new();
+        for email in rows {
+            result.push(email?);
+        }
+        Ok(result)
+    }
+
     pub fn get_email_by_id(&self, email_id: &str) -> Result<Option<Email>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(&format!(
@@ -902,6 +944,49 @@ impl Database {
 mod tests {
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    fn insert_from(db: &Database, id: &str, thread_id: &str, sender_email: &str, is_sent: bool, timestamp: i64) {
+        insert_email(db, id, "acc1", thread_id, timestamp);
+        db.connection()
+            .execute(
+                "UPDATE emails SET sender_email = ?2, is_sent = ?3, mailbox = ?4 WHERE id = ?1",
+                rusqlite::params![id, sender_email, is_sent, if is_sent { "sent" } else { "inbox" }],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn user_replies_to_correspondent_are_the_users_past_messages_in_their_threads() {
+        let db = Database::new_for_testing().unwrap();
+        // Threads with the correspondent: t1 (old), t2 (newer), t3 (current).
+        insert_from(&db, "c1", "t1", "Ana@Client.com", false, 100);
+        insert_from(&db, "r1", "t1", "me@me.com", true, 110);
+        insert_from(&db, "c2", "t2", "ana@client.com", false, 200);
+        insert_from(&db, "r2", "t2", "me@me.com", true, 210);
+        insert_from(&db, "c3", "t3", "ana@client.com", false, 300);
+        insert_from(&db, "r3", "t3", "me@me.com", true, 310);
+        // A thread without the correspondent.
+        insert_from(&db, "x1", "t9", "bob@other.com", false, 150);
+        insert_from(&db, "rx", "t9", "me@me.com", true, 160);
+        // A reply written after the message being answered (the future).
+        insert_from(&db, "c4", "t4", "ana@client.com", false, 400);
+        insert_from(&db, "r4", "t4", "me@me.com", true, 410);
+
+        let got = db
+            .get_user_replies_to_correspondent("acc1", "ana@client.com", "t3", 350, 5)
+            .unwrap();
+        let ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["r2", "r1"],
+            "newest first, current thread and future excluded"
+        );
+
+        let one = db
+            .get_user_replies_to_correspondent("acc1", "ana@client.com", "t3", 350, 1)
+            .unwrap();
+        assert_eq!(one.len(), 1);
+    }
 
     #[test]
     fn account_emails_by_ids_returns_only_live_visible_rows_of_that_account_newest_first() {

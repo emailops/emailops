@@ -8,8 +8,11 @@ import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/ap
 import * as api from '@/lib/api';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
+import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Email } from '@/types';
+import { AiInstructionBar } from './AiInstructionBar';
+import { SendWarningBanner } from './SendWarningBanner';
 
 interface ReplyComposeProps {
   email: Email;
@@ -39,6 +42,10 @@ interface ReplyComposeProps {
   /** Past threads the AI used as precedent for the current draft. Rendered as
    *  collapsed cards at the bottom of the reply panel for transparency. */
   draftSources?: DraftSource[];
+  /** (Re)generate the AI draft with an optional free-text instruction. When
+   *  set (AI drafts enabled, not a forward) an instruction bar sits above the
+   *  editor. */
+  onGenerateDraft?: (instructions: string) => void;
 }
 
 function getDomain(email: string): string {
@@ -118,6 +125,7 @@ export function ReplyCompose({
   initialAttachments = [],
   isLoadingDraft = false,
   draftSources = [],
+  onGenerateDraft,
 }: ReplyComposeProps) {
   const { t } = useTranslation(['compose']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
@@ -176,6 +184,12 @@ export function ReplyCompose({
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [showCc, setShowCc] = useState(false);
   const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
+  // Pre-send warnings awaiting "send anyway"; any edit dismisses them.
+  const [sendWarnings, setSendWarnings] = useState<SendWarning[] | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every edit of the body or attachments
+  useEffect(() => {
+    setSendWarnings(null);
+  }, [bodyHtml, attachments]);
   // The forwarded files are fetched and base64-encoded AFTER this panel opens,
   // so they arrive as a prop change rather than as an initial value. Applied
   // once, by identity, and appended — anything the user attached in the
@@ -287,10 +301,19 @@ export function ReplyCompose({
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = async (force = false) => {
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     if (toRecipients.length === 0 || !plain) return;
+    // A forward quotes someone else's text, which may well say "attached".
+    if (!force && mode !== 'forward') {
+      const warnings = findSendWarnings(plain, attachments.length);
+      if (warnings.length > 0) {
+        setSendWarnings(warnings);
+        return;
+      }
+    }
+    setSendWarnings(null);
     setSendError(null);
     setIsSending(true);
     try {
@@ -446,6 +469,14 @@ export function ReplyCompose({
         </div>
       )}
 
+      {onGenerateDraft && mode !== 'forward' && (
+        <AiInstructionBar
+          onGenerate={onGenerateDraft}
+          isGenerating={isLoadingDraft}
+          hasDraft={bodyHtml.replace(/<[^>]*>/g, '').trim().length > 0}
+        />
+      )}
+
       {/* Body */}
       <div className="relative">
         <RichTextEditor
@@ -530,7 +561,7 @@ export function ReplyCompose({
         </button>
         <button
           type="button"
-          onClick={handleSend}
+          onClick={() => void handleSend()}
           disabled={isSending || isLoadingDraft || toRecipients.length === 0 || !bodyHtml.trim()}
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -543,6 +574,16 @@ export function ReplyCompose({
                 : 'Send Reply'}
         </button>
       </div>
+
+      {sendWarnings && (
+        <div className="mt-3">
+          <SendWarningBanner
+            warnings={sendWarnings}
+            onSendAnyway={() => void handleSend(true)}
+            onReview={() => setSendWarnings(null)}
+          />
+        </div>
+      )}
 
       {sendError && (
         <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">

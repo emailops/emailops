@@ -179,6 +179,28 @@ export function EmailView({
     };
   }, [addLog]);
 
+  // AI Draft always opens in reply-all so the suggested body lands in a
+  // compose with every thread participant prefilled. A new request replaces
+  // whatever the composer holds; `instructions` steers the reply.
+  const requestAiDraft = async (instructions?: string) => {
+    const target = threadEmails[threadEmails.length - 1];
+    if (!target) return;
+    setReplyMode('reply-all');
+    setReplyBody('');
+    setDraftSources([]);
+    setIsReplyOpen(true);
+    setIsGeneratingDraft(true);
+    addLog('info', 'ai', instructions ? 'Requesting AI draft with instructions…' : 'Requesting AI draft…');
+    try {
+      const requestId = await api.generateDraft(target.id, instructions || null);
+      draftRequestIdRef.current = requestId;
+    } catch (err) {
+      setIsGeneratingDraft(false);
+      draftRequestIdRef.current = null;
+      addLog('error', 'ai', `Failed to start AI draft: ${err}`);
+    }
+  };
+
   const handleOpenAttachment = useCallback(
     (meta: EmailAttachmentMeta) => {
       if (meta.mimeType.startsWith('image/')) {
@@ -483,24 +505,7 @@ export function EmailView({
             </button>
             {aiDraftsEnabled && (
               <button
-                onClick={async () => {
-                  // AI Draft always opens in reply-all so the suggested body
-                  // lands in a compose with every thread participant prefilled.
-                  setReplyMode('reply-all');
-                  setReplyBody('');
-                  setDraftSources([]);
-                  setIsReplyOpen(true);
-                  setIsGeneratingDraft(true);
-                  addLog('info', 'ai', 'Requesting AI draft…');
-                  try {
-                    const requestId = await api.generateDraft(latestEmail.id);
-                    draftRequestIdRef.current = requestId;
-                  } catch (err) {
-                    setIsGeneratingDraft(false);
-                    draftRequestIdRef.current = null;
-                    addLog('error', 'ai', `Failed to start AI draft: ${err}`);
-                  }
-                }}
+                onClick={() => void requestAiDraft()}
                 disabled={isGeneratingDraft}
                 className="flex items-center gap-1.5 px-3 py-1 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 title={t('inbox:emailView.aiDraftTitle')}
@@ -636,6 +641,7 @@ export function EmailView({
             initialAttachments={forwardAttachments}
             isLoadingDraft={isGeneratingDraft}
             draftSources={draftSources}
+            onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
             onCancel={() => {
               setIsReplyOpen(false);
               setReplyBody('');

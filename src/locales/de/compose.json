@@ -51,7 +51,9 @@
     "tone": "Ton",
     "toneFormal": "Förmlich",
     "toneCasual": "Locker",
-    "toneFriendly": "Freundlich"
+    "toneFriendly": "Freundlich",
+    "instructionPlaceholder": "Sag der KI, was sie antworten soll (optional), z. B. zusagen, aber Donnerstag vorschlagen",
+    "regenerate": "Neu generieren"
   },
   "feedback": {
     "general": {
@@ -93,5 +95,11 @@
     "subject": "Betreff",
     "to": "An",
     "cc": "Cc"
+  },
+  "sendWarnings": {
+    "missingAttachment": "Die Nachricht erwähnt einen Anhang, aber es ist nichts angehängt.",
+    "unfilledPlaceholder": "Es gibt noch nicht ausgefüllte Platzhalter: {{items}}",
+    "review": "Überprüfen",
+    "sendAnyway": "Trotzdem senden"
   }
 }

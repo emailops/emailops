@@ -18,11 +18,22 @@ use crate::util::text::truncate_utf8;
 /// own generation budget. The model still gets a usable thread + RAG slice
 /// even when both are large.
 const MAX_PROMPT_CHARS: usize = 12_000;
-/// Per-message truncation inside the thread context. The previous value of
-/// 300 chars was too aggressive — long messages lost substantive content
-/// before the model ever saw them.
-const IN_THREAD_MSG_CHARS: usize = 1_500;
+/// The message being answered keeps up to this many chars of its cleaned body
+/// before older messages get any budget.
+const TARGET_MSG_MAX_CHARS: usize = 6_000;
+/// Below this, an older message's excerpt is too short to be useful: drop the
+/// oldest messages instead of shaving everyone down to noise.
+const MIN_OLDER_MSG_CHARS: usize = 300;
+/// The thread always gets at least this much, even when a long custom
+/// template, precedents or instructions eat most of `MAX_PROMPT_CHARS`.
+const MIN_THREAD_CHARS: usize = 2_000;
 const RAG_SNIPPET_CHARS: usize = 1_500;
+/// How many of the user's past messages to the same correspondent are shown
+/// as voice samples, and how much of each.
+const STYLE_SAMPLES_K: usize = 2;
+const STYLE_SAMPLE_CHARS: usize = 800;
+/// Shorter samples ("Ok, gracias") say nothing about how the user writes.
+const MIN_STYLE_SAMPLE_CHARS: usize = 40;
 const RAG_TOP_K: usize = 3;
 const RAG_POOL_SIZE: usize = 30;
 
@@ -75,7 +86,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
     let email = db
         .get_email_by_id(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
-    let thread = db.get_thread(&email.account_id, &email.thread_id)?;
+    let thread = thread_up_to(db.get_thread(&email.account_id, &email.thread_id)?, &email.id);
 
     let persona = db
         .get_preference("draft_persona")?
@@ -116,23 +127,21 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
     };
 
     // ── Prompt assembly ──────────────────────────────────────────────────
-    let thread_context = build_thread_context(&thread);
-    let rag_context = build_rag_context(&sources, &user_email);
-    let instructions_section = match instructions {
-        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
-        _ => String::new(),
-    };
-
-    let mut prompt = prompt_template
-        .replace("{persona}", &persona)
-        .replace("{style}", &style)
-        .replace("{thread_context}", &thread_context)
-        .replace("{rag_context}", &rag_context)
-        .replace("{instructions}", &instructions_section);
-
-    if prompt.len() > MAX_PROMPT_CHARS {
-        prompt = truncate_utf8(&prompt, MAX_PROMPT_CHARS).to_string();
-    }
+    let thread_messages = load_thread_messages(db, &thread);
+    let style_samples = load_style_samples(db, &email, &user_email);
+    let rag_context = format!(
+        "{}{}",
+        build_style_context(&style_samples, &email.sender),
+        build_rag_context(&sources, &user_email)
+    );
+    let prompt = plan_reply_prompt(&ReplyPromptInput {
+        template: &prompt_template,
+        persona: &persona,
+        style: &style,
+        thread: &thread_messages,
+        rag_context: &rag_context,
+        instructions,
+    });
 
     // ── Model call ───────────────────────────────────────────────────────
     emit_log("info", "calling model…");
@@ -140,8 +149,9 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
     let config = AiService::get_config(db)?;
     let start = std::time::Instant::now();
     let draft = ai
-        .complete(
-            &prompt,
+        .complete_with_prefix(
+            &prompt.prefix,
+            &prompt.suffix,
             "generate_draft",
             Some(CompletionOptions {
                 temperature: Some(0.7),
@@ -163,7 +173,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
             config.model,
             thread.len(),
             sources.len(),
-            prompt.len(),
+            prompt.prefix.len() + prompt.suffix.len(),
             body.len(),
             elapsed
         ),
@@ -404,7 +414,7 @@ async fn retrieve_rag_sources(db: &Arc<Database>, email: &Email, user_email: &st
             .unwrap_or_else(|| candidate.clone());
 
         let body = db.get_email_body(&context_email.id).unwrap_or_default();
-        let body_clean = strip_html_for_prompt(&body);
+        let body_clean = crate::services::thread_clean::clean_email_body(&body, usize::MAX);
         let snippet = if body_clean.trim().is_empty() {
             truncate_utf8(&context_email.snippet, RAG_SNIPPET_CHARS).to_string()
         } else {
@@ -429,27 +439,272 @@ async fn retrieve_rag_sources(db: &Arc<Database>, email: &Email, user_email: &st
     Ok(sources)
 }
 
-fn build_thread_context(thread: &[Email]) -> String {
-    if thread.is_empty() {
+/// One message of the thread being answered, with its cleaned body (quotes
+/// and signature stripped). Input to [`plan_reply_prompt`].
+#[derive(Debug, Clone)]
+struct ThreadMessage {
+    sender: String,
+    sender_email: String,
+    subject: String,
+    body: String,
+}
+
+struct ReplyPromptInput<'a> {
+    template: &'a str,
+    persona: &'a str,
+    style: &'a str,
+    /// Oldest first; the last message is the one being answered.
+    thread: &'a [ThreadMessage],
+    rag_context: &'a str,
+    instructions: Option<&'a str>,
+}
+
+/// The reply prompt split for the prefix KV cache: `prefix` depends only on
+/// the template and the persona/style prefs, so it is identical on every
+/// draft; `suffix` carries the per-draft thread, precedents and instructions.
+#[derive(Debug, Clone, PartialEq)]
+struct ReplyPrompt {
+    prefix: String,
+    suffix: String,
+}
+
+/// Placeholders whose content changes on every draft. The prompt is split
+/// at the first of them so the static head can stay cached.
+const PER_DRAFT_PLACEHOLDERS: [&str; 3] = ["{thread_context}", "{rag_context}", "{instructions}"];
+
+/// Assemble the reply-draft prompt. Pure.
+///
+/// The thread is fitted into whatever `MAX_PROMPT_CHARS` leaves after the
+/// template, precedents and instructions (never less than
+/// `MIN_THREAD_CHARS`), shared out by [`allocate_thread_budget`], so the
+/// closing instruction is never truncated away.
+fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
+    let template = input
+        .template
+        .replace("{persona}", input.persona)
+        .replace("{style}", input.style);
+    let split = PER_DRAFT_PLACEHOLDERS
+        .iter()
+        .filter_map(|p| template.find(p))
+        .min()
+        .unwrap_or(template.len());
+    let (prefix, suffix_template) = template.split_at(split);
+
+    let instructions_section = match input.instructions {
+        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
+        _ => String::new(),
+    };
+
+    let fixed_len = template.len() + input.rag_context.len() + instructions_section.len();
+    let overhead = closing_instruction(input.thread.len(), "").len() + THREAD_HEADER_CHARS * input.thread.len();
+    let thread_budget = MAX_PROMPT_CHARS
+        .saturating_sub(fixed_len + overhead)
+        .max(MIN_THREAD_CHARS);
+    let thread_context = build_thread_context(input.thread, thread_budget);
+
+    let suffix = suffix_template
+        .replace("{thread_context}", &thread_context)
+        .replace("{rag_context}", input.rag_context)
+        .replace("{instructions}", &instructions_section);
+
+    ReplyPrompt {
+        prefix: prefix.to_string(),
+        suffix,
+    }
+}
+
+/// Share `budget` chars across a thread's message bodies (`lens`, oldest
+/// first; the last one is being answered). Pure.
+///
+/// The answered message is served first, up to `TARGET_MSG_MAX_CHARS`. Older
+/// messages then split the rest fairly (water-filling: short messages are
+/// kept whole, long ones share what remains). When a fair share would drop
+/// below `MIN_OLDER_MSG_CHARS`, the oldest messages are dropped (0) instead.
+fn allocate_thread_budget(lens: &[usize], budget: usize) -> Vec<usize> {
+    let mut alloc = vec![0; lens.len()];
+    let Some((&target_len, older)) = lens.split_last() else {
+        return alloc;
+    };
+    let target = target_len.min(TARGET_MSG_MAX_CHARS).min(budget);
+    alloc[lens.len() - 1] = target;
+    let remaining = budget - target;
+
+    // Keep the newest older messages that still leave each a useful share.
+    let mut first_kept = older.len();
+    while first_kept > 0 {
+        let n = older.len() - first_kept + 1;
+        let useful = MIN_OLDER_MSG_CHARS.min(older[first_kept - 1]);
+        if remaining / n < useful {
+            break;
+        }
+        first_kept -= 1;
+    }
+
+    // Water-fill the kept range: shortest first, each takes min(len, fair share).
+    let mut kept: Vec<usize> = (first_kept..older.len()).collect();
+    kept.sort_by_key(|&i| older[i]);
+    let mut left = remaining;
+    let mut slots = kept.len();
+    for i in kept {
+        let share = left / slots;
+        let take = older[i].min(share);
+        alloc[i] = take;
+        left -= take;
+        slots -= 1;
+    }
+    alloc
+}
+
+/// Load each thread message's body, cleaned of quoted history and signature
+/// (a reply's quote repeats the whole thread and would eat the budget). Falls
+/// back to the list preview when the body is missing or unreadable.
+fn load_thread_messages(db: &Database, thread: &[Email]) -> Vec<ThreadMessage> {
+    thread
+        .iter()
+        .map(|msg| {
+            let body = match db.get_email_body(&msg.id) {
+                Ok(raw) => crate::services::thread_clean::clean_email_body(&raw, usize::MAX),
+                Err(e) => {
+                    emit_log(
+                        "warn",
+                        &format!("body unavailable for {} ({}); using preview", msg.id, e),
+                    );
+                    String::new()
+                }
+            };
+            ThreadMessage {
+                sender: msg.sender.clone(),
+                sender_email: msg.sender_email.clone(),
+                subject: msg.subject.clone(),
+                body: if body.trim().is_empty() {
+                    msg.snippet.clone()
+                } else {
+                    body
+                },
+            }
+        })
+        .collect()
+}
+
+/// The user's own recent messages to the sender of `email`, cleaned — the
+/// best evidence of how they greet, sign off and pitch the register with this
+/// person. Empty when the user is the sender, or on a DB error (logged).
+fn load_style_samples(db: &Database, email: &Email, user_email: &str) -> Vec<String> {
+    if user_email.is_empty() || email.sender_email.eq_ignore_ascii_case(user_email) {
+        return Vec::new();
+    }
+    let replies = match db.get_user_replies_to_correspondent(
+        &email.account_id,
+        &email.sender_email,
+        &email.thread_id,
+        email.timestamp,
+        STYLE_SAMPLES_K * 3,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_log("warn", &format!("style samples skipped ({})", e));
+            return Vec::new();
+        }
+    };
+    replies
+        .iter()
+        .filter_map(|r| match db.get_email_body(&r.id) {
+            Ok(raw) => Some(crate::services::thread_clean::clean_email_body(&raw, usize::MAX)),
+            Err(e) => {
+                emit_log("warn", &format!("style sample body unavailable for {} ({})", r.id, e));
+                None
+            }
+        })
+        .collect()
+}
+
+/// Render up to `STYLE_SAMPLES_K` useful samples (newest first) of how the
+/// user writes to `correspondent`. Pure.
+fn build_style_context(samples: &[String], correspondent: &str) -> String {
+    let useful: Vec<&String> = samples
+        .iter()
+        .filter(|s| s.trim().chars().count() >= MIN_STYLE_SAMPLE_CHARS)
+        .take(STYLE_SAMPLES_K)
+        .collect();
+    if useful.is_empty() {
         return String::new();
     }
+    let mut s = format!(
+        "\nHow you usually write to {correspondent} (match this greeting, sign-off, register and length; do not copy the content):\n"
+    );
+    for (i, sample) in useful.iter().enumerate() {
+        s.push_str(&format!(
+            "\n[Your past message {}]\n{}\n",
+            i + 1,
+            truncate_chars(sample.trim(), STYLE_SAMPLE_CHARS)
+        ));
+    }
+    s
+}
+
+/// Cut an oldest-first thread at the message being replied to.
+///
+/// Later messages are the future from the draft's point of view: showing them
+/// makes the model answer the wrong message, and in `draft_eval` it leaked the
+/// user's real reply (the ground truth) into the prompt. An unknown target
+/// keeps the whole thread.
+fn thread_up_to(mut thread: Vec<Email>, target_id: &str) -> Vec<Email> {
+    if let Some(pos) = thread.iter().position(|e| e.id == target_id) {
+        thread.truncate(pos + 1);
+    }
+    thread
+}
+
+/// The instruction that closes the thread block: which message to answer and
+/// the grounding rules. Never truncated.
+fn closing_instruction(message_number: usize, sender: &str) -> String {
+    format!(
+        "\nWrite a reply to Message {} (from {}). Address the reply to {}. Answer every question and request in it. \
+Do not invent facts, prices, dates or commitments that are not in the thread or the \
+instructions; write a [placeholder] instead. You cannot attach files or send anything: \
+never say something is attached, enclosed or already sent (\"te adjunto\", \"please find \
+attached\", \"I've sent the invite\"). Only where the thread asks for a file, write \
+[attach: <that file, named as in the thread>] for the user to attach.\n",
+        message_number, sender, sender
+    )
+}
+
+/// Per-message header allowance ("--- Message N ---", From, Subject) when
+/// sizing the thread budget.
+const THREAD_HEADER_CHARS: usize = 160;
+
+fn build_thread_context(thread: &[ThreadMessage], budget: usize) -> String {
+    let Some(last) = thread.last() else {
+        return String::new();
+    };
+    let lens: Vec<usize> = thread.iter().map(|m| m.body.chars().count()).collect();
+    let alloc = allocate_thread_budget(&lens, budget);
     let mut s = String::from("Email thread (oldest first):\n");
-    for (i, msg) in thread.iter().enumerate() {
+    let dropped = alloc[..alloc.len() - 1].iter().take_while(|&&a| a == 0).count();
+    if dropped > 0 {
+        s.push_str(&format!("\n[{dropped} earlier message(s) omitted]\n"));
+    }
+    for (i, (msg, &chars)) in thread.iter().zip(&alloc).enumerate().skip(dropped) {
         s.push_str(&format!(
             "\n--- Message {} ---\nFrom: {} <{}>\nSubject: {}\n{}\n",
             i + 1,
             msg.sender,
             msg.sender_email,
             msg.subject,
-            truncate_utf8(&msg.snippet, IN_THREAD_MSG_CHARS),
+            truncate_chars(&msg.body, chars),
         ));
     }
-    if let Some(last) = thread.last() {
-        s.push_str(&format!(
-            "\nThe latest message is from {}. Write a reply to it.\n",
-            last.sender
-        ));
+    s.push_str(&closing_instruction(thread.len(), &last.sender));
+    s
+}
+
+/// Char-aware cut with a "…" marker so the model knows the text continues.
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
     }
+    let mut s: String = text.chars().take(max.saturating_sub(1)).collect();
+    s.push('…');
     s
 }
 
@@ -457,7 +712,10 @@ fn build_rag_context(sources: &[DraftSource], user_email: &str) -> String {
     if sources.is_empty() {
         return String::new();
     }
-    let mut s = String::from("\nSimilar past threads (use for tone and precedent — do not quote verbatim):\n");
+    let mut s = String::from(
+        "\nSimilar past threads. These are other conversations with other people: use them only \
+for tone and phrasing, never reuse their names, facts or answers, and do not quote them:\n",
+    );
     for (i, src) in sources.iter().enumerate() {
         let role = if !user_email.is_empty() && src.sender_email.eq_ignore_ascii_case(user_email) {
             "your reply"
@@ -498,29 +756,6 @@ fn build_fts_query(subject: &str, snippet: &str) -> String {
         }
     }
     out.join(" ")
-}
-
-/// Cheap HTML → plain-text for prompt insertion. Strips tags and collapses
-/// whitespace. Intentionally not a real sanitizer — we never render this,
-/// we only feed it to the model.
-fn strip_html_for_prompt(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for c in html.chars() {
-        if c == '<' {
-            in_tag = true;
-            continue;
-        }
-        if c == '>' {
-            in_tag = false;
-            out.push(' ');
-            continue;
-        }
-        if !in_tag {
-            out.push(c);
-        }
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn pick_thread_context_email(db: &Database, account_id: &str, thread_id: &str, user_email: &str) -> Option<Email> {
@@ -735,77 +970,232 @@ mod tests {
         assert!(q.contains("budget"), "tokens must be lowercased");
     }
 
-    // ── strip_html_for_prompt ──────────────────────────────────────────────
-
-    #[test]
-    fn strip_html_plain_text_unchanged() {
-        let result = strip_html_for_prompt("Hello World");
-        assert_eq!(result, "Hello World");
-    }
-
-    #[test]
-    fn strip_html_removes_tags_preserves_content() {
-        let result = strip_html_for_prompt("<p>Hello <b>world</b></p>");
-        assert!(!result.contains('<'), "no angle brackets must remain");
-        assert!(!result.contains('>'), "no angle brackets must remain");
-        assert!(result.contains("Hello"), "text content must be preserved");
-        assert!(result.contains("world"), "text content must be preserved");
-    }
-
-    #[test]
-    fn strip_html_collapses_whitespace() {
-        let result = strip_html_for_prompt("<p>  Hello  </p>  <p>World</p>");
-        assert!(!result.contains("   "), "multiple spaces must be collapsed");
-        assert!(
-            result.starts_with("Hello") || result.contains("Hello "),
-            "collapsed result must contain Hello"
-        );
-    }
-
-    #[test]
-    fn strip_html_empty_input_returns_empty() {
-        assert_eq!(strip_html_for_prompt(""), "");
-    }
-
-    #[test]
-    fn strip_html_handles_only_tags() {
-        let result = strip_html_for_prompt("<div><span></span></div>");
-        assert!(result.trim().is_empty(), "only-tags input must produce empty text");
-    }
-
     // ── build_thread_context ───────────────────────────────────────────────
 
     #[test]
     fn build_thread_context_empty_thread_returns_empty() {
-        assert_eq!(build_thread_context(&[]), "");
+        assert_eq!(build_thread_context(&[], 1_000), "");
     }
 
     #[test]
     fn build_thread_context_includes_sender_and_subject() {
-        let email = make_email(
-            "e1",
-            "Alice",
-            "alice@example.com",
-            "Budget Review",
-            "Please review the attached",
-        );
-        let ctx = build_thread_context(&[email]);
+        let ctx = build_thread_context(&[msg("Alice", "Please review the attached")], 1_000);
         assert!(ctx.contains("Alice"), "sender name must appear in context");
         assert!(ctx.contains("alice@example.com"), "sender email must appear");
-        assert!(ctx.contains("Budget Review"), "subject must appear");
-        assert!(ctx.contains("Please review"), "snippet must appear");
+        assert!(ctx.contains("Project kickoff"), "subject must appear");
+        assert!(ctx.contains("Please review"), "body must appear");
+    }
+
+    #[test]
+    fn build_thread_context_forbids_claiming_attachments_or_sends() {
+        // The draft cannot attach or send anything: "te adjunto…" in a draft
+        // goes out with no attachment. It must leave a bracketed note instead.
+        let ctx = build_thread_context(&[msg("Alice", "can you send me the form?")], 1_000);
+        assert!(ctx.contains("cannot attach files or send anything"));
+        assert!(ctx.contains("[attach:"));
     }
 
     #[test]
     fn build_thread_context_mentions_write_reply_to_latest() {
-        let e1 = make_email("e1", "Alice", "alice@example.com", "Hello", "hi");
-        let e2 = make_email("e2", "Bob", "bob@example.com", "Re: Hello", "reply here");
-        let ctx = build_thread_context(&[e1, e2]);
+        let ctx = build_thread_context(&[msg("Alice", "hi"), msg("Bob", "reply here")], 1_000);
         assert!(ctx.contains("Bob"), "latest sender must appear");
         assert!(
             ctx.to_lowercase().contains("reply"),
             "context must prompt the model to write a reply"
         );
+    }
+
+    #[test]
+    fn build_thread_context_notes_omitted_messages() {
+        let mut thread: Vec<ThreadMessage> = (0..10).map(|_| msg("Alice", &"x".repeat(1_000))).collect();
+        thread.push(msg("Bob", "latest"));
+        let ctx = build_thread_context(&thread, 1_500);
+        assert!(ctx.contains("earlier message(s) omitted"));
+        assert!(!ctx.contains("--- Message 1 ---"));
+        assert!(ctx.contains("--- Message 11 ---"));
+    }
+
+    // ── thread_up_to ──────────────────────────────────────────────────────
+
+    fn ids(thread: &[Email]) -> Vec<&str> {
+        thread.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    #[test]
+    fn thread_up_to_drops_messages_after_the_target() {
+        // Drafting on an older message must not show the model later
+        // replies — including the user's own real answer (the eval leak).
+        let thread = vec![
+            make_email("e1", "Alice", "alice@example.com", "Hi", "one"),
+            make_email("e2", "Me", "me@example.com", "Re: Hi", "two"),
+            make_email("e3", "Alice", "alice@example.com", "Re: Hi", "three"),
+        ];
+        assert_eq!(ids(&thread_up_to(thread, "e1")), vec!["e1"]);
+    }
+
+    #[test]
+    fn thread_up_to_keeps_everything_up_to_and_including_the_target() {
+        let thread = vec![
+            make_email("e1", "Alice", "alice@example.com", "Hi", "one"),
+            make_email("e2", "Me", "me@example.com", "Re: Hi", "two"),
+            make_email("e3", "Alice", "alice@example.com", "Re: Hi", "three"),
+        ];
+        assert_eq!(ids(&thread_up_to(thread, "e3")), vec!["e1", "e2", "e3"]);
+    }
+
+    #[test]
+    fn thread_up_to_unknown_target_keeps_whole_thread() {
+        let thread = vec![
+            make_email("e1", "Alice", "alice@example.com", "Hi", "one"),
+            make_email("e2", "Me", "me@example.com", "Re: Hi", "two"),
+        ];
+        assert_eq!(ids(&thread_up_to(thread, "missing")), vec!["e1", "e2"]);
+    }
+
+    // ── allocate_thread_budget ────────────────────────────────────────────
+
+    #[test]
+    fn allocate_budget_keeps_everything_when_it_fits() {
+        assert_eq!(allocate_thread_budget(&[100, 200, 300], 1_000), vec![100, 200, 300]);
+    }
+
+    #[test]
+    fn allocate_budget_gives_the_target_priority() {
+        // The last message is the one being answered: it keeps its full
+        // length (up to the target cap) before older messages get anything.
+        let alloc = allocate_thread_budget(&[3_000, 3_000], 3_500);
+        assert_eq!(alloc[1], 3_000);
+        assert_eq!(alloc[0], 500);
+    }
+
+    #[test]
+    fn allocate_budget_caps_the_target() {
+        let alloc = allocate_thread_budget(&[20_000], 50_000);
+        assert_eq!(alloc, vec![TARGET_MSG_MAX_CHARS]);
+    }
+
+    #[test]
+    fn allocate_budget_fair_shares_older_messages() {
+        // One huge old message must not starve the short ones.
+        let alloc = allocate_thread_budget(&[10_000, 300, 300, 100], 2_000);
+        assert_eq!(alloc[3], 100, "target kept whole");
+        assert_eq!(alloc[1], 300, "short messages kept whole");
+        assert_eq!(alloc[2], 300);
+        assert_eq!(alloc[0], 1_300, "the long one gets the remainder");
+    }
+
+    #[test]
+    fn allocate_budget_drops_oldest_when_shares_get_too_small() {
+        // 10 older messages, 1_000 chars left for them: a fair share would be
+        // 100 chars each, below the useful minimum — drop the oldest instead.
+        let mut lens = vec![1_000; 10];
+        lens.push(500);
+        let alloc = allocate_thread_budget(&lens, 1_500);
+        assert_eq!(alloc[10], 500);
+        assert!(alloc[..10].iter().all(|&a| a == 0 || a >= MIN_OLDER_MSG_CHARS));
+        assert!(alloc[9] > 0, "newest older message survives");
+        assert_eq!(alloc[0], 0, "oldest message dropped");
+        assert!(alloc.iter().sum::<usize>() <= 1_500);
+    }
+
+    // ── plan_reply_prompt ─────────────────────────────────────────────────
+
+    fn msg(sender: &str, body: &str) -> ThreadMessage {
+        ThreadMessage {
+            sender: sender.to_string(),
+            sender_email: format!("{}@example.com", sender.to_lowercase()),
+            subject: "Project kickoff".to_string(),
+            body: body.to_string(),
+        }
+    }
+
+    fn plan(thread: &[ThreadMessage], rag: &str, instructions: Option<&str>) -> ReplyPrompt {
+        plan_reply_prompt(&ReplyPromptInput {
+            template: DEFAULT_PROMPT_TEMPLATE,
+            persona: "a consultant",
+            style: "brief",
+            thread,
+            rag_context: rag,
+            instructions,
+        })
+    }
+
+    #[test]
+    fn reply_prompt_prefix_is_stable_across_threads() {
+        // The prefix is the KV-cache anchor: it must not depend on the thread.
+        let a = plan(&[msg("Alice", "first thread")], "", None);
+        let b = plan(&[msg("Bob", "second thread")], "precedent", Some("say yes"));
+        assert_eq!(a.prefix, b.prefix);
+        assert!(a.prefix.contains("a consultant") && a.prefix.contains("brief"));
+        assert!(!a.prefix.contains("first thread"));
+    }
+
+    #[test]
+    fn reply_prompt_uses_full_bodies_not_previews() {
+        let long_body = format!("{} the key question is at the end?", "context ".repeat(80));
+        let p = plan(&[msg("Alice", &long_body)], "", None);
+        assert!(p.suffix.contains("the key question is at the end?"));
+    }
+
+    #[test]
+    fn reply_prompt_never_cuts_the_closing_instruction() {
+        let huge = "x".repeat(60_000);
+        let p = plan(&[msg("Alice", &huge), msg("Bob", &huge)], "", Some("say yes"));
+        assert!(p.suffix.trim_end().ends_with("no signature):"));
+        assert!(p.suffix.contains("say yes"));
+        assert!(p.prefix.len() + p.suffix.len() <= MAX_PROMPT_CHARS + 500);
+    }
+
+    #[test]
+    fn reply_prompt_names_the_message_to_answer() {
+        let p = plan(&[msg("Alice", "hi"), msg("Bob", "can we meet?")], "", None);
+        assert!(p.suffix.contains("Message 2"));
+        assert!(p.suffix.contains("from Bob"));
+    }
+
+    #[test]
+    fn reply_prompt_custom_template_without_placeholders_is_all_prefix() {
+        let p = plan_reply_prompt(&ReplyPromptInput {
+            template: "Just write something nice.",
+            persona: "p",
+            style: "s",
+            thread: &[msg("Alice", "hi")],
+            rag_context: "",
+            instructions: None,
+        });
+        assert_eq!(format!("{}{}", p.prefix, p.suffix), "Just write something nice.");
+    }
+
+    // ── build_style_context ───────────────────────────────────────────────
+
+    #[test]
+    fn style_context_empty_without_samples() {
+        assert_eq!(build_style_context(&[], "Ana"), "");
+    }
+
+    #[test]
+    fn style_context_skips_too_short_samples() {
+        // "Ok, gracias" says nothing about how the user writes.
+        let samples = vec!["Ok, gracias".to_string()];
+        assert_eq!(build_style_context(&samples, "Ana"), "");
+    }
+
+    #[test]
+    fn style_context_names_the_correspondent_and_keeps_k_samples() {
+        let samples: Vec<String> = (1..=5)
+            .map(|i| format!("Hola Ana, sample number {i} with enough words to be useful. Un abrazo"))
+            .collect();
+        let ctx = build_style_context(&samples, "Ana");
+        assert!(ctx.contains("to Ana"));
+        assert!(ctx.contains("sample number 1") && ctx.contains("sample number 2"));
+        assert!(!ctx.contains(&format!("sample number {}", STYLE_SAMPLES_K + 1)));
+    }
+
+    #[test]
+    fn style_context_caps_each_sample() {
+        let samples = vec!["palabra ".repeat(1_000)];
+        let ctx = build_style_context(&samples, "Ana");
+        assert!(ctx.chars().count() < STYLE_SAMPLE_CHARS + 300);
     }
 
     // ── build_rag_context ─────────────────────────────────────────────────
@@ -830,6 +1220,21 @@ mod tests {
         let src = make_source("client@corp.com");
         let ctx = build_rag_context(&[src], "me@example.com");
         assert!(ctx.contains("received"), "incoming email must be labelled 'received'");
+    }
+
+    #[test]
+    fn build_rag_context_marks_precedents_as_other_people() {
+        // A precedent greeting "Hi Rafael" leaked into a reply to Nadia: the
+        // label must say these are other conversations, for tone only.
+        let ctx = build_rag_context(&[make_source("me@example.com")], "me@example.com");
+        assert!(ctx.contains("other conversations with other people"));
+        assert!(ctx.contains("never reuse their names"));
+    }
+
+    #[test]
+    fn closing_instruction_names_who_to_greet() {
+        let closing = closing_instruction(2, "Nadia Brunner");
+        assert!(closing.contains("Address the reply to Nadia Brunner"));
     }
 
     #[test]
