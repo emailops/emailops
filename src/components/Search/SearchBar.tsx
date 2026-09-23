@@ -506,7 +506,7 @@ export function SearchBar({
                         {accountEmailById && (
                           <span
                             data-testid="account-chip"
-                            className="inline-flex items-center gap-1 flex-shrink-0 max-w-[50%] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+                            className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
                           >
                             <span
                               className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(emailWithScore.accountId)}`}
