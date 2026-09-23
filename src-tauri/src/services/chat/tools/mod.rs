@@ -210,6 +210,25 @@ pub enum ToolEffect {
     /// the UI can say what it opened.
     #[serde(rename_all = "camelCase")]
     NavigateTo { target: String, title: String },
+    /// Open one of the app's forms with the fields the model filled in, for
+    /// the user to review and submit. Fired by `run_form_fill_turn` (not a
+    /// tool) after the query planner returns a `form` verdict.
+    ///
+    /// `form_id` is a key of `services::forms::registry::FORMS` and `target`
+    /// is that form's `view/<name>#<anchor>`; both are re-validated on the
+    /// frontend. `values` carries only keys the form declares, already coerced
+    /// to their declared kinds, so the receiving component can spread it onto
+    /// its state without re-checking types.
+    ///
+    /// `missing_required` names the fields the model could not fill, so the UI
+    /// can focus the first one instead of the user hunting for it.
+    #[serde(rename_all = "camelCase")]
+    FillForm {
+        form_id: String,
+        target: String,
+        values: serde_json::Value,
+        missing_required: Vec<String>,
+    },
 }
 
 /// Errors the registry surfaces to the chat loop.

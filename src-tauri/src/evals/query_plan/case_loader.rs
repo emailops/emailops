@@ -60,6 +60,18 @@ pub struct PlanCase {
     #[serde(default)]
     pub expect_help_page_any: Vec<String>,
 
+    /// The app form the planner must route to (`{"form": "<id>"}`) — set for a
+    /// question that asks to CREATE something the app has a form for. The
+    /// counterpart of `expect_app_help`, which covers asking HOW to create it.
+    #[serde(default)]
+    pub expect_form: Option<String>,
+
+    /// The form the user has open on screen while asking, if any (the
+    /// `form/<id>` half of the chat panel's view context). Lets a case cover
+    /// "añade una columna de IVA", which only means something with a form up.
+    #[serde(default)]
+    pub open_form: Option<String>,
+
     /// `{{today}}` for this case, so date expectations stay stable as the
     /// calendar moves. ISO `YYYY-MM-DD`; defaults to the runner's today.
     #[serde(default)]

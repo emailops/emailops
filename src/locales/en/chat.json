@@ -57,7 +57,12 @@
     "streaming": "Generating…",
     "stopped": "Generation stopped",
     "error": "Something went wrong",
-    "retry": "Retry"
+    "retry": "Retry",
+    "wrong": "This answer isn't right",
+    "wrongPrompt": "What was wrong with it?",
+    "wrongPlaceholder": "e.g. those emails are from September, not August",
+    "wrongSubmit": "Try again",
+    "rejected": "Marked as wrong — retried below."
   },
   "processing": {
     "routing": "Routing…",
@@ -171,7 +176,7 @@
     "expand": "Open full chat view",
     "resize": "Resize chat panel",
     "conversationPicker": "Switch conversation",
-    "emptyHint": "Ask about the email you have open, or anything in your inbox.",
+    "emptyHint": "Ask about the email you have open, anything in your inbox, or how to do something in EmailOps.",
     "context": {
       "using": "Using as context",
       "remove": "Don't use this thread as context",

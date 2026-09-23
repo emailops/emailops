@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Select } from '@/components/shared/Select';
 import { errorText } from '@/lib/errors';
+import { useChatFilledForm } from '@/stores/formFillStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import type { LensColumn, LensRow } from '@/types';
@@ -48,6 +49,13 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     setCreateOpen,
   } = useLensStore();
 
+  // A chat fill addressed to `lens.create` opens the dialog. The modal itself
+  // consumes the values; this only decides that it should be on screen, so the
+  // user sees the form appear with the fields already in it.
+  const pendingLensFill = useChatFilledForm('lens.create');
+  useEffect(() => {
+    if (pendingLensFill) setCreateOpen(true);
+  }, [pendingLensFill, setCreateOpen]);
   const [drawerRow, setDrawerRow] = useState<LensRow | null>(null);
   // "quarter" is a synthetic group derived from the email timestamp; the rest
   // are schema column keys. Default to quarter so the table opens with a

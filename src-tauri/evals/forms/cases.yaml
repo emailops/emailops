@@ -1,0 +1,101 @@
+# How well the model fills the app's forms.
+#
+# Every case is a request a user would actually type, scored against what the
+# Create Lens form needs to be submittable. The four things that matter, in
+# order: completeness (a missing required field blocks the save), coverage (one
+# column per thing the request named), restraint (a scope key the request never
+# implied silently narrows the lens to nothing), and typing (`currency` on an
+# amount column, not `string`).
+#
+# Synthetic requests only — no sender, subject or address from a real mailbox.
+
+- id: lens_invoices_es
+  form: lens.create
+  language: Spanish
+  today: "2026-09-23"
+  request: "crea una lens para seguir las facturas de mis proveedores con el importe, la fecha y el nombre del proveedor"
+  note: "the canonical request: three named data points must become three typed columns"
+  expect_present: [name, columns, promptText]
+  expect_min_columns: 3
+  expect_columns_covering: ["importe", "fecha", "proveedor"]
+  expect_column_types: [currency, date]
+  # The request names no sender and no mailbox other than the default, so
+  # inventing either would silently narrow the lens.
+  expect_absent: [scopeSenderDomains, scopeCategories]
+
+- id: lens_invoices_en
+  form: lens.create
+  language: English
+  today: "2026-09-23"
+  request: "create a lens tracking supplier invoices with the amount, the due date and the supplier name"
+  note: "the same request in English — the filler must not be Spanish-only"
+  expect_present: [name, columns, promptText]
+  expect_min_columns: 3
+  expect_columns_covering: ["amount", "date", "supplier"]
+  expect_column_types: [currency, date]
+  expect_absent: [scopeSenderDomains, scopeCategories]
+
+- id: lens_scoped_to_a_sender_domain
+  form: lens.create
+  language: English
+  today: "2026-09-23"
+  request: "make a lens over receipts from billing.example.com showing the total and the payment date"
+  note: "a request that DOES name a sender must fill the scope — the mirror of the restraint cases"
+  expect_present: [name, columns, promptText, scopeSenderDomains]
+  expect_values:
+    scopeSenderDomains: ["billing.example.com"]
+  expect_min_columns: 2
+
+- id: lens_scoped_to_sent_mail
+  form: lens.create
+  language: English
+  today: "2026-09-23"
+  request: "a lens over the quotes I have sent, with the client name and the quoted amount"
+  note: "\"I have sent\" is outbound: the direction enum must be set, not left at the default"
+  expect_present: [name, columns, promptText]
+  expect_values:
+    scopeDirection: "outbound"
+  expect_min_columns: 2
+
+- id: lens_with_an_enum_column
+  form: lens.create
+  language: English
+  today: "2026-09-23"
+  request: "a lens over job applications with the candidate name and a status that is one of new, interviewing or rejected"
+  note: "an enum column is only usable when enumValues comes with it; the type alone is a dead field"
+  expect_present: [name, columns, promptText]
+  expect_column_types: [enum]
+  expect_columns_covering: ["status", "candidate"]
+
+- id: editing_an_open_form_keeps_what_is_there
+  form: lens.create
+  language: Spanish
+  today: "2026-09-23"
+  current_values:
+    name: "Facturas de proveedores"
+    promptText: "Extrae los datos de cada factura."
+    columns:
+      - key: "supplier"
+        label: "Proveedor"
+        type: "string"
+      - key: "amount"
+        label: "Importe"
+        type: "currency"
+  request: "añade una columna para el IVA"
+  note: "the open-form path: a field edit must ADD to the form on screen, not replace it with a one-column form"
+  expect_present: [name, columns, promptText]
+  expect_min_columns: 3
+  expect_columns_covering: ["proveedor", "importe", "iva"]
+  expect_values:
+    name: "Facturas de proveedores"
+
+- id: a_vague_request_fills_what_it_can
+  form: lens.create
+  language: English
+  today: "2026-09-23"
+  request: "make me a lens for my newsletters"
+  note: "under-specified on purpose: the model should still produce a usable starting point rather than nothing"
+  expect_present: [name]
+  # Nothing here says what to extract, so a partially filled form is the right
+  # answer — the chat names what is still missing and the user completes it.
+  expect_complete: false

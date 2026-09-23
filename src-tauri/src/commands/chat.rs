@@ -144,6 +144,16 @@ pub async fn send_chat_message(
     // reading a thread from any of them. Looking the thread up under the chat's
     // account found nothing and silently dropped the context.
     context_account_id: Option<String>,
+    // What the user has on screen this turn: `view/<name>`, `settings/<tab>`,
+    // or `form/<form id>` plus that form's current values. Lets "esto"/"aquí"
+    // resolve, and lets "añade una columna de IVA" edit the form in front of
+    // the user. Validated backend-side (`chat::view_context`), so an
+    // unrecognised token is dropped rather than prompted.
+    context_view: Option<crate::models::ChatViewContext>,
+    // Set when the user pressed "this answer is wrong" and said why. Runs an
+    // ordinary new turn with a short correction instruction; the rejected
+    // answer stays in the conversation.
+    correction: Option<crate::models::ChatCorrection>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -223,6 +233,8 @@ pub async fn send_chat_message(
     let categories_for_task = categories.clone();
     let ambient_thread_for_task = context_thread_id.clone();
     let ambient_account_for_task = context_account_id.clone();
+    let view_for_task = context_view.clone();
+    let correction_for_task = correction.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
     state
         .ai_queue
@@ -238,8 +250,12 @@ pub async fn send_chat_message(
                 model_for_task,
                 history,
                 categories_for_task,
-                ambient_thread_for_task,
-                ambient_account_for_task,
+                chat::TurnContext {
+                    ambient_thread_id: ambient_thread_for_task,
+                    ambient_account_id: ambient_account_for_task,
+                    view: view_for_task,
+                    correction: correction_for_task,
+                },
             )
             .await
             {

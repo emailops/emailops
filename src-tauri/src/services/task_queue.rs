@@ -11,9 +11,24 @@ const HISTORY_LIMIT: usize = 5;
 
 type BoxFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+/// How urgently a task should be picked off the queue.
+///
+/// The queue is FIFO within a priority; the priority only decides which of the
+/// tasks *currently waiting* goes next. It never preempts a task that is
+/// already running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    /// Maintenance nobody is watching: classification, junk scoring,
+    /// embeddings, backfills the app scheduled for itself.
+    Background,
+    /// Work the user asked for by hand and is waiting on, on screen.
+    Interactive,
+}
+
 struct QueuedTask {
     id: u64,
     name: String,
+    priority: TaskPriority,
     fut: BoxFuture,
 }
 
@@ -121,6 +136,28 @@ impl TaskQueue {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        self.submit_with_priority(name, TaskPriority::Background, task).await
+    }
+
+    /// Submit a task the user is waiting on, so it goes ahead of the
+    /// background maintenance already queued.
+    ///
+    /// Use this for anything that starts with a click and has a control on
+    /// screen reporting it — a lens backfill, a re-extract. Without it the
+    /// queue is strictly FIFO, and on a concurrency-1 queue a click can sit
+    /// behind hours of classify/embed work with nothing to show for it.
+    pub async fn submit_priority<F>(&self, name: &str, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.submit_with_priority(name, TaskPriority::Interactive, task).await
+    }
+
+    /// Shared submit path. See [`TaskPriority`].
+    pub async fn submit_with_priority<F>(&self, name: &str, priority: TaskPriority, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         // Lazy-start the consumer
         {
             let mut started = self.started.lock().await;
@@ -152,6 +189,7 @@ impl TaskQueue {
         let queued = QueuedTask {
             id,
             name: name.to_string(),
+            priority,
             fut: Box::pin(task),
         };
 
@@ -206,8 +244,37 @@ async fn run_consumer(
     queue_name: &'static str,
 ) {
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    while let Some(queued) = receiver.recv().await {
+    // Tasks pulled off the channel but not yet started. The channel itself is
+    // strictly FIFO, so the ordering decision has to happen here — and it has
+    // to happen AFTER a slot is free, otherwise a priority task that arrives
+    // while the queue is backed up has already missed its chance.
+    let mut waiting: Vec<QueuedTask> = Vec::new();
+    loop {
         let permit = semaphore.clone().acquire_owned().await;
+
+        // Block for the first task, then sweep up everything else already
+        // queued so the pick below sees the whole backlog.
+        if waiting.is_empty() {
+            match receiver.recv().await {
+                Some(t) => waiting.push(t),
+                // Every sender dropped: the app is shutting down.
+                None => return,
+            }
+        }
+        while let Ok(t) = receiver.try_recv() {
+            waiting.push(t);
+        }
+
+        // Highest priority first, then FIFO — ids are monotonic, so ordering by
+        // id preserves submission order among peers.
+        let pick = waiting
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, t)| (std::cmp::Reverse(t.priority), t.id))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let queued = waiting.swap_remove(pick);
+
         let task_state = state.clone();
         let id = queued.id;
         let name = queued.name;
@@ -261,6 +328,107 @@ async fn run_consumer(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_user_initiated_task_runs_before_background_work_queued_ahead_of_it() {
+        // The bug this pins: clicking "Run backfill" queued the lens behind ~50
+        // classify/junk/embed tasks on a concurrency-1 queue, so it never
+        // visibly started. Work the user asked for by hand must not wait for
+        // maintenance that nobody is watching.
+        let q = TaskQueue::new(1, "test");
+        let order = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+        // A blocker occupies the single slot so everything else really queues.
+        let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+        let gate_rx = Arc::new(Mutex::new(Some(gate_rx)));
+        let gate_clone = gate_rx.clone();
+        q.submit_named("blocker", async move {
+            let rx = gate_clone.lock().await.take().unwrap();
+            let _ = rx.await;
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Background maintenance queues up first …
+        for i in 0..5 {
+            let o = order.clone();
+            let label = format!("background-{i}");
+            let recorded = label.clone();
+            q.submit_named(&label, async move {
+                if let Ok(mut v) = o.lock() {
+                    v.push(recorded);
+                }
+            })
+            .await;
+        }
+        // … and only THEN does the user click something.
+        let o = order.clone();
+        q.submit_priority("user:backfill", async move {
+            if let Ok(mut v) = o.lock() {
+                v.push("user:backfill".to_string());
+            }
+        })
+        .await;
+
+        let _ = gate_tx.send(());
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if order.lock().map(|v| v.len()).unwrap_or(0) >= 6 {
+                break;
+            }
+        }
+
+        let ran = order.lock().map(|v| v.clone()).unwrap_or_default();
+        assert_eq!(ran.len(), 6, "everything should still run: {ran:?}");
+        assert_eq!(
+            ran.first().map(String::as_str),
+            Some("user:backfill"),
+            "the user's task must jump the maintenance queue, got {ran:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn priority_tasks_keep_fifo_order_among_themselves() {
+        let q = TaskQueue::new(1, "test");
+        let order = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+        let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+        let gate_rx = Arc::new(Mutex::new(Some(gate_rx)));
+        let gate_clone = gate_rx.clone();
+        q.submit_named("blocker", async move {
+            let rx = gate_clone.lock().await.take().unwrap();
+            let _ = rx.await;
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        for i in 0..3 {
+            let o = order.clone();
+            let label = format!("user-{i}");
+            let recorded = label.clone();
+            q.submit_priority(&label, async move {
+                if let Ok(mut v) = o.lock() {
+                    v.push(recorded);
+                }
+            })
+            .await;
+        }
+
+        let _ = gate_tx.send(());
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if order.lock().map(|v| v.len()).unwrap_or(0) >= 3 {
+                break;
+            }
+        }
+
+        let ran = order.lock().map(|v| v.clone()).unwrap_or_default();
+        assert_eq!(
+            ran,
+            vec!["user-0", "user-1", "user-2"],
+            "priority must not reorder peers"
+        );
+    }
 
     #[tokio::test]
     async fn snapshot_tracks_running_and_pending() {

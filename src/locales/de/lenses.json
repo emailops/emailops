@@ -95,7 +95,8 @@
       "nameRequired": "Der Name ist erforderlich.",
       "promptRequired": "Der Prompt ist erforderlich.",
       "promptBeforePreview": "Füge vor dem Testen einen Prompt hinzu."
-    }
+    },
+    "filledFromChatMissing": "Aus dem Chat ausgefüllt. Noch erforderlich: {{fields}}."
   },
   "identity": {
     "title": "Identität",

@@ -100,7 +100,40 @@ interface ChatStore {
    * shows (chat panel only) — the backend grounds the answer in it for this
    * turn instead of running retrieval. Omitted by the full-page chat view.
    */
-  sendMessage: (content: string, contextThreadId?: string | null, contextAccountId?: string | null) => Promise<void>;
+  sendMessage: (
+    content: string,
+    contextThreadId?: string | null,
+    contextAccountId?: string | null,
+    contextView?: api.ChatViewContext | null,
+  ) => Promise<void>;
+  /**
+   * "This answer is wrong" → a fresh corrective turn.
+   *
+   * The rejected answer stays in the history, marked, and the correction runs
+   * as a new turn carrying what the user said was wrong. Nothing is persisted
+   * beyond the conversation itself.
+   */
+  retryWithCorrection: (
+    rejectedMessageId: string,
+    reason: string,
+    contextThreadId?: string | null,
+    contextAccountId?: string | null,
+    contextView?: api.ChatViewContext | null,
+  ) => Promise<void>;
+  /** Ids of assistant messages the user marked wrong, for this session. */
+  rejectedMessageIds: string[];
+  /** Shared turn dispatcher behind `sendMessage` and `retryWithCorrection` —
+   *  one place that owns the isSending guard, the optimistic append and the
+   *  error handling, so a correction cannot drift from a normal turn. */
+  dispatchTurn: (
+    content: string,
+    opts: {
+      contextThreadId?: string | null;
+      contextAccountId?: string | null;
+      contextView?: api.ChatViewContext | null;
+      correction?: api.ChatCorrection | null;
+    },
+  ) => Promise<void>;
   /** Load persisted categories preference from the DB (called once on mount). */
   loadCategoriesPref: () => Promise<void>;
   /** Update the current selection + persist it so the next session reuses it. */
@@ -131,6 +164,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   isLoadingConversations: false,
   isLoadingMessages: false,
   error: null,
+  rejectedMessageIds: [],
   selectedCategories: [...DEFAULT_CATEGORIES],
   categoriesLoaded: false,
 
@@ -280,7 +314,30 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  sendMessage: async (content, contextThreadId, contextAccountId) => {
+  sendMessage: async (content, contextThreadId, contextAccountId, contextView) => {
+    await get().dispatchTurn(content, { contextThreadId, contextAccountId, contextView });
+  },
+
+  retryWithCorrection: async (rejectedMessageId, reason, contextThreadId, contextAccountId, contextView) => {
+    const trimmed = reason.trim();
+    if (!trimmed) return;
+    // Mark first so the rejected bubble is struck through while the corrective
+    // turn runs, rather than only once the new answer lands.
+    set((s) => ({
+      rejectedMessageIds: s.rejectedMessageIds.includes(rejectedMessageId)
+        ? s.rejectedMessageIds
+        : [...s.rejectedMessageIds, rejectedMessageId],
+    }));
+    await get().dispatchTurn(trimmed, {
+      contextThreadId,
+      contextAccountId,
+      contextView,
+      correction: { rejectedMessageId, reason: trimmed },
+    });
+  },
+
+  dispatchTurn: async (content, opts) => {
+    const { contextThreadId, contextAccountId, contextView, correction } = opts;
     const trimmed = content.trim();
     if (!trimmed) return;
     const conversationId = get().activeConversationId;
@@ -302,6 +359,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         get().selectedCategories,
         contextThreadId,
         contextAccountId,
+        contextView,
+        correction,
       );
       // Only mutate if we're still on the same conversation.
       if (get().activeConversationId !== conversationId) return;
@@ -454,6 +513,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       isLoadingConversations: false,
       isLoadingMessages: false,
       error: null,
+      rejectedMessageIds: [],
     });
   },
 }));

@@ -95,7 +95,8 @@
       "nameRequired": "Name is required.",
       "promptRequired": "Prompt is required.",
       "promptBeforePreview": "Add a prompt before previewing."
-    }
+    },
+    "filledFromChatMissing": "Filled in from chat. Still needed: {{fields}}."
   },
   "identity": {
     "title": "Identity",

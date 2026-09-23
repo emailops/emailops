@@ -4,7 +4,7 @@
 // template prefills the form and switches to it, so every Lens is reviewed
 // (account, folders, columns, prompt) before `create_lens` runs.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
@@ -12,7 +12,9 @@ import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
+import { useChatFilledForm, useFormFillStore } from '@/stores/formFillStore';
 import { useLensStore } from '@/stores/lensStore';
+import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
   CreateLensInput,
   Lens,
@@ -26,6 +28,7 @@ import type {
 
 import { LensFolderChips } from './LensFolderChips';
 import { type DraftColumn, draftFromTemplate, scopeFromDraft } from './lensDraft';
+import { toLensFormPrefill, toLensFormValues } from './lensPrefill';
 import { withoutFolderMailboxes } from './scopeFolders';
 import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
@@ -106,6 +109,68 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   const [error, setError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewRows, setPreviewRows] = useState<LensPreviewRow[] | null>(null);
+
+  // ── Filled from chat ──────────────────────────────────────────────────
+  // The chat drops its filled values in `formFillStore`; we apply them here
+  // and highlight whatever it could not fill. Everything the model did not
+  // touch keeps whatever is already in the form, so "añade una columna de
+  // IVA" adds to the user's work instead of replacing it.
+  const pendingFill = useChatFilledForm('lens.create');
+  const clearFilledForm = useFormFillStore((s) => s.clearFilledForm);
+  const [missingFromChat, setMissingFromChat] = useState<string[]>([]);
+  const appliedNonce = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Gated on `open`: this component stays mounted while closed, and applying
+    // (and clearing) a fill before the dialog is on screen would race the
+    // parent effect that opens it — child effects flush first.
+    if (!open || !pendingFill || appliedNonce.current === pendingFill.nonce) return;
+    appliedNonce.current = pendingFill.nonce;
+    const prefill = toLensFormPrefill(pendingFill.values);
+    // A chat fill is always a custom lens — it defines its own columns, which
+    // is exactly what the Templates tab cannot express.
+    setTab('custom');
+    if (prefill.name !== undefined) setName(prefill.name);
+    if (prefill.icon !== undefined) setIcon(prefill.icon);
+    if (prefill.mailboxes !== undefined) setMailboxes(prefill.mailboxes);
+    if (prefill.categories !== undefined) setCategories(prefill.categories);
+    if (prefill.direction !== undefined) setDirection(prefill.direction);
+    if (prefill.senderDomains !== undefined) setSenderDomains(prefill.senderDomains);
+    if (prefill.query !== undefined) setQuery(prefill.query);
+    if (prefill.prompt !== undefined) setPrompt(prefill.prompt);
+    if (prefill.columns !== undefined) setColumns(prefill.columns);
+    setMissingFromChat(pendingFill.missingRequired);
+    setError(null);
+    clearFilledForm();
+  }, [open, pendingFill, clearFilledForm]);
+
+  // Tell the chat this form is on screen, and what is currently in it, so
+  // "añade una columna para el IVA" edits THIS form instead of starting a new
+  // one. Cleared on close: the context describes the moment, nothing more.
+  const setOpenForm = useViewContextStore((s) => s.setOpenForm);
+  useEffect(() => {
+    if (!open) {
+      setOpenForm(null);
+      return;
+    }
+    setOpenForm({
+      token: 'form/lens.create',
+      values: toLensFormValues({
+        name,
+        icon,
+        mailboxes,
+        categories,
+        direction,
+        senderDomains,
+        query,
+        prompt,
+        columns,
+      }),
+    });
+    return () => {
+      setOpenForm(null);
+    };
+  }, [open, name, icon, mailboxes, categories, direction, senderDomains, query, prompt, columns, setOpenForm]);
 
   if (!open) return null;
 
@@ -264,6 +329,10 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       subtitle={t('lenses:create.subtitle')}
       size="2xl"
       disableBackdropClose
+      // Filling this form from chat is a conversation: the docked panel has to
+      // stay visible and clickable so the user can say "no, ese importe es una
+      // moneda" without closing the dialog first.
+      nonBlocking
       footer={
         <div className="flex justify-end gap-2 border-t border-gray-700 px-6 py-3">
           <button
@@ -312,6 +381,15 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
           </button>
         </div>
 
+        {missingFromChat.length > 0 && (
+          <div
+            data-testid="lens-create-missing-from-chat"
+            className="rounded border border-amber-700/50 bg-amber-900/30 px-3 py-2 text-xs text-amber-200"
+          >
+            {t('lenses:create.filledFromChatMissing', { fields: missingFromChat.join(', ') })}
+          </div>
+        )}
+
         {tab === 'templates' && (
           <section className="space-y-3">
             {templatesLoading ? (
@@ -351,6 +429,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   <span className="mb-1 block text-gray-400">{t('lenses:identity.name')}</span>
                   <input
                     type="text"
+                    data-testid="lens-create-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder={t('lenses:create.namePlaceholder')}
@@ -532,6 +611,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                         </span>
                         <input
                           type="text"
+                          data-testid="lens-create-column-key"
                           value={c.key}
                           onChange={(e) => updateColumn(idx, { key: e.target.value })}
                           placeholder="amount" // i18n-ignore: example column key (technical identifier)
