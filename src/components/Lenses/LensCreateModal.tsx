@@ -1,8 +1,8 @@
 // Create Lens modal.
 //
-// Two tabs: a Templates picker (default — pick from the 8 built-ins) and a
-// Custom form (define scope + schema + prompt by hand). Both routes converge
-// on backend commands `create_lens_from_template` / `create_lens`.
+// Two tabs: a Templates picker (default) and the Custom form. Picking a
+// template prefills the form and switches to it, so every Lens is reviewed
+// (account, folders, columns, prompt) before `create_lens` runs.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -25,8 +25,9 @@ import type {
 } from '@/types';
 
 import { LensFolderChips } from './LensFolderChips';
+import { type DraftColumn, draftFromTemplate, scopeFromDraft } from './lensDraft';
 import { withoutFolderMailboxes } from './scopeFolders';
-import { validateSenderDomains } from './scopeValidation';
+import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
 interface LensCreateModalProps {
   open: boolean;
@@ -49,16 +50,6 @@ const COLUMN_TYPES: LensColumnType[] = [
 const MAILBOXES = ['inbox', 'sent', 'archive', 'spam', 'trash'] as const;
 const CATEGORIES = ['Primary', 'Promotions', 'Social', 'Updates', 'Forums'] as const;
 
-interface DraftColumn {
-  key: string;
-  label: string;
-  type: LensColumnType;
-  description: string;
-  required: boolean;
-  isUniqueKey: boolean;
-  enumValues: string; // comma-separated; parsed on submit
-}
-
 function newColumn(): DraftColumn {
   return { key: '', label: '', type: 'string', description: '', required: false, isUniqueKey: false, enumValues: '' };
 }
@@ -67,14 +58,14 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   const { t } = useTranslation(['common', 'lenses']);
   const accounts = useAccountStore((s) => s.accounts);
   const createLens = useLensStore((s) => s.createLens);
-  const refreshLenses = useLensStore((s) => s.refreshLenses);
 
   const [tab, setTab] = useState<'templates' | 'custom'>('templates');
 
   // Templates tab state
   const [templates, setTemplates] = useState<LensTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [templateAccountId, setTemplateAccountId] = useState<string>('');
+  /** Template the form was prefilled from; kept on the created Lens. */
+  const [templateKey, setTemplateKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -94,7 +85,9 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   const [direction, setDirection] = useState<LensDirection>('inbound');
   const [lastDays, setLastDays] = useState<string>('60');
   const [query, setQuery] = useState('');
+  const [querySearchBody, setQuerySearchBody] = useState(false);
   const [senderDomains, setSenderDomains] = useState('');
+  const [senderEmails, setSenderEmails] = useState('');
   const [prompt, setPrompt] = useState(() => t('lenses:create.defaultPrompt'));
   const [columns, setColumns] = useState<DraftColumn[]>(() => [
     {
@@ -117,6 +110,27 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   // Built-in template names come from the backend in English; localize them by
   // key, falling back to the backend text for a template the locales lack.
   const templateName = (tpl: LensTemplate) => t(`lenses:templates.${tpl.key}.name`, { defaultValue: tpl.name });
+
+  const applyTemplate = (tpl: LensTemplate) => {
+    const draft = draftFromTemplate(tpl, (key, fallback) => t(key, { defaultValue: fallback }));
+    setName(draft.name);
+    setIcon(draft.icon);
+    setTemplateKey(draft.templateKey);
+    setPrompt(draft.prompt);
+    setColumns(draft.columns);
+    setAccountId(draft.form.accountId);
+    setMailboxes(draft.form.mailboxes);
+    setCategories(draft.form.categories);
+    setDirection(draft.form.direction);
+    setLastDays(draft.form.lastDays);
+    setQuery(draft.form.query);
+    setQuerySearchBody(draft.form.querySearchBody);
+    setSenderDomains(draft.form.senderDomains);
+    setSenderEmails(draft.form.senderEmails);
+    setPreviewRows(null);
+    setError(null);
+    setTab('custom');
+  };
 
   const toggleInArray = (list: string[], v: string, setter: (next: string[]) => void) => {
     setter(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
@@ -168,20 +182,22 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       }
       finalisedColumns.push(col);
     }
-    const domainCheck = validateSenderDomains(senderDomains);
-    if (domainCheck.error) {
-      setError(t(`lenses:scope.errors.${domainCheck.error.code}`, domainCheck.error.params));
+    const inputError = validateSenderDomains(senderDomains).error ?? validateSenderEmails(senderEmails).error;
+    if (inputError) {
+      setError(t(`lenses:scope.errors.${inputError.code}`, inputError.params));
       return null;
     }
-    const scope: LensScope = {
-      accountIds: accountId ? [accountId] : null,
-      mailboxes: mailboxes.length ? mailboxes : null,
-      categories: categories.length ? categories : null,
-      direction: direction === 'either' ? null : direction,
-      query: query.trim() || null,
-      senderDomains: domainCheck.values.length ? domainCheck.values : null,
-      dateRange: lastDays.trim() ? { lastDays: Number.parseInt(lastDays, 10) || null } : null,
-    };
+    const scope = scopeFromDraft({
+      accountId,
+      mailboxes,
+      categories,
+      direction,
+      lastDays,
+      query,
+      querySearchBody,
+      senderDomains,
+      senderEmails,
+    });
     return { scope, schema: { columns: finalisedColumns } };
   };
 
@@ -200,6 +216,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     const input: CreateLensInput = {
       name: name.trim(),
       icon: icon.trim() || null,
+      templateKey,
       accountId: accountId || null,
       scope: built.scope,
       schema: built.schema,
@@ -234,20 +251,6 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       setError(errorText(err));
     } finally {
       setPreviewing(false);
-    }
-  };
-
-  const handleCreateFromTemplate = async (tpl: LensTemplate) => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      const lens = await api.createLensFromTemplate(tpl.key, templateName(tpl), templateAccountId || undefined);
-      await refreshLenses();
-      onCreated(lens);
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -309,19 +312,6 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
 
         {tab === 'templates' && (
           <section className="space-y-3">
-            <label className="block max-w-xs">
-              <span className="mb-1 block text-gray-400">{t('lenses:apply.applyToAccount')}</span>
-              <Select
-                value={templateAccountId}
-                options={[
-                  { value: '', label: t('lenses:apply.allAccounts') },
-                  ...accounts.map((a) => ({ value: a.id, label: a.email })),
-                ]}
-                onChange={(value) => setTemplateAccountId(value)}
-                ariaLabel={t('lenses:apply.applyToAccount')}
-                fullWidth
-              />
-            </label>
             {templatesLoading ? (
               <div className="py-6 text-center text-gray-500">{t('lenses:loadingTemplates')}</div>
             ) : templates.length === 0 ? (
@@ -332,8 +322,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   <button
                     key={tpl.key}
                     type="button"
-                    disabled={submitting}
-                    onClick={() => void handleCreateFromTemplate(tpl)}
+                    onClick={() => applyTemplate(tpl)}
                     className="group flex items-start gap-3 rounded border border-gray-700 bg-[#1e1e1e]/60 p-3 text-left transition-colors hover:border-blue-500/60 hover:bg-blue-900/10 disabled:opacity-50"
                   >
                     <span className="text-xl leading-none">{tpl.icon}</span>
@@ -486,6 +475,17 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               </div>
 
               <label className="block">
+                <span className="mb-1 block text-gray-400">{t('lenses:scope.senderEmails')}</span>
+                <input
+                  type="text"
+                  value={senderEmails}
+                  onChange={(e) => setSenderEmails(e.target.value)}
+                  placeholder="billing@stripe.com, invoices@vendor.com" // i18n-ignore: example sender emails
+                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                />
+              </label>
+
+              <label className="block">
                 <span className="mb-1 block text-gray-400">{t('lenses:scope.keywordQuery')}</span>
                 <input
                   type="text"
@@ -494,6 +494,16 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   placeholder={t('lenses:scope.keywordPlaceholder')}
                   className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
                 />
+              </label>
+              <label className="flex items-center gap-2 text-[11px] text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={querySearchBody}
+                  onChange={(e) => setQuerySearchBody(e.target.checked)}
+                  className="h-3 w-3 accent-blue-500"
+                />
+                {t('lenses:scope.searchBody')}
+                <span className="text-gray-500">{t('lenses:scope.keywordsBodyHint')}</span>
               </label>
             </section>
 
