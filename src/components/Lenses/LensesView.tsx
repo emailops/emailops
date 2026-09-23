@@ -146,43 +146,46 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           ) : (
             <h1
               className={`truncate text-sm font-semibold text-gray-100 ${activeLens ? 'cursor-text hover:text-white' : ''}`}
-              title={activeLens ? 'Click to rename' : undefined}
+              title={activeLens ? t('lenses:view.renameTooltip') : undefined}
               onClick={() => {
                 if (!activeLens) return;
                 setRenameValue(activeLens.name);
                 setRenaming(true);
               }}
             >
-              {activeLens ? activeLens.name : 'Lenses'}
+              {activeLens ? activeLens.name : t('lenses:title')}
             </h1>
           )}
           {activeLens && (
             <p className="mt-0.5 truncate text-xs text-gray-400">
               {/* Backend returns total = -1 when COUNT is skipped (infinite scroll); */}
               {/* in that case fall back to the count of rows currently loaded. */}
-              {totalRows >= 0 ? totalRows : rows.length} row
-              {(totalRows >= 0 ? totalRows : rows.length) === 1 ? '' : 's'}
+              {t('lenses:view.rowCount', { count: totalRows >= 0 ? totalRows : rows.length })}
               {isRunning && (
                 <span className="ml-2 text-blue-400">
-                  ↻ running{' '}
+                  {t('lenses:view.running')}{' '}
                   {(status?.total ?? 0) > 0
                     ? `${status?.processed ?? 0}/${status?.total ?? 0} (${Math.min(
                         100,
                         Math.round(((status?.processed ?? 0) / Math.max(1, status?.total ?? 1)) * 100),
                       )}%)`
-                    : `(${status?.processed ?? 0} processed)`}
-                  {(status?.failed ?? 0) > 0 && <span className="ml-1 text-red-400">· {status?.failed} failed</span>}
+                    : t('lenses:view.processedCount', { count: status?.processed ?? 0 })}
+                  {(status?.failed ?? 0) > 0 && (
+                    <span className="ml-1 text-red-400">
+                      {t('lenses:view.failedCount', { count: status?.failed ?? 0 })}
+                    </span>
+                  )}
                 </span>
               )}
               {status?.state === 'error' && (
                 <span className="ml-2 text-red-400" title={status.lastError ?? undefined}>
-                  last run failed{status.lastError ? `: ${status.lastError}` : ''}
+                  {t('lenses:view.lastRunFailed')}
+                  {status.lastError ? `: ${status.lastError}` : ''}
                 </span>
               )}
               {!isRunning && status && status.failed > 0 && (
                 <span className="ml-2 text-yellow-400">
-                  {status.failed} row{status.failed === 1 ? '' : 's'} failed extraction — click &ldquo;Run
-                  backfill&rdquo; to retry
+                  {t('lenses:view.rowsFailedRetry', { count: status.failed, action: t('lenses:runBackfill') })}
                 </span>
               )}
             </p>
@@ -230,7 +233,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:configTooltip')}
               >
-                Config
+                {t('lenses:view.config')}
               </button>
               <button
                 type="button"
@@ -238,7 +241,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:historyTooltip')}
               >
-                History
+                {t('lenses:view.history')}
               </button>
               {confirmDelete ? (
                 <button
@@ -268,7 +271,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                   onClick={() => setConfirmDelete(true)}
                   className="rounded border border-red-700/60 px-3 py-1 text-xs text-red-300 hover:bg-red-900/40"
                 >
-                  Delete
+                  {t('common:actions.delete')}
                 </button>
               )}
             </>
@@ -278,7 +281,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
             onClick={() => setShowCreate(true)}
             className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
           >
-            + New Lens
+            {t('lenses:view.newLens')}
           </button>
         </div>
       </div>

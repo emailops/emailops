@@ -219,7 +219,11 @@ export function LensScopeEditor({ lens, open, onClose }: LensScopeEditorProps) {
                 domainCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
               }`}
             />
-            {domainCheck.error && <p className="mt-1 text-[10px] text-red-400">{domainCheck.error}</p>}
+            {domainCheck.error && (
+              <p className="mt-1 text-[10px] text-red-400">
+                {t(`lenses:scope.errors.${domainCheck.error.code}`, domainCheck.error.params)}
+              </p>
+            )}
           </label>
         </div>
 
@@ -234,7 +238,11 @@ export function LensScopeEditor({ lens, open, onClose }: LensScopeEditorProps) {
               emailCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
             }`}
           />
-          {emailCheck.error && <p className="mt-1 text-[10px] text-red-400">{emailCheck.error}</p>}
+          {emailCheck.error && (
+            <p className="mt-1 text-[10px] text-red-400">
+              {t(`lenses:scope.errors.${emailCheck.error.code}`, emailCheck.error.params)}
+            </p>
+          )}
         </label>
 
         <label className="block">

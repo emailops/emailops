@@ -1,13 +1,13 @@
 // Modal listing the most recent runs for a Lens (most recent first).
 // Sourced from the `lens_runs` table via `list_lens_runs`.
 
-import { format } from 'date-fns';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { formatDateTime } from '@/lib/intl';
 import type { LensRunHistoryEntry } from '@/types';
 
 interface LensRunHistoryDialogProps {
@@ -18,7 +18,7 @@ interface LensRunHistoryDialogProps {
 }
 
 export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRunHistoryDialogProps) {
-  const { t } = useTranslation(['common', 'lenses']);
+  const { t, i18n } = useTranslation(['common', 'lenses']);
   const [runs, setRuns] = useState<LensRunHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +48,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
     <Modal
       open={open}
       onClose={onClose}
-      title={`Run history — ${lensName}`}
+      title={t('lenses:runHistory.title', { name: lensName })}
       size="lg"
       footer={
         <div className="flex justify-end">
@@ -83,10 +83,10 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           <tbody>
             {runs.map((r) => (
               <tr key={r.id} className="border-t border-gray-800">
+                <td className="px-3 py-2 align-top text-gray-300">{formatDateTime(r.startedAt, i18n.language)}</td>
                 <td className="px-3 py-2 align-top text-gray-300">
-                  {format(new Date(r.startedAt * 1000), 'MMM d, yyyy h:mm a')}
+                  {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
                 </td>
-                <td className="px-3 py-2 align-top text-gray-300">{r.kind}</td>
                 <td className="px-3 py-2 align-top">
                   <StatusBadge status={r.status} />
                 </td>
@@ -107,7 +107,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
               .filter((r) => r.errorMessage)
               .map((r) => (
                 <li key={r.id}>
-                  <span className="text-gray-500">{format(new Date(r.startedAt * 1000), 'MMM d, h:mm a')}:</span>{' '}
+                  <span className="text-gray-500">{formatDateTime(r.startedAt, i18n.language)}:</span>{' '}
                   <span className="text-red-300">{r.errorMessage}</span>
                 </li>
               ))}
@@ -119,6 +119,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation(['lenses']);
   const cls =
     status === 'success'
       ? 'border-green-700/60 text-green-300 bg-green-900/30'
@@ -129,7 +130,11 @@ function StatusBadge({ status }: { status: string }) {
           : status === 'running'
             ? 'border-blue-700/60 text-blue-300 bg-blue-900/30'
             : 'border-gray-700/60 text-gray-300';
-  return <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>{status}</span>;
+  return (
+    <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>
+      {t(`lenses:runHistory.statuses.${status}`, { defaultValue: status })}
+    </span>
+  );
 }
 
 function formatDuration(r: LensRunHistoryEntry): string {

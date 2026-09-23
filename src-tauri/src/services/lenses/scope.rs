@@ -323,6 +323,24 @@ mod tests {
     }
 
     #[test]
+    fn folder_mailboxes_select_only_the_chosen_imap_folders() {
+        // IMAP custom folders are stored as `folder:<serverPath>`; the Lens
+        // folder picker sends exactly those values alongside the built-ins.
+        let db = Database::new_for_testing().expect("db");
+        insert_email(&db, "in", "acct1", "inbox", 100);
+        insert_email(&db, "quotes", "acct1", "folder:INBOX.Quotes", 200);
+        insert_email(&db, "other", "acct1", "folder:INBOX.Other", 300);
+
+        let scope = LensScope {
+            mailboxes: Some(vec!["inbox".into(), "folder:INBOX.Quotes".into()]),
+            direction: Some(Direction::Inbound),
+            ..Default::default()
+        };
+        let ids = evaluate(&db, &scope).unwrap();
+        assert_eq!(ids, vec!["quotes".to_string(), "in".to_string()]);
+    }
+
+    #[test]
     fn direction_outbound_filters_to_sent_mailbox() {
         let db = Database::new_for_testing().expect("db");
         insert_email(&db, "in1", "acct1", "inbox", 100);

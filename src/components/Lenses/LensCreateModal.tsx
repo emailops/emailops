@@ -24,6 +24,8 @@ import type {
   LensTemplate,
 } from '@/types';
 
+import { LensFolderChips } from './LensFolderChips';
+import { withoutFolderMailboxes } from './scopeFolders';
 import { validateSenderDomains } from './scopeValidation';
 
 interface LensCreateModalProps {
@@ -93,15 +95,13 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   const [lastDays, setLastDays] = useState<string>('60');
   const [query, setQuery] = useState('');
   const [senderDomains, setSenderDomains] = useState('');
-  const [prompt, setPrompt] = useState(
-    'Extract the fields below from this email. Leave nullable fields as null when the email does not contain the information.',
-  );
-  const [columns, setColumns] = useState<DraftColumn[]>([
+  const [prompt, setPrompt] = useState(() => t('lenses:create.defaultPrompt'));
+  const [columns, setColumns] = useState<DraftColumn[]>(() => [
     {
       key: 'summary',
-      label: 'Summary',
+      label: t('lenses:columns.builtin.summary'),
       type: 'text',
-      description: 'One-sentence summary of the email.',
+      description: t('lenses:create.defaultSummaryDescription'),
       required: true,
       isUniqueKey: false,
       enumValues: '',
@@ -132,15 +132,15 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     for (const c of columns) {
       const key = c.key.trim();
       if (!key) {
-        setError('Every column needs a key.');
+        setError(t('lenses:create.errors.missingKey'));
         return null;
       }
       if (!/^[a-z][a-z0-9_]*$/i.test(key)) {
-        setError(`Column key "${key}" must be alphanumeric/underscore and start with a letter.`);
+        setError(t('lenses:create.errors.invalidKey', { key }));
         return null;
       }
       if (finalisedColumns.some((existing) => existing.key === key)) {
-        setError(`Duplicate column key "${key}".`);
+        setError(t('lenses:create.errors.duplicateKey', { key }));
         return null;
       }
       const col: LensColumn = {
@@ -157,7 +157,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
           .map((s) => s.trim())
           .filter(Boolean);
         if (values.length === 0) {
-          setError(`Enum column "${key}" needs at least one value.`);
+          setError(t('lenses:create.errors.enumNeedsValues', { key }));
           return null;
         }
         col.enumValues = values;
@@ -166,7 +166,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     }
     const domainCheck = validateSenderDomains(senderDomains);
     if (domainCheck.error) {
-      setError(domainCheck.error);
+      setError(t(`lenses:scope.errors.${domainCheck.error.code}`, domainCheck.error.params));
       return null;
     }
     const scope: LensScope = {
@@ -184,11 +184,11 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
   const handleSubmit = async () => {
     setError(null);
     if (!name.trim()) {
-      setError('Name is required.');
+      setError(t('lenses:create.errors.nameRequired'));
       return;
     }
     if (!prompt.trim()) {
-      setError('Prompt is required.');
+      setError(t('lenses:create.errors.promptRequired'));
       return;
     }
     const built = buildScopeAndSchema();
@@ -217,7 +217,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     setError(null);
     setPreviewRows(null);
     if (!prompt.trim()) {
-      setError('Add a prompt before previewing.');
+      setError(t('lenses:create.errors.promptBeforePreview'));
       return;
     }
     const built = buildScopeAndSchema();
@@ -252,7 +252,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       open={open}
       onClose={submitting ? () => undefined : onClose}
       title={t('lenses:create.title')}
-      subtitle="Define a filter, a schema, and an extraction prompt."
+      subtitle={t('lenses:create.subtitle')}
       size="2xl"
       disableBackdropClose
       footer={
@@ -263,7 +263,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
             disabled={submitting}
             className="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
           >
-            Cancel
+            {t('common:actions.cancel')}
           </button>
           {tab === 'custom' && (
             <button
@@ -272,7 +272,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               disabled={submitting}
               className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
-              {submitting ? 'Creating…' : 'Create Lens'}
+              {submitting ? t('lenses:create.creating') : t('lenses:create.submit')}
             </button>
           )}
         </div>
@@ -290,7 +290,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               tab === 'templates' ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            Templates
+            {t('lenses:create.tabTemplates')}
           </button>
           <button
             type="button"
@@ -299,7 +299,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               tab === 'custom' ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            Custom
+            {t('lenses:create.tabCustom')}
           </button>
         </div>
 
@@ -386,7 +386,10 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                       { value: '', label: t('lenses:scope.allAccounts') },
                       ...accounts.map((a) => ({ value: a.id, label: a.email })),
                     ]}
-                    onChange={(value) => setAccountId(value)}
+                    onChange={(value) => {
+                      setAccountId(value);
+                      setMailboxes((prev) => withoutFolderMailboxes(prev));
+                    }}
                     ariaLabel={t('lenses:scope.account')}
                     fullWidth
                   />
@@ -421,11 +424,17 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                           : 'border-gray-600 text-gray-300 hover:bg-gray-700'
                       }`}
                     >
-                      {m}
+                      {t(`lenses:scope.mailboxNames.${m}`)}
                     </button>
                   ))}
                 </div>
               </div>
+
+              <LensFolderChips
+                accountId={accountId}
+                selected={mailboxes}
+                onToggle={(v) => toggleInArray(mailboxes, v, setMailboxes)}
+              />
 
               <div className="space-y-1">
                 <span className="block text-gray-400">{t('lenses:scope.categories')}</span>
@@ -441,7 +450,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                           : 'border-gray-600 text-gray-300 hover:bg-gray-700'
                       }`}
                     >
-                      {c}
+                      {t(`lenses:scope.categoryNames.${c}`)}
                     </button>
                   ))}
                 </div>
@@ -491,7 +500,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   onClick={addColumn}
                   className="rounded border border-gray-600 px-2 py-0.5 text-[11px] text-gray-200 hover:bg-gray-700"
                 >
-                  + Add column
+                  {t('lenses:columns.add')}
                 </button>
               </div>
               <div className="space-y-2">
@@ -529,7 +538,10 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                         </span>
                         <Select
                           value={c.type}
-                          options={COLUMN_TYPES.map((colType) => ({ value: colType, label: colType }))}
+                          options={COLUMN_TYPES.map((colType) => ({
+                            value: colType,
+                            label: t(`lenses:columns.types.${colType}`),
+                          }))}
                           onChange={(value) => updateColumn(idx, { type: value as LensColumnType })}
                           ariaLabel={t('lenses:columns.type')}
                           size="xs"
@@ -543,7 +555,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                             checked={c.required}
                             onChange={(e) => updateColumn(idx, { required: e.target.checked })}
                           />
-                          required
+                          {t('lenses:columns.required')}
                         </label>
                         <label
                           className="flex items-center gap-1 text-[11px] text-gray-300"
@@ -591,7 +603,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                     {c.type === 'enum' && (
                       <label className="mt-2 block">
                         <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                          Enum values (comma-separated)
+                          {t('lenses:columns.enumValues')}
                         </span>
                         <input
                           type="text"
@@ -626,16 +638,20 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   disabled={previewing || submitting}
                   className="rounded border border-gray-600 px-2 py-1 text-[11px] text-gray-200 hover:bg-gray-700 disabled:opacity-50"
                 >
-                  {previewing ? 'Testing…' : 'Test on 3 emails'}
+                  {previewing ? t('lenses:create.testing') : t('lenses:create.testOnSample')}
                 </button>
                 <span className="text-[11px] text-gray-500">{t('lenses:create.previewHelp')}</span>
               </div>
               {previewRows && previewRows.length > 0 && (
                 <div className="mt-2 space-y-2">
-                  <h4 className="text-[11px] uppercase tracking-wider text-gray-500">Preview ({previewRows.length})</h4>
+                  <h4 className="text-[11px] uppercase tracking-wider text-gray-500">
+                    {t('lenses:create.previewTitle', { count: previewRows.length })}
+                  </h4>
                   {previewRows.map((r) => (
                     <div key={r.emailId} className="rounded border border-gray-700 bg-[#1e1e1e]/60 p-2 text-[11px]">
-                      <div className="truncate font-medium text-gray-200">{r.emailSubject || '(no subject)'}</div>
+                      <div className="truncate font-medium text-gray-200">
+                        {r.emailSubject || t('lenses:create.noSubject')}
+                      </div>
                       <div className="truncate text-gray-500">{r.emailSender}</div>
                       {r.errorMessage ? (
                         <div className="mt-1 text-red-400">{r.errorMessage}</div>

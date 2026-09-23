@@ -488,7 +488,8 @@ export function LensTable({
                     colSpan={colSpan}
                     className="border-b border-gray-700 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400"
                   >
-                    {label} <span className="ml-1 text-gray-500">({bucket.length})</span>
+                    {label === '(none)' ? t('lenses:noneOption') : label}{' '}
+                    <span className="ml-1 text-gray-500">({bucket.length})</span>
                   </td>
                 </tr>
                 {bucket.map((row) => (
@@ -560,18 +561,14 @@ export function NoRowsState({
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <h2 className="text-base font-semibold text-gray-200">{t('lenses:emptyRows')}</h2>
       <p className="max-w-md text-xs text-gray-400">
-        {isRunning && total > 0
-          ? `Extracting from ${total} matching email${total === 1 ? '' : 's'} — this can take a while on the first run.`
-          : 'Run an extraction over the matching emails to populate this table.'}
+        {isRunning && total > 0 ? t('lenses:view.extractingFrom', { count: total }) : t('lenses:view.noRowsHelp')}
       </p>
       {isRunning && total > 0 && (
         <div className="w-72 max-w-full">
           <div className="h-1.5 w-full overflow-hidden rounded bg-gray-800">
             <div className="h-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
-          <p className="mt-1 text-[11px] text-gray-500">
-            {processed} of {total} processed ({pct}%)
-          </p>
+          <p className="mt-1 text-[11px] text-gray-500">{t('lenses:view.progress', { processed, total, pct })}</p>
         </div>
       )}
       <button
@@ -580,7 +577,11 @@ export function NoRowsState({
         disabled={isRunning}
         className="mt-2 rounded bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
       >
-        {isRunning ? (total > 0 ? `Running… ${processed}/${total}` : 'Running…') : 'Run backfill'}
+        {isRunning
+          ? total > 0
+            ? t('lenses:view.runningProgress', { processed, total })
+            : t('lenses:view.runningShort')
+          : t('lenses:runBackfill')}
       </button>
     </div>
   );

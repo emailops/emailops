@@ -35,7 +35,31 @@
     "senderEmails": "Adresses de l'expéditeur",
     "keywordQuery": "Recherche par mot-clé (FTS5)",
     "keywordsBodyHint": "(si décoché, seul l'objet est recherché)",
-    "searchBody": "Rechercher dans le corps de l'e-mail"
+    "searchBody": "Rechercher dans le corps de l'e-mail",
+    "folders": "Dossiers",
+    "foldersPickAccount": "Choisissez un compte pour inclure ses dossiers.",
+    "folderMissing": "Ce dossier n'existe plus dans le compte — retirez-le du périmètre.",
+    "foldersLoadError": "Impossible de charger les dossiers : {{error}}",
+    "help": "Choisissez les e-mails que cette lentille analyse. Les changements de périmètre s'appliquent aux prochaines exécutions ; les lignes déjà extraites restent jusqu'à ce que vous relanciez le retraitement.",
+    "mailboxNames": {
+      "inbox": "Boîte de réception",
+      "sent": "Envoyés",
+      "archive": "Archives",
+      "spam": "Spam",
+      "trash": "Corbeille"
+    },
+    "categoryNames": {
+      "Primary": "Principal",
+      "Promotions": "Promotions",
+      "Social": "Social",
+      "Updates": "Notifications",
+      "Forums": "Forums"
+    },
+    "errors": {
+      "domainLooksLikeEmail": "« {{value}} » ressemble à une adresse e-mail — mettez-la dans « E-mails de l'expéditeur » ou n'utilisez que le domaine (ex. « {{domain}} »).",
+      "invalidDomain": "« {{value}} » n'est pas un domaine valide (attendu : quelque chose comme « stripe.com »).",
+      "invalidEmail": "« {{value}} » n'est pas une adresse e-mail valide."
+    }
   },
   "prompt": {
     "placeholder": "Décrivez ce qu'il faut extraire de chaque e-mail…"
@@ -49,7 +73,27 @@
     "descriptionPlaceholder": "Signification de ce champ — incluse dans le prompt du modèle.",
     "promptHelp": "Indiquez au modèle ce qu'il faut extraire. Les descriptions de colonnes ci-dessus sont également transmises comme schéma de l'appel d'outil.",
     "previewHelp": "Exécute l'extraction sur un petit échantillon sans enregistrer.",
-    "previewEmpty": "Aucun e-mail ne correspond à la portée. Essayez d'élargir les filtres."
+    "previewEmpty": "Aucun e-mail ne correspond à la portée. Essayez d'élargir les filtres.",
+    "subtitle": "Définissez un filtre, un schéma et un prompt d'extraction.",
+    "submit": "Créer la lentille",
+    "creating": "Création…",
+    "tabTemplates": "Modèles",
+    "tabCustom": "Personnalisée",
+    "testOnSample": "Tester sur 3 e-mails",
+    "testing": "Test en cours…",
+    "previewTitle": "Aperçu ({{count}})",
+    "noSubject": "(sans objet)",
+    "defaultPrompt": "Extrayez de cet e-mail les champs ci-dessous. Laissez à null les champs facultatifs lorsque l'e-mail ne contient pas l'information.",
+    "defaultSummaryDescription": "Résumé de l'e-mail en une phrase.",
+    "errors": {
+      "missingKey": "Chaque colonne a besoin d'une clé.",
+      "invalidKey": "La clé de colonne « {{key}} » ne doit contenir que des lettres, chiffres et tirets bas, et commencer par une lettre.",
+      "duplicateKey": "Clé de colonne en double : « {{key}} ».",
+      "enumNeedsValues": "La colonne de liste « {{key}} » a besoin d'au moins une valeur.",
+      "nameRequired": "Le nom est obligatoire.",
+      "promptRequired": "Le prompt est obligatoire.",
+      "promptBeforePreview": "Ajoutez un prompt avant de tester."
+    }
   },
   "identity": {
     "title": "Identité",
@@ -100,6 +144,20 @@
       "travel_type": "Type",
       "vendor": "Fournisseur",
       "worth_clicking": "Vaut la peine ?"
+    },
+    "add": "+ Ajouter une colonne",
+    "required": "obligatoire",
+    "enumValues": "Valeurs de la liste (séparées par des virgules)",
+    "types": {
+      "string": "Texte court",
+      "text": "Texte long",
+      "number": "Nombre",
+      "currency": "Montant",
+      "date": "Date",
+      "boolean": "Oui/Non",
+      "enum": "Liste de valeurs",
+      "email": "E-mail",
+      "url": "URL"
     }
   },
   "table": {
@@ -113,7 +171,8 @@
   },
   "row": {
     "sourceEmail": "E-mail source",
-    "closeDrawer": "Fermer le panneau"
+    "closeDrawer": "Fermer le panneau",
+    "noEmail": "Aucun e-mail sélectionné."
   },
   "runHistory": {
     "loading": "Chargement…",
@@ -125,12 +184,54 @@
     "ok": "OK",
     "failed": "Échoués",
     "duration": "Durée",
-    "errorMessages": "Messages d'erreur"
+    "errorMessages": "Messages d'erreur",
+    "title": "Historique des exécutions — {{name}}",
+    "kinds": {
+      "backfill": "Retraitement",
+      "incremental": "Incrémentale",
+      "reextract": "Réextraction",
+      "single": "Unitaire"
+    },
+    "statuses": {
+      "running": "En cours",
+      "success": "Réussie",
+      "failed": "Échouée",
+      "cancelled": "Annulée"
+    }
   },
   "apply": {
     "applyToAccount": "Appliquer au compte",
     "allAccounts": "Tous les comptes"
   },
   "showExcludedRows": "Afficher les lignes exclues",
-  "showLensRows": "Retour au Lens"
+  "showLensRows": "Retour au Lens",
+  "config": {
+    "title": "Configuration — {{name}}",
+    "tabPrompt": "Prompt",
+    "promptHelp": "Ce prompt est envoyé au modèle avec le contenu de chaque e-mail. L'enregistrement marque toutes les lignes existantes comme obsolètes (hausse de prompt_version) afin de pouvoir les réextraire.",
+    "promptVersion": "Version du prompt :"
+  },
+  "view": {
+    "renameTooltip": "Cliquez pour renommer",
+    "rowCount_one": "{{count}} ligne",
+    "rowCount_other": "{{count}} lignes",
+    "rowCount_many": "{{count}} lignes",
+    "running": "↻ en cours",
+    "processedCount": "({{count}} traités)",
+    "failedCount": "· {{count}} en échec",
+    "lastRunFailed": "la dernière exécution a échoué",
+    "rowsFailedRetry_one": "{{count}} ligne a échoué à l'extraction — cliquez sur « {{action}} » pour réessayer",
+    "rowsFailedRetry_other": "{{count}} lignes ont échoué à l'extraction — cliquez sur « {{action}} » pour réessayer",
+    "rowsFailedRetry_many": "{{count}} lignes ont échoué à l'extraction — cliquez sur « {{action}} » pour réessayer",
+    "config": "Configurer",
+    "history": "Historique",
+    "newLens": "+ Nouvelle lentille",
+    "extractingFrom_one": "Extraction de {{count}} e-mail correspondant — la première exécution peut prendre un moment.",
+    "extractingFrom_other": "Extraction de {{count}} e-mails correspondants — la première exécution peut prendre un moment.",
+    "extractingFrom_many": "Extraction de {{count}} e-mails correspondants — la première exécution peut prendre un moment.",
+    "noRowsHelp": "Lancez une extraction sur les e-mails correspondants pour remplir ce tableau.",
+    "progress": "{{processed}} sur {{total}} traités ({{pct}} %)",
+    "runningShort": "En cours…",
+    "runningProgress": "En cours… {{processed}}/{{total}}"
+  }
 }
