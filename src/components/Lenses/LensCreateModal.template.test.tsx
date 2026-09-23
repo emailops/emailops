@@ -79,4 +79,20 @@ describe('LensCreateModal templates', () => {
     expect(bodySearch).toBeDefined();
     expect(document.querySelector('textarea')?.value).toBe('Extract the submitter.');
   });
+
+  it('reopens on the Templates tab even after a template switched it to the form', async () => {
+    const render = (open: boolean) =>
+      root.render(<LensCreateModal open={open} onClose={() => {}} onCreated={() => {}} />);
+    await act(async () => render(true));
+    const card = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Contact form leads'));
+    await act(async () => card?.click());
+    expect(document.querySelector('textarea')).not.toBeNull(); // on the form now
+
+    await act(async () => render(false));
+    await act(async () => render(true));
+    expect(document.querySelector('textarea')).toBeNull();
+    expect([...document.querySelectorAll('button')].some((b) => b.textContent?.includes('Contact form leads'))).toBe(
+      true,
+    );
+  });
 });

@@ -69,6 +69,8 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
 
   useEffect(() => {
     if (!open) return;
+    // Every entry point (sidebar "+", header button) starts from the templates.
+    setTab('templates');
     setTemplatesLoading(true);
     api
       .listLensTemplates()
