@@ -24,7 +24,7 @@ args = ap.parse_args()
 skip = set(filter(None, args.skip.split(",")))
 only = set(filter(None, args.only.split(",")))
 if args.tier == "quick":
-    skip |= {"e2e", "oracle", "evals", "translation"}
+    skip |= {"e2e", "oracle", "evals", "forms", "translation"}
 
 stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 DEMO_DIR = REPO / ".emailops-demo-data"
@@ -237,9 +237,19 @@ APP = RUN / "app"
 V = SKILL / "scripts/verify.sh"
 def app_env(): return dict(ENV, VERIFY_RUN_DIR=str(APP))
 def reset_ui_prefs():
-    """UI state the sweep toggles is persisted in the demo DB (`chat_panel_open`);
-    a run that dies mid-sweep would otherwise change the next run's starting state."""
-    subprocess.run(["sqlite3", str(DEMO_DIR / "emailops.db"), "INSERT OR REPLACE INTO user_preferences (key, value) VALUES ('chat_panel_open', 'true')"], check=True)
+    """State the sweep needs, seeded in the demo DB before every run.
+
+    `chat_panel_open`: UI state the sweep itself toggles, so a run that dies
+    mid-sweep would otherwise change the next run's starting state.
+
+    `lenses_enabled`: Lenses is experimental and off by default, and the
+    Chat/Formularios steps drive the Create Lens form. It is also the gate the
+    backend reads (`forms::registry::LENS_CREATE.available`), so with it off the
+    chat correctly refuses to route there and those steps would have nothing to
+    measure."""
+    prefs = [("chat_panel_open", "true"), ("lenses_enabled", "true")]
+    sql = ";".join(f"INSERT OR REPLACE INTO user_preferences (key, value) VALUES ('{k}', '{v}')" for k, v in prefs)
+    subprocess.run(["sqlite3", str(DEMO_DIR / "emailops.db"), sql], check=True)
 
 def layer_e2e():
     reset_ui_prefs()
@@ -328,6 +338,23 @@ def layer_junk():
                 f"actual {g['actual']:.4f} · límite {g['limit']:.4f}", None,
                 desc="Puerta global del detector sobre el conjunto de casos", model="determinista (Naive Bayes local)", judge="sin juez: umbral fijo", harness=harness, checks=[])
 
+def layer_forms():
+    # How the model fills the app's forms (Create Lens is the pilot): synthetic
+    # requests, no mailbox data, needs the chat model.
+    teardown()
+    out = LAYERS / "forms"; out.mkdir(exist_ok=True)
+    rc, o, e = sh(f'make eval-forms ARGS="--out {out}"', timeout=3600)
+    rep = _json_run_report(out)
+    if rep is None:
+        add("Chat con el buzón", "eval", "form_fill_eval (harness)", "fail", (o + e)[-3000:]); return
+    harness = ("form_fill_eval: peticiones sintéticas en src-tauri/evals/forms/cases.yaml contra la definición "
+               "declarativa del formulario (services::forms::registry); cada caso fija qué campos deben quedar "
+               "rellenos, cuáles NO debe inventar el modelo, cuántas columnas y con qué tipos, sin juez")
+    for it in rep["per_item_results"]:
+        add("Chat con el buzón", "eval", it["id"], "ok" if it["passed"] else "fail", it.get("detail") or "", None,
+            desc=f"Caso sintético de form_fill_eval; puntuación {it.get('score')}", model=rep.get("model") or "",
+            judge="sin juez: comprobaciones por campo", harness=harness, checks=[])
+
 def layer_translation():
     # Language detection + translation on synthetic cases; needs the chat model.
     teardown()
@@ -361,7 +388,7 @@ try:
     # Model-backed evals run before the UI layers: a fresh CLI process with the GPU
     # to itself, instead of right after the dev app's teardown (a 35B run after
     # that teardown once degraded to garbage answers at 5x the latency).
-    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("evals", layer_evals), ("junk", layer_junk), ("translation", layer_translation), ("e2e", layer_e2e), ("oracle", layer_oracle), ("perf", layer_perf)]:
+    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("evals", layer_evals), ("junk", layer_junk), ("forms", layer_forms), ("translation", layer_translation), ("e2e", layer_e2e), ("oracle", layer_oracle), ("perf", layer_perf)]:
         layer_run(name, fn)
 finally:
     teardown()
