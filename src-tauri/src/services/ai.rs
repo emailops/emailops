@@ -668,6 +668,20 @@ impl AiService {
     }
 
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {
+        self.complete_with_prefix("", prompt, operation, options).await
+    }
+
+    /// [`complete`](Self::complete) for a prompt whose `prefix` is identical
+    /// on every call (a fixed instruction block) and whose `suffix` is the
+    /// per-call part. Backends with a persistent KV cache keep the prefix
+    /// decoded between calls; the others see `prefix + suffix`.
+    pub async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        operation: &str,
+        options: Option<CompletionOptions>,
+    ) -> Result<String> {
         let mut opts = options.unwrap_or_default();
         // Apply thinking preference from config if not explicitly set
         if opts.think.is_none() {
@@ -677,15 +691,20 @@ impl AiService {
             }
         }
         let t = std::time::Instant::now();
-        let result = self.provider.complete(prompt, opts).await?;
+        let result = if prefix.is_empty() {
+            self.provider.complete(suffix, opts).await?
+        } else {
+            self.provider.complete_with_prefix(prefix, suffix, opts).await?
+        };
         let latency_ms = t.elapsed().as_millis() as u64;
         self.check_budget(result.cost_usd)?;
         self.record_usage(&result, operation)?;
+        let input = format!("{prefix}{suffix}");
         crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
             trace_name: operation,
             name: operation,
             model: &result.model,
-            input: prompt,
+            input: &input,
             output: &result.text,
             prompt_tokens: result.prompt_tokens,
             completion_tokens: result.completion_tokens,
