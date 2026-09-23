@@ -1346,3 +1346,26 @@ correct and faithful.
 **Rejected:** changing the chat system prompt to decline general knowledge and ask for
 clarification on ambiguous names (moves replies on every route for behaviour the developer
 does not need).
+
+## 2026-09-22 — Published docs are verified against the app, sentence by sentence
+
+**Decision:** Every block of `docs/site/` is a catalogued claim (`<!-- claim:id -->` +
+`docs/site/claims.toml`), and `make docs-check ARGS=--with-app` verifies it against the
+running app — a fresh install, a locked relaunch, the demo mailbox and the CLI — with
+tests, release assets and source files only where the app cannot show it. The report is
+the docs themselves, each sentence green (a deterministic check that *quotes* it passed,
+reading its expected value from the docs and testing behaviour), yellow (not validatable,
+only a label seen, partial, or not yet covered) or red, tagged with how it was checked.
+Reference tables are generated from code (`make docs-gen`), not hand-maintained. What no
+check reaches is judged by the agent running the `maintain-docs` skill against the
+evidence the app run collected, shown as `[AGT]`. The `release` skill calls
+`maintain-docs` before tagging.
+**Context:** Case-level "OK" hid three failures: expectations typed into the check
+instead of read from the docs, a label on screen taken as proof of behaviour, and one
+passing check marking a whole paragraph verified. Each hid a real drift (the model
+recommendation on a 16 GB Mac, Junk settings unreachable without AI, a disk figure that
+matched no model, models the docs said were greyed out and were not).
+**Rejected:** Checking text against source code (a locale string can exist and never be
+rendered); one pass/fail per block; incremental runs of only the changed sections (too
+complex for the gain — the whole check always runs); a local vision model as judge (the
+embedded runtime has no image support and the useful models do not fit in 16 GB).

@@ -23,7 +23,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-python3 - <<'PY'
+# See the interpreter note in check-docs-parity.sh: a bare `python3` can resolve
+# to an x86_64 build that cannot exec on Apple Silicon.
+uv run --no-project python - <<'PY'
 import json, pathlib, re, sys
 
 LANGS = ["en", "es", "fr", "de"]

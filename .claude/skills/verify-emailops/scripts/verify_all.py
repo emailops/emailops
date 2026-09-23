@@ -168,6 +168,12 @@ def layer_static():
         ("cargo fmt --check", "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check", "fail"),
         ("clippy (flags de CI)", "cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings", "fail"),
         ("ids deterministas de la BD demo", "cd scripts && python3 -m unittest -q test_generate_demo_db", "fail"),
+        # Published docs: structure, quoted labels and paths, and full claim coverage.
+        # The per-claim verification itself is `make docs-check` (maintain-docs skill).
+        ("docs: estructura en los 4 idiomas", "bash scripts/check-docs-parity.sh", "fail"),
+        ("docs: etiquetas de UI citadas", "bash scripts/check-docs-labels.sh", "fail"),
+        ("docs: rutas de fichero citadas", "uv run --no-project scripts/check-docs-paths.py", "fail"),
+        ("docs: cobertura completa de afirmaciones", "uv run --no-project scripts/check-docs-claims.py", "fail"),
         ("cargo audit", "cargo audit --file src-tauri/Cargo.lock", "info"),
         ("npm audit (high/critical)", "npm audit --audit-level=high", "info"),
     ]

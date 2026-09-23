@@ -6,9 +6,9 @@ description: "Drive the real EmailOps desktop app (Tauri 2 + React, macOS) the w
 # Verify EmailOps
 
 EmailOps is a Tauri 2 desktop app: Rust backend, React/TypeScript frontend rendered in
-a WKWebView. The user touches the **desktop window** (primary surface). Secondary
-surfaces, verified elsewhere: `emailops-cli` (headless, `make cli-*`, see root
-`CLAUDE.md`) and the iOS build (`scripts/ios.sh`, no tap tooling).
+a WKWebView. The user touches the **desktop window** (primary surface). The one
+secondary surface, verified elsewhere, is `emailops-cli` (headless, `make cli-*`,
+see root `CLAUDE.md`). There is no mobile build.
 
 Everything below goes through one helper so the next agent never re-derives it:
 

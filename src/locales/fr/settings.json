@@ -391,7 +391,7 @@
     "regenerateConfirm": "Régénérer les embeddings efface les vecteurs existants. Continuer ?",
     "selectAccount": "Sélectionnez un compte pour configurer la recherche IA.",
     "categoriesTitle": "Catégories pour les embeddings",
-    "categoriesHelp": "Seuls les courriels dans ces catégories seront embeddés pour la recherche sémantique. Les embeddings alimentent « trouver des similaires » et la recherche en langage naturel sur toute votre boîte. Ne laissez que Principale pour garder l'index petit et rapide ; ajoutez d'autres catégories si vous voulez que la recherche couvre les newsletters, le social ou les promotions.",
+    "categoriesHelp": "Seuls les courriels dans ces catégories seront embeddés pour la recherche sémantique. Les embeddings alimentent la recherche en langage naturel sur toute votre boîte et l'étape de récupération du chat. Ne laissez que Principale pour garder l'index petit et rapide ; ajoutez d'autres catégories si vous voulez que la recherche couvre les newsletters, le social ou les promotions.",
     "noCategoriesWarn": "Aucune catégorie sélectionnée — aucun nouveau courriel ne sera embeddé.",
     "rebuildTitle": "Reconstruire l'index de recherche",
     "rebuildHelp": "Supprime tous les embeddings de ce compte et les régénère de zéro. À utiliser après avoir changé de modèle d'embeddings ou les catégories ci-dessus. S'exécute en arrière-plan et traite toute la boîte par lots ; la progression apparaît dans le panneau de sortie.",
