@@ -38,15 +38,33 @@ interface FormFillStore {
   clearFilledForm: () => void;
 }
 
-export const useFormFillStore = create<FormFillStore>((set, get) => ({
+/**
+ * Monotonic across the whole session, deliberately NOT derived from the
+ * current `pending`.
+ *
+ * The form clears the hand-off the moment it applies a fill, so a nonce
+ * computed from `pending` restarts at 1 on the next fill — the same value the
+ * form already recorded as applied, which made it skip every fill after the
+ * first. (Seen 23/09/2026: "creame una lente…" filled the form, "sí" reported
+ * 8 fields and changed nothing on screen.)
+ */
+let fillSequence = 0;
+
+export const useFormFillStore = create<FormFillStore>((set) => ({
   pending: null,
-  setFilledForm: (formId, values, missingRequired) =>
-    set({ pending: { formId, values, missingRequired, nonce: (get().pending?.nonce ?? 0) + 1 } }),
+  setFilledForm: (formId, values, missingRequired) => {
+    fillSequence += 1;
+    set({ pending: { formId, values, missingRequired, nonce: fillSequence } });
+  },
   clearFilledForm: () => set({ pending: null }),
 }));
 
-/** Selector: the pending fill for `formId`, or `null`. */
-export function selectPendingFill(state: FormFillStore, formId: FillableFormId): PendingFormFill | null {
+/** Selector: the pending fill for `formId`, or `null`. Takes only the slice it
+ *  reads, so a test can exercise it without building a whole store. */
+export function selectPendingFill(
+  state: Pick<FormFillStore, 'pending'>,
+  formId: FillableFormId,
+): PendingFormFill | null {
   return state.pending?.formId === formId ? state.pending : null;
 }
 
