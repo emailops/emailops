@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { useLogStore } from '@/stores/logStore';
@@ -18,6 +19,16 @@ interface MessageBubbleProps {
   onOpenEmail?: () => void;
   /** Show the emails this answer references in the email list, via this search query. */
   onShowEmailsInList?: (query: string) => void;
+  /** The user marked this answer wrong and said why — run a corrective turn.
+   *  Omitted where retrying makes no sense (an already-rejected answer, or a
+   *  surface with no store wired). */
+  onReject?: (reason: string) => void;
+  /** Already marked wrong: the control is replaced by a note, so the user
+   *  cannot stack corrections on the same dead answer. */
+  isRejected?: boolean;
+  /** A turn is already in flight — the retry button stays visible but inert
+   *  rather than queueing a second turn the store would drop anyway. */
+  isSending?: boolean;
 }
 
 /** LM Studio-style "Processing…" status: a spinner plus a localized label for
@@ -116,6 +127,100 @@ function ThinkingSection({ text, streaming }: { text: string; streaming: boolean
   );
 }
 
+/**
+ * "This answer isn't right" → say why → retry.
+ *
+ * Two steps on purpose: a one-click thumbs-down tells the model nothing it can
+ * act on, and the whole point of this control is to feed the retry something
+ * specific ("esos correos son de septiembre"). Module scope, not nested in
+ * `MessageBubble`, so typing in the textarea survives the parent re-rendering
+ * on every stream token (see `src/CLAUDE.md` → Component Identity & Remounts).
+ */
+function WrongAnswerControl({ onReject, disabled }: { onReject: (reason: string) => void; disabled: boolean }) {
+  const { t } = useTranslation(['chat', 'common']);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus on open rather than `autoFocus`: the attribute is an a11y hazard on a
+  // control that can mount at any time (a screen reader loses its place), while
+  // focusing the box the user just chose to open is exactly what they asked for.
+  useEffect(() => {
+    if (open) textareaRef.current?.focus();
+  }, [open]);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        data-testid="chat-mark-wrong"
+        onClick={() => setOpen(true)}
+        className="mt-2 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700"
+      >
+        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"
+          />
+        </svg>
+        {t('chat:message.wrong')}
+      </button>
+    );
+  }
+
+  const submit = () => {
+    const trimmed = reason.trim();
+    if (!trimmed || disabled) return;
+    onReject(trimmed);
+    setOpen(false);
+    setReason('');
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-gray-300 bg-white p-2">
+      <label className="mb-1 block text-xs text-gray-600" htmlFor="chat-wrong-reason">
+        {t('chat:message.wrongPrompt')}
+      </label>
+      <textarea
+        id="chat-wrong-reason"
+        data-testid="chat-wrong-reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+        }}
+        rows={2}
+        ref={textareaRef}
+        placeholder={t('chat:message.wrongPlaceholder')}
+        className="w-full resize-y rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-primary-500 focus:outline-none"
+      />
+      <div className="mt-1.5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            setReason('');
+          }}
+          className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+        >
+          {t('common:actions.cancel')}
+        </button>
+        <button
+          type="button"
+          data-testid="chat-wrong-submit"
+          onClick={submit}
+          disabled={disabled || reason.trim().length === 0}
+          className="rounded bg-primary-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+        >
+          {t('chat:message.wrongSubmit')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   isStreaming,
@@ -123,6 +228,9 @@ export function MessageBubble({
   accountId,
   onOpenEmail,
   onShowEmailsInList,
+  onReject,
+  isRejected,
+  isSending,
 }: MessageBubbleProps) {
   const { t } = useTranslation(['chat']);
   const isUser = message.role === 'user';
@@ -217,6 +325,14 @@ export function MessageBubble({
               </button>
             )}
             {!isStreaming && message.trace && <ReasoningSection trace={message.trace} />}
+            {!isStreaming && hasAnswer && onReject && !isRejected && (
+              <WrongAnswerControl onReject={onReject} disabled={Boolean(isSending)} />
+            )}
+            {isRejected && (
+              <div data-testid="chat-rejected-note" className="mt-2 text-xs italic text-amber-700">
+                {t('chat:message.rejected')}
+              </div>
+            )}
           </>
         )}
       </div>

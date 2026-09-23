@@ -679,8 +679,13 @@ async fn run_chat(
             model.clone(),
             history,
             categories.clone(),
-            thread.clone(),
-            ambient_account.clone(),
+            // Headless CLI — nothing on screen, but `--thread` still grounds
+            // the turn the way the panel's context chip does.
+            crate::services::chat::TurnContext {
+                ambient_thread_id: thread.clone(),
+                ambient_account_id: ambient_account.clone(),
+                ..Default::default()
+            },
         )
         .await?;
 

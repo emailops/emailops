@@ -295,6 +295,9 @@ async fn run_planner(db: &Database, provider: &dyn AIProvider, user_email: &str)
         BENCH_TODAY,
         "what did the supplier say about the delayed pallet?",
         &glossary,
+        // The KV bench measures the cached head; no form is open.
+        None,
+        &crate::services::forms::registry::catalog(db),
     )
     .await;
     Ok(())

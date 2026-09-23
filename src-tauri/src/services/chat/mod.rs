@@ -19,6 +19,10 @@
 pub mod tools;
 
 mod conversations;
+// "This answer is wrong" — the per-turn instruction that steers the retry.
+pub(crate) mod correction;
+// The short-circuit turn that fills an app form after a `form` planner verdict.
+pub(crate) mod form_turn;
 // `pub(crate)` for the query-planner eval harness, which scores it directly
 // instead of inferring its quality from chat answers.
 pub(crate) mod planner;
@@ -29,6 +33,8 @@ mod routing;
 // the CLI and the eval report.
 pub mod trace_steps;
 mod turn;
+// What the user has on screen, as one validated per-turn context line.
+pub(crate) mod view_context;
 
 // ── Re-exports for external callers (commands/, evals/) ──────────────────────
 pub use conversations::{
@@ -45,7 +51,7 @@ pub use retrieval::{
 // the re-export reads as unused on a default `--no-default-features` build.
 #[allow(unused_imports)]
 pub(crate) use retrieval::{smart_body_slice, MAX_SOURCE_BODY_CHARS};
-pub use turn::{build_prompt, run_chat_turn};
+pub use turn::{build_prompt, run_chat_turn, TurnContext};
 // Tool-call salvage parsers — used as the secondary/tertiary fallback by the
 // embedded llama.cpp tool-call parsing chain (`ai/llama_cpp/runtime.rs`) after
 // `parse_qwen_tool_calls` (the primary). Only the llamacpp feature consumes

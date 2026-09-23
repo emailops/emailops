@@ -46,6 +46,18 @@ export function ChatPanelDock({
   });
   const draggingRef = useRef(false);
 
+  // Publish the dock's width so a non-blocking dialog can keep clear of it
+  // (see `Modal`'s `nonBlocking`). A CSS variable rather than a prop: the
+  // dialogs that need it are mounted in unrelated subtrees, and threading the
+  // width to each of them would couple every form to the chat panel.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--chat-dock-width', `${width}px`);
+    return () => {
+      root.style.removeProperty('--chat-dock-width');
+    };
+  }, [width]);
+
   // Drag from the left border: the panel is right-anchored, so its width is
   // the distance from the pointer to the window's right edge.
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
