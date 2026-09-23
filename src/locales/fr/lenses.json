@@ -59,7 +59,8 @@
       "domainLooksLikeEmail": "« {{value}} » ressemble à une adresse e-mail — mettez-la dans « E-mails de l'expéditeur » ou n'utilisez que le domaine (ex. « {{domain}} »).",
       "invalidDomain": "« {{value}} » n'est pas un domaine valide (attendu : quelque chose comme « stripe.com »).",
       "invalidEmail": "« {{value}} » n'est pas une adresse e-mail valide."
-    }
+    },
+    "keywordPlaceholder": "ex. facture"
   },
   "prompt": {
     "placeholder": "Décrivez ce qu'il faut extraire de chaque e-mail…"

@@ -59,7 +59,8 @@
       "domainLooksLikeEmail": "\"{{value}}\" looks like an email — put it in \"Sender emails\" instead, or use just the domain (e.g. \"{{domain}}\").",
       "invalidDomain": "\"{{value}}\" is not a valid domain (expected something like \"stripe.com\").",
       "invalidEmail": "\"{{value}}\" is not a valid email address."
-    }
+    },
+    "keywordPlaceholder": "e.g. invoice"
   },
   "prompt": {
     "placeholder": "Describe what to extract from each email…"

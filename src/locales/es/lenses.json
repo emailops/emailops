@@ -59,7 +59,8 @@
       "domainLooksLikeEmail": "\"{{value}}\" parece un correo — ponlo en \"Correos del remitente\" o usa solo el dominio (p. ej. \"{{domain}}\").",
       "invalidDomain": "\"{{value}}\" no es un dominio válido (se espera algo como \"stripe.com\").",
       "invalidEmail": "\"{{value}}\" no es una dirección de correo válida."
-    }
+    },
+    "keywordPlaceholder": "p. ej. presupuesto"
   },
   "prompt": {
     "placeholder": "Describe qué extraer de cada correo…"

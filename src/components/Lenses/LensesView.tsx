@@ -129,7 +129,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     <div className="flex h-full flex-1 flex-col overflow-hidden bg-[#1e1e1e] text-gray-200">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-40 flex-1">
           {activeLens && renaming ? (
             <input
               ref={renameInputRef}
@@ -191,7 +191,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {activeLens && (
             <label className="flex items-center gap-1 text-[11px] text-gray-400">
               {t('lenses:groupBy')}
@@ -214,7 +214,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => void cancelRun(activeLens.id)}
-                  className="rounded border border-yellow-600 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900/30"
+                  className="rounded border border-yellow-600 whitespace-nowrap px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900/30"
                 >
                   {t('lenses:cancelRun')}
                 </button>
@@ -222,7 +222,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => void runLens(activeLens.id, 'backfill')}
-                  className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                  className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 >
                   {t('lenses:runBackfill')}
                 </button>
@@ -230,7 +230,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
               <button
                 type="button"
                 onClick={() => setShowConfig(true)}
-                className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:configTooltip')}
               >
                 {t('lenses:view.config')}
@@ -238,7 +238,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
               <button
                 type="button"
                 onClick={() => setShowHistory(true)}
-                className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:historyTooltip')}
               >
                 {t('lenses:view.history')}
@@ -260,7 +260,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                           .addLog('error', 'system', `Failed to delete Lens "${name}": ${errorText(e)}`);
                       });
                   }}
-                  className="rounded border border-red-500 bg-red-900/40 px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-900/60"
+                  className="rounded border border-red-500 bg-red-900/40 whitespace-nowrap px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-900/60"
                   title={t('lenses:deleteConfirmTooltip')}
                 >
                   {t('lenses:deleteConfirm')}
@@ -269,7 +269,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
-                  className="rounded border border-red-700/60 px-3 py-1 text-xs text-red-300 hover:bg-red-900/40"
+                  className="rounded border border-red-700/60 whitespace-nowrap px-3 py-1 text-xs text-red-300 hover:bg-red-900/40"
                 >
                   {t('common:actions.delete')}
                 </button>
@@ -279,7 +279,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
+            className="rounded bg-blue-600 whitespace-nowrap px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
           >
             {t('lenses:view.newLens')}
           </button>

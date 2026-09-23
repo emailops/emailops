@@ -485,7 +485,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder='e.g. "invoice" OR "receipt"' // i18n-ignore: FTS5 query syntax sample
+                  placeholder={t('lenses:scope.keywordPlaceholder')}
                   className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
                 />
               </label>

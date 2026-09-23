@@ -59,7 +59,8 @@
       "domainLooksLikeEmail": "„{{value}}“ sieht wie eine E-Mail-Adresse aus — trage sie unter „Absender-E-Mails“ ein oder nutze nur die Domain (z. B. „{{domain}}“).",
       "invalidDomain": "„{{value}}“ ist keine gültige Domain (erwartet wird etwa „stripe.com“).",
       "invalidEmail": "„{{value}}“ ist keine gültige E-Mail-Adresse."
-    }
+    },
+    "keywordPlaceholder": "z. B. Rechnung"
   },
   "prompt": {
     "placeholder": "Beschreibe, was aus jeder E-Mail extrahiert werden soll…"
