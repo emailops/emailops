@@ -135,6 +135,19 @@ pub struct CaseOutcome {
     /// `"<Page › Heading>\n<content>"` — the grounding of an answer about the
     /// app, which the judge must see like any other source.
     pub help_sections: Vec<String>,
+    /// The `<memory>…</memory>` header the turn prepended to the user
+    /// message — grounding for an answer taken from memory, which the judge
+    /// must see like any other source.
+    pub memory: Option<String>,
+}
+
+/// Cut the `<memory>…</memory>` header out of the user message as it was
+/// prompted (`ChatMessage::prompt_content`). `None` when the turn had none.
+pub(crate) fn memory_block(prompted: &str) -> Option<String> {
+    const CLOSE: &str = "</memory>";
+    let start = prompted.find("<memory>")?;
+    let end = prompted[start..].find(CLOSE)? + start + CLOSE.len();
+    Some(prompted[start..end].to_string())
 }
 
 /// Lightweight view of a `ChatMessageSource` for the report.
@@ -323,6 +336,11 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
 
     // 5. Read back the assistant row (final content + trace + stats + sources).
     let messages = db.get_chat_messages(&conv.id)?;
+    let memory = messages
+        .iter()
+        .find(|m| m.id == user_msg.id)
+        .and_then(|m| m.prompt_content.as_deref())
+        .and_then(memory_block);
     let assistant = messages.into_iter().find(|m| m.id == assistant_msg.id).ok_or_else(|| {
         EvalError::Config(format!(
             "assistant message {} missing from conversation {}",
@@ -406,6 +424,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         sources_used,
         open_thread,
         help_sections,
+        memory,
     })
 }
 
@@ -465,6 +484,23 @@ mod tests {
                 rusqlite::params![id, account_id, thread_id, subject],
             )
             .expect("seed email");
+    }
+
+    // ── memory_block ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn memory_block_is_cut_out_of_the_prompted_user_message() {
+        let prompted = "<memory>\nTasks: open=2 overdue=0 due_today=1\n</memory>\n\nEMAILOPS HELP …\n\nwhat is due?";
+        assert_eq!(
+            memory_block(prompted).as_deref(),
+            Some("<memory>\nTasks: open=2 overdue=0 due_today=1\n</memory>")
+        );
+    }
+
+    #[test]
+    fn memory_block_is_none_when_the_turn_had_no_header() {
+        assert_eq!(memory_block("what is due?"), None);
+        assert_eq!(memory_block("<memory>\nunterminated"), None);
     }
 
     // ── plan_thread_ref ───────────────────────────────────────────────────────

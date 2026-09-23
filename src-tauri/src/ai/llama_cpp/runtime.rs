@@ -59,8 +59,10 @@ static GEMMA4_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 use tokio::sync::{Mutex, Semaphore};
 
 /// How often the idle-eviction background task wakes up to check if loaded
-/// models have been unused long enough to drop.
-const EVICTION_POLL_INTERVAL_SECS: u64 = 60;
+/// models have been unused long enough to drop. Short, so a keep-alive of `0`
+/// ("free it after use") frees the memory within seconds of the answer; each
+/// wake-up is two atomic loads.
+const EVICTION_POLL_INTERVAL_SECS: u64 = 10;
 
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -318,6 +320,12 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
     use crate::ai::gpu_plan::{classify_device, GpuDevice, RawDeviceType};
     use llama_cpp_2::LlamaBackendDeviceType as Ty;
 
+    // The hardware's own answer to "is this memory shared with the CPU?". On
+    // macOS the only GPU backend ggml builds is Metal, so Metal's answer is the
+    // answer for every GPU device in the list; elsewhere there is none and
+    // classify_device falls back to ggml's type and the backend name.
+    let unified = metal_has_unified_memory();
+
     llama_cpp_2::list_llama_ggml_backend_devices()
         .into_iter()
         .map(|d| {
@@ -328,8 +336,9 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
                 Ty::Accelerator => RawDeviceType::Accelerator,
                 Ty::Unknown => RawDeviceType::Unknown,
             };
+            let gpu = matches!(raw, RawDeviceType::Gpu | RawDeviceType::IntegratedGpu);
             GpuDevice {
-                kind: classify_device(&d.backend, raw),
+                kind: classify_device(&d.backend, raw, if gpu { unified } else { None }),
                 name: d.name,
                 backend: d.backend,
                 memory_free: d.memory_free as u64,
@@ -337,6 +346,38 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
             }
         })
         .collect()
+}
+
+/// Whether this Mac's GPU shares memory with the CPU, as Metal itself reports it.
+///
+/// ggml knows this (`has_unified_memory`, read from the same property) but its
+/// generic device properties do not carry it, and it types the Metal device as
+/// a plain `Gpu`; without asking here, the only clue left is the backend name,
+/// which ggml has already renamed once ("Metal" → "MTL").
+#[cfg(target_os = "macos")]
+fn metal_has_unified_memory() -> Option<bool> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+
+    #[link(name = "Metal", kind = "framework")]
+    extern "C" {
+        fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
+    }
+
+    // SAFETY: MTLCreateSystemDefaultDevice takes no arguments and returns either
+    // nil (no Metal device) or a +1 retained id<MTLDevice> under the Create rule;
+    // Retained takes that ownership and releases it on drop.
+    let device = unsafe { Retained::from_raw(MTLCreateSystemDefaultDevice()) }?;
+    // SAFETY: hasUnifiedMemory is a BOOL property every MTLDevice implements
+    // (macOS 10.15+, below this app's 12.0 floor), taking no arguments.
+    let unified: bool = unsafe { msg_send![&*device, hasUnifiedMemory] };
+    Some(unified)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn metal_has_unified_memory() -> Option<bool> {
+    None
 }
 
 /// The device list for planning decisions made outside the loader — currently
@@ -437,7 +478,8 @@ impl LlamaCppRuntime {
         runtime
     }
 
-    /// Override the idle-eviction window. 0 pins the model forever.
+    /// Override the idle-eviction window, as `services::ai::keep_alive_from_pref`
+    /// reads it: `KEEP_ALIVE_FOREVER` pins the model, `0` frees it after use.
     pub fn set_keep_alive_secs(&self, secs: u32) {
         self.keep_alive_secs.store(secs, Ordering::Relaxed);
     }
@@ -512,12 +554,8 @@ impl LlamaCppRuntime {
                 };
 
                 let keep_alive = runtime.keep_alive_secs.load(Ordering::Relaxed);
-                if keep_alive == 0 {
-                    continue; // eviction disabled
-                }
-
                 let idle = now_secs().saturating_sub(runtime.last_used.load(Ordering::Relaxed));
-                if idle < keep_alive as i64 {
+                if !crate::services::ai::should_evict(keep_alive, idle) {
                     continue;
                 }
 

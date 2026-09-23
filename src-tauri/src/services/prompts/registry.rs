@@ -134,6 +134,10 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
         description: "Today's weekday name in English (e.g. Thursday), so the model never guesses weekdays from ISO dates.",
     },
     VariableDef {
+        name: "next_days",
+        description: "The seven days after today with their weekdays (e.g. 'Wed 2026-09-23 (tomorrow), Thu 2026-09-24 (day after tomorrow), …'), so relative days are read, not computed.",
+    },
+    VariableDef {
         name: "language_instruction",
         description: "Reply-language instruction (default: 'Reply in the language the user writes in.').",
     },

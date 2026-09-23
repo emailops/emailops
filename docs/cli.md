@@ -11,7 +11,7 @@ It exists so that:
 
 The binary is gated behind the `cli` cargo feature, so it never compiles into
 default or release desktop builds. Logic lives in `src-tauri/src/cli/`; the bin
-(`src-tauri/src/bin/emailops_cli.rs`) is a thin wrapper.
+(`src-tauri/src/cli_main.rs`) is a thin wrapper.
 
 It operates on the **real** data directory. SQLite runs in WAL mode, so read
 commands (`accounts`, `emails`, `show`, `search`, `stats`, `doctor`, `config get/list`)
@@ -251,8 +251,10 @@ With `--trace`, `--json` switches from a bare emails array to
 `{ "emails": [...], "trace": { searchMethod, aiAvailable, parsedQuery, shown,
 offset, totalHits, query } }`; pretty mode prints the emails, then a trace block
 to stderr. Without `--trace` the JSON shape is unchanged (a plain emails array).
-`totalHits` is the full match count (before paging), `offset` is the skip
-applied, and `shown` is how many rows this page returned.
+`totalHits` is how many matches the search returned before `--limit`/`--offset`
+paging, **not** the total number of matching emails in the mailbox: the search
+service caps its own result set at 100 rows, so `totalHits` saturates there.
+`offset` is the skip applied, and `shown` is how many rows this page returned.
 
 ### `chat <question>`
 Ask one question against your mail and stream the answer.

@@ -42,6 +42,10 @@ pub mod util;
 #[cfg(feature = "desktop")]
 mod webdriver;
 
+// Tests that regenerate the reference tables in docs/site from the code.
+#[cfg(test)]
+pub(crate) mod docs_sourcegen;
+
 // Rust-native eval harness. Gated behind the `eval` feature so the production
 // binary does not carry Tera / tauri::test / YAML parsing code.
 #[cfg(feature = "eval")]

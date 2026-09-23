@@ -5,7 +5,9 @@ intentionally absent — milestones land when they're ready. If something
 here matters to you, open an issue or a PR; community input shapes
 priority.
 
-> The current shipping version is **0.6.6** (see [CHANGELOG.md](CHANGELOG.md)).
+> For the current shipping version and what each release contained, see
+> [CHANGELOG.md](CHANGELOG.md). Restating the version number here only bought a
+> line that went stale every release — it read 0.6.6 while 0.6.8 was out.
 
 ## Next up (targeting 0.7.0)
 

@@ -73,7 +73,34 @@ export const BRIDGE_SCRIPT = String.raw`
     root.setAttribute('data-email-zoom', String(z));
     postHeight();
   }
+  // The reading pane is always light, but the frame inherits the OS
+  // appearance. A newsletter's dark-scheme media rules would then switch its
+  // text to white while its dark background never shows — white on white.
+  // Drop those conditions from the email's own (parsed) stylesheets.
+  function dropDarkSchemeRules(owner){
+    var rules = owner.cssRules;
+    for (var i = rules.length - 1; i >= 0; i--){
+      var rule = rules[i];
+      if (!rule.cssRules) continue;
+      if (rule.media){
+        var dark = [];
+        for (var j = 0; j < rule.media.length; j++){
+          var medium = rule.media.item(j);
+          if (/prefers-color-scheme\s*:\s*dark/i.test(medium)) dark.push(medium);
+        }
+        if (dark.length > 0 && dark.length === rule.media.length){
+          owner.deleteRule(i);
+          continue;
+        }
+        dark.forEach(function(m){ rule.media.deleteMedium(m); });
+      }
+      dropDarkSchemeRules(rule);
+    }
+  }
   function init(){
+    for (var s = 0; s < document.styleSheets.length; s++){
+      dropDarkSchemeRules(document.styleSheets[s]);
+    }
     // macOS touchpad pinch: Chromium/Firefox deliver it as ctrl+wheel; WebKit
     // (the Tauri webview) fires proprietary gesture events with an absolute
     // scale relative to the gesture's start. Cmd/Ctrl+0 resets.
@@ -206,6 +233,9 @@ export const BRIDGE_SCRIPT = String.raw`
 // Baseline styles inside the frame. Tailwind doesn't apply here — these
 // reproduce the look the previous div-based renderer had via utility classes.
 export const FRAME_BASE_CSS = `
+  /* The reading pane is light-only: resolve system colours (Canvas,
+     CanvasText, form controls) light even when the OS is in dark mode. */
+  :root { color-scheme: light only; }
   html, body { margin: 0; padding: 0; background: transparent; }
   body {
     /* flow-root establishes a block formatting context so the first/last child's
@@ -237,6 +267,7 @@ export const FRAME_BASE_CSS = `
 function buildSrcDoc(sanitizedHtml: string): string {
   return `<!doctype html><html><head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="light">
 <base target="_top">
 <style>${FRAME_BASE_CSS}</style>
 <script>${BRIDGE_SCRIPT}</script>

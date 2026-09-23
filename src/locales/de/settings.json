@@ -391,7 +391,7 @@
     "regenerateConfirm": "Beim Neu-Erzeugen werden bestehende Vektoren gelöscht. Fortfahren?",
     "selectAccount": "Wähle ein Konto, um die KI-Suche zu konfigurieren.",
     "categoriesTitle": "Embedding-Kategorien",
-    "categoriesHelp": "Nur E-Mails in diesen Kategorien werden für die semantische Suche embedded. Embeddings ermöglichen „Ähnliche finden“ und natürlichsprachliche Suche über dein gesamtes Postfach. Lass nur „Primär“ ausgewählt, um den Index klein und schnell zu halten; füge weitere Kategorien hinzu, wenn die Suche Newsletter, Social oder Werbung abdecken soll.",
+    "categoriesHelp": "Nur E-Mails in diesen Kategorien werden für die semantische Suche embedded. Embeddings ermöglichen natürlichsprachliche Suche über dein gesamtes Postfach und den Retrieval-Schritt im Chat. Lass nur „Primär“ ausgewählt, um den Index klein und schnell zu halten; füge weitere Kategorien hinzu, wenn die Suche Newsletter, Social oder Werbung abdecken soll.",
     "noCategoriesWarn": "Keine Kategorien ausgewählt — es werden keine neuen E-Mails embedded.",
     "rebuildTitle": "Suchindex neu aufbauen",
     "rebuildHelp": "Löscht alle Embeddings dieses Kontos und erzeugt sie von Grund auf neu. Verwende das nach einer Änderung des Embedding-Modells oder der obigen Kategorien. Läuft im Hintergrund und verarbeitet das gesamte Postfach in Batches; der Fortschritt erscheint im Ausgabe-Panel.",

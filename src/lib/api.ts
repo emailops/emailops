@@ -1102,6 +1102,8 @@ export interface AiCapability {
   totalRamGb: number;
   /** RAM the smallest catalog chat model needs, so the UI can say why. */
   minRamGbForLocalAi: number;
+  /** Download size of that same model, for the wizard's disk figure. */
+  minDownloadBytesForLocalAi: number;
   os: string;
   arch: string;
 }

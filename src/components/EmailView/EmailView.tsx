@@ -522,7 +522,7 @@ export function EmailView({
                     />
                   </svg>
                 )}
-                AI Draft
+                {t('inbox:emailView.aiDraft')}
               </button>
             )}
             {onChatAboutThread && (

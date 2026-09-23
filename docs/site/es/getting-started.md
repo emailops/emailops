@@ -8,45 +8,56 @@ nav:
   inbox-layout: settings/appearance
 ---
 
-La primera vez que abres EmailOps se ejecuta un asistente de cuatro pasos. Lleva un par de
+<!-- claim:start-intro-1 -->
+La primera vez que abres EmailOps se ejecuta un asistente de hasta cuatro pasos (tres si
+eliges un cliente de correo simple). Lleva un par de
 minutos, la mayor parte de ellos descargando un modelo en segundo plano.
 
 ## 1. IA sí o no {#ai-on-or-off}
 
+<!-- claim:start-1-ai-1 -->
 EmailOps analiza tu hardware y recomienda si activar la IA local. Elige:
 
-- **IA activada** — chat, borradores, clasificación y búsqueda semántica se ejecutan en esta
-  máquina.
+- **Usar IA** — chat, borradores, clasificación y búsqueda semántica se ejecutan en esta
+  máquina. <!-- claim:start-1-ai-2 -->
 - **Cliente de correo simple** — no se descarga ningún modelo ni se hace ninguna llamada de
   IA. Puedes activar la IA más tarde en **Ajustes → IA: backend y modelos**, y desactivarla
-  con la misma facilidad.
+  con la misma facilidad. <!-- claim:start-1-ai-3 -->
 
 ## 2. Backend y modelo de IA {#ai-backend-and-model}
 
+<!-- claim:start-2-ai-1 -->
 Si activaste la IA, elige dónde se ejecuta la inferencia:
 
 | Backend | Qué significa |
 |---|---|
-| **En la app (local)** | El predeterminado. Un runtime llama.cpp integrado en EmailOps. Sin demonio, sin configuración, sin red. |
-| **Ollama (local)** | Usa tu servidor Ollama existente en `http://localhost:11434`. |
-| **OpenRouter (remoto)** | Envía los prompts a una API de pago en la nube. Opcional, por función, y desactivado por defecto. |
+| **En la app** | El predeterminado. Un runtime llama.cpp integrado en EmailOps. Sin demonio, sin configuración, sin red. |
+| **Ollama** | Usa tu servidor Ollama existente en `http://localhost:11434`. |
+| **OpenRouter** | Envía los prompts a una API de pago en la nube. Opcional, por función, y desactivado por defecto. |
 
-Con el backend integrado, elige un modelo de chat del catálogo. **Qwen 3.5 4B** es el
-predeterminado recomendado: unos 3 GB de descarga, necesita aproximadamente 8 GB de memoria
-para ejecutarse y admite las llamadas a herramientas de las que depende el chat. Los modelos
-demasiado grandes para la memoria de tu sistema aparecen atenuados. La descarga corre en
-segundo plano — puedes seguir con el asistente.
+<!-- claim:start-2-ai-2 -->
+Con el backend integrado, elige un modelo de chat del catálogo. EmailOps preselecciona el
+modelo más grande que tu máquina puede mover con holgura, así que la recomendación depende de
+la memoria que encuentre: en una máquina de 16 GB es **Qwen 3.5 4B**, unos 3 GB de descarga y
+menos de 4 GB de memoria mientras responde; una máquina más amplia recibe un modelo mayor
+del mismo catálogo. Todos los modelos recomendados admiten las llamadas a herramientas de las
+que depende el chat. La descarga muestra su progreso en el mismo paso; **Continuar** sigue deshabilitado hasta
+que el modelo de chat termina de descargarse, o hasta que eliges un archivo que ya tienes con
+**Usar archivo existente…**.
 
+<!-- claim:start-2-ai-3 -->
 La memoria que cuenta depende de la máquina: **memoria unificada** en un Mac con Apple
 Silicon, la **VRAM de tu GPU** en un equipo Windows o Linux con tarjeta dedicada, y la RAM del
 sistema si no hay GPU. El [catálogo de modelos](../ai-features/#the-model-catalog) indica la
 cifra de cada modelo.
 
+<!-- claim:start-2-ai-4 -->
 El modelo de embeddings que impulsa la búsqueda semántica (**Nomic Embed Text v1.5**, ~80 MB)
 viene incluido dentro de la app en macOS, así que no hay nada que descargar para la búsqueda.
 
 ## 3. Diseño de la bandeja {#inbox-layout}
 
+<!-- claim:start-3-inbox-1 -->
 Elige cómo se distribuye el buzón — **dividido** (lista a la izquierda, mensaje a la derecha)
 o **ancho completo** (un panel cada vez). Puedes cambiarlo cuando quieras en
 **Ajustes → Apariencia**, junto con el idioma de la interfaz (español, inglés, francés,
@@ -54,14 +65,16 @@ alemán).
 
 ## 4. Conectar una cuenta
 
+<!-- claim:start-4-connect-1 -->
 El último paso añade tu primer buzón. EmailOps admite:
 
 - **Gmail** — inicia sesión en el navegador y concede el acceso. Los tokens van directos al
-  llavero del sistema.
-- **Outlook / Microsoft 365** — el mismo flujo por navegador, vía la API Microsoft Graph.
+  llavero del sistema. <!-- claim:start-4-connect-2 -->
+- **Outlook / Microsoft 365** — el mismo flujo por navegador, vía la API Microsoft Graph. <!-- claim:start-4-connect-3 -->
 - **IMAP / SMTP** — iCloud, Yahoo, Fastmail, ProtonMail Bridge o cualquier servidor
-  personalizado. Introduce los datos del servidor y las credenciales directamente.
+  personalizado. Introduce los datos del servidor y las credenciales directamente. <!-- claim:start-4-connect-4 -->
 
+<!-- claim:start-4-connect-5 -->
 Añade más cuentas cuando quieras con el botón **+** junto a **Cuentas** en la barra lateral. Con
 varias conectadas obtienes una bandeja unificada "Todas las cuentas" además de las vistas por cuenta.
 
@@ -69,6 +82,7 @@ varias conectadas obtienes una bandeja unificada "Todas las cuentas" además de 
 
 ### La primera sincronización tarda
 
+<!-- claim:start-after-wizard-first-sync-1 -->
 EmailOps descarga tu correo a una base de datos local, y la primera pasada tiene que traerlo
 todo desde cero. Cuánto tarda depende del tamaño del buzón — unos minutos en una cuenta
 pequeña, bastante más en una con años de historial y adjuntos pesados. Se ejecuta en segundo
@@ -76,23 +90,25 @@ plano y los primeros mensajes aparecen en segundos — el correo se descarga por
 medida que se recorre el buzón, no al terminar de recorrerlo entero — así que puedes leer y
 buscar lo que ya ha llegado mientras el resto se pone al día.
 
+<!-- claim:start-after-wizard-first-sync-2 -->
 Es un coste único. Cada sincronización posterior es **incremental**: solo pide a tu proveedor
 lo que ha cambiado desde la última vez, así que termina en segundos y se ejecuta discretamente
 según su programación. Si la IA está activada, la clasificación y los embeddings también
 procesan el atraso en la primera ejecución y después solo tocan el correo nuevo.
 
+<!-- claim:start-after-wizard-first-sync-3 -->
 Cuando termine la primera sincronización:
 
 1. La **clasificación** empieza a etiquetar el correo nuevo por prioridad, intención y tema —
-   consulta [Funciones de IA](../ai-features/#classification).
+   consulta [Funciones de IA](../ai-features/#classification). <!-- claim:start-after-wizard-first-sync-4 -->
 2. Los **embeddings** se generan en segundo plano para que la búsqueda semántica tenga algo
    sobre lo que buscar. Puedes ver el progreso y reconstruir el índice en
-   **Ajustes → Búsqueda con IA**.
+   **Ajustes → Búsqueda con IA**. <!-- claim:start-after-wizard-first-sync-5 -->
 3. Plantéate poner una **contraseña principal** en **Ajustes → Privacidad y seguridad** si
    quieres que la app se bloquee al arrancar — consulta
-   [Privacidad y seguridad](../privacy-security/).
+   [Privacidad y seguridad](../privacy-security/). <!-- claim:start-after-wizard-first-sync-6 -->
 
-Tanto la clasificación como los embeddings respetan **Limitar el procesado de IA a
-correos recientes**
+<!-- claim:start-after-wizard-first-sync-7 -->
+Tanto la clasificación como los embeddings respetan **Limitar el procesado de IA**
 (**Ajustes → IA: backend y modelos**), así que un archivo de hace una década no se procesa a
 menos que lo pidas.

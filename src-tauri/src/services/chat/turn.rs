@@ -57,6 +57,23 @@ fn now_local() -> chrono::NaiveDateTime {
     now_utc().naive_utc() + chrono::Duration::seconds(crate::services::clock::utc_offset_secs() as i64)
 }
 
+/// The seven days after `today`, each with its weekday, so the model reads
+/// "pasado mañana" or "el jueves" off a list instead of counting days itself.
+pub(crate) fn next_days_line(today: chrono::NaiveDate) -> String {
+    (1..=7)
+        .map(|n| {
+            let day = today + chrono::Duration::days(n);
+            let label = day.format("%a %Y-%m-%d");
+            match n {
+                1 => format!("{label} (tomorrow)"),
+                2 => format!("{label} (day after tomorrow)"),
+                _ => label.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
@@ -247,6 +264,7 @@ from this mailbox as if they answered the question."
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("user_identity", user_identity);
     tpl_vars.insert("tools_section", tools_section.to_string());
@@ -1156,6 +1174,56 @@ fn repair_missing_email_id(
     args.as_object_mut()?
         .insert("email_id".to_string(), serde_json::Value::String(next.clone()));
     Some(next)
+}
+
+/// Most edits between a miscopied `email_id` and the result it was meant to
+/// be. Ids are long hex strings, so two slips still leave one clear match.
+const MAX_EMAIL_ID_EDITS: usize = 2;
+
+/// Deterministically repair an `email_id` the model miscopied from a tool
+/// result (observed: `…f9e99306` written as `…f9e9306`, so the draft tool
+/// answered "email not found" and the turn gave up). When the id is not one
+/// this turn's results listed and exactly ONE listed id is within
+/// `MAX_EMAIL_ID_EDITS`, swap it in. Returns the wrong id when it did.
+fn repair_mangled_email_id(args: &mut serde_json::Value, available_refs: &[String]) -> Option<String> {
+    let wrong = args.get("email_id")?.as_str()?.trim().to_string();
+    if wrong.is_empty() || available_refs.contains(&wrong) {
+        return None;
+    }
+    let mut close = available_refs
+        .iter()
+        .filter(|r| crate::services::junk::lookalike::edit_distance(r, &wrong) <= MAX_EMAIL_ID_EDITS);
+    let right = close.next()?.clone();
+    if close.next().is_some() {
+        return None;
+    }
+    args.as_object_mut()?
+        .insert("email_id".to_string(), serde_json::Value::String(right));
+    Some(wrong)
+}
+
+/// Deterministically repair a `generate_email_draft` call that dropped
+/// `instructions`: pass the user's own request instead, so what they asked
+/// the draft to say ("proposing a call next week") reaches the generator.
+///
+/// Only when this message is itself a draft request (`wants_email_draft`) —
+/// a bare "sí" carries no content. Returns true when the args were modified.
+fn repair_missing_draft_instructions(args: &mut serde_json::Value, user_question: &str) -> bool {
+    let has_instructions = args
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    if has_instructions || !wants_email_draft(user_question) {
+        return false;
+    }
+    let Some(obj) = args.as_object_mut() else {
+        return false;
+    };
+    obj.insert(
+        "instructions".to_string(),
+        serde_json::Value::String(user_question.trim().to_string()),
+    );
+    true
 }
 
 /// Canonical, argument-order-independent key for a tool call (`name|args`), so
@@ -2405,6 +2473,23 @@ async fn run_tool_loop(
                     ),
                 );
             }
+            if let Some(wrong) = repair_mangled_email_id(&mut tc.function.arguments, &aggregated_email_refs) {
+                emit_log(
+                    "info",
+                    &format!(
+                        "tool_loop: {} email_id {wrong} matched no result — corrected to the one it resembles",
+                        tc.function.name
+                    ),
+                );
+            }
+            if tc.function.name == "generate_email_draft"
+                && repair_missing_draft_instructions(&mut tc.function.arguments, user_question)
+            {
+                emit_log(
+                    "info",
+                    "tool_loop: generate_email_draft had no instructions — passed the user's request",
+                );
+            }
             if tc.function.name == "get_email_body" {
                 // Track explicit reads; repair id-less reads with the next
                 // unread search result (Qwen 3.6 batches body reads but drops
@@ -2852,6 +2937,7 @@ async fn run_thread_bound_turn(
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
     // Empty rather than omitted, for the same reason: the identity block only
@@ -5103,6 +5189,63 @@ mod tests {
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
     }
 
+    /// The draft for Kwame failed with "email not found": the model copied
+    /// `demo_9470b630f9e99306` from the search result as `…f9e9306`.
+    #[test]
+    fn a_miscopied_email_id_is_corrected_to_the_one_result_it_resembles() {
+        let refs = vec!["demo_9470b630f9e99306".to_string(), "demo_1111aaaa2222bbbb".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_9470b630f9e9306" });
+        assert_eq!(
+            repair_mangled_email_id(&mut args, &refs).as_deref(),
+            Some("demo_9470b630f9e9306")
+        );
+        assert_eq!(args["email_id"], "demo_9470b630f9e99306");
+    }
+
+    #[test]
+    fn a_known_or_unrecognisable_email_id_is_left_alone() {
+        let refs = vec!["demo_9470b630f9e99306".to_string()];
+        let mut known = serde_json::json!({ "email_id": "demo_9470b630f9e99306" });
+        assert_eq!(repair_mangled_email_id(&mut known, &refs), None);
+        let mut other = serde_json::json!({ "email_id": "demo_ffffffffffffffff" });
+        assert_eq!(repair_mangled_email_id(&mut other, &refs), None);
+        assert_eq!(other["email_id"], "demo_ffffffffffffffff");
+    }
+
+    #[test]
+    fn an_email_id_close_to_two_results_is_ambiguous_and_left_alone() {
+        let refs = vec!["demo_aaaa1".to_string(), "demo_aaaa2".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_aaaa" });
+        assert_eq!(repair_mangled_email_id(&mut args, &refs), None);
+    }
+
+    /// "write an email to Kwame proposing a call next week" drafted with only
+    /// `email_id`: the call proposal never reached the draft generator.
+    #[test]
+    fn draft_repair_passes_the_users_request_as_instructions() {
+        let q = "write an email to Kwame proposing a call next week about his Ollama question";
+        let mut args = serde_json::json!({ "email_id": "e1" });
+        assert!(repair_missing_draft_instructions(&mut args, q));
+        assert_eq!(args["instructions"], q);
+    }
+
+    #[test]
+    fn draft_repair_keeps_instructions_the_model_wrote() {
+        let mut args = serde_json::json!({ "email_id": "e1", "instructions": "keep it short" });
+        assert!(!repair_missing_draft_instructions(&mut args, "write a reply to Kwame"));
+        assert_eq!(args["instructions"], "keep it short");
+    }
+
+    /// A bare confirmation carries no content; the request it confirms was
+    /// in an earlier turn the model already read.
+    #[test]
+    fn draft_repair_skips_a_bare_confirmation() {
+        for q in ["sí", "ok, hazlo", "yes please"] {
+            let mut args = serde_json::json!({ "email_id": "e1", "instructions": "  " });
+            assert!(!repair_missing_draft_instructions(&mut args, q), "{q}");
+        }
+    }
+
     #[test]
     fn repair_fills_from_when_question_names_one_address() {
         // The production failure: the model issues search_emails({}) even
@@ -6395,6 +6538,25 @@ mod tests {
         );
     }
 
+    /// "¿qué tengo pasado mañana?" on a Tuesday was asked of the calendar as
+    /// Wednesday: the prompt gave today and tomorrow only, so every other
+    /// relative day was the model's own (wrong) arithmetic.
+    #[test]
+    fn next_days_line_names_the_coming_week_with_weekdays() {
+        let tuesday = chrono::NaiveDate::from_ymd_opt(2026, 9, 22).expect("date");
+        let line = next_days_line(tuesday);
+        assert!(
+            line.starts_with("Wed 2026-09-23 (tomorrow), Thu 2026-09-24 (day after tomorrow), Fri 2026-09-25"),
+            "{line}"
+        );
+        assert!(line.ends_with("Tue 2026-09-29"), "{line}");
+    }
+
+    #[test]
+    fn the_chat_system_prompt_lists_the_coming_days() {
+        assert!(crate::services::prompts::defaults::CHAT_SYSTEM.contains("{{next_days}}"));
+    }
+
     #[test]
     fn thread_bound_binds_every_chat_system_placeholder() {
         // `prompts::render` leaves unknown placeholders INTACT (prompts/mod.rs),
@@ -6411,6 +6573,10 @@ mod tests {
         vars.insert("today", "2026-01-01".to_string());
         vars.insert("tomorrow", "2026-01-02".to_string());
         vars.insert("weekday", "Thursday".to_string());
+        vars.insert(
+            "next_days",
+            next_days_line(chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("date")),
+        );
         vars.insert("language_instruction", "Reply in Spanish.".to_string());
         vars.insert("tools_section", String::new());
         vars.insert("user_identity", String::new());

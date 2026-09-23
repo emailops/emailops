@@ -1125,6 +1125,64 @@ mod tests {
 
     // ── search_contacts ─────────────────────────────────────────────────
 
+    /// "who am I still owing a reply to?" listed every thread as "from
+    /// Ulises" with invented `email://` ids: the tool printed thread ids and
+    /// summaries only, so there was no sender to name and no email to link.
+    #[test]
+    fn list_open_threads_names_the_latest_inbound_sender_and_email() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "in-1",
+            "acc",
+            "t1",
+            "Nadia Brunner",
+            "nadia@example.org",
+            "Second account?",
+            "q",
+            100,
+        );
+        seed_email(
+            &db,
+            "in-2",
+            "acc",
+            "t1",
+            "Nadia Brunner",
+            "nadia@example.org",
+            "Re: Second account?",
+            "q",
+            300,
+        );
+        seed_email(&db, "out-1", "acc", "t1", "Me", "acc", "Re: Second account?", "a", 200);
+        db.upsert_thread_state(&crate::models::ThreadState {
+            account_id: "acc".into(),
+            thread_id: "t1".into(),
+            awaiting: "user".into(),
+            last_inbound_at: Some(300),
+            last_outbound_at: Some(200),
+            last_touched_at: 300,
+            summary: Some("How do I add a second account?".into()),
+            commitment: None,
+            deadline_at: None,
+            participants: vec!["nadia@example.org".into()],
+            updated_at: 300,
+        })
+        .expect("thread state");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "list_open_threads",
+            &arg(serde_json::json!({"awaiting": "user"})),
+        );
+        assert!(out.contains("from=\"Nadia Brunner <nadia@example.org>\""), "{out}");
+        assert!(
+            out.contains("email_id=in-2"),
+            "latest inbound, not the user's own reply: {out}"
+        );
+    }
+
     #[test]
     fn search_contacts_resolves_name_plus_domain() {
         let db = tools_test_db();

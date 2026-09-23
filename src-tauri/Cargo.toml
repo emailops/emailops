@@ -380,3 +380,7 @@ tauri-plugin-shell = { version = "2", optional = true }
 # exists on Apple platforms (Vulkan/CPU builds have no equivalent).
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+# Asks Metal whether the GPU shares memory with the CPU (`hasUnifiedMemory`):
+# ggml's generic device properties drop that field, so it is read at the source.
+# Already in the tree through Tauri; this only makes the use direct.
+objc2 = "0.6"

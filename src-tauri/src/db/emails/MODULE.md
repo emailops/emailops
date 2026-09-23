@@ -53,4 +53,4 @@ Every dedup/count/CTE under `AllEnabled` must key on `(account_id, thread_id)`
 
 - Business logic (classification decisions, draft assembly) — `services/`
 - Vector/embedding queries — `db/embeddings.rs`
-- Schema migrations — `db/schema.rs`
+- Schema migrations — `src-tauri/migrations/`
