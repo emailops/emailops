@@ -172,5 +172,6 @@
     "confirmFailed": "Could not file the message on the server",
     "notJunkFailed": "Could not record that this message is not junk",
     "hideFlagged": "Hide junk messages"
-  }
+  },
+  "emailUnavailable": "Email no longer available."
 }

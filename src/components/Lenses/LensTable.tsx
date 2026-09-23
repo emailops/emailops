@@ -319,7 +319,7 @@ function LensTableRow({
           title={t('lenses:table.openSourceEmail')}
         >
           <div className="truncate text-gray-200" title={row.emailSubject}>
-            {row.emailSubject || '(no subject)'}
+            {row.emailSubject || t('lenses:create.noSubject')}
           </div>
           <div className="truncate text-[11px] text-gray-500" title={row.emailSender}>
             {row.emailSender}
