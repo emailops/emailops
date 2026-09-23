@@ -264,3 +264,13 @@ describe('selectLenses', () => {
     expect(selectLenses(s)).toBe(lenses);
   });
 });
+
+describe('create dialog', () => {
+  it('starts closed and opens/closes through SET_CREATE_OPEN', () => {
+    // Lives in the store so the sidebar "+" can open it from any view.
+    expect(initialLensState.createOpen).toBe(false);
+    const opened = lensReducer(initialLensState, { type: 'SET_CREATE_OPEN', open: true });
+    expect(opened.createOpen).toBe(true);
+    expect(lensReducer(opened, { type: 'SET_CREATE_OPEN', open: false }).createOpen).toBe(false);
+  });
+});

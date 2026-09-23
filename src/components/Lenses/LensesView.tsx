@@ -44,9 +44,10 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     startStatusListener,
     showExcluded,
     setShowExcluded,
+    createOpen,
+    setCreateOpen,
   } = useLensStore();
 
-  const [showCreate, setShowCreate] = useState(false);
   const [drawerRow, setDrawerRow] = useState<LensRow | null>(null);
   // "quarter" is a synthetic group derived from the email timestamp; the rest
   // are schema column keys. Default to quarter so the table opens with a
@@ -278,7 +279,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           )}
           <button
             type="button"
-            onClick={() => setShowCreate(true)}
+            onClick={() => setCreateOpen(true)}
             className="rounded bg-blue-600 whitespace-nowrap px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
           >
             {t('lenses:view.newLens')}
@@ -322,7 +323,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto">
         {!activeLens ? (
-          <EmptyState onCreate={() => setShowCreate(true)} />
+          <EmptyState onCreate={() => setCreateOpen(true)} />
         ) : isLoadingRows ? (
           <div className="p-8 text-center text-xs text-gray-500">{t('lenses:loadingRows')}</div>
         ) : rows.length === 0 ? (
@@ -363,10 +364,10 @@ export function LensesView({ initialLensId }: LensesViewProps) {
       <LensConfigModal lens={activeLens} open={showConfig} onClose={() => setShowConfig(false)} />
 
       <LensCreateModal
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
         onCreated={(lens) => {
-          setShowCreate(false);
+          setCreateOpen(false);
           void selectLens(lens.id);
         }}
       />

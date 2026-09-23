@@ -48,6 +48,8 @@ export interface LensState {
   isLoadingRows: boolean;
   /** Viewing the rows the user excluded, rather than the Lens itself. */
   showExcluded: boolean;
+  /** Create dialog open — in the store so the sidebar "+" can open it. */
+  createOpen: boolean;
   sort: LensSortSpec | null;
   error: string | null;
   runStatus: Record<string, LensStatus>;
@@ -62,6 +64,7 @@ export const initialLensState: LensState = {
   totalRows: 0,
   isLoadingRows: false,
   showExcluded: false,
+  createOpen: false,
   sort: null,
   error: null,
   runStatus: {},
@@ -83,6 +86,7 @@ export type LensAction =
   | { type: 'EXCLUDE_ROW'; emailId: string }
   | { type: 'INCLUDE_ROW'; emailId: string }
   | { type: 'SET_SHOW_EXCLUDED'; showExcluded: boolean }
+  | { type: 'SET_CREATE_OPEN'; open: boolean }
   | { type: 'SET_RUN_STATUS'; lensId: string; status: LensStatus };
 
 // ── Pure reducer ─────────────────────────────────────────────────────────────
@@ -136,6 +140,8 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
       };
     case 'SET_SHOW_EXCLUDED':
       return { ...state, showExcluded: action.showExcluded, isLoadingRows: true };
+    case 'SET_CREATE_OPEN':
+      return { ...state, createOpen: action.open };
     case 'SET_RUN_STATUS':
       return { ...state, runStatus: { ...state.runStatus, [action.lensId]: action.status } };
   }
@@ -190,6 +196,7 @@ interface LensStore extends LensState {
   setSort: (sort: LensSortSpec | null) => Promise<void>;
 
   // CRUD
+  setCreateOpen: (open: boolean) => void;
   createLens: (input: CreateLensInput) => Promise<Lens>;
   updateLens: (lensId: string, input: UpdateLensInput) => Promise<Lens>;
   deleteLens: (lensId: string) => Promise<void>;
@@ -353,6 +360,8 @@ export const useLensStore = create<LensStore>((set, get) => ({
     await api.includeLensRow(id, emailId);
     dispatch(set, { type: 'INCLUDE_ROW', emailId });
   },
+
+  setCreateOpen: (open) => dispatch(set, { type: 'SET_CREATE_OPEN', open }),
 
   setShowExcluded: async (showExcluded) => {
     dispatch(set, { type: 'SET_SHOW_EXCLUDED', showExcluded });
