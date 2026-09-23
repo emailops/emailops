@@ -71,6 +71,7 @@ let root: Root;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.mocked(api.searchEmails).mockClear();
   vi.mocked(api.searchEmails).mockResolvedValue(RESULT);
   useAccountStore.setState({
     accounts: [account('acct-work', 'work@example.com'), account('acct-home', 'home@example.com')],
@@ -94,7 +95,6 @@ async function searchFor(accountId: string | null, query: string) {
         onSelectEmail={() => {}}
         onApplySearch={() => {}}
         onApplySearchWithResults={() => {}}
-        selectedCategories={[]}
         onClose={() => {}}
       />,
     );
@@ -118,6 +118,11 @@ describe('SearchBar account chip', () => {
   it('names each hit’s account in the unified view', async () => {
     await searchFor(null, 'invoice');
     expect(chips()).toEqual(['work@example.com', 'home@example.com']);
+  });
+
+  it('searches every category, not only the selected inbox tab', async () => {
+    await searchFor(null, 'invoice');
+    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual([null, 'invoice', true]);
   });
 
   it('shows no chip when the search is scoped to one account', async () => {

@@ -6,7 +6,7 @@ import { accountColorClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
-import type { Email, EmailCategory } from '@/types';
+import type { Email } from '@/types';
 
 /** Detect an autocomplete trigger (`from:` or `to:` token) at the cursor position.
  *  Returns the field, the prefix typed so far, and the token's start index.
@@ -37,7 +37,6 @@ interface SearchBarProps {
   onApplySearch: (query: string) => void;
   /** Apply search with pre-fetched results to avoid a duplicate backend call */
   onApplySearchWithResults: (query: string, emails: Email[]) => void;
-  selectedCategories: EmailCategory[];
   onClose: () => void;
 }
 
@@ -46,7 +45,6 @@ export function SearchBar({
   onSelectEmail,
   onApplySearch,
   onApplySearchWithResults,
-  selectedCategories,
   onClose,
 }: SearchBarProps) {
   const { t, i18n } = useTranslation(['common', 'inbox']);
@@ -136,7 +134,7 @@ export function SearchBar({
       setIsSearching(true);
       setSearchError(null);
 
-      const promise = api.searchEmails(accountId, searchQuery, true, selectedCategories);
+      const promise = api.searchEmails(accountId, searchQuery, true);
       inFlightRef.current = { query: searchQuery, promise };
 
       try {
@@ -168,7 +166,7 @@ export function SearchBar({
         }
       }
     },
-    [accountId, hasAccounts, selectedCategories],
+    [accountId, hasAccounts],
   );
 
   /** Fetch sender suggestions for the current autocomplete trigger */

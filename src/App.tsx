@@ -1640,7 +1640,6 @@ function AppInner() {
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
           onApplySearchWithResults={handleApplySearchWithResults}
-          selectedCategories={selectedCategoriesList}
           onClose={() => setIsSearchOpen(false)}
         />
       )}
