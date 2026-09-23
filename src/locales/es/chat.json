@@ -72,6 +72,12 @@
     "retrievingEmail": "Recuperando correo…",
     "generatingDraft": "Generando borrador…",
     "runningTools": "Procesando consulta…",
+    "researching": "Investigando…",
+    "research": {
+      "gathering": "Research: reuniendo correos…",
+      "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",
+      "writing": "Research: redactando el informe a partir de {{total}} correos…"
+    },
     "generating": "Generando…"
   },
   "reasoning": {
@@ -115,7 +121,8 @@
         "fetchMetadata": "Obtener metadatos",
         "threadExpansion": "Expansión del hilo",
         "helpDocs": "Ayuda de EmailOps",
-        "rag": "Recuperación RAG"
+        "rag": "Recuperación RAG",
+        "research": "Research"
       },
       "noCalls": "sin llamadas",
       "fallbackSkipped": "reserva (omitida)",
@@ -135,7 +142,11 @@
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "caché KV {{cached}}/{{total}} tok ({{pct}}%)",
       "kvCacheMiss": "caché KV 0/{{total}} tok (fría)",
-      "helpSections": "{{included}} de {{candidates}} secciones de las guías"
+      "helpSections": "{{included}} de {{candidates}} secciones de las guías",
+      "researchRead": "{{emails}} correos leídos en {{batches}} lotes (máx. {{cap}})",
+      "researchFindings": "{{findings}} hallazgos de {{relevant}} correos",
+      "researchFailed": "{{n}} lotes fallaron",
+      "researchSources": "{{search}} de búsqueda + {{rag}} de recuperación"
     }
   },
   "sources": {
@@ -200,5 +211,10 @@
   "accountPicker": {
     "label": "Cuenta en la que busca este chat",
     "hint": "El chat responde desde una sola cuenta a la vez. Al cambiarla se inicia una conversación nueva."
+  },
+  "research": {
+    "toggle": "Research",
+    "title": "Modo research: lee muchos más correos por lotes y redacta un análisis detallado. Más lento: puede tardar varios minutos. Se aplica solo al siguiente mensaje.",
+    "hint": "Siguiente mensaje: análisis en profundidad (más lento)"
   }
 }

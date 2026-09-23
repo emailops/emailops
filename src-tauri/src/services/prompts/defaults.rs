@@ -299,6 +299,45 @@ Question: {{query}}
 {{open_form}}
 JSON:"#;
 
+// ── Chat research mode ──────────────────────────────────────────────────────
+
+/// Research-mode map step: one batch of emails in, the findings relevant to the
+/// question out. The split point for `complete_with_prefix` is
+/// `QUESTION: {{question}}`: the instructions above it are identical on every
+/// batch, so they stay decoded in the one-shot prefix slot.
+pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research assistant working over the user's own mailbox. You receive ONE batch of emails and the user's research question. Extract every fact in this batch that helps answer the question.
+
+Rules:
+- One finding per line, starting with "- ". Be specific: people, companies, dates, amounts, decisions, requests, problems, status.
+- End every finding with the email it came from as (email://EMAIL_ID), copying the EMAIL_ID exactly as given. A finding several emails support lists each one: (email://ID1) (email://ID2).
+- Use only what the emails say. No speculation, no advice, no introduction, no summary of the batch.
+- Skip emails that are irrelevant to the question. If nothing in the batch is relevant, reply with exactly: NONE
+- Write the findings in the language of the question.
+
+QUESTION: {{question}}
+
+EMAILS:
+{{emails}}"#;
+
+/// Research-mode reduce step: the notes of every batch in, the final report
+/// out. Split at `QUESTION: {{question}}` like the map prompt; the coverage
+/// line varies per turn, so it sits below the split.
+pub const CHAT_RESEARCH_REDUCE: &str = r#"You are a research assistant writing a detailed report for the user from notes another step extracted from their own mailbox. {{language_instruction}}
+
+How to write the report:
+- Start with a direct answer to the question in two or three sentences, then develop it in sections with Markdown headings and bullet points (main themes, people and companies involved, dates and amounts, open issues or pending actions — whichever the question calls for).
+- Group related findings and merge duplicates. Point out patterns, changes over time and contradictions between emails.
+- Every factual claim links the email it came from as [short label](email://EMAIL_ID), copying the id from the notes. Never invent an id. Do not use numbered [1] citations.
+- Use ONLY the notes. If they do not cover part of the question, say so plainly. Never say you lack access to the mailbox.
+- End with one short line saying how much was read (from COVERAGE).
+
+QUESTION: {{question}}
+
+COVERAGE: {{coverage}}
+
+NOTES:
+{{notes}}"#;
+
 // ── Translation ─────────────────────────────────────────────────────────────
 
 pub const TRANSLATE_DETECT_LANGUAGE: &str = r#"Identify the language of this email excerpt. Reply with ONLY the two-letter ISO 639-1 code (e.g. en, es, fr, de, it, pt). If the language is unknown or mixed, reply und.

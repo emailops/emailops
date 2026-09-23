@@ -162,6 +162,7 @@ pub(super) async fn run_form_fill_turn(
         llm_streaming_ms: None,
         llm_calls: vec![],
         help: None,
+        research: None,
         steps: Vec::new(),
     });
     if let Err(e) = db.update_chat_message_trace(assistant_message_id, &trace) {

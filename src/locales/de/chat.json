@@ -72,6 +72,12 @@
     "retrievingEmail": "E-Mail abrufen…",
     "generatingDraft": "Entwurf generieren…",
     "runningTools": "Anfrage verarbeiten…",
+    "researching": "Recherche läuft…",
+    "research": {
+      "gathering": "Recherche: E-Mails werden gesammelt…",
+      "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",
+      "writing": "Recherche: Bericht aus {{total}} E-Mails wird verfasst…"
+    },
     "generating": "Antwort generieren…"
   },
   "reasoning": {
@@ -115,7 +121,8 @@
         "fetchMetadata": "Metadaten abrufen",
         "threadExpansion": "Thread-Erweiterung",
         "helpDocs": "EmailOps-Hilfe",
-        "rag": "RAG-Abruf"
+        "rag": "RAG-Abruf",
+        "research": "Recherche"
       },
       "noCalls": "keine Aufrufe",
       "fallbackSkipped": "Fallback (übersprungen)",
@@ -135,7 +142,11 @@
       "prefill": "Prefill {{latency}}",
       "kvCacheHit": "KV-Cache {{cached}}/{{total}} Tok ({{pct}} %)",
       "kvCacheMiss": "KV-Cache 0/{{total}} Tok (kalt)",
-      "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten"
+      "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten",
+      "researchRead": "{{emails}} E-Mails in {{batches}} Stapeln gelesen (max. {{cap}})",
+      "researchFindings": "{{findings}} Erkenntnisse aus {{relevant}} E-Mails",
+      "researchFailed": "{{n}} Stapel fehlgeschlagen",
+      "researchSources": "{{search}} aus der Suche + {{rag}} aus dem Retrieval"
     }
   },
   "sources": {
@@ -200,5 +211,10 @@
   "accountPicker": {
     "label": "Konto, in dem dieser Chat sucht",
     "hint": "Der Chat antwortet immer nur aus einem Konto. Ein Wechsel startet eine neue Unterhaltung."
+  },
+  "research": {
+    "toggle": "Recherche",
+    "title": "Recherchemodus: liest deutlich mehr E-Mails in Stapeln und verfasst eine ausführliche Analyse. Langsamer – kann mehrere Minuten dauern. Gilt nur für die nächste Nachricht.",
+    "hint": "Nächste Nachricht: gründliche Analyse (langsamer)"
   }
 }

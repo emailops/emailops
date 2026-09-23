@@ -154,6 +154,9 @@ pub async fn send_chat_message(
     // ordinary new turn with a short correction instruction; the rejected
     // answer stays in the conversation.
     correction: Option<crate::models::ChatCorrection>,
+    // Research mode for this one message: read many more emails in batches
+    // (map-reduce) — slower, for questions that need a broad analysis.
+    research: Option<bool>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -255,6 +258,7 @@ pub async fn send_chat_message(
                     ambient_account_id: ambient_account_for_task,
                     view: view_for_task,
                     correction: correction_for_task,
+                    research: research.unwrap_or(false),
                 },
             )
             .await

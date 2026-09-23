@@ -6,6 +6,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
 
 let container: HTMLDivElement;
@@ -72,5 +73,22 @@ describe('ChatInput auto-grow', () => {
     typeInto(textarea, '');
     expect(textarea.style.height).toBe('60px');
     expect(textarea.style.overflowY).toBe('hidden');
+  });
+});
+
+describe('ChatInput research toggle', () => {
+  it('arms and disarms research mode for the next message', () => {
+    useChatStore.setState({ researchMode: false });
+    renderInput();
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="chat-research-toggle"]');
+    if (!toggle) throw new Error('research toggle not rendered');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+
+    act(() => toggle.click());
+    expect(useChatStore.getState().researchMode).toBe(true);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+
+    act(() => toggle.click());
+    expect(useChatStore.getState().researchMode).toBe(false);
   });
 });

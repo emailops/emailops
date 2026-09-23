@@ -13,6 +13,7 @@ import type {
   ChatPhase,
   ChatPhaseEvent,
   ChatRenamedEvent,
+  ChatResearchProgressEvent,
   ChatSourcesEvent,
   ChatStreamEvent,
   ChatTraceEvent,
@@ -63,6 +64,11 @@ interface ChatStore {
    *  running tools → generating). Null when nothing is streaming. Drives the
    *  bubble's "Processing…" status before the first answer token arrives. */
   streamingPhase: ChatPhase | null;
+  /** Research mode armed for the NEXT message only: the send disarms it, so a
+   *  follow-up question is a normal (fast) turn unless the user arms it again. */
+  researchMode: boolean;
+  /** Batch progress of the in-flight research turn; null otherwise. */
+  researchProgress: ChatResearchProgressEvent | null;
   isSending: boolean;
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
@@ -142,6 +148,8 @@ interface ChatStore {
   /** Event handlers — wired once in App.tsx via tauri listen() */
   handleStreamToken: (e: ChatStreamEvent) => void;
   handlePhase: (e: ChatPhaseEvent) => void;
+  handleResearchProgress: (e: ChatResearchProgressEvent) => void;
+  setResearchMode: (on: boolean) => void;
   handleSources: (e: ChatSourcesEvent) => void;
   handleTrace: (e: ChatTraceEvent) => void;
   handleRenamed: (e: ChatRenamedEvent) => void;
@@ -160,6 +168,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   streamingMessageId: null,
   streamingPhase: null,
+  researchMode: false,
+  researchProgress: null,
   isSending: false,
   isLoadingConversations: false,
   isLoadingMessages: false,
@@ -350,7 +360,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // again when the command returns: a fast turn (e.g. thread-bound chat) can
     // emit its first phase during the await, and that early phase must survive
     // the streamingMessageId assignment so the status shows instead of bare dots.
-    set({ isSending: true, error: null, streamingPhase: null });
+    // Research is armed per message: read it for this send and disarm it now.
+    // A corrective retry is an ordinary turn.
+    const research = get().researchMode && !correction;
+    set({ isSending: true, error: null, streamingPhase: null, researchProgress: null, researchMode: false });
 
     try {
       const { userMessage, assistantMessage } = await api.sendChatMessage(
@@ -361,6 +374,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         contextAccountId,
         contextView,
         correction,
+        research,
       );
       // Only mutate if we're still on the same conversation.
       if (get().activeConversationId !== conversationId) return;
@@ -420,10 +434,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // The turn is over once `done` fires — drop the processing status so a
       // stale "Generating…" can't linger under the finished answer.
       const streamingPhase = evt.done ? null : s.streamingPhase;
+      const researchProgress = evt.done ? null : s.researchProgress;
       const error = evt.error ?? s.error;
-      return { messages, streamingMessageId, streamingPhase, error };
+      return { messages, streamingMessageId, streamingPhase, researchProgress, error };
     });
   },
+
+  handleResearchProgress: (evt) => {
+    const { activeConversationId, streamingMessageId } = get();
+    if (evt.conversationId !== activeConversationId) return;
+    // Same scoping as `handlePhase`: accept while the id is still unknown.
+    if (streamingMessageId !== null && evt.messageId !== streamingMessageId) return;
+    set({ researchProgress: evt });
+  },
+
+  setResearchMode: (on) => set({ researchMode: on }),
 
   handlePhase: (evt) => {
     const { activeConversationId, streamingMessageId } = get();
@@ -509,6 +534,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       messages: [],
       streamingMessageId: null,
       streamingPhase: null,
+      researchMode: false,
+      researchProgress: null,
       isSending: false,
       isLoadingConversations: false,
       isLoadingMessages: false,

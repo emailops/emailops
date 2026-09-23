@@ -38,6 +38,9 @@ pub fn plan_steps(trace: &ChatTrace) -> Vec<TraceStep> {
             steps.push(llm_step(i));
         }
     }
+    if trace.research.is_some() {
+        steps.push(TraceStep::Research);
+    }
     if trace.retrieval.is_some() {
         steps.push(TraceStep::Retrieval);
     }
@@ -187,6 +190,27 @@ pub fn step_detail(trace: &ChatTrace, step: &TraceStep) -> String {
                 format!("{mode} · {}", trace.route.reason)
             }
         }
+        TraceStep::Research => match &trace.research {
+            Some(r) => {
+                let mut d = format!(
+                    "gathered {} search + {} rag (cap {}) · {} findings from {} emails · gather {} ms, read {} ms, write {} ms",
+                    r.search_hits,
+                    r.retrieval_hits,
+                    r.max_emails,
+                    r.findings,
+                    r.relevant_emails,
+                    r.gather_ms,
+                    r.map_ms,
+                    r.reduce_ms
+                );
+                if r.failed_batches > 0 {
+                    let plural = if r.failed_batches == 1 { "batch" } else { "batches" };
+                    d.push_str(&format!(" · {} {plural} failed", r.failed_batches));
+                }
+                d
+            }
+            None => String::new(),
+        },
         TraceStep::Retrieval => match &trace.retrieval {
             Some(r) => format!(
                 "{} vec + {} fts → top {} · {} ms{}",
@@ -257,6 +281,10 @@ pub fn step_label(trace: &ChatTrace, step: &TraceStep) -> String {
                 format!("route: {} (matched: {})", r.classifier, r.matched_keywords.join(", "))
             }
         }
+        TraceStep::Research => match &trace.research {
+            Some(r) => format!("research ({} emails, {} batches)", r.emails_analyzed, r.batches),
+            None => "research".into(),
+        },
         TraceStep::Retrieval => "RAG retrieval".into(),
         TraceStep::Help => match &trace.help {
             Some(h) => format!("guides ({} of {} sections)", h.included, h.candidates),
@@ -330,6 +358,7 @@ mod tests {
             llm_streaming_ms: None,
             llm_calls,
             help: None,
+            research: None,
             steps: vec![],
         }
     }
@@ -349,6 +378,7 @@ mod tests {
             .iter()
             .map(|s| match s {
                 TraceStep::Route => "route".into(),
+                TraceStep::Research => "research".into(),
                 TraceStep::Retrieval => "rag".into(),
                 TraceStep::Help => "help".into(),
                 TraceStep::Llm { index, .. } => {
@@ -361,6 +391,57 @@ mod tests {
     }
 
     // ── Order (ported from src/lib/reasoningTrace.ts `buildFlow`) ────────
+
+    #[test]
+    fn a_research_turn_shows_its_step_after_the_planner_then_its_calls() {
+        let mut t = trace(
+            "planner",
+            vec![
+                llm("planner", -2, 0),
+                llm("research_map", 0, 0),
+                llm("research_map", 1, 0),
+                llm("research_reduce", -1, 0),
+            ],
+            vec![],
+        );
+        t.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 20,
+            batches: 2,
+            ..Default::default()
+        });
+        assert_eq!(
+            tags(&t),
+            [
+                "route",
+                "llm:planner/-2",
+                "research",
+                "llm:research_map/0",
+                "llm:research_map/1",
+                "llm:research_reduce/-1"
+            ]
+        );
+    }
+
+    #[test]
+    fn research_step_label_and_detail_carry_the_counts() {
+        let mut t = trace("planner", vec![], vec![]);
+        t.research = Some(crate::models::ResearchTrace {
+            max_emails: 100,
+            search_hits: 30,
+            retrieval_hits: 40,
+            emails_analyzed: 60,
+            batches: 6,
+            failed_batches: 1,
+            findings: 25,
+            relevant_emails: 18,
+            ..Default::default()
+        });
+        assert_eq!(step_label(&t, &TraceStep::Research), "research (60 emails, 6 batches)");
+        let detail = step_detail(&t, &TraceStep::Research);
+        assert!(detail.contains("30 search + 40 rag"), "{detail}");
+        assert!(detail.contains("25 findings from 18 emails"), "{detail}");
+        assert!(detail.contains("1 batch failed"), "{detail}");
+    }
 
     #[test]
     fn the_route_always_comes_first() {

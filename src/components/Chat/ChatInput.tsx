@@ -1,6 +1,45 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
+import { useChatStore } from '@/stores/chatStore';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
+
+/** Arms research mode for the next message: the backend reads many more
+ *  emails in batches and writes a detailed report, at the cost of minutes.
+ *  Per message on purpose — the send disarms it (see `chatStore.dispatchTurn`),
+ *  so the chat never stays slow by accident. */
+function ResearchToggle() {
+  const { t } = useTranslation(['chat']);
+  const researchMode = useChatStore((s) => s.researchMode);
+  const setResearchMode = useChatStore((s) => s.setResearchMode);
+  return (
+    <button
+      type="button"
+      data-testid="chat-research-toggle"
+      aria-pressed={researchMode}
+      onClick={() => setResearchMode(!researchMode)}
+      title={t('chat:research.title')}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors ${
+        researchMode
+          ? 'border-primary-300 bg-primary-50 text-primary-700'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+      }`}
+    >
+      <svg
+        className="w-3.5 h-3.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="M21 21l-4.35-4.35M8 11h6M11 8v6" strokeLinecap="round" />
+      </svg>
+      <span className="font-medium">{t('chat:research.toggle')}</span>
+    </button>
+  );
+}
 
 interface ChatInputProps {
   onSend: (content: string) => void;
@@ -17,6 +56,13 @@ interface ChatInputProps {
   compact?: boolean;
   /** Rendered directly above the textarea — the panel's context chip slot. */
   contextSlot?: ReactNode;
+}
+
+function ResearchHint() {
+  const { t } = useTranslation(['chat']);
+  const researchMode = useChatStore((s) => s.researchMode);
+  if (!researchMode) return null;
+  return <span className="text-xs text-gray-500">{t('chat:research.hint')}</span>;
 }
 
 export function ChatInput({
@@ -92,8 +138,10 @@ export function ChatInput({
           Send
         </button>
       </div>
-      <div className="mt-2 flex items-center">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <CategoryFilterDropdown />
+        <ResearchToggle />
+        <ResearchHint />
       </div>
     </div>
   );

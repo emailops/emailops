@@ -379,3 +379,66 @@ describe('a turn that is still generating when you navigate away', () => {
     expect(s.streamingPhase).toBeNull();
   });
 });
+
+describe('chatStore research mode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      streamingPhase: null,
+      researchMode: false,
+      researchProgress: null,
+      messages: [],
+      isSending: false,
+      error: null,
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'q' },
+      assistantMessage: assistantMessage('msg-1'),
+    });
+  });
+
+  it('sends a normal turn when research mode is off', async () => {
+    await useChatStore.getState().sendMessage('q');
+    expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(false);
+  });
+
+  it('sends the armed research flag once, then disarms it', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(true);
+    // Per message: the next question is a normal (fast) turn again.
+    expect(useChatStore.getState().researchMode).toBe(false);
+  });
+
+  it('tracks progress for the in-flight turn and clears it when the turn ends', async () => {
+    await useChatStore.getState().sendMessage('q');
+    useChatStore.getState().handleResearchProgress({
+      messageId: 'msg-1',
+      conversationId: 'conv-1',
+      stage: 'reading',
+      batch: 2,
+      batches: 5,
+      emailsRead: 20,
+      emailsTotal: 50,
+    });
+    expect(useChatStore.getState().researchProgress?.emailsRead).toBe(20);
+
+    // A late event from another message is ignored.
+    useChatStore.getState().handleResearchProgress({
+      messageId: 'other',
+      conversationId: 'conv-1',
+      stage: 'writing',
+      batch: 5,
+      batches: 5,
+      emailsRead: 50,
+      emailsTotal: 50,
+    });
+    expect(useChatStore.getState().researchProgress?.stage).toBe('reading');
+
+    useChatStore.getState().handleStreamToken(streamEvent({ messageId: 'msg-1', done: true }));
+    expect(useChatStore.getState().researchProgress).toBeNull();
+  });
+});

@@ -1314,6 +1314,11 @@ export async function sendChatMessage(
    * retry is steered by what the user actually objected to.
    */
   correction?: ChatCorrection | null,
+  /**
+   * Research mode for this message: the backend reads many more emails in
+   * batches (map-reduce) and writes a detailed report. Takes minutes.
+   */
+  research = false,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1323,6 +1328,7 @@ export async function sendChatMessage(
     contextAccountId: contextAccountId ?? null,
     contextView: contextView ?? null,
     correction: correction ?? null,
+    research,
   });
 }
 

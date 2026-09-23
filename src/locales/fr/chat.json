@@ -72,6 +72,12 @@
     "retrievingEmail": "Récupération du courriel…",
     "generatingDraft": "Génération du brouillon…",
     "runningTools": "Traitement de la requête…",
+    "researching": "Recherche en cours…",
+    "research": {
+      "gathering": "Recherche : collecte des e-mails…",
+      "reading": "Recherche : lecture des e-mails {{read}}/{{total}} (lot {{batch}}/{{batches}})…",
+      "writing": "Recherche : rédaction du rapport à partir de {{total}} e-mails…"
+    },
     "generating": "Génération…"
   },
   "reasoning": {
@@ -115,7 +121,8 @@
         "fetchMetadata": "Récupérer les métadonnées",
         "threadExpansion": "Expansion du fil",
         "helpDocs": "Aide EmailOps",
-        "rag": "Recherche RAG"
+        "rag": "Recherche RAG",
+        "research": "Recherche"
       },
       "noCalls": "aucun appel",
       "fallbackSkipped": "repli (ignoré)",
@@ -135,7 +142,11 @@
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "cache KV {{cached}}/{{total}} tok ({{pct}} %)",
       "kvCacheMiss": "cache KV 0/{{total}} tok (froid)",
-      "helpSections": "{{included}} sur {{candidates}} sections des guides"
+      "helpSections": "{{included}} sur {{candidates}} sections des guides",
+      "researchRead": "{{emails}} e-mails lus en {{batches}} lots (max. {{cap}})",
+      "researchFindings": "{{findings}} constats issus de {{relevant}} e-mails",
+      "researchFailed": "{{n}} lots en échec",
+      "researchSources": "{{search}} via la recherche + {{rag}} via la récupération"
     }
   },
   "sources": {
@@ -200,5 +211,10 @@
   "accountPicker": {
     "label": "Compte dans lequel cette discussion recherche",
     "hint": "La discussion répond à partir d'un seul compte à la fois. En changer démarre une nouvelle conversation."
+  },
+  "research": {
+    "toggle": "Recherche",
+    "title": "Mode recherche : lit beaucoup plus d'e-mails par lots et rédige une analyse détaillée. Plus lent — peut prendre plusieurs minutes. S'applique uniquement au prochain message.",
+    "hint": "Prochain message : analyse approfondie (plus lente)"
   }
 }

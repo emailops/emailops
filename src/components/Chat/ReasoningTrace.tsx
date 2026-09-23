@@ -204,6 +204,33 @@ function HelpDetail({ trace }: { trace: ChatTrace }) {
   );
 }
 
+/** What a research-mode turn read: candidates gathered, batches, findings. */
+function ResearchRow({ trace }: { trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  const r = trace.research;
+  if (!r) return null;
+  return (
+    <li data-testid="trace-step" className="py-1">
+      <div className="text-gray-900">{t('chat:reasoning.trace.step.research')}</div>
+      <div className="text-xs text-gray-700 ml-4">
+        {t('chat:reasoning.trace.researchRead', { emails: r.emailsAnalyzed, batches: r.batches, cap: r.maxEmails })}
+        {' · '}
+        {t('chat:reasoning.trace.researchFindings', { findings: r.findings, relevant: r.relevantEmails })}
+        {r.failedBatches > 0 && (
+          <span className="text-amber-700">
+            {' · '}
+            {t('chat:reasoning.trace.researchFailed', { n: r.failedBatches })}
+          </span>
+        )}
+      </div>
+      <div className="text-xs text-gray-700 ml-4">
+        {t('chat:reasoning.trace.researchSources', { search: r.searchHits, rag: r.retrievalHits })} ·{' '}
+        {formatLatency(r.gatherMs)} + {formatLatency(r.mapMs)} + {formatLatency(r.reduceMs)}
+      </div>
+    </li>
+  );
+}
+
 /** Who decided the route, in words: the backend's classifier ids
  *  ("heuristic", "planner", "forced"…) mean nothing to a reader. */
 const ROUTE_CLASSIFIERS = ['heuristic', 'heuristic_followup', 'planner', 'forced', 'ambient', 'llm'] as const;
@@ -360,6 +387,8 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
                 switch (step.type) {
                   case 'route':
                     return <RouteRow key={key} trace={trace} routeMode={routeMode} />;
+                  case 'research':
+                    return <ResearchRow key={key} trace={trace} />;
                   case 'retrieval':
                     return <RetrievalDetail key={key} trace={trace} />;
                   case 'help':

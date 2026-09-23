@@ -560,7 +560,36 @@ export type ChatPhase =
   | 'retrievingEmail'
   | 'generatingDraft'
   | 'runningTools'
+  | 'researching'
   | 'generating';
+
+/** Progress of a research-mode turn, fired on `chat-research-progress`.
+ *  Mirrors `ChatResearchProgressEvent` in Rust. */
+export interface ChatResearchProgressEvent {
+  messageId: string;
+  conversationId: string;
+  stage: 'gathering' | 'reading' | 'writing';
+  batch: number;
+  batches: number;
+  emailsRead: number;
+  emailsTotal: number;
+}
+
+/** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */
+export interface ResearchTrace {
+  nCtx: number;
+  maxEmails: number;
+  searchHits: number;
+  retrievalHits: number;
+  emailsAnalyzed: number;
+  batches: number;
+  failedBatches: number;
+  findings: number;
+  relevantEmails: number;
+  gatherMs: number;
+  mapMs: number;
+  reduceMs: number;
+}
 
 export interface ChatPhaseEvent {
   messageId: string;
@@ -701,6 +730,8 @@ export interface ChatTrace {
   llmCalls?: LlmCallTrace[];
   /** What the EmailOps-help lookup (bundled guides) did this turn. */
   help?: HelpTrace | null;
+  /** Research-mode stats; absent on an ordinary turn. */
+  research?: ResearchTrace | null;
   /** The turn in execution order, built by the backend
    *  (`services::chat::trace_steps`) — the one ordering the reasoning panel,
    *  the CLI and the eval report all walk. */
@@ -725,6 +756,7 @@ export interface CacheAction {
 /** Mirrors `TraceStep`. `llm` / `tool` index into `llmCalls` / `toolCalls`. */
 export type TraceStep =
   | { type: 'route' }
+  | { type: 'research' }
   | { type: 'retrieval' }
   | { type: 'help' }
   | { type: 'llm'; index: number; kvCache: KvCacheStats | null; cacheAction: CacheAction | null }

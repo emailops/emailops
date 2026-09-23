@@ -327,6 +327,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         chat::TurnContext {
             ambient_thread_id: ambient_thread_id.clone(),
             ambient_account_id: ambient_owner.clone(),
+            research: case.research,
             ..Default::default()
         },
     )

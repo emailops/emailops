@@ -3170,6 +3170,7 @@ async fn run_thread_bound_turn(
                 llm_streaming_ms: None,
                 llm_calls: llm_calls.clone(),
                 help: None,
+                research: None,
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -3518,6 +3519,10 @@ pub struct TurnContext {
     pub view: Option<crate::models::ChatViewContext>,
     /// Set when this turn is a retry of an answer the user marked wrong.
     pub correction: Option<crate::models::ChatCorrection>,
+    /// Research mode: read far more of the mailbox in batches (map-reduce,
+    /// see `research`) instead of answering from one page of results. Slower
+    /// by design; the user opts in per message.
+    pub research: bool,
 }
 
 pub async fn run_chat_turn(
@@ -3540,7 +3545,13 @@ pub async fn run_chat_turn(
     let turn_start = std::time::Instant::now();
 
     // Destructured back into locals so the body below reads unchanged.
-    let ambient_thread_id = context.ambient_thread_id.clone();
+    // A research question is about the mailbox, not the email on screen, so
+    // the open thread is not offered as context on a research turn.
+    let ambient_thread_id = if context.research {
+        None
+    } else {
+        context.ambient_thread_id.clone()
+    };
     let ambient_account_id = context.ambient_account_id.clone();
 
     // Validated once: an unrecognised token is dropped here and can never
@@ -3635,6 +3646,12 @@ pub async fn run_chat_turn(
     };
 
     if let Some(system_messages) = thread_context {
+        if context.research {
+            emit_log(
+                "info",
+                "research mode ignored: this conversation is about one thread, answering from it",
+            );
+        }
         return run_thread_bound_turn(
             db,
             provider,
@@ -3745,7 +3762,13 @@ pub async fn run_chat_turn(
                 && db.calendar_enabled(&a.id).unwrap_or(false)
         })
         .unwrap_or(false);
-    let mut preseeded_tool_calls = if ambient_context.is_some() {
+    // Research mode gathers with the planner's filter itself; a shortcut would
+    // answer from one page and skip the reading it was asked to do. Cleared
+    // below when the planner says the question is not about the mailbox.
+    let mut research_active = context.research && ambient_context.is_none();
+    // The planner's filter, kept for research to page through.
+    let mut research_plan: Option<super::planner::SearchPlan> = None;
+    let mut preseeded_tool_calls = if ambient_context.is_some() || research_active {
         None
     } else {
         heuristic_direct_tools(&user_question, calendar_available)
@@ -3790,7 +3813,7 @@ pub async fn run_chat_turn(
     let mut form_to_fill: Option<&'static crate::services::forms::FormDef> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
-        && (route.mode == RouteMode::ToolsFirst || asked_planner)
+        && (route.mode == RouteMode::ToolsFirst || asked_planner || research_active)
         && planner_enabled(&db)
     {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
@@ -3841,7 +3864,16 @@ pub async fn run_chat_turn(
                     plan
                 };
                 let structural = plan.has_structural_filter();
-                if asked_planner && !structural {
+                if research_active {
+                    // Research pages this filter itself (and adds retrieval
+                    // when it names no filter) instead of pre-seeding one page.
+                    emit_log(
+                        "info",
+                        &format!("planner: research filter (structural={structural}) [{plan_ms}ms]"),
+                    );
+                    planner_trace = Some(build_planner_trace(plan_ms, "search", plan_telemetry));
+                    research_plan = Some(*plan);
+                } else if asked_planner && !structural {
                     emit_log(
                         "debug",
                         &format!("planner: keyword-only plan, keeping RAG [{plan_ms}ms]"),
@@ -3871,10 +3903,19 @@ pub async fn run_chat_turn(
                     ),
                 );
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
-                route = super::routing::planner_help_route();
-                app_help = true;
-                help_page = page;
-                emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                if research_active && super::research::research_continues(super::research::PlannerVerdict::AppHelp) {
+                    // The toggle says the question is about the mailbox: gather
+                    // by retrieval instead of answering from the guides.
+                    emit_log(
+                        "info",
+                        "research mode: app-help verdict overridden, gathering from the mailbox",
+                    );
+                } else {
+                    route = super::routing::planner_help_route();
+                    app_help = true;
+                    help_page = page;
+                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
+                }
             }
             super::planner::Plan::FormFill(form_id) => {
                 // "crea una lens de facturas": there is nothing to retrieve and
@@ -3882,6 +3923,7 @@ pub async fn run_chat_turn(
                 // the frontend opens it. Handled below, outside this match, so
                 // the borrow on `route`/`planner_trace` ends first.
                 emit_log("info", &format!("planner: fill form {form_id} [{plan_ms}ms]"));
+                research_active &= super::research::research_continues(super::research::PlannerVerdict::FormFill);
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
                 route = super::routing::planner_help_route();
                 form_to_fill = super::view_context::resolve_target_form(Some(form_id), open_form_id)
@@ -3927,6 +3969,10 @@ pub async fn run_chat_turn(
     emit_log("info", "stage: retrieve");
     let (sources, retrieval_trace, query_embedding): (Vec<ScoredEmail>, Option<RetrievalTrace>, Option<Vec<f32>>) =
         match &route.mode {
+            _ if research_active => {
+                emit_log("info", "retrieve: skipped (research mode gathers its own candidates)");
+                (Vec::new(), None, None)
+            }
             RouteMode::ToolsFirst => {
                 emit_log("info", "retrieve: skipped (ToolsFirst route)");
                 (Vec::new(), None, None)
@@ -3977,7 +4023,8 @@ pub async fn run_chat_turn(
     let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
     let planner_says_app_help = planner_trace.as_ref().map(|_| app_help);
     let (help_sources, help_trace): (Vec<crate::services::help_docs::HelpSource>, Option<HelpTrace>) =
-        if help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
+        if !research_active
+            && help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
             && db.is_help_docs_enabled().unwrap_or(true)
         {
             // Text index on demand (one hash + one COUNT when up to date), so
@@ -4141,6 +4188,8 @@ pub async fn run_chat_turn(
 
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+    // Set by the research branch below; `None` on an ordinary turn.
+    let mut research_trace: Option<crate::models::ResearchTrace> = None;
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
     // The planner ran before the loop; surface it first in the timeline.
     if let Some(pt) = planner_trace.take() {
@@ -4162,7 +4211,98 @@ pub async fn run_chat_turn(
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
         tool_email_refs,
-    ) = {
+    ) = if research_active {
+        // Research mode replaces the tool loop: gather → read in batches →
+        // write the report, all as one-shot completions on the auxiliary
+        // prefix slot, so the chat's KV anchor is untouched for the next turn.
+        // The report comes back as a finished assistant answer, so the path
+        // below ships it like any direct answer (citation cleanup, sources,
+        // trace) without a second model call.
+        emit_log("info", "stage: research");
+        emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Researching);
+        let t_research = std::time::Instant::now();
+        let map_template = crate::services::prompts::get_template(&db, "chat.research_map")?;
+        let reduce_template = crate::services::prompts::get_template(&db, "chat.research_reduce")?;
+        let language = ai_language.english_name();
+        let language_instruction = if language.is_empty() {
+            "Reply in the language the user writes in.".to_string()
+        } else {
+            format!("Reply in {language}.")
+        };
+        let n_ctx = super::research::resolve_n_ctx(&db, provider.provider_type());
+        let progress_conversation = conversation_id.clone();
+        let progress_message = assistant_message_id.clone();
+        let on_progress = move |p: super::research::ResearchProgress| {
+            crate::services::events::emit(
+                "chat-research-progress",
+                crate::models::ChatResearchProgressEvent {
+                    message_id: progress_message.clone(),
+                    conversation_id: progress_conversation.clone(),
+                    stage: p.stage.as_str().to_string(),
+                    batch: p.batch as u32,
+                    batches: p.batches as u32,
+                    emails_read: p.emails_read as u32,
+                    emails_total: p.emails_total as u32,
+                },
+            );
+        };
+        let run = super::research::run_research(
+            super::research::ResearchInput {
+                db: &db,
+                provider: provider.as_ref(),
+                account_id: &account_id,
+                categories: &categories,
+                question: &user_question,
+                plan: research_plan.as_ref(),
+                n_ctx,
+                language_instruction: &language_instruction,
+                map_template: &map_template,
+                reduce_template: &reduce_template,
+            },
+            &on_progress,
+        )
+        .await;
+        let elapsed = t_research.elapsed().as_millis() as i64;
+        emit_log(
+            "info",
+            &format!(
+                "research: done ({} emails read in {} batches, {} relevant, n_ctx={}) [{}ms]",
+                run.trace.emails_analyzed, run.trace.batches, run.trace.relevant_emails, n_ctx, elapsed
+            ),
+        );
+        llm_calls.extend(run.llm_calls);
+        research_trace = Some(run.trace);
+        let (messages, failed) = match run.answer {
+            Some(answer) => (
+                vec![
+                    AiMessage {
+                        role: "user".to_string(),
+                        content: user_question.clone(),
+                        tool_calls: None,
+                    },
+                    AiMessage {
+                        role: "assistant".to_string(),
+                        content: answer,
+                        tool_calls: None,
+                    },
+                ],
+                false,
+            ),
+            None => (Vec::new(), true),
+        };
+        (
+            messages,
+            elapsed,
+            failed,
+            run.error,
+            // Every email read may be linked; the ones a finding cites are the
+            // answer's sources when it links none itself.
+            run.analyzed,
+            Vec::new(),
+            false,
+            run.relevant,
+        )
+    } else {
         emit_log("info", "stage: tool_loop");
         emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
         let t_tool_loop = std::time::Instant::now();
@@ -4250,12 +4390,15 @@ pub async fn run_chat_turn(
                 aggregated_email_refs.push(id.clone());
             }
         }
-        let contradiction_retry_messages: Option<Vec<AiMessage>> = if aggregated_email_refs.is_empty() && !ambient_turn
-        {
-            None
-        } else {
-            Some(final_messages.clone())
-        };
+        // A research report is not retried: it rests on notes, not on the
+        // tool transcript the guard would replay, and a "nothing relevant"
+        // report is a legitimate finding after reading the whole set.
+        let contradiction_retry_messages: Option<Vec<AiMessage>> =
+            if research_active || (aggregated_email_refs.is_empty() && !ambient_turn) {
+                None
+            } else {
+                Some(final_messages.clone())
+            };
         match plan_answer(final_messages) {
             // The tool loop ended with a direct assistant text answer — reuse it
             // as-is and SKIP the re-stream. Otherwise we'd be appending the answer
@@ -4757,6 +4900,7 @@ pub async fn run_chat_turn(
                 llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
                 llm_calls: llm_calls.clone(),
                 help: help_trace.clone(),
+                research: research_trace.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {

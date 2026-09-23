@@ -188,6 +188,16 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_no_email_sources: bool,
 
+    /// Run the turn in research mode (the chat's per-message "Research"
+    /// toggle): paged search + wide retrieval, read in batches, one report.
+    #[serde(default)]
+    pub research: bool,
+
+    /// Research-mode coverage floor: the turn must have read at least this
+    /// many emails. Absence skips the check.
+    #[serde(default)]
+    pub expected_min_research_emails: Option<u32>,
+
     /// Case-insensitive subject substrings: every bare `[n]` citation in the
     /// answer must resolve to a numbered source whose subject contains one of
     /// them — the way the UI resolves it. Catches right facts pinned to the

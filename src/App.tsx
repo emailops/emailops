@@ -86,6 +86,7 @@ import type {
   CalendarEvent,
   ChatPhaseEvent,
   ChatRenamedEvent,
+  ChatResearchProgressEvent,
   ChatSourcesEvent,
   ChatStreamEvent,
   ChatTraceEvent,
@@ -815,6 +816,11 @@ function AppInner() {
     unlisteners.push(
       listen<ChatPhaseEvent>('chat-phase', (event) => {
         useChatStore.getState().handlePhase(event.payload);
+      }),
+    );
+    unlisteners.push(
+      listen<ChatResearchProgressEvent>('chat-research-progress', (event) => {
+        useChatStore.getState().handleResearchProgress(event.payload);
       }),
     );
     unlisteners.push(

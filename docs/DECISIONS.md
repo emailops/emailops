@@ -1437,3 +1437,34 @@ to it.
 refers to; *persisting rejections to a table for later eval graduation* — the developer
 declined it as scope for now, so the reason steers the retry and is then discarded;
 *a correction-specific route or prompt* — the answer was wrong, not the route.
+
+## 2026-09-23 — Chat research mode is a per-message map-reduce on the auxiliary slot
+
+**Decision:** The chat gets a **Research** toggle next to the category filter. It arms
+research mode for the **next message only** (the send disarms it). A research turn skips
+the heuristic shortcuts and the tool loop. It gathers candidates by paging the query
+planner's `search_emails` filter, adding wide hybrid retrieval when the plan names no
+structural filter. It then reads them in batches with one `complete_with_prefix` call per
+batch (`chat.research_map`), keeping only the findings that cite an email of the batch,
+and writes the report in one more call (`chat.research_reduce`). Batch size, the number
+of batches and the email cap (≤100) come from the context window, so every batch fits
+the map window and all of the notes fit one reduce window. The report is shipped like a
+direct answer: citation cleanup, sources and trace. Bare `(email://ID)` and
+`[email://ID]` references are relinked to `[subject](email://ID)`.
+**Context:** a normal turn answers from about 8 sources or one 25-row page. That suits
+"what did X say?" but is too thin for "what themes came up this quarter?". Measured
+before and after on the developer's mailbox (qwen3.5-4b-q8_0, n_ctx 15360), the same
+question went from 25 rows read in 53 s to 100 emails read in 10 batches in 213 s, with
+35 emails cited. Every research call runs on the one-shot prefix slot (2026-09-19
+entry), so the chat's KV anchor survives for the next ordinary turn, and the map
+instructions stay decoded across batches.
+**Rejected:**
+- *Only raising the existing limits* (more sources, larger pages, more tool rounds):
+  with a 7k-token system prefix in an 8–32k window the prompt front-truncates, and a 4B
+  model loses facts in a long context.
+- *An agentic loop that plans its own sub-queries*: the local 4B model plans long
+  investigations unreliably.
+- *A persistent or per-conversation toggle*: it leaves the chat slow by accident.
+- *Streaming the report through `chat_stream`*: its system prompt would replace the chat
+  anchor, and the 7k chat prefix leaves no room for the notes at 8k. The report is
+  therefore not streamed; progress events cover the wait.

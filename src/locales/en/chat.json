@@ -72,6 +72,12 @@
     "retrievingEmail": "Retrieving email…",
     "generatingDraft": "Generating draft…",
     "runningTools": "Processing prompt…",
+    "researching": "Researching…",
+    "research": {
+      "gathering": "Research: gathering emails…",
+      "reading": "Research: reading emails {{read}}/{{total}} (batch {{batch}}/{{batches}})…",
+      "writing": "Research: writing the report from {{total}} emails…"
+    },
     "generating": "Generating…"
   },
   "reasoning": {
@@ -115,7 +121,8 @@
         "fetchMetadata": "Fetch metadata",
         "threadExpansion": "Thread expansion",
         "helpDocs": "EmailOps help",
-        "rag": "RAG retrieval"
+        "rag": "RAG retrieval",
+        "research": "Research"
       },
       "noCalls": "no calls",
       "fallbackSkipped": "fallback (skipped)",
@@ -135,7 +142,11 @@
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "KV cache {{cached}}/{{total}} tok ({{pct}}%)",
       "kvCacheMiss": "KV cache 0/{{total}} tok (cold)",
-      "helpSections": "{{included}} of {{candidates}} guide sections"
+      "helpSections": "{{included}} of {{candidates}} guide sections",
+      "researchRead": "{{emails}} emails read in {{batches}} batches (cap {{cap}})",
+      "researchFindings": "{{findings}} findings from {{relevant}} emails",
+      "researchFailed": "{{n}} batches failed",
+      "researchSources": "{{search}} from search + {{rag}} from retrieval"
     }
   },
   "sources": {
@@ -200,5 +211,10 @@
   "accountPicker": {
     "label": "Account this chat searches",
     "hint": "Chat answers from one account at a time. Switching starts a new conversation."
+  },
+  "research": {
+    "toggle": "Research",
+    "title": "Research mode: reads many more emails in batches and writes a detailed analysis. Slower — can take several minutes. Applies to the next message only.",
+    "hint": "Next message: in-depth analysis (slower)"
   }
 }

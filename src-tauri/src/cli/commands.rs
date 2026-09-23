@@ -120,7 +120,22 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             fresh,
             thread,
             prewarm,
-        } => run_chat(session, questions, trace, conversation, fresh, thread, prewarm).await,
+            research,
+        } => {
+            run_chat(
+                session,
+                questions,
+                ChatOptions {
+                    trace,
+                    conversation,
+                    fresh,
+                    thread,
+                    prewarm,
+                    research,
+                },
+            )
+            .await
+        }
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -563,15 +578,26 @@ pub(super) fn collect_referenced_drafts(
 /// Multiple questions run sequentially in ONE process so the model stays
 /// loaded between turns — that's what makes per-turn prefill numbers
 /// comparable (`make cli-bench`).
-async fn run_chat(
-    session: &mut CliSession,
-    questions: Vec<String>,
+/// The `chat` subcommand's flags, grouped so `run_chat` stops growing a
+/// parameter per flag.
+struct ChatOptions {
     trace: bool,
     conversation: Option<String>,
     fresh: bool,
     thread: Option<String>,
     prewarm: bool,
-) -> Result<()> {
+    research: bool,
+}
+
+async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: ChatOptions) -> Result<()> {
+    let ChatOptions {
+        trace,
+        conversation,
+        fresh,
+        thread,
+        prewarm,
+        research,
+    } = options;
     let account_id = session.require_account()?;
     let model = session.model.clone();
 
@@ -684,6 +710,7 @@ async fn run_chat(
             crate::services::chat::TurnContext {
                 ambient_thread_id: thread.clone(),
                 ambient_account_id: ambient_account.clone(),
+                research,
                 ..Default::default()
             },
         )

@@ -1026,6 +1026,32 @@ pub struct ToolCallTrace {
     pub elapsed_ms: i64,
 }
 
+/// What a research-mode turn read: how many emails were gathered, how many
+/// map batches ran, and how many emails yielded findings for the report.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchTrace {
+    /// Context window the batches were sized to.
+    pub n_ctx: u32,
+    /// Cap on emails this turn could read.
+    pub max_emails: u32,
+    /// Candidates from paging `search_emails`.
+    pub search_hits: u32,
+    /// Candidates from hybrid retrieval.
+    pub retrieval_hits: u32,
+    /// Emails actually read by the map step.
+    pub emails_analyzed: u32,
+    pub batches: u32,
+    pub failed_batches: u32,
+    /// Finding lines kept across all batches.
+    pub findings: u32,
+    /// Emails at least one finding cites.
+    pub relevant_emails: u32,
+    pub gather_ms: i64,
+    pub map_ms: i64,
+    pub reduce_ms: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatTrace {
@@ -1052,6 +1078,9 @@ pub struct ChatTrace {
     /// when the feature is off or the turn short-circuited before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<HelpTrace>,
+    /// Research-mode map-reduce stats. `None` on an ordinary turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<ResearchTrace>,
     /// The turn in execution order — the one ordering every renderer (the
     /// reasoning panel, `emailops-cli chat --trace`, the eval report) walks.
     /// Built by `services::chat::trace_steps::plan_steps`; filled when the turn
@@ -1067,6 +1096,7 @@ pub struct ChatTrace {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TraceStep {
     Route,
+    Research,
     Retrieval,
     Help,
     #[serde(rename_all = "camelCase")]
@@ -1166,8 +1196,29 @@ pub enum ChatPhase {
     /// Running any other tool in the loop — generic fallback when no
     /// tool-specific phase applies.
     RunningTools,
+    /// Research mode: gathering candidates and reading them in batches. The
+    /// `chat-research-progress` event carries the batch counts.
+    Researching,
     /// Streaming the final assistant answer.
     Generating,
+}
+
+/// Progress of a research-mode turn, emitted on `chat-research-progress` as
+/// each stage starts and after every map batch, so a turn that takes minutes
+/// shows how far along it is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatResearchProgressEvent {
+    pub message_id: String,
+    pub conversation_id: String,
+    /// `"gathering"`, `"reading"` or `"writing"`.
+    pub stage: String,
+    /// Batches finished so far / in total (0/0 while gathering).
+    pub batch: u32,
+    pub batches: u32,
+    /// Emails read so far / in total.
+    pub emails_read: u32,
+    pub emails_total: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

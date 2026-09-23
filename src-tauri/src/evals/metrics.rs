@@ -119,6 +119,10 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         checks.push(check_no_email_sources(&outcome.sources_used));
     }
 
+    if let Some(min) = case.expected_min_research_emails {
+        checks.push(check_research_coverage(min, outcome.assistant_trace.as_ref()));
+    }
+
     if !case.expected_cited_subjects.is_empty() {
         checks.push(check_cited_subjects(
             &case.expected_cited_subjects,
@@ -227,6 +231,30 @@ fn check_help_pages_any(pages: &[String], trace: Option<&ChatTrace>) -> Heuristi
 /// Assert that no mailbox email was fed to the model as a RAG source — a
 /// question about the app must be answered from the guides, not from an
 /// email that happens to discuss the same topic.
+/// A research-mode turn must have read at least `min` emails — the whole point
+/// of the mode is coverage, and a planner filter that pages nothing or a
+/// retrieval that silently fails would still yield a fluent report.
+fn check_research_coverage(min: u32, trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let read = trace
+        .and_then(|t| t.research.as_ref())
+        .map(|r| (r.emails_analyzed, r.batches));
+    let passed = read.is_some_and(|(emails, _)| emails >= min);
+    HeuristicCheck {
+        name: "research_coverage".into(),
+        passed,
+        expected: format!(">= {min} emails read"),
+        actual: match read {
+            Some((emails, batches)) => format!("{emails} emails read in {batches} batches"),
+            None => "no research trace (the turn did not run research mode)".into(),
+        },
+        detail: if passed {
+            "research mode read the expected share of the mailbox".into()
+        } else {
+            "research mode read fewer emails than the case requires".into()
+        },
+    }
+}
+
 fn check_no_email_sources(sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
     let passed = sources.is_empty();
     HeuristicCheck {
@@ -579,6 +607,7 @@ mod tests {
             tool_loop_ms: 0,
             llm_streaming_ms: None,
             help: None,
+            research: None,
             llm_calls: vec![],
             steps: vec![],
         }
@@ -599,6 +628,37 @@ mod tests {
             ..Default::default()
         });
         trace
+    }
+
+    // ── expected_min_research_emails ───────────────────────────────────────
+
+    #[test]
+    fn research_coverage_passes_when_enough_emails_were_read() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 13,
+            batches: 2,
+            ..Default::default()
+        });
+        let check = check_research_coverage(10, Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn research_coverage_fails_when_too_few_emails_were_read() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 4,
+            ..Default::default()
+        });
+        assert!(!check_research_coverage(10, Some(&trace)).passed);
+    }
+
+    #[test]
+    fn research_coverage_fails_when_the_turn_did_not_research() {
+        let check = check_research_coverage(10, Some(&trace_with(vec![])));
+        assert!(!check.passed);
+        assert!(check.actual.contains("no research"), "{}", check.actual);
     }
 
     #[test]
