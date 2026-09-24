@@ -260,6 +260,13 @@
     "stop": "Stop and write report",
     "stopping": "Stopping…",
     "filter": "Filter",
-    "byMeaning": "Gathered by meaning (no filter)"
+    "byMeaning": "Gathered by meaning (no filter)",
+    "exit": {
+      "title": "Research in progress",
+      "body": "A chat research is still reading your emails. If you quit now it is lost and its answer stays empty.",
+      "keep": "Keep researching",
+      "quit": "Quit anyway"
+    },
+    "statusBar": "Chat: Research in progress… ({{step}})"
   }
 }

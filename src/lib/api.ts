@@ -1352,6 +1352,12 @@ export async function stopResearch(messageId: string): Promise<boolean> {
   return invoke('stop_research', { messageId });
 }
 
+/** Quit even though a research run is reading (it is lost). Called from the
+ *  confirmation the backend asks for when a close or Cmd+Q arrives mid-run. */
+export async function confirmExit(): Promise<void> {
+  return invoke('confirm_exit');
+}
+
 /** Mirrors `models::ChatCorrection` on the Rust side. */
 export interface ChatCorrection {
   /** The assistant message the user marked wrong. */

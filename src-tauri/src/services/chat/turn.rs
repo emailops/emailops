@@ -4215,7 +4215,6 @@ pub async fn run_chat_turn(
         } else {
             format!("Reply in {language}.")
         };
-        let n_ctx = super::research::resolve_n_ctx(&db, provider.provider_type());
         let progress_conversation = conversation_id.clone();
         let progress_message = assistant_message_id.clone();
         let on_progress = move |p: super::research::ResearchProgress| {
@@ -4265,6 +4264,9 @@ pub async fn run_chat_turn(
             llm_calls.push(call);
         }
         tool_traces.extend(prepared.gather_calls.iter().cloned());
+        // Read the window now, with the model loaded by the planner: batches
+        // and notes are sized to what the runtime really runs with.
+        let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref());
         let guard = super::research::register_run(&assistant_message_id);
         let run = super::research::run_research(
             super::research::ResearchInput {
@@ -4274,6 +4276,7 @@ pub async fn run_chat_turn(
                 prepared: &prepared,
                 n_ctx,
                 language_instruction: &language_instruction,
+                language_code: ai_language.as_code(),
                 map_template: &map_template,
                 condense_template: &condense_template,
                 reduce_template: &reduce_template,

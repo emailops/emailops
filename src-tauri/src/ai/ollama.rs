@@ -931,6 +931,13 @@ impl AIProvider for OllamaClient {
         ProviderType::Ollama
     }
 
+    /// Every sampled request carries `num_ctx` from [`OllamaSamplingOptions::grounded`].
+    fn context_window(&self) -> Option<u32> {
+        OllamaSamplingOptions::grounded()
+            .num_ctx
+            .and_then(|n| u32::try_from(n).ok())
+    }
+
     fn model_name(&self) -> &str {
         &self.model
     }

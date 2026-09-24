@@ -187,6 +187,10 @@ const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
         description: "How many emails were read, in how many batches, and how many had findings.",
     },
     VariableDef {
+        name: "counts",
+        description: "Exact counts of the matching emails and conversations, computed in code; says when the full list is appended.",
+    },
+    VariableDef {
         name: "notes",
         description: "The findings every batch extracted, each ending with its email:// link.",
     },

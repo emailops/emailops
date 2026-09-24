@@ -346,11 +346,14 @@ How to write the report:
 - Group related findings and merge duplicates. Point out patterns, changes over time and contradictions between emails.
 - Every factual claim links the email it came from as [short label](email://EMAIL_ID), copying the id from the notes. Never invent an id. Do not use numbered [1] citations.
 - Use ONLY the notes. If they do not cover part of the question, say so plainly. Never say you lack access to the mailbox.
+- Any number of emails, people or items comes from COUNTS, never from counting the notes.
 - End with one short line saying how much was read (from COVERAGE).
 
 QUESTION: {{question}}
 
 COVERAGE: {{coverage}}
+
+COUNTS: {{counts}}
 
 NOTES:
 {{notes}}"#;

@@ -12,6 +12,7 @@ import { CalendarView } from '@/components/Calendar/CalendarView';
 import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
 import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
 import { ChatView } from '@/components/Chat/ChatView';
+import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
 import { ToastHost } from '@/components/common/ToastHost';
@@ -821,6 +822,12 @@ function AppInner() {
     unlisteners.push(
       listen<ChatResearchProgressEvent>('chat-research-progress', (event) => {
         useChatStore.getState().handleResearchProgress(event.payload);
+      }),
+    );
+    // The backend held a close / Cmd+Q because research is reading.
+    unlisteners.push(
+      listen('research-exit-requested', () => {
+        useChatStore.getState().handleResearchExitRequested();
       }),
     );
     unlisteners.push(
@@ -1754,6 +1761,8 @@ function AppInner() {
           onRefreshAfterApply={refreshAfterRuleApply}
         />
       )}
+
+      <ResearchExitDialog />
 
       {accountSettingsAccount && (
         <AccountSettingsDialog

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResearchDoc {
     pub id: String,
+    pub thread_id: String,
     pub date: String,
     pub from: String,
     pub subject: String,
@@ -133,9 +134,11 @@ pub(crate) fn split_reduce_prompt(
     language_instruction: &str,
     question: &str,
     coverage: &str,
+    counts: &str,
     notes: &str,
 ) -> (String, String) {
     let mut vars = HashMap::new();
+    vars.insert("counts", counts.to_string());
     vars.insert("language_instruction", language_instruction.to_string());
     vars.insert("question", question.to_string());
     vars.insert("coverage", coverage.to_string());
@@ -220,6 +223,195 @@ pub(crate) fn relink_bare_refs(answer: &str, subjects: &HashMap<String, String>)
     out
 }
 
+// ── Matches, exact counts, full list ─────────────────────────────────────────
+
+/// What the report must carry besides the model's prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReportShape {
+    /// "List every…", "how many…": the report ends with the complete,
+    /// numbered list of matches, built in code — a model-written list stops at
+    /// its output budget (a few dozen lines) and a model's count is a guess.
+    FullList,
+    /// Themes, trends, summaries: the prose is the answer.
+    Analysis,
+}
+
+/// Words that ask for an enumeration or a count, EN/ES/FR/DE. Matched as
+/// whole words or phrases on the lowercased question.
+const LIST_CUES: &[&str] = &[
+    // EN
+    "list",
+    "all the",
+    "every",
+    "each",
+    "how many",
+    "number of",
+    "count",
+    "enumerate",
+    "table",
+    // ES
+    "lista",
+    "listado",
+    "todas",
+    "todos",
+    "cada",
+    "cuántos",
+    "cuántas",
+    "cuantos",
+    "cuantas",
+    "número de",
+    "numero de",
+    "enumera",
+    "tabla",
+    // FR
+    "liste",
+    "toutes",
+    "tous",
+    "chaque",
+    "combien",
+    "nombre de",
+    // DE
+    "liste",
+    "alle",
+    "jede",
+    "jeder",
+    "wie viele",
+    "anzahl",
+    "tabelle",
+];
+
+/// Whether the question wants the full list of matches appended. Pure.
+pub(crate) fn plan_report_shape(question: &str) -> ReportShape {
+    let q = format!(" {} ", question.to_lowercase());
+    let is_word_char = |c: char| c.is_alphanumeric();
+    let hit = LIST_CUES.iter().any(|cue| {
+        q.match_indices(cue).any(|(i, _)| {
+            let before = q[..i].chars().next_back().is_none_or(|c| !is_word_char(c));
+            let after = q[i + cue.len()..].chars().next().is_none_or(|c| !is_word_char(c));
+            before && after
+        })
+    });
+    if hit {
+        ReportShape::FullList
+    } else {
+        ReportShape::Analysis
+    }
+}
+
+/// One email the reading step found relevant, with its first finding.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Match {
+    pub id: String,
+    pub thread_id: String,
+    pub date: String,
+    pub subject: String,
+    pub finding: String,
+}
+
+/// A finding line without its bullet and its `email://` references.
+fn finding_text(line: &str) -> String {
+    use std::sync::OnceLock;
+    static REF_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let re = REF_RE.get_or_init(|| regex::Regex::new(r"\[[^\]]*\]\(email://[^)\s]+\)|\(email://[^)\s]+\)").unwrap());
+    let stripped = re.replace_all(line, "");
+    stripped
+        .trim_start_matches(['-', '*', '•', ' '])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches([',', ';', ':'])
+        .to_string()
+}
+
+/// Every email a finding cites, in reading order (oldest first), each with the
+/// first finding that cites it. Taken from the map notes, before any condense
+/// round, so merging notes for the report never drops a match from the list
+/// or the count.
+pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<Match> {
+    let mut first: HashMap<&str, String> = HashMap::new();
+    for batch in notes {
+        for line in &batch.lines {
+            for id in &batch.cited {
+                if line.contains(id.as_str()) {
+                    first.entry(id.as_str()).or_insert_with(|| finding_text(line));
+                }
+            }
+        }
+    }
+    docs.iter()
+        .filter_map(|d| {
+            first.get(d.id.as_str()).map(|finding| Match {
+                id: d.id.clone(),
+                thread_id: d.thread_id.clone(),
+                date: d.date.clone(),
+                subject: d.subject.clone(),
+                finding: finding.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The exact counts the report states — computed, never left to the model.
+pub(crate) fn counts_line(matches: &[Match]) -> String {
+    let threads: std::collections::HashSet<&str> = matches.iter().map(|m| m.thread_id.as_str()).collect();
+    format!(
+        "{} emails with relevant findings, in {} conversations",
+        matches.len(),
+        threads.len()
+    )
+}
+
+/// The facts line of the report prompt: the exact counts, and — when the full
+/// list will be appended — that the model must not try to write it out.
+pub(crate) fn report_facts(matches: &[Match], shape: ReportShape) -> String {
+    let mut facts = format!(
+        "{} (exact — computed from every email read; state these numbers, never count the notes yourself).",
+        counts_line(matches)
+    );
+    if shape == ReportShape::FullList && !matches.is_empty() {
+        facts.push_str(&format!(
+            " The complete numbered list of all {} matches is appended after your report automatically: do not reproduce it item by item — give the total, then group, summarise and highlight.",
+            matches.len()
+        ));
+    }
+    facts
+}
+
+/// The complete numbered list of matches, in the report's language.
+pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> String {
+    if matches.is_empty() {
+        return String::new();
+    }
+    let heading = match language_code {
+        "es" => "Lista completa",
+        "fr" => "Liste complète",
+        "de" => "Vollständige Liste",
+        _ => "Full list",
+    };
+    let mut out = format!("### {heading} ({})\n\n", matches.len());
+    for (i, m) in matches.iter().enumerate() {
+        let date = if m.date.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", m.date)
+        };
+        let finding = if m.finding.is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", m.finding)
+        };
+        out.push_str(&format!(
+            "{}. {date}[{}](email://{}){finding}\n",
+            i + 1,
+            link_label(&m.subject),
+            m.id
+        ));
+    }
+    out
+}
+
 /// Split point of the condense prompt — same convention as map and reduce.
 const CONDENSE_MARKER: &str = "QUESTION: {{question}}";
 
@@ -261,6 +453,7 @@ mod tests {
     fn doc(id: &str) -> ResearchDoc {
         ResearchDoc {
             id: id.into(),
+            thread_id: format!("thread-{id}"),
             date: "2026-09-01".into(),
             from: "Alice <alice@example.com>".into(),
             subject: "Invoice 42".into(),
@@ -341,7 +534,14 @@ NONE";
     #[test]
     fn reduce_prompt_keeps_per_turn_content_out_of_the_prefix() {
         let tmpl = "Write the report. {{language_instruction}}\n\nQUESTION: {{question}}\nCOVERAGE: {{coverage}}\nNOTES:\n{{notes}}";
-        let (prefix, suffix) = split_reduce_prompt(tmpl, "Reply in Spanish.", "q?", "read 10", "- n (email://1)");
+        let (prefix, suffix) = split_reduce_prompt(
+            tmpl,
+            "Reply in Spanish.",
+            "q?",
+            "read 10",
+            "3 emails",
+            "- n (email://1)",
+        );
         assert_eq!(prefix, "Write the report. Reply in Spanish.\n\n");
         assert!(suffix.contains("q?") && suffix.contains("read 10") && suffix.contains("email://1"));
     }
@@ -359,10 +559,11 @@ NONE";
             "Reply in Spanish.",
             "Q?",
             "read 5",
+            "7 emails with relevant findings",
             "- n (email://e1)",
         );
         assert!(prefix.contains("Reply in Spanish."));
-        for per_turn in ["Q?", "read 5", "email://e1)"] {
+        for per_turn in ["Q?", "read 5", "7 emails with relevant findings", "email://e1)"] {
             assert!(!prefix.contains(per_turn), "{per_turn} leaked into the cached prefix");
             assert!(suffix.contains(per_turn));
         }
@@ -442,5 +643,119 @@ NONE";
             "- a (email://1)\n- bb (email://2)\n"
         );
         assert_eq!(notes_len(&b), join_notes(&[b]).chars().count());
+    }
+
+    // ── matches, counts, full list ──
+
+    #[test]
+    fn a_list_or_count_question_gets_the_full_list() {
+        for q in [
+            "dame una lista con todas las peticiones de contacto",
+            "List every invoice from Hetzner",
+            "¿Cuántas facturas he recibido este año?",
+            "how many customers wrote about pricing?",
+            "enumera los proveedores",
+            "combien de demandes de contact ?",
+            "Wie viele Rechnungen?",
+            "all the emails where someone asks for a demo",
+        ] {
+            assert_eq!(plan_report_shape(q), ReportShape::FullList, "{q}");
+        }
+    }
+
+    #[test]
+    fn an_analysis_question_gets_no_appended_list() {
+        for q in [
+            "¿Qué temas principales han salido con clientes?",
+            "Research how downloads evolved over the last 3 months",
+            "summarise the recurring issues users report",
+        ] {
+            assert_eq!(plan_report_shape(q), ReportShape::Analysis, "{q}");
+        }
+    }
+
+    fn m(id: &str, thread: &str, date: &str, finding: &str) -> Match {
+        Match {
+            id: id.into(),
+            thread_id: thread.into(),
+            date: date.into(),
+            subject: format!("Subject {id}"),
+            finding: finding.into(),
+        }
+    }
+
+    #[test]
+    fn matches_take_each_emails_first_finding_without_its_references() {
+        let docs = vec![
+            ResearchDoc {
+                thread_id: "t1".into(),
+                ..doc("e1")
+            },
+            ResearchDoc {
+                thread_id: "t1".into(),
+                ..doc("e2")
+            },
+            ResearchDoc {
+                thread_id: "t2".into(),
+                ..doc("e3")
+            },
+        ];
+        let notes = vec![BatchNotes {
+            lines: vec![
+                "- Alice asks for a quote (email://e1)".into(),
+                "- Alice follows up [Invoice 42](email://e1)".into(),
+                "- Bob too (email://e3) (email://e1)".into(),
+            ],
+            cited: ids(&["e1", "e3"]),
+        }];
+        let matches = collect_matches(&docs, &notes);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].id, "e1");
+        assert_eq!(matches[0].finding, "Alice asks for a quote");
+        assert_eq!(matches[1].id, "e3");
+        assert_eq!(matches[1].finding, "Bob too");
+    }
+
+    #[test]
+    fn counts_are_exact_emails_and_conversations() {
+        let matches = vec![m("e1", "t1", "", ""), m("e2", "t1", "", ""), m("e3", "t2", "", "")];
+        assert_eq!(
+            counts_line(&matches),
+            "3 emails with relevant findings, in 2 conversations"
+        );
+    }
+
+    #[test]
+    fn report_facts_give_exact_counts_and_announce_the_list_only_when_appended() {
+        let matches = vec![m("e1", "t1", "", ""), m("e2", "t2", "", "")];
+        let list = report_facts(&matches, ReportShape::FullList);
+        assert!(
+            list.contains("2 emails with relevant findings, in 2 conversations"),
+            "{list}"
+        );
+        assert!(list.contains("appended"), "{list}");
+        let analysis = report_facts(&matches, ReportShape::Analysis);
+        assert!(analysis.contains("2 emails"), "{analysis}");
+        assert!(!analysis.contains("appended"), "{analysis}");
+    }
+
+    #[test]
+    fn the_full_list_numbers_every_match_with_its_link() {
+        let matches = vec![
+            m("e1", "t1", "2026-01-02", "Alice asks for a quote"),
+            m("e3", "t2", "2026-01-05", "Bob [asks] too"),
+        ];
+        let list = render_match_list(&matches, "es");
+        assert!(list.starts_with("### Lista completa (2)\n\n"), "{list}");
+        assert!(
+            list.contains("1. 2026-01-02 · [Subject e1](email://e1) — Alice asks for a quote\n"),
+            "{list}"
+        );
+        assert!(
+            list.contains("2. 2026-01-05 · [Subject e3](email://e3) — Bob [asks] too\n"),
+            "{list}"
+        );
+        assert!(render_match_list(&matches, "en").starts_with("### Full list (2)"));
+        assert!(render_match_list(&[], "en").is_empty());
     }
 }

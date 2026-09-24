@@ -260,6 +260,13 @@
     "stop": "Detener y redactar informe",
     "stopping": "Deteniendo…",
     "filter": "Filtro",
-    "byMeaning": "Reunidos por significado (sin filtro)"
+    "byMeaning": "Reunidos por significado (sin filtro)",
+    "exit": {
+      "title": "Investigación en curso",
+      "body": "Una investigación del chat sigue leyendo tus correos. Si sales ahora se perderá y su respuesta quedará vacía.",
+      "keep": "Seguir investigando",
+      "quit": "Salir igualmente"
+    },
+    "statusBar": "Chat: investigación en curso… ({{step}})"
   }
 }

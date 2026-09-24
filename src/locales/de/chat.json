@@ -260,6 +260,13 @@
     "stop": "Stoppen und Bericht schreiben",
     "stopping": "Wird gestoppt…",
     "filter": "Filter",
-    "byMeaning": "Nach Bedeutung gesammelt (kein Filter)"
+    "byMeaning": "Nach Bedeutung gesammelt (kein Filter)",
+    "exit": {
+      "title": "Recherche läuft",
+      "body": "Eine Chat-Recherche liest noch Ihre E-Mails. Wenn Sie jetzt beenden, geht sie verloren und ihre Antwort bleibt leer.",
+      "keep": "Weiter recherchieren",
+      "quit": "Trotzdem beenden"
+    },
+    "statusBar": "Chat: Recherche läuft… ({{step}})"
   }
 }

@@ -459,6 +459,14 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
+            // Closing the window would kill a research run that may have been
+            // reading for an hour: hold the close and let the user decide.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if services::chat::research::exit_decision() == services::chat::research::ExitDecision::Ask {
+                    api.prevent_close();
+                    emit_research_exit_requested();
+                }
+            }
             if let tauri::WindowEvent::Destroyed = event {
                 // Last window closed — shut down background tasks so the process exits cleanly.
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -631,6 +639,7 @@ pub fn run() {
             commands::chat::send_chat_message,
             commands::chat::estimate_research,
             commands::chat::stop_research,
+            commands::chat::confirm_exit,
             commands::chat::prewarm_chat,
             commands::memory::list_pending_tasks,
             commands::memory::get_task_counts,
@@ -688,6 +697,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|_app_handle, event| {
+            // Cmd+Q / app-menu Quit arrive here, not as a window close.
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if services::chat::research::exit_decision() == services::chat::research::ExitDecision::Ask {
+                    api.prevent_exit();
+                    emit_research_exit_requested();
+                }
+            }
             // Built + run with a callback (rather than plain `Builder::run`)
             // purely to reach `RunEvent::Exit`. On macOS `-[NSApplication
             // terminate:]` calls `exit()` itself, so the event loop never
@@ -697,6 +713,16 @@ pub fn run() {
                 on_exit();
             }
         });
+}
+
+/// Ask the frontend to confirm quitting while research runs (see
+/// `commands::chat::confirm_exit`).
+#[cfg(feature = "desktop")]
+fn emit_research_exit_requested() {
+    services::events::emit(
+        "research-exit-requested",
+        serde_json::json!({ "running": services::chat::research::running_runs() }),
+    );
 }
 
 /// Last-chance cleanup, run from `RunEvent::Exit`.

@@ -136,6 +136,15 @@ pub async fn stop_research(message_id: String) -> Result<bool, AppError> {
     Ok(chat::research::request_stop(&message_id))
 }
 
+/// The user chose to quit while research runs: let the next exit through and
+/// quit now. The runs are lost — their answers stay empty.
+#[tauri::command]
+pub async fn confirm_exit(app: AppHandle) -> Result<(), AppError> {
+    chat::research::confirm_exit();
+    app.exit(0);
+    Ok(())
+}
+
 // ── Send a message ─────────────────────────────────────────────────────────
 
 /// Response from `send_chat_message`: contains the pre-created user and

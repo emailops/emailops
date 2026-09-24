@@ -60,6 +60,10 @@ impl AIProvider for LlamaCppBackend {
         &self.embedding_model_name
     }
 
+    fn context_window(&self) -> Option<u32> {
+        self.runtime.chat_context_window()
+    }
+
     async fn is_available(&self) -> bool {
         self.runtime.is_ready()
     }

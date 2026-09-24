@@ -260,6 +260,13 @@
     "stop": "Arrêter et rédiger le rapport",
     "stopping": "Arrêt en cours…",
     "filter": "Filtre",
-    "byMeaning": "Rassemblés par le sens (sans filtre)"
+    "byMeaning": "Rassemblés par le sens (sans filtre)",
+    "exit": {
+      "title": "Recherche en cours",
+      "body": "Une recherche du chat lit encore vos e-mails. Si vous quittez maintenant, elle sera perdue et sa réponse restera vide.",
+      "keep": "Continuer la recherche",
+      "quit": "Quitter quand même"
+    },
+    "statusBar": "Chat : recherche en cours… ({{step}})"
   }
 }

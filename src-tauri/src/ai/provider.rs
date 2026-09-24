@@ -217,6 +217,14 @@ pub trait AIProvider: Send + Sync {
         self.complete(&format!("{prefix}{suffix}"), options).await
     }
 
+    /// The context window, in tokens, the loaded chat model actually runs
+    /// with. `None` when unknown (the model is not loaded yet, or the backend
+    /// does not say). Callers that size prompts to the window (research mode)
+    /// fall back to the configured value.
+    fn context_window(&self) -> Option<u32> {
+        None
+    }
+
     /// Generate a single embedding vector.
     async fn embed(&self, text: &str) -> Result<EmbeddingResult>;
     /// Generate embeddings for a batch of texts (may parallelize internally).

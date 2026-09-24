@@ -31,15 +31,16 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-pub use control::request_stop;
+pub use control::{confirm_exit, exit_decision, request_stop, running_runs, ExitDecision};
 pub(crate) use control::{register_run, store_estimate, take_estimate};
 use plan::{
     merge_candidates, plan_batches, plan_condense_groups, plan_estimate, plan_gather, plan_research_budget,
     semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS, REDUCE_MAX_TOKENS,
 };
 use prompts::{
-    assemble_notes, coverage_line, join_notes, notes_len, parse_map_notes, relink_bare_refs, split_condense_prompt,
-    split_map_prompt, split_reduce_prompt, BatchNotes, ResearchDoc,
+    assemble_notes, collect_matches, coverage_line, join_notes, notes_len, parse_map_notes, plan_report_shape,
+    relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt,
+    BatchNotes, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -55,10 +56,23 @@ use crate::models::{Email, LlmCallTrace, ResearchEstimate, ResearchTrace, ToolCa
 /// backend is assumed to have.
 const DEFAULT_N_CTX: u32 = 8192;
 
-/// The window to size research batches to. Pure: the embedded runtime uses the
-/// `chat.n_ctx` override when set, else the machine's RAM tier; the HTTP
-/// backends run at their 8k default.
-pub(crate) fn plan_n_ctx(provider: crate::ai::provider::ProviderType, n_ctx_override: u32, auto_tier: u32) -> u32 {
+/// The window to size research batches to. Pure.
+///
+/// `reported` is the window the loaded model actually runs with
+/// ([`AIProvider::context_window`]): for the embedded runtime that is the
+/// `chat.n_ctx` setting after its clamps (KV cache that fits in RAM, the
+/// model's trained window), which can be well below the setting. Before the
+/// model has loaded there is none, and the setting — or the RAM tier the
+/// runtime starts from — stands in; the HTTP backends run at their 8k default.
+pub(crate) fn plan_n_ctx(
+    reported: Option<u32>,
+    provider: crate::ai::provider::ProviderType,
+    n_ctx_override: u32,
+    auto_tier: u32,
+) -> u32 {
+    if let Some(n) = reported.filter(|n| *n > 0) {
+        return n;
+    }
     match provider {
         crate::ai::provider::ProviderType::LlamaCpp if n_ctx_override > 0 => n_ctx_override,
         crate::ai::provider::ProviderType::LlamaCpp => auto_tier,
@@ -66,8 +80,10 @@ pub(crate) fn plan_n_ctx(provider: crate::ai::provider::ProviderType, n_ctx_over
     }
 }
 
-/// Read the inputs of [`plan_n_ctx`] from the preferences and the machine.
-pub(crate) fn resolve_n_ctx(db: &Database, provider: crate::ai::provider::ProviderType) -> u32 {
+/// Read the inputs of [`plan_n_ctx`]: the provider's live window, the
+/// preferences and the machine. Call it once the model is loaded (after the
+/// planner ran) so the live window is known.
+pub(crate) fn resolve_n_ctx(db: &Database, provider: &dyn AIProvider) -> u32 {
     let n_ctx_override = db
         .get_preference("chat.n_ctx")
         .ok()
@@ -75,7 +91,12 @@ pub(crate) fn resolve_n_ctx(db: &Database, provider: crate::ai::provider::Provid
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
     let auto_tier = crate::util::system::auto_n_ctx_tier(crate::util::system::total_ram_bytes());
-    plan_n_ctx(provider, n_ctx_override, auto_tier)
+    plan_n_ctx(
+        provider.context_window(),
+        provider.provider_type(),
+        n_ctx_override,
+        auto_tier,
+    )
 }
 
 /// Where the measured speed of the last run is kept, for the next estimate.
@@ -360,9 +381,10 @@ fn oldest_first(db: &Database, ids: Vec<String>) -> Vec<String> {
 /// Plan and gather, then report what the run would read and how long it would
 /// take. The gathered set is kept (see `control`) so the confirmed run reads
 /// exactly what was counted.
-pub(crate) async fn estimate(input: &PrepareInput<'_>, n_ctx: u32) -> ResearchEstimate {
+pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     let prepared = prepare(input).await;
-    let budget = plan_research_budget(n_ctx);
+    // After the planner ran, so the model is loaded and reports its window.
+    let budget = plan_research_budget(resolve_n_ctx(input.db, input.provider));
     let ms_per_email = input
         .db
         .get_preference(MS_PER_EMAIL_PREF)
@@ -399,7 +421,6 @@ pub async fn estimate_for_account(
     let today = chrono::DateTime::from_timestamp(now, 0)
         .map(|d| d.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
-    let n_ctx = resolve_n_ctx(db, provider.provider_type());
     let input = PrepareInput {
         db,
         provider: provider.as_ref(),
@@ -409,7 +430,7 @@ pub async fn estimate_for_account(
         user_email: &user_email,
         today: &today,
     };
-    Ok(estimate(&input, n_ctx).await)
+    Ok(estimate(&input).await)
 }
 
 // ── Run ─────────────────────────────────────────────────────────────────────
@@ -431,6 +452,8 @@ pub(crate) struct ResearchInput<'a> {
     pub prepared: &'a Prepared,
     pub n_ctx: u32,
     pub language_instruction: &'a str,
+    /// ISO code of the report language, for the full list's heading.
+    pub language_code: &'a str,
     pub map_template: &'a str,
     pub condense_template: &'a str,
     pub reduce_template: &'a str,
@@ -557,6 +580,7 @@ fn load_docs(db: &Database, ids: &[String], chars_per_email: usize) -> Vec<Resea
             };
             ResearchDoc {
                 id: email.id.clone(),
+                thread_id: email.thread_id.clone(),
                 date: chrono::DateTime::from_timestamp(email.timestamp, 0)
                     .map(|d| d.format("%Y-%m-%d").to_string())
                     .unwrap_or_default(),
@@ -662,16 +686,14 @@ pub(crate) async fn run_research(
     }
     run.trace.map_ms = t_map.elapsed().as_millis() as i64;
     run.analyzed = docs[..read].iter().map(|d| d.id.clone()).collect();
-    for batch in &notes {
-        run.trace.findings += batch.lines.len() as u32;
-        for id in &batch.cited {
-            if !run.relevant.contains(id) {
-                run.relevant.push(id.clone());
-            }
-        }
-    }
+    run.trace.findings = notes.iter().map(|b| b.lines.len() as u32).sum();
+    // The matches come from the map notes, before any condense round: the
+    // list and the counts must not depend on how the notes were merged.
+    let matches = collect_matches(&docs[..read], &notes);
+    run.relevant = matches.iter().map(|m| m.id.clone()).collect();
     run.trace.emails_analyzed = read as u32;
-    run.trace.relevant_emails = run.relevant.len() as u32;
+    run.trace.relevant_emails = matches.len() as u32;
+    let shape = plan_report_shape(input.question);
 
     // ── Condense ──
     let t_condense = std::time::Instant::now();
@@ -742,11 +764,13 @@ pub(crate) async fn run_research(
         run.trace.batches as usize,
         run.trace.failed_batches as usize,
     );
+    let facts = report_facts(&matches, shape);
     let (prefix, suffix) = split_reduce_prompt(
         input.reduce_template,
         input.language_instruction,
         input.question,
         &coverage,
+        &facts,
         &notes_block,
     );
     let t_reduce = std::time::Instant::now();
@@ -762,11 +786,24 @@ pub(crate) async fn run_research(
     .await;
     run.llm_calls.push(trace);
     run.trace.reduce_ms = t_reduce.elapsed().as_millis() as i64;
+    // Built in code, not written by the model: every match, however many.
+    let full_list = if shape == ReportShape::FullList {
+        render_match_list(&matches, input.language_code)
+    } else {
+        String::new()
+    };
     match result {
         Ok(reply) if !reply.text.trim().is_empty() => {
             let subjects: HashMap<String, String> = docs.iter().map(|d| (d.id.clone(), d.subject.clone())).collect();
-            run.answer = Some(relink_bare_refs(reply.text.trim(), &subjects));
+            let prose = relink_bare_refs(reply.text.trim(), &subjects);
+            run.answer = Some(if full_list.is_empty() {
+                prose
+            } else {
+                format!("{prose}\n\n{full_list}")
+            });
         }
+        // The report failed but the list stands on its own: ship it.
+        _ if !full_list.is_empty() => run.answer = Some(full_list),
         Ok(_) => run.error = Some("the research report came back empty".to_string()),
         Err(e) => run.error = Some(format!("writing the research report failed: {e}")),
     }
@@ -786,12 +823,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn n_ctx_follows_the_override_then_the_ram_tier_on_llamacpp() {
+    fn n_ctx_is_the_window_the_runtime_reports_when_it_reports_one() {
         use crate::ai::provider::ProviderType;
-        assert_eq!(plan_n_ctx(ProviderType::LlamaCpp, 12288, 32768), 12288);
-        assert_eq!(plan_n_ctx(ProviderType::LlamaCpp, 0, 16384), 16384);
-        assert_eq!(plan_n_ctx(ProviderType::Ollama, 32768, 32768), DEFAULT_N_CTX);
-        assert_eq!(plan_n_ctx(ProviderType::OpenRouter, 0, 32768), DEFAULT_N_CTX);
+        // The embedded runtime clamps the setting to what the KV cache fits
+        // and the model was trained on; that clamped window is the truth.
+        assert_eq!(plan_n_ctx(Some(15360), ProviderType::LlamaCpp, 32768, 32768), 15360);
+        assert_eq!(plan_n_ctx(Some(4096), ProviderType::Ollama, 0, 16384), 4096);
+    }
+
+    #[test]
+    fn before_the_model_loads_n_ctx_follows_the_setting_then_the_ram_tier() {
+        use crate::ai::provider::ProviderType;
+        assert_eq!(plan_n_ctx(None, ProviderType::LlamaCpp, 12288, 32768), 12288);
+        assert_eq!(plan_n_ctx(None, ProviderType::LlamaCpp, 0, 16384), 16384);
+        assert_eq!(plan_n_ctx(None, ProviderType::Ollama, 32768, 32768), DEFAULT_N_CTX);
+        assert_eq!(
+            plan_n_ctx(Some(0), ProviderType::LlamaCpp, 0, 16384),
+            16384,
+            "0 = not known yet"
+        );
     }
 
     // ── executor (fake provider + in-memory DB) ──
@@ -877,6 +927,7 @@ mod tests {
             prepared,
             n_ctx,
             language_instruction: "Reply in Spanish.",
+            language_code: "es",
             map_template: d::CHAT_RESEARCH_MAP,
             condense_template: d::CHAT_RESEARCH_CONDENSE,
             reduce_template: d::CHAT_RESEARCH_REDUCE,
@@ -951,6 +1002,44 @@ mod tests {
             db.get_preference(MS_PER_EMAIL_PREF).unwrap().is_some(),
             "speed recorded"
         );
+    }
+
+    #[tokio::test]
+    async fn a_list_question_gets_every_match_listed_and_counted_exactly() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 24);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        assert_eq!(prepared.email_ids.len(), 25);
+        let budget = plan_research_budget(16384);
+        // Every email of every batch is a match: 25 of them, more than a
+        // model-written list would hold.
+        for batch in prepared.email_ids.chunks(budget.max_emails_per_batch) {
+            let reply: String = batch
+                .iter()
+                .map(|id| format!("- Invoice request (email://{id})\n"))
+                .collect();
+            provider.push_completion(reply);
+        }
+        provider.push_completion("Resumen: el proveedor envió facturas mensuales.");
+        let stop = AtomicBool::new(false);
+        let mut input = run_input(&db, &provider, &prepared, 16384, &stop);
+        input.question = "Dame una lista con todas las facturas del proveedor";
+        let run = run_research(input, &|_| {}).await;
+
+        let answer = run.answer.expect("an answer");
+        assert!(answer.starts_with("Resumen:"), "{answer}");
+        assert!(answer.contains("### Lista completa (25)"), "{answer}");
+        assert!(answer.contains("\n25. "), "every match is listed: {answer}");
+        let calls = provider.prefix_completion_calls();
+        let reduce_prompt = &calls.last().expect("reduce").1;
+        assert!(
+            reduce_prompt.contains("25 emails with relevant findings, in 24 conversations"),
+            "{reduce_prompt}"
+        );
+        assert!(reduce_prompt.contains("appended"), "{reduce_prompt}");
+        assert_eq!(run.trace.relevant_emails, 25);
     }
 
     #[tokio::test]
@@ -1040,7 +1129,7 @@ mod tests {
         provider.push_completion(r#"{"from": "billing@supplier.example"}"#);
         let categories: Vec<String> = Vec::new();
         let input = prepare_input(&db, &provider, &categories);
-        let est = estimate(&input, 16384).await;
+        let est = estimate(&input).await;
         assert_eq!(est.emails, 41);
         assert_eq!(est.batches, 5);
         assert!(est.seconds > 0);

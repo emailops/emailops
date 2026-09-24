@@ -613,3 +613,45 @@ describe('chat reset on account change', () => {
     expect(useChatStore.getState().conversations).toEqual([conv]);
   });
 });
+
+describe('the research running anywhere in the app', () => {
+  const progress = {
+    messageId: 'msg-bg',
+    conversationId: 'conv-other',
+    stage: 'reading' as const,
+    batch: 3,
+    batches: 10,
+    emailsRead: 30,
+    emailsTotal: 100,
+  };
+
+  beforeEach(() => {
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      runningResearch: null,
+      backgroundTurns: {},
+      researchExitRequested: false,
+    });
+  });
+
+  it('is tracked whichever conversation it runs in', () => {
+    useChatStore.getState().handleResearchProgress(progress);
+    expect(useChatStore.getState().runningResearch).toEqual(progress);
+  });
+
+  it('ends when its answer is done, even off screen', () => {
+    useChatStore.getState().handleResearchProgress(progress);
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'msg-bg', conversationId: 'conv-other', done: true }));
+    expect(useChatStore.getState().runningResearch).toBeNull();
+  });
+
+  it('asks before quitting and can be dismissed', () => {
+    useChatStore.getState().handleResearchExitRequested();
+    expect(useChatStore.getState().researchExitRequested).toBe(true);
+    useChatStore.getState().dismissResearchExit();
+    expect(useChatStore.getState().researchExitRequested).toBe(false);
+  });
+});

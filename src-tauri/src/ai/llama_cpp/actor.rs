@@ -56,6 +56,7 @@
 // email plaintext, so it is never persisted to disk.
 
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -191,22 +192,33 @@ pub(crate) struct InferenceActorHandle {
     /// and aborts the process if the context outlived us. See
     /// [`InferenceActorHandle::wait_for_exit`].
     thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// The context window the thread settled on (`0` until it has): the
+    /// `chat.n_ctx` setting after the RAM / KV-fit / trained-window clamps.
+    n_ctx: Arc<AtomicU32>,
 }
 
 impl InferenceActorHandle {
+    /// The window this actor runs with, once its thread has computed it.
+    pub(crate) fn n_ctx(&self) -> Option<u32> {
+        Some(self.n_ctx.load(Ordering::Relaxed)).filter(|n| *n > 0)
+    }
+
     /// Spawn the actor thread for `model`. The context is created lazily on
     /// the thread itself (it cannot be sent across). `n_ctx_override` is the
     /// user's configured context window (`0` = auto); the actor resolves the
     /// effective window via [`effective_n_ctx`] once the model is known.
     pub(crate) fn spawn(model: Arc<LlamaModel>, n_ctx_override: u32) -> std::result::Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel::<GenRequest>();
+        let n_ctx = Arc::new(AtomicU32::new(0));
+        let published = Arc::clone(&n_ctx);
         let join = std::thread::Builder::new()
             .name("llama-inference".into())
-            .spawn(move || actor_loop(&model, &rx, n_ctx_override))
+            .spawn(move || actor_loop(&model, &rx, n_ctx_override, &published))
             .map_err(|e| format!("Failed to spawn inference thread: {}", e))?;
         Ok(Self {
             tx,
             thread: Arc::new(Mutex::new(Some(join))),
+            n_ctx,
         })
     }
 
@@ -302,7 +314,7 @@ impl ActorExitWaiter {
     }
 }
 
-fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32) {
+fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32, published_n_ctx: &AtomicU32) {
     // KV bytes per token from the model's real geometry (f16 K+V per layer).
     // Hybrid/SWA layers cap their own KV, so this is a safe upper bound.
     let kv_bytes_per_token = {
@@ -312,6 +324,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     };
     let auto_cap = plan_auto_n_ctx_cap(crate::util::system::total_ram_bytes(), model.size(), kv_bytes_per_token);
     let n_ctx = effective_n_ctx(n_ctx_override, model.n_ctx_train(), auto_cap);
+    published_n_ctx.store(n_ctx, Ordering::Relaxed);
     crate::services::logger::log(
         "info",
         "ai",

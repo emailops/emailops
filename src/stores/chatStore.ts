@@ -72,6 +72,11 @@ interface ChatStore {
   researchMode: boolean;
   /** Batch progress of the in-flight research turn; null otherwise. */
   researchProgress: ChatResearchProgressEvent | null;
+  /** The research reading right now in ANY conversation — for the status bar
+   *  and the quit confirmation, which do not care which chat is on screen. */
+  runningResearch: ChatResearchProgressEvent | null;
+  /** The user tried to quit while research runs; the confirmation is open. */
+  researchExitRequested: boolean;
   /** When the in-flight research started reading (ms), for the time left. */
   researchStartedAt: number | null;
   /** The user pressed Stop; the run is finishing its batch and the report. */
@@ -160,6 +165,9 @@ interface ChatStore {
   handleStreamToken: (e: ChatStreamEvent) => void;
   handlePhase: (e: ChatPhaseEvent) => void;
   handleResearchProgress: (e: ChatResearchProgressEvent) => void;
+  /** The backend held a quit because research runs: ask the user. */
+  handleResearchExitRequested: () => void;
+  dismissResearchExit: () => void;
   setResearchMode: (on: boolean) => void;
   handleSources: (e: ChatSourcesEvent) => void;
   handleTrace: (e: ChatTraceEvent) => void;
@@ -221,6 +229,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   researchProgress: null,
   researchStartedAt: null,
   researchStopping: false,
+  runningResearch: null,
+  researchExitRequested: false,
   pendingResearch: null,
   inputPrefill: null,
   isSending: false,
@@ -518,6 +528,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   handleStreamToken: (evt) => {
+    // The research that answers this message is over, on screen or not.
+    if (evt.done && get().runningResearch?.messageId === evt.messageId) {
+      set({ runningResearch: null });
+    }
     const { activeConversationId } = get();
     if (evt.conversationId !== activeConversationId) {
       // Not on screen — accumulate so returning to it shows the answer and
@@ -578,7 +592,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
+  handleResearchExitRequested: () => set({ researchExitRequested: true }),
+  dismissResearchExit: () => set({ researchExitRequested: false }),
+
   handleResearchProgress: (evt) => {
+    set({ runningResearch: evt });
     const { activeConversationId, streamingMessageId } = get();
     if (evt.conversationId !== activeConversationId) {
       // Off screen: keep it with the parked turn so the return shows it.

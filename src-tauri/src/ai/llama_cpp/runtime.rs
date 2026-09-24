@@ -705,6 +705,13 @@ impl LlamaCppRuntime {
         Ok(model)
     }
 
+    /// The context window the chat model runs with, once its actor exists.
+    /// `None` before the first chat call (the model loads lazily) or while
+    /// the actor is being replaced.
+    pub fn chat_context_window(&self) -> Option<u32> {
+        self.chat_actor.try_lock().ok()?.as_ref()?.n_ctx()
+    }
+
     /// Get (or lazily spawn) the persistent inference actor for the chat
     /// model. The actor owns the context whose KV cache is reused across
     /// requests; it lives until evicted alongside `chat_model`.

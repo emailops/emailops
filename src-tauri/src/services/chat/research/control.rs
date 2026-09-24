@@ -103,6 +103,41 @@ pub(crate) fn take_estimate(id: &str, account_id: &str, question: &str) -> Optio
     usable.then_some(cached.prepared)
 }
 
+/// How many research runs are reading right now.
+pub fn running_runs() -> usize {
+    stop_flags().lock().unwrap_or_else(PoisonError::into_inner).len()
+}
+
+/// Set once the user chose "quit anyway": the next exit is let through.
+static EXIT_CONFIRMED: AtomicBool = AtomicBool::new(false);
+
+/// Record that the user confirmed quitting despite a running research.
+pub fn confirm_exit() {
+    EXIT_CONFIRMED.store(true, Ordering::Relaxed);
+}
+
+/// Whether the app may close now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitDecision {
+    Allow,
+    /// A research run would be lost: hold the exit and ask the user.
+    Ask,
+}
+
+/// Pure: ask only while research runs and the user has not already said yes.
+pub fn plan_exit(running: usize, confirmed: bool) -> ExitDecision {
+    if running > 0 && !confirmed {
+        ExitDecision::Ask
+    } else {
+        ExitDecision::Allow
+    }
+}
+
+/// [`plan_exit`] on the live state.
+pub fn exit_decision() -> ExitDecision {
+    plan_exit(running_runs(), EXIT_CONFIRMED.load(Ordering::Relaxed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +147,22 @@ mod tests {
             email_ids: ids.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn quitting_asks_only_while_research_runs_and_until_confirmed() {
+        assert_eq!(plan_exit(0, false), ExitDecision::Allow);
+        assert_eq!(plan_exit(1, false), ExitDecision::Ask);
+        assert_eq!(plan_exit(2, true), ExitDecision::Allow, "the user said quit anyway");
+    }
+
+    #[test]
+    fn a_registered_run_counts_as_running() {
+        // Other tests register runs concurrently: assert a floor, not an
+        // exact number.
+        let guard = register_run("msg-running-1");
+        assert!(running_runs() >= 1);
+        drop(guard);
     }
 
     #[test]
