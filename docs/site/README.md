@@ -42,7 +42,7 @@ The heading text is translated; **the id is not**. That keeps
 different fragment spellings. When you add a link to a heading, give that heading an
 id first — in all four files.
 
-Current ids: `with-local-ai`, `direct-download`, `linux` (installation);
+Current ids: `with-local-ai`, `direct-download`, `smartscreen`, `linux` (installation);
 `choosing-a-backend`, `the-model-catalog`, `performance-knobs`, `chat-with-your-mailbox`,
 `ai-drafts`, `classification`, `tag-board`, `semantic-search`, `translation`, `tasks`,
 `memory`, `lenses`, `turning-it-all-off` (ai-features); `unified-inbox`, `calendar`,

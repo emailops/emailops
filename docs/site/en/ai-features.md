@@ -224,6 +224,7 @@ a "learn only from emails I wrote" mode. You can exclude senders and tags (newsl
 excluded by default), cap tasks per email, limit how far back extraction goes, and backfill
 older mail on demand.
 
+<!-- claim:ai-tasks-2 -->
 Turn it on in **Settings → AI Tasks** with **Extract tasks from emails**; the tasks it finds
 then appear under **Tasks** in the sidebar.
 
@@ -235,6 +236,7 @@ stored as long-term context so chat does not start from zero every time. Candida
 scored and promoted past a threshold; low-scoring ones expire. Everything it has learned is
 inspectable, and the whole subsystem has a master off switch.
 
+<!-- claim:ai-memory-2 -->
 Turn it on in **Settings → AI Memory** with **Let the assistant remember facts**; what it has
 learned is listed under **Memory** in the sidebar.
 
@@ -246,6 +248,7 @@ projections (think "all invoices with amount and due date") that you create and 
 sidebar. A row you exclude stays out of the view; **Show excluded rows** brings them back into
 sight so you can include one again.
 
+<!-- claim:ai-lenses-2 -->
 Turn them on in **Settings → AI Lenses**, then create and run individual lenses from the
 **Lenses** entry in the sidebar.
 

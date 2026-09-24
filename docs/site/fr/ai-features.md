@@ -240,6 +240,7 @@ j'ai écrits » existe. Vous pouvez exclure des expéditeurs et des étiquettes 
 le sont par défaut), plafonner le nombre de tâches par e-mail, limiter la profondeur
 d'extraction et traiter à la demande le courrier plus ancien.
 
+<!-- claim:ai-tasks-2 -->
 Activez-les dans **Paramètres → Tâches IA** avec **Extraire des tâches des courriels** ; les
 tâches trouvées apparaissent sous **Tâches** dans la barre latérale.
 
@@ -252,6 +253,7 @@ Les faits candidats sont notés et promus au-delà d'un seuil ; ceux qui obtienn
 faible expirent. Tout ce qui a été appris est consultable, et l'ensemble du sous-système
 dispose d'un interrupteur général.
 
+<!-- claim:ai-memory-2 -->
 Activez-la dans **Paramètres → Mémoire de l'IA** avec **Laisser l'assistant retenir des
 informations** ; ce qu'elle a appris est listé sous **Mémoire** dans la barre latérale.
 
@@ -263,6 +265,7 @@ extraites par l'IA (par exemple « toutes les factures avec montant et échéanc
 créez et exécutez depuis la barre latérale. Une ligne exclue disparaît de la vue ; **Afficher
 les lignes exclues** les réaffiche pour que vous puissiez en réintégrer une.
 
+<!-- claim:ai-lenses-2 -->
 Activez-les dans **Paramètres → Filtres dynamiques IA**, puis créez et exécutez chaque vue
 depuis l'entrée **Filtres dynamiques** de la barre latérale.
 
