@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { formatDuration, remainingSeconds } from '@/lib/researchTime';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessage, ChatPhase } from '@/types';
@@ -40,22 +41,48 @@ interface MessageBubbleProps {
 function ProcessingStatus({ phase }: { phase: ChatPhase }) {
   const { t } = useTranslation(['chat']);
   const research = useChatStore((s) => s.researchProgress);
-  const label =
+  const startedAt = useChatStore((s) => s.researchStartedAt);
+  const stopping = useChatStore((s) => s.researchStopping);
+  const stopResearch = useChatStore((s) => s.stopResearch);
+  // Re-render every few seconds so the time left counts down between batches.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (phase !== 'researching') return;
+    const id = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  let label =
     phase === 'researching' && research
       ? t(`chat:processing.research.${research.stage}` as const, {
-          read: research.emailsRead,
-          total: research.emailsTotal,
+          read: research.emailsRead.toLocaleString(),
+          total: research.emailsTotal.toLocaleString(),
           batch: research.batch,
           batches: research.batches,
         })
       : t(`chat:processing.${phase}` as const);
+  if (phase === 'researching' && research?.stage === 'reading' && startedAt != null) {
+    const left = remainingSeconds(research, startedAt, now);
+    if (left != null) label += t('chat:processing.research.remaining', { time: formatDuration(left) });
+  }
   return (
-    <span className="inline-flex items-center gap-2 text-gray-500">
+    <span className="inline-flex items-center gap-2 text-gray-500 flex-wrap">
       <svg className="w-3.5 h-3.5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
       </svg>
       <span>{label}</span>
+      {phase === 'researching' && (
+        <button
+          type="button"
+          data-testid="research-stop"
+          disabled={stopping}
+          onClick={() => void stopResearch()}
+          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+        >
+          {stopping ? t('chat:research.stopping') : t('chat:research.stop')}
+        </button>
+      )}
     </span>
   );
 }

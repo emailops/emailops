@@ -27,7 +27,7 @@ pub(crate) mod form_turn;
 // instead of inferring its quality from chat answers.
 pub(crate) mod planner;
 mod prewarm;
-pub(crate) mod research;
+pub mod research;
 pub(crate) mod retrieval;
 mod routing;
 // The turn's trace as one ordered step list — shared by the reasoning panel,

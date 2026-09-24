@@ -76,7 +76,9 @@
     "research": {
       "gathering": "Recherche: E-Mails werden gesammelt…",
       "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",
-      "writing": "Recherche: Bericht aus {{total}} E-Mails wird verfasst…"
+      "condensing": "Recherche: Notizen zusammenführen {{batch}}/{{batches}}…",
+      "writing": "Recherche: Bericht aus {{total}} E-Mails wird verfasst…",
+      "remaining": " · noch ~{{time}}"
     },
     "generating": "Antwort generieren…"
   },
@@ -143,10 +145,43 @@
       "kvCacheHit": "KV-Cache {{cached}}/{{total}} Tok ({{pct}} %)",
       "kvCacheMiss": "KV-Cache 0/{{total}} Tok (kalt)",
       "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten",
-      "researchRead": "{{emails}} E-Mails in {{batches}} Stapeln gelesen (max. {{cap}})",
+      "researchFailed": "{{n}} Stapel fehlgeschlagen"
+    },
+    "flow": {
+      "researchOn": "Recherchemodus",
+      "researchRead": "{{read}} von {{planned}} E-Mails in {{batches}} Stapeln gelesen",
       "researchFindings": "{{findings}} Erkenntnisse aus {{relevant}} E-Mails",
-      "researchFailed": "{{n}} Stapel fehlgeschlagen",
-      "researchSources": "{{search}} aus der Suche + {{rag}} aus dem Retrieval"
+      "researchStopped": "vom Benutzer gestoppt",
+      "keywords": "Schlüsselwörter",
+      "findings": "{{n}} Erkenntnisse",
+      "kind": {
+        "router": "Router",
+        "planner": "Planer (LLM)",
+        "retrieval": "RAG-Retrieval",
+        "help": "EmailOps-Hilfe",
+        "tool": "tool_call:",
+        "llmRound": "LLM-Runde {{n}}",
+        "answer": "Antwort (LLM)",
+        "llmCall": "LLM-Aufruf",
+        "llmCallN": "LLM-Aufruf {{n}}/{{total}}"
+      },
+      "section": {
+        "prompt": "Prompt",
+        "output": "Ausgabe",
+        "details": "Details"
+      },
+      "detail": {
+        "latency": "Latenz",
+        "prefill": "Prefill",
+        "kvCache": "KV-Cache",
+        "cache": "Cache",
+        "toolCalls": "Tool-Aufrufe",
+        "chars": "Zeichen",
+        "hits": "Treffer",
+        "route": "Route",
+        "reason": "Grund",
+        "status": "Status"
+      }
     }
   },
   "sources": {
@@ -215,6 +250,16 @@
   "research": {
     "toggle": "Recherche",
     "title": "Recherchemodus: liest deutlich mehr E-Mails in Stapeln und verfasst eine ausführliche Analyse. Langsamer – kann mehrere Minuten dauern. Gilt nur für die nächste Nachricht.",
-    "hint": "Nächste Nachricht: gründliche Analyse (langsamer)"
+    "hint": "Nächste Nachricht: gründliche Analyse (langsamer)",
+    "estimating": "Zähle die E-Mails, die diese Recherche abdeckt…",
+    "estimate": "Diese Recherche liest {{emails}} E-Mails in {{batches}} Stapeln · etwa {{time}}",
+    "estimateNone": "Keine E-Mail passt zu dieser Frage – nichts zu recherchieren.",
+    "estimateFailed": "Diese Recherche konnte nicht geschätzt werden: {{error}}",
+    "start": "Recherche starten",
+    "cancel": "Abbrechen",
+    "stop": "Stoppen und Bericht schreiben",
+    "stopping": "Wird gestoppt…",
+    "filter": "Filter",
+    "byMeaning": "Nach Bedeutung gesammelt (kein Filter)"
   }
 }

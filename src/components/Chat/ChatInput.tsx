@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
+import { formatDuration } from '@/lib/researchTime';
 import { useChatStore } from '@/stores/chatStore';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
 
@@ -58,6 +59,75 @@ interface ChatInputProps {
   contextSlot?: ReactNode;
 }
 
+/** The estimate of a research question, for the user to start or drop before
+ *  anything is sent: how many emails, in how many batches, about how long. */
+function ResearchConfirm() {
+  const { t } = useTranslation(['chat']);
+  const pending = useChatStore((s) => s.pendingResearch);
+  const confirmResearch = useChatStore((s) => s.confirmResearch);
+  const cancelResearch = useChatStore((s) => s.cancelResearch);
+  if (!pending) return null;
+  const estimate = pending.estimate;
+  const canStart = pending.status === 'ready' && estimate != null && estimate.emails > 0;
+  let body: ReactNode;
+  if (pending.status === 'estimating') {
+    body = <span className="text-gray-600">{t('chat:research.estimating')}</span>;
+  } else if (pending.status === 'error') {
+    body = <span className="text-red-700">{t('chat:research.estimateFailed', { error: pending.error ?? '' })}</span>;
+  } else if (estimate && estimate.emails === 0) {
+    body = <span className="text-gray-700">{t('chat:research.estimateNone')}</span>;
+  } else if (estimate) {
+    const filter = estimate.filter
+      ? Object.entries(estimate.filter)
+          .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+          .join(', ')
+      : null;
+    body = (
+      <>
+        <div className="text-gray-900">
+          {t('chat:research.estimate', {
+            emails: estimate.emails.toLocaleString(),
+            batches: estimate.batches.toLocaleString(),
+            time: formatDuration(estimate.seconds),
+          })}
+        </div>
+        <div className="text-xs text-gray-600">
+          {filter ? `${t('chat:research.filter')}: ${filter}` : t('chat:research.byMeaning')}
+        </div>
+      </>
+    );
+  }
+  return (
+    <div
+      data-testid="research-confirm"
+      className="mb-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm"
+    >
+      <div className="mb-1 truncate text-xs text-gray-500">“{pending.content}”</div>
+      {body}
+      <div className="mt-2 flex gap-2">
+        {canStart && (
+          <button
+            type="button"
+            data-testid="research-start"
+            onClick={() => void confirmResearch()}
+            className="rounded-md bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700"
+          >
+            {t('chat:research.start')}
+          </button>
+        )}
+        <button
+          type="button"
+          data-testid="research-cancel"
+          onClick={cancelResearch}
+          className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+        >
+          {t('chat:research.cancel')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ResearchHint() {
   const { t } = useTranslation(['chat']);
   const researchMode = useChatStore((s) => s.researchMode);
@@ -76,6 +146,16 @@ export function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // A research question waits for its estimate to be confirmed: no new send
+  // until the user starts or cancels it.
+  const researchPending = useChatStore((s) => s.pendingResearch !== null);
+  const inputPrefill = useChatStore((s) => s.inputPrefill);
+  const isDisabled = disabled || researchPending;
+
+  // A cancelled research question comes back to the input for editing.
+  useEffect(() => {
+    if (inputPrefill) setValue(inputPrefill.text);
+  }, [inputPrefill]);
 
   // Grow with the prompt (rows={2} sets the floor) and shrink back on send;
   // past the cap the textarea scrolls internally instead of pushing the
@@ -101,7 +181,7 @@ export function ChatInput({
 
   const submit = () => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || isDisabled) return;
     onSend(trimmed);
     setValue('');
   };
@@ -116,6 +196,7 @@ export function ChatInput({
   return (
     <div className={`border-t border-gray-200 bg-white ${compact ? 'px-3 py-3' : 'px-6 py-4'}`}>
       {contextSlot}
+      <ResearchConfirm />
       <div className={`flex items-end ${compact ? 'gap-2' : 'gap-3'}`}>
         <textarea
           ref={textareaRef}
@@ -124,13 +205,13 @@ export function ChatInput({
           onKeyDown={onKeyDown}
           rows={compact ? 1 : 2}
           placeholder={placeholder ?? 'Ask about your emails… (Enter to send, Shift+Enter for newline)'}
-          disabled={disabled}
+          disabled={isDisabled}
           className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 disabled:bg-gray-50"
         />
         <button
           type="button"
           onClick={submit}
-          disabled={disabled || value.trim().length === 0}
+          disabled={isDisabled || value.trim().length === 0}
           className={`bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
             compact ? 'px-3 py-2 text-xs' : 'px-4 py-2 text-sm'
           }`}

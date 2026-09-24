@@ -18,6 +18,7 @@ import type {
   ChatStreamEvent,
   ChatTraceEvent,
   EmailCategory,
+  ResearchEstimate,
 } from '@/types';
 
 /** Preference key shared with the Rust backend (`commands/chat.rs`). */
@@ -71,6 +72,16 @@ interface ChatStore {
   researchMode: boolean;
   /** Batch progress of the in-flight research turn; null otherwise. */
   researchProgress: ChatResearchProgressEvent | null;
+  /** When the in-flight research started reading (ms), for the time left. */
+  researchStartedAt: number | null;
+  /** The user pressed Stop; the run is finishing its batch and the report. */
+  researchStopping: boolean;
+  /** A research question awaiting the user's go-ahead: its estimate (how many
+   *  emails, how long) is shown before anything is sent. */
+  pendingResearch: PendingResearch | null;
+  /** Text to put back in the input (a cancelled research question); the
+   *  nonce lets the same text be restored twice. */
+  inputPrefill: { text: string; nonce: number } | null;
   isSending: boolean;
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
@@ -133,15 +144,13 @@ interface ChatStore {
   /** Shared turn dispatcher behind `sendMessage` and `retryWithCorrection` —
    *  one place that owns the isSending guard, the optimistic append and the
    *  error handling, so a correction cannot drift from a normal turn. */
-  dispatchTurn: (
-    content: string,
-    opts: {
-      contextThreadId?: string | null;
-      contextAccountId?: string | null;
-      contextView?: api.ChatViewContext | null;
-      correction?: api.ChatCorrection | null;
-    },
-  ) => Promise<void>;
+  dispatchTurn: (content: string, opts: TurnOptions) => Promise<void>;
+  /** Send the pending research question the user confirmed. */
+  confirmResearch: () => Promise<void>;
+  /** Drop the pending research question and hand its text back to the input. */
+  cancelResearch: () => void;
+  /** Stop the running research: it writes its report from what it has read. */
+  stopResearch: () => Promise<void>;
   /** Load persisted categories preference from the DB (called once on mount). */
   loadCategoriesPref: () => Promise<void>;
   /** Update the current selection + persist it so the next session reuses it. */
@@ -168,6 +177,25 @@ interface ChatStore {
   resetForAccount: (accountKey: string) => void;
 }
 
+/** What a turn carries besides its text. */
+interface TurnOptions {
+  contextThreadId?: string | null;
+  contextAccountId?: string | null;
+  contextView?: api.ChatViewContext | null;
+  correction?: api.ChatCorrection | null;
+  research?: boolean;
+  researchEstimateId?: string | null;
+}
+
+/** A research question waiting for the user to confirm its estimate. */
+export interface PendingResearch {
+  content: string;
+  opts: TurnOptions;
+  status: 'estimating' | 'ready' | 'error';
+  estimate: ResearchEstimate | null;
+  error: string | null;
+}
+
 /** A turn still running in a conversation that is not on screen. */
 interface BackgroundTurn {
   messageId: string;
@@ -191,6 +219,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   streamingPhase: null,
   researchMode: false,
   researchProgress: null,
+  researchStartedAt: null,
+  researchStopping: false,
+  pendingResearch: null,
+  inputPrefill: null,
   isSending: false,
   isLoadingConversations: false,
   isLoadingMessages: false,
@@ -363,7 +395,59 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   sendMessage: async (content, contextThreadId, contextAccountId, contextView) => {
-    await get().dispatchTurn(content, { contextThreadId, contextAccountId, contextView });
+    const opts: TurnOptions = { contextThreadId, contextAccountId, contextView };
+    if (!get().researchMode) {
+      await get().dispatchTurn(content, opts);
+      return;
+    }
+    // Research: estimate first, send only once the user confirms. The toggle
+    // is spent on this question either way.
+    const trimmed = content.trim();
+    const conversationId = get().activeConversationId;
+    if (!trimmed || !conversationId) return;
+    set({
+      researchMode: false,
+      pendingResearch: { content: trimmed, opts, status: 'estimating', estimate: null, error: null },
+    });
+    try {
+      const estimate = await api.estimateResearch(conversationId, trimmed, get().selectedCategories);
+      if (get().pendingResearch?.content !== trimmed) return; // cancelled meanwhile
+      set({ pendingResearch: { content: trimmed, opts, status: 'ready', estimate, error: null } });
+    } catch (e) {
+      if (get().pendingResearch?.content !== trimmed) return;
+      set({ pendingResearch: { content: trimmed, opts, status: 'error', estimate: null, error: errorText(e) } });
+    }
+  },
+
+  confirmResearch: async () => {
+    const pending = get().pendingResearch;
+    if (pending?.status !== 'ready' || !pending.estimate) return;
+    set({ pendingResearch: null });
+    await get().dispatchTurn(pending.content, {
+      ...pending.opts,
+      research: true,
+      researchEstimateId: pending.estimate.estimateId,
+    });
+  },
+
+  cancelResearch: () => {
+    const pending = get().pendingResearch;
+    if (!pending) return;
+    set((s) => ({
+      pendingResearch: null,
+      inputPrefill: { text: pending.content, nonce: (s.inputPrefill?.nonce ?? 0) + 1 },
+    }));
+  },
+
+  stopResearch: async () => {
+    const messageId = get().streamingMessageId;
+    if (!messageId) return;
+    set({ researchStopping: true });
+    try {
+      await api.stopResearch(messageId);
+    } catch (e) {
+      set({ researchStopping: false, error: errorText(e) });
+    }
   },
 
   retryWithCorrection: async (rejectedMessageId, reason, contextThreadId, contextAccountId, contextView) => {
@@ -398,10 +482,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // again when the command returns: a fast turn (e.g. thread-bound chat) can
     // emit its first phase during the await, and that early phase must survive
     // the streamingMessageId assignment so the status shows instead of bare dots.
-    // Research is armed per message: read it for this send and disarm it now.
     // A corrective retry is an ordinary turn.
-    const research = get().researchMode && !correction;
-    set({ isSending: true, error: null, streamingPhase: null, researchProgress: null, researchMode: false });
+    const research = (opts.research ?? false) && !correction;
+    set({
+      isSending: true,
+      error: null,
+      streamingPhase: null,
+      researchProgress: null,
+      researchStartedAt: null,
+      researchStopping: false,
+    });
 
     try {
       const { userMessage, assistantMessage } = await api.sendChatMessage(
@@ -413,6 +503,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         contextView,
         correction,
         research,
+        opts.researchEstimateId,
       );
       // Only mutate if we're still on the same conversation.
       if (get().activeConversationId !== conversationId) return;
@@ -475,7 +566,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const streamingPhase = evt.done ? null : s.streamingPhase;
       const researchProgress = evt.done ? null : s.researchProgress;
       const error = evt.error ?? s.error;
-      return { messages, streamingMessageId, streamingPhase, researchProgress, error };
+      return {
+        messages,
+        streamingMessageId,
+        streamingPhase,
+        researchProgress,
+        researchStartedAt: evt.done ? null : s.researchStartedAt,
+        researchStopping: evt.done ? false : s.researchStopping,
+        error,
+      };
     });
   },
 
@@ -503,7 +602,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
     // Same scoping as `handlePhase`: accept while the id is still unknown.
     if (streamingMessageId !== null && evt.messageId !== streamingMessageId) return;
-    set({ researchProgress: evt });
+    // The clock for "time left" starts when reading starts.
+    const startedAt = get().researchStartedAt ?? (evt.stage === 'reading' ? Date.now() : null);
+    set({ researchProgress: evt, researchStartedAt: startedAt });
   },
 
   setResearchMode: (on) => set({ researchMode: on }),

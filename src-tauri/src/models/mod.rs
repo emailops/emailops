@@ -1033,23 +1033,49 @@ pub struct ToolCallTrace {
 pub struct ResearchTrace {
     /// Context window the batches were sized to.
     pub n_ctx: u32,
-    /// Cap on emails this turn could read.
-    pub max_emails: u32,
-    /// Candidates from paging `search_emails`.
+    /// Emails gathered for reading (what the estimate counted).
+    #[serde(default)]
+    pub planned_emails: u32,
+    /// Candidates from the planner's filter (thread-expanded).
     pub search_hits: u32,
-    /// Candidates from hybrid retrieval.
-    pub retrieval_hits: u32,
-    /// Emails actually read by the map step.
+    /// Candidates found by meaning (plus keyword hits) for a topic question.
+    #[serde(alias = "retrievalHits")]
+    pub semantic_hits: u32,
+    /// Emails actually read by the map step — fewer than `planned_emails`
+    /// when the user stopped the run.
     pub emails_analyzed: u32,
+    /// Map batches run.
     pub batches: u32,
     pub failed_batches: u32,
     /// Finding lines kept across all batches.
     pub findings: u32,
     /// Emails at least one finding cites.
     pub relevant_emails: u32,
+    /// Condense calls needed to fit the notes into the report prompt.
+    #[serde(default)]
+    pub condense_calls: u32,
+    /// The user pressed Stop before every batch was read.
+    #[serde(default)]
+    pub stopped: bool,
     pub gather_ms: i64,
     pub map_ms: i64,
+    #[serde(default)]
+    pub condense_ms: i64,
     pub reduce_ms: i64,
+}
+
+/// What a research run would read, shown for the user to confirm before it
+/// starts. `estimate_id` hands the gathered set to the run that follows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchEstimate {
+    pub estimate_id: String,
+    pub emails: u32,
+    pub batches: u32,
+    pub seconds: u64,
+    /// The planner's filter, as `search_emails` arguments; `None` when the
+    /// question is gathered by meaning.
+    pub filter: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

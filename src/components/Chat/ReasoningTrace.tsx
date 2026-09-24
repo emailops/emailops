@@ -1,15 +1,8 @@
-import { Fragment, useState } from 'react';
+import { Fragment, type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatLatency, tokensPerSecond } from '@/lib/reasoningTrace';
-import type {
-  CacheAction,
-  ChatMessage,
-  ChatTrace,
-  KvCacheStats,
-  LlmCallTrace,
-  RouteMode,
-  ToolCallTrace,
-} from '@/types';
+import { buildFlow, type FlowPhase, type FlowStep } from '@/lib/traceFlow';
+import type { ChatMessage, ChatTrace } from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
 export { formatLatency };
@@ -33,243 +26,186 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ToolCallRow({ call }: { call: ToolCallTrace }) {
-  const { t } = useTranslation(['chat']);
-  const [open, setOpen] = useState(false);
-  return (
-    <li data-testid="trace-step" className="text-[13px] text-gray-700 py-1">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 hover:text-gray-900 w-full text-left"
-      >
-        <svg
-          className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-        <span className="font-mono text-gray-900">
-          <span className="text-gray-500">{t('chat:reasoning.trace.tool')}</span> {call.name}
-        </span>
-        <span className="text-gray-600 tabular-nums">
-          · {formatLatency(call.elapsedMs)} · {t('chat:reasoning.trace.chars', { n: call.resultChars })}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-1 ml-4 space-y-1">
-          <div>
-            <div className="text-gray-600">{t('chat:reasoning.trace.arguments')}</div>
-            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all">
-              {JSON.stringify(call.arguments, null, 2)}
-            </pre>
-          </div>
-          <div>
-            <div className="text-gray-600">{t('chat:reasoning.trace.resultPreview')}</div>
-            <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-all">
-              {call.resultPreview}
-            </pre>
-          </div>
-        </div>
-      )}
-    </li>
-  );
-}
-
-/** One LLM call (planner, tool round or final stream) — expandable to show the
- *  exact prompt that was sent and the model's response. input/output are only
- *  populated in dev builds (cfg(debug_assertions) on the backend). The cache
- *  figures come from the step, computed once in the backend. */
-function LlmCallRow({ call, kv, action }: { call: LlmCallTrace; kv: KvCacheStats | null; action: CacheAction | null }) {
-  const { t } = useTranslation(['chat']);
-  const [open, setOpen] = useState(false);
-  const hasIO = (call.input && call.input.length > 0) || (call.output && call.output.length > 0);
-  const label =
-    call.kind === 'tool_round'
-      ? t('chat:reasoning.trace.phase.toolRound', { n: call.round })
-      : call.kind === 'final_stream'
-        ? t('chat:reasoning.trace.phase.finalStream')
-        : call.kind === 'planner'
-          ? t('chat:reasoning.trace.phase.planner')
-          : t('chat:reasoning.trace.phase.llmCall');
-  const requested = call.kind === 'tool_round' ? (call.toolCallsRequested ?? 0) : 0;
-  // Map CacheAction.kind → an icon + a tone color shown next to the plan name.
-  // Mirrors the visualizer's badges so the two surfaces share a vocabulary.
-  const actionStyle: Record<string, { icon: string; tone: string }> = {
-    extend: { icon: '🪴', tone: 'text-emerald-700' },
-    'anchor-hit': { icon: '🌳', tone: 'text-sky-700' },
-    wiped: { icon: '🔥', tone: 'text-red-600' },
-    'cold-fresh': { icon: '🌱', tone: 'text-gray-600' },
-  };
-  return (
-    <li data-testid="trace-step" className="text-[13px] text-gray-700 py-1">
-      <button
-        type="button"
-        onClick={() => hasIO && setOpen((v) => !v)}
-        className={`flex items-baseline gap-1 w-full text-left flex-wrap ${hasIO ? 'hover:text-gray-900' : 'cursor-default'}`}
-      >
-        {hasIO ? (
-          <svg
-            className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        ) : (
-          <span className="inline-block w-3" />
-        )}
-        <span className="text-gray-900 min-w-[140px]">{label}</span>
-        <span className="text-gray-700 tabular-nums">{formatLatency(call.latencyMs)}</span>
-        {call.prefillMs != null && (
-          <span className="text-gray-600 tabular-nums">
-            · {t('chat:reasoning.trace.prefill', { latency: formatLatency(call.prefillMs) })}
-          </span>
-        )}
-        {kv && (
-          <span className={`tabular-nums ${kv.cached > 0 ? 'text-emerald-700' : 'text-gray-500'}`}>
-            ·{' '}
-            {kv.cached > 0
-              ? t('chat:reasoning.trace.kvCacheHit', { cached: kv.cached, total: kv.total, pct: kv.pct })
-              : t('chat:reasoning.trace.kvCacheMiss', { total: kv.total })}
-          </span>
-        )}
-        {action && (
-          <span className={`tabular-nums ${actionStyle[action.kind]?.tone ?? 'text-gray-600'}`} title={action.detail}>
-            · {actionStyle[action.kind]?.icon ?? ''} {action.detail}
-          </span>
-        )}
-        {requested > 0 && (
-          <span className="text-gray-700">· {t('chat:reasoning.trace.toolCallsRequested', { n: requested })}</span>
-        )}
-        {call.failed && <span className="text-red-600 italic">{t('chat:reasoning.trace.failed')}</span>}
-        {!hasIO && <span className="text-gray-500 italic">{t('chat:reasoning.trace.devOnly')}</span>}
-      </button>
-      {open && hasIO && (
-        <div className="mt-1 ml-4 space-y-1.5">
-          {call.input && (
-            <div>
-              <div className="flex items-baseline gap-2">
-                <div className="text-gray-600 uppercase tracking-wide text-[11px]">
-                  {t('chat:reasoning.trace.input')} · {t('chat:reasoning.trace.chars', { n: call.input.length })}
-                </div>
-                <CopyButton text={call.input} />
-              </div>
-              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
-                {call.input}
-              </pre>
-            </div>
-          )}
-          {call.output && (
-            <div>
-              <div className="flex items-baseline gap-2">
-                <div className="text-gray-600 uppercase tracking-wide text-[11px]">
-                  {t('chat:reasoning.trace.output')} · {t('chat:reasoning.trace.chars', { n: call.output.length })}
-                </div>
-                <CopyButton text={call.output} />
-              </div>
-              <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
-                {call.output}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-/** The guides lookup of the turn: how many sections matched, how many passed
- *  the similarity gate, and the best similarity — the numbers to read when a
- *  question about the app got no help block (gate too high) or a mailbox
- *  question got one (gate too low). */
-function HelpDetail({ trace }: { trace: ChatTrace }) {
-  const { t } = useTranslation(['chat']);
-  const h = trace.help;
-  if (!h || h.candidates === 0) {
-    return null;
-  }
-  const sim = h.topSimilarity != null ? ` · sim ${h.topSimilarity.toFixed(2)}` : '';
-  return (
-    <li data-testid="trace-step" className="py-1">
-      <div className="text-gray-900">{t('chat:reasoning.trace.step.helpDocs')}</div>
-      <div className="text-xs text-gray-700 ml-4">
-        {t('chat:reasoning.trace.helpSections', { included: h.included, candidates: h.candidates })}
-        {sim} · {formatLatency(h.elapsedMs)}
-      </div>
-    </li>
-  );
-}
-
-/** What a research-mode turn read: candidates gathered, batches, findings. */
-function ResearchRow({ trace }: { trace: ChatTrace }) {
-  const { t } = useTranslation(['chat']);
-  const r = trace.research;
-  if (!r) return null;
-  return (
-    <li data-testid="trace-step" className="py-1">
-      <div className="text-gray-900">{t('chat:reasoning.trace.step.research')}</div>
-      <div className="text-xs text-gray-700 ml-4">
-        {t('chat:reasoning.trace.researchRead', { emails: r.emailsAnalyzed, batches: r.batches, cap: r.maxEmails })}
-        {' · '}
-        {t('chat:reasoning.trace.researchFindings', { findings: r.findings, relevant: r.relevantEmails })}
-        {r.failedBatches > 0 && (
-          <span className="text-amber-700">
-            {' · '}
-            {t('chat:reasoning.trace.researchFailed', { n: r.failedBatches })}
-          </span>
-        )}
-      </div>
-      <div className="text-xs text-gray-700 ml-4">
-        {t('chat:reasoning.trace.researchSources', { search: r.searchHits, rag: r.retrievalHits })} ·{' '}
-        {formatLatency(r.gatherMs)} + {formatLatency(r.mapMs)} + {formatLatency(r.reduceMs)}
-      </div>
-    </li>
-  );
-}
-
 /** Who decided the route, in words: the backend's classifier ids
  *  ("heuristic", "planner", "forced"…) mean nothing to a reader. */
 const ROUTE_CLASSIFIERS = ['heuristic', 'heuristic_followup', 'planner', 'forced', 'ambient', 'llm'] as const;
 
-/** How the turn was routed: whether it searched the mailbox first, who
- *  decided that, why, and the keywords a heuristic matched. */
-function RouteRow({ trace, routeMode }: { trace: ChatTrace; routeMode: (m: RouteMode | string) => string }) {
-  const { t } = useTranslation(['chat']);
-  const classifier = trace.route.classifier;
-  const who = (ROUTE_CLASSIFIERS as readonly string[]).includes(classifier)
-    ? t(`chat:reasoning.trace.classifier.${classifier as (typeof ROUTE_CLASSIFIERS)[number]}`)
-    : classifier;
+/** Phase tags stay technical and untranslated, like the `tool:` label. */
+const PHASE_TAG: Record<FlowPhase, string> = {
+  gather: 'GATHER',
+  map: 'MAP',
+  condense: 'CONDENSE',
+  reduce: 'REDUCE',
+};
+
+type Section = 'prompt' | 'output' | 'details';
+
+function Pre({ text }: { text: string }) {
   return (
-    <li data-testid="trace-step" className="py-1">
-      <div>
-        <span className="text-gray-600">{t('chat:reasoning.trace.route')}:</span>{' '}
-        <span className="font-medium text-gray-900">{routeMode(trace.route.mode)}</span>
-        <span className="text-gray-600"> · {t('chat:reasoning.trace.routeDecidedBy', { who })}</span>
+    <pre className="mt-0.5 p-1.5 rounded bg-gray-50 border border-gray-200 text-[11px] text-gray-800 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+      {text}
+    </pre>
+  );
+}
+
+/** The title of a step: what ran, in words, plus its short result. */
+function StepTitle({ step, trace }: { step: FlowStep; trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  let title: ReactNode;
+  switch (step.kind) {
+    case 'router': {
+      const c = trace.route.classifier;
+      const who = (ROUTE_CLASSIFIERS as readonly string[]).includes(c)
+        ? t(`chat:reasoning.trace.classifier.${c as (typeof ROUTE_CLASSIFIERS)[number]}`)
+        : c;
+      title = (
+        <>
+          {t('chat:reasoning.flow.kind.router')} <span className="text-gray-600">({who})</span>
+        </>
+      );
+      break;
+    }
+    case 'llmCall':
+      title = step.ordinal
+        ? t('chat:reasoning.flow.kind.llmCallN', { n: step.ordinal.n, total: step.ordinal.total })
+        : t('chat:reasoning.flow.kind.llmCall');
+      break;
+    case 'llmRound':
+      title = t('chat:reasoning.flow.kind.llmRound', { n: step.round ?? 0 });
+      break;
+    default:
+      title = t(`chat:reasoning.flow.kind.${step.kind}` as const);
+  }
+  return (
+    <>
+      {step.phase && (
+        <span className="font-mono text-[11px] text-primary-700 bg-primary-50 border border-primary-100 rounded px-1">
+          [{PHASE_TAG[step.phase]}]
+        </span>
+      )}
+      <span className="text-gray-900">{title}</span>
+      {step.summary && (
+        <span className="font-mono text-[12px] text-gray-700 break-all">
+          {step.kind === 'router' ? `${t('chat:reasoning.flow.keywords')}: ${step.summary}` : step.summary}
+        </span>
+      )}
+      {step.findings != null && (
+        <span className="text-gray-600">→ {t('chat:reasoning.flow.findings', { n: step.findings })}</span>
+      )}
+      {step.failed && <span className="text-red-600 italic">{t('chat:reasoning.trace.failed')}</span>}
+    </>
+  );
+}
+
+function FlowStepRow({ step, index, trace }: { step: FlowStep; index: number; trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  const [open, setOpen] = useState<Record<Section, boolean>>({ prompt: false, output: false, details: false });
+  const hasDetails = step.details.length > 0 || step.kind === 'retrieval';
+  const sections: Section[] = [
+    ...(step.prompt ? (['prompt'] as const) : []),
+    ...(step.output ? (['output'] as const) : []),
+    ...(hasDetails ? (['details'] as const) : []),
+  ];
+  return (
+    <li data-testid="trace-step" className="py-1 text-[13px] text-gray-700">
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span className="text-gray-500 tabular-nums w-5 shrink-0 text-right">{index + 1}.</span>
+        <StepTitle step={step} trace={trace} />
       </div>
-      {trace.route.reason && <div className="text-gray-700 ml-4">{trace.route.reason}</div>}
-      {trace.route.matchedKeywords.length > 0 && (
-        <div className="mt-0.5 ml-4 flex flex-wrap gap-1">
-          {trace.route.matchedKeywords.map((kw) => (
-            <span
-              key={kw}
-              className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[11px] text-gray-800"
+      {sections.length > 0 && (
+        <div className="ml-6 mt-0.5 flex gap-3 text-[11px] uppercase tracking-wide">
+          {sections.map((section) => (
+            <button
+              key={section}
+              type="button"
+              data-section={section}
+              aria-expanded={open[section]}
+              onClick={() => setOpen((o) => ({ ...o, [section]: !o[section] }))}
+              className={`flex items-center gap-0.5 ${open[section] ? 'text-gray-900' : 'text-gray-500 hover:text-gray-800'}`}
             >
-              {kw}
-            </span>
+              <svg
+                className={`w-2.5 h-2.5 transition-transform ${open[section] ? 'rotate-90' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              {t(`chat:reasoning.flow.section.${section}` as const)}
+            </button>
           ))}
         </div>
       )}
+      <div className="ml-6 space-y-1.5">
+        {open.prompt && step.prompt && (
+          <div>
+            <div className="flex items-baseline gap-2 text-[11px] text-gray-600">
+              {t('chat:reasoning.trace.chars', { n: step.prompt.length })}
+              <CopyButton text={step.prompt} />
+            </div>
+            <Pre text={step.prompt} />
+          </div>
+        )}
+        {open.output && step.output && (
+          <div>
+            <div className="flex items-baseline gap-2 text-[11px] text-gray-600">
+              {t('chat:reasoning.trace.chars', { n: step.output.length })}
+              <CopyButton text={step.output} />
+            </div>
+            <Pre text={step.output} />
+          </div>
+        )}
+        {open.details && (
+          <div className="text-[12px] text-gray-700">
+            {step.details.length > 0 && (
+              <ul className="space-y-0.5">
+                {step.details.map((d) => (
+                  <li key={d.label} className="flex gap-2">
+                    <span className="text-gray-500 min-w-[90px]">
+                      {t(`chat:reasoning.flow.detail.${d.label}` as const)}
+                    </span>
+                    <span className="tabular-nums break-all">{d.value}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {step.kind === 'retrieval' && <RetrievalBreakdown trace={trace} />}
+          </div>
+        )}
+      </div>
     </li>
+  );
+}
+
+/** A research turn's summary, above its steps. */
+function ResearchHeader({ trace }: { trace: ChatTrace }) {
+  const { t } = useTranslation(['chat']);
+  const r = trace.research;
+  if (!r) return null;
+  return (
+    <div className="mb-1 text-[13px]">
+      <span className="font-medium text-primary-700">{t('chat:reasoning.flow.researchOn')}</span>
+      <span className="text-gray-700">
+        {' · '}
+        {t('chat:reasoning.flow.researchRead', {
+          read: r.emailsAnalyzed,
+          planned: r.plannedEmails,
+          batches: r.batches,
+        })}
+        {' · '}
+        {t('chat:reasoning.flow.researchFindings', { findings: r.findings, relevant: r.relevantEmails })}
+      </span>
+      {r.stopped && <span className="text-amber-700"> · {t('chat:reasoning.flow.researchStopped')}</span>}
+      {r.failedBatches > 0 && (
+        <span className="text-amber-700"> · {t('chat:reasoning.trace.researchFailed', { n: r.failedBatches })}</span>
+      )}
+    </div>
   );
 }
 
 /** Per-step retrieval timings + counts — the granular detail a developer wants
  *  when the retrieval step in the flow looks slow. */
-function RetrievalDetail({ trace }: { trace: ChatTrace }) {
+function RetrievalBreakdown({ trace }: { trace: ChatTrace }) {
   const { t } = useTranslation(['chat']);
   const r = trace.retrieval;
   if (!r) {
@@ -313,9 +249,8 @@ function RetrievalDetail({ trace }: { trace: ChatTrace }) {
       : '';
 
   return (
-    <li data-testid="trace-step" className="py-1">
-      <div className="text-gray-900">{t('chat:reasoning.trace.step.rag')}</div>
-      <ul className="space-y-0.5 ml-4">
+    <div className="py-0.5">
+      <ul className="space-y-0.5">
         {steps.map((s) => (
           <li key={s.key} className="flex items-baseline gap-2">
             <span className="inline-block w-1 h-1 rounded-full bg-gray-400 mt-1" />
@@ -326,27 +261,29 @@ function RetrievalDetail({ trace }: { trace: ChatTrace }) {
           </li>
         ))}
       </ul>
-      <div className="text-gray-700 mt-0.5 ml-7">
+      <div className="text-gray-700 mt-0.5 ml-3">
         {t('chat:reasoning.trace.fused', { n: r.fusedTopK })}
         {dedup}
       </div>
       {r.categories && r.categories.length > 0 && (
-        <div className="text-gray-700 mt-0.5 ml-7">
+        <div className="text-gray-700 mt-0.5 ml-3">
           {t('chat:reasoning.trace.categories')}: {r.categories.join(', ')}
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
 export function ReasoningSection({ trace }: { trace: ChatTrace }) {
   const { t } = useTranslation(['chat']);
   const [isOpen, setIsOpen] = useState(false);
-
-  const routeMode = (mode: RouteMode | string): string =>
-    mode === 'rag_first' || mode === 'tools_first' ? t(`chat:reasoning.trace.routeMode.${mode}` as const) : mode;
-
-  const steps = trace.steps ?? [];
+  const flow = buildFlow(trace);
+  const mode =
+    trace.research != null
+      ? t('chat:reasoning.flow.researchOn')
+      : trace.route.mode === 'rag_first' || trace.route.mode === 'tools_first'
+        ? t(`chat:reasoning.trace.routeMode.${trace.route.mode}` as const)
+        : trace.route.mode;
 
   return (
     <div className="mt-2 pt-2 border-t border-gray-200">
@@ -365,52 +302,27 @@ export function ReasoningSection({ trace }: { trace: ChatTrace }) {
         </svg>
         {isOpen ? t('chat:reasoning.hide') : t('chat:reasoning.show')}
         <span className="text-gray-500">
-          · {routeMode(trace.route.mode)} · {formatLatency(trace.totalElapsedMs)}
+          · {mode} · {formatLatency(trace.totalElapsedMs)}
         </span>
       </button>
 
       {isOpen && (
-        <div className="mt-2 space-y-3 text-[13px] text-gray-800">
-          {/* Flow — the turn step by step, in the order the backend built
+        <div className="mt-2 space-y-2 text-[13px] text-gray-800">
+          {/* The turn step by step, in the order the backend built
               (`services::chat::trace_steps`, shared with the CLI and the eval
-              report): route → planner → RAG → guides → each LLM round and the
-              tools it called → final stream. LLM rows expand to the exact
-              prompt + response (dev builds only); tool rows to arguments +
-              result preview. */}
+              report). Each step is one line; its prompt, output and numbers
+              (latency, prefill, KV cache) sit in sections collapsed under it. */}
           <div>
             <div className="text-gray-600 uppercase tracking-wide text-xs mb-0.5">
               {t('chat:reasoning.trace.workflow')} · {formatLatency(trace.totalElapsedMs)}
             </div>
-            <ul className="space-y-0.5">
-              {steps.map((step, i) => {
-                const key = `${step.type}-${i}`;
-                switch (step.type) {
-                  case 'route':
-                    return <RouteRow key={key} trace={trace} routeMode={routeMode} />;
-                  case 'research':
-                    return <ResearchRow key={key} trace={trace} />;
-                  case 'retrieval':
-                    return <RetrievalDetail key={key} trace={trace} />;
-                  case 'help':
-                    return <HelpDetail key={key} trace={trace} />;
-                  case 'llm': {
-                    const call = trace.llmCalls?.[step.index];
-                    return call ? (
-                      <LlmCallRow key={key} call={call} kv={step.kvCache} action={step.cacheAction} />
-                    ) : null;
-                  }
-                  case 'tool': {
-                    const call = trace.toolCalls[step.index];
-                    return call ? <ToolCallRow key={key} call={call} /> : null;
-                  }
-                  default:
-                    return null;
-                }
-              })}
-            </ul>
+            <ResearchHeader trace={trace} />
+            <ol className="space-y-0.5">
+              {flow.map((step, i) => (
+                <FlowStepRow key={step.key} step={step} index={i} trace={trace} />
+              ))}
+            </ol>
           </div>
-
-          {/* Model */}
           <div className="text-gray-600 text-xs">
             {t('chat:reasoning.trace.model')} <span className="font-mono text-gray-800">{trace.model}</span>
           </div>

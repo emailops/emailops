@@ -60,6 +60,7 @@ import type {
   PendingTask,
   QuickFilterStats,
   RefreshServerTotalResponse,
+  ResearchEstimate,
   SendChatResponse,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -1319,6 +1320,8 @@ export async function sendChatMessage(
    * batches (map-reduce) and writes a detailed report. Takes minutes.
    */
   research = false,
+  /** The estimate the user confirmed: the run reads exactly what it counted. */
+  researchEstimateId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1329,7 +1332,24 @@ export async function sendChatMessage(
     contextView: contextView ?? null,
     correction: correction ?? null,
     research,
+    researchEstimateId: researchEstimateId ?? null,
   });
+}
+
+/** Plan and gather a research question without reading it: how many emails
+ *  it covers and how long reading them would take, for the user to confirm. */
+export async function estimateResearch(
+  conversationId: string,
+  content: string,
+  categories?: EmailCategory[],
+): Promise<ResearchEstimate> {
+  return invoke('estimate_research', { conversationId, content, categories });
+}
+
+/** Stop a running research turn: it stops reading and writes its report from
+ *  what it has read. Resolves false when no run is live for that message. */
+export async function stopResearch(messageId: string): Promise<boolean> {
+  return invoke('stop_research', { messageId });
 }
 
 /** Mirrors `models::ChatCorrection` on the Rust side. */

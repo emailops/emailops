@@ -568,7 +568,7 @@ export type ChatPhase =
 export interface ChatResearchProgressEvent {
   messageId: string;
   conversationId: string;
-  stage: 'gathering' | 'reading' | 'writing';
+  stage: 'gathering' | 'reading' | 'condensing' | 'writing';
   batch: number;
   batches: number;
   emailsRead: number;
@@ -578,17 +578,34 @@ export interface ChatResearchProgressEvent {
 /** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */
 export interface ResearchTrace {
   nCtx: number;
-  maxEmails: number;
+  /** Emails gathered for reading (what the estimate counted). */
+  plannedEmails: number;
   searchHits: number;
-  retrievalHits: number;
+  semanticHits: number;
+  /** Emails read — fewer than `plannedEmails` when the user stopped it. */
   emailsAnalyzed: number;
   batches: number;
   failedBatches: number;
   findings: number;
   relevantEmails: number;
+  condenseCalls: number;
+  stopped: boolean;
   gatherMs: number;
   mapMs: number;
+  condenseMs: number;
   reduceMs: number;
+}
+
+/** What a research run would read, for the user to confirm. Mirrors
+ *  `ResearchEstimate` in Rust. */
+export interface ResearchEstimate {
+  estimateId: string;
+  emails: number;
+  batches: number;
+  seconds: number;
+  /** The planner's filter as `search_emails` arguments; null when the
+   *  question is gathered by meaning. */
+  filter: Record<string, unknown> | null;
 }
 
 export interface ChatPhaseEvent {

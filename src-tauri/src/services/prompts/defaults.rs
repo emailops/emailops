@@ -319,6 +319,23 @@ QUESTION: {{question}}
 EMAILS:
 {{emails}}"#;
 
+/// Research-mode condense step: when the notes of every batch do not fit one
+/// report prompt, groups of them are merged first. Split at
+/// `QUESTION: {{question}}` like the map prompt.
+pub const CHAT_RESEARCH_CONDENSE: &str = r#"You are the note-merging step of a research assistant working over the user's own mailbox. You receive findings that earlier steps extracted from many emails, and the user's research question. Merge them into a shorter list that keeps every fact the question needs.
+
+Rules:
+- One finding per line, starting with "- ".
+- Merge findings that say the same thing into one line and keep EVERY (email://EMAIL_ID) reference of the lines you merge, copied exactly.
+- Keep names, companies, dates, amounts and email addresses exactly as written. Do not generalise away specifics.
+- Drop only what does not help answer the question. No introduction, no summary paragraph.
+- Write in the language of the question.
+
+QUESTION: {{question}}
+
+FINDINGS:
+{{notes}}"#;
+
 /// Research-mode reduce step: the notes of every batch in, the final report
 /// out. Split at `QUESTION: {{question}}` like the map prompt; the coverage
 /// line varies per turn, so it sits below the split.

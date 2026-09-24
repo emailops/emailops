@@ -5,7 +5,7 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
 
@@ -90,5 +90,43 @@ describe('ChatInput research toggle', () => {
 
     act(() => toggle.click());
     expect(useChatStore.getState().researchMode).toBe(false);
+  });
+});
+
+describe('ChatInput research confirmation', () => {
+  const estimate = { estimateId: 'est-1', emails: 1240, batches: 124, seconds: 2100, filter: null };
+
+  it('shows the estimate with start and cancel, and blocks the input meanwhile', () => {
+    const confirmResearch = vi.fn(async () => {});
+    const cancelResearch = vi.fn();
+    useChatStore.setState({
+      pendingResearch: { content: 'q', opts: {}, status: 'ready', estimate, error: null },
+      confirmResearch,
+      cancelResearch,
+    });
+    const textarea = renderInput();
+    expect(textarea.disabled).toBe(true);
+    const card = container.querySelector('[data-testid="research-confirm"]');
+    expect(card?.textContent).toContain('research.estimate');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="research-start"]')?.click());
+    expect(confirmResearch).toHaveBeenCalled();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="research-cancel"]')?.click());
+    expect(cancelResearch).toHaveBeenCalled();
+  });
+
+  it('offers no start when nothing matches', () => {
+    useChatStore.setState({
+      pendingResearch: { content: 'q', opts: {}, status: 'ready', estimate: { ...estimate, emails: 0 }, error: null },
+    });
+    renderInput();
+    expect(container.querySelector('[data-testid="research-confirm"]')?.textContent).toContain('research.estimateNone');
+    expect(container.querySelector('[data-testid="research-start"]')).toBeNull();
+  });
+
+  it('puts a cancelled question back in the textarea', () => {
+    useChatStore.setState({ pendingResearch: null, inputPrefill: null });
+    const textarea = renderInput();
+    act(() => useChatStore.setState({ inputPrefill: { text: 'themes?', nonce: 1 } }));
+    expect(textarea.value).toBe('themes?');
   });
 });

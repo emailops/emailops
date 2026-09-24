@@ -3523,6 +3523,9 @@ pub struct TurnContext {
     /// see `research`) instead of answering from one page of results. Slower
     /// by design; the user opts in per message.
     pub research: bool,
+    /// The estimate the user confirmed before a research turn: the run reads
+    /// the set it counted. `None` plans and gathers inside the turn.
+    pub research_estimate_id: Option<String>,
 }
 
 pub async fn run_chat_turn(
@@ -3762,12 +3765,12 @@ pub async fn run_chat_turn(
                 && db.calendar_enabled(&a.id).unwrap_or(false)
         })
         .unwrap_or(false);
-    // Research mode gathers with the planner's filter itself; a shortcut would
-    // answer from one page and skip the reading it was asked to do. Cleared
-    // below when the planner says the question is not about the mailbox.
-    let mut research_active = context.research && ambient_context.is_none();
-    // The planner's filter, kept for research to page through.
-    let mut research_plan: Option<super::planner::SearchPlan> = None;
+    // Research mode plans and gathers on its own (`research::prepare`, or the
+    // estimate the user confirmed); a shortcut or the turn's planner would
+    // answer from one page and skip the reading it was asked to do. The
+    // toggle is the user saying the question is about the mailbox, so no
+    // planner verdict (app help, a form) takes the turn elsewhere.
+    let research_active = context.research && ambient_context.is_none();
     let mut preseeded_tool_calls = if ambient_context.is_some() || research_active {
         None
     } else {
@@ -3813,7 +3816,8 @@ pub async fn run_chat_turn(
     let mut form_to_fill: Option<&'static crate::services::forms::FormDef> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
-        && (route.mode == RouteMode::ToolsFirst || asked_planner || research_active)
+        && !research_active
+        && (route.mode == RouteMode::ToolsFirst || asked_planner)
         && planner_enabled(&db)
     {
         let template = crate::services::prompts::get_template(&db, "chat.query_plan")?;
@@ -3864,16 +3868,7 @@ pub async fn run_chat_turn(
                     plan
                 };
                 let structural = plan.has_structural_filter();
-                if research_active {
-                    // Research pages this filter itself (and adds retrieval
-                    // when it names no filter) instead of pre-seeding one page.
-                    emit_log(
-                        "info",
-                        &format!("planner: research filter (structural={structural}) [{plan_ms}ms]"),
-                    );
-                    planner_trace = Some(build_planner_trace(plan_ms, "search", plan_telemetry));
-                    research_plan = Some(*plan);
-                } else if asked_planner && !structural {
+                if asked_planner && !structural {
                     emit_log(
                         "debug",
                         &format!("planner: keyword-only plan, keeping RAG [{plan_ms}ms]"),
@@ -3903,19 +3898,10 @@ pub async fn run_chat_turn(
                     ),
                 );
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
-                if research_active && super::research::research_continues(super::research::PlannerVerdict::AppHelp) {
-                    // The toggle says the question is about the mailbox: gather
-                    // by retrieval instead of answering from the guides.
-                    emit_log(
-                        "info",
-                        "research mode: app-help verdict overridden, gathering from the mailbox",
-                    );
-                } else {
-                    route = super::routing::planner_help_route();
-                    app_help = true;
-                    help_page = page;
-                    emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
-                }
+                route = super::routing::planner_help_route();
+                app_help = true;
+                help_page = page;
+                emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
             }
             super::planner::Plan::FormFill(form_id) => {
                 // "crea una lens de facturas": there is nothing to retrieve and
@@ -3923,7 +3909,6 @@ pub async fn run_chat_turn(
                 // the frontend opens it. Handled below, outside this match, so
                 // the borrow on `route`/`planner_trace` ends first.
                 emit_log("info", &format!("planner: fill form {form_id} [{plan_ms}ms]"));
-                research_active &= super::research::research_continues(super::research::PlannerVerdict::FormFill);
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
                 route = super::routing::planner_help_route();
                 form_to_fill = super::view_context::resolve_target_form(Some(form_id), open_form_id)
@@ -4222,6 +4207,7 @@ pub async fn run_chat_turn(
         emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Researching);
         let t_research = std::time::Instant::now();
         let map_template = crate::services::prompts::get_template(&db, "chat.research_map")?;
+        let condense_template = crate::services::prompts::get_template(&db, "chat.research_condense")?;
         let reduce_template = crate::services::prompts::get_template(&db, "chat.research_reduce")?;
         let language = ai_language.english_name();
         let language_instruction = if language.is_empty() {
@@ -4246,22 +4232,57 @@ pub async fn run_chat_turn(
                 },
             );
         };
+        // The set the user confirmed; plan and gather here only when there is
+        // none (CLI, evals, or an estimate that expired).
+        let confirmed = context
+            .research_estimate_id
+            .as_deref()
+            .and_then(|id| super::research::take_estimate(id, &account_id, &user_question));
+        let prepared = match confirmed {
+            Some(p) => p,
+            None => {
+                on_progress(super::research::ResearchProgress {
+                    stage: super::research::ResearchStage::Gathering,
+                    batch: 0,
+                    batches: 0,
+                    emails_read: 0,
+                    emails_total: 0,
+                });
+                let today = now_local().format("%Y-%m-%d").to_string();
+                super::research::prepare(&super::research::PrepareInput {
+                    db: &db,
+                    provider: provider.as_ref(),
+                    account_id: &account_id,
+                    categories: &categories,
+                    question: &user_question,
+                    user_email: &user_email,
+                    today: &today,
+                })
+                .await
+            }
+        };
+        if let Some(call) = prepared.planner_call.clone() {
+            llm_calls.push(call);
+        }
+        tool_traces.extend(prepared.gather_calls.iter().cloned());
+        let guard = super::research::register_run(&assistant_message_id);
         let run = super::research::run_research(
             super::research::ResearchInput {
                 db: &db,
                 provider: provider.as_ref(),
-                account_id: &account_id,
-                categories: &categories,
                 question: &user_question,
-                plan: research_plan.as_ref(),
+                prepared: &prepared,
                 n_ctx,
                 language_instruction: &language_instruction,
                 map_template: &map_template,
+                condense_template: &condense_template,
                 reduce_template: &reduce_template,
+                stop: &guard.flag,
             },
             &on_progress,
         )
         .await;
+        drop(guard);
         let elapsed = t_research.elapsed().as_millis() as i64;
         emit_log(
             "info",

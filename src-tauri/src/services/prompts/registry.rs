@@ -162,6 +162,17 @@ const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
     },
 ];
 
+const CHAT_RESEARCH_CONDENSE_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "notes",
+        description: "A group of findings from earlier batches, each ending with its email:// link.",
+    },
+];
+
 const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
     VariableDef {
         name: "language_instruction",
@@ -394,6 +405,15 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_RESEARCH_MAP,
         variables: CHAT_RESEARCH_MAP_VARS,
+    },
+    PromptDef {
+        id: "chat.research_condense",
+        label: "Chat — research mode: merging notes",
+        description: "When a research run read so many emails that its notes do not fit the report prompt, this merges groups of notes first.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_CONDENSE,
+        variables: CHAT_RESEARCH_CONDENSE_VARS,
     },
     PromptDef {
         id: "chat.research_reduce",

@@ -103,6 +103,39 @@ pub async fn get_chat_messages(
     chat::get_messages(&state.db, &conversation_id)
 }
 
+// ── Research mode ──────────────────────────────────────────────────────────
+
+/// Plan and gather a research question, and say how many emails it would read
+/// and how long that would take, for the user to confirm before it starts.
+#[tauri::command]
+pub async fn estimate_research(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    content: String,
+    categories: Option<Vec<String>>,
+) -> Result<crate::models::ResearchEstimate, AppError> {
+    if !state.db.is_ai_enabled()? {
+        return Err(AppError::AiDisabled);
+    }
+    let question = content.trim();
+    if question.is_empty() {
+        return Err(AppError::InvalidInput("Message is empty".into()));
+    }
+    let categories = resolve_categories(&state, categories);
+    let account_id = state
+        .db
+        .get_chat_conversation_account(&conversation_id)?
+        .ok_or_else(|| AppError::NotFound(format!("conversation {}", conversation_id)))?;
+    chat::research::estimate_for_account(&state.db, &account_id, &categories, question).await
+}
+
+/// Stop the research run answering `message_id`: it stops reading and writes
+/// its report from what it has read. `false` when no run is live.
+#[tauri::command]
+pub async fn stop_research(message_id: String) -> Result<bool, AppError> {
+    Ok(chat::research::request_stop(&message_id))
+}
+
 // ── Send a message ─────────────────────────────────────────────────────────
 
 /// Response from `send_chat_message`: contains the pre-created user and
@@ -157,6 +190,9 @@ pub async fn send_chat_message(
     // Research mode for this one message: read many more emails in batches
     // (map-reduce) — slower, for questions that need a broad analysis.
     research: Option<bool>,
+    // The estimate the user confirmed (`estimate_research`): the run reads
+    // exactly the emails it counted.
+    research_estimate_id: Option<String>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -259,6 +295,7 @@ pub async fn send_chat_message(
                     view: view_for_task,
                     correction: correction_for_task,
                     research: research.unwrap_or(false),
+                    research_estimate_id: research_estimate_id.clone(),
                 },
             )
             .await

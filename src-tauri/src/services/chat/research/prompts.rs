@@ -1,0 +1,446 @@
+//! Research-mode prompts: rendering the map / condense / reduce prompts split
+//! for `complete_with_prefix`, parsing the findings a batch returns, and
+//! turning the report's bare references into email links.
+
+use std::collections::HashMap;
+
+/// One email as the map step reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResearchDoc {
+    pub id: String,
+    pub date: String,
+    pub from: String,
+    pub subject: String,
+    pub body: String,
+}
+
+impl ResearchDoc {
+    pub(crate) fn render(&self) -> String {
+        format!(
+            "EMAIL_ID: {}\nDate: {}\nFrom: {}\nSubject: {}\n{}\n",
+            self.id, self.date, self.from, self.subject, self.body
+        )
+    }
+
+    pub(crate) fn rendered_len(&self) -> usize {
+        self.render().chars().count()
+    }
+}
+
+/// The map prompt's split point: everything above is the same on every batch
+/// of every research turn, so it stays decoded in the one-shot prefix slot.
+const MAP_MARKER: &str = "QUESTION: {{question}}";
+/// Same for the reduce prompt.
+const REDUCE_MARKER: &str = "QUESTION: {{question}}";
+
+/// Render a template and cut it at `marker` into (invariant head, per-call
+/// tail). A user-edited template without the marker still works; it only
+/// forfeits the prefix cache.
+fn split_at_marker(template: &str, marker: &str, vars: &HashMap<&str, String>) -> (String, String) {
+    let (head, tail) = match template.find(marker) {
+        Some(idx) => template.split_at(idx),
+        None => (template, ""),
+    };
+    (
+        crate::services::prompts::render(head, vars),
+        crate::services::prompts::render(tail, vars),
+    )
+}
+
+/// The map prompt for one batch, split for `complete_with_prefix`.
+pub(crate) fn split_map_prompt(template: &str, question: &str, docs: &[ResearchDoc]) -> (String, String) {
+    let emails = docs.iter().map(ResearchDoc::render).collect::<Vec<_>>().join("\n");
+    let mut vars = HashMap::new();
+    vars.insert("question", question.to_string());
+    vars.insert("emails", emails);
+    split_at_marker(template, MAP_MARKER, &vars)
+}
+
+/// What one batch yielded: the finding lines, and the emails they cite.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct BatchNotes {
+    pub lines: Vec<String>,
+    pub cited: Vec<String>,
+}
+
+/// Keep the findings of a map reply that cite an email of the batch.
+///
+/// A finding with no citation to a batch email is dropped rather than trusted:
+/// it is either chatter ("Here are the findings:"), a "nothing relevant" in
+/// some wording, or a claim the reduce could not link — and an unlinked claim
+/// in the final report is exactly what research mode must not produce.
+pub(crate) fn parse_map_notes(reply: &str, batch_ids: &[String]) -> BatchNotes {
+    let mut notes = BatchNotes::default();
+    for raw in reply.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let cited: Vec<&String> = batch_ids.iter().filter(|id| line.contains(id.as_str())).collect();
+        if cited.is_empty() {
+            continue;
+        }
+        let body = line.trim_start_matches(['-', '*', '•', ' ']).trim();
+        notes.lines.push(format!("- {body}"));
+        for id in cited {
+            if !notes.cited.contains(id) {
+                notes.cited.push(id.clone());
+            }
+        }
+    }
+    notes
+}
+
+/// Join every batch's findings into the notes block, trimmed to `max_chars`.
+///
+/// When the notes overflow, each batch keeps an equal share of its leading
+/// lines (a model lists its strongest findings first) instead of the last
+/// batches being cut off entirely — the tail of the candidate list is still
+/// part of what the user asked to have read.
+pub(crate) fn assemble_notes(batches: &[BatchNotes], max_chars: usize) -> String {
+    let total: usize = batches
+        .iter()
+        .flat_map(|b| b.lines.iter())
+        .map(|l| l.chars().count() + 1)
+        .sum();
+    let non_empty = batches.iter().filter(|b| !b.lines.is_empty()).count().max(1);
+    let share = if total <= max_chars {
+        usize::MAX
+    } else {
+        max_chars / non_empty
+    };
+    let mut out = String::new();
+    for batch in batches {
+        let mut used = 0;
+        for line in &batch.lines {
+            let len = line.chars().count() + 1;
+            if used + len > share {
+                break;
+            }
+            used += len;
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The reduce prompt, split for `complete_with_prefix`. `coverage` is the
+/// per-turn "read N emails, M relevant" line — it rides in the tail so the
+/// head stays identical across research turns.
+pub(crate) fn split_reduce_prompt(
+    template: &str,
+    language_instruction: &str,
+    question: &str,
+    coverage: &str,
+    notes: &str,
+) -> (String, String) {
+    let mut vars = HashMap::new();
+    vars.insert("language_instruction", language_instruction.to_string());
+    vars.insert("question", question.to_string());
+    vars.insert("coverage", coverage.to_string());
+    vars.insert("notes", notes.to_string());
+    split_at_marker(template, REDUCE_MARKER, &vars)
+}
+
+/// The coverage line the report ends on.
+/// `planned` is how many were gathered: fewer read means the user stopped it.
+pub(crate) fn coverage_line(
+    analyzed: usize,
+    planned: usize,
+    relevant: usize,
+    batches: usize,
+    failed_batches: usize,
+) -> String {
+    let read = if analyzed < planned {
+        format!("stopped by the user after reading {analyzed} of {planned} emails")
+    } else {
+        format!("read {analyzed} emails")
+    };
+    let mut line = format!("{read} in {batches} batches; {relevant} of them had relevant findings");
+    if failed_batches > 0 {
+        line.push_str(&format!(" ({failed_batches} batches could not be read)"));
+    }
+    line
+}
+
+// ── Report post-processing ──────────────────────────────────────────────────
+
+/// Longest link label built from a subject.
+const MAX_LABEL_CHARS: usize = 60;
+
+/// A subject as a Markdown link label: no brackets (they would end the label),
+/// whitespace collapsed, cut to [`MAX_LABEL_CHARS`].
+fn link_label(subject: &str) -> String {
+    let cleaned: String = subject.replace(['[', ']'], "");
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.is_empty() {
+        return "email".to_string();
+    }
+    let joined = words.join(" ");
+    if joined.chars().count() <= MAX_LABEL_CHARS {
+        joined
+    } else {
+        let cut: String = joined.chars().take(MAX_LABEL_CHARS - 1).collect();
+        format!("{}…", cut.trim_end())
+    }
+}
+
+/// Turn the bare references a report makes into real email links.
+///
+/// The notes cite as `(email://ID)` and a small model copies that shape (or
+/// writes `[email://ID]`) instead of `[label](email://ID)`, which the chat only
+/// renders as a clickable chip in the link form. Each bare reference to an
+/// email that was read becomes a link labelled with its subject; proper links
+/// and ids that were never read are left untouched (the link allowlist drops
+/// the latter downstream).
+pub(crate) fn relink_bare_refs(answer: &str, subjects: &HashMap<String, String>) -> String {
+    use std::sync::OnceLock;
+    static BARE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let re = BARE_RE.get_or_init(|| regex::Regex::new(r"\[email://([^\]\s]+)\]|\(email://([^)\s]+)\)").unwrap());
+    let mut out = String::with_capacity(answer.len());
+    let mut last = 0;
+    for caps in re.captures_iter(answer) {
+        let Some(whole) = caps.get(0) else { continue };
+        let Some(id) = caps.get(1).or_else(|| caps.get(2)).map(|m| m.as_str()) else {
+            continue;
+        };
+        // `(email://ID)` right after `]` is already the target of a link.
+        let is_link_target = caps.get(2).is_some() && answer[..whole.start()].ends_with(']');
+        let Some(subject) = subjects.get(id).filter(|_| !is_link_target) else {
+            continue;
+        };
+        out.push_str(&answer[last..whole.start()]);
+        out.push_str(&format!("[{}](email://{id})", link_label(subject)));
+        last = whole.end();
+    }
+    out.push_str(&answer[last..]);
+    out
+}
+
+/// Split point of the condense prompt — same convention as map and reduce.
+const CONDENSE_MARKER: &str = "QUESTION: {{question}}";
+
+/// The condense prompt for one group of notes, split for `complete_with_prefix`.
+pub(crate) fn split_condense_prompt(template: &str, question: &str, notes: &str) -> (String, String) {
+    let mut vars = HashMap::new();
+    vars.insert("question", question.to_string());
+    vars.insert("notes", notes.to_string());
+    split_at_marker(template, CONDENSE_MARKER, &vars)
+}
+
+/// Every batch's notes joined, one line each, untrimmed.
+pub(crate) fn join_notes(batches: &[BatchNotes]) -> String {
+    batches
+        .iter()
+        .flat_map(|b| b.lines.iter())
+        .fold(String::new(), |mut out, line| {
+            out.push_str(line);
+            out.push('\n');
+            out
+        })
+}
+
+/// A batch's notes as the prompt will see them, in chars.
+pub(crate) fn notes_len(batch: &BatchNotes) -> usize {
+    batch.lines.iter().map(|l| l.chars().count() + 1).sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ── map prompt / notes ──
+
+    fn doc(id: &str) -> ResearchDoc {
+        ResearchDoc {
+            id: id.into(),
+            date: "2026-09-01".into(),
+            from: "Alice <alice@example.com>".into(),
+            subject: "Invoice 42".into(),
+            body: "Please pay by Friday.".into(),
+        }
+    }
+
+    #[test]
+    fn map_prompt_keeps_the_batch_out_of_the_prefix() {
+        let tmpl = "Extract findings.\n\nQUESTION: {{question}}\n\nEMAILS:\n{{emails}}";
+        let (prefix, suffix) = split_map_prompt(tmpl, "¿qué facturas?", &[doc("e1"), doc("e2")]);
+        assert_eq!(prefix, "Extract findings.\n\n");
+        assert!(suffix.starts_with("QUESTION: ¿qué facturas?"));
+        assert!(suffix.contains("EMAIL_ID: e1") && suffix.contains("EMAIL_ID: e2"));
+        // The prefix is identical for another question and batch.
+        let (other, _) = split_map_prompt(tmpl, "other", &[doc("e9")]);
+        assert_eq!(prefix, other);
+    }
+
+    #[test]
+    fn map_prompt_without_marker_still_renders_everything() {
+        let (prefix, suffix) = split_map_prompt("Q={{question}} E={{emails}}", "q", &[doc("e1")]);
+        assert!(prefix.contains("Q=q") && prefix.contains("EMAIL_ID: e1"));
+        assert!(suffix.is_empty());
+    }
+
+    #[test]
+    fn notes_keep_only_findings_citing_a_batch_email() {
+        let reply = "Here are the findings:\n\
+- Alice asks to pay invoice 42 by Friday (email://e1)\n\
+* Bob confirms the refund (email://e2) (email://e1)\n\
+- Something about email://zzz\n\
+NONE";
+        let notes = parse_map_notes(reply, &ids(&["e1", "e2"]));
+        assert_eq!(
+            notes.lines,
+            vec![
+                "- Alice asks to pay invoice 42 by Friday (email://e1)".to_string(),
+                "- Bob confirms the refund (email://e2) (email://e1)".to_string(),
+            ]
+        );
+        assert_eq!(notes.cited, ids(&["e1", "e2"]));
+    }
+
+    #[test]
+    fn a_none_reply_yields_no_notes() {
+        assert_eq!(parse_map_notes("NONE", &ids(&["e1"])), BatchNotes::default());
+        assert_eq!(parse_map_notes("", &ids(&["e1"])), BatchNotes::default());
+    }
+
+    #[test]
+    fn notes_fit_whole_when_under_budget() {
+        let b = vec![
+            BatchNotes {
+                lines: vec!["- a (email://1)".into()],
+                cited: ids(&["1"]),
+            },
+            BatchNotes {
+                lines: vec!["- b (email://2)".into()],
+                cited: ids(&["2"]),
+            },
+        ];
+        assert_eq!(assemble_notes(&b, 1000), "- a (email://1)\n- b (email://2)\n");
+    }
+
+    #[test]
+    fn overflowing_notes_keep_a_share_of_every_batch() {
+        let batch = |tag: &str| BatchNotes {
+            lines: (0..10).map(|i| format!("- {tag}{i} ..........")).collect(),
+            cited: vec![],
+        };
+        let notes = assemble_notes(&[batch("a"), batch("b")], 100);
+        assert!(notes.chars().count() <= 100, "{notes}");
+        assert!(notes.contains("- a0") && notes.contains("- b0"), "{notes}");
+        assert!(!notes.contains("- a9"));
+    }
+
+    #[test]
+    fn reduce_prompt_keeps_per_turn_content_out_of_the_prefix() {
+        let tmpl = "Write the report. {{language_instruction}}\n\nQUESTION: {{question}}\nCOVERAGE: {{coverage}}\nNOTES:\n{{notes}}";
+        let (prefix, suffix) = split_reduce_prompt(tmpl, "Reply in Spanish.", "q?", "read 10", "- n (email://1)");
+        assert_eq!(prefix, "Write the report. Reply in Spanish.\n\n");
+        assert!(suffix.contains("q?") && suffix.contains("read 10") && suffix.contains("email://1"));
+    }
+
+    #[test]
+    fn the_default_prompts_split_on_their_markers() {
+        use crate::services::prompts::defaults::{CHAT_RESEARCH_MAP, CHAT_RESEARCH_REDUCE};
+        let (prefix, suffix) = split_map_prompt(CHAT_RESEARCH_MAP, "Q?", &[doc("e1")]);
+        assert!(!prefix.contains("Q?") && !prefix.contains("e1"));
+        assert!(suffix.contains("Q?") && suffix.contains("EMAIL_ID: e1"));
+        assert!(!suffix.contains("{{"), "unrendered placeholder: {suffix}");
+
+        let (prefix, suffix) = split_reduce_prompt(
+            CHAT_RESEARCH_REDUCE,
+            "Reply in Spanish.",
+            "Q?",
+            "read 5",
+            "- n (email://e1)",
+        );
+        assert!(prefix.contains("Reply in Spanish."));
+        for per_turn in ["Q?", "read 5", "email://e1)"] {
+            assert!(!prefix.contains(per_turn), "{per_turn} leaked into the cached prefix");
+            assert!(suffix.contains(per_turn));
+        }
+        assert!(!prefix.contains("{{") && !suffix.contains("{{"));
+    }
+
+    fn subjects() -> HashMap<String, String> {
+        HashMap::from([
+            ("e1".to_string(), "Invoice 42".to_string()),
+            ("e2".to_string(), "Re: [Q3] refund ]".to_string()),
+        ])
+    }
+
+    #[test]
+    fn relink_turns_bracketed_ids_into_subject_links() {
+        let out = relink_bare_refs("Pay by Friday [email://e1].", &subjects());
+        assert_eq!(out, "Pay by Friday [Invoice 42](email://e1).");
+    }
+
+    #[test]
+    fn relink_turns_parenthesised_ids_into_subject_links() {
+        let out = relink_bare_refs("Pay by Friday (email://e1) and refund (email://e2)", &subjects());
+        assert_eq!(
+            out,
+            "Pay by Friday [Invoice 42](email://e1) and refund [Re: Q3 refund](email://e2)"
+        );
+    }
+
+    #[test]
+    fn relink_leaves_proper_links_and_unknown_ids_alone() {
+        let text = "See [the invoice](email://e1), and [email://zzz].";
+        assert_eq!(relink_bare_refs(text, &subjects()), text);
+    }
+
+    #[test]
+    fn relink_labels_an_email_without_subject_generically() {
+        let map = HashMap::from([("e3".to_string(), "   ".to_string())]);
+        assert_eq!(relink_bare_refs("x [email://e3]", &map), "x [email](email://e3)");
+    }
+
+    #[test]
+    fn coverage_mentions_failed_batches_only_when_some_failed() {
+        assert_eq!(
+            coverage_line(40, 40, 12, 4, 0),
+            "read 40 emails in 4 batches; 12 of them had relevant findings"
+        );
+        assert!(coverage_line(40, 40, 12, 4, 1).ends_with("(1 batches could not be read)"));
+    }
+
+    #[test]
+    fn coverage_says_when_the_user_stopped_the_reading() {
+        assert_eq!(
+            coverage_line(30, 100, 12, 3, 0),
+            "stopped by the user after reading 30 of 100 emails in 3 batches; 12 of them had relevant findings"
+        );
+    }
+
+    #[test]
+    fn condense_prompt_keeps_the_notes_out_of_the_prefix() {
+        use crate::services::prompts::defaults::CHAT_RESEARCH_CONDENSE;
+        let (prefix, suffix) = split_condense_prompt(CHAT_RESEARCH_CONDENSE, "Q?", "- n (email://e1)");
+        assert!(!prefix.contains("Q?") && !prefix.contains("email://e1"));
+        assert!(suffix.contains("Q?") && suffix.contains("- n (email://e1)"));
+        assert!(!prefix.contains("{{") && !suffix.contains("{{"));
+        let (other, _) = split_condense_prompt(CHAT_RESEARCH_CONDENSE, "other", "- x (email://e2)");
+        assert_eq!(prefix, other, "the head is shared by every condense call");
+    }
+
+    #[test]
+    fn join_notes_and_notes_len_agree() {
+        let b = BatchNotes {
+            lines: vec!["- a (email://1)".into(), "- bb (email://2)".into()],
+            cited: ids(&["1", "2"]),
+        };
+        assert_eq!(
+            join_notes(std::slice::from_ref(&b)),
+            "- a (email://1)\n- bb (email://2)\n"
+        );
+        assert_eq!(notes_len(&b), join_notes(&[b]).chars().count());
+    }
+}

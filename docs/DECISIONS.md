@@ -1468,3 +1468,31 @@ instructions stay decoded across batches.
 - *Streaming the report through `chat_stream`*: its system prompt would replace the chat
   anchor, and the 7k chat prefix leaves no room for the notes at 8k. The report is
   therefore not streamed; progress events cover the wait.
+
+## 2026-09-24 — Research mode has no email cap: estimate, confirm, stop
+
+**Decision:** A research turn reads **every** email its question covers. The planner's
+filter is run in full, straight against the DB (every matching thread, expanded to its
+messages). A topic question with no filter gathers every email within a similarity band of
+the best vector hit, plus every keyword hit. Before anything is sent, the user sees an
+estimate: how many emails, how many batches and roughly how long, timed from this machine's
+last run. They confirm it or cancel it. The confirmed run reads exactly the set the
+estimate counted. While it reads, **Stop** ends the reading and the report is written from
+what has been read. Notes that outgrow one report prompt are merged in rounds by a condense
+step (`chat.research_condense`) before the report. The 50,000-email gather limit is a
+safety net, not a product limit. This supersedes the ≤100-email cap in the 2026-09-23
+entry.
+**Context:** the developer asked for no limit. A cap of 100 also hid a real miss: paging
+through the `search_emails` tool read 25 of 33 contact requests, because of the tool's page
+and tag rules and its 500-row offset clamp. Unbounded reading costs about 1.5–2 s per email
+on the embedded 4B model — about 30 min for 1,000 emails — so the count and time are shown
+before the run starts, and the run can be cut short. Every call still runs on the
+one-shot prefix slot.
+**Rejected:**
+- *A fixed cap (100, or one derived from the window)*: it silently drops part of what the
+  user asked to have read.
+- *Running without an estimate*: a vague question could start hours of work unannounced.
+- *Cancel as abort*: after twenty minutes of reading, the partial report is worth more than
+  nothing.
+- *A fixed top-k for topic questions*: it cuts a large topic short and pads a small one
+  with noise.

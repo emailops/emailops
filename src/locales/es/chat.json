@@ -76,7 +76,9 @@
     "research": {
       "gathering": "Research: reuniendo correos…",
       "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",
-      "writing": "Research: redactando el informe a partir de {{total}} correos…"
+      "condensing": "Research: fusionando notas {{batch}}/{{batches}}…",
+      "writing": "Research: redactando el informe a partir de {{total}} correos…",
+      "remaining": " · quedan ~{{time}}"
     },
     "generating": "Generando…"
   },
@@ -143,10 +145,43 @@
       "kvCacheHit": "caché KV {{cached}}/{{total}} tok ({{pct}}%)",
       "kvCacheMiss": "caché KV 0/{{total}} tok (fría)",
       "helpSections": "{{included}} de {{candidates}} secciones de las guías",
-      "researchRead": "{{emails}} correos leídos en {{batches}} lotes (máx. {{cap}})",
+      "researchFailed": "{{n}} lotes fallaron"
+    },
+    "flow": {
+      "researchOn": "Modo research",
+      "researchRead": "leídos {{read}} de {{planned}} correos en {{batches}} lotes",
       "researchFindings": "{{findings}} hallazgos de {{relevant}} correos",
-      "researchFailed": "{{n}} lotes fallaron",
-      "researchSources": "{{search}} de búsqueda + {{rag}} de recuperación"
+      "researchStopped": "detenido por el usuario",
+      "keywords": "palabras clave",
+      "findings": "{{n}} hallazgos",
+      "kind": {
+        "router": "Router",
+        "planner": "Planner (LLM)",
+        "retrieval": "Recuperación RAG",
+        "help": "Ayuda de EmailOps",
+        "tool": "tool_call:",
+        "llmRound": "Ronda LLM {{n}}",
+        "answer": "Respuesta (LLM)",
+        "llmCall": "Llamada LLM",
+        "llmCallN": "Llamada LLM {{n}}/{{total}}"
+      },
+      "section": {
+        "prompt": "prompt",
+        "output": "salida",
+        "details": "detalles"
+      },
+      "detail": {
+        "latency": "latencia",
+        "prefill": "prefill",
+        "kvCache": "caché KV",
+        "cache": "caché",
+        "toolCalls": "llamadas a herramientas",
+        "chars": "caracteres",
+        "hits": "resultados",
+        "route": "ruta",
+        "reason": "motivo",
+        "status": "estado"
+      }
     }
   },
   "sources": {
@@ -215,6 +250,16 @@
   "research": {
     "toggle": "Research",
     "title": "Modo research: lee muchos más correos por lotes y redacta un análisis detallado. Más lento: puede tardar varios minutos. Se aplica solo al siguiente mensaje.",
-    "hint": "Siguiente mensaje: análisis en profundidad (más lento)"
+    "hint": "Siguiente mensaje: análisis en profundidad (más lento)",
+    "estimating": "Contando los correos que abarca esta investigación…",
+    "estimate": "Esta investigación leerá {{emails}} correos en {{batches}} lotes · unos {{time}}",
+    "estimateNone": "Ningún correo coincide con esta pregunta: no hay nada que investigar.",
+    "estimateFailed": "No se pudo estimar esta investigación: {{error}}",
+    "start": "Empezar investigación",
+    "cancel": "Cancelar",
+    "stop": "Detener y redactar informe",
+    "stopping": "Deteniendo…",
+    "filter": "Filtro",
+    "byMeaning": "Reunidos por significado (sin filtro)"
   }
 }

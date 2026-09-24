@@ -381,6 +381,8 @@ describe('a turn that is still generating when you navigate away', () => {
 });
 
 describe('chatStore research mode', () => {
+  const estimate = { estimateId: 'est-1', emails: 1240, batches: 124, seconds: 2100, filter: { subject: 'x' } };
+
   beforeEach(() => {
     vi.clearAllMocks();
     useChatStore.setState({
@@ -389,6 +391,8 @@ describe('chatStore research mode', () => {
       streamingPhase: null,
       researchMode: false,
       researchProgress: null,
+      pendingResearch: null,
+      inputPrefill: null,
       messages: [],
       isSending: false,
       error: null,
@@ -398,19 +402,62 @@ describe('chatStore research mode', () => {
       userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'q' },
       assistantMessage: assistantMessage('msg-1'),
     });
+    vi.mocked(api.estimateResearch).mockResolvedValue(estimate);
   });
 
   it('sends a normal turn when research mode is off', async () => {
     await useChatStore.getState().sendMessage('q');
     expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(false);
+    expect(api.estimateResearch).not.toHaveBeenCalled();
   });
 
-  it('sends the armed research flag once, then disarms it', async () => {
+  it('estimates first and waits for confirmation instead of sending', async () => {
     useChatStore.getState().setResearchMode(true);
     await useChatStore.getState().sendMessage('themes this quarter?');
-    expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(true);
-    // Per message: the next question is a normal (fast) turn again.
+    expect(api.estimateResearch).toHaveBeenCalledWith('conv-1', 'themes this quarter?', ['primary']);
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
+    const pending = useChatStore.getState().pendingResearch;
+    expect(pending?.status).toBe('ready');
+    expect(pending?.estimate).toEqual(estimate);
+    // Per message: the toggle is spent on this question.
     expect(useChatStore.getState().researchMode).toBe(false);
+  });
+
+  it('sends the confirmed research with its estimate', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    await useChatStore.getState().confirmResearch();
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[1]).toBe('themes this quarter?');
+    expect(call[7]).toBe(true);
+    expect(call[8]).toBe('est-1');
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+  });
+
+  it('cancelling sends nothing and hands the question back to the input', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    useChatStore.getState().cancelResearch();
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('themes this quarter?');
+  });
+
+  it('shows an estimate that failed', async () => {
+    vi.mocked(api.estimateResearch).mockRejectedValue(new Error('AI is disabled'));
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('q');
+    const pending = useChatStore.getState().pendingResearch;
+    expect(pending?.status).toBe('error');
+    expect(pending?.error).toContain('AI is disabled');
+  });
+
+  it('stops the running research', async () => {
+    vi.mocked(api.stopResearch).mockResolvedValue(true);
+    useChatStore.setState({ streamingMessageId: 'msg-9' });
+    await useChatStore.getState().stopResearch();
+    expect(api.stopResearch).toHaveBeenCalledWith('msg-9');
+    expect(useChatStore.getState().researchStopping).toBe(true);
   });
 
   it('tracks progress for the in-flight turn and clears it when the turn ends', async () => {
@@ -425,6 +472,7 @@ describe('chatStore research mode', () => {
       emailsTotal: 50,
     });
     expect(useChatStore.getState().researchProgress?.emailsRead).toBe(20);
+    expect(useChatStore.getState().researchStartedAt).not.toBeNull();
 
     // A late event from another message is ignored.
     useChatStore.getState().handleResearchProgress({
@@ -440,6 +488,7 @@ describe('chatStore research mode', () => {
 
     useChatStore.getState().handleStreamToken(streamEvent({ messageId: 'msg-1', done: true }));
     expect(useChatStore.getState().researchProgress).toBeNull();
+    expect(useChatStore.getState().researchStopping).toBe(false);
   });
 });
 
