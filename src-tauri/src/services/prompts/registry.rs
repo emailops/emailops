@@ -157,8 +157,12 @@ const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
         description: "The user's research question.",
     },
     VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
+    },
+    VariableDef {
         name: "emails",
-        description: "One batch of emails: EMAIL_ID, date, sender, subject and the cleaned body of each.",
+        description: "One batch of conversations: each email's EMAIL_ID, date, sender and recipients (the user as YOU) and what it adds to its thread.",
     },
 ];
 
@@ -185,6 +189,10 @@ const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
     VariableDef {
         name: "coverage",
         description: "How many emails were read, in how many batches, and how many had findings.",
+    },
+    VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
     },
     VariableDef {
         name: "counts",

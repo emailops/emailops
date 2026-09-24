@@ -308,15 +308,18 @@ JSON:"#;
 pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research assistant working over the user's own mailbox. You receive ONE batch of emails and the user's research question. Extract every fact in this batch that helps answer the question.
 
 Rules:
-- One finding per line, starting with "- ". Be specific: people, companies, dates, amounts, decisions, requests, problems, status.
+- One finding per line, starting with "- MATCH: " or "- CONTEXT: ". Be specific: people, companies, dates, amounts, decisions, requests, problems, status.
+- MATCH: the email itself answers the question (for "which quotes have I sent?", a quote the user sent). CONTEXT: related but not an answer (a request, a reply, a quote someone else sent). When unsure, use CONTEXT.
 - End every finding with the email it came from as (email://EMAIL_ID), copying the EMAIL_ID exactly as given. A finding several emails support lists each one: (email://ID1) (email://ID2).
 - Use only what the emails say. No speculation, no advice, no introduction, no summary of the batch.
 - Skip emails that are irrelevant to the question. If nothing in the batch is relevant, reply with exactly: NONE
 - Write the findings in the language of the question.
 
 QUESTION: {{question}}
+- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Say who sent what to whom, and never describe the user as a client, customer or contact.
 
 EMAILS:
+{{direction}}
 {{emails}}"#;
 
 /// Research-mode condense step: when the notes of every batch do not fit one
@@ -325,7 +328,7 @@ EMAILS:
 pub const CHAT_RESEARCH_CONDENSE: &str = r#"You are the note-merging step of a research assistant working over the user's own mailbox. You receive findings that earlier steps extracted from many emails, and the user's research question. Merge them into a shorter list that keeps every fact the question needs.
 
 Rules:
-- One finding per line, starting with "- ".
+- One finding per line, starting with "- " and keeping its MATCH: or CONTEXT: tag.
 - Merge findings that say the same thing into one line and keep EVERY (email://EMAIL_ID) reference of the lines you merge, copied exactly.
 - Keep names, companies, dates, amounts and email addresses exactly as written. Do not generalise away specifics.
 - Drop only what does not help answer the question. No introduction, no summary paragraph.
@@ -350,8 +353,11 @@ How to write the report:
 - End with one short line saying how much was read (from COVERAGE).
 
 QUESTION: {{question}}
+- "YOU" or "the user" in the notes is the person you are writing for: address them as "you", never as a client, customer or contact.
+- MATCH notes answer the question. CONTEXT notes are background: use them to explain, never list or count them as answers.
 
 COVERAGE: {{coverage}}
+{{direction}}
 
 COUNTS: {{counts}}
 

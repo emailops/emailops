@@ -1563,3 +1563,36 @@ reader and for no conversation to appear twice in an answer.
   keeps the whole cleaned body.
 - *Deduplicating research matches after the map step*: the model would still read every
   reply with its history, and the count would stay per email.
+
+## 2026-09-24 — Research knows who the user is; a finding says whether it answers
+
+**Decision:** Research decides what counts from facts code already has. It does not
+leave the model to guess them.
+- **Roles:** every message the reading step sees is rendered with its role decided in
+  code: `From: YOU (the user)` or `To: YOU`, from the account's address.
+- **Direction:** the planner's filter sets the question's direction: a sender filter on
+  the user means *sent*, a recipient filter on the user means *received*. The direction
+  is passed to the map and report steps.
+- **Direction check:** a conversation counts for a *sent* question only if a cited
+  email is the user's own, and the mirror for *received*.
+- **Finding tags:** each finding is tagged `MATCH` (the email answers the question) or
+  `CONTEXT` (related background). Only `MATCH` findings make the list, the count and
+  the sources. An untagged line counts as a match, so a user-edited prompt keeps
+  working.
+- **Report limit:** it is sized from the window: a quarter of it is reserved (1,536 to
+  4,096 tokens), and the actual limit is what the real prompt leaves free, capped at
+  4,096.
+
+**Context:** "which quotes have I sent to clients?" counted quotes the user had received
+(insurance, sworn translations) and listed the user as a client. The prompt never said
+which participant was the user. Code also counted any cited conversation as a match,
+so a correctly written "Requested a quote from X" still became a quote sent. The report
+limit was a fixed 1,536 tokens on a 15k window, and long reports were cut mid-line.
+**Rejected:**
+- *Only rewording the prompt ("be careful about direction")*: the model still could not
+  tell who the user was.
+- *A code-only direction filter*: the user writes in a quote-request thread too, so
+  "sent a quote" versus "asked for a quote" needs the model's judgement. The tag makes
+  that judgement explicit, and code enforces it.
+- *An uncapped report*: a 4B model repeats itself past a few thousand tokens, and
+  every token costs time.

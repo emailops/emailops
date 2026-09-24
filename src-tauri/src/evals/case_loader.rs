@@ -198,6 +198,16 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_min_research_emails: Option<u32>,
 
+    /// Research precision, as case-insensitive subject substrings of the
+    /// conversations the run matched (its sources): each `expected` one must
+    /// be among them, no `forbidden` one may be. Pins a run that reads the
+    /// right mail but counts the wrong conversations — a quote the user
+    /// received counted as one the user sent.
+    #[serde(default)]
+    pub expected_research_matches: Vec<String>,
+    #[serde(default)]
+    pub forbidden_research_matches: Vec<String>,
+
     /// Case-insensitive subject substrings: every bare `[n]` citation in the
     /// answer must resolve to a numbered source whose subject contains one of
     /// them — the way the UI resolves it. Catches right facts pinned to the

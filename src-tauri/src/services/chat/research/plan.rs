@@ -17,8 +17,11 @@ const MAP_OVERHEAD_TOKENS: usize = 700;
 pub(crate) const MAP_MAX_TOKENS: u32 = 400;
 /// Instructions + question + coverage line of the reduce/condense prompts.
 pub(crate) const REDUCE_OVERHEAD_TOKENS: usize = 700;
-/// The final report's length.
-pub(crate) const REDUCE_MAX_TOKENS: u32 = 1536;
+/// The final report's length: a quarter of the window, never below the floor
+/// (a report that says anything useful about many conversations) nor above the
+/// cap (a small model repeats itself past it, and every token costs time).
+pub(crate) const MIN_REPORT_TOKENS: u32 = 1536;
+pub(crate) const MAX_REPORT_TOKENS: u32 = 4096;
 /// What one condense call may write: a group of notes merged into fewer lines.
 pub(crate) const CONDENSE_MAX_TOKENS: u32 = 1024;
 /// Slack for tokenizer error and chat-template tokens.
@@ -43,6 +46,8 @@ pub(crate) struct ResearchBudget {
     pub max_emails_per_batch: usize,
     /// Notes chars one reduce (or condense) prompt can carry.
     pub notes_chars: usize,
+    /// Output tokens kept free for the report when the notes fill its prompt.
+    pub report_tokens: u32,
 }
 
 /// Size a research turn to the window. Pure: `n_ctx` is the only input.
@@ -51,14 +56,54 @@ pub(crate) fn plan_research_budget(n_ctx: u32) -> ResearchBudget {
     let batch_tokens = window.saturating_sub(MAP_OVERHEAD_TOKENS + MAP_MAX_TOKENS as usize + SAFETY_TOKENS);
     let batch_chars = (batch_tokens * CHARS_PER_TOKEN).min(CHARS_PER_EMAIL * MAX_EMAILS_PER_BATCH);
     let max_emails_per_batch = (batch_chars / CHARS_PER_EMAIL).clamp(1, MAX_EMAILS_PER_BATCH);
+    let report_tokens = (n_ctx / 4).clamp(MIN_REPORT_TOKENS, MAX_REPORT_TOKENS);
     // The reduce writes the longer output, so its reserve bounds both steps.
-    let notes_tokens = window.saturating_sub(REDUCE_OVERHEAD_TOKENS + REDUCE_MAX_TOKENS as usize + SAFETY_TOKENS);
+    let notes_tokens = window.saturating_sub(REDUCE_OVERHEAD_TOKENS + report_tokens as usize + SAFETY_TOKENS);
     ResearchBudget {
         n_ctx,
         chars_per_email: CHARS_PER_EMAIL,
         batch_chars,
         max_emails_per_batch,
         notes_chars: (notes_tokens * CHARS_PER_TOKEN).max(CHARS_PER_TOKEN * 256),
+        report_tokens,
+    }
+}
+
+/// The report's output limit for an actual reduce prompt of `prompt_chars`:
+/// whatever the window leaves free, between the floor and the cap. A prompt
+/// the notes filled still leaves [`ResearchBudget::report_tokens`]. Pure.
+pub(crate) fn plan_report_tokens(budget: &ResearchBudget, prompt_chars: usize) -> u32 {
+    let prompt_tokens = prompt_chars / CHARS_PER_TOKEN;
+    let free = (budget.n_ctx as usize).saturating_sub(prompt_tokens + SAFETY_TOKENS);
+    u32::try_from(free)
+        .unwrap_or(u32::MAX)
+        .clamp(MIN_REPORT_TOKENS, MAX_REPORT_TOKENS)
+}
+
+// ── Direction ───────────────────────────────────────────────────────────────
+
+/// Which side of the user's mail a question is about.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Direction {
+    /// Mail the user sent ("which quotes have I sent?").
+    Sent,
+    /// Mail the user received ("which quotes did I get?").
+    Received,
+    #[default]
+    Any,
+}
+
+/// The direction the planner already decided: a sender filter on the user's
+/// own address is a question about sent mail, a recipient filter on it about
+/// received mail. Read from the plan, never guessed from the wording. Pure.
+pub(crate) fn plan_direction(plan: Option<&SearchPlan>, user_email: &str) -> Direction {
+    let me = user_email.trim();
+    let is_me =
+        |addr: &Option<String>| !me.is_empty() && addr.as_deref().is_some_and(|a| a.trim().eq_ignore_ascii_case(me));
+    match plan {
+        Some(p) if is_me(&p.from) => Direction::Sent,
+        Some(p) if is_me(&p.to) => Direction::Received,
+        _ => Direction::Any,
     }
 }
 
@@ -217,9 +262,49 @@ mod tests {
     fn budget_notes_fit_the_reduce_window() {
         for n_ctx in [8192u32, 16384, 32768] {
             let b = plan_research_budget(n_ctx);
-            let tokens = b.notes_chars / CHARS_PER_TOKEN + REDUCE_OVERHEAD_TOKENS + REDUCE_MAX_TOKENS as usize;
+            let tokens = b.notes_chars / CHARS_PER_TOKEN + REDUCE_OVERHEAD_TOKENS + b.report_tokens as usize;
             assert!(tokens <= n_ctx as usize, "n_ctx={n_ctx}: reduce needs {tokens}");
         }
+    }
+
+    #[test]
+    fn the_report_reserve_is_a_quarter_of_the_window_within_bounds() {
+        assert_eq!(plan_research_budget(4096).report_tokens, MIN_REPORT_TOKENS);
+        assert_eq!(plan_research_budget(8192).report_tokens, 2048);
+        assert_eq!(plan_research_budget(15360).report_tokens, 3840);
+        assert_eq!(plan_research_budget(32768).report_tokens, MAX_REPORT_TOKENS);
+    }
+
+    #[test]
+    fn the_report_gets_what_its_prompt_leaves_free_up_to_the_cap() {
+        let b = plan_research_budget(15360);
+        // The production run: a 5.5k-token prompt left ~9.5k free.
+        assert_eq!(plan_report_tokens(&b, 5_566 * CHARS_PER_TOKEN), MAX_REPORT_TOKENS);
+        // A reduce prompt filled with notes to the brim still gets the reserve.
+        let full = REDUCE_OVERHEAD_TOKENS * CHARS_PER_TOKEN + b.notes_chars;
+        assert!(plan_report_tokens(&b, full) >= b.report_tokens);
+        // On a small window the report never goes below the floor.
+        let small = plan_research_budget(4096);
+        assert_eq!(plan_report_tokens(&small, 4096 * CHARS_PER_TOKEN), MIN_REPORT_TOKENS);
+    }
+
+    // ── direction ──
+
+    #[test]
+    fn direction_follows_a_sender_or_recipient_filter_on_the_user() {
+        let me = "Me@Example.com";
+        let from = |a: &str| plan(|p| p.from = Some(a.into()));
+        let to = |a: &str| plan(|p| p.to = Some(a.into()));
+        assert_eq!(plan_direction(Some(&from("me@example.com")), me), Direction::Sent);
+        assert_eq!(plan_direction(Some(&to("me@example.com")), me), Direction::Received);
+        assert_eq!(plan_direction(Some(&from("ana@client.example")), me), Direction::Any);
+        assert_eq!(plan_direction(Some(&plan(|_| {})), me), Direction::Any);
+        assert_eq!(plan_direction(None, me), Direction::Any);
+        assert_eq!(
+            plan_direction(Some(&from("me@example.com")), ""),
+            Direction::Any,
+            "no account address"
+        );
     }
 
     #[test]

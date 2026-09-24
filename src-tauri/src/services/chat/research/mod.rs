@@ -35,14 +35,14 @@ pub use control::{confirm_exit, exit_decision, request_stop, running_runs, ExitD
 pub(crate) use control::{register_run, store_estimate, take_estimate};
 use plan::{
     merge_candidates, plan_batches, plan_condense_groups, plan_estimate, plan_gather, plan_research_budget,
-    semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS, REDUCE_MAX_TOKENS,
+    semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS,
 };
 pub(crate) use prompts::Match;
 use prompts::{
-    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, finish_report, join_notes,
-    matched_email_ids, notes_len, parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list,
-    report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes, DocMessage, ReportShape,
-    ResearchDoc,
+    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, finish_report, is_user,
+    join_notes, notes_len, parse_map_notes, participant, plan_report_shape, recipients, relink_bare_refs,
+    render_match_list, report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes,
+    DocMessage, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -395,7 +395,7 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
         .and_then(|s| s.parse::<u64>().ok());
     // Batched exactly as the run will batch them: whole conversations, each
     // read for what its messages add.
-    let docs = load_docs(input.db, &prepared.email_ids, &budget);
+    let docs = load_docs(input.db, &prepared.email_ids, &budget, input.user_email);
     let emails: usize = docs.iter().map(|d| d.messages.len()).sum();
     let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch).len();
@@ -502,6 +502,9 @@ pub(crate) struct ResearchInput<'a> {
     pub language_instruction: &'a str,
     /// ISO code of the report language, for the full list's heading.
     pub language_code: &'a str,
+    /// The account's address: who "I" is in the question, and who wrote which
+    /// message of a thread.
+    pub user_email: &'a str,
     pub map_template: &'a str,
     pub condense_template: &'a str,
     pub reduce_template: &'a str,
@@ -625,7 +628,7 @@ const CONVERSATION_EMAILS_BUDGET: usize = 4;
 /// Load the gathered emails as conversations — oldest first, by the thread's
 /// first gathered email — each read once through the shared thread reader:
 /// every message's new content only, one budget for the conversation.
-fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget) -> Vec<ResearchDoc> {
+fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget, user_email: &str) -> Vec<ResearchDoc> {
     use crate::services::thread_reader::{read_thread, ReadOptions, ThreadMessage};
     let emails = load_emails(db, ids);
     let by_id: HashMap<&str, &Email> = emails.iter().map(|e| (e.id.as_str(), e)).collect();
@@ -670,13 +673,14 @@ fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget) -> Ve
                     .messages
                     .into_iter()
                     .map(|m| DocMessage {
+                        from: participant(&m.sender, &m.sender_email, user_email),
+                        from_user: is_user(&m.sender_email, user_email),
+                        to: by_id
+                            .get(m.id.as_str())
+                            .map(|e| recipients(&e.recipients, user_email))
+                            .unwrap_or_default(),
                         id: m.id,
                         date: date(m.timestamp),
-                        from: if m.sender.is_empty() || m.sender == m.sender_email {
-                            m.sender_email
-                        } else {
-                            format!("{} <{}>", m.sender, m.sender_email)
-                        },
                         text: if m.text.is_empty() {
                             "(no new content)".to_string()
                         } else {
@@ -726,7 +730,8 @@ pub(crate) async fn run_research(
 
     // ── Map ──
     progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len(), &found);
-    let docs = load_docs(input.db, &prepared.email_ids, &budget);
+    let docs = load_docs(input.db, &prepared.email_ids, &budget, input.user_email);
+    let direction = plan::plan_direction(prepared.plan.as_ref(), input.user_email);
     // Emails read after the first `n` conversations.
     let emails_in = |n: usize| docs[..n].iter().map(|d| d.messages.len()).sum::<usize>();
     let total_emails = emails_in(docs.len());
@@ -751,7 +756,7 @@ pub(crate) async fn run_research(
         }
         let batch = &docs[range.clone()];
         let batch_ids: Vec<String> = batch.iter().flat_map(|d| d.ids().cloned()).collect();
-        let (prefix, suffix) = split_map_prompt(input.map_template, input.question, batch);
+        let (prefix, suffix) = split_map_prompt(input.map_template, input.question, batch, direction);
         let (result, trace) = complete(
             input.provider,
             (&prefix, &suffix),
@@ -769,7 +774,7 @@ pub(crate) async fn run_research(
                 // Regrouped over everything read so far: a conversation whose
                 // replies land in different batches stays one match.
                 all_notes.push(parsed.clone());
-                found = collect_matches(&docs[..range.end], &all_notes);
+                found = collect_matches(&docs[..range.end], &all_notes, direction);
                 super::emit_log(
                     "debug",
                     &format!(
@@ -815,13 +820,13 @@ pub(crate) async fn run_research(
     run.trace.findings = notes.iter().map(|b| b.lines.len() as u32).sum();
     // The matches come from the map notes, before any condense round: the
     // list and the counts must not depend on how the notes were merged.
-    let matches = collect_matches(&docs[..read], &notes);
+    let matches = collect_matches(&docs[..read], &notes, direction);
     // One source per conversation: the answer never lists two emails of one
     // thread.
     run.relevant = matches.iter().map(|m| m.id.clone()).collect();
     let emails_read = emails_in(read);
     run.trace.emails_analyzed = emails_read as u32;
-    run.trace.relevant_emails = matched_email_ids(&docs[..read], &notes).len() as u32;
+    run.trace.relevant_emails = matches.iter().map(|m| m.emails).sum::<usize>() as u32;
     let shape = plan_report_shape(input.question);
 
     // Cancelled: no condense, no report — say how far it got and stop.
@@ -915,12 +920,15 @@ pub(crate) async fn run_research(
         &coverage,
         &facts,
         &notes_block,
+        direction,
     );
+    // The report may use what its actual prompt leaves free in the window.
+    let report_tokens = plan::plan_report_tokens(&budget, prefix.chars().count() + suffix.chars().count());
     let t_reduce = std::time::Instant::now();
     let (result, trace) = complete(
         input.provider,
         (&prefix, &suffix),
-        REDUCE_MAX_TOKENS,
+        report_tokens,
         0.2,
         REDUCE_TIMEOUT,
         "research_reduce",
@@ -951,7 +959,7 @@ pub(crate) async fn run_research(
             let prose = canonicalize_links(&relink_bare_refs(reply.text.trim(), &subjects), &representative);
             run.answer = Some(if full_list.is_empty() {
                 // Hitting the output budget means the report stopped short.
-                let cut = reply.completion_tokens >= REDUCE_MAX_TOKENS;
+                let cut = reply.completion_tokens >= report_tokens;
                 finish_report(&prose, cut, &matches, input.language_code)
             } else {
                 format!("{prose}\n\n{full_list}")
@@ -1083,6 +1091,7 @@ mod tests {
             n_ctx,
             language_instruction: "Reply in Spanish.",
             language_code: "es",
+            user_email: "me@example.com",
             map_template: d::CHAT_RESEARCH_MAP,
             condense_template: d::CHAT_RESEARCH_CONDENSE,
             reduce_template: d::CHAT_RESEARCH_REDUCE,

@@ -53,3 +53,20 @@
   expected_min_research_emails: 3
   expected_answer_contains: ["### Full list (", "](email://"]
   metrics: []
+
+# Direction: "quotes I sent to clients" must count the two quotes the user
+# sent, not the quote the user asked a translation agency for (the user writes
+# in that thread too — only who sent the quote to whom tells it apart) nor one
+# a designer sent unasked.
+- id: research_counts_only_the_quotes_the_user_sent_en
+  question: "Which quotes have I sent to clients?"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_min_research_emails: 3
+  expected_research_matches: ["PrivacyHub analytics migration", "Bahía Studio marketing site"]
+  forbidden_research_matches: ["German translation", "landing page illustrations"]
+  expected_answer_contains_any: ["8,400", "8.400", "8400"]
+  expected_answer_contains: ["](email://"]
+  metrics: []

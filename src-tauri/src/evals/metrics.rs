@@ -123,6 +123,14 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         checks.push(check_research_coverage(min, outcome.assistant_trace.as_ref()));
     }
 
+    if !case.expected_research_matches.is_empty() || !case.forbidden_research_matches.is_empty() {
+        checks.push(check_research_matches(
+            &case.expected_research_matches,
+            &case.forbidden_research_matches,
+            &outcome.sources_used,
+        ));
+    }
+
     if !case.expected_cited_subjects.is_empty() {
         checks.push(check_cited_subjects(
             &case.expected_cited_subjects,
@@ -251,6 +259,40 @@ fn check_research_coverage(min: u32, trace: Option<&ChatTrace>) -> HeuristicChec
             "research mode read the expected share of the mailbox".into()
         } else {
             "research mode read fewer emails than the case requires".into()
+        },
+    }
+}
+
+/// The conversations a research run matched are its sources: each `expected`
+/// subject substring must be among them and no `forbidden` one may be.
+fn check_research_matches(
+    expected: &[String],
+    forbidden: &[String],
+    sources: &[crate::evals::harness::SourceSummary],
+) -> HeuristicCheck {
+    let has = |needle: &String| {
+        let needle = needle.to_lowercase();
+        sources.iter().find(|s| s.subject.to_lowercase().contains(&needle))
+    };
+    let missing: Vec<&str> = expected
+        .iter()
+        .filter(|e| has(e).is_none())
+        .map(String::as_str)
+        .collect();
+    let wrong: Vec<&str> = forbidden.iter().filter_map(has).map(|s| s.subject.as_str()).collect();
+    let passed = missing.is_empty() && wrong.is_empty();
+    HeuristicCheck {
+        name: "research_matches".into(),
+        passed,
+        expected: format!("matches {expected:?}, never {forbidden:?}"),
+        actual: format!(
+            "{} conversations matched; missing {missing:?}; wrongly matched {wrong:?}",
+            sources.len()
+        ),
+        detail: if passed {
+            "research matched the right conversations".into()
+        } else {
+            "research matched the wrong set of conversations".into()
         },
     }
 }
@@ -837,6 +879,32 @@ mod tests {
     // that found its evidence through a tool (whose results carry no number)
     // numbered those emails itself, so `[1]` rendered as an unrelated shipping
     // notice while the answer's facts came from the vendor's support mail.
+
+    // ── expected / forbidden research matches ─────────────────────────────
+
+    #[test]
+    fn research_matches_pass_with_every_expected_and_no_forbidden_conversation() {
+        let sources = vec![source(1, "a", "Re: Proposal: PrivacyHub migration")];
+        let check = check_research_matches(&["privacyhub".into()], &["translation".into()], &sources);
+        assert!(check.passed, "{}", check.actual);
+    }
+
+    #[test]
+    fn research_matches_fail_on_a_forbidden_conversation() {
+        let sources = vec![
+            source(1, "a", "Proposal: PrivacyHub migration"),
+            source(2, "b", "Re: Quote request: German translation"),
+        ];
+        let check = check_research_matches(&["privacyhub".into()], &["translation".into()], &sources);
+        assert!(!check.passed);
+        assert!(check.actual.contains("German translation"), "{}", check.actual);
+    }
+
+    #[test]
+    fn research_matches_fail_when_an_expected_conversation_is_missing() {
+        let sources = vec![source(1, "a", "Something else")];
+        assert!(!check_research_matches(&["privacyhub".into()], &[], &sources).passed);
+    }
 
     fn source(n: i32, email_id: &str, subject: &str) -> SourceSummary {
         SourceSummary {

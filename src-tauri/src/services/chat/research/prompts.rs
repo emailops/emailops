@@ -4,14 +4,81 @@
 
 use std::collections::HashMap;
 
+use super::plan::Direction;
+
+/// How the person asking is named in a message's From / To. Decided in code
+/// from the account's address, so the model never has to guess which of the
+/// people in a thread is the user.
+pub(crate) const USER_LABEL: &str = "YOU (the user)";
+
 /// One message of a conversation as the map step reads it: its new content
 /// only (the shared thread reader strips what earlier messages said).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DocMessage {
     pub id: String,
     pub date: String,
+    /// The sender, or [`USER_LABEL`].
     pub from: String,
+    /// The recipients, the user as [`USER_LABEL`]; empty when unknown.
+    pub to: String,
+    /// The user wrote this message.
+    pub from_user: bool,
     pub text: String,
+}
+
+/// Whether `address` is the user's own.
+pub(crate) fn is_user(address: &str, user_email: &str) -> bool {
+    let me = user_email.trim();
+    !me.is_empty() && address.trim().eq_ignore_ascii_case(me)
+}
+
+/// A sender as the map step shows it: the user as [`USER_LABEL`], anyone
+/// else as `Name <address>`. Pure.
+pub(crate) fn participant(name: &str, address: &str, user_email: &str) -> String {
+    if is_user(address, user_email) {
+        USER_LABEL.to_string()
+    } else if name.trim().is_empty() || name.trim() == address.trim() {
+        address.trim().to_string()
+    } else {
+        format!("{} <{}>", name.trim(), address.trim())
+    }
+}
+
+/// Recipients as the map step shows them, the user as [`USER_LABEL`]. Each
+/// entry is a bare address or `Name <address>`. Pure.
+pub(crate) fn recipients(list: &[String], user_email: &str) -> String {
+    list.iter()
+        .map(|r| {
+            let address = r
+                .rsplit_once('<')
+                .and_then(|(_, rest)| rest.split_once('>'))
+                .map_or(r.as_str(), |(addr, _)| addr);
+            if is_user(address, user_email) {
+                USER_LABEL.to_string()
+            } else {
+                r.trim().to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What the map and reduce steps are told about the question's direction.
+/// Empty when the question has none.
+pub(crate) fn direction_note(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Sent => {
+            "DIRECTION: the question is about what the user SENT (messages From: YOU). Something \
+             another person sent to the user (a quote, offer or invoice the user received or asked \
+             for) is not something the user sent: leave it out."
+        }
+        Direction::Received => {
+            "DIRECTION: the question is about what the user RECEIVED (messages To: YOU from \
+             someone else). Something the user wrote and sent to others is not something the user \
+             received: leave it out."
+        }
+        Direction::Any => "",
+    }
 }
 
 /// One conversation as the map step reads it. The unit of reading is the
@@ -28,8 +95,13 @@ impl ResearchDoc {
     pub(crate) fn render(&self) -> String {
         let mut out = format!("CONVERSATION: {}\n", self.subject);
         for m in &self.messages {
+            let to = if m.to.is_empty() {
+                String::new()
+            } else {
+                format!("To: {}\n", m.to)
+            };
             out.push_str(&format!(
-                "EMAIL_ID: {}\nDate: {}\nFrom: {}\n{}\n\n",
+                "EMAIL_ID: {}\nDate: {}\nFrom: {}\n{to}{}\n\n",
                 m.id, m.date, m.from, m.text
             ));
         }
@@ -66,10 +138,16 @@ fn split_at_marker(template: &str, marker: &str, vars: &HashMap<&str, String>) -
 }
 
 /// The map prompt for one batch, split for `complete_with_prefix`.
-pub(crate) fn split_map_prompt(template: &str, question: &str, docs: &[ResearchDoc]) -> (String, String) {
+pub(crate) fn split_map_prompt(
+    template: &str,
+    question: &str,
+    docs: &[ResearchDoc],
+    direction: Direction,
+) -> (String, String) {
     let emails = docs.iter().map(ResearchDoc::render).collect::<Vec<_>>().join("\n");
     let mut vars = HashMap::new();
     vars.insert("question", question.to_string());
+    vars.insert("direction", direction_note(direction).to_string());
     vars.insert("emails", emails);
     split_at_marker(template, MAP_MARKER, &vars)
 }
@@ -153,8 +231,10 @@ pub(crate) fn split_reduce_prompt(
     coverage: &str,
     counts: &str,
     notes: &str,
+    direction: Direction,
 ) -> (String, String) {
     let mut vars = HashMap::new();
+    vars.insert("direction", direction_note(direction).to_string());
     vars.insert("counts", counts.to_string());
     vars.insert("language_instruction", language_instruction.to_string());
     vars.insert("question", question.to_string());
@@ -339,16 +419,42 @@ pub(crate) struct Match {
     pub finding: String,
 }
 
-/// A finding line without its bullet and its `email://` references.
+/// Whether a finding answers the question or only gives background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FindingTag {
+    /// The cited email answers the question itself: it is a match.
+    Match,
+    /// Related, but not an answer (a request, a reply, the other side's mail):
+    /// background for the report, never a match. An untagged line — a
+    /// user-edited map prompt without the tags — counts as a match.
+    Context,
+}
+
+/// A finding's tag and the text after its bullet and tag. Reads the shapes a
+/// small model writes: `CONTEXT:`, `**CONTEXT:**`, `[Context]`, any case.
+pub(crate) fn finding_tag(line: &str) -> (FindingTag, &str) {
+    let body = line.trim_start_matches(['-', '*', '•', ' ']);
+    let bare = body.trim_start_matches(['*', '[', ' ']);
+    for (word, tag) in [("context", FindingTag::Context), ("match", FindingTag::Match)] {
+        let Some(head) = bare.get(..word.len()) else { continue };
+        let after = &bare[word.len()..];
+        // A tag, not a word that starts the sentence ("Matched…", "Match fees…").
+        if head.eq_ignore_ascii_case(word) && after.starts_with([':', '*', ']']) {
+            return (tag, after.trim_start_matches(['*', ']', ':', ' ']));
+        }
+    }
+    (FindingTag::Match, body.trim())
+}
+
+/// A finding line without its bullet, its tag and its `email://` references.
 fn finding_text(line: &str) -> String {
     use std::sync::OnceLock;
     static REF_RE: OnceLock<regex::Regex> = OnceLock::new();
     // Hard-coded literal that cannot fail by construction.
     #[allow(clippy::unwrap_used)]
     let re = REF_RE.get_or_init(|| regex::Regex::new(r"\[[^\]]*\]\(email://[^)\s]+\)|\(email://[^)\s]+\)").unwrap());
-    let stripped = re.replace_all(line, "");
+    let stripped = re.replace_all(finding_tag(line).1, "");
     stripped
-        .trim_start_matches(['-', '*', '•', ' '])
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -356,11 +462,11 @@ fn finding_text(line: &str) -> String {
         .to_string()
 }
 
-/// The first finding citing each email.
+/// The first `MATCH` finding citing each email; `CONTEXT` lines never make one.
 fn first_findings(notes: &[BatchNotes]) -> HashMap<&str, String> {
     let mut first: HashMap<&str, String> = HashMap::new();
     for batch in notes {
-        for line in &batch.lines {
+        for line in batch.lines.iter().filter(|l| finding_tag(l).0 == FindingTag::Match) {
             for id in &batch.cited {
                 if line.contains(id.as_str()) {
                     first.entry(id.as_str()).or_insert_with(|| finding_text(line));
@@ -371,21 +477,16 @@ fn first_findings(notes: &[BatchNotes]) -> HashMap<&str, String> {
     first
 }
 
-/// Every email a finding cites, in reading order.
-pub(crate) fn matched_email_ids(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<String> {
-    let first = first_findings(notes);
-    docs.iter()
-        .flat_map(|d| d.ids())
-        .filter(|id| first.contains_key(id.as_str()))
-        .cloned()
-        .collect()
-}
-
 /// Every conversation a finding cites, in reading order (oldest first), each
 /// with its first cited email and that email's first finding. Taken from the
 /// map notes, before any condense round, so merging notes for the report never
 /// drops a match from the list or the count.
-pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<Match> {
+///
+/// A question with a direction counts a conversation only when a cited email
+/// is on that side: for "what have I sent", one the user wrote. A thread where
+/// the user asked for a quote and only the supplier's reply was cited is a
+/// quote received — the code knows who wrote each email, the model need not.
+pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes], direction: Direction) -> Vec<Match> {
     let first = first_findings(notes);
     docs.iter()
         .filter_map(|d| {
@@ -394,6 +495,19 @@ pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec
                 .iter()
                 .filter(|m| first.contains_key(m.id.as_str()))
                 .collect();
+            let on_side = match direction {
+                Direction::Sent => cited.iter().any(|m| m.from_user),
+                Direction::Received => cited.iter().any(|m| !m.from_user),
+                Direction::Any => true,
+            };
+            if !on_side {
+                return None;
+            }
+            let cited: Vec<&DocMessage> = match direction {
+                Direction::Sent => cited.into_iter().filter(|m| m.from_user).collect(),
+                Direction::Received => cited.into_iter().filter(|m| !m.from_user).collect(),
+                Direction::Any => cited,
+            };
             let head = cited.first()?;
             Some(Match {
                 id: head.id.clone(),
@@ -413,7 +527,39 @@ pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec
 /// citing a conversation an earlier link-only bullet of the same run already
 /// cites. Pure.
 pub(crate) fn canonicalize_links(answer: &str, representative: &HashMap<String, String>) -> String {
-    drop_repeated_link_bullets(&point_links_at_representatives(answer, representative))
+    let pointed = point_links_at_representatives(answer, representative);
+    drop_repeated_link_bullets(&drop_adjacent_repeat_links(&pointed))
+}
+
+/// Drops a link that directly follows another link (only spaces between) to
+/// the same email: `[A](email://e1)[B](email://e1)` reads as one citation.
+fn drop_adjacent_repeat_links(answer: &str) -> String {
+    use std::sync::OnceLock;
+    static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let re = LINK_RE.get_or_init(|| regex::Regex::new(r"\[[^\]]*\]\(email://([^)\s]+)\)").unwrap());
+    let mut out = String::with_capacity(answer.len());
+    let mut last_end = 0;
+    let mut prev: Option<(usize, String)> = None;
+    for caps in re.captures_iter(answer) {
+        let (Some(whole), Some(id)) = (caps.get(0), caps.get(1)) else {
+            continue;
+        };
+        let repeat = prev
+            .as_ref()
+            .is_some_and(|(end, prev_id)| prev_id == id.as_str() && answer[*end..whole.start()].trim().is_empty());
+        if repeat {
+            // Keep the previous link; skip the gap and this one.
+            last_end = whole.end();
+        } else {
+            out.push_str(&answer[last_end..whole.end()]);
+            last_end = whole.end();
+        }
+        prev = Some((whole.end(), id.as_str().to_string()));
+    }
+    out.push_str(&answer[last_end..]);
+    out
 }
 
 fn point_links_at_representatives(answer: &str, representative: &HashMap<String, String>) -> String {
@@ -595,10 +741,89 @@ mod tests {
                     id: (*id).into(),
                     date: "2026-09-01".into(),
                     from: "Alice <alice@example.com>".into(),
+                    to: String::new(),
+                    from_user: false,
                     text: "Please pay by Friday.".into(),
                 })
                 .collect(),
         }
+    }
+
+    // ── who wrote to whom ──
+
+    #[test]
+    fn the_user_is_named_as_you() {
+        assert_eq!(participant("Gero", "GERO@x.example", "gero@x.example"), USER_LABEL);
+        assert_eq!(
+            participant("Ana", "ana@x.example", "gero@x.example"),
+            "Ana <ana@x.example>"
+        );
+        assert_eq!(participant("", "ana@x.example", "gero@x.example"), "ana@x.example");
+        assert_eq!(participant("ana@x.example", "ana@x.example", ""), "ana@x.example");
+    }
+
+    #[test]
+    fn recipients_name_the_user_as_you() {
+        let to = vec!["ana@x.example".to_string(), "Gero <gero@x.example>".to_string()];
+        assert_eq!(
+            recipients(&to, "gero@x.example"),
+            format!("ana@x.example, {USER_LABEL}")
+        );
+        assert_eq!(recipients(&[], "gero@x.example"), "");
+    }
+
+    #[test]
+    fn a_message_renders_who_sent_it_to_whom() {
+        let mut d = doc("e1");
+        d.messages[0].from = USER_LABEL.into();
+        d.messages[0].to = "ana@x.example".into();
+        assert!(
+            d.render().contains(&format!("From: {USER_LABEL}\nTo: ana@x.example\n")),
+            "{}",
+            d.render()
+        );
+        d.messages[0].to = String::new();
+        assert!(!d.render().contains("To:"), "no recipients, no To line");
+    }
+
+    fn mine(mut d: ResearchDoc, id: &str) -> ResearchDoc {
+        for m in d.messages.iter_mut().filter(|m| m.id == id) {
+            m.from_user = true;
+        }
+        d
+    }
+
+    #[test]
+    fn a_sent_question_counts_only_conversations_where_a_cited_email_is_the_users() {
+        // t1: the user's own quote is cited. t2: the user asked, the supplier's
+        // quote is what got cited — a quote received, not sent.
+        let docs = vec![mine(conv("t1", &["e1"]), "e1"), mine(conv("t2", &["e2", "e3"]), "e2")];
+        let notes = vec![BatchNotes {
+            lines: vec!["- my quote (email://e1)".into(), "- their quote (email://e3)".into()],
+            cited: vec!["e1".into(), "e3".into()],
+        }];
+        let ids = |ms: Vec<Match>| ms.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(ids(collect_matches(&docs, &notes, Direction::Sent)), vec!["e1"]);
+        assert_eq!(ids(collect_matches(&docs, &notes, Direction::Received)), vec!["e3"]);
+        assert_eq!(ids(collect_matches(&docs, &notes, Direction::Any)), vec!["e1", "e3"]);
+    }
+
+    #[test]
+    fn the_map_prompt_states_the_questions_direction() {
+        let template = "HEAD\nQUESTION: {{question}}\n{{direction}}\n{{emails}}";
+        let (_, tail) = split_map_prompt(template, "q?", &[doc("e1")], Direction::Sent);
+        assert!(tail.contains(direction_note(Direction::Sent)), "{tail}");
+        let (_, tail) = split_map_prompt(template, "q?", &[doc("e1")], Direction::Any);
+        assert!(!tail.contains("SENT") && !tail.contains("RECEIVED"), "{tail}");
+    }
+
+    #[test]
+    fn repeated_inline_links_to_one_conversation_collapse() {
+        let map = HashMap::from([("e2".to_string(), "e1".to_string())]);
+        assert_eq!(
+            canonicalize_links("Paid [A](email://e1)[B](email://e2) and [C](email://e9).", &map),
+            "Paid [A](email://e1) and [C](email://e9)."
+        );
     }
 
     #[test]
@@ -622,18 +847,18 @@ mod tests {
     #[test]
     fn map_prompt_keeps_the_batch_out_of_the_prefix() {
         let tmpl = "Extract findings.\n\nQUESTION: {{question}}\n\nEMAILS:\n{{emails}}";
-        let (prefix, suffix) = split_map_prompt(tmpl, "¿qué facturas?", &[doc("e1"), doc("e2")]);
+        let (prefix, suffix) = split_map_prompt(tmpl, "¿qué facturas?", &[doc("e1"), doc("e2")], Direction::Any);
         assert_eq!(prefix, "Extract findings.\n\n");
         assert!(suffix.starts_with("QUESTION: ¿qué facturas?"));
         assert!(suffix.contains("EMAIL_ID: e1") && suffix.contains("EMAIL_ID: e2"));
         // The prefix is identical for another question and batch.
-        let (other, _) = split_map_prompt(tmpl, "other", &[doc("e9")]);
+        let (other, _) = split_map_prompt(tmpl, "other", &[doc("e9")], Direction::Any);
         assert_eq!(prefix, other);
     }
 
     #[test]
     fn map_prompt_without_marker_still_renders_everything() {
-        let (prefix, suffix) = split_map_prompt("Q={{question}} E={{emails}}", "q", &[doc("e1")]);
+        let (prefix, suffix) = split_map_prompt("Q={{question}} E={{emails}}", "q", &[doc("e1")], Direction::Any);
         assert!(prefix.contains("Q=q") && prefix.contains("EMAIL_ID: e1"));
         assert!(suffix.is_empty());
     }
@@ -699,6 +924,7 @@ NONE";
             "read 10",
             "3 emails",
             "- n (email://1)",
+            Direction::Any,
         );
         assert_eq!(prefix, "Write the report. Reply in Spanish.\n\n");
         assert!(suffix.contains("q?") && suffix.contains("read 10") && suffix.contains("email://1"));
@@ -707,7 +933,7 @@ NONE";
     #[test]
     fn the_default_prompts_split_on_their_markers() {
         use crate::services::prompts::defaults::{CHAT_RESEARCH_MAP, CHAT_RESEARCH_REDUCE};
-        let (prefix, suffix) = split_map_prompt(CHAT_RESEARCH_MAP, "Q?", &[doc("e1")]);
+        let (prefix, suffix) = split_map_prompt(CHAT_RESEARCH_MAP, "Q?", &[doc("e1")], Direction::Any);
         assert!(!prefix.contains("Q?") && !prefix.contains("e1"));
         assert!(suffix.contains("Q?") && suffix.contains("EMAIL_ID: e1"));
         assert!(!suffix.contains("{{"), "unrendered placeholder: {suffix}");
@@ -719,6 +945,7 @@ NONE";
             "read 5",
             "7 emails with relevant findings",
             "- n (email://e1)",
+            Direction::Any,
         );
         assert!(prefix.contains("Reply in Spanish."));
         for per_turn in ["Q?", "read 5", "7 emails with relevant findings", "email://e1)"] {
@@ -891,12 +1118,58 @@ NONE";
             ],
             cited: ids(&["e1", "e3"]),
         }];
-        let matches = collect_matches(&docs, &notes);
+        let matches = collect_matches(&docs, &notes, Direction::Any);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].id, "e1");
         assert_eq!(matches[0].finding, "Alice asks for a quote");
         assert_eq!(matches[1].id, "e3");
         assert_eq!(matches[1].finding, "Bob too");
+    }
+
+    #[test]
+    fn a_context_finding_is_kept_as_a_note_but_never_makes_a_match() {
+        // The user's request for a supplier's quote is related to "which
+        // quotes have I sent?" but does not answer it.
+        let docs = vec![conv("t1", &["e1"]), conv("t2", &["e2"])];
+        let notes = vec![BatchNotes {
+            lines: vec![
+                "- MATCH: Sent a quote for 8,400 EUR (email://e1)".into(),
+                "- CONTEXT: Requested a translation quote (email://e2)".into(),
+            ],
+            cited: ids(&["e1", "e2"]),
+        }];
+        let matches = collect_matches(&docs, &notes, Direction::Any);
+        assert_eq!(matches.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["e1"]);
+        assert_eq!(
+            matches[0].finding, "Sent a quote for 8,400 EUR",
+            "the tag is not part of the finding"
+        );
+    }
+
+    #[test]
+    fn finding_tags_are_read_in_the_shapes_a_small_model_writes() {
+        for line in ["- CONTEXT: x", "- **CONTEXT:** x", "- [Context] x", "* context: x"] {
+            assert_eq!(finding_tag(line), (FindingTag::Context, "x"), "{line}");
+        }
+        for line in ["- MATCH: x", "- **Match**: x", "- x"] {
+            assert_eq!(finding_tag(line), (FindingTag::Match, "x"), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_finding_that_starts_with_the_word_is_not_a_tag() {
+        assert_eq!(
+            finding_tag("- Contextual help shipped"),
+            (FindingTag::Match, "Contextual help shipped")
+        );
+        assert_eq!(
+            finding_tag("- Matched invoice 42"),
+            (FindingTag::Match, "Matched invoice 42")
+        );
+        assert_eq!(
+            finding_tag("- Match fees were paid"),
+            (FindingTag::Match, "Match fees were paid")
+        );
     }
 
     #[test]
@@ -914,13 +1187,12 @@ NONE";
             ],
             cited: ids(&["e1", "e2", "e3", "e4"]),
         }];
-        let matches = collect_matches(&docs, &notes);
+        let matches = collect_matches(&docs, &notes, Direction::Any);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].id, "e1", "the conversation's first matching email");
         assert_eq!(matches[0].emails, 3);
         assert_eq!(matches[0].finding, "Budget requested");
         assert_eq!(matches[1].emails, 1);
-        assert_eq!(matched_email_ids(&docs, &notes), ids(&["e1", "e2", "e3", "e4"]));
     }
 
     #[test]
