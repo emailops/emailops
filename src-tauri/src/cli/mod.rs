@@ -232,6 +232,11 @@ pub enum Command {
         /// Takes minutes on a local model.
         #[arg(long)]
         research: bool,
+        /// With `--research`: only plan and gather, and print how many emails
+        /// the research would read, in how many batches and about how long —
+        /// the confirmation card the app shows. Nothing is read or sent.
+        #[arg(long, requires = "research")]
+        estimate: bool,
     },
 
     /// Download new mail for an account.
@@ -769,6 +774,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_research_estimate_flag_parses_and_needs_research() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "q?", "--research", "--estimate"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Chat {
+                research: true,
+                estimate: true,
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["emailops-cli", "chat", "q?", "--estimate"]).is_err());
+    }
+
+    #[test]
     fn chat_research_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "chat", "themes this quarter?", "--research"]);
         assert!(matches!(cli.command, Some(Command::Chat { research: true, .. })));
@@ -786,6 +805,7 @@ mod tests {
                 thread,
                 prewarm,
                 research,
+                estimate,
             }) => {
                 assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
@@ -794,6 +814,7 @@ mod tests {
                 assert!(thread.is_none());
                 assert!(!prewarm);
                 assert!(!research, "research mode is opt-in");
+                assert!(!estimate);
             }
             other => panic!("expected Chat, got {other:?}"),
         }
