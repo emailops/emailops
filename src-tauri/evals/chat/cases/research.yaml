@@ -39,3 +39,17 @@
   expected_min_research_emails: 10
   expected_answer_contains: ["](email://"]
   metrics: []
+
+# A list question: the report closes with the complete numbered list of
+# matches, built in code (a model-written list stops at its output budget),
+# and states the exact count. The demo mailbox's 2025 prospect requests are the
+# persona's canonical "list them all" query.
+- id: research_lists_every_prospect_request_with_an_exact_count_en
+  question: "Give me a list of all the prospect requests I received in 2025, with who asked and what for"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_min_research_emails: 3
+  expected_answer_contains: ["### Full list (", "](email://"]
+  metrics: []

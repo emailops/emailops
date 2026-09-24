@@ -1496,3 +1496,30 @@ one-shot prefix slot.
   nothing.
 - *A fixed top-k for topic questions*: it cuts a large topic short and pads a small one
   with noise.
+
+## 2026-09-24 — Research lists and counts are built in code; the status bar shows long AI work
+
+**Decision:** The matches a research run finds — every email the reading step cites, each
+with its first finding — are collected in code from the map notes, before any condense
+round. The report prompt receives the exact counts (emails and conversations) as facts it
+must state, not something it counts itself. When the question asks for a list or a count
+("list", "todas", "how many", "cuántos", "combien", "wie viele"…), the report ends with the
+complete numbered list of matches, rendered in code, with no size cap.
+Research sizes its batches to the window the loaded model actually runs with — the
+`AIProvider::context_window()` the llama.cpp actor publishes after clamping the setting to
+RAM, KV fit and the trained window — and falls back to the setting before the model loads.
+Closing the window or quitting (Cmd+Q) while research reads is held by the backend, and
+the frontend asks the user to confirm.
+The log bar shows the long-running AI work in progress: research first, with its step,
+then lens, memory and task backfills, classification, Embeddings, junk scoring and model
+downloads. What is running is polled from the task-queue snapshot; the numbers come from
+each process's own status call or progress event.
+**Context:** a model-written report stops at its output budget (a few dozen lines), and a
+small model's count of its own notes is a guess. The status bar had no view of background
+AI work at all; the queue snapshot was only visible on the Dashboard.
+**Rejected:**
+- *Raising the report's `max_tokens`*: the report would still be bounded, and the count
+  would still be guessed.
+- *Having the model write the list in chunks*: slower, and just as lossy.
+- *A new unified progress event for every job*: it would touch every job module. Their
+  existing status APIs and events already carry the numbers.

@@ -56,5 +56,18 @@
       "debug": "DBG",
       "info": "INF"
     }
+  },
+  "activity": {
+    "lensBackfill": "Lens backfill",
+    "lensRun": "Lens run",
+    "memoryBackfill": "Memory backfill",
+    "memoryExtract": "Memory extraction",
+    "tasksBackfill": "Task backfill",
+    "tasksExtract": "Task extraction",
+    "classification": "Classifying emails",
+    "embeddings": "Generating Embeddings",
+    "junk": "Junk scoring",
+    "modelDownload": "Downloading model",
+    "remaining": "{{n}} remaining"
   }
 }

@@ -56,5 +56,18 @@
       "debug": "DBG",
       "info": "INF"
     }
+  },
+  "activity": {
+    "lensBackfill": "Lens-Backfill",
+    "lensRun": "Lens-Lauf",
+    "memoryBackfill": "Gedächtnis-Backfill",
+    "memoryExtract": "Gedächtnis-Extraktion",
+    "tasksBackfill": "Aufgaben-Backfill",
+    "tasksExtract": "Aufgaben-Extraktion",
+    "classification": "E-Mails werden klassifiziert",
+    "embeddings": "Embeddings werden erzeugt",
+    "junk": "Spam-Bewertung",
+    "modelDownload": "Modell wird heruntergeladen",
+    "remaining": "noch {{n}}"
   }
 }
