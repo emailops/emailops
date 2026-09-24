@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new EmailOps release across all three platforms — full verification run first (`make verify-release`, its summary committed with the release), version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local, manual publish) with a local install + launch smoke test, a doc-staleness check (app docs + public website) before tagging, commit, tag, (confirmation-gated) push, then the Linux/Windows CI build (triggered and watched, auto-published on success). The macOS GitHub release asset is never uploaded automatically; the skill prints the exact info to publish it manually — Linux/Windows assets attach to the same release automatically via CI. After the developer publishes the macOS DMGs, the skill regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap (confirmation-gated).
+description: Cut a new EmailOps release across all three platforms — full verification run first (`make verify-release`, its summary committed with the release), version bump across all source-of-truth files, CHANGELOG, quality gates, signed + notarized macOS universal app + standalone CLI builds (local) with a local install + launch smoke test, a doc-staleness check (app docs + public website) before tagging, commit, tag, push, a DRAFT GitHub release with the macOS DMGs attached, then the Linux/Windows CI build (triggered and watched, attaches its installers to the same draft). Only once every platform's binaries are on the draft does the skill ask the developer whether to publish it — publishing is never done without asking. After publishing, it regenerates the Homebrew cask from the release assets and pushes it to emailops/homebrew-tap.
 argument-hint: <patch|minor|major|X.Y.Z>
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep
@@ -15,12 +15,15 @@ status line, and **stop on the first failure** — never paper over a failing ga
 ## Platforms at a glance
 
 - **macOS**: built, signed, and notarized **locally** on the developer's
-  machine (Phases 5-5b), uploaded to the GitHub release **by hand** (Phase 8).
-  This is a permanent choice, not a stopgap — signing secrets never need to
-  touch CI for this platform.
+  machine (Phases 5-5b), uploaded by the skill to the **draft** GitHub release
+  (Phase 7). This is a permanent choice, not a stopgap — signing secrets never
+  need to touch CI for this platform.
 - **Linux + Windows**: built in CI (`.github/workflows/release.yml`), unsigned
-  by convention, smoke-tested on the same runner, and **auto-published** to the
-  same tagged release (Phase 7b). The skill triggers this and waits for it.
+  by convention, smoke-tested on the same runner, and attached to the same
+  **draft** release (Phase 7b). The skill triggers this and waits for it.
+- **The release is always created as a draft** and stays one until every
+  platform's binaries are attached. Publishing it is the one step the skill
+  never takes without asking (Phase 8).
 - Both share one version bump and one git tag — there is no separate release
   cycle per platform.
 
@@ -28,9 +31,9 @@ status line, and **stop on the first failure** — never paper over a failing ga
 
 If you are ever unsure about *anything* — the target version, whether the
 working tree is in a safe state, an ambiguous CHANGELOG entry, an unexpected
-build failure, whether to push, missing tooling, conflicting state, etc. — **stop
+build failure, missing tooling, conflicting state, etc. — **stop
 and ask the user.** Do not guess, do not invent a version, do not improvise a
-workaround. A release is irreversible once pushed; a clarifying question is
+workaround. A published release is irreversible; a clarifying question is
 always cheaper than a bad tag.
 
 ## Argument
@@ -264,24 +267,41 @@ git tag vX.Y.Z
 Do **not** add Claude/agent as author or co-author (repo convention). Use the
 real new version in both the message and tag.
 
-## Phase 7 — Push (confirmation-gated)
+## Phase 7 — Push + draft GitHub release
 
-Pushing is a shared, irreversible action. **Always ask for explicit
-confirmation before it**, even if the user kicked off the release.
-
-Push branch + tag (only after the user confirms):
+Every gate before this point passed, so push without asking — the release is
+not visible to users until it is published in Phase 8:
 
 ```bash
 git push origin main
 git push origin vX.Y.Z
 ```
 
-**Do not upload the macOS DMGs yourself.** Even if `gh` is installed and
-authenticated, never run `gh release create`/`gh release upload` for the macOS
-assets as part of this skill. The developer uploads those manually — your job
-for macOS ends at printing the exact info they need (see Phase 8). This does
-**not** apply to Linux/Windows — those *are* auto-published by CI, deliberately
-(Phase 7b), since they carry no signing secrets to protect.
+Write the release notes from the new CHANGELOG section to a temp file (e.g.
+`/tmp/emailops-vX.Y.Z-notes.md`), then create the release **as a draft** with
+both macOS DMGs attached:
+
+```bash
+gh release create vX.Y.Z --draft --verify-tag \
+  --title "vX.Y.Z" \
+  --notes-file /tmp/emailops-vX.Y.Z-notes.md \
+  release/EmailOps-macos.dmg \
+  release/EmailOps-CLI-macos.dmg
+```
+
+- **Never omit `--draft`**, and never run `gh release create`/`edit` in a way
+  that publishes before Phase 8's confirmation.
+- If a release for the tag already exists (`gh release view vX.Y.Z` exits 0),
+  check it is still a draft (`gh release view vX.Y.Z --json isDraft`) and use
+  `gh release upload vX.Y.Z <dmgs>` instead. If it is already published, stop
+  and ask — never replace assets on a published release (see Phase 9's
+  invariant).
+- The filenames must stay exactly `EmailOps-macos.dmg` and
+  `EmailOps-CLI-macos.dmg` — that is what makes the permanent
+  `releases/latest/download/<name>` links resolve to this build. Never attach
+  versioned copies.
+- If `gh` is missing or unauthenticated, stop and tell the developer
+  (`brew install gh && gh auth login`).
 
 ## Phase 7b — Trigger and watch the Linux/Windows CI release build
 
@@ -316,11 +336,10 @@ gh run watch <run-id>
   macOS assets (or only some platforms) is a legitimate outcome only if the
   developer explicitly accepts it after seeing the failure.
 - **On success**: both `.deb`/`.AppImage` and `.msi`/setup `.exe` are already
-  attached to the `vX.Y.Z` GitHub release (the workflow creates it if it
-  doesn't exist yet, via `softprops/action-gh-release`'s upsert-by-tag
-  behavior — safe to run before *or* after the developer manually uploads the
-  macOS DMGs in Phase 8, since it only adds files, never removes or renames
-  what's already there). Note in your status line that the smoke tests passed
+  attached to the `vX.Y.Z` draft (`softprops/action-gh-release` finds the draft
+  by tag and only adds files). The workflow sets `draft: true` on that step —
+  without it the action *publishes* an existing draft once its uploads finish,
+  so never remove it. Note in your status line that the smoke tests passed
   — this confirms the installed binary starts and resolves its shared
   libraries/DLLs on a clean machine, **not** that GPU offload works (CI
   runners have no GPU; that still needs an occasional real-hardware check).
@@ -329,90 +348,45 @@ Once Phase 7b's CI build succeeds, this is also the point to follow through on
 any website updates queued back in Phase 5d — now that the platforms in
 question are confirmed actually working, not just built.
 
-## Phase 8 — Print the manual GitHub-release info (macOS only)
+## Phase 8 — Check the draft, then ask to publish
 
-The macOS assets are always uploaded by the developer by hand — Linux/Windows
-are not (Phase 7b already attached them, or created the release if it didn't
-exist). Gather and print everything the developer needs for the macOS side, so
-it is copy-paste ready. Verify each fact before printing it (don't assume). If
-Phase 7b already created the release, `gh release create` below will fail
-(release exists) — use `gh release upload` instead; check which applies with
-`gh release view vX.Y.Z` first and print the correct command.
+Run this only after Phase 7b succeeded (or the developer explicitly accepted a
+missing platform). Verify the draft before asking — don't assume:
 
-1. **Confirm the assets exist.** Stat each stable-named DMG and compute its
-   SHA-256 so the developer can sanity-check the uploads. The release attaches
-   **two** assets — the desktop app and the standalone CLI — each reachable by
-   filename through a permanent latest-download link:
-   - `EmailOps-macos.dmg` →
-     `https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`
-   - `EmailOps-CLI-macos.dmg` →
-     `https://github.com/emailops/emailops/releases/latest/download/EmailOps-CLI-macos.dmg`
+```bash
+gh release view vX.Y.Z --json isDraft,assets --jq '{isDraft, assets: [.assets[] | {name, size, digest}]}'
+shasum -a 256 release/EmailOps-macos.dmg release/EmailOps-CLI-macos.dmg
+```
 
-   ```bash
-   ls -la release/EmailOps-macos.dmg release/EmailOps-CLI-macos.dmg
-   shasum -a 256 release/EmailOps-macos.dmg release/EmailOps-CLI-macos.dmg
-   ```
+The draft must be `isDraft: true` and carry every expected asset:
+`EmailOps-macos.dmg`, `EmailOps-CLI-macos.dmg`, `EmailOps-linux.AppImage`,
+`EmailOps-linux.deb`, `EmailOps-windows.msi`, `EmailOps-windows-setup.exe`,
+`EmailOps-windows-cuda.msi`, `EmailOps-windows-cuda-setup.exe` (plus the
+optional `EmailOps-linux.rpm`). The macOS digests must match the local
+`shasum` output. Anything missing or mismatched: stop and report.
 
-2. **Confirm the tag is on origin** (`git ls-remote --tags origin vX.Y.Z`) and
-   note the repo (`git remote get-url origin`).
+Then show the developer the tag (+ commit), the asset list with sizes, the
+draft URL, and the release notes, and **ask whether to publish**. Only on an
+explicit yes:
 
-3. **Write the release notes to a temp file** from the new CHANGELOG section
-   (e.g. `/tmp/emailops-vX.Y.Z-notes.md`) so the `--notes-file` path is real.
+```bash
+gh release edit vX.Y.Z --draft=false --latest
+```
 
-Then print, in your final message:
-
-- **Repo, tag (+ commit it points at), and release title** (`vX.Y.Z`).
-- **The two DMG asset paths**, `release/EmailOps-macos.dmg` (desktop app) and
-  `release/EmailOps-CLI-macos.dmg` (standalone CLI). The filenames must stay
-  exactly as-is — that is what makes the permanent latest-download links resolve
-  to this build. Do not rename them per-version and do not attach versioned
-  copies; GitHub serves the latest-download link by filename, so a versioned
-  name would not be reachable through the permanent URL.
-- **The raw release notes** (inline) plus the temp-file path.
-- **Both ways to publish**, and let the developer pick. Which `gh` command
-  applies depends on whether Phase 7b already created the release (check with
-  `gh release view vX.Y.Z >/dev/null 2>&1` — exit 0 means it exists):
-  - *gh CLI, release does not exist yet* (Phase 7b hasn't run or hasn't
-    finished — this creates it):
-
-    ```bash
-    gh release create vX.Y.Z \
-      --title "vX.Y.Z" \
-      --notes-file /tmp/emailops-vX.Y.Z-notes.md \
-      release/EmailOps-macos.dmg \
-      release/EmailOps-CLI-macos.dmg
-    ```
-
-  - *gh CLI, release already exists* (Phase 7b already created it with the
-    Linux/Windows assets — this just adds the macOS DMGs to it):
-
-    ```bash
-    gh release upload vX.Y.Z \
-      release/EmailOps-macos.dmg \
-      release/EmailOps-CLI-macos.dmg
-    ```
-
-    If `gh` is not installed, mention it (`brew install gh && gh auth login`).
-  - *Web UI*: open `https://github.com/emailops/emailops/releases/new` (or
-    `.../releases/edit/vX.Y.Z` if it already exists), choose the `vX.Y.Z` tag,
-    set the title if new, paste the notes if new, drag in **both**
-    `release/EmailOps-macos.dmg` and `release/EmailOps-CLI-macos.dmg` (keep the
-    filenames as-is), keep "Set as the latest release" checked, and publish.
-
-Tell the user that once they have published the release, the Homebrew cask
-still needs updating (Phase 9) — offer to do it as soon as they confirm the
-release is live.
+Confirm it is live (`gh release view vX.Y.Z --json isDraft,url`) and that
+`https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg`
+resolves (`curl -sIL -o /dev/null -w '%{http_code}' <url>` → 200). If the
+developer says no, stop here and leave the draft as is.
 
 ## Phase 9 — Homebrew cask update (post-publish)
 
 EmailOps is also distributed via the `emailops/homebrew-tap` cask. The cask is
 generated **from the published release assets** (it pins the sha256 digests
 GitHub computes for each asset), so this phase can only run **after** the
-developer has published the GitHub release from Phase 8. Full background and
+release was published in Phase 8. Full background and
 invariants: `homebrew/README.md`.
 
-1. **Verify the release is live and digested.** Do not rely on the user's
-   word alone — check:
+1. **Verify the release is live and digested:**
 
    ```bash
    gh api repos/emailops/emailops/releases/tags/vX.Y.Z --jq '.assets[] | {name, digest}'
@@ -450,8 +424,8 @@ invariants: `homebrew/README.md`.
    git -C ../homebrew-tap commit -m "emailops X.Y.Z"
    ```
 
-5. **Push the tap (confirmation-gated).** Same rule as Phase 7 — ask before
-   pushing:
+5. **Push the tap.** The developer already approved publishing, so no
+   further confirmation:
 
    ```bash
    git -C ../homebrew-tap push origin main
@@ -462,7 +436,7 @@ invariants: `homebrew/README.md`.
 6. **Commit the regenerated cask in the main repo too** (`homebrew/Casks/
    emailops.rb` is tracked here as the source of what was shipped):
    `git add homebrew/Casks/emailops.rb && git commit -m "chore: update Homebrew cask to vX.Y.Z"`,
-   and include it when pushing `main` (ask first, as always).
+   and push `main`.
 
 **Invariant:** never replace a DMG asset on an already-published tag — the
 cask pins its sha256, so swapping the file breaks every install of that
@@ -473,9 +447,8 @@ version. If an asset is bad, cut a new patch release instead.
 Report: the new version, the Phase 1b verification result (summary path, newly failing tests and what the developer decided about them), that gates/build/verify passed, the local install
 smoke-test result (with screenshot), any doc-staleness findings from Phase 5d
 (app docs and website) and whether the developer acted on them, the commit +
-tag created, the push state (pushed or pending), the Linux/Windows CI result
+tag created and pushed, the Linux/Windows CI result
 (run URL, conclusion, smoke-test outcome per platform), the website push state
-(updated + pushed, or held pending developer confirmation), that the macOS
-GitHub release upload is left for the developer to do manually (with the info
-from Phase 8 printed above), and the Homebrew cask state (updated + pushed to
-the tap, or pending the release publish).
+(updated + pushed, or held pending developer confirmation), the release state
+(draft with its asset list, or published with its URL), and the Homebrew cask
+state (updated + pushed to the tap, or pending the release publish).
