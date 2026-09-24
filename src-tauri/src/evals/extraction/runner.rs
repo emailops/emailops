@@ -181,6 +181,7 @@ pub async fn run(mut cfg: ExtractionRunnerConfig) -> EvalResult<PathBuf> {
             passed,
             score: None,
             detail,
+            evidence: None,
         });
     }
     match json_report.write(&cfg.out_dir) {

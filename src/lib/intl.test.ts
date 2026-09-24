@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatBytes, formatDate, formatNumber, formatRelativeTime, relativeParts } from './intl';
+import {
+  formatBytes,
+  formatDate,
+  formatDayMonthYearTime,
+  formatNumber,
+  formatRelativeTime,
+  relativeParts,
+} from './intl';
 
 describe('relativeParts (unit selection)', () => {
   it('selects seconds under a minute', () => {
@@ -71,5 +78,18 @@ describe('formatDate', () => {
     const ts = 1_700_000_000;
     const en = formatDate(ts, 'en', { year: 'numeric', month: 'short', day: 'numeric' });
     expect(en).toMatch(/2023/);
+  });
+});
+
+describe('formatDayMonthYearTime', () => {
+  it('writes DD/MM/YYYY HH:mm in local time, zero-padded, 24h', () => {
+    const ts = new Date(2026, 8, 4, 9, 5).getTime() / 1000;
+    expect(formatDayMonthYearTime(ts)).toBe('04/09/2026 09:05');
+    const evening = new Date(2026, 11, 31, 23, 59).getTime() / 1000;
+    expect(formatDayMonthYearTime(evening)).toBe('31/12/2026 23:59');
+  });
+
+  it('shows a dash for a missing timestamp', () => {
+    expect(formatDayMonthYearTime(null)).toBe('—');
   });
 });

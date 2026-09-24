@@ -229,17 +229,20 @@ export function Inbox({
   const isUnified = useAccountStore((s) => isUnifiedMode(s.activeAccountId));
   const allAccounts = useAccountStore((s) => s.accounts);
   const autocompleteAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
+  const activeFilter = useFilterStore((s) => s.activeFilter);
+  const searchQuery = useEmailStore((s) => s.searchQuery);
+  // Search results mix every account, so they also get a readable chip.
+  const showAccountChip = Boolean(searchQuery);
   const getAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
     const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
       colorClass: accountColorClass(email.accountId),
       label: emailById.get(email.accountId) ?? email.accountId,
+      chip: showAccountChip,
     });
-  }, [isUnified, allAccounts]);
+  }, [isUnified, allAccounts, showAccountChip]);
 
-  const activeFilter = useFilterStore((s) => s.activeFilter);
-  const searchQuery = useEmailStore((s) => s.searchQuery);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
   const navigationMode = useEmailStore((s) => s.navigationMode);

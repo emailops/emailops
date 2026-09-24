@@ -11,6 +11,7 @@ import { RuleManagementModal } from '@/components/Attachments/RuleManagementModa
 import { CalendarView } from '@/components/Calendar/CalendarView';
 import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
 import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
+import { ChatPanelRail } from '@/components/Chat/ChatPanelRail';
 import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
@@ -49,6 +50,7 @@ import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
+import { chatDockMode } from '@/lib/chatPanelLayout';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
@@ -56,7 +58,7 @@ import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
-import { isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
+import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -234,9 +236,10 @@ function AppInner() {
   // it wins over the view behind it — the same precedence an open FORM has
   // over both (registered by the form component itself, see viewContextStore).
   const setBaseView = useViewContextStore((s) => s.setBaseView);
+  const activeLensIdForChat = useLensStore((s) => s.activeLensId);
   useEffect(() => {
-    setBaseView(settingsTab ? `settings/${settingsTab}` : `view/${viewMode}`);
-  }, [viewMode, settingsTab, setBaseView]);
+    setBaseView(baseViewToken(settingsTab, viewMode, activeLensIdForChat));
+  }, [viewMode, settingsTab, activeLensIdForChat, setBaseView]);
   const [classificationRulePrefill, setClassificationRulePrefill] = useState<ClassificationRulePrefill | null>(null);
   const [rulePrefill, setRulePrefill] = useState<RuleFormPrefill | null>(null);
   const [selectedCategories, setSelectedCategories] = usePersistedPref<Set<EmailCategory>>(
@@ -1274,6 +1277,8 @@ function AppInner() {
     }
   };
 
+  const chatDock = chatDockMode({ aiEnabled, panelOpen: isChatPanelOpen, fullChatView: viewMode === 'chat' });
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {onboardingCompleted === false && (
@@ -1424,7 +1429,11 @@ function AppInner() {
               <MemoryView accountId={effectiveAccountId} />
             </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
-            <LensesView />
+            <LensesView
+              onCreateWithChat={(prompt) => {
+                void handleNewChat().then(() => useChatStore.getState().prefillInput(prompt));
+              }}
+            />
           ) : viewMode === 'tagboard' && aiEnabled ? (
             // The board is a list surface like the inbox: it owns the left
             // pane and hands the selected thread to the same EmailView. Both
@@ -1649,8 +1658,10 @@ function AppInner() {
 
         {/* Right-docked chat. Gated on the master AI switch like every other
             AI surface, and suppressed while the full-page chat view is open so
-            the same conversation isn't rendered twice side by side. */}
-        {aiEnabled && isChatPanelOpen && viewMode !== 'chat' && (
+            the same conversation isn't rendered twice side by side. Collapsed,
+            it leaves a rail to reopen it from any view. */}
+        {chatDock === 'rail' && <ChatPanelRail onOpen={() => setIsChatPanelOpen(true)} />}
+        {chatDock === 'panel' && (
           <ChatPanelDock
             accountId={chatAccountId}
             onAccountChange={handleChatAccountChange}
@@ -1675,7 +1686,6 @@ function AppInner() {
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
           onApplySearchWithResults={handleApplySearchWithResults}
-          selectedCategories={selectedCategoriesList}
           onClose={() => setIsSearchOpen(false)}
         />
       )}

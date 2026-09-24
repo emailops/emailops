@@ -13,7 +13,7 @@ Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linu
 ## Download
 
 - **macOS**: [EmailOps-macos.dmg](https://github.com/emailops/emailops/releases/latest/download/EmailOps-macos.dmg)
-- **Windows**: [EmailOps-windows-setup.exe](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-setup.exe) (recommended — Vulkan GPU acceleration, auto-detects a compatible driver and falls back to CPU). NVIDIA users can instead get the [CUDA build](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-cuda-setup.exe).
+- **Windows**: [EmailOps-windows-setup.exe](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-setup.exe) (recommended — Vulkan GPU acceleration, auto-detects a compatible driver and falls back to CPU). NVIDIA users can instead get the [CUDA build](https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows-cuda-setup.exe). The installer is not code-signed yet, so Windows SmartScreen shows *"Windows protected your PC"* on first run: click **More info → Run anyway** ([details](https://getemailops.com/docs/installation/#smartscreen)).
 - **Linux**: [EmailOps-linux.AppImage](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.AppImage) (no install needed) or [EmailOps-linux.deb](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.deb) for Debian/Ubuntu.
 
 All installers, checksums, and older versions are on the [Releases page](https://github.com/emailops/emailops/releases/latest).

@@ -113,6 +113,7 @@ interface ChatStore {
    */
   selectAccount: (accountId: string) => Promise<void>;
   createConversation: (accountId: string, title?: string) => Promise<string>;
+  prefillInput: (text: string) => void;
   /** Create a chat seeded with the cleaned content of an email thread. */
   createConversationFromThread: (accountId: string, threadId: string) => Promise<string>;
   selectConversation: (id: string | null) => Promise<void>;
@@ -323,6 +324,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         (previous && inAccount(previous) ? previous : null);
       await get().selectConversation(target);
     },
+
+    prefillInput: (text) => set((s) => ({ inputPrefill: { text, nonce: (s.inputPrefill?.nonce ?? 0) + 1 } })),
 
     createConversation: async (accountId, title) => {
       const conv = await api.createChatConversation(accountId, title);

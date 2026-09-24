@@ -9,12 +9,18 @@
 //   cargo run --features eval --bin lens_extract_eval -- \
 //     --lens-id <id> --limit 20
 //
+//   # Run a built-in template without creating a Lens row first:
+//   cargo run --features eval --example lens_extract_eval -- \
+//     --template contact_form_leads --prod-db <data-dir>/emailops.db
+//
 //   # Run against specific email IDs (bypasses scope evaluation):
 //   cargo run --features eval --bin lens_extract_eval -- \
 //     --lens-id <id> --email-ids 19e3f5ffc919cc9c,19d4e767bb03dbb6,19d7c385a8b2cfb9
 //
 // Flags:
-//   --lens-id <id>           Required. Existing Lens id in the prod DB.
+//   --lens-id <id>           Existing Lens id in the prod DB.
+//   --template <key>         Built-in template key instead of --lens-id; the
+//                            Lens is built in memory from the template.
 //   --limit <N>              Number of emails to sample from scope. Default: 20.
 //   --email-ids <id,...>     Comma-separated email IDs. Bypasses scope; runs
 //                            extraction on exactly these emails.
@@ -30,14 +36,18 @@ use serde::Serialize;
 
 use emailops_lib::db::Database;
 use emailops_lib::evals::db_source::{prepare_eval_db, EvalDbMode};
+use emailops_lib::evals::lenses::runner::lens_from_template;
 use emailops_lib::services::ai::AiService;
 use emailops_lib::services::lenses::{extractor, scope as scope_eval};
 
 #[derive(Parser, Debug)]
 #[command(name = "lens_extract_eval", about = "Evaluate per-email Lens extraction.")]
 struct Args {
-    #[arg(long = "lens-id")]
-    lens_id: String,
+    #[arg(long = "lens-id", required_unless_present = "template", conflicts_with = "template")]
+    lens_id: Option<String>,
+
+    #[arg(long)]
+    template: Option<String>,
 
     #[arg(long, default_value_t = 20)]
     limit: usize,
@@ -115,17 +125,36 @@ fn main() {
         EvalDbMode::CopyToTemp
     };
 
-    match rt.block_on(run(args.lens_id, args.limit, pinned_ids, prod_db, db_mode, out_dir)) {
-        Ok(path) => eprintln!("[lens-extract-eval] done → {}", path.display()),
+    let source = match (args.lens_id, args.template) {
+        (Some(id), _) => LensSource::Stored(id),
+        (None, Some(key)) => LensSource::Template(key),
+        (None, None) => {
+            eprintln!("[lens-extract-eval] pass --lens-id or --template");
+            std::process::exit(2);
+        }
+    };
+
+    let code = match rt.block_on(run(source, args.limit, pinned_ids, prod_db, db_mode, out_dir)) {
+        Ok(path) => {
+            eprintln!("[lens-extract-eval] done → {}", path.display());
+            0
+        }
         Err(e) => {
             eprintln!("[lens-extract-eval] ERROR: {}", e);
-            std::process::exit(1);
+            1
         }
-    }
+    };
+    // Leaving normally lets ggml's Metal static destructor abort (exit 134).
+    emailops_lib::services::ai::shutdown_and_exit(code);
+}
+
+enum LensSource {
+    Stored(String),
+    Template(String),
 }
 
 async fn run(
-    lens_id: String,
+    source: LensSource,
     limit: usize,
     pinned_ids: Vec<String>,
     prod_db: PathBuf,
@@ -135,7 +164,10 @@ async fn run(
     let prepared_db = prepare_eval_db(&prod_db, db_mode, "lens-extract").map_err(|e| e.to_string())?;
     let db = Arc::new(Database::new(prepared_db.db_dir().to_path_buf()).map_err(|e| e.to_string())?);
 
-    let lens = db.get_lens(&lens_id).map_err(|e| e.to_string())?;
+    let lens = match source {
+        LensSource::Stored(id) => db.get_lens(&id).map_err(|e| e.to_string())?,
+        LensSource::Template(key) => lens_from_template(&key).map_err(|e| e.to_string())?,
+    };
     eprintln!(
         "[lens-extract-eval] lens = {} ({}), columns = {}",
         lens.name,

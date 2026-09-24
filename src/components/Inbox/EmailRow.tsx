@@ -32,8 +32,10 @@ interface EmailRowProps {
   compact?: boolean;
   /** Unified ("All accounts") mode: colored left-edge bar identifying the
    *  email's account. Rendered absolutely so it never changes row height
-   *  (the virtualizer depends on stable measured heights). */
-  accountBadge?: { colorClass: string; label: string };
+   *  (the virtualizer depends on stable measured heights). `chip` also names
+   *  the account inline — used for unified search results, where rows from
+   *  several accounts are mixed and a colour alone is not enough. */
+  accountBadge?: { colorClass: string; label: string; chip?: boolean };
 }
 
 export function EmailRow({
@@ -99,6 +101,19 @@ export function EmailRow({
     />
   ) : null;
 
+  // Inline chip sits on the sender line, which already has a fixed height, so
+  // it does not change the measured row height either.
+  const accountChip = accountBadge?.chip ? (
+    <span
+      data-testid="account-chip"
+      className="inline-flex items-center gap-1 flex-shrink min-w-0 max-w-[40%] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+      title={t('inbox:emailRow.accountTooltip', { email: accountBadge.label })}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountBadge.colorClass}`} aria-hidden="true" />
+      <span className="truncate">{accountBadge.label}</span>
+    </span>
+  ) : null;
+
   if (compact) {
     return (
       <div
@@ -147,6 +162,7 @@ export function EmailRow({
           >
             {senderName(email)}
           </span>
+          {accountChip}
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
           <div className="flex-1 min-w-0 flex items-baseline gap-2 text-sm">
             {/* Its own flex item, so truncating the subject never swallows the chip
@@ -226,6 +242,7 @@ export function EmailRow({
             <span className={`text-sm truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>
               {senderName(email)}
             </span>
+            {accountChip}
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
             <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
             <EmailActionsMenu

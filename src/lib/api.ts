@@ -42,8 +42,11 @@ import type {
   JunkStats,
   JunkVerdict,
   Lens,
+  LensColumnFilter,
+  LensColumnValueCount,
   LensPreviewRow,
   LensRowsPage,
+  LensRunFailure,
   LensRunHandle,
   LensRunHistoryEntry,
   LensRunKind,
@@ -540,14 +543,10 @@ export interface SearchResult {
   searchMethod: SearchMethod;
 }
 
-/** `accountId: null` searches across every enabled account (unified view). */
-export async function searchEmails(
-  accountId: string | null,
-  query?: string,
-  useAi?: boolean,
-  categories?: EmailCategory[],
-): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi, categories });
+/** `accountId: null` searches across every enabled account (unified view).
+ *  Search spans every category — the inbox tab does not narrow it. */
+export async function searchEmails(accountId: string | null, query?: string, useAi?: boolean): Promise<SearchResult> {
+  return invoke('search_emails', { accountId, query, useAi });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {
@@ -1667,16 +1666,28 @@ export async function createLensFromTemplate(templateKey: string, name?: string,
 
 export async function getLensRows(
   lensId: string,
-  opts: { sort?: LensSortSpec; limit?: number; offset?: number } = {},
+  opts: { sort?: LensSortSpec; filters?: LensColumnFilter[]; limit?: number; offset?: number } = {},
 ): Promise<LensRowsPage> {
   // Backend SortSpec is `{ key, desc }` — translate from the UI shape.
   const sortPayload = opts.sort ? { key: opts.sort.columnKey, desc: opts.sort.direction === 'desc' } : null;
   return invoke('get_lens_rows', {
     lensId,
     sort: sortPayload,
+    filters: opts.filters?.length ? opts.filters : null,
     limit: opts.limit ?? null,
     offset: opts.offset ?? null,
   });
+}
+
+/** Rows that failed extraction while one run ran, for the run history. */
+export async function listLensRunFailures(lensId: string, runId: string): Promise<LensRunFailure[]> {
+  return invoke('list_lens_run_failures', { lensId, runId });
+}
+
+/** Distinct values of one Lens column with their row counts (empty cells
+ *  first), for the Excel-style column filter. */
+export async function getLensColumnValues(lensId: string, key: string): Promise<LensColumnValueCount[]> {
+  return invoke('get_lens_column_values', { lensId, key });
 }
 
 export async function updateLensRowOverride(

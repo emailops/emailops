@@ -108,6 +108,26 @@ Mettez à jour ensuite avec `brew upgrade --cask emailops`.
 2. Lancez l'installeur et suivez les instructions. <!-- claim:inst-windows-2 -->
 3. Ouvrez EmailOps depuis le menu Démarrer. <!-- claim:inst-windows-3 -->
 
+### « Windows a protégé votre ordinateur » {#smartscreen}
+
+<!-- claim:inst-windows-smartscreen-1 -->
+Au lancement de l'installeur, Windows peut afficher un écran bleu **Microsoft Defender
+SmartScreen** avec le message *« Windows a protégé votre ordinateur »*. C'est normal :
+l'installeur n'est pas encore signé, car la signature sous Windows exige un certificat payant
+dont le projet ne dispose pas. L'avertissement ne dit rien du fichier lui-même ; SmartScreen
+l'affiche pour tout téléchargement non signé qu'il n'a pas encore vu souvent.
+
+<!-- claim:inst-windows-smartscreen-2 -->
+Pour continuer :
+
+1. Cliquez sur **Informations complémentaires**. <!-- claim:inst-windows-smartscreen-3 -->
+2. Vérifiez que l'application s'appelle **EmailOps**, puis cliquez sur **Exécuter quand même**. <!-- claim:inst-windows-smartscreen-4 -->
+
+<!-- claim:inst-windows-smartscreen-5 -->
+Si vous voulez d'abord vérifier que le téléchargement est authentique, comparez son empreinte
+SHA-256 (`Get-FileHash .\EmailOps-windows-setup.exe` dans PowerShell) aux sommes de contrôle
+de la [page de la version](https://github.com/emailops/emailops/releases/latest).
+
 ### Accélération GPU
 
 <!-- claim:inst-windows-gpu-acceleration-1 -->

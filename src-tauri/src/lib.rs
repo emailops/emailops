@@ -683,6 +683,8 @@ pub fn run() {
             commands::lenses::list_lens_templates,
             commands::lenses::create_lens_from_template,
             commands::lenses::get_lens_rows,
+            commands::lenses::get_lens_column_values,
+            commands::lenses::list_lens_run_failures,
             commands::lenses::get_excluded_lens_rows,
             commands::lenses::update_lens_row_override,
             commands::lenses::exclude_lens_row,

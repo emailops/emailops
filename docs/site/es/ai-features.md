@@ -233,6 +233,7 @@ remitentes y etiquetas (las newsletters se excluyen por defecto), limitar las ta
 correo, acotar hasta dónde llega la extracción hacia atrás y procesar correo antiguo bajo
 demanda.
 
+<!-- claim:ai-tasks-2 -->
 Actívalas en **Ajustes → Tareas con IA** con **Extraer tareas de los correos**; las tareas que
 encuentra aparecen en **Tareas**, en la barra lateral.
 
@@ -245,6 +246,7 @@ hechos candidatos se puntúan y se promocionan al superar un umbral; los de baja
 caducan. Todo lo aprendido es inspeccionable, y el subsistema entero tiene un interruptor
 general.
 
+<!-- claim:ai-memory-2 -->
 Actívala en **Ajustes → Memoria de IA** con **Dejar que el asistente recuerde datos**; lo que
 ha aprendido aparece en **Memoria**, en la barra lateral.
 
@@ -256,6 +258,7 @@ extraídas por IA (piensa en "todas las facturas con importe y vencimiento") que
 ejecutas desde la barra lateral. Una fila que excluyes desaparece de la vista; **Ver filas
 excluidas** las vuelve a mostrar para que puedas incluir alguna de nuevo.
 
+<!-- claim:ai-lenses-2 -->
 Actívalas en **Ajustes → Lentes de IA** y después crea y ejecuta cada lente desde la entrada
 **Lentes** de la barra lateral.
 

@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
-    CreateLensInput, Lens, LensRowsPage, LensRunHandle, LensRunHistoryEntry, LensRunKind, LensSchema, LensScope,
-    LensStatus, LensSummary, PreviewRow, SortSpec, UpdateLensInput,
+    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRowsPage, LensRunFailure, LensRunHandle,
+    LensRunHistoryEntry, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, SortSpec,
+    UpdateLensInput,
 };
 use crate::models::AppLogEvent;
 use crate::services::ai::AiService;
@@ -141,12 +142,38 @@ pub async fn get_lens_rows(
     state: State<'_, AppState>,
     lens_id: String,
     sort: Option<SortSpec>,
+    filters: Option<Vec<ColumnFilter>>,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<LensRowsPage> {
-    state
-        .db
-        .get_lens_rows(&lens_id, sort.as_ref(), limit.unwrap_or(200), offset.unwrap_or(0))
+    state.db.get_lens_rows_filtered(
+        &lens_id,
+        sort.as_ref(),
+        filters.as_deref().unwrap_or_default(),
+        limit.unwrap_or(200),
+        offset.unwrap_or(0),
+    )
+}
+
+/// Rows that failed while one run ran, for the run history's error detail.
+#[tauri::command]
+pub async fn list_lens_run_failures(
+    state: State<'_, AppState>,
+    lens_id: String,
+    run_id: String,
+) -> Result<Vec<LensRunFailure>> {
+    state.db.list_lens_run_failures(&lens_id, &run_id)
+}
+
+/// Distinct values of one column with their row counts, for the Excel-style
+/// column filter.
+#[tauri::command]
+pub async fn get_lens_column_values(
+    state: State<'_, AppState>,
+    lens_id: String,
+    key: String,
+) -> Result<Vec<ColumnValueCount>> {
+    state.db.get_lens_column_values(&lens_id, &key)
 }
 
 /// The rows the user has excluded, so the "include" command below has a screen

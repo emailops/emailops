@@ -66,6 +66,7 @@ export function ChatPanel({
     rejectedMessageIds,
     loadCategoriesPref,
     categoriesLoaded,
+    inputPrefill,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
   // What the user has on screen, sent with each turn so "esto" / "aquí"
@@ -240,6 +241,8 @@ export function ChatPanel({
       <ChatInput
         compact
         onSend={handleSend}
+        prefillText={inputPrefill?.text}
+        prefillNonce={inputPrefill?.nonce}
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={

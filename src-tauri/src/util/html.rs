@@ -28,6 +28,17 @@ pub fn strip_html_for_fts(html: &str) -> String {
         }
         let b = bytes[i];
         if b == b'<' {
+            // `Name <addr@host>` in plain-text mail is not a tag: keep the
+            // address. Real tags carry spaces or `=` before any `@`.
+            if let Some(addr) = angle_bracket_address(&html[i + 1..]) {
+                if !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
+                out.push_str(addr);
+                out.push(' ');
+                i += addr.len() + 2;
+                continue;
+            }
             if bytes.len() - i >= 6 && bytes[i..i + 6].eq_ignore_ascii_case(b"<style") {
                 skip_until = Some(b"</style>");
             } else if bytes.len() - i >= 7 && bytes[i..i + 7].eq_ignore_ascii_case(b"<script") {
@@ -71,6 +82,19 @@ pub fn strip_html_for_fts(html: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `rest` starts right after a `<`: the address it wraps when it reads
+/// `addr@host>`, e.g. the `<ana@site.example>` of `Ana <ana@site.example>`.
+fn angle_bracket_address(rest: &str) -> Option<&str> {
+    let end = rest.find('>')?;
+    let inner = &rest[..end];
+    let looks_like_address = inner.contains('@')
+        && !inner.starts_with('/')
+        && !inner
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '=' | '<'));
+    looks_like_address.then_some(inner)
 }
 
 /// Decode the most common HTML entities. Covers a handful of named entities
@@ -180,6 +204,21 @@ pub fn split_draft_body(body: &str) -> (String, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_keeps_an_address_written_in_angle_brackets() {
+        // Plain-text mail names people as `Name <addr>`. Read as a tag, the
+        // address vanished from the search index and from the text Lens
+        // extraction sends the model.
+        let got = strip_html_for_fts("From: Sam Lee <sam.lee@mail.example>\nSubject: Hi");
+        assert_eq!(got, "From: Sam Lee sam.lee@mail.example Subject: Hi");
+    }
+
+    #[test]
+    fn strip_still_removes_real_tags_around_addresses() {
+        let got = strip_html_for_fts(r#"<p>Write to <a href="mailto:ana@site.example">ana@site.example</a></p>"#);
+        assert_eq!(got, "Write to ana@site.example");
+    }
 
     #[test]
     fn split_draft_body_keeps_html_and_derives_plain() {

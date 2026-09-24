@@ -231,6 +231,7 @@ pub async fn run(cfg: FormRunnerConfig) -> EvalResult<FormMetricsReport> {
             } else {
                 failed.join(" · ")
             },
+            evidence: None,
         });
     }
     report.write(&cfg.out_dir)?;

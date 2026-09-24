@@ -35,7 +35,7 @@ interface VirtualEmailListProps {
   compact?: boolean;
   /** Unified ("All accounts") mode: per-account color bar. Returns undefined
    *  outside unified mode so rows render exactly as before. */
-  getAccountBadge?: (email: Email) => { colorClass: string; label: string } | undefined;
+  getAccountBadge?: (email: Email) => { colorClass: string; label: string; chip?: boolean } | undefined;
 }
 
 /**

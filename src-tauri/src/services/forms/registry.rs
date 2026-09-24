@@ -10,6 +10,7 @@
 //! Pure data + pure lookups. No I/O, no DB, no `AppHandle`.
 
 use crate::db::Database;
+use crate::services::i18n::Language;
 use serde::Serialize;
 
 /// How one field is typed, and what the model is allowed to put in it.
@@ -81,6 +82,19 @@ pub struct FormDef {
     /// read the DB hides the form.
     #[serde(skip)]
     pub available: fn(&Database) -> bool,
+    /// What the chat says once the form is filled and open, in `lang`. The
+    /// fill is a draft the model wrote, so it must ask for a review and a save.
+    #[serde(skip)]
+    pub fill_reply: fn(Language) -> &'static str,
+}
+
+fn lens_fill_reply(lang: Language) -> &'static str {
+    match lang {
+        Language::En => "I've configured the Lens by filling in the form. There may be errors or incomplete parts: review it and save it so the Lens is created.",
+        Language::Es => "He configurado la lente rellenando el formulario. Puede haber errores o partes incompletas: revísalo y guárdalo para que se cree la lente.",
+        Language::Fr => "J'ai configuré la lentille en remplissant le formulaire. Il peut y avoir des erreurs ou des parties incomplètes : vérifiez-le et enregistrez-le pour créer la lentille.",
+        Language::De => "Ich habe die Linse eingerichtet, indem ich das Formular ausgefüllt habe. Es kann Fehler oder unvollständige Teile geben: prüfe es und speichere es, damit die Linse erstellt wird.",
+    }
 }
 
 const LENS_COLUMN_FIELDS: &[FieldDef] = &[
@@ -158,6 +172,7 @@ pub const LENS_CREATE: FormDef = FormDef {
     // Lenses is an experimental feature, off by default. With it off the view
     // does not exist, so neither does this form.
     available: |db| db.is_lenses_enabled().unwrap_or(false),
+    fill_reply: lens_fill_reply,
     fields: &[
         FieldDef {
             key: "name",
@@ -168,6 +183,13 @@ pub const LENS_CREATE: FormDef = FormDef {
         FieldDef {
             key: "icon",
             description: "A single emoji representing the lens",
+            kind: FieldKind::Text,
+            required: false,
+        },
+        FieldDef {
+            key: "scopeAccount",
+            description:
+                "Email address of the account the lens is for, when the request names one. Omit for all accounts",
             kind: FieldKind::Text,
             required: false,
         },
@@ -264,6 +286,20 @@ pub fn catalog(db: &Database) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lens_form_can_name_the_account_it_is_for() {
+        // "crea una lente para la cuenta X…" left the form on All accounts:
+        // the form had no field the model could put the account in.
+        let form = lookup("lens.create").expect("lens.create is registered");
+        let field = form
+            .fields
+            .iter()
+            .find(|f| f.key == "scopeAccount")
+            .expect("scopeAccount field");
+        assert!(!field.required, "no account named = all accounts");
+        assert_eq!(field.kind, FieldKind::Text);
+    }
 
     #[test]
     fn lookup_finds_a_known_form() {

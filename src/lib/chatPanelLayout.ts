@@ -18,3 +18,16 @@ export function parseChatPanelWidth(raw: string): number | null {
   if (!Number.isFinite(parsed) || raw.trim() === '') return null;
   return clampChatPanelWidth(parsed);
 }
+
+/** What sits against the window's right edge. */
+export type ChatDockMode = 'panel' | 'rail' | 'none';
+
+/**
+ * The docked chat panel when it is open; a rail to reopen it when collapsed,
+ * so every view can bring the chat back; nothing while the full-page chat is
+ * on screen (the same conversation would show twice) or AI is switched off.
+ */
+export function chatDockMode(s: { aiEnabled: boolean; panelOpen: boolean; fullChatView: boolean }): ChatDockMode {
+  if (!s.aiEnabled || s.fullChatView) return 'none';
+  return s.panelOpen ? 'panel' : 'rail';
+}

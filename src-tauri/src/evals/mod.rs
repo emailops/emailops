@@ -23,6 +23,7 @@ pub mod harness;
 pub mod json_report;
 pub mod judge;
 pub mod junk;
+pub mod lenses;
 pub mod metrics;
 pub mod oneshot_kv;
 pub mod query_plan;

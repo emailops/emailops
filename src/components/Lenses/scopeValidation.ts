@@ -1,5 +1,5 @@
 // Validation helpers for the comma-separated scope inputs.
-// Shared between LensCreateModal and LensScopeEditor so both prevent the
+// Shared between LensCreateModal and LensConfigModal so both prevent the
 // "full email in Sender domains" foot-gun that silently makes scope match
 // zero rows (DB stores `sender_domain` as the part after `@`, so an entry
 // like "user@example.com" never matches an email whose sender_domain is
@@ -19,9 +19,15 @@ function parseList(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Translation-ready error: render with `t(`lenses:scope.errors.${code}`, params)`. */
+export interface ScopeInputError {
+  code: 'domainLooksLikeEmail' | 'invalidDomain' | 'invalidEmail';
+  params: { value: string; domain?: string };
+}
+
 export interface ValidatedList {
   values: string[];
-  error: string | null;
+  error: ScopeInputError | null;
 }
 
 /** Parse + validate the Sender domains input. */
@@ -31,13 +37,13 @@ export function validateSenderDomains(raw: string): ValidatedList {
     if (v.includes('@')) {
       return {
         values,
-        error: `"${v}" looks like an email — put it in "Sender emails" instead, or use just the domain (e.g. "${v.split('@')[1] ?? ''}").`,
+        error: { code: 'domainLooksLikeEmail', params: { value: v, domain: v.split('@')[1] ?? '' } },
       };
     }
     if (!DOMAIN_RE.test(v)) {
       return {
         values,
-        error: `"${v}" is not a valid domain (expected something like "stripe.com").`,
+        error: { code: 'invalidDomain', params: { value: v } },
       };
     }
   }
@@ -51,7 +57,7 @@ export function validateSenderEmails(raw: string): ValidatedList {
     if (!EMAIL_RE.test(v)) {
       return {
         values,
-        error: `"${v}" is not a valid email address.`,
+        error: { code: 'invalidEmail', params: { value: v } },
       };
     }
   }

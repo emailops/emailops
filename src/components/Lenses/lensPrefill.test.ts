@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { toLensFormPrefill, toLensFormValues } from './lensPrefill';
+import { accountIdForEmail, toLensFormPrefill, toLensFormValues } from './lensPrefill';
 
 describe('toLensFormPrefill', () => {
   it('maps the scalar fields the model filled', () => {
@@ -150,5 +150,31 @@ describe('toLensFormValues', () => {
       ],
     });
     expect(values.columns).toEqual([{ key: 'a', label: 'A', type: 'string' }]);
+  });
+});
+
+describe('account', () => {
+  it('reads the account the request named', () => {
+    expect(toLensFormPrefill({ scopeAccount: ' Owner@Studio.example ' }).accountEmail).toBe('Owner@Studio.example');
+  });
+
+  it('sends the account on screen back as the form value', () => {
+    expect(toLensFormValues({ accountEmail: 'owner@studio.example' }).scopeAccount).toBe('owner@studio.example');
+    expect(toLensFormValues({}).scopeAccount).toBeUndefined();
+  });
+});
+
+describe('accountIdForEmail', () => {
+  const accounts = [
+    { id: 'a1', email: 'owner@studio.example' },
+    { id: 'a2', email: 'personal@mail.example' },
+  ];
+
+  it('matches an account by address, ignoring case', () => {
+    expect(accountIdForEmail(accounts, 'OWNER@studio.example')).toBe('a1');
+  });
+
+  it('finds nothing for an address that is not one of the accounts', () => {
+    expect(accountIdForEmail(accounts, 'someone@else.example')).toBeNull();
   });
 });

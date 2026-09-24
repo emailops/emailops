@@ -35,7 +35,8 @@ describe('fetchEmails after navigateToEmail', () => {
     store.setSearchQuery('id:cited');
     await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined);
 
-    expect(api.searchEmails).toHaveBeenCalledWith('acc', 'id:cited', true, ['primary']);
+    // Search spans every category: the selected tab is not sent.
+    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual(['acc', 'id:cited', true]);
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['cited']);
   });
 

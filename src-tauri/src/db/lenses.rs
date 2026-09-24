@@ -7,14 +7,17 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
-    CreateLensInput, Lens, LensRow, LensRowsPage, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary,
-    SortSpec, UpdateLensInput,
+    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRow, LensRowsPage, LensRunFailure, LensRunKind,
+    LensSchema, LensScope, LensStatus, LensSummary, SortSpec, UpdateLensInput,
 };
 
 use super::Database;
 
 /// (run_id, kind, processed, total, succeeded, failed)
 pub type LensRunProgress = (String, String, i64, i64, i64, i64);
+
+/// A Lens's unique-key JSON path (if any) and its `(key, type)` columns.
+type LensSchemaCols = (Option<String>, Vec<(String, crate::models::lens::LensColumnType)>);
 
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -256,33 +259,19 @@ impl Database {
         Ok(())
     }
 
-    /// Returns rows for a Lens with overrides merged. Sort happens client-side
-    /// over the page for v1 (PRD §7.1: extracted columns aren't indexed).
-    /// When the schema has a column with `is_unique_key = true`, rows are
-    /// deduplicated by that column's value — only the most recent email per
-    /// unique value is returned (null/empty values each keep their own row).
-    /// `total = -1` when not computed.
-    pub fn get_lens_rows(
-        &self,
-        lens_id: &str,
-        sort: Option<&SortSpec>,
-        limit: i64,
-        offset: i64,
-    ) -> Result<LensRowsPage> {
-        // Resolve unique-key column + schema columns from the lens schema.
-        // The columns vec is used to whitelist `sort.key` so user-supplied input
-        // can't be spliced into the ORDER BY clause, and to pick the right
-        // numeric/text comparator for the sort key.
-        use crate::models::lens::LensColumnType;
-        let (unique_key_path, schema_cols): (Option<String>, Vec<(String, LensColumnType)>) = {
-            let conn = self.reader();
-            let schema_json: Option<String> = conn
-                .query_row(
-                    "SELECT schema_json FROM lenses WHERE id = ?1",
-                    params![lens_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
+    /// Unique-key JSON path and `(key, type)` of every column, from the Lens
+    /// schema. The column list whitelists user-supplied keys before they are
+    /// spliced into a JSON path.
+    fn lens_schema_cols(&self, lens_id: &str) -> Result<LensSchemaCols> {
+        let conn = self.reader();
+        let schema_json: Option<String> = conn
+            .query_row(
+                "SELECT schema_json FROM lenses WHERE id = ?1",
+                params![lens_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(
             match schema_json.and_then(|s| serde_json::from_str::<crate::models::lens::LensSchema>(&s).ok()) {
                 Some(schema) => {
                     let ukey = schema
@@ -294,8 +283,72 @@ impl Database {
                     (ukey, cols)
                 }
                 None => (None, Vec::new()),
-            }
-        };
+            },
+        )
+    }
+
+    /// Returns rows for a Lens with overrides merged. See
+    /// [`Self::get_lens_rows_filtered`].
+    pub fn get_lens_rows(
+        &self,
+        lens_id: &str,
+        sort: Option<&SortSpec>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<LensRowsPage> {
+        self.get_lens_rows_filtered(lens_id, sort, &[], limit, offset)
+    }
+
+    /// Distinct values of one column across the Lens's visible (`ok`) rows,
+    /// with their row counts: empty cells first, then values A→Z. Feeds the
+    /// Excel-style column filter. An unknown key yields nothing.
+    pub fn get_lens_column_values(&self, lens_id: &str, key: &str) -> Result<Vec<ColumnValueCount>> {
+        let (_, schema_cols) = self.lens_schema_cols(lens_id)?;
+        if !schema_cols.iter().any(|(k, _)| k == key) {
+            return Ok(Vec::new());
+        }
+        // `key` is whitelisted against the schema above.
+        let value = effective_value_sql(key);
+        let sql = format!(
+            "SELECT NULLIF({value}, '') AS v, COUNT(*) FROM lens_rows r \
+             WHERE r.lens_id = ?1 AND r.status = 'ok' \
+             GROUP BY v ORDER BY v IS NOT NULL, v COLLATE NOCASE"
+        );
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let values = stmt
+            .query_map(params![lens_id], |row| {
+                Ok(ColumnValueCount {
+                    value: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(values)
+    }
+
+    /// Returns rows for a Lens with overrides merged. Sort happens client-side
+    /// over the page for v1 (PRD §7.1: extracted columns aren't indexed).
+    /// When the schema has a column with `is_unique_key = true`, rows are
+    /// deduplicated by that column's value — only the most recent email per
+    /// unique value is returned (null/empty values each keep their own row).
+    /// `total = -1` when not computed.
+    /// `filters` keep only rows matching every column filter (see
+    /// [`ColumnFilter`]); filters on keys outside the schema are ignored.
+    pub fn get_lens_rows_filtered(
+        &self,
+        lens_id: &str,
+        sort: Option<&SortSpec>,
+        filters: &[ColumnFilter],
+        limit: i64,
+        offset: i64,
+    ) -> Result<LensRowsPage> {
+        // Resolve unique-key column + schema columns from the lens schema.
+        // The columns vec is used to whitelist `sort.key` so user-supplied input
+        // can't be spliced into the ORDER BY clause, and to pick the right
+        // numeric/text comparator for the sort key.
+        use crate::models::lens::LensColumnType;
+        let (unique_key_path, schema_cols) = self.lens_schema_cols(lens_id)?;
 
         // Build the ORDER BY fragment. The column expression is one of:
         //   - `email_timestamp` (default / "emailTimestamp" key)
@@ -343,7 +396,40 @@ impl Database {
         let conn = self.reader();
         let limit = limit.clamp(1, 1000);
 
-        let rows: Vec<LensRow> = if let Some(ref ukey_path) = unique_key_path {
+        // Fixed binds first (?1 lens, ?2 limit, ?3 offset, and ?4 the
+        // unique-key path when there is one), then one per filter value.
+        let mut binds: Vec<rusqlite::types::Value> =
+            vec![lens_id.to_string().into(), limit.into(), offset.max(0).into()];
+        if let Some(path) = &unique_key_path {
+            binds.push(path.clone().into());
+        }
+        let mut filter_sql = String::new();
+        for f in filters.iter().filter(|f| schema_cols.iter().any(|(k, _)| k == &f.key)) {
+            // `f.key` is whitelisted against the schema above.
+            let value = effective_value_sql(&f.key);
+            let mut alternatives: Vec<String> = Vec::new();
+            if !f.values.is_empty() {
+                let placeholders: Vec<String> = f
+                    .values
+                    .iter()
+                    .map(|v| {
+                        binds.push(v.clone().into());
+                        format!("?{}", binds.len())
+                    })
+                    .collect();
+                alternatives.push(format!("{value} IN ({})", placeholders.join(", ")));
+            }
+            if f.include_empty {
+                alternatives.push(format!("NULLIF({value}, '') IS NULL"));
+            }
+            if alternatives.is_empty() {
+                // Nothing ticked: like Excel, the column hides every row.
+                alternatives.push("0".into());
+            }
+            filter_sql.push_str(&format!(" AND ({})", alternatives.join(" OR ")));
+        }
+
+        let rows: Vec<LensRow> = if unique_key_path.is_some() {
             // Deduplicate by unique-key column value using ROW_NUMBER().
             // COALESCE(NULLIF(..., ''), email_id) keeps null/empty values as
             // separate rows rather than collapsing them all into one.
@@ -358,7 +444,7 @@ impl Database {
                           ) AS rn \
                    FROM lens_rows r \
                    JOIN emails e ON e.id = r.email_id \
-                   WHERE r.lens_id = ?1 AND r.status = 'ok' \
+                   WHERE r.lens_id = ?1 AND r.status = 'ok'{filter_sql} \
                  ) \
                  SELECT lens_id, email_id, account_id, extracted_json, overrides_json, \
                         prompt_version, email_timestamp, extracted_at, status, error_message, \
@@ -369,7 +455,7 @@ impl Database {
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
-                .query_map(params![lens_id, limit, offset.max(0), ukey_path], map_lens_row)?
+                .query_map(rusqlite::params_from_iter(binds.iter()), map_lens_row)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             rows
         } else {
@@ -379,13 +465,13 @@ impl Database {
                         e.subject, e.sender, e.sender_email \
                  FROM lens_rows r \
                  JOIN emails e ON e.id = r.email_id \
-                 WHERE r.lens_id = ?1 AND r.status = 'ok' \
+                 WHERE r.lens_id = ?1 AND r.status = 'ok'{filter_sql} \
                  ORDER BY {order_expr}{tiebreak} \
                  LIMIT ?2 OFFSET ?3",
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt
-                .query_map(params![lens_id, limit, offset.max(0)], map_lens_row)?
+                .query_map(rusqlite::params_from_iter(binds.iter()), map_lens_row)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             rows
         };
@@ -563,6 +649,38 @@ impl Database {
             params![processed, succeeded, failed, run_id],
         )?;
         Ok(())
+    }
+
+    /// Rows that failed extraction while `run_id` ran: still `failed`, and
+    /// extracted between the run's start and its end (now, if still running).
+    ///
+    /// Runs keep only counts, and each row keeps only its latest attempt, so
+    /// this is the run's failure list as far as the rows remember it: a row a
+    /// later run fixed (or failed again) is no longer attributed to this run.
+    pub fn list_lens_run_failures(&self, lens_id: &str, run_id: &str) -> Result<Vec<LensRunFailure>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT r.email_id, e.subject, e.sender, r.error_message, r.extracted_at \
+             FROM lens_rows r \
+             JOIN emails e ON e.id = r.email_id \
+             JOIN lens_runs lr ON lr.id = ?2 AND lr.lens_id = r.lens_id \
+             WHERE r.lens_id = ?1 AND r.status = 'failed' \
+               AND r.extracted_at >= lr.started_at \
+               AND r.extracted_at <= COALESCE(lr.finished_at, ?3) \
+             ORDER BY r.extracted_at ASC",
+        )?;
+        let failures = stmt
+            .query_map(params![lens_id, run_id, now_secs()], |row| {
+                Ok(LensRunFailure {
+                    email_id: row.get(0)?,
+                    subject: row.get(1)?,
+                    sender: row.get(2)?,
+                    error_message: row.get(3)?,
+                    extracted_at: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(failures)
     }
 
     pub fn finish_lens_run(&self, run_id: &str, status: &str, error_message: Option<&str>) -> Result<()> {
@@ -826,6 +944,15 @@ fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
     }
 }
 
+/// The value a column shows in the table, as text: a hand edit
+/// (`overrides_json`) wins over the extracted value. `key` must already be
+/// whitelisted against the Lens schema — it is spliced into a JSON path.
+fn effective_value_sql(key: &str) -> String {
+    format!(
+        "CAST(COALESCE(json_extract(r.overrides_json, '$.{key}'), json_extract(r.extracted_json, '$.{key}')) AS TEXT)"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1080,5 +1207,231 @@ mod exclusion_round_trip_tests {
             db.get_excluded_lens_rows(&lens.id, 50, 0).unwrap().rows.is_empty(),
             "and drop it from the excluded list"
         );
+    }
+}
+
+#[cfg(test)]
+mod column_filter_tests {
+    use super::tests::sample_input;
+    use crate::db::Database;
+    use crate::models::lens::{ColumnFilter, ColumnValueCount};
+
+    /// One email + one extracted row whose `vendor` is `vendor` (None = absent).
+    fn seed(db: &Database, lens_id: &str, email_id: &str, vendor: Option<&str>, ts: i64) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'imap', 'me@example.test', 'Test', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                                 recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,'acc1',?1,'Invoice','Vendor','billing@vendor.test','vendor.test','[]','[]','',?2,0,'primary',0)",
+            rusqlite::params![email_id, ts],
+        )
+        .unwrap();
+        drop(conn);
+        let data = match vendor {
+            Some(v) => serde_json::json!({ "vendor": v }).to_string(),
+            None => "{}".to_string(),
+        };
+        db.upsert_lens_row(lens_id, email_id, "acc1", &data, 1, ts, "ok", None)
+            .unwrap();
+    }
+
+    fn ids(page: &crate::models::lens::LensRowsPage) -> Vec<&str> {
+        page.rows.iter().map(|r| r.email_id.as_str()).collect()
+    }
+
+    fn filter(values: &[&str], include_empty: bool) -> Vec<ColumnFilter> {
+        vec![ColumnFilter {
+            key: "vendor".into(),
+            values: values.iter().map(|v| (*v).to_string()).collect(),
+            include_empty,
+        }]
+    }
+
+    fn setup() -> (Database, String) {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed(&db, &lens.id, "acme", Some("Acme"), 300);
+        seed(&db, &lens.id, "globex", Some("Globex"), 200);
+        seed(&db, &lens.id, "blank", None, 100);
+        (db, lens.id)
+    }
+
+    #[test]
+    fn a_filter_keeps_only_the_selected_values() {
+        let (db, lens) = setup();
+        let page = db
+            .get_lens_rows_filtered(&lens, None, &filter(&["Acme"], false), 50, 0)
+            .unwrap();
+        assert_eq!(ids(&page), vec!["acme"]);
+    }
+
+    #[test]
+    fn empty_cells_are_their_own_choice() {
+        let (db, lens) = setup();
+        let page = db
+            .get_lens_rows_filtered(&lens, None, &filter(&["Globex"], true), 50, 0)
+            .unwrap();
+        assert_eq!(ids(&page), vec!["globex", "blank"]);
+        let only_empty = db
+            .get_lens_rows_filtered(&lens, None, &filter(&[], true), 50, 0)
+            .unwrap();
+        assert_eq!(ids(&only_empty), vec!["blank"]);
+    }
+
+    #[test]
+    fn a_hand_edited_value_wins_over_the_extracted_one() {
+        // The table shows the override, so the filter must match what is shown.
+        let (db, lens) = setup();
+        db.set_lens_row_override(&lens, "acme", &serde_json::json!({"vendor": "Initech"}))
+            .unwrap();
+        let page = db
+            .get_lens_rows_filtered(&lens, None, &filter(&["Initech"], false), 50, 0)
+            .unwrap();
+        assert_eq!(ids(&page), vec!["acme"]);
+        let old = db
+            .get_lens_rows_filtered(&lens, None, &filter(&["Acme"], false), 50, 0)
+            .unwrap();
+        assert!(old.rows.is_empty());
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_column_is_ignored() {
+        // Keys are spliced into a JSON path, so only schema columns may reach SQL.
+        let (db, lens) = setup();
+        let bogus = vec![ColumnFilter {
+            key: "vendor') OR 1=1 --".into(),
+            values: vec!["x".into()],
+            include_empty: false,
+        }];
+        let page = db.get_lens_rows_filtered(&lens, None, &bogus, 50, 0).unwrap();
+        assert_eq!(page.rows.len(), 3);
+    }
+
+    #[test]
+    fn column_values_list_each_value_once_with_its_count() {
+        let (db, lens) = setup();
+        seed(&db, &lens, "acme2", Some("Acme"), 50);
+        let values = db.get_lens_column_values(&lens, "vendor").unwrap();
+        assert_eq!(
+            values,
+            vec![
+                ColumnValueCount { value: None, count: 1 },
+                ColumnValueCount {
+                    value: Some("Acme".into()),
+                    count: 2
+                },
+                ColumnValueCount {
+                    value: Some("Globex".into()),
+                    count: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_apply_before_unique_key_deduplication() {
+        // Lenses with a unique key (e.g. the contact-form template) go through
+        // the deduplicating query: the filter must work there too.
+        let db = Database::new_for_testing().expect("test db");
+        let mut input = sample_input();
+        input.schema.columns[0].is_unique_key = true;
+        let lens = db.create_lens(&input).unwrap();
+        seed(&db, &lens.id, "acme-old", Some("Acme"), 100);
+        seed(&db, &lens.id, "acme-new", Some("Acme"), 200);
+        seed(&db, &lens.id, "globex", Some("Globex"), 150);
+        let page = db
+            .get_lens_rows_filtered(&lens.id, None, &filter(&["Acme"], false), 50, 0)
+            .unwrap();
+        assert_eq!(ids(&page), vec!["acme-new"], "one row per unique value, newest wins");
+    }
+
+    #[test]
+    fn column_values_for_an_unknown_key_are_empty() {
+        let (db, lens) = setup();
+        assert!(db.get_lens_column_values(&lens, "nope").unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod run_failure_tests {
+    use super::tests::sample_input;
+    use crate::db::Database;
+
+    fn seed_email(db: &Database, id: &str, subject: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'imap', 'me@example.test', 'Test', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                                 recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,'acc1',?1,?2,'Vendor','billing@vendor.test','vendor.test','[]','[]','',100,0,'primary',0)",
+            rusqlite::params![id, subject],
+        )
+        .unwrap();
+    }
+
+    /// A row with the given status and error, extracted at `at`.
+    fn row(db: &Database, lens: &str, id: &str, status: &str, error: Option<&str>, at: i64) {
+        seed_email(db, id, &format!("Subject {id}"));
+        db.upsert_lens_row(lens, id, "acc1", "{}", 1, 100, status, error)
+            .unwrap();
+        db.connection()
+            .execute(
+                "UPDATE lens_rows SET extracted_at = ?1 WHERE lens_id = ?2 AND email_id = ?3",
+                rusqlite::params![at, lens, id],
+            )
+            .unwrap();
+    }
+
+    fn run(db: &Database, lens: &str, id: &str, started: i64, finished: Option<i64>) {
+        db.connection()
+            .execute(
+                "INSERT INTO lens_runs (id, lens_id, kind, started_at, finished_at, status) VALUES (?1, ?2, 'backfill', ?3, ?4, 'failed')",
+                rusqlite::params![id, lens, started, finished],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_run_lists_the_rows_that_failed_while_it_ran() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        run(&db, &lens, "old", 1_000, Some(1_100));
+        run(&db, &lens, "new", 2_000, Some(2_100));
+        row(&db, &lens, "e-old", "failed", Some("model timeout"), 1_050);
+        row(&db, &lens, "e-new", "failed", Some("not a JSON object"), 2_050);
+        row(&db, &lens, "e-ok", "ok", None, 2_060);
+
+        let failures = db.list_lens_run_failures(&lens, "new").unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].email_id, "e-new");
+        assert_eq!(failures[0].subject, "Subject e-new");
+        assert_eq!(failures[0].error_message.as_deref(), Some("not a JSON object"));
+    }
+
+    #[test]
+    fn a_running_run_counts_up_to_now() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        run(&db, &lens, "live", 1_000, None);
+        row(&db, &lens, "e1", "failed", Some("boom"), super::now_secs());
+        assert_eq!(db.list_lens_run_failures(&lens, "live").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_run_has_no_failures() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        assert!(db.list_lens_run_failures(&lens, "nope").unwrap().is_empty());
     }
 }

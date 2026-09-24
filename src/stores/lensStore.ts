@@ -28,6 +28,7 @@ import { errorText } from '@/lib/errors';
 import type {
   CreateLensInput,
   Lens,
+  LensColumnFilter,
   LensRow,
   LensRunKind,
   LensSortSpec,
@@ -48,6 +49,12 @@ export interface LensState {
   isLoadingRows: boolean;
   /** Viewing the rows the user excluded, rather than the Lens itself. */
   showExcluded: boolean;
+  /** Create dialog open — in the store so the sidebar "+" can open it. */
+  createOpen: boolean;
+  /** "With the chat or by hand?" chooser shown before creating a Lens. */
+  createChooserOpen: boolean;
+  /** Excel-style filters on the active Lens's columns, one per column. */
+  columnFilters: LensColumnFilter[];
   sort: LensSortSpec | null;
   error: string | null;
   runStatus: Record<string, LensStatus>;
@@ -62,6 +69,9 @@ export const initialLensState: LensState = {
   totalRows: 0,
   isLoadingRows: false,
   showExcluded: false,
+  createOpen: false,
+  createChooserOpen: false,
+  columnFilters: [],
   sort: null,
   error: null,
   runStatus: {},
@@ -83,6 +93,9 @@ export type LensAction =
   | { type: 'EXCLUDE_ROW'; emailId: string }
   | { type: 'INCLUDE_ROW'; emailId: string }
   | { type: 'SET_SHOW_EXCLUDED'; showExcluded: boolean }
+  | { type: 'SET_CREATE_OPEN'; open: boolean }
+  | { type: 'SET_CREATE_CHOOSER_OPEN'; open: boolean }
+  | { type: 'SET_COLUMN_FILTER'; key: string; filter: LensColumnFilter | null }
   | { type: 'SET_RUN_STATUS'; lensId: string; status: LensStatus };
 
 // ── Pure reducer ─────────────────────────────────────────────────────────────
@@ -101,7 +114,15 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
     case 'SET_ERROR':
       return { ...state, error: action.error, isLoadingLenses: false, isLoadingRows: false };
     case 'SET_ACTIVE_LENS_ID':
-      return { ...state, activeLensId: action.lensId, isLoadingRows: true, error: null, showExcluded: false };
+      // Column keys belong to one Lens's schema, so filters do not carry over.
+      return {
+        ...state,
+        activeLensId: action.lensId,
+        isLoadingRows: true,
+        error: null,
+        showExcluded: false,
+        columnFilters: [],
+      };
     case 'SET_LOADING_ROWS':
       return { ...state, isLoadingRows: action.loading };
     case 'SET_ACTIVE_LENS_DATA':
@@ -136,6 +157,14 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
       };
     case 'SET_SHOW_EXCLUDED':
       return { ...state, showExcluded: action.showExcluded, isLoadingRows: true };
+    case 'SET_CREATE_OPEN':
+      return { ...state, createOpen: action.open };
+    case 'SET_CREATE_CHOOSER_OPEN':
+      return { ...state, createChooserOpen: action.open };
+    case 'SET_COLUMN_FILTER': {
+      const others = state.columnFilters.filter((f) => f.key !== action.key);
+      return { ...state, columnFilters: action.filter ? [...others, action.filter] : others };
+    }
     case 'SET_RUN_STATUS':
       return { ...state, runStatus: { ...state.runStatus, [action.lensId]: action.status } };
   }
@@ -190,6 +219,10 @@ interface LensStore extends LensState {
   setSort: (sort: LensSortSpec | null) => Promise<void>;
 
   // CRUD
+  setCreateOpen: (open: boolean) => void;
+  setCreateChooserOpen: (open: boolean) => void;
+  /** `null` clears the column's filter. Refetches the rows. */
+  setColumnFilter: (key: string, filter: LensColumnFilter | null) => Promise<void>;
   createLens: (input: CreateLensInput) => Promise<Lens>;
   updateLens: (lensId: string, input: UpdateLensInput) => Promise<Lens>;
   deleteLens: (lensId: string) => Promise<void>;
@@ -261,7 +294,7 @@ export const useLensStore = create<LensStore>((set, get) => ({
     try {
       const [lens, page] = await Promise.all([
         api.getLens(lensId),
-        api.getLensRows(lensId, { sort: get().sort ?? undefined }),
+        api.getLensRows(lensId, { sort: get().sort ?? undefined, filters: get().columnFilters }),
       ]);
       // Guard against stale fetches if the user clicked another lens mid-flight.
       if (get().activeLensId !== lensId) return;
@@ -276,7 +309,7 @@ export const useLensStore = create<LensStore>((set, get) => ({
     dispatch(set, { type: 'SET_SORT', sort });
     const id = get().activeLensId;
     if (id) {
-      const page = await api.getLensRows(id, { sort: sort ?? undefined });
+      const page = await api.getLensRows(id, { sort: sort ?? undefined, filters: get().columnFilters });
       if (get().activeLensId !== id) return;
       dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
     }
@@ -354,13 +387,30 @@ export const useLensStore = create<LensStore>((set, get) => ({
     dispatch(set, { type: 'INCLUDE_ROW', emailId });
   },
 
+  setCreateOpen: (open) => dispatch(set, { type: 'SET_CREATE_OPEN', open }),
+  setCreateChooserOpen: (open) => dispatch(set, { type: 'SET_CREATE_CHOOSER_OPEN', open }),
+
+  setColumnFilter: async (key, filter) => {
+    dispatch(set, { type: 'SET_COLUMN_FILTER', key, filter });
+    const id = get().activeLensId;
+    if (!id) return;
+    const filters = get().columnFilters;
+    try {
+      const page = await api.getLensRows(id, { sort: get().sort ?? undefined, filters });
+      if (get().activeLensId !== id || get().columnFilters !== filters) return;
+      dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
+    } catch (err) {
+      dispatch(set, { type: 'SET_ERROR', error: errorText(err) });
+    }
+  },
+
   setShowExcluded: async (showExcluded) => {
     dispatch(set, { type: 'SET_SHOW_EXCLUDED', showExcluded });
     const id = get().activeLensId;
     if (!id) return;
     const page = showExcluded
       ? await api.getExcludedLensRows(id)
-      : await api.getLensRows(id, { sort: get().sort ?? undefined });
+      : await api.getLensRows(id, { sort: get().sort ?? undefined, filters: get().columnFilters });
     if (get().activeLensId !== id || get().showExcluded !== showExcluded) return;
     dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
     dispatch(set, { type: 'SET_LOADING_ROWS', loading: false });
@@ -371,7 +421,7 @@ export const useLensStore = create<LensStore>((set, get) => ({
     if (!id) return;
     await api.updateLensRowOverride(id, emailId, overrides);
     // Reload the page to pick up the merged values.
-    const page = await api.getLensRows(id, { sort: get().sort ?? undefined });
+    const page = await api.getLensRows(id, { sort: get().sort ?? undefined, filters: get().columnFilters });
     if (get().activeLensId !== id) return;
     dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
   },

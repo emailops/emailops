@@ -172,5 +172,6 @@
     "confirmFailed": "Impossible de classer le message sur le serveur",
     "notJunkFailed": "Impossible d'enregistrer que ce message n'est pas indésirable",
     "hideFlagged": "Masquer les indésirables"
-  }
+  },
+  "emailUnavailable": "Cet e-mail n’est plus disponible."
 }

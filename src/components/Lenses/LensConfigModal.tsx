@@ -13,7 +13,11 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { Lens, LensDirection, LensScope } from '@/types';
 
-import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
+import { LensColumnsEditor } from './LensColumnsEditor';
+import { LensFolderChips } from './LensFolderChips';
+import { type DraftColumn, draftColumnsFromSchema, schemaFromDraftColumns } from './lensDraft';
+import { withoutFolderMailboxes } from './scopeFolders';
+import { type ScopeInputError, validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
 interface LensConfigModalProps {
   lens: Lens | null;
@@ -29,7 +33,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   const accounts = useAccountStore((s) => s.accounts);
   const updateLens = useLensStore((s) => s.updateLens);
 
-  const [activeTab, setActiveTab] = useState<'scope' | 'prompt'>('scope');
+  const [activeTab, setActiveTab] = useState<'scope' | 'columns' | 'prompt'>('scope');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +47,14 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   const [senderEmails, setSenderEmails] = useState('');
   const [query, setQuery] = useState('');
   const [querySearchBody, setQuerySearchBody] = useState(true);
+
+  // ── Columns state ────────────────────────────────────────────────────────
+  // Stored labels are shown as they are: this edits the Lens, not a template.
+  const initialColumns = useMemo(
+    () => (lens ? draftColumnsFromSchema(lens.schema.columns, (_key, fallback) => fallback) : []),
+    [lens],
+  );
+  const [columns, setColumns] = useState<DraftColumn[]>([]);
 
   // ── Prompt state ─────────────────────────────────────────────────────────
   const [promptText, setPromptText] = useState('');
@@ -61,9 +73,10 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     setQuery(s.query ?? '');
     setQuerySearchBody(s.querySearchBody ?? false);
     setPromptText(lens.promptText);
+    setColumns(initialColumns);
     setActiveTab('scope');
     setError(null);
-  }, [open, lens]);
+  }, [open, lens, initialColumns]);
 
   const domainCheck = useMemo(() => validateSenderDomains(senderDomains), [senderDomains]);
   const emailCheck = useMemo(() => validateSenderEmails(senderEmails), [senderEmails]);
@@ -86,19 +99,28 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   };
 
   const promptDirty = promptText.trim() !== (lens?.promptText ?? '').trim();
+  const columnsDirty = JSON.stringify(columns) !== JSON.stringify(initialColumns);
 
   const saveDisabled =
     isSaving ||
     (activeTab === 'scope' && (!!domainCheck.error || !!emailCheck.error)) ||
-    (activeTab === 'prompt' && !promptDirty);
+    (activeTab === 'prompt' && !promptDirty) ||
+    (activeTab === 'columns' && !columnsDirty);
 
   const handleSave = async () => {
     if (!lens) return;
-    setIsSaving(true);
     setError(null);
+    const built = activeTab === 'columns' ? schemaFromDraftColumns(columns) : null;
+    if (built && !built.ok) {
+      setError(t(`lenses:create.errors.${built.error.code}`, built.error.params));
+      return;
+    }
+    setIsSaving(true);
     try {
       if (activeTab === 'scope') {
         await updateLens(lens.id, { scope: buildScope() });
+      } else if (built?.ok) {
+        await updateLens(lens.id, { schema: { columns: built.columns } });
       } else {
         await updateLens(lens.id, { promptText });
       }
@@ -116,12 +138,14 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     setter(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   };
 
+  const inputErrorText = (e: ScopeInputError) => t(`lenses:scope.errors.${e.code}`, e.params);
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`Config — ${lens.name}`}
-      size="lg"
+      title={t('lenses:config.title', { name: lens.name })}
+      size="2xl"
       footer={
         <div className="flex justify-end gap-2">
           <button
@@ -130,7 +154,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
             disabled={isSaving}
             className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
           >
-            Cancel
+            {t('common:actions.cancel')}
           </button>
           <button
             type="button"
@@ -138,23 +162,27 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
             disabled={saveDisabled}
             className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
-            {isSaving ? 'Saving…' : 'Save'}
+            {isSaving ? t('common:state.saving') : t('common:actions.save')}
           </button>
         </div>
       }
     >
       {/* Tab bar */}
       <div className="mb-4 flex border-b border-gray-700">
-        {(['scope', 'prompt'] as const).map((tab) => (
+        {(['scope', 'columns', 'prompt'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-1.5 text-xs font-medium capitalize transition-colors ${
+            className={`px-4 py-1.5 text-xs font-medium transition-colors ${
               activeTab === tab ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            {tab}
+            {tab === 'scope'
+              ? t('lenses:scope.title')
+              : tab === 'columns'
+                ? t('lenses:columns.title')
+                : t('lenses:config.tabPrompt')}
           </button>
         ))}
       </div>
@@ -162,10 +190,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
       {/* Scope tab */}
       {activeTab === 'scope' && (
         <div className="space-y-4 text-xs text-gray-300">
-          <p className="text-[11px] text-gray-500">
-            Choose which emails this Lens analyzes. Scope changes apply to future runs; existing extracted rows stay
-            until you re-run backfill.
-          </p>
+          <p className="text-[11px] text-gray-500">{t('lenses:scope.help')}</p>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
@@ -176,7 +201,10 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                   { value: '', label: t('lenses:scope.allAccounts') },
                   ...accounts.map((a) => ({ value: a.id, label: a.email })),
                 ]}
-                onChange={(value) => setAccountId(value)}
+                onChange={(value) => {
+                  setAccountId(value);
+                  setMailboxes((prev) => withoutFolderMailboxes(prev));
+                }}
                 ariaLabel={t('lenses:scope.account')}
                 fullWidth
               />
@@ -211,12 +239,18 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                       : 'border-gray-600 text-gray-300 hover:bg-gray-700'
                   }`}
                 >
-                  {m}
+                  {t(`lenses:scope.mailboxNames.${m}`)}
                 </button>
               ))}
             </div>
             <p className="text-[10px] text-gray-500">{t('lenses:scope.mailboxesEmptyHelp')}</p>
           </div>
+
+          <LensFolderChips
+            accountId={accountId}
+            selected={mailboxes}
+            onToggle={(v) => toggleIn(mailboxes, v, setMailboxes)}
+          />
 
           <div className="space-y-1">
             <span className="block text-gray-400">{t('lenses:scope.categories')}</span>
@@ -232,7 +266,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                       : 'border-gray-600 text-gray-300 hover:bg-gray-700'
                   }`}
                 >
-                  {c}
+                  {t(`lenses:scope.categoryNames.${c}`)}
                 </button>
               ))}
             </div>
@@ -261,7 +295,9 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                   domainCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
                 }`}
               />
-              {domainCheck.error && <p className="mt-1 text-[10px] text-red-400">{domainCheck.error}</p>}
+              {domainCheck.error && (
+                <p className="mt-1 text-[10px] text-red-400">{inputErrorText(domainCheck.error)}</p>
+              )}
             </label>
           </div>
 
@@ -276,7 +312,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                 emailCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
               }`}
             />
-            {emailCheck.error && <p className="mt-1 text-[10px] text-red-400">{emailCheck.error}</p>}
+            {emailCheck.error && <p className="mt-1 text-[10px] text-red-400">{inputErrorText(emailCheck.error)}</p>}
           </label>
 
           <div className="space-y-2">
@@ -286,7 +322,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder='e.g. "invoice" OR "receipt"' // i18n-ignore: FTS5 query syntax sample
+                placeholder={t('lenses:scope.keywordPlaceholder')}
                 className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
               />
             </label>
@@ -306,15 +342,21 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
         </div>
       )}
 
+      {/* Columns tab */}
+      {activeTab === 'columns' && (
+        <div className="space-y-3 text-xs text-gray-300">
+          <p className="text-[11px] text-gray-500">{t('lenses:config.columnsHelp')}</p>
+          <LensColumnsEditor columns={columns} onChange={setColumns} />
+          {error && <div className="text-xs text-red-400">{error}</div>}
+        </div>
+      )}
+
       {/* Prompt tab */}
       {activeTab === 'prompt' && (
         <div className="space-y-3">
-          <p className="text-[11px] text-gray-500">
-            This prompt is sent to the model alongside each email's content. Saving will mark all existing rows as stale
-            (prompt_version bump) so they can be re-extracted.
-          </p>
+          <p className="text-[11px] text-gray-500">{t('lenses:config.promptHelp')}</p>
           <div className="text-[11px] text-gray-500">
-            Prompt version: <span className="text-gray-300">{lens.promptVersion}</span>
+            {t('lenses:config.promptVersion')} <span className="text-gray-300">{lens.promptVersion}</span>
           </div>
           <textarea
             value={promptText}

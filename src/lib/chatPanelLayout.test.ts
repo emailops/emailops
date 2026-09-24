@@ -3,6 +3,7 @@ import {
   CHAT_PANEL_DEFAULT_WIDTH,
   CHAT_PANEL_MAX_WIDTH,
   CHAT_PANEL_MIN_WIDTH,
+  chatDockMode,
   clampChatPanelWidth,
   parseChatPanelWidth,
 } from '@/lib/chatPanelLayout';
@@ -50,5 +51,27 @@ describe('parseChatPanelWidth', () => {
   it('has a default inside its own bounds', () => {
     expect(CHAT_PANEL_DEFAULT_WIDTH).toBeGreaterThanOrEqual(CHAT_PANEL_MIN_WIDTH);
     expect(CHAT_PANEL_DEFAULT_WIDTH).toBeLessThanOrEqual(CHAT_PANEL_MAX_WIDTH);
+  });
+});
+
+describe('chatDockMode', () => {
+  it('docks the panel when the chat is open', () => {
+    expect(chatDockMode({ aiEnabled: true, panelOpen: true, fullChatView: false })).toBe('panel');
+  });
+
+  it('leaves a rail to reopen it when the chat is collapsed, on any view', () => {
+    // Without the rail, reopening a collapsed chat depended on the inbox
+    // header button, which other views (Lenses, Tag Board, Settings…) lack.
+    expect(chatDockMode({ aiEnabled: true, panelOpen: false, fullChatView: false })).toBe('rail');
+  });
+
+  it('shows neither while the full-page chat is on screen', () => {
+    expect(chatDockMode({ aiEnabled: true, panelOpen: true, fullChatView: true })).toBe('none');
+    expect(chatDockMode({ aiEnabled: true, panelOpen: false, fullChatView: true })).toBe('none');
+  });
+
+  it('shows neither when AI is switched off', () => {
+    expect(chatDockMode({ aiEnabled: false, panelOpen: true, fullChatView: false })).toBe('none');
+    expect(chatDockMode({ aiEnabled: false, panelOpen: false, fullChatView: false })).toBe('none');
   });
 });

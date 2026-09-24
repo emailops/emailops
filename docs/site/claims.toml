@@ -180,6 +180,35 @@ checks = [
   { none = 'A generic launch step.' },
 ]
 
+[inst-windows-smartscreen-1]
+checks = [
+  { manual = 'What SmartScreen shows for an installer it does not know is Microsoft behaviour, outside this repo.', covers = ['When you run the installer, Windows may show a blue Microsoft Defender SmartScreen screen saying "Windows protected your PC".', 'The warning says nothing about the file itself. SmartScreen shows it for every unsigned download it has not seen often.'] },
+  { file = '.github/workflows/release.yml', has = 'NOT code-signed', covers = ['This is expected: the installer is not code-signed yet, because signing on Windows needs a paid certificate the project does not have.'] },
+  { file = 'scripts/verify_platform.sh', has = 'unsigned by design' },
+]
+fix = 'If the Windows installers ever get code-signed (a signtool step in scripts/build_platform.sh), remove this section in all four languages.'
+
+[inst-windows-smartscreen-2]
+checks = [
+  { none = 'Lead-in to the two SmartScreen steps.' },
+]
+
+[inst-windows-smartscreen-3]
+checks = [
+  { manual = "The SmartScreen dialog's own buttons; nothing in this repo renders them." },
+]
+
+[inst-windows-smartscreen-4]
+checks = [
+  { manual = "The SmartScreen dialog's own buttons; nothing in this repo renders them." },
+]
+
+[inst-windows-smartscreen-5]
+checks = [
+  { release = 'EmailOps-windows-setup.exe' },
+  { manual = 'GitHub publishes a sha256 digest for every release asset, and Get-FileHash ships with Windows.' },
+]
+
 [inst-windows-gpu-acceleration-1]
 checks = [
   { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: vulkan', covers = ["The Windows version carries a Vulkan backend"] },
@@ -787,14 +816,32 @@ checks = [
   { manual = 'Newsletters being excluded by default and the per-email cap are not checked.' },
 ]
 
+[ai-tasks-2]
+checks = [
+  { file = 'src/locales/en/settings.json', has = 'Extract tasks from emails', covers = ['Turn it on in Settings → AI Tasks with Extract tasks from emails'] },
+  { manual = 'The Tasks sidebar entry is exercised by the ai-tasks-1 demo case, which opens that view; no case names this sentence.' },
+]
+
 [ai-memory-1]
 checks = [
   { app = true },
 ]
 
+[ai-memory-2]
+checks = [
+  { file = 'src/locales/en/settings.json', has = 'Let the assistant remember facts', covers = ['Turn it on in Settings → AI Memory with Let the assistant remember facts'] },
+  { manual = 'The Memory sidebar entry is exercised by the ai-memory-1 demo case, which opens that view; no case names this sentence.' },
+]
+
 [ai-lenses-1]
 checks = [
   { app = true },
+]
+
+[ai-lenses-2]
+checks = [
+  { file = 'src/locales/en/settings.json', has = 'AI Lenses', covers = ['Turn them on in Settings → AI Lenses'] },
+  { manual = 'The Lenses sidebar entry is exercised by the ai-lenses-1 demo case, which turns the feature on and looks for it; no case names this sentence.' },
 ]
 
 [ai-turning-off-1]

@@ -25,12 +25,11 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
   } = useEmailStore();
   const { activeAccountId } = useAccountStore();
   const activeFilter = useFilterStore((s) => s.activeFilter);
-  const selectedCategoriesKey = searchQuery ? selectedCategories.slice().sort().join(',') : '';
   // The truthy gate below keeps its "no accounts" meaning — the All-accounts
   // sentinel is truthy. Queries receive the translated id (null = unified).
   const queryAccountId = toQueryAccountId(activeAccountId);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: searchQuery + selectedCategoriesKey are deliberate refetch triggers (fetchEmails reads the query from the store)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: searchQuery is a deliberate refetch trigger (fetchEmails reads the query from the store)
   useEffect(() => {
     if (activeAccountId) {
       fetchEmails(queryAccountId, activeFilter, selectedCategories, false, mailbox);
@@ -41,17 +40,7 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
       // previously active account's emails stayed in the store forever.
       reset();
     }
-  }, [
-    activeAccountId,
-    queryAccountId,
-    activeFilter,
-    searchQuery,
-    selectedCategoriesKey,
-    fetchEmails,
-    selectedCategories,
-    mailbox,
-    reset,
-  ]);
+  }, [activeAccountId, queryAccountId, activeFilter, searchQuery, fetchEmails, selectedCategories, mailbox, reset]);
 
   const loadMore = useCallback(() => {
     if (activeAccountId) {
