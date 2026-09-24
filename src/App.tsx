@@ -11,6 +11,7 @@ import { RuleManagementModal } from '@/components/Attachments/RuleManagementModa
 import { CalendarView } from '@/components/Calendar/CalendarView';
 import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
 import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
+import { ChatPanelRail } from '@/components/Chat/ChatPanelRail';
 import { ChatView } from '@/components/Chat/ChatView';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
@@ -48,6 +49,7 @@ import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
+import { chatDockMode } from '@/lib/chatPanelLayout';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
@@ -1259,6 +1261,8 @@ function AppInner() {
     }
   };
 
+  const chatDock = chatDockMode({ aiEnabled, panelOpen: isChatPanelOpen, fullChatView: viewMode === 'chat' });
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {onboardingCompleted === false && (
@@ -1638,8 +1642,10 @@ function AppInner() {
 
         {/* Right-docked chat. Gated on the master AI switch like every other
             AI surface, and suppressed while the full-page chat view is open so
-            the same conversation isn't rendered twice side by side. */}
-        {aiEnabled && isChatPanelOpen && viewMode !== 'chat' && (
+            the same conversation isn't rendered twice side by side. Collapsed,
+            it leaves a rail to reopen it from any view. */}
+        {chatDock === 'rail' && <ChatPanelRail onOpen={() => setIsChatPanelOpen(true)} />}
+        {chatDock === 'panel' && (
           <ChatPanelDock
             accountId={chatAccountId}
             onAccountChange={handleChatAccountChange}
