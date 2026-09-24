@@ -11,6 +11,8 @@ delta (newly failing / newly passing).
 """
 import base64, html, json, pathlib, re, sys, collections
 
+import report_trace
+
 src = pathlib.Path(sys.argv[1]); run = src.parent
 out = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else run / "informe.html"
 data = json.loads(src.read_text())
@@ -59,23 +61,87 @@ for _r in records:
         _models_by_section.setdefault((_r["feature"], _r["type"]), set()).add((_r.get("evidence") or {}).get("model") or "")
 def per_row_model(r): return len(_models_by_section.get((r["feature"], r["type"]), set()) - {""}) > 1
 
+COPY_BUTTON = ('<button type="button" class="copy" title="Copiar la traza entera" aria-label="Copiar la traza entera" onclick="copyTrace(event, this)">'
+               '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>'
+               '<span>Copiar</span></button>')
+
+# Plain-text version of one eval case, built from the rendered block on click
+# (so the page does not carry every prompt twice). Blocks cut at render time
+# stay cut here.
+COPY_JS = r"""
+function traceText(caseEl) {
+  const L = [];
+  const body = el => el ? el.textContent.trim() : '';
+  L.push('Caso: ' + caseEl.dataset.name);
+  for (const d of caseEl.querySelectorAll(':scope > .qa > div')) {
+    const lbl = d.querySelector('.lbl');
+    L.push(body(lbl) + ': ' + d.textContent.slice(lbl ? lbl.textContent.length : 0).trim());
+  }
+  const rows = caseEl.querySelectorAll(':scope > table.checks tbody tr');
+  if (rows.length) {
+    L.push('', 'Checks:');
+    for (const tr of rows) {
+      const c = [...tr.children].map(td => td.textContent.trim());
+      L.push('  [' + (tr.classList.contains('bad') ? 'FALLO' : 'OK') + '] ' + c[0] + ' | esperado: ' + c[1] + ' | obtenido: ' + c[2] + (c[3] ? ' | ' + c[3] : ''));
+    }
+  }
+  if (caseEl.dataset.flow) L.push('', 'Flujo: ' + caseEl.dataset.flow);
+  const trace = caseEl.querySelector(':scope > details.trace');
+  const steps = trace ? trace.querySelectorAll('ol.steps > li.step') : [];
+  if (steps.length) L.push('', 'Traza:');
+  steps.forEach((st, i) => {
+    const head = st.querySelector('.stephead');
+    L.push('', (i + 1) + '. ' + body(head.querySelector('.steplabel')) + ' — ' + body(head.querySelector('.muted')));
+    for (const b of st.querySelectorAll('details.blk')) {
+      const title = b.querySelector('summary').firstChild.textContent.trim();
+      L.push('--- ' + title + ' ---', b.querySelector('pre').textContent);
+    }
+  });
+  const raw = trace ? trace.querySelector(':scope > details:last-of-type') : null;
+  if (raw) L.push('', '--- ' + body(raw.querySelector('summary')) + ' ---', raw.querySelector('pre').textContent);
+  return L.join('\n');
+}
+async function copyTrace(ev, btn) {
+  ev.preventDefault(); ev.stopPropagation();  // a click inside <summary> would toggle the block
+  const text = traceText(btn.closest('.case'));
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    ok = document.execCommand('copy'); ta.remove();
+  }
+  const label = btn.querySelector('span'); const before = label.textContent;
+  label.textContent = ok ? 'Copiada (' + text.length + ' caracteres)' : 'No se pudo copiar';
+  btn.classList.toggle('done', ok);
+  setTimeout(() => { label.textContent = before; btn.classList.remove('done'); }, 2000);
+}
+"""
+
+def eval_case_html(r):
+    """Question, golden and answer; every check with the judge's metrics as
+    rows of the same table; then the engine trace step by step."""
+    ev = r.get("evidence") or {}; jr = ev.get("judge_report")
+    model_txt = f'<span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: ' if per_row_model(r) else '<span class="lbl">Validación</span><span class="muted">'
+    judge_txt = f' · juez {E(jr.get("model", ""))}' if jr and jr.get("model") else ""
+    out = f'<p>{model_txt}{E(ev.get("judge") or "heurística")}{judge_txt}</span></p>'
+    gold = f'<div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div>' if ev.get("expected_output") else ""
+    out += f'<div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div>{gold}<div class="a"><span class="lbl">Respuesta</span>{E(ev.get("answer", "") or "(vacía)")}</div></div>'
+    checks = (ev.get("checks") or []) + report_trace.judge_checks(jr)
+    if checks:
+        out += '<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th><th>Detalle</th></tr></thead><tbody>' + "".join(
+            f'<tr class="{"good" if c["passed"] else "bad"}"><td>{E(c["name"])}</td><td>{E(str(c["expected"]))}</td><td>{E(str(c["actual"]))}</td><td>{E(str(c.get("detail", "")))}</td></tr>' for c in checks) + "</tbody></table>"
+    t = ev.get("ai_trace")
+    if t is not None:
+        steps = report_trace.steps_html(t) if t.get("steps") else ""
+        # The prompts and outputs are in the steps above; the raw JSON keeps the rest (token and cache counters).
+        slim = {**t, "llmCalls": [{k: v for k, v in c.items() if k not in ("input", "output")} for c in t.get("llmCalls") or []]} if steps else t
+        raw = f'<details><summary>JSON crudo{" (sin prompts)" if steps else ""}</summary><pre>{E(json.dumps(slim, ensure_ascii=False, indent=2)[:60000])}</pre></details>'
+        out += f'<details class="trace"><summary>Traza del motor de IA {COPY_BUTTON}</summary>{steps}{raw}</details>'
+    flow = report_trace.flow_summary(t) or ""
+    return f'<div class="case" data-name="{E(r["name"])}" data-flow="{E(flow)}">{out}</div>'
+
 def evidence(r):
     ev = r.get("evidence") or {}; parts = []
-    if r["type"] == "eval":
-        model_txt = f'<span class="lbl">Modelo</span>{E(ev.get("model") or "?")} <span class="muted">· validación: ' if per_row_model(r) else '<span class="lbl">Validación</span><span class="muted">'
-        parts.append(f'<p>{model_txt}{E(ev.get("judge") or "heurística")}</span></p>')
-        parts.append(f'<div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div><div class="a"><span class="lbl">Respuesta</span>{E(ev.get("answer", "") or "(vacía)")}</div></div>')
-        if ev.get("expected_output"): parts.append(f'<div class="qa"><div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div></div>')
-        jr = ev.get("judge_report")
-        if jr:
-            sc = jr.get("scores") or {}
-            parts.append('<p><span class="lbl">Juez</span>' + E(jr.get("model", "")) + " · " + ", ".join(f"{k} {v:.2f}" for k, v in sc.items() if isinstance(v, (int, float))) + (f' · <em>{E(sc.get("rationale") or "")}</em>' if sc.get("rationale") else "") + (f' · <b class="fail">error: {E(sc["error"])}</b>' if sc.get("error") else "") + "</p>")
-        checks = ev.get("checks") or []
-        if checks:
-            parts.append('<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th><th>Detalle</th></tr></thead><tbody>' + "".join(
-                f'<tr class="{"bad" if not c["passed"] else "good"}"><td>{E(c["name"])}</td><td>{E(str(c["expected"]))}</td><td>{E(str(c["actual"]))}</td><td>{E(str(c.get("detail", "")))}</td></tr>' for c in checks) + "</tbody></table>")
-        if ev.get("ai_trace") is not None:
-            parts.append(f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>')
+    if r["type"] == "eval": parts.append(eval_case_html(r))
     if ev.get("expect"): parts.append(f'<p><span class="lbl">Esperado</span>{E(ev["expect"])}</p>')
     if ev.get("trace"): parts.append(f'<details open><summary>Traza</summary><pre>{E(ev["trace"])}</pre></details>')
     if ev.get("log_tail"): parts.append(f'<details><summary>Últimas líneas de app.log</summary><pre>{E(ev["log_tail"])}</pre></details>')
@@ -93,18 +159,14 @@ def rows_html(rs, expand_fail=True):
         if cat: name_cell += f' <span class="muted">· {E(cat)}</span>'
         model = (r.get("evidence") or {}).get("model") if per_row_model(r) else None
         det = E(r["detail"] or "") + (f' <span class="muted">· modelo {E(model)}</span>' if model else "")
-        out += f'<tr class="{cls}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
+        flow = report_trace.flow_summary((r.get("evidence") or {}).get("ai_trace"))
+        if flow: det += f'<div class="flow">{E(flow)}</div>'
+        out += f'<tr class="{cls}" id="{ANCHOR[id(r)]}"><td><span class="chip {st}">{STATUS_LABEL[st]}</span></td><td class="name">{name_cell}</td><td class="det">{det}</td><td class="dur">{dur}</td></tr>'
         if st in ("fail", "info") and (r.get("evidence") or {}) and (expand_fail or st == "info"):
             ev = evidence(r)
             if ev: out += f'<tr class="ev"><td colspan="4">{ev}</td></tr>'
-        elif r["type"] == "eval" and st == "ok":
-            ev = r.get("evidence") or {}
-            checks = ev.get("checks") or []
-            tbl = '<table class="checks"><thead><tr><th>Check</th><th>Esperado</th><th>Obtenido</th></tr></thead><tbody>' + "".join(f'<tr><td>{E(c["name"])}</td><td>{E(str(c["expected"]))}</td><td>{E(str(c["actual"]))[:160]}</td></tr>' for c in checks) + "</tbody></table>"
-            jr = ev.get("judge_report") or {}; sc = jr.get("scores") or {}
-            jtxt = ("<p><span class=\"lbl\">Juez</span>" + E(jr.get("model", "")) + " · " + ", ".join(f"{k} {v:.2f}" for k, v in sc.items() if isinstance(v, (int, float))) + (f" · <em>{E(sc.get('rationale') or '')}</em>" if sc.get("rationale") else "") + "</p>") if jr else ""
-            gold = f'<div class="q"><span class="lbl">Golden</span>{E(ev["expected_output"])}</div>' if ev.get("expected_output") else ""
-            out += f'<tr class="ev"><td colspan="4"><details><summary>Pregunta, golden, checks, juez y traza</summary><div class="qa"><div class="q"><span class="lbl">Pregunta</span>{E(ev.get("question", ""))}</div>{gold}<div class="a"><span class="lbl">Respuesta</span>{E((ev.get("answer") or "")[:1500])}</div></div>{jtxt}{tbl}' + (f'<details><summary>Traza del motor de IA</summary><pre>{E(json.dumps(ev["ai_trace"], ensure_ascii=False, indent=1)[:60000])}</pre></details>' if ev.get("ai_trace") is not None else "") + '</details></td></tr>'
+        elif r["type"] == "eval" and st == "ok" and r.get("evidence"):
+            out += f'<tr class="ev"><td colspan="4"><details><summary>Pregunta, golden, checks y traza</summary>{eval_case_html(r)}</details></td></tr>'
     return out
 
 # ---------- build ----------
@@ -112,11 +174,17 @@ by_feat = collections.defaultdict(list)
 for r in records: by_feat[r["feature"]].append(r)
 feat_order = [f for f in features if f in by_feat] + [f for f in by_feat if f not in features]
 
+ANCHOR = {id(r): f"c{i}" for i, r in enumerate(records)}
+def toc_cases(rs):
+    """Every case of a subsection as a collapsed list, failures first."""
+    ordered = [r for r in rs if r["status"] == "fail"] + [r for r in rs if r["status"] != "fail"]
+    items = "".join(f'<li class="{r["status"]}"><a href="#{ANCHOR[id(r)]}">{E(r["name"])}</a></li>' for r in ordered)
+    return f'<details class="cases"><summary>{len(rs)} casos</summary><ul>{items}</ul></details>'
 def toc_count(rs):
     c = counts(rs); return f'<span class="n">{c["ok"]}</span>' + (f' <span class="f">{c["fail"]} ✗</span>' if c["fail"] else "")
 index_html = "".join(
     f'<li><a href="#f-{slug(f)}">{E(f)}</a> {toc_count(by_feat[f])}<ul>' +
-    "".join(f'<li><a href="#f-{slug(f)}-{t}">{TYPE_LABEL[t]}</a> {toc_count([r for r in by_feat[f] if r["type"] == t])}</li>' for t in types if any(r["type"] == t for r in by_feat[f])) + "</ul></li>"
+    "".join(f'<li><a href="#f-{slug(f)}-{t}">{TYPE_LABEL[t]}</a> {toc_count([r for r in by_feat[f] if r["type"] == t])}{toc_cases([r for r in by_feat[f] if r["type"] == t])}</li>' for t in types if any(r["type"] == t for r in by_feat[f])) + "</ul></li>"
     for f in feat_order)
 
 global_rows = [(f, f"f-{slug(f)}", counts(by_feat[f])) for f in feat_order]
@@ -160,7 +228,7 @@ for f in feat_order:
             if harness:
                 head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or "?")}<br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Harness</span>{E(harness)}</p>'
             else:
-                head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or ai.get("model", "?"))} <span class="muted">({E(ai.get("provider", "?"))}, embeddings {E(ai.get("embeddingModel", "?"))})</span><br><span class="lbl">Juez</span>{E(ev_meta.get("judge_model", "?"))} <span class="muted">· umbral 0,70 por métrica · una respuesta se acepta solo si superan los checks heurísticos y el juez</span><br><span class="lbl">Golden</span>cada caso lleva `expected_output` cuando la respuesta es determinable a partir de la BD demo; el juez la usa como referencia<br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Checks</span>answer_nonempty (respuesta no vacía), route (ruta elegida: ToolsFirst / RAG), tools_called (herramientas invocadas en orden), answer_contains / answer_not_contains (anclas de texto o enlaces email:// draft://), expected_tool_args_contains (argumentos de la herramienta). Cada caso lista los suyos en el desplegable.</p>'
+                head = f'<p class="evalmeta"><span class="lbl">Modelo</span>{E(", ".join(models) or ai.get("model", "?"))} <span class="muted">({E(ai.get("provider", "?"))}, embeddings {E(ai.get("embeddingModel", "?"))})</span><br><span class="lbl">Juez</span>{E(ev_meta.get("judge_model", "?"))} <span class="muted">· umbral 0,70 por métrica · una respuesta se acepta solo si superan los checks heurísticos y el juez</span><br><span class="lbl">Golden</span>cada caso lleva `expected_output` cuando la respuesta es determinable a partir de la BD demo; el juez la usa como referencia<br><span class="lbl">Validación</span>{E(judge)}<br><span class="lbl">Checks</span>answer_nonempty (respuesta no vacía), route (ruta elegida: ToolsFirst / RAG), tools_called (herramientas invocadas en orden), answer_contains / answer_not_contains (anclas de texto o enlaces email:// draft://), expected_tool_args_contains (argumentos de la herramienta), juez · &lt;métrica&gt; (una fila por métrica del juez contra el umbral). Cada caso lista los suyos en el desplegable, con el flujo de la traza bajo el detalle.</p>'
         sub += f'<details class="type" id="f-{slug(f)}-{t}"{" open" if fails else ""}><summary>{TYPE_LABEL[t]} <span class="muted">{len(trs)} · {len(fails)} fallos</span></summary>{head}{sub_tbl}</details>'
     sections += f'<details class="feature" id="f-{slug(f)}"{" open" if c["fail"] else ""}><summary>{E(f)} <span class="muted">{c["ok"]} ok · {c["fail"]} fallos · {c["skip"]} n/a</span></summary>{type_tbl}{sub}</details>'
 
@@ -177,7 +245,8 @@ gc = counts(records)
 
 PRIVATE = bool(meta.get("private"))
 TITLE = "Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps"
-page = f'''<title>{TITLE}</title>
+page = f'''<meta charset="utf-8">
+<title>{TITLE}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{{--bg:#F6F7F5;--panel:#FFFFFF;--ink:#1C2430;--muted:#5D6675;--line:#D9DED8;--accent:#1F6F8B;--ok:#2E7D4F;--fail:#B23A3A;--skip:#A66A00;--info:#4A5AA8;--chipbg:#EEF1EC;--badbg:#FBEDED;--evbg:#FAFBF9;color-scheme:light}}
@@ -218,6 +287,12 @@ details summary{{cursor:pointer;color:var(--accent);margin:6px 0}}
 table.checks{{margin:8px 0}} table.checks tr.bad td{{background:var(--badbg)}}
 figure{{margin:10px 0 0}} figure img{{width:100%;max-width:900px;height:auto;border:1px solid var(--line);border-radius:4px;display:block}} figcaption{{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);margin-top:4px}}
 ul.index{{columns:2;column-gap:32px;padding-left:18px}} ul.index ul{{padding-left:16px;font-size:13px;margin:2px 0 6px}} ul.index>li{{break-inside:avoid;margin-bottom:6px}}
+.flow{{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--accent);margin-top:4px}}
+ol.steps{{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}} li.step{{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:6px 10px}}
+.stephead{{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}} .steplabel{{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:500}}
+details.blk summary{{font-size:12px;margin:4px 0 0}} details.blk pre{{margin:4px 0 0}}
+nav.toc details.cases summary{{font-size:11.5px;color:var(--muted);margin:2px 0}} nav.toc details.cases li{{padding-left:10px;font-size:11.5px;word-break:break-word}} nav.toc details.cases li.fail a{{color:var(--fail);font-weight:600}}
+button.copy{{display:inline-flex;align-items:center;gap:4px;margin-left:10px;padding:2px 8px;font:inherit;font-size:12px;color:var(--accent);background:var(--panel);border:1px solid var(--line);border-radius:4px;cursor:pointer;vertical-align:middle}} button.copy:hover{{border-color:var(--accent)}} button.copy.done{{color:var(--ok);border-color:var(--ok)}}
 ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 @media (max-width:720px){{ul.index{{columns:1}}}}
 </style>
@@ -263,6 +338,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 </main>
 </div>
 <script>
+{COPY_JS}
 // A link into a collapsed section opens it (and its parents) before jumping.
 function openHash(){{const id=location.hash.slice(1); if(!id) return; let el=document.getElementById(id); if(!el) return; for(let p=el; p; p=p.parentElement) if(p.tagName==='DETAILS') p.open=true; el.scrollIntoView({{block:'start'}});}}
 window.addEventListener('hashchange', openHash); openHash();
