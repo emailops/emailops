@@ -408,6 +408,10 @@ jobs:
           tag_name: ${{ inputs.tag_name }}
           body_path: ${{ runner.temp }}/release-notes.md
           files: release/*
+          # Always a draft: the release skill creates the draft first and
+          # publishes it only after every platform's binaries are attached.
+          # Without this, the action finalizes (publishes) an existing draft.
+          draft: true
 
   # Windows-only, NVIDIA-only additional download alongside the Vulkan build
   # above (which stays the recommended default: it covers AMD/Intel/NVIDIA
@@ -570,3 +574,7 @@ jobs:
           tag_name: ${{ inputs.tag_name }}
           body_path: ${{ runner.temp }}/release-notes.md
           files: release/*
+          # Always a draft: the release skill creates the draft first and
+          # publishes it only after every platform's binaries are attached.
+          # Without this, the action finalizes (publishes) an existing draft.
+          draft: true
