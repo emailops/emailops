@@ -202,7 +202,6 @@
     "ok": "OK",
     "failed": "Fallidos",
     "duration": "Duración",
-    "errorMessages": "Mensajes de error",
     "title": "Historial de ejecuciones — {{name}}",
     "kinds": {
       "backfill": "Reproceso",
@@ -215,7 +214,14 @@
       "success": "Correcta",
       "failed": "Fallida",
       "cancelled": "Cancelada"
-    }
+    },
+    "errorsSummary_one": "Ver {{count}} error",
+    "errorsSummary_other": "Ver {{count}} errores",
+    "errorsSummary_many": "Ver {{count}} errores",
+    "runErrorSummary": "Ver el error de la ejecución",
+    "runError": "Error de la ejecución",
+    "failuresRetried": "Las filas que fallaron se han vuelto a procesar después.",
+    "unknownError": "Sin motivo registrado"
   },
   "apply": {
     "applyToAccount": "Aplicar a la cuenta",

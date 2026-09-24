@@ -202,7 +202,6 @@
     "ok": "OK",
     "failed": "Fehlgeschlagen",
     "duration": "Dauer",
-    "errorMessages": "Fehlermeldungen",
     "title": "Laufverlauf — {{name}}",
     "kinds": {
       "backfill": "Nachverarbeitung",
@@ -215,7 +214,14 @@
       "success": "Erfolgreich",
       "failed": "Fehlgeschlagen",
       "cancelled": "Abgebrochen"
-    }
+    },
+    "errorsSummary_one": "{{count}} Fehler anzeigen",
+    "errorsSummary_other": "{{count}} Fehler anzeigen",
+    "errorsSummary_many": "{{count}} Fehler anzeigen",
+    "runErrorSummary": "Fehler des Laufs anzeigen",
+    "runError": "Fehler des Laufs",
+    "failuresRetried": "Die fehlgeschlagenen Zeilen wurden seitdem erneut verarbeitet.",
+    "unknownError": "Kein Grund erfasst"
   },
   "apply": {
     "applyToAccount": "Auf Konto anwenden",

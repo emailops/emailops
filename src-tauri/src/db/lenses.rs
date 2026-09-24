@@ -7,8 +7,8 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
-    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRow, LensRowsPage, LensRunKind, LensSchema, LensScope,
-    LensStatus, LensSummary, SortSpec, UpdateLensInput,
+    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRow, LensRowsPage, LensRunFailure, LensRunKind,
+    LensSchema, LensScope, LensStatus, LensSummary, SortSpec, UpdateLensInput,
 };
 
 use super::Database;
@@ -649,6 +649,38 @@ impl Database {
             params![processed, succeeded, failed, run_id],
         )?;
         Ok(())
+    }
+
+    /// Rows that failed extraction while `run_id` ran: still `failed`, and
+    /// extracted between the run's start and its end (now, if still running).
+    ///
+    /// Runs keep only counts, and each row keeps only its latest attempt, so
+    /// this is the run's failure list as far as the rows remember it: a row a
+    /// later run fixed (or failed again) is no longer attributed to this run.
+    pub fn list_lens_run_failures(&self, lens_id: &str, run_id: &str) -> Result<Vec<LensRunFailure>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT r.email_id, e.subject, e.sender, r.error_message, r.extracted_at \
+             FROM lens_rows r \
+             JOIN emails e ON e.id = r.email_id \
+             JOIN lens_runs lr ON lr.id = ?2 AND lr.lens_id = r.lens_id \
+             WHERE r.lens_id = ?1 AND r.status = 'failed' \
+               AND r.extracted_at >= lr.started_at \
+               AND r.extracted_at <= COALESCE(lr.finished_at, ?3) \
+             ORDER BY r.extracted_at ASC",
+        )?;
+        let failures = stmt
+            .query_map(params![lens_id, run_id, now_secs()], |row| {
+                Ok(LensRunFailure {
+                    email_id: row.get(0)?,
+                    subject: row.get(1)?,
+                    sender: row.get(2)?,
+                    error_message: row.get(3)?,
+                    extracted_at: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(failures)
     }
 
     pub fn finish_lens_run(&self, run_id: &str, status: &str, error_message: Option<&str>) -> Result<()> {
@@ -1323,5 +1355,83 @@ mod column_filter_tests {
     fn column_values_for_an_unknown_key_are_empty() {
         let (db, lens) = setup();
         assert!(db.get_lens_column_values(&lens, "nope").unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod run_failure_tests {
+    use super::tests::sample_input;
+    use crate::db::Database;
+
+    fn seed_email(db: &Database, id: &str, subject: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'imap', 'me@example.test', 'Test', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                                 recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,'acc1',?1,?2,'Vendor','billing@vendor.test','vendor.test','[]','[]','',100,0,'primary',0)",
+            rusqlite::params![id, subject],
+        )
+        .unwrap();
+    }
+
+    /// A row with the given status and error, extracted at `at`.
+    fn row(db: &Database, lens: &str, id: &str, status: &str, error: Option<&str>, at: i64) {
+        seed_email(db, id, &format!("Subject {id}"));
+        db.upsert_lens_row(lens, id, "acc1", "{}", 1, 100, status, error)
+            .unwrap();
+        db.connection()
+            .execute(
+                "UPDATE lens_rows SET extracted_at = ?1 WHERE lens_id = ?2 AND email_id = ?3",
+                rusqlite::params![at, lens, id],
+            )
+            .unwrap();
+    }
+
+    fn run(db: &Database, lens: &str, id: &str, started: i64, finished: Option<i64>) {
+        db.connection()
+            .execute(
+                "INSERT INTO lens_runs (id, lens_id, kind, started_at, finished_at, status) VALUES (?1, ?2, 'backfill', ?3, ?4, 'failed')",
+                rusqlite::params![id, lens, started, finished],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_run_lists_the_rows_that_failed_while_it_ran() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        run(&db, &lens, "old", 1_000, Some(1_100));
+        run(&db, &lens, "new", 2_000, Some(2_100));
+        row(&db, &lens, "e-old", "failed", Some("model timeout"), 1_050);
+        row(&db, &lens, "e-new", "failed", Some("not a JSON object"), 2_050);
+        row(&db, &lens, "e-ok", "ok", None, 2_060);
+
+        let failures = db.list_lens_run_failures(&lens, "new").unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].email_id, "e-new");
+        assert_eq!(failures[0].subject, "Subject e-new");
+        assert_eq!(failures[0].error_message.as_deref(), Some("not a JSON object"));
+    }
+
+    #[test]
+    fn a_running_run_counts_up_to_now() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        run(&db, &lens, "live", 1_000, None);
+        row(&db, &lens, "e1", "failed", Some("boom"), super::now_secs());
+        assert_eq!(db.list_lens_run_failures(&lens, "live").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_run_has_no_failures() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap().id;
+        assert!(db.list_lens_run_failures(&lens, "nope").unwrap().is_empty());
     }
 }

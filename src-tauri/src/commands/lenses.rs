@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
-    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRowsPage, LensRunHandle, LensRunHistoryEntry,
-    LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, SortSpec, UpdateLensInput,
+    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRowsPage, LensRunFailure, LensRunHandle,
+    LensRunHistoryEntry, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, SortSpec,
+    UpdateLensInput,
 };
 use crate::models::AppLogEvent;
 use crate::services::ai::AiService;
@@ -152,6 +153,16 @@ pub async fn get_lens_rows(
         limit.unwrap_or(200),
         offset.unwrap_or(0),
     )
+}
+
+/// Rows that failed while one run ran, for the run history's error detail.
+#[tauri::command]
+pub async fn list_lens_run_failures(
+    state: State<'_, AppState>,
+    lens_id: String,
+    run_id: String,
+) -> Result<Vec<LensRunFailure>> {
+    state.db.list_lens_run_failures(&lens_id, &run_id)
 }
 
 /// Distinct values of one column with their row counts, for the Excel-style

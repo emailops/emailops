@@ -1,7 +1,7 @@
 // Modal listing the most recent runs for a Lens (most recent first).
 // Sourced from the `lens_runs` table via `list_lens_runs`.
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
@@ -9,6 +9,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { formatDayMonthYearTime } from '@/lib/intl';
 import type { LensRunHistoryEntry } from '@/types';
+import { LensRunErrors } from './LensRunErrors';
 
 interface LensRunHistoryDialogProps {
   lensId: string | null;
@@ -82,37 +83,31 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           </thead>
           <tbody>
             {runs.map((r) => (
-              <tr key={r.id} className="border-t border-gray-800">
-                <td className="px-3 py-2 align-top text-gray-300">{formatDayMonthYearTime(r.startedAt)}</td>
-                <td className="px-3 py-2 align-top text-gray-300">
-                  {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
-                </td>
-                <td className="px-3 py-2 align-top">
-                  <StatusBadge status={r.status} />
-                </td>
-                <td className="px-3 py-2 align-top text-gray-300">{r.processed}</td>
-                <td className="px-3 py-2 align-top text-green-300">{r.succeeded}</td>
-                <td className="px-3 py-2 align-top text-red-300">{r.failed}</td>
-                <td className="px-3 py-2 align-top text-gray-400">{formatDuration(r)}</td>
-              </tr>
+              <Fragment key={r.id}>
+                <tr className="border-t border-gray-800">
+                  <td className="px-3 py-2 align-top text-gray-300">{formatDayMonthYearTime(r.startedAt)}</td>
+                  <td className="px-3 py-2 align-top text-gray-300">
+                    {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-3 py-2 align-top text-gray-300">{r.processed}</td>
+                  <td className="px-3 py-2 align-top text-green-300">{r.succeeded}</td>
+                  <td className="px-3 py-2 align-top text-red-300">{r.failed}</td>
+                  <td className="px-3 py-2 align-top text-gray-400">{formatDuration(r)}</td>
+                </tr>
+                {lensId && (r.failed > 0 || r.errorMessage) && (
+                  <tr>
+                    <td colSpan={7} className="px-3 pb-2">
+                      <LensRunErrors lensId={lensId} run={r} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
-      )}
-      {runs.some((r) => r.errorMessage) && (
-        <details className="mt-3 px-3 text-[11px] text-gray-400">
-          <summary className="cursor-pointer">{t('lenses:runHistory.errorMessages')}</summary>
-          <ul className="mt-2 space-y-1">
-            {runs
-              .filter((r) => r.errorMessage)
-              .map((r) => (
-                <li key={r.id}>
-                  <span className="text-gray-500">{formatDayMonthYearTime(r.startedAt)}:</span>{' '}
-                  <span className="text-red-300">{r.errorMessage}</span>
-                </li>
-              ))}
-          </ul>
-        </details>
       )}
     </Modal>
   );

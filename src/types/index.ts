@@ -1150,6 +1150,15 @@ export interface LensRunHistoryEntry {
   errorMessage: string | null;
 }
 
+/** A row that failed extraction while one run ran (run history detail). */
+export interface LensRunFailure {
+  emailId: string;
+  subject: string;
+  sender: string;
+  errorMessage: string | null;
+  extractedAt: number;
+}
+
 export interface LensTemplate {
   key: string;
   name: string;

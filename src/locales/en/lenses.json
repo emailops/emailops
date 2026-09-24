@@ -202,7 +202,6 @@
     "ok": "OK",
     "failed": "Failed",
     "duration": "Duration",
-    "errorMessages": "Error messages",
     "title": "Run history — {{name}}",
     "kinds": {
       "backfill": "Backfill",
@@ -215,7 +214,14 @@
       "success": "Success",
       "failed": "Failed",
       "cancelled": "Cancelled"
-    }
+    },
+    "errorsSummary_one": "Show {{count}} error",
+    "errorsSummary_other": "Show {{count}} errors",
+    "errorsSummary_many": "Show {{count}} errors",
+    "runErrorSummary": "Show the run error",
+    "runError": "Run error",
+    "failuresRetried": "The rows that failed have been processed again since.",
+    "unknownError": "No reason recorded"
   },
   "apply": {
     "applyToAccount": "Apply to account",

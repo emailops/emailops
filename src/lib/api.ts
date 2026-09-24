@@ -46,6 +46,7 @@ import type {
   LensColumnValueCount,
   LensPreviewRow,
   LensRowsPage,
+  LensRunFailure,
   LensRunHandle,
   LensRunHistoryEntry,
   LensRunKind,
@@ -1645,6 +1646,11 @@ export async function getLensRows(
     limit: opts.limit ?? null,
     offset: opts.offset ?? null,
   });
+}
+
+/** Rows that failed extraction while one run ran, for the run history. */
+export async function listLensRunFailures(lensId: string, runId: string): Promise<LensRunFailure[]> {
+  return invoke('list_lens_run_failures', { lensId, runId });
 }
 
 /** Distinct values of one Lens column with their row counts (empty cells

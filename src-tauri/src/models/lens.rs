@@ -196,6 +196,17 @@ pub struct ColumnFilter {
     pub include_empty: bool,
 }
 
+/// A row that failed extraction during one run, for the run history.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensRunFailure {
+    pub email_id: String,
+    pub subject: String,
+    pub sender: String,
+    pub error_message: Option<String>,
+    pub extracted_at: i64,
+}
+
 /// One distinct value of a column and how many rows carry it. `value` is
 /// `None` for empty cells.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

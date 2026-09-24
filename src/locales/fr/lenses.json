@@ -202,7 +202,6 @@
     "ok": "OK",
     "failed": "Échoués",
     "duration": "Durée",
-    "errorMessages": "Messages d'erreur",
     "title": "Historique des exécutions — {{name}}",
     "kinds": {
       "backfill": "Retraitement",
@@ -215,7 +214,14 @@
       "success": "Réussie",
       "failed": "Échouée",
       "cancelled": "Annulée"
-    }
+    },
+    "errorsSummary_one": "Voir {{count}} erreur",
+    "errorsSummary_other": "Voir {{count}} erreurs",
+    "errorsSummary_many": "Voir {{count}} erreurs",
+    "runErrorSummary": "Voir l’erreur de l’exécution",
+    "runError": "Erreur de l’exécution",
+    "failuresRetried": "Les lignes en échec ont été retraitées depuis.",
+    "unknownError": "Aucun motif enregistré"
   },
   "apply": {
     "applyToAccount": "Appliquer au compte",
