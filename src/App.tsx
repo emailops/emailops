@@ -898,7 +898,9 @@ function AppInner() {
     // syncs proceed independently; progress events drive list refreshes.
     if (isUnified) {
       resetEmails();
-      useChatStore.getState().reset();
+      // Keyed on the account: this effect also re-runs when the account list
+      // reloads, and a same-account reset emptied the chat mid-conversation.
+      useChatStore.getState().resetForAccount(activeAccountId);
 
       if (!useConnectivityStore.getState().isOnline) {
         addLog('info', 'sync', 'Sync skipped — currently offline.');
@@ -926,8 +928,9 @@ function AppInner() {
 
     // Reset emails when switching accounts to avoid showing stale data
     resetEmails();
-    // Also clear any chat state held from the previous account.
-    useChatStore.getState().reset();
+    // Also clear any chat state held from the previous account — only on a
+    // real switch (see `resetForAccount`).
+    useChatStore.getState().resetForAccount(activeAccountId);
 
     // Skip sync for disabled accounts — still load cached emails
     if (!account.enabled) {

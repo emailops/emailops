@@ -52,7 +52,9 @@ interface ChatStore {
    * because the turn had finished by then. Buffering here lets the answer and
    * its status be restored on return.
    */
-  backgroundTurns: Record<string, { messageId: string; content: string; phase: ChatPhase | null; done: boolean }>;
+  backgroundTurns: Record<string, BackgroundTurn>;
+  /** Account key the chat was last reset for (see `resetForAccount`). */
+  resetAccountKey: string | null;
   /** Last conversation open per account, this session only. See `selectAccount`. */
   lastConversationByAccount: Record<string, string>;
   /** Account chat is currently answering from. */
@@ -154,8 +156,26 @@ interface ChatStore {
   handleTrace: (e: ChatTraceEvent) => void;
   handleRenamed: (e: ChatRenamedEvent) => void;
 
-  /** Clear everything (called when active account changes) */
+  /** Clear everything. */
   reset: () => void;
+  /**
+   * Clear the chat because the app switched to `accountKey` — a no-op when it
+   * was already reset for that key. The App effect that calls this re-runs
+   * whenever the account list reloads, not only on a real switch, and an
+   * unconditional reset there emptied the conversation list (and dropped an
+   * in-flight turn) while the account stayed the same.
+   */
+  resetForAccount: (accountKey: string) => void;
+}
+
+/** A turn still running in a conversation that is not on screen. */
+interface BackgroundTurn {
+  messageId: string;
+  content: string;
+  phase: ChatPhase | null;
+  /** Research batch progress, so a research turn shows where it is on return. */
+  research: ChatResearchProgressEvent | null;
+  done: boolean;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -165,6 +185,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   lastConversationByAccount: {},
   currentAccountId: null,
   backgroundTurns: {},
+  resetAccountKey: null,
   messages: [],
   streamingMessageId: null,
   streamingPhase: null,
@@ -259,8 +280,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // its `done` event is dropped by handleStreamToken's conversation guard,
     // so a stale streamingMessageId would make the freshly loaded copy of that
     // message render as still processing.
+    //
+    // A turn still running in the conversation being left is parked in
+    // `backgroundTurns` first. Its next event can be ~20 s away (a research
+    // batch), and returning before it arrived found no record and showed an
+    // empty, finished-looking answer. Re-selecting the open conversation
+    // parks and restores it the same way.
+    const parked = parkRunningTurn(get());
     if (!id) {
-      set({ activeConversationId: null, messages: [], streamingMessageId: null, streamingPhase: null });
+      set({
+        activeConversationId: null,
+        messages: [],
+        streamingMessageId: null,
+        streamingPhase: null,
+        researchProgress: null,
+        backgroundTurns: parked,
+      });
       return;
     }
     set({
@@ -270,6 +305,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       error: null,
       streamingMessageId: null,
       streamingPhase: null,
+      researchProgress: null,
+      backgroundTurns: parked,
     });
     try {
       const messages = await api.getChatMessages(id);
@@ -296,6 +333,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           backgroundTurns: remaining,
           streamingMessageId: pending.done ? null : pending.messageId,
           streamingPhase: pending.done ? null : pending.phase,
+          researchProgress: pending.done ? null : pending.research,
         };
       });
     } catch (e) {
@@ -403,6 +441,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               messageId: evt.messageId,
               content: evt.error ?? base + evt.token,
               phase: prev?.phase ?? null,
+              research: prev?.research ?? null,
               done: evt.done ?? false,
             },
           },
@@ -442,7 +481,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   handleResearchProgress: (evt) => {
     const { activeConversationId, streamingMessageId } = get();
-    if (evt.conversationId !== activeConversationId) return;
+    if (evt.conversationId !== activeConversationId) {
+      // Off screen: keep it with the parked turn so the return shows it.
+      set((s) => {
+        const prev = s.backgroundTurns[evt.conversationId];
+        if (prev?.done) return s;
+        return {
+          backgroundTurns: {
+            ...s.backgroundTurns,
+            [evt.conversationId]: {
+              messageId: prev?.messageId ?? evt.messageId,
+              content: prev?.content ?? '',
+              phase: prev?.phase ?? 'researching',
+              research: evt,
+              done: false,
+            },
+          },
+        };
+      });
+      return;
+    }
     // Same scoping as `handlePhase`: accept while the id is still unknown.
     if (streamingMessageId !== null && evt.messageId !== streamingMessageId) return;
     set({ researchProgress: evt });
@@ -463,6 +521,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               messageId: prev?.messageId ?? evt.messageId,
               content: prev?.content ?? '',
               phase: evt.phase,
+              research: prev?.research ?? null,
               done: prev?.done ?? false,
             },
           },
@@ -527,8 +586,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }));
   },
 
+  resetForAccount: (accountKey) => {
+    if (get().resetAccountKey === accountKey) return;
+    get().reset();
+    set({ resetAccountKey: accountKey });
+  },
+
   reset: () => {
     set({
+      // Forget the account too, so the chat surfaces' `selectAccount` reloads
+      // the list instead of treating the account as already loaded.
+      currentAccountId: null,
       conversations: [],
       activeConversationId: null,
       messages: [],
@@ -544,3 +612,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 }));
+
+/** `backgroundTurns` with the open conversation's running turn parked in it. */
+function parkRunningTurn(s: ChatStore): Record<string, BackgroundTurn> {
+  const { activeConversationId, streamingMessageId } = s;
+  if (!activeConversationId || !streamingMessageId) return s.backgroundTurns;
+  const message = s.messages.find((m) => m.id === streamingMessageId);
+  return {
+    ...s.backgroundTurns,
+    [activeConversationId]: {
+      messageId: streamingMessageId,
+      content: message?.content ?? '',
+      phase: s.streamingPhase,
+      research: s.researchProgress,
+      done: false,
+    },
+  };
+}
