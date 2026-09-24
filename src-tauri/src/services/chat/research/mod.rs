@@ -34,15 +34,15 @@ use serde_json::Value;
 pub use control::{confirm_exit, exit_decision, request_stop, running_runs, ExitDecision};
 pub(crate) use control::{register_run, store_estimate, take_estimate};
 use plan::{
-    merge_candidates, plan_batches, plan_condense_groups, plan_estimate, plan_gather, plan_research_budget,
-    semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS,
+    for_every_user_address, merge_candidates, plan_batches, plan_condense_groups, plan_estimate, plan_gather,
+    plan_research_budget, semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS,
 };
 pub(crate) use prompts::Match;
 use prompts::{
-    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, finish_report, is_user,
-    join_notes, notes_len, parse_map_notes, participant, plan_report_shape, recipients, relink_bare_refs,
-    render_match_list, report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes,
-    DocMessage, ReportShape, ResearchDoc,
+    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, enforce_direction,
+    finish_report, join_notes, notes_len, parse_map_notes, participant, plan_report_shape, recipients,
+    relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt,
+    BatchNotes, DocMessage, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -131,6 +131,9 @@ pub(crate) struct Prepared {
     pub search_hits: u32,
     pub semantic_hits: u32,
     pub gather_ms: i64,
+    /// Every address the user sends from (see `Database::user_addresses`):
+    /// who "I" is when reading, and every sender a filter on the user covers.
+    pub user_addresses: Vec<String>,
 }
 
 /// Everything planning and gathering read.
@@ -217,9 +220,12 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
 
 /// Run the gather steps for `plan` and order the result oldest first.
 pub(crate) async fn gather(input: &PrepareInput<'_>, plan: Option<SearchPlan>) -> Prepared {
-    let mut prepared = Prepared::default();
+    let mut prepared = Prepared {
+        user_addresses: user_addresses(input.db, input.account_id, input.user_email),
+        ..Default::default()
+    };
     let mut lists: Vec<Vec<String>> = Vec::new();
-    for step in plan_gather(plan.as_ref(), input.question) {
+    for step in for_every_user_address(plan_gather(plan.as_ref(), input.question), &prepared.user_addresses) {
         let t = std::time::Instant::now();
         let (name, arguments, ids) = match &step {
             GatherStep::Filter(p) | GatherStep::FilterUntagged(p) => {
@@ -251,6 +257,19 @@ pub(crate) async fn gather(input: &PrepareInput<'_>, plan: Option<SearchPlan>) -
     prepared.email_ids = oldest_first(input.db, merge_candidates(&lists));
     prepared.plan = plan;
     prepared
+}
+
+/// Every address the user sends from; just the account's when the lookup
+/// fails, which is logged.
+fn user_addresses(db: &Database, account_id: &str, account_email: &str) -> Vec<String> {
+    match db.user_addresses(account_id) {
+        Ok(addrs) if !addrs.is_empty() => addrs,
+        Ok(_) => vec![account_email.to_lowercase()],
+        Err(e) => {
+            super::emit_log("error", &format!("research: could not list the user's addresses: {e}"));
+            vec![account_email.to_lowercase()]
+        }
+    }
 }
 
 /// The plan as the `search_emails` arguments it stands for, for the trace.
@@ -395,7 +414,7 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
         .and_then(|s| s.parse::<u64>().ok());
     // Batched exactly as the run will batch them: whole conversations, each
     // read for what its messages add.
-    let docs = load_docs(input.db, &prepared.email_ids, &budget, input.user_email);
+    let docs = load_docs(input.db, &prepared.email_ids, &budget, &prepared.user_addresses);
     let emails: usize = docs.iter().map(|d| d.messages.len()).sum();
     let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch).len();
@@ -502,9 +521,6 @@ pub(crate) struct ResearchInput<'a> {
     pub language_instruction: &'a str,
     /// ISO code of the report language, for the full list's heading.
     pub language_code: &'a str,
-    /// The account's address: who "I" is in the question, and who wrote which
-    /// message of a thread.
-    pub user_email: &'a str,
     pub map_template: &'a str,
     pub condense_template: &'a str,
     pub reduce_template: &'a str,
@@ -628,7 +644,12 @@ const CONVERSATION_EMAILS_BUDGET: usize = 4;
 /// Load the gathered emails as conversations — oldest first, by the thread's
 /// first gathered email — each read once through the shared thread reader:
 /// every message's new content only, one budget for the conversation.
-fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget, user_email: &str) -> Vec<ResearchDoc> {
+fn load_docs(
+    db: &Database,
+    ids: &[String],
+    budget: &plan::ResearchBudget,
+    user_addresses: &[String],
+) -> Vec<ResearchDoc> {
     use crate::services::thread_reader::{read_thread, ReadOptions, ThreadMessage};
     let emails = load_emails(db, ids);
     let by_id: HashMap<&str, &Email> = emails.iter().map(|e| (e.id.as_str(), e)).collect();
@@ -673,11 +694,11 @@ fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget, user_
                     .messages
                     .into_iter()
                     .map(|m| DocMessage {
-                        from: participant(&m.sender, &m.sender_email, user_email),
-                        from_user: is_user(&m.sender_email, user_email),
+                        from: participant(&m.sender, &m.sender_email, user_addresses),
+                        from_user: plan::is_user_address(&m.sender_email, user_addresses),
                         to: by_id
                             .get(m.id.as_str())
-                            .map(|e| recipients(&e.recipients, user_email))
+                            .map(|e| recipients(&e.recipients, user_addresses))
                             .unwrap_or_default(),
                         id: m.id,
                         date: date(m.timestamp),
@@ -730,8 +751,8 @@ pub(crate) async fn run_research(
 
     // ── Map ──
     progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len(), &found);
-    let docs = load_docs(input.db, &prepared.email_ids, &budget, input.user_email);
-    let direction = plan::plan_direction(prepared.plan.as_ref(), input.user_email);
+    let docs = load_docs(input.db, &prepared.email_ids, &budget, &prepared.user_addresses);
+    let direction = plan::plan_direction(prepared.plan.as_ref(), &prepared.user_addresses);
     // Emails read after the first `n` conversations.
     let emails_in = |n: usize| docs[..n].iter().map(|d| d.messages.len()).sum::<usize>();
     let total_emails = emails_in(docs.len());
@@ -770,7 +791,12 @@ pub(crate) async fn run_research(
         run.llm_calls.push(trace);
         match result {
             Ok(reply) => {
-                let parsed = parse_map_notes(&reply.text, &batch_ids);
+                // Held to who wrote each email before anything reads it.
+                let parsed = enforce_direction(
+                    parse_map_notes(&reply.text, &batch_ids),
+                    &docs[range.clone()],
+                    direction,
+                );
                 // Regrouped over everything read so far: a conversation whose
                 // replies land in different batches stays one match.
                 all_notes.push(parsed.clone());
@@ -1091,7 +1117,6 @@ mod tests {
             n_ctx,
             language_instruction: "Reply in Spanish.",
             language_code: "es",
-            user_email: "me@example.com",
             map_template: d::CHAT_RESEARCH_MAP,
             condense_template: d::CHAT_RESEARCH_CONDENSE,
             reduce_template: d::CHAT_RESEARCH_REDUCE,
@@ -1423,5 +1448,39 @@ mod tests {
         let est = estimate(&prepare_input(&db, &provider, &categories)).await;
         assert_eq!(est.emails, 30);
         assert_eq!(est.batches, 1, "one conversation, one batch");
+    }
+
+    #[tokio::test]
+    async fn a_question_about_sent_mail_gathers_what_every_user_address_sent() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 0);
+        {
+            let conn = db.connection();
+            for (id, sender) in [
+                ("s1", "me@example.com"),
+                ("s2", "me@work.example"),
+                ("x1", "ana@client.example"),
+            ] {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1,'acct',?1,'Quote',?2,?2,'d','[]','[]','snip',1780000000,1,'primary',
+                             CASE WHEN ?2 = 'ana@client.example' THEN 'inbox' ELSE 'sent' END,0)",
+                    rusqlite::params![id, sender],
+                )
+                .unwrap();
+            }
+        }
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "me@example.com"}"#);
+        let categories: Vec<String> = Vec::new();
+        let est = estimate(&prepare_input(&db, &provider, &categories)).await;
+        let prepared = take_estimate(&est.estimate_id, "acct", "¿Qué facturas me ha enviado el proveedor?")
+            .expect("kept for the run");
+        let mut ids = prepared.email_ids.clone();
+        ids.sort();
+        // r00 is the seed's own reply from the account address.
+        assert_eq!(ids, ["r00", "s1", "s2"], "the alias's mail too, never the client's");
     }
 }

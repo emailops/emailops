@@ -93,13 +93,18 @@ pub(crate) enum Direction {
     Any,
 }
 
-/// The direction the planner already decided: a sender filter on the user's
-/// own address is a question about sent mail, a recipient filter on it about
-/// received mail. Read from the plan, never guessed from the wording. Pure.
-pub(crate) fn plan_direction(plan: Option<&SearchPlan>, user_email: &str) -> Direction {
-    let me = user_email.trim();
-    let is_me =
-        |addr: &Option<String>| !me.is_empty() && addr.as_deref().is_some_and(|a| a.trim().eq_ignore_ascii_case(me));
+/// Whether `address` is one the user sends from.
+pub(crate) fn is_user_address(address: &str, user_addresses: &[String]) -> bool {
+    let address = address.trim();
+    !address.is_empty() && user_addresses.iter().any(|u| u.trim().eq_ignore_ascii_case(address))
+}
+
+/// The direction the planner already decided: a sender filter on one of the
+/// user's addresses is a question about sent mail, a recipient filter on one
+/// about received mail. Read from the plan, never guessed from the wording.
+/// Pure.
+pub(crate) fn plan_direction(plan: Option<&SearchPlan>, user_addresses: &[String]) -> Direction {
+    let is_me = |addr: &Option<String>| addr.as_deref().is_some_and(|a| is_user_address(a, user_addresses));
     match plan {
         Some(p) if is_me(&p.from) => Direction::Sent,
         Some(p) if is_me(&p.to) => Direction::Received,
@@ -156,6 +161,38 @@ pub(crate) fn plan_gather(plan: Option<&SearchPlan>, question: &str) -> Vec<Gath
         steps.push(GatherStep::FilterUntagged(untagged));
     }
     steps
+}
+
+/// A filter on the user runs once per address the user sends from: the
+/// planner writes the account's address, and mail sent from an alias is the
+/// user's mail too. Filters on anyone else are left alone. Pure.
+pub(crate) fn for_every_user_address(steps: Vec<GatherStep>, user_addresses: &[String]) -> Vec<GatherStep> {
+    let on_user = |a: &Option<String>| a.as_deref().is_some_and(|a| is_user_address(a, user_addresses));
+    let expand = |plan: SearchPlan, wrap: fn(SearchPlan) -> GatherStep| -> Vec<GatherStep> {
+        if on_user(&plan.from) {
+            let each = |a: &String| SearchPlan {
+                from: Some(a.clone()),
+                ..plan.clone()
+            };
+            user_addresses.iter().map(|a| wrap(each(a))).collect()
+        } else if on_user(&plan.to) {
+            let each = |a: &String| SearchPlan {
+                to: Some(a.clone()),
+                ..plan.clone()
+            };
+            user_addresses.iter().map(|a| wrap(each(a))).collect()
+        } else {
+            vec![wrap(plan)]
+        }
+    };
+    steps
+        .into_iter()
+        .flat_map(|step| match step {
+            GatherStep::Filter(p) => expand(p, GatherStep::Filter),
+            GatherStep::FilterUntagged(p) => expand(p, GatherStep::FilterUntagged),
+            other => vec![other],
+        })
+        .collect()
 }
 
 /// Hits kept from the semantic pool: everything within `band` of the best
@@ -290,20 +327,50 @@ mod tests {
 
     // ── direction ──
 
+    fn addrs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_filter_on_the_user_searches_every_address_the_user_sends_from() {
+        let me = addrs(&["me@mail.example", "me@work.example"]);
+        let steps = plan_gather(Some(&plan(|p| p.from = Some("Me@Mail.example".into()))), "q");
+        let froms: Vec<String> = for_every_user_address(steps, &me)
+            .into_iter()
+            .filter_map(|s| match s {
+                GatherStep::Filter(p) => p.from,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(froms, me);
+    }
+
+    #[test]
+    fn a_filter_on_someone_else_is_left_alone() {
+        let me = addrs(&["me@mail.example", "me@work.example"]);
+        let steps = plan_gather(Some(&plan(|p| p.from = Some("ana@client.example".into()))), "q");
+        assert_eq!(for_every_user_address(steps.clone(), &me), steps);
+    }
+
     #[test]
     fn direction_follows_a_sender_or_recipient_filter_on_the_user() {
-        let me = "Me@Example.com";
+        let me = &addrs(&["me@example.com", "me@work.example"]);
         let from = |a: &str| plan(|p| p.from = Some(a.into()));
         let to = |a: &str| plan(|p| p.to = Some(a.into()));
-        assert_eq!(plan_direction(Some(&from("me@example.com")), me), Direction::Sent);
+        assert_eq!(plan_direction(Some(&from("Me@Example.com")), me), Direction::Sent);
+        assert_eq!(
+            plan_direction(Some(&from("me@work.example")), me),
+            Direction::Sent,
+            "an alias is the user too"
+        );
         assert_eq!(plan_direction(Some(&to("me@example.com")), me), Direction::Received);
         assert_eq!(plan_direction(Some(&from("ana@client.example")), me), Direction::Any);
         assert_eq!(plan_direction(Some(&plan(|_| {})), me), Direction::Any);
         assert_eq!(plan_direction(None, me), Direction::Any);
         assert_eq!(
-            plan_direction(Some(&from("me@example.com")), ""),
+            plan_direction(Some(&from("me@example.com")), &[]),
             Direction::Any,
-            "no account address"
+            "no known address"
         );
     }
 

@@ -309,7 +309,7 @@ pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research as
 
 Rules:
 - One finding per line, starting with "- MATCH: " or "- CONTEXT: ". Be specific: people, companies, dates, amounts, decisions, requests, problems, status.
-- MATCH: the email itself answers the question (for "which quotes have I sent?", a quote the user sent). CONTEXT: related but not an answer (a request, a reply, a quote someone else sent). When unsure, use CONTEXT.
+- MATCH: the email itself is what the question asks about (for "which quotes have I sent?", the email in which the user sends a quote). CONTEXT: anything else related, including an email about it (a question, a request, a follow-up, a thanks) or the same thing from someone else. When unsure, use CONTEXT.
 - End every finding with the email it came from as (email://EMAIL_ID), copying the EMAIL_ID exactly as given. A finding several emails support lists each one: (email://ID1) (email://ID2).
 - Use only what the emails say. No speculation, no advice, no introduction, no summary of the batch.
 - Skip emails that are irrelevant to the question. If nothing in the batch is relevant, reply with exactly: NONE
@@ -317,9 +317,9 @@ Rules:
 
 QUESTION: {{question}}
 - "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Say who sent what to whom, and never describe the user as a client, customer or contact.
+{{direction}}
 
 EMAILS:
-{{direction}}
 {{emails}}"#;
 
 /// Research-mode condense step: when the notes of every batch do not fit one
@@ -354,10 +354,10 @@ How to write the report:
 
 QUESTION: {{question}}
 - "YOU" or "the user" in the notes is the person you are writing for: address them as "you", never as a client, customer or contact.
-- MATCH notes answer the question. CONTEXT notes are background: use them to explain, never list or count them as answers.
+- MATCH notes answer the question. CONTEXT notes are background: use them to explain, never list or count them as answers. Never mention MATCH, CONTEXT, the notes or these rules in the report.
+{{direction}}
 
 COVERAGE: {{coverage}}
-{{direction}}
 
 COUNTS: {{counts}}
 

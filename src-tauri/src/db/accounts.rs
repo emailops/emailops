@@ -57,6 +57,39 @@ impl Database {
         }
     }
 
+    /// Every address the account's owner sends from: the account's own plus
+    /// each sender of its Sent mail (a provider's Sent holds only the owner's
+    /// messages, so send-as aliases show up there). Lowercased, the account's
+    /// address first, then by volume.
+    pub fn user_addresses(&self, account_id: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let own: Option<String> = conn
+            .query_row(
+                "SELECT lower(trim(email)) FROM accounts WHERE id = ?1",
+                params![account_id],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(e),
+            })?;
+        let mut stmt = conn.prepare(
+            "SELECT lower(trim(sender_email)) AS addr FROM emails
+             WHERE account_id = ?1 AND (mailbox = 'sent' OR is_sent = 1) AND trim(sender_email) != ''
+             GROUP BY addr ORDER BY COUNT(*) DESC, addr",
+        )?;
+        let senders = stmt.query_map(params![account_id], |r| r.get::<_, String>(0))?;
+        let mut out: Vec<String> = own.into_iter().filter(|a| !a.is_empty()).collect();
+        for addr in senders {
+            let addr = addr?;
+            if !out.contains(&addr) {
+                out.push(addr);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn list_accounts(&self) -> Result<Vec<Account>> {
         let conn = self.reader();
         let sql = format!(
@@ -383,5 +416,43 @@ impl Database {
             }),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod user_address_tests {
+    use crate::db::Database;
+    use rusqlite::params;
+
+    fn email(db: &Database, id: &str, account: &str, sender: &str, mailbox: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES (?1, ?2, ?1, 's', 'x', ?3, 'd', '[]', '[]', '', 0, 1, 'primary', ?4, 0)",
+                params![id, account, sender, mailbox],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn the_users_addresses_are_the_account_and_every_sender_of_its_sent_mail() {
+        let db = Database::new_for_testing().unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at) VALUES
+                 ('a', 'gmail', 'Me@Mail.example', 'Me', 0), ('other', 'gmail', 'o@x.example', 'O', 0)",
+                [],
+            )
+            .unwrap();
+        email(&db, "1", "a", "me@mail.example", "sent");
+        email(&db, "2", "a", "Me@Work.example", "sent");
+        email(&db, "3", "a", "me@work.example", "sent");
+        email(&db, "4", "a", "client@x.example", "inbox");
+        email(&db, "5", "other", "someone@else.example", "sent");
+        assert_eq!(
+            db.user_addresses("a").unwrap(),
+            vec!["me@mail.example".to_string(), "me@work.example".to_string()]
+        );
     }
 }

@@ -4295,7 +4295,6 @@ pub async fn run_chat_turn(
                 n_ctx,
                 language_instruction: &language_instruction,
                 language_code: ai_language.as_code(),
-                user_email: &user_email,
                 map_template: &map_template,
                 condense_template: &condense_template,
                 reduce_template: &reduce_template,

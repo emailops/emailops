@@ -1569,7 +1569,12 @@ reader and for no conversation to appear twice in an answer.
 **Decision:** Research decides what counts from facts code already has. It does not
 leave the model to guess them.
 - **Roles:** every message the reading step sees is rendered with its role decided in
-  code: `From: YOU (the user)` or `To: YOU`, from the account's address.
+  code: `From: YOU (the user)` or `To: YOU`.
+- **The user's addresses:** "the user" is every address they send from: the account's
+  own plus each sender of the account's Sent mail. A provider's Sent folder holds only
+  the owner's messages, so send-as aliases show up there with no configuration. A
+  filter the planner puts on the user's address is run once per address, so mail sent
+  from an alias is gathered too.
 - **Direction:** the planner's filter sets the question's direction: a sender filter on
   the user means *sent*, a recipient filter on the user means *received*. The direction
   is passed to the map and report steps.

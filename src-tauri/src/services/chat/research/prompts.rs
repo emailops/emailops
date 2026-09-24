@@ -26,16 +26,12 @@ pub(crate) struct DocMessage {
     pub text: String,
 }
 
-/// Whether `address` is the user's own.
-pub(crate) fn is_user(address: &str, user_email: &str) -> bool {
-    let me = user_email.trim();
-    !me.is_empty() && address.trim().eq_ignore_ascii_case(me)
-}
+use super::plan::is_user_address as is_user;
 
 /// A sender as the map step shows it: the user as [`USER_LABEL`], anyone
 /// else as `Name <address>`. Pure.
-pub(crate) fn participant(name: &str, address: &str, user_email: &str) -> String {
-    if is_user(address, user_email) {
+pub(crate) fn participant(name: &str, address: &str, user_addresses: &[String]) -> String {
+    if is_user(address, user_addresses) {
         USER_LABEL.to_string()
     } else if name.trim().is_empty() || name.trim() == address.trim() {
         address.trim().to_string()
@@ -46,14 +42,14 @@ pub(crate) fn participant(name: &str, address: &str, user_email: &str) -> String
 
 /// Recipients as the map step shows them, the user as [`USER_LABEL`]. Each
 /// entry is a bare address or `Name <address>`. Pure.
-pub(crate) fn recipients(list: &[String], user_email: &str) -> String {
+pub(crate) fn recipients(list: &[String], user_addresses: &[String]) -> String {
     list.iter()
         .map(|r| {
             let address = r
                 .rsplit_once('<')
                 .and_then(|(_, rest)| rest.split_once('>'))
                 .map_or(r.as_str(), |(addr, _)| addr);
-            if is_user(address, user_email) {
+            if is_user(address, user_addresses) {
                 USER_LABEL.to_string()
             } else {
                 r.trim().to_string()
@@ -185,6 +181,53 @@ pub(crate) fn parse_map_notes(reply: &str, batch_ids: &[String]) -> BatchNotes {
         }
     }
     notes
+}
+
+/// Holds a batch's findings to who actually wrote each email. On a question
+/// with a direction, a MATCH citing only emails from the other side is a
+/// misreading (the supplier's quote read as the user's own): it becomes
+/// CONTEXT, with who wrote it, so the report cannot state it as an answer.
+/// The list and the count already exclude it (see [`collect_matches`]); this
+/// keeps the prose in step. Pure.
+pub(crate) fn enforce_direction(notes: BatchNotes, docs: &[ResearchDoc], direction: Direction) -> BatchNotes {
+    if direction == Direction::Any {
+        return notes;
+    }
+    let by_id: HashMap<&str, &DocMessage> = docs
+        .iter()
+        .flat_map(|d| d.messages.iter())
+        .map(|m| (m.id.as_str(), m))
+        .collect();
+    let lines = notes
+        .lines
+        .into_iter()
+        .map(|line| {
+            let (tag, rest) = finding_tag(&line);
+            let cited: Vec<&DocMessage> = by_id
+                .iter()
+                .filter(|(id, _)| line.contains(*id))
+                .map(|(_, m)| *m)
+                .collect();
+            if tag == FindingTag::Context || cited.is_empty() {
+                return line;
+            }
+            let wrong_side = match direction {
+                Direction::Sent => cited.iter().all(|m| !m.from_user),
+                Direction::Received => cited.iter().all(|m| m.from_user),
+                Direction::Any => false,
+            };
+            if !wrong_side {
+                return line;
+            }
+            let writer = if direction == Direction::Sent {
+                format!("written by {}, not by the user", cited[0].from)
+            } else {
+                "written by the user".to_string()
+            };
+            format!("- CONTEXT: {rest} [{writer}]")
+        })
+        .collect();
+    BatchNotes { lines, ..notes }
 }
 
 /// Join every batch's findings into the notes block, trimmed to `max_chars`.
@@ -639,7 +682,14 @@ pub(crate) fn cancelled_note(language_code: &str, read: usize, planned: usize) -
 /// matches, built in code. A complete report is left as written. Pure.
 pub(crate) fn finish_report(report: &str, cut: bool, matches: &[Match], language_code: &str) -> String {
     if !cut {
-        return report.to_string();
+        // A report that links none of its sources leaves the user nothing to
+        // open: the list, built in code, carries every match as a link.
+        let list = render_match_list(matches, language_code);
+        return if report.contains("](email://") || list.is_empty() {
+            report.to_string()
+        } else {
+            format!("{report}\n\n{list}")
+        };
     }
     let kept = report.rsplit_once('\n').map_or("", |(head, _)| head).trim_end();
     let list = render_match_list(matches, language_code);
@@ -751,25 +801,28 @@ mod tests {
 
     // ── who wrote to whom ──
 
+    fn me() -> Vec<String> {
+        vec!["gero@x.example".to_string(), "gero@work.example".to_string()]
+    }
+
+    #[test]
+    fn an_alias_the_user_sends_from_is_the_user_too() {
+        assert_eq!(participant("Gero", "Gero@Work.example", &me()), USER_LABEL);
+    }
+
     #[test]
     fn the_user_is_named_as_you() {
-        assert_eq!(participant("Gero", "GERO@x.example", "gero@x.example"), USER_LABEL);
-        assert_eq!(
-            participant("Ana", "ana@x.example", "gero@x.example"),
-            "Ana <ana@x.example>"
-        );
-        assert_eq!(participant("", "ana@x.example", "gero@x.example"), "ana@x.example");
-        assert_eq!(participant("ana@x.example", "ana@x.example", ""), "ana@x.example");
+        assert_eq!(participant("Gero", "GERO@x.example", &me()), USER_LABEL);
+        assert_eq!(participant("Ana", "ana@x.example", &me()), "Ana <ana@x.example>");
+        assert_eq!(participant("", "ana@x.example", &me()), "ana@x.example");
+        assert_eq!(participant("ana@x.example", "ana@x.example", &[]), "ana@x.example");
     }
 
     #[test]
     fn recipients_name_the_user_as_you() {
         let to = vec!["ana@x.example".to_string(), "Gero <gero@x.example>".to_string()];
-        assert_eq!(
-            recipients(&to, "gero@x.example"),
-            format!("ana@x.example, {USER_LABEL}")
-        );
-        assert_eq!(recipients(&[], "gero@x.example"), "");
+        assert_eq!(recipients(&to, &me()), format!("ana@x.example, {USER_LABEL}"));
+        assert_eq!(recipients(&[], &me()), "");
     }
 
     #[test]
@@ -1102,9 +1155,59 @@ NONE";
     }
 
     #[test]
+    fn a_report_that_links_nothing_ends_with_every_match() {
+        let matches = vec![m("e1", "t1", "2024-01-02", "quote A")];
+        let prose = "You sent one quote, to Acme.";
+        assert_eq!(
+            finish_report(prose, false, &matches, "en"),
+            format!("{prose}\n\n{}", render_match_list(&matches, "en"))
+        );
+    }
+
+    #[test]
+    fn a_match_the_user_did_not_write_is_background_on_a_sent_question() {
+        // The model read the supplier's reply as the user's own quote.
+        let mut supplier = conv("t2", &["e2", "e3"]);
+        supplier.messages[0].from_user = true; // e2: the user's request
+        let docs = vec![mine(conv("t1", &["e1"]), "e1"), supplier];
+        let notes = BatchNotes {
+            lines: vec![
+                "- MATCH: Sent a quote (email://e1)".into(),
+                "- MATCH: The user sent a 90 EUR quote (email://e3)".into(),
+                "- CONTEXT: Asked for a quote (email://e2)".into(),
+            ],
+            cited: ids(&["e1", "e3", "e2"]),
+        };
+        let out = enforce_direction(notes.clone(), &docs, Direction::Sent);
+        assert_eq!(out.lines[0], notes.lines[0]);
+        assert_eq!(
+            out.lines[1],
+            "- CONTEXT: The user sent a 90 EUR quote (email://e3) [written by Alice <alice@example.com>, not by the user]"
+        );
+        assert_eq!(out.lines[2], notes.lines[2]);
+        assert_eq!(out.cited, notes.cited);
+        assert_eq!(enforce_direction(notes.clone(), &docs, Direction::Any), notes);
+    }
+
+    #[test]
+    fn a_match_the_user_wrote_is_background_on_a_received_question() {
+        let docs = vec![mine(conv("t1", &["e1"]), "e1")];
+        let notes = BatchNotes {
+            lines: vec!["- MATCH: Got a quote (email://e1)".into()],
+            cited: ids(&["e1"]),
+        };
+        let out = enforce_direction(notes, &docs, Direction::Received);
+        assert_eq!(
+            out.lines[0],
+            "- CONTEXT: Got a quote (email://e1) [written by the user]"
+        );
+    }
+
+    #[test]
     fn a_complete_report_is_left_as_written() {
         let matches = vec![m("e1", "t1", "", "")];
-        assert_eq!(finish_report("All done.", false, &matches, "en"), "All done.");
+        let linked = "All done: [the quote](email://e1).";
+        assert_eq!(finish_report(linked, false, &matches, "en"), linked);
     }
 
     #[test]
