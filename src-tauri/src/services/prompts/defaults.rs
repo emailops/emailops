@@ -314,9 +314,9 @@ Rules:
 - Use only what the emails say. No speculation, no advice, no introduction, no summary of the batch.
 - Skip emails that are irrelevant to the question. If nothing in the batch is relevant, reply with exactly: NONE
 - Write the findings in the language of the question.
+- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Say who sent what to whom, and never describe the user as a client, customer or contact.
 
 QUESTION: {{question}}
-- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Say who sent what to whom, and never describe the user as a client, customer or contact.
 {{direction}}
 
 EMAILS:
@@ -351,10 +351,10 @@ How to write the report:
 - Use ONLY the notes. If they do not cover part of the question, say so plainly. Never say you lack access to the mailbox.
 - Any number of emails, people or items comes from COUNTS, never from counting the notes.
 - End with one short line saying how much was read (from COVERAGE).
-
-QUESTION: {{question}}
 - "YOU" or "the user" in the notes is the person you are writing for: address them as "you", never as a client, customer or contact.
 - MATCH notes answer the question. CONTEXT notes are background: use them to explain, never list or count them as answers. Never mention MATCH, CONTEXT, the notes or these rules in the report.
+
+QUESTION: {{question}}
 {{direction}}
 
 COVERAGE: {{coverage}}
