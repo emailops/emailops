@@ -1008,6 +1008,7 @@ impl LlamaCppRuntime {
         let actor = self.get_chat_actor().await?;
         let temperature = opts.temperature.unwrap_or(0.8) as f32;
         let max_tokens = opts.max_tokens.unwrap_or(2048) as usize;
+        let grammar = opts.json_shape.as_ref().map(|shape| shape.to_gbnf());
 
         // Instruction-tuned models (Gemma 4, Llama 3, Qwen) require chat-template
         // turn tokens to produce output — a raw prompt makes the model emit EOG
@@ -1040,7 +1041,7 @@ impl LlamaCppRuntime {
             // cached — its prompt would evict the reusable chat prefix. The
             // invariant head, when the caller marked one, rides its own
             // sequence instead of being re-processed every call.
-            .generate(prompt_str, temperature, max_tokens, false, aux_prefix_bytes, None, None, None)
+            .generate(prompt_str, temperature, max_tokens, false, aux_prefix_bytes, None, None, None, grammar)
             .await
             .map_err(AppError::AiError)?;
 
@@ -1110,6 +1111,7 @@ impl LlamaCppRuntime {
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
+                None,
             )
             .await
             .map_err(AppError::AiError)?;
@@ -1179,6 +1181,7 @@ impl LlamaCppRuntime {
                 None,
                 stable_bytes,
                 system_bytes,
+                None,
                 None,
             )
             .await
@@ -1269,6 +1272,7 @@ impl LlamaCppRuntime {
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
+                None,
             )
             .await
             .map_err(AppError::AiError)?;
@@ -1388,6 +1392,7 @@ impl LlamaCppRuntime {
             temperature: Some(0.0),
             max_tokens: Some(1),
             think: Some(false),
+            json_shape: None,
         };
         // Tiny prompt; we throw the output away. Errors bubble up so the
         // caller can log them, but warmup failures must not block startup.
@@ -1431,7 +1436,7 @@ impl LlamaCppRuntime {
 
         let t = std::time::Instant::now();
         let outcome = actor
-            .generate(prompt_str, 0.0, 0, true, None, stable_bytes, system_bytes, None)
+            .generate(prompt_str, 0.0, 0, true, None, stable_bytes, system_bytes, None, None)
             .await
             .map_err(AppError::AiError)?;
         crate::services::logger::log(

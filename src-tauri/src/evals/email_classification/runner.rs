@@ -424,6 +424,7 @@ impl Classifier for LlamaCppClassifier {
                     temperature: Some(0.0),
                     max_tokens: Some(64),
                     think: Some(false),
+                    json_shape: None,
                 }),
             )
             .await

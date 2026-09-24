@@ -293,6 +293,7 @@ pub async fn detect_email_language_with(ai: &AiService, db: &Database, email_id:
             temperature: Some(0.0),
             max_tokens: Some(DETECT_MAX_TOKENS),
             think: Some(false),
+            json_shape: None,
         };
         let raw = ai.complete(&prompt, "translate.detect", Some(opts)).await?;
         normalize_detected_code(&raw).unwrap_or_else(|| "und".to_string())
@@ -375,6 +376,7 @@ async fn run_translation(
         temperature: Some(0.0),
         max_tokens: Some(translation_max_tokens(input_chars)),
         think: Some(false),
+        json_shape: None,
     };
     let raw = ai.complete(&prompt, "translate.email", Some(opts)).await?;
     let cleaned = clean_translation_output(&raw);

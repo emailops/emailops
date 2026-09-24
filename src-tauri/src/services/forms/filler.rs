@@ -349,6 +349,7 @@ pub async fn fill_form(
         // the turn.
         max_tokens: Some(1024),
         think: Some(false),
+        json_shape: None,
     };
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => match parse_fill(&result.text, form) {

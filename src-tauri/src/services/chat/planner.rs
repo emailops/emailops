@@ -497,6 +497,7 @@ pub async fn plan_search(
         temperature: Some(0.0),
         max_tokens: Some(128),
         think: Some(false),
+        json_shape: None,
     };
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => {

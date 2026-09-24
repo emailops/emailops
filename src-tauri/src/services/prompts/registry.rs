@@ -162,7 +162,7 @@ const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
     },
     VariableDef {
         name: "emails",
-        description: "One batch of conversations: each email's EMAIL_ID, date, sender and recipients (the user as YOU) and what it adds to its thread.",
+        description: "One batch of conversations labelled C1…, their emails labelled E1…: date, sender and recipients (the user as YOU) and what each adds to its thread.",
     },
 ];
 
@@ -173,7 +173,7 @@ const CHAT_RESEARCH_CONDENSE_VARS: &[VariableDef] = &[
     },
     VariableDef {
         name: "notes",
-        description: "A group of findings from earlier batches, each ending with its email:// link.",
+        description: "A group of notes from earlier batches, labelled N1… and tagged MATCH or CONTEXT.",
     },
 ];
 
@@ -200,7 +200,7 @@ const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
     },
     VariableDef {
         name: "notes",
-        description: "The findings every batch extracted, each ending with its email:// link.",
+        description: "The numbered conversations the notes cover, then every note tagged MATCH or CONTEXT and citing conversations as [n].",
     },
 ];
 

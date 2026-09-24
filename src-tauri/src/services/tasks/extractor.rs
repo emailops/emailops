@@ -247,6 +247,7 @@ async fn run_llm_extraction(
                 temperature: Some(0.1),
                 max_tokens: Some(500),
                 think: None,
+                json_shape: None,
             }),
         )
         .await?;

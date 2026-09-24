@@ -13,8 +13,9 @@ use crate::services::chat::planner::SearchPlan;
 pub(crate) const CHARS_PER_TOKEN: usize = 3;
 /// Instructions + question of the map prompt, in tokens.
 const MAP_OVERHEAD_TOKENS: usize = 700;
-/// Findings one batch may produce.
-pub(crate) const MAP_MAX_TOKENS: u32 = 400;
+/// What one batch's reply may take: one bounded entry per conversation (see
+/// `reading`), so the reply always fits and nothing is cut mid-batch.
+pub(crate) const MAP_MAX_TOKENS: u32 = 1200;
 /// Instructions + question + coverage line of the reduce/condense prompts.
 pub(crate) const REDUCE_OVERHEAD_TOKENS: usize = 700;
 /// The final report's length: a quarter of the window, never below the floor
@@ -22,8 +23,9 @@ pub(crate) const REDUCE_OVERHEAD_TOKENS: usize = 700;
 /// cap (a small model repeats itself past it, and every token costs time).
 pub(crate) const MIN_REPORT_TOKENS: u32 = 1536;
 pub(crate) const MAX_REPORT_TOKENS: u32 = 4096;
-/// What one condense call may write: a group of notes merged into fewer lines.
-pub(crate) const CONDENSE_MAX_TOKENS: u32 = 1024;
+/// What one condense call may write: at most `MAX_CONDENSED_NOTES` merged
+/// notes (see `notes`), each bounded.
+pub(crate) const CONDENSE_MAX_TOKENS: u32 = 1100;
 /// Slack for tokenizer error and chat-template tokens.
 const SAFETY_TOKENS: usize = 256;
 /// Cleaned body kept per email: enough for the substance of most mail, small
@@ -372,6 +374,23 @@ mod tests {
             Direction::Any,
             "no known address"
         );
+    }
+
+    #[test]
+    fn a_full_reading_reply_always_fits_its_output_budget() {
+        // Worst case: every conversation of a full batch gets an entry with the
+        // longest text and the most emails. At the conservative chars-per-token
+        // estimate, plus JSON keys and punctuation per entry.
+        let per_entry = super::super::reading::MAX_FINDING_CHARS / CHARS_PER_TOKEN + 30;
+        let worst = MAX_EMAILS_PER_BATCH * per_entry + 16;
+        assert!(worst <= MAP_MAX_TOKENS as usize, "{worst} > {MAP_MAX_TOKENS}");
+    }
+
+    #[test]
+    fn a_full_condense_reply_always_fits_its_output_budget() {
+        let per_note = 300 / CHARS_PER_TOKEN + 30;
+        let worst = super::super::notes::MAX_CONDENSED_NOTES * per_note + 16;
+        assert!(worst <= CONDENSE_MAX_TOKENS as usize, "{worst} > {CONDENSE_MAX_TOKENS}");
     }
 
     #[test]

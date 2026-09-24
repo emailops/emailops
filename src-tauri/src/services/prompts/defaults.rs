@@ -301,53 +301,58 @@ JSON:"#;
 
 // ── Chat research mode ──────────────────────────────────────────────────────
 
-/// Research-mode map step: one batch of emails in, the findings relevant to the
-/// question out. The split point for `complete_with_prefix` is
+/// Research-mode map step: one batch of conversations in, one JSON verdict per
+/// relevant conversation out (the shape is enforced — see `research::reading`). The split point for `complete_with_prefix` is
 /// `QUESTION: {{question}}`: the instructions above it are identical on every
 /// batch, so they stay decoded in the one-shot prefix slot.
-pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research assistant working over the user's own mailbox. You receive ONE batch of emails and the user's research question. Extract every fact in this batch that helps answer the question.
+pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research assistant working over the user's own mailbox. You receive ONE batch of conversations and the user's research question. For each conversation that has something to do with the question, write one entry.
+
+Each entry:
+- "conversation": the conversation's label (C1, C2, …).
+- "text": what the conversation says that helps answer the question. Be specific: people, companies, dates, amounts, decisions, status, and who sent what to whom. At most 240 characters, in the language of the question.
+- "tag": "match" when the conversation contains what the question asks about (for "which quotes have I sent?", a quote the user sent). "context" when it is only related: a request for it, a question or follow-up about it, or the same thing from someone else.
+- "emails": the labels (E1, E2, …) of that conversation's emails the entry comes from.
 
 Rules:
-- One finding per line, starting with "- MATCH: " or "- CONTEXT: ". Be specific: people, companies, dates, amounts, decisions, requests, problems, status.
-- MATCH: the email itself is what the question asks about (for "which quotes have I sent?", the email in which the user sends a quote). CONTEXT: anything else related, including an email about it (a question, a request, a follow-up, a thanks) or the same thing from someone else. When unsure, use CONTEXT.
-- End every finding with the email it came from as (email://EMAIL_ID), copying the EMAIL_ID exactly as given. A finding several emails support lists each one: (email://ID1) (email://ID2).
-- Use only what the emails say. No speculation, no advice, no introduction, no summary of the batch.
-- Skip emails that are irrelevant to the question. If nothing in the batch is relevant, reply with exactly: NONE
-- Write the findings in the language of the question.
-- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Say who sent what to whom, and never describe the user as a client, customer or contact.
+- One entry per conversation at most. Leave out conversations that have nothing to do with the question; if none has, reply {"findings": []}.
+- Use only what the emails say. No speculation, no advice.
+- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Never describe the user as a client, customer or contact.
+- Reply with the JSON object only: {"findings": [{"conversation": …, "text": …, "tag": …, "emails": […]}]}
 
 QUESTION: {{question}}
 {{direction}}
 
-EMAILS:
+CONVERSATIONS:
 {{emails}}"#;
 
 /// Research-mode condense step: when the notes of every batch do not fit one
 /// report prompt, groups of them are merged first. Split at
 /// `QUESTION: {{question}}` like the map prompt.
-pub const CHAT_RESEARCH_CONDENSE: &str = r#"You are the note-merging step of a research assistant working over the user's own mailbox. You receive findings that earlier steps extracted from many emails, and the user's research question. Merge them into a shorter list that keeps every fact the question needs.
+pub const CHAT_RESEARCH_CONDENSE: &str = r#"You are the note-merging step of a research assistant working over the user's own mailbox. You receive notes (N1, N2, …) that earlier steps took from many conversations, and the user's research question. Merge them into fewer, shorter notes that keep every fact the question needs.
+
+Each merged note:
+- "text": the merged facts, specific — keep names, companies, dates and amounts exactly as written. At most 300 characters, in the language of the question.
+- "from": the labels of every note you merged into it.
 
 Rules:
-- One finding per line, starting with "- " and keeping its MATCH: or CONTEXT: tag.
-- Merge findings that say the same thing into one line and keep EVERY (email://EMAIL_ID) reference of the lines you merge, copied exactly.
-- Keep names, companies, dates, amounts and email addresses exactly as written. Do not generalise away specifics.
-- Drop only what does not help answer the question. No introduction, no summary paragraph.
-- Write in the language of the question.
+- Merge notes that say the same thing or belong together. Never merge a MATCH note with a CONTEXT note.
+- Drop only what does not help answer the question.
+- Reply with the JSON object only: {"notes": [{"text": …, "from": […]}]}
 
 QUESTION: {{question}}
 
-FINDINGS:
+NOTES:
 {{notes}}"#;
 
 /// Research-mode reduce step: the notes of every batch in, the final report
 /// out. Split at `QUESTION: {{question}}` like the map prompt; the coverage
 /// line varies per turn, so it sits below the split.
-pub const CHAT_RESEARCH_REDUCE: &str = r#"You are a research assistant writing a detailed report for the user from notes another step extracted from their own mailbox. {{language_instruction}}
+pub const CHAT_RESEARCH_REDUCE: &str = r#"You are a research assistant writing a detailed report for the user from notes another step took from their own mailbox. {{language_instruction}}
 
 How to write the report:
 - Start with a direct answer to the question in two or three sentences, then develop it in sections with Markdown headings and bullet points (main themes, people and companies involved, dates and amounts, open issues or pending actions — whichever the question calls for).
-- Group related findings and merge duplicates. Point out patterns, changes over time and contradictions between emails.
-- Every factual claim links the email it came from as [short label](email://EMAIL_ID), copying the id from the notes. Never invent an id. Do not use numbered [1] citations.
+- Group related notes and merge duplicates. Point out patterns, changes over time and contradictions.
+- After every factual claim, cite the conversation it comes from by its number in square brackets, as the notes do: [3], or [2, 5] for several. Never write links, email addresses as sources, or ids.
 - Use ONLY the notes. If they do not cover part of the question, say so plainly. Never say you lack access to the mailbox.
 - Any number of emails, people or items comes from COUNTS, never from counting the notes.
 - End with one short line saying how much was read (from COVERAGE).
@@ -361,7 +366,6 @@ COVERAGE: {{coverage}}
 
 COUNTS: {{counts}}
 
-NOTES:
 {{notes}}"#;
 
 // ── Translation ─────────────────────────────────────────────────────────────

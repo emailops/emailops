@@ -56,6 +56,9 @@ struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    /// A JSON Schema the reply must follow (Ollama's structured outputs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaSamplingOptions>,
     /// `keep_alive` controls how long Ollama keeps the model resident in RAM
@@ -89,6 +92,9 @@ struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaChatMessage>,
     stream: bool,
+    /// See `OllamaRequest::format`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -438,7 +444,7 @@ impl OllamaClient {
     }
 
     pub async fn generate(&self, prompt: &str) -> Result<String> {
-        Ok(self.generate_with_options(prompt, None).await?.0)
+        Ok(self.generate_with_options(prompt, None, None).await?.0)
     }
 
     /// The reply, and whether it stopped at `num_predict`.
@@ -446,6 +452,7 @@ impl OllamaClient {
         &self,
         prompt: &str,
         sampling: Option<OllamaSamplingOptions>,
+        format: Option<serde_json::Value>,
     ) -> Result<(String, bool)> {
         let url = format!("{}/api/generate", self.base_url);
 
@@ -455,6 +462,7 @@ impl OllamaClient {
             stream: false,
             options: sampling,
             keep_alive: Some(self.keep_alive.clone()),
+            format,
         };
 
         let response = self
@@ -498,7 +506,7 @@ impl OllamaClient {
 
     pub async fn chat(&self, prompt: &str, think: Option<bool>) -> Result<String> {
         Ok(self
-            .chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded())
+            .chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded(), None)
             .await?
             .0)
     }
@@ -508,6 +516,7 @@ impl OllamaClient {
         prompt: &str,
         think: Option<bool>,
         sampling: OllamaSamplingOptions,
+        format: Option<serde_json::Value>,
     ) -> Result<(String, bool)> {
         let url = format!("{}/api/chat", self.base_url);
 
@@ -524,6 +533,7 @@ impl OllamaClient {
             tools: None,
             options: Some(sampling),
             keep_alive: Some(self.keep_alive.clone()),
+            format,
         };
 
         let response = self
@@ -580,6 +590,7 @@ impl OllamaClient {
             tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -637,6 +648,7 @@ impl OllamaClient {
             tools: None,
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -741,6 +753,7 @@ impl OllamaClient {
             tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -1010,6 +1023,7 @@ impl AIProvider for OllamaClient {
     }
 
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
+        let format = options.json_shape.as_ref().map(|shape| shape.to_json_schema());
         let (text, truncated) = if options.think.is_some() {
             // Some(true) = enable thinking, Some(false) = disable thinking.
             // Both route through /api/chat which is the only endpoint that
@@ -1021,7 +1035,7 @@ impl AIProvider for OllamaClient {
             if let Some(max_tokens) = options.max_tokens {
                 sampling.num_predict = Some(max_tokens as i32);
             }
-            self.chat_with_sampling(prompt, options.think, sampling).await?
+            self.chat_with_sampling(prompt, options.think, sampling, format).await?
         } else {
             let sampling = if options.temperature.is_some() || options.max_tokens.is_some() {
                 let mut s = OllamaSamplingOptions::grounded();
@@ -1035,7 +1049,7 @@ impl AIProvider for OllamaClient {
             } else {
                 None
             };
-            self.generate_with_options(prompt, sampling).await?
+            self.generate_with_options(prompt, sampling, format).await?
         };
         Ok(CompletionResult {
             text,
@@ -1163,6 +1177,7 @@ impl AIProvider for OllamaClient {
                 num_predict: Some(1),
             }),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
         // Generous timeout: the first load of a multi-GB GGUF on a cold
         // system can take tens of seconds. We don't care about the output.
@@ -1737,6 +1752,27 @@ mod pattern_parser_tests {
 #[cfg(test)]
 mod stop_reason_tests {
     use super::*;
+
+    #[test]
+    fn a_json_shape_is_sent_as_the_format_schema() {
+        use crate::ai::json_shape::JsonShape;
+        let shape = JsonShape::object(vec![("tag", JsonShape::one_of(&["match", "context"]))]);
+        let request = OllamaRequest {
+            model: "m".into(),
+            prompt: "p".into(),
+            stream: false,
+            options: None,
+            keep_alive: None,
+            format: Some(shape.to_json_schema()),
+        };
+        let body = serde_json::to_value(&request).unwrap();
+        assert_eq!(body["format"], shape.to_json_schema());
+        let request = OllamaRequest {
+            format: None,
+            ..request
+        };
+        assert!(serde_json::to_value(&request).unwrap().get("format").is_none());
+    }
 
     #[test]
     fn a_generate_reply_that_hit_num_predict_is_truncated() {

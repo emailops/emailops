@@ -175,6 +175,9 @@ struct GenRequest {
     /// system message can still reuse it. `None` disables anchoring.
     system_prefix_bytes: Option<usize>,
     on_token: Option<OnToken>,
+    /// GBNF grammar the reply must follow (`JsonShape::to_gbnf`): tokens
+    /// that would leave it are never sampled. `None` samples freely.
+    grammar: Option<String>,
     reply: tokio::sync::oneshot::Sender<std::result::Result<GenOutcome, String>>,
 }
 
@@ -249,6 +252,7 @@ impl InferenceActorHandle {
         stable_prompt_bytes: Option<usize>,
         system_prefix_bytes: Option<usize>,
         on_token: Option<OnToken>,
+        grammar: Option<String>,
     ) -> std::result::Result<GenOutcome, String> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -261,6 +265,7 @@ impl InferenceActorHandle {
                 stable_prompt_bytes,
                 system_prefix_bytes,
                 on_token,
+                grammar,
                 reply: reply_tx,
             })
             .map_err(|_| "Inference thread is no longer running".to_string())?;
@@ -388,6 +393,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             stable_prompt_bytes,
             system_prefix_bytes,
             mut on_token,
+            grammar,
             reply,
         } = req;
         let result = generate_with_cache(
@@ -405,6 +411,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             system_prefix_bytes,
             on_token.as_mut(),
             &mut n_ctx_suggested,
+            grammar.as_deref(),
         );
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
@@ -451,6 +458,7 @@ fn generate_with_cache(
     system_prefix_bytes: Option<usize>,
     mut on_token: Option<&mut OnToken>,
     n_ctx_suggested: &mut bool,
+    grammar: Option<&str>,
 ) -> std::result::Result<GenOutcome, String> {
     // Prefill clock starts before tokenisation: everything up to the first
     // sampled token is latency the user perceives as "thinking".
@@ -828,13 +836,21 @@ fn generate_with_cache(
     }
     let prefill_ms = t_prefill.elapsed().as_millis() as i64;
 
-    // Sampler chain: temperature → random distribution.
-    // temperature=0 → effectively greedy via a near-zero temp.
+    // Sampler chain: [grammar →] temperature → random distribution.
+    // temperature=0 → effectively greedy via a near-zero temp. A grammar
+    // masks every token that would leave it, so the reply always parses; one
+    // llama.cpp rejects fails the call rather than silently sampling freely.
     let eff_temp = temperature.max(1e-6);
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::temp(eff_temp),
-        LlamaSampler::dist(u32::MAX), // LLAMA_DEFAULT_SEED
-    ]);
+    let mut chain = Vec::with_capacity(3);
+    if let Some(grammar) = grammar {
+        chain.push(
+            LlamaSampler::grammar(model, grammar, "root")
+                .map_err(|e| format!("The reply grammar was rejected: {e}"))?,
+        );
+    }
+    chain.push(LlamaSampler::temp(eff_temp));
+    chain.push(LlamaSampler::dist(u32::MAX)); // LLAMA_DEFAULT_SEED
+    let mut sampler = LlamaSampler::chain_simple(chain);
 
     let mut output = String::new();
     let mut n_gen = 0u32;
@@ -842,8 +858,11 @@ fn generate_with_cache(
     let mut ended = false;
 
     for i in 0..max_gen {
+        // `sample` already accepts the token into every sampler of the chain
+        // (`llama_sampler_sample` → `llama_sampler_accept`). Accepting it again
+        // is a no-op for temperature and distribution but advances a grammar
+        // twice, which corrupts it and makes llama.cpp throw.
         let token = sampler.sample(ctx, -1);
-        sampler.accept(token);
 
         if model.is_eog_token(token) {
             ended = true;

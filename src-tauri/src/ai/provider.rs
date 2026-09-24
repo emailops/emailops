@@ -138,6 +138,10 @@ pub struct CompletionOptions {
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
     pub think: Option<bool>,
+    /// The reply must take this JSON shape. Enforced where the provider can
+    /// (a grammar on llama.cpp, `format` on Ollama, `response_format` on
+    /// OpenRouter); `None` leaves the reply free text.
+    pub json_shape: Option<crate::ai::json_shape::JsonShape>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -358,6 +362,7 @@ pub struct FakeAiProvider {
     chats: RwLock<std::collections::VecDeque<AiMessage>>,
     /// Calls recorded for later assertion.
     completion_calls: RwLock<Vec<String>>,
+    completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     embed_calls: RwLock<Vec<String>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
@@ -386,6 +391,7 @@ impl FakeAiProvider {
             }),
             chats: RwLock::new(std::collections::VecDeque::new()),
             completion_calls: RwLock::new(Vec::new()),
+            completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             embed_calls: RwLock::new(Vec::new()),
             prewarm_calls: RwLock::new(Vec::new()),
@@ -467,6 +473,15 @@ impl FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(msg);
+    }
+
+    /// The JSON shape each `complete` call asked for (`None` for free text),
+    /// in call order.
+    pub fn completion_shapes(&self) -> Vec<Option<crate::ai::json_shape::JsonShape>> {
+        self.completion_shapes
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Every prompt passed to `complete`, in call order.
@@ -589,11 +604,15 @@ impl AIProvider for FakeAiProvider {
         }])
     }
 
-    async fn complete(&self, prompt: &str, _options: CompletionOptions) -> Result<CompletionResult> {
+    async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
         self.completion_calls
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(prompt.to_string());
+        self.completion_shapes
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(options.json_shape);
         if let Some(message) = self
             .completion_failure
             .read()

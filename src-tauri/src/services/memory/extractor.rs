@@ -195,6 +195,7 @@ async fn run_llm_extraction(db: &Arc<Database>, ai: &AiService, email: &Email) -
                 temperature: Some(0.1),
                 max_tokens: Some(400),
                 think: None,
+                json_shape: None,
             }),
         )
         .await?;

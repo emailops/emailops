@@ -1601,3 +1601,43 @@ limit was a fixed 1,536 tokens on a 15k window, and long reports were cut mid-li
   that judgement explicit, and code enforces it.
 - *An uncapped report*: a 4B model repeats itself past a few thousand tokens, and
   every token costs time.
+
+## 2026-09-24 — Research steps talk JSON under an enforced shape; the report cites by number
+
+**Decision:**
+- **Reading step:** it returns one JSON verdict per conversation,
+  `{conversation, text, tag, emails}`. It names conversations and emails by short batch
+  labels (`C1`, `E3`), never by id. The shape is *enforced*:
+  - a GBNF grammar on llama.cpp (`ai::json_shape` renders it), which also confines the
+    labels to the batch's own;
+  - JSON Schema `format` on Ollama;
+  - strict `response_format` on OpenRouter.
+
+  Entries and their text are bounded, so the reply always fits the step's output budget.
+- **Condense step:** it merges notes by label (`N3`), and code keeps which conversations
+  each note covers.
+- **Report:** it cites conversations as `[n]` and code writes every link.
+- **Providers report stop reasons:** each one says when a reply stopped at its token
+  limit (`CompletionResult.truncated`), and a cut reading reply fails its batch loudly
+  instead of losing its tail.
+
+**Context:** a recall eval showed research finding 8 of 13 weekly digests. The reading
+step's 400-token free-text output was cut mid-batch without anyone noticing, and that
+had been happening before the MATCH/CONTEXT tags. Free text also needed five Markdown
+patches (bare `email://` refs, id-labelled links, repeated links and bullets) and a tag
+parser, each covering one way a small model had failed. Ollama never reported token
+counts, so cut detection by counting tokens never worked there.
+
+Enforcing the grammar exposed a latent bug. The actor accepted each sampled token twice
+(`llama_sampler_sample` already accepts), which is harmless for temperature and
+distribution samplers but corrupts a grammar and makes llama.cpp throw. The duplicate
+accept is gone.
+
+**Rejected:**
+- *Raising the free-text output budget*: still unbounded, and still cut without notice
+  on a large batch.
+- *Enabling llama-cpp-2's `common` feature for `json_schema_to_grammar`*: it changes the
+  native build and the Linux/Windows packaging, which has no CI. A small in-house
+  shape→GBNF renderer covers what research needs.
+- *Asking the model to copy email ids*: 16-character ids are easy to mangle, and a
+  grammar over labels makes an invented citation impossible.

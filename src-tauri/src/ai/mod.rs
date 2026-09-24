@@ -4,6 +4,7 @@
 // jobs compile.
 pub mod gguf;
 pub mod gpu_plan;
+pub mod json_shape;
 pub mod ollama;
 pub mod openrouter;
 pub mod provider;

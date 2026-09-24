@@ -157,6 +157,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
                 temperature: Some(0.7),
                 max_tokens: Some(800),
                 think: None,
+                json_shape: None,
             }),
         )
         .await?;
@@ -315,6 +316,7 @@ pub async fn generate_new_draft(
                 temperature: Some(0.7),
                 max_tokens: Some(800),
                 think: None,
+                json_shape: None,
             }),
         )
         .await?;

@@ -26,6 +26,20 @@ struct OpenRouterChatRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
+    /// Structured output: the reply must follow a JSON Schema.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+}
+
+/// OpenRouter's structured-output request for `shape`, strict so the model
+/// may not add or drop fields.
+fn response_format(shape: Option<&crate::ai::json_shape::JsonShape>) -> Option<serde_json::Value> {
+    shape.map(|shape| {
+        serde_json::json!({
+            "type": "json_schema",
+            "json_schema": { "name": "reply", "strict": true, "schema": shape.to_json_schema() },
+        })
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -261,6 +275,7 @@ impl AIProvider for OpenRouterClient {
             stream: false,
             max_tokens: options.max_tokens,
             temperature: options.temperature,
+            response_format: response_format(options.json_shape.as_ref()),
         };
 
         let response = self
@@ -483,6 +498,17 @@ fn extract_cost_from_response(response: &reqwest::Response) -> f64 {
 #[cfg(test)]
 mod stop_reason_tests {
     use super::*;
+
+    #[test]
+    fn a_json_shape_becomes_a_strict_response_format() {
+        use crate::ai::json_shape::JsonShape;
+        let shape = JsonShape::object(vec![("tag", JsonShape::one_of(&["match", "context"]))]);
+        let format = response_format(Some(&shape)).expect("a format");
+        assert_eq!(format["type"], "json_schema");
+        assert_eq!(format["json_schema"]["strict"], true);
+        assert_eq!(format["json_schema"]["schema"], shape.to_json_schema());
+        assert!(response_format(None).is_none());
+    }
 
     #[test]
     fn a_choice_that_hit_max_tokens_is_truncated() {

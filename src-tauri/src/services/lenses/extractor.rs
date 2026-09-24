@@ -220,6 +220,7 @@ async fn extract_via_text_prompt(
                 temperature: Some(0.0),
                 max_tokens: Some(1024),
                 think: Some(false),
+                json_shape: None,
             },
         )
         .await
