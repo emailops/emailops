@@ -99,3 +99,23 @@
   # Nothing here says what to extract, so a partially filled form is the right
   # answer — the chat names what is still missing and the user completes it.
   expect_complete: false
+
+- id: lens_names_the_account_es
+  form: lens.create
+  language: Spanish
+  today: "2026-09-24"
+  request: "Crea un AI lens para la cuenta ventas@estudio-ejemplo.example que extraiga de los correos de reservas.example lo siguiente: fecha, lugar, precio"
+  note: "the request names the account; left empty, the form defaulted to All accounts and the lens read every mailbox"
+  expect_present: [name, scopeAccount, columns, promptText]
+  expect_values:
+    scopeAccount: "ventas@estudio-ejemplo.example"
+  expect_columns_covering: ["fecha", "lugar", "precio"]
+
+- id: lens_without_an_account_leaves_it_empty
+  form: lens.create
+  language: English
+  today: "2026-09-24"
+  request: "create a lens for all my accounts that extracts the date, the place and the price from booking confirmations"
+  note: "no address named: the model must not invent one (an unknown address is ignored, but a guessed real one would narrow the lens)"
+  expect_present: [name, columns, promptText]
+  expect_absent: [scopeAccount]

@@ -28,7 +28,7 @@ import type {
 
 import { LensFolderChips } from './LensFolderChips';
 import { type DraftColumn, draftFromTemplate, scopeFromDraft } from './lensDraft';
-import { toLensFormPrefill, toLensFormValues } from './lensPrefill';
+import { accountIdForEmail, toLensFormPrefill, toLensFormValues } from './lensPrefill';
 import { withoutFolderMailboxes } from './scopeFolders';
 import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
@@ -132,6 +132,11 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     setTab('custom');
     if (prefill.name !== undefined) setName(prefill.name);
     if (prefill.icon !== undefined) setIcon(prefill.icon);
+    if (prefill.accountEmail !== undefined) {
+      // An address that is none of the user's accounts leaves the choice as is.
+      const id = accountIdForEmail(accounts, prefill.accountEmail);
+      if (id) setAccountId(id);
+    }
     if (prefill.mailboxes !== undefined) setMailboxes(prefill.mailboxes);
     if (prefill.categories !== undefined) setCategories(prefill.categories);
     if (prefill.direction !== undefined) setDirection(prefill.direction);
@@ -142,7 +147,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     setMissingFromChat(pendingFill.missingRequired);
     setError(null);
     clearFilledForm();
-  }, [open, pendingFill, clearFilledForm]);
+  }, [open, pendingFill, clearFilledForm, accounts]);
 
   // Tell the chat this form is on screen, and what is currently in it, so
   // "añade una columna para el IVA" edits THIS form instead of starting a new
@@ -158,6 +163,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       values: toLensFormValues({
         name,
         icon,
+        accountEmail: accounts.find((a) => a.id === accountId)?.email,
         mailboxes,
         categories,
         direction,
@@ -170,7 +176,21 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     return () => {
       setOpenForm(null);
     };
-  }, [open, name, icon, mailboxes, categories, direction, senderDomains, query, prompt, columns, setOpenForm]);
+  }, [
+    open,
+    name,
+    icon,
+    accountId,
+    accounts,
+    mailboxes,
+    categories,
+    direction,
+    senderDomains,
+    query,
+    prompt,
+    columns,
+    setOpenForm,
+  ]);
 
   if (!open) return null;
 
