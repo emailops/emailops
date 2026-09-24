@@ -218,8 +218,12 @@ perf budgets. Results are attributed to features through `features.json`.
 - **Chat evals.** `make cli-eval ARGS="--json --judge …"`: each case carries deterministic checks
   (route, tools called, answer contains/not contains, draft link…) **and** an
   `expected_output` golden; the judge (`evals/judge.rs`, same local provider) scores
-  `answer_relevancy` / `faithfulness` against it, threshold 0.7. The report shows question,
-  answer, golden, judge scores and the collapsible AI trace for failures.
+  `answer_relevancy` / `faithfulness` against it, threshold 0.7. Every case row shows its flow
+  (`route → planner → search_emails → answer`, the labels `services::chat::trace_steps` uses);
+  its block holds question, golden, answer, one checks table where each judge metric is a row
+  against the threshold, and the AI trace step by step with prompts, outputs and tool I/O as
+  plain text (`scripts/report_trace.py`; tests: `python3 -m unittest test_report_trace`). The
+  index lists every case of each subsection, collapsed, failures first.
 - **Private run.** `make verify-private` (`scripts/verify_private.sh` → `verify_private.py`) runs the
   suites that need the real mailbox: `private-evals/chat/cases` through the same judged CLI
   harness and the private junk golden set, against the `make eval-snapshot` copy of the
