@@ -26,6 +26,16 @@ on:
         required: false
         type: boolean
         default: false
+      targets:
+        description: "Which installers to build. `all` is what a release ships; a single target is for a dry-run beta build (the other legs are skipped)."
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-vulkan
+          - windows-cuda
+          - linux
   # push:
   #   tags:
   #     - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -50,6 +60,7 @@ jobs:
   #   .../releases/latest/download/EmailOps-linux.AppImage
   release:
     name: Release (${{ matrix.platform }})
+    if: ${{ inputs.targets != 'windows-cuda' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:
@@ -88,6 +99,9 @@ jobs:
           - os: windows-2022
             platform: windows
             target: x86_64-pc-windows-msvc
+        # A single `targets` value drops the other leg of this matrix
+        # (`windows-cuda` skips this job outright: an empty matrix is an error).
+        exclude: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '[{"platform":"linux"}]' || inputs.targets == 'linux' && '[{"platform":"windows"}]' || '[]') }}
 
     steps:
       - uses: actions/checkout@v7
@@ -410,6 +424,7 @@ jobs:
   # release tag.
   release-windows-cuda:
     name: Release (windows-cuda)
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'windows-cuda' }}
     runs-on: windows-2022
     # 90 min (matching the Vulkan legs) wasn't enough on the very first run:
     # that measured a Build step still going at 82 min when the job was
