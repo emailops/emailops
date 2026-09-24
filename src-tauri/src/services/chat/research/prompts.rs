@@ -4,27 +4,44 @@
 
 use std::collections::HashMap;
 
-/// One email as the map step reads it.
+/// One message of a conversation as the map step reads it: its new content
+/// only (the shared thread reader strips what earlier messages said).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ResearchDoc {
+pub(crate) struct DocMessage {
     pub id: String,
-    pub thread_id: String,
     pub date: String,
     pub from: String,
+    pub text: String,
+}
+
+/// One conversation as the map step reads it. The unit of reading is the
+/// thread, not the email: a reply re-quoting the whole conversation would
+/// otherwise be read, and cited, once per reply.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResearchDoc {
+    pub thread_id: String,
     pub subject: String,
-    pub body: String,
+    pub messages: Vec<DocMessage>,
 }
 
 impl ResearchDoc {
     pub(crate) fn render(&self) -> String {
-        format!(
-            "EMAIL_ID: {}\nDate: {}\nFrom: {}\nSubject: {}\n{}\n",
-            self.id, self.date, self.from, self.subject, self.body
-        )
+        let mut out = format!("CONVERSATION: {}\n", self.subject);
+        for m in &self.messages {
+            out.push_str(&format!(
+                "EMAIL_ID: {}\nDate: {}\nFrom: {}\n{}\n\n",
+                m.id, m.date, m.from, m.text
+            ));
+        }
+        out
     }
 
     pub(crate) fn rendered_len(&self) -> usize {
         self.render().chars().count()
+    }
+
+    pub(crate) fn ids(&self) -> impl Iterator<Item = &String> {
+        self.messages.iter().map(|m| &m.id)
     }
 }
 
@@ -345,43 +362,56 @@ fn first_findings(notes: &[BatchNotes]) -> HashMap<&str, String> {
     first
 }
 
-/// Every email a finding cites, in reading order — the answer's sources.
+/// Every email a finding cites, in reading order.
 pub(crate) fn matched_email_ids(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<String> {
     let first = first_findings(notes);
     docs.iter()
-        .filter(|d| first.contains_key(d.id.as_str()))
-        .map(|d| d.id.clone())
+        .flat_map(|d| d.ids())
+        .filter(|id| first.contains_key(id.as_str()))
+        .cloned()
         .collect()
 }
 
 /// Every conversation a finding cites, in reading order (oldest first), each
-/// with its first matching email and that email's first finding. Taken from the
+/// with its first cited email and that email's first finding. Taken from the
 /// map notes, before any condense round, so merging notes for the report never
 /// drops a match from the list or the count.
 pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<Match> {
     let first = first_findings(notes);
-    let mut out: Vec<Match> = Vec::new();
-    let mut by_thread: HashMap<&str, usize> = HashMap::new();
-    for d in docs {
-        let Some(finding) = first.get(d.id.as_str()) else {
-            continue;
-        };
-        match by_thread.get(d.thread_id.as_str()) {
-            Some(&i) => out[i].emails += 1,
-            None => {
-                by_thread.insert(d.thread_id.as_str(), out.len());
-                out.push(Match {
-                    id: d.id.clone(),
-                    emails: 1,
-                    thread_id: d.thread_id.clone(),
-                    date: d.date.clone(),
-                    subject: d.subject.clone(),
-                    finding: finding.clone(),
-                });
-            }
-        }
-    }
-    out
+    docs.iter()
+        .filter_map(|d| {
+            let cited: Vec<&DocMessage> = d
+                .messages
+                .iter()
+                .filter(|m| first.contains_key(m.id.as_str()))
+                .collect();
+            let head = cited.first()?;
+            Some(Match {
+                id: head.id.clone(),
+                emails: cited.len(),
+                thread_id: d.thread_id.clone(),
+                date: head.date.clone(),
+                subject: d.subject.clone(),
+                finding: first.get(head.id.as_str()).cloned().unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// Point every link to an email of a matched conversation at that
+/// conversation's representative, so the report never cites two emails of one
+/// thread. Pure.
+pub(crate) fn canonicalize_links(answer: &str, representative: &HashMap<String, String>) -> String {
+    use std::sync::OnceLock;
+    static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let re = LINK_RE.get_or_init(|| regex::Regex::new(r"email://([^)\s\]]+)").unwrap());
+    re.replace_all(answer, |caps: &regex::Captures| {
+        let id = &caps[1];
+        format!("email://{}", representative.get(id).map_or(id, String::as_str))
+    })
+    .into_owned()
 }
 
 /// The exact counts the report states — computed, never left to the model.
@@ -495,15 +525,44 @@ mod tests {
 
     // ── map prompt / notes ──
 
+    /// A one-message conversation.
     fn doc(id: &str) -> ResearchDoc {
+        conv(&format!("thread-{id}"), &[id])
+    }
+
+    /// A conversation of several messages.
+    fn conv(thread: &str, ids: &[&str]) -> ResearchDoc {
         ResearchDoc {
-            id: id.into(),
-            thread_id: format!("thread-{id}"),
-            date: "2026-09-01".into(),
-            from: "Alice <alice@example.com>".into(),
+            thread_id: thread.into(),
             subject: "Invoice 42".into(),
-            body: "Please pay by Friday.".into(),
+            messages: ids
+                .iter()
+                .map(|id| DocMessage {
+                    id: (*id).into(),
+                    date: "2026-09-01".into(),
+                    from: "Alice <alice@example.com>".into(),
+                    text: "Please pay by Friday.".into(),
+                })
+                .collect(),
         }
+    }
+
+    #[test]
+    fn a_conversation_renders_once_with_every_message_id() {
+        let text = conv("t1", &["e1", "e2"]).render();
+        assert!(text.starts_with("CONVERSATION: Invoice 42\n"), "{text}");
+        assert_eq!(text.matches("EMAIL_ID: ").count(), 2);
+        assert!(text.contains("EMAIL_ID: e1\n") && text.contains("EMAIL_ID: e2\n"));
+    }
+
+    #[test]
+    fn links_to_any_email_of_a_conversation_point_at_its_representative() {
+        let map = HashMap::from([
+            ("e2".to_string(), "e1".to_string()),
+            ("e3".to_string(), "e1".to_string()),
+        ]);
+        let out = canonicalize_links("[a](email://e2) and [b](email://e3), [c](email://e9)", &map);
+        assert_eq!(out, "[a](email://e1) and [b](email://e1), [c](email://e9)");
     }
 
     #[test]
@@ -731,21 +790,8 @@ NONE";
     }
 
     #[test]
-    fn matches_take_each_emails_first_finding_without_its_references() {
-        let docs = vec![
-            ResearchDoc {
-                thread_id: "t1".into(),
-                ..doc("e1")
-            },
-            ResearchDoc {
-                thread_id: "t1".into(),
-                ..doc("e2")
-            },
-            ResearchDoc {
-                thread_id: "t2".into(),
-                ..doc("e3")
-            },
-        ];
+    fn matches_take_each_conversations_first_finding_without_its_references() {
+        let docs = vec![conv("t1", &["e1", "e2"]), conv("t2", &["e3"])];
         let notes = vec![BatchNotes {
             lines: vec![
                 "- Alice asks for a quote (email://e1)".into(),
@@ -767,13 +813,7 @@ NONE";
         // A thread of replies all quoting the same request used to show up as
         // five matches in the progress, five lines in the list and five in
         // the count.
-        let docs: Vec<ResearchDoc> = ["e1", "e2", "e3", "e4"]
-            .iter()
-            .map(|id| ResearchDoc {
-                thread_id: if *id == "e4" { "t2".into() } else { "t1".into() },
-                ..doc(id)
-            })
-            .collect();
+        let docs = vec![conv("t1", &["e1", "e2", "e3"]), conv("t2", &["e4"])];
         let notes = vec![BatchNotes {
             lines: vec![
                 "- Budget requested (email://e1)".into(),
@@ -789,11 +829,7 @@ NONE";
         assert_eq!(matches[0].emails, 3);
         assert_eq!(matches[0].finding, "Budget requested");
         assert_eq!(matches[1].emails, 1);
-        assert_eq!(
-            matched_email_ids(&docs, &notes),
-            ids(&["e1", "e2", "e3", "e4"]),
-            "every cited email stays a source"
-        );
+        assert_eq!(matched_email_ids(&docs, &notes), ids(&["e1", "e2", "e3", "e4"]));
     }
 
     #[test]

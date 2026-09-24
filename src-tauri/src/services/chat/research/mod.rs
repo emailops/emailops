@@ -39,9 +39,9 @@ use plan::{
 };
 pub(crate) use prompts::Match;
 use prompts::{
-    assemble_notes, cancelled_note, collect_matches, coverage_line, join_notes, matched_email_ids, notes_len,
-    parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list, report_facts, split_condense_prompt,
-    split_map_prompt, split_reduce_prompt, BatchNotes, ReportShape, ResearchDoc,
+    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, join_notes, matched_email_ids,
+    notes_len, parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list, report_facts,
+    split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes, DocMessage, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -612,37 +612,73 @@ async fn complete(
     (result, trace)
 }
 
-/// Load the emails and cut each body to the research budget, in `ids` order.
-fn load_docs(db: &Database, ids: &[String], chars_per_email: usize) -> Vec<ResearchDoc> {
+/// Longest a single conversation may run in a batch, as a multiple of the
+/// per-email budget: long threads get more room than one email, not unbounded.
+const CONVERSATION_EMAILS_BUDGET: usize = 4;
+
+/// Load the gathered emails as conversations — oldest first, by the thread's
+/// first gathered email — each read once through the shared thread reader:
+/// every message's new content only, one budget for the conversation.
+fn load_docs(db: &Database, ids: &[String], budget: &plan::ResearchBudget) -> Vec<ResearchDoc> {
+    use crate::services::thread_reader::{read_thread, ReadOptions, ThreadMessage};
     let emails = load_emails(db, ids);
     let by_id: HashMap<&str, &Email> = emails.iter().map(|e| (e.id.as_str(), e)).collect();
-    ids.iter()
-        .filter_map(|id| by_id.get(id.as_str()))
-        .map(|email| {
-            let body = match db.get_email_body(&email.id) {
-                Ok(raw) if !raw.trim().is_empty() => {
-                    crate::services::thread_clean::clean_email_body(&raw, chars_per_email)
-                }
-                Ok(_) => email.snippet.clone(),
-                Err(e) => {
-                    super::emit_log("debug", &format!("research: body of {} unavailable: {e}", email.id));
-                    email.snippet.clone()
-                }
-            };
-            ResearchDoc {
-                id: email.id.clone(),
-                thread_id: email.thread_id.clone(),
-                date: chrono::DateTime::from_timestamp(email.timestamp, 0)
-                    .map(|d| d.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default(),
-                from: if email.sender.is_empty() || email.sender == email.sender_email {
-                    email.sender_email.clone()
-                } else {
-                    format!("{} <{}>", email.sender, email.sender_email)
-                },
-                subject: email.subject.clone(),
-                body,
-            }
+    let mut order: Vec<&str> = Vec::new();
+    let mut threads: HashMap<&str, Vec<&Email>> = HashMap::new();
+    for email in ids.iter().filter_map(|id| by_id.get(id.as_str())) {
+        threads
+            .entry(email.thread_id.as_str())
+            .or_insert_with(|| {
+                order.push(email.thread_id.as_str());
+                Vec::new()
+            })
+            .push(email);
+    }
+    let date = |ts: i64| {
+        chrono::DateTime::from_timestamp(ts, 0)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default()
+    };
+    order
+        .into_iter()
+        .filter_map(|thread_id| {
+            let mut members = threads.remove(thread_id)?;
+            members.sort_by_key(|e| e.timestamp);
+            let messages: Vec<ThreadMessage> = members
+                .iter()
+                .map(|e| {
+                    let body = db.get_email_body(&e.id).unwrap_or_else(|err| {
+                        super::emit_log("debug", &format!("research: body of {} unavailable: {err}", e.id));
+                        String::new()
+                    });
+                    ThreadMessage::from_email(e, body)
+                })
+                .collect();
+            let cap =
+                (budget.chars_per_email * messages.len().clamp(1, CONVERSATION_EMAILS_BUDGET)).min(budget.batch_chars);
+            let read = read_thread(&messages, &ReadOptions::budget(cap));
+            Some(ResearchDoc {
+                thread_id: thread_id.to_string(),
+                subject: members.first().map(|e| e.subject.clone()).unwrap_or_default(),
+                messages: read
+                    .messages
+                    .into_iter()
+                    .map(|m| DocMessage {
+                        id: m.id,
+                        date: date(m.timestamp),
+                        from: if m.sender.is_empty() || m.sender == m.sender_email {
+                            m.sender_email
+                        } else {
+                            format!("{} <{}>", m.sender, m.sender_email)
+                        },
+                        text: if m.text.is_empty() {
+                            "(no new content)".to_string()
+                        } else {
+                            m.text
+                        },
+                    })
+                    .collect(),
+            })
         })
         .collect()
 }
@@ -684,24 +720,31 @@ pub(crate) async fn run_research(
 
     // ── Map ──
     progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len(), &found);
-    let docs = load_docs(input.db, &prepared.email_ids, budget.chars_per_email);
+    let docs = load_docs(input.db, &prepared.email_ids, &budget);
+    // Emails read after the first `n` conversations.
+    let emails_in = |n: usize| docs[..n].iter().map(|d| d.messages.len()).sum::<usize>();
+    let total_emails = emails_in(docs.len());
     let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch);
     let t_map = std::time::Instant::now();
     let mut notes: Vec<BatchNotes> = Vec::with_capacity(batches.len());
+    // Conversations read so far.
     let mut read = 0;
-    progress(ResearchStage::Reading, 0, batches.len(), 0, docs.len(), &found);
+    progress(ResearchStage::Reading, 0, batches.len(), 0, total_emails, &found);
     for (i, range) in batches.iter().enumerate() {
         if input.stop.load(Ordering::Relaxed) {
             run.trace.stopped = true;
             super::emit_log(
                 "info",
-                &format!("research: cancelled by the user after {read} of {} emails", docs.len()),
+                &format!(
+                    "research: cancelled by the user after {} of {total_emails} emails",
+                    emails_in(read)
+                ),
             );
             break;
         }
         let batch = &docs[range.clone()];
-        let batch_ids: Vec<String> = batch.iter().map(|d| d.id.clone()).collect();
+        let batch_ids: Vec<String> = batch.iter().flat_map(|d| d.ids().cloned()).collect();
         let (prefix, suffix) = split_map_prompt(input.map_template, input.question, batch);
         let (result, trace) = complete(
             input.provider,
@@ -742,22 +785,42 @@ pub(crate) async fn run_research(
         }
         read = range.end;
         run.trace.batches += 1;
-        progress(ResearchStage::Reading, i + 1, batches.len(), read, docs.len(), &found);
+        super::emit_log(
+            "info",
+            &format!(
+                "research: read {}/{total_emails} emails (batch {}/{}), {} conversations matched",
+                emails_in(read),
+                i + 1,
+                batches.len(),
+                found.len()
+            ),
+        );
+        progress(
+            ResearchStage::Reading,
+            i + 1,
+            batches.len(),
+            emails_in(read),
+            total_emails,
+            &found,
+        );
     }
     run.trace.map_ms = t_map.elapsed().as_millis() as i64;
-    run.analyzed = docs[..read].iter().map(|d| d.id.clone()).collect();
+    run.analyzed = docs[..read].iter().flat_map(|d| d.ids().cloned()).collect();
     run.trace.findings = notes.iter().map(|b| b.lines.len() as u32).sum();
     // The matches come from the map notes, before any condense round: the
     // list and the counts must not depend on how the notes were merged.
     let matches = collect_matches(&docs[..read], &notes);
-    run.relevant = matched_email_ids(&docs[..read], &notes);
-    run.trace.emails_analyzed = read as u32;
-    run.trace.relevant_emails = run.relevant.len() as u32;
+    // One source per conversation: the answer never lists two emails of one
+    // thread.
+    run.relevant = matches.iter().map(|m| m.id.clone()).collect();
+    let emails_read = emails_in(read);
+    run.trace.emails_analyzed = emails_read as u32;
+    run.trace.relevant_emails = matched_email_ids(&docs[..read], &notes).len() as u32;
     let shape = plan_report_shape(input.question);
 
     // Cancelled: no condense, no report — say how far it got and stop.
     if run.trace.stopped {
-        run.answer = Some(cancelled_note(input.language_code, read, docs.len()));
+        run.answer = Some(cancelled_note(input.language_code, emails_read, total_emails));
         return run;
     }
 
@@ -773,7 +836,14 @@ pub(crate) async fn run_research(
         }
         let mut merged = Vec::with_capacity(groups.len());
         for (j, group) in groups.iter().enumerate() {
-            progress(ResearchStage::Condensing, j, groups.len(), read, docs.len(), &found);
+            progress(
+                ResearchStage::Condensing,
+                j,
+                groups.len(),
+                emails_read,
+                total_emails,
+                &found,
+            );
             let block = join_notes(&notes[group.clone()]);
             let (prefix, suffix) = split_condense_prompt(input.condense_template, input.question, &block);
             let (result, trace) = complete(
@@ -814,8 +884,8 @@ pub(crate) async fn run_research(
         ResearchStage::Writing,
         run.trace.batches as usize,
         batches.len(),
-        read,
-        docs.len(),
+        emails_read,
+        total_emails,
         &found,
     );
     let notes_block = assemble_notes(&notes, budget.notes_chars);
@@ -825,9 +895,9 @@ pub(crate) async fn run_research(
         notes_block
     };
     let coverage = coverage_line(
-        read,
-        docs.len(),
-        run.relevant.len(),
+        emails_read,
+        total_emails,
+        run.trace.relevant_emails as usize,
         run.trace.batches as usize,
         run.trace.failed_batches as usize,
     );
@@ -861,8 +931,18 @@ pub(crate) async fn run_research(
     };
     match result {
         Ok(reply) if !reply.text.trim().is_empty() => {
-            let subjects: HashMap<String, String> = docs.iter().map(|d| (d.id.clone(), d.subject.clone())).collect();
-            let prose = relink_bare_refs(reply.text.trim(), &subjects);
+            let subjects: HashMap<String, String> = docs
+                .iter()
+                .flat_map(|d| d.ids().map(|id| (id.clone(), d.subject.clone())))
+                .collect();
+            // Every link to an email of a matched conversation points at that
+            // conversation's representative: one email per thread.
+            let representative: HashMap<String, String> = matches
+                .iter()
+                .filter_map(|m| docs.iter().find(|d| d.thread_id == m.thread_id).map(|d| (d, m)))
+                .flat_map(|(d, m)| d.ids().map(|id| (id.clone(), m.id.clone())))
+                .collect();
+            let prose = canonicalize_links(&relink_bare_refs(reply.text.trim(), &subjects), &representative);
             run.answer = Some(if full_list.is_empty() {
                 prose
             } else {
@@ -876,8 +956,8 @@ pub(crate) async fn run_research(
     }
 
     // The next estimate uses what this machine actually took.
-    if read > 0 {
-        let ms = (run.trace.map_ms + run.trace.condense_ms + run.trace.reduce_ms) as u64 / read as u64;
+    if emails_read > 0 {
+        let ms = (run.trace.map_ms + run.trace.condense_ms + run.trace.reduce_ms) as u64 / emails_read as u64;
         if let Err(e) = input.db.set_preference(MS_PER_EMAIL_PREF, &ms.to_string()) {
             super::emit_log("debug", &format!("research: could not save the measured speed: {e}"));
         }
@@ -1080,14 +1160,17 @@ mod tests {
         let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
         assert_eq!(prepared.email_ids.len(), 25);
         let budget = plan_research_budget(16384);
-        // Every email of every batch is a match: 25 of them, more than a
-        // model-written list would hold.
-        for batch in prepared.email_ids.chunks(budget.max_emails_per_batch) {
-            let reply: String = batch
-                .iter()
-                .map(|id| format!("- Invoice request (email://{id})\n"))
-                .collect();
-            provider.push_completion(reply);
+        // Every email is a match: 25 emails in 24 conversations (the reply
+        // shares e00's thread), read 10 conversations per batch. Each reply
+        // cites every id; a batch keeps only its own.
+        let conversations = 24usize;
+        let reply: String = prepared
+            .email_ids
+            .iter()
+            .map(|id| format!("- Invoice request (email://{id})\n"))
+            .collect();
+        for _ in 0..conversations.div_ceil(budget.max_emails_per_batch) {
+            provider.push_completion(reply.clone());
         }
         provider.push_completion("Resumen: el proveedor envió facturas mensuales.");
         let stop = AtomicBool::new(false);
@@ -1120,13 +1203,16 @@ mod tests {
         let categories: Vec<String> = Vec::new();
         let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
         let budget = plan_research_budget(16384);
-        // Every email of every batch matches: 30 in all, more than the 5 shown.
-        for batch in prepared.email_ids.chunks(budget.max_emails_per_batch) {
-            let reply: String = batch
-                .iter()
-                .map(|id| format!("- due Friday (email://{id})\n"))
-                .collect();
-            provider.push_completion(reply);
+        // Every email matches: 30 emails in 29 conversations, more than the
+        // 5 shown. Each reply cites every id; a batch keeps only its own.
+        let conversations = 29usize;
+        let reply: String = prepared
+            .email_ids
+            .iter()
+            .map(|id| format!("- due Friday (email://{id})\n"))
+            .collect();
+        for _ in 0..conversations.div_ceil(budget.max_emails_per_batch) {
+            provider.push_completion(reply.clone());
         }
         provider.push_completion("Informe.");
         let stop = AtomicBool::new(false);
@@ -1176,12 +1262,13 @@ mod tests {
 
         assert!(run.trace.stopped);
         assert_eq!(run.trace.batches, 1);
-        assert_eq!(run.trace.emails_analyzed, 10);
+        // The first batch is 10 conversations; one holds e00 and its reply.
+        assert_eq!(run.trace.emails_analyzed, 11);
         // No condense, no report: only the one map call ran.
         assert_eq!(provider.prefix_completion_calls().len(), 1);
         assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
         let answer = run.answer.expect("a cancellation note");
-        assert!(answer.contains("10") && answer.contains("30"), "{answer}");
+        assert!(answer.contains("11") && answer.contains("30"), "{answer}");
     }
 
     #[tokio::test]

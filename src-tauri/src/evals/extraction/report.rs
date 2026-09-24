@@ -416,7 +416,7 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     <span class="pill ok">{{ summary.ok_count }} ok</span>
     <span class="pill skipped">{{ summary.skipped_count }} skipped</span>
     <span class="pill error">{{ summary.error_count }} errors</span>
-    {% if summary.mean_score %}<span class="pill">mean judge score {{ summary.mean_score | round(method="common", precision=2) }}</span>{% endif %}
+    {% if summary.mean_score %}<span class="pill">mean judge score {{ summary.mean_score | round(precision=2) }}</span>{% endif %}
     {% if summary.judge_enabled %}<span class="pill">judge: {{ summary.judge_model }}</span>{% else %}<span class="pill">judge disabled</span>{% endif %}
   </div>
 </header>
@@ -475,7 +475,7 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
                   <div class="item-title">{{ f.fact }}</div>
                   <div class="item-meta">
                     {{ f.subject_kind }} · {{ f.subject_key }}
-                    {% if f.confidence %} · conf {{ f.confidence | round(method="common", precision=2) }}{% endif %}
+                    {% if f.confidence %} · conf {{ f.confidence | round(precision=2) }}{% endif %}
                   </div>
                 </li>
               {% endfor %}
@@ -523,3 +523,44 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
 </main>
 </body>
 </html>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::memory::extractor::ExtractedFact;
+
+    #[test]
+    fn a_report_with_fact_confidences_renders() {
+        // `round(method="common")` is not a Tera method: every memory eval
+        // with a confidence on a fact failed to write its report.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let case = ReportCase {
+            email_id: "e1".into(),
+            subject: "s".into(),
+            sender: "a".into(),
+            sender_email: "a@x.com".into(),
+            timestamp: 0,
+            body_plain: "b".into(),
+            tasks: Vec::new(),
+            facts: vec![ExtractedFact {
+                subject_kind: "person".into(),
+                subject_key: "a@x.com".into(),
+                fact: "likes tea".into(),
+                confidence: Some(0.876),
+                domain: None,
+                vigency: None,
+            }],
+            thread_summary: None,
+            commitment: None,
+            deadline_iso: None,
+            verdict: None,
+            extract_ms: 1,
+            status: CaseStatus::Ok,
+            error: None,
+        };
+        let path =
+            render_report(dir.path(), &[case], ExtractionKind::Facts, "acct", "m", false, "").expect("report renders");
+        let html = std::fs::read_to_string(path).expect("report file");
+        assert!(html.contains("conf 0.88"), "confidence rounded to 2 places");
+    }
+}

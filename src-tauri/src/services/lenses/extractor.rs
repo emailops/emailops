@@ -55,8 +55,6 @@ pub async fn extract_email(
     let email = db
         .get_email_by_id(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("email {email_id}")))?;
-    let body = db.get_email_body(email_id).unwrap_or_default();
-
     let max_body_chars = db
         .get_preference("lenses.max_body_chars")
         .ok()
@@ -64,7 +62,7 @@ pub async fn extract_email(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_BODY_CHARS);
 
-    let body_text = clean_and_trim_body(&body, max_body_chars);
+    let body_text = body_for_extraction(db, &email, max_body_chars);
 
     // 2. Build the tool definition from the Lens schema.
     let tool = build_tool_definition(&lens.schema);
@@ -440,6 +438,15 @@ fn value_is_empty(value: &serde_json::Value) -> bool {
 /// Strip HTML, collapse whitespace, and truncate to `max_chars` (from the
 /// bottom — header context at the top is more important than trailing
 /// footers/quoted blocks).
+/// The text a lens reads for one email: what it adds to its thread (not its
+/// quoted history, which the earlier messages were already read for),
+/// cleaned and cut to `max_chars`.
+pub(crate) fn body_for_extraction(db: &Database, email: &crate::models::Email, max_chars: usize) -> String {
+    let raw = db.get_email_body(&email.id).unwrap_or_default();
+    let new_content = crate::services::thread_reader::message_new_content(db, email, &raw);
+    clean_and_trim_body(&new_content, max_chars)
+}
+
 pub(crate) fn clean_and_trim_body(body: &str, max_chars: usize) -> String {
     let stripped = crate::util::html::strip_html_for_fts(body);
     let normalised = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -631,6 +638,22 @@ fn parse_localised_number(raw: &str) -> Option<f64> {
         _ => raw.to_string(),
     };
     normalised.parse::<f64>().ok()
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    #[test]
+    fn a_lens_reads_a_replys_new_content_not_its_quoted_history() {
+        let db = Database::new_for_testing().unwrap();
+        fixtures::seed_quoting_thread(&db);
+        let email = db.get_email_by_id("e2").unwrap().expect("e2");
+        let text = body_for_extraction(&db, &email, DEFAULT_MAX_BODY_CHARS);
+        assert!(text.contains(fixtures::REPLY_NEW), "{text}");
+        assert!(!text.contains(fixtures::REQUEST), "{text}");
+    }
 }
 
 #[cfg(test)]

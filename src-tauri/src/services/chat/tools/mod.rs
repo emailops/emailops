@@ -1995,6 +1995,46 @@ mod tests {
         assert!(app.iter().any(|e| e.id == "bad"));
     }
 
+    /// A reply row shows what the reply adds, not the earlier message it
+    /// repeats — even pasted with no "On … wrote:" marker to cut at.
+    #[test]
+    fn search_emails_with_bodies_shows_a_replys_new_content_only() {
+        use crate::services::thread_reader::fixtures::{REPLY_NEW, REQUEST};
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "q1",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Portal budget",
+            REQUEST,
+            t,
+        );
+        seed_email(
+            &db,
+            "q2",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Re: Portal budget",
+            &format!("{REPLY_NEW}\n\n{REQUEST}"),
+            t + 100,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(out.contains(REPLY_NEW), "{out}");
+        assert!(!out.contains(REQUEST), "the repeated request is not re-read: {out}");
+    }
+
     /// `with_bodies` lets the model pull cleaned bodies in the same call
     /// instead of one get_email_body round per row.
     #[test]

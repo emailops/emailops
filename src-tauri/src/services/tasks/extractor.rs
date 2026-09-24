@@ -263,7 +263,10 @@ fn build_prompt(
     cfg: &TaskConfig,
     existing_thread_tasks: &[String],
 ) -> Result<String> {
-    let body = db.get_email_body(&email.id).unwrap_or_default();
+    let raw = db.get_email_body(&email.id).unwrap_or_default();
+    // What this email adds to its thread — not its quoted history, whose
+    // tasks were extracted when the earlier messages were read.
+    let body = crate::services::thread_reader::message_new_content(db, email, &raw);
     let body_trimmed = truncate_utf8(&body, MAX_BODY_CHARS);
     let snippet = if body_trimmed.is_empty() {
         email.snippet.as_str()
@@ -594,6 +597,22 @@ fn parse_iso_ts(raw: &str) -> Option<i64> {
 
 fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
     crate::services::logger::log(level, source, message);
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    #[test]
+    fn the_prompt_reads_a_replys_new_content_not_its_quoted_history() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        let email = db.get_email_by_id("e2").unwrap().expect("e2");
+        let prompt = build_prompt(&db, &email, &TaskConfig::default(), &[]).unwrap();
+        assert!(prompt.contains(fixtures::REPLY_NEW), "{prompt}");
+        assert!(!prompt.contains(fixtures::REQUEST), "{prompt}");
+    }
 }
 
 #[cfg(test)]

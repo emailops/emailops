@@ -1541,3 +1541,25 @@ cancel.
 - *Keeping both buttons*: the developer chose one.
 - *Retrying a rejected research as an ordinary turn*: it would answer from one page of
   results, which is the thing the user rejected.
+
+## 2026-09-24 — One shared thread reader; each email is read for what it adds
+
+**Decision:** Every feature that reads a conversation goes through
+`services/thread_reader.rs`. It covers the chat's thread context, the `get_thread` tool,
+draft generation, research (which now reads, counts and lists **one match per
+conversation**), `search_emails` bodies, and the memory, task and lens extractors. A
+message is read for its *new content*: the cleaned body minus quoted history (attribution
+lines, `>` lines, HTML `<blockquote>`) and minus any paragraph an earlier message in the
+thread already said. So a reply never re-sends the emails it answers. One water-fill
+budget, with an optional focus message and oldest-first drops, replaces the per-feature
+allocators.
+**Context:** each feature cleaned threads its own way. A reply that pasted its
+predecessor without a quote marker was read, and extracted from, twice. Research
+listed one thread's replies as separate matches. The developer asked for one reusable
+reader and for no conversation to appear twice in an answer.
+**Rejected:**
+- *Moving the chat's RAG sources to new content only*: a retrieved reply is often the
+  only hit for its thread, and its quoted history is the context the answer needs. RAG
+  keeps the whole cleaned body.
+- *Deduplicating research matches after the map step*: the model would still read every
+  reply with its history, and the count would stay per email.

@@ -117,30 +117,17 @@ pub fn create_conversation_with_thread(
 ///   - the ambient-context path in `run_chat_turn` builds it fresh per turn,
 ///     for the thread the user currently has open in the main view.
 pub fn build_thread_context(db: &Database, account_id: &str, thread_id: &str) -> Result<(String, String)> {
-    let emails = db.get_thread(account_id, thread_id)?;
-    if emails.is_empty() {
+    use crate::services::thread_reader::{load_thread, read_thread, render_thread, ReadOptions, CHAT_THREAD_BUDGET};
+    let messages = load_thread(db, account_id, thread_id)?;
+    let Some(first) = messages.first() else {
         return Err(crate::models::error::AppError::NotFound(format!(
             "thread {thread_id} for account {account_id}"
         )));
-    }
-
-    // Hydrate body for each email up front. Empty bodies (e.g. emails awaiting
-    // re-download) are surfaced in the formatted context as "(empty)".
-    let mut bodies: std::collections::HashMap<String, String> = std::collections::HashMap::with_capacity(emails.len());
-    for e in &emails {
-        // Bodies that fail to load for any reason are downgraded to empty so
-        // a single broken row can't block the entire chat creation.
-        let body = db.get_email_body(&e.id).unwrap_or_default();
-        bodies.insert(e.id.clone(), body);
-    }
-
-    let context = crate::services::thread_clean::format_thread_context(
-        &emails,
-        |id| bodies.get(id).cloned(),
-        crate::services::thread_clean::chars_per_email(emails.len()),
-    );
-
-    Ok((context, emails[0].subject.clone()))
+    };
+    // Read once, as a thread: each reply's new content only (its quoted
+    // history is the earlier messages, already shown), one shared budget.
+    let read = read_thread(&messages, &ReadOptions::budget(CHAT_THREAD_BUDGET));
+    Ok((render_thread(&read), first.subject.clone()))
 }
 
 /// Strip RE:/FWD: prefixes (and locale variants) from a subject and truncate

@@ -40,6 +40,7 @@ pub mod tag_priority;
 pub mod task_queue;
 pub mod tasks;
 pub mod thread_clean;
+pub mod thread_reader;
 pub mod translation;
 // Desktop-only: the GitHub-release update checker. Meaningless for a served app.
 #[cfg(feature = "desktop")]

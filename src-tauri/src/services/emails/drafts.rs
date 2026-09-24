@@ -521,67 +521,43 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
 /// kept whole, long ones share what remains). When a fair share would drop
 /// below `MIN_OLDER_MSG_CHARS`, the oldest messages are dropped (0) instead.
 fn allocate_thread_budget(lens: &[usize], budget: usize) -> Vec<usize> {
-    let mut alloc = vec![0; lens.len()];
-    let Some((&target_len, older)) = lens.split_last() else {
-        return alloc;
+    // The shared thread reader's planner, with the answered message as focus.
+    let opts = crate::services::thread_reader::ReadOptions {
+        budget_chars: budget,
+        min_chars_per_message: MIN_OLDER_MSG_CHARS,
+        focus_id: None,
+        focus_max_chars: TARGET_MSG_MAX_CHARS,
     };
-    let target = target_len.min(TARGET_MSG_MAX_CHARS).min(budget);
-    alloc[lens.len() - 1] = target;
-    let remaining = budget - target;
-
-    // Keep the newest older messages that still leave each a useful share.
-    let mut first_kept = older.len();
-    while first_kept > 0 {
-        let n = older.len() - first_kept + 1;
-        let useful = MIN_OLDER_MSG_CHARS.min(older[first_kept - 1]);
-        if remaining / n < useful {
-            break;
-        }
-        first_kept -= 1;
-    }
-
-    // Water-fill the kept range: shortest first, each takes min(len, fair share).
-    let mut kept: Vec<usize> = (first_kept..older.len()).collect();
-    kept.sort_by_key(|&i| older[i]);
-    let mut left = remaining;
-    let mut slots = kept.len();
-    for i in kept {
-        let share = left / slots;
-        let take = older[i].min(share);
-        alloc[i] = take;
-        left -= take;
-        slots -= 1;
-    }
-    alloc
+    crate::services::thread_reader::allocate_budget(lens, &opts, lens.len().checked_sub(1))
 }
 
-/// Load each thread message's body, cleaned of quoted history and signature
-/// (a reply's quote repeats the whole thread and would eat the budget). Falls
+/// Load each thread message's **new content** through the shared thread
+/// reader: quoted history, signature and anything an earlier message already
+/// said are gone, so the thread is read once instead of once per reply. Falls
 /// back to the list preview when the body is missing or unreadable.
 fn load_thread_messages(db: &Database, thread: &[Email]) -> Vec<ThreadMessage> {
-    thread
+    let raw: Vec<crate::services::thread_reader::ThreadMessage> = thread
         .iter()
         .map(|msg| {
-            let body = match db.get_email_body(&msg.id) {
-                Ok(raw) => crate::services::thread_clean::clean_email_body(&raw, usize::MAX),
-                Err(e) => {
-                    emit_log(
-                        "warn",
-                        &format!("body unavailable for {} ({}); using preview", msg.id, e),
-                    );
-                    String::new()
-                }
-            };
-            ThreadMessage {
-                sender: msg.sender.clone(),
-                sender_email: msg.sender_email.clone(),
-                subject: msg.subject.clone(),
-                body: if body.trim().is_empty() {
-                    msg.snippet.clone()
-                } else {
-                    body
-                },
-            }
+            let body = db.get_email_body(&msg.id).unwrap_or_else(|e| {
+                emit_log(
+                    "warn",
+                    &format!("body unavailable for {} ({}); using preview", msg.id, e),
+                );
+                String::new()
+            });
+            crate::services::thread_reader::ThreadMessage::from_email(msg, body)
+        })
+        .collect();
+    let texts = crate::services::thread_reader::new_content(&raw);
+    thread
+        .iter()
+        .zip(texts)
+        .map(|(msg, body)| ThreadMessage {
+            sender: msg.sender.clone(),
+            sender_email: msg.sender_email.clone(),
+            subject: msg.subject.clone(),
+            body,
         })
         .collect()
 }

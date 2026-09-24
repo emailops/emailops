@@ -471,7 +471,9 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             for e in emails {
                 if let Ok(body) = emails::get_email_body(ctx.db, &e.id) {
                     if !body.is_empty() {
-                        map.insert(e.id.clone(), thread_clean::clean_email_body(&body, per_email));
+                        // What the email adds to its thread, not what it repeats.
+                        let new = crate::services::thread_reader::message_new_content(ctx.db, e, &body);
+                        map.insert(e.id.clone(), thread_clean::clean_email_body(&new, per_email));
                     }
                 }
             }
@@ -738,8 +740,12 @@ impl SearchEmailsTool {
         if include_bodies {
             let cleaned: std::collections::HashMap<String, String> = bodies
                 .into_iter()
-                .filter(|(id, _)| kept.iter().any(|e| &e.id == id))
-                .map(|(id, b)| (id, thread_clean::clean_email_body(&b, per_email)))
+                .filter_map(|(id, b)| {
+                    let email = kept.iter().find(|e| e.id == id)?;
+                    // What the email adds to its thread, not what it repeats.
+                    let new = crate::services::thread_reader::message_new_content(ctx.db, email, &b);
+                    Some((id, thread_clean::clean_email_body(&new, per_email)))
+                })
                 .collect();
             out.push_str(&render_rows(ctx, &kept, Some(&cleaned)));
         } else {
