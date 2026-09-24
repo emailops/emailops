@@ -113,6 +113,23 @@ describe('plainTextToHtml', () => {
   it('handles ampersands without double-escaping', () => {
     expect(plainTextToHtml('Tom & Jerry')).toBe('<p>Tom &amp; Jerry</p>');
   });
+
+  it('renders markdown bold from an AI draft as bold, not literal asterisks', () => {
+    expect(plainTextToHtml('Go to **Settings > Accounts** and click Add.')).toBe(
+      '<p>Go to <strong>Settings &gt; Accounts</strong> and click Add.</p>',
+    );
+  });
+
+  it('keeps asterisks that are not a closed bold span on one line', () => {
+    expect(plainTextToHtml('a ** b')).toBe('<p>a ** b</p>');
+    expect(plainTextToHtml('**open\nclose**')).toBe('<p>**open<br>close**</p>');
+    expect(plainTextToHtml('2 * 3 * 4')).toBe('<p>2 * 3 * 4</p>');
+  });
+
+  it('does not bold an empty or whitespace-padded span', () => {
+    expect(plainTextToHtml('****')).toBe('<p>****</p>');
+    expect(plainTextToHtml('x ** y ** z')).toBe('<p>x ** y ** z</p>');
+  });
 });
 
 describe('plainTextToParagraphsHtml', () => {

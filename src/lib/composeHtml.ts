@@ -165,7 +165,14 @@ function mimeTypeToExtension(mime: string): string {
 export function plainTextToHtml(text: string): string {
   // Split on blank lines into paragraphs; within a paragraph, convert single
   // newlines to <br>. Escape HTML special chars first.
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Local models write **bold** in drafts and translations even when asked
+  // for plain text; the editor would show the asterisks literally. A closed
+  // span on one line, not padded with spaces, becomes <strong>.
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, '<strong>$1</strong>');
   const paragraphs = escaped.split(/\n{2,}/);
   return paragraphs.map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 }
