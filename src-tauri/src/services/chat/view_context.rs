@@ -30,6 +30,9 @@ pub enum ViewContext {
     Settings(String),
     /// A fillable form is open on screen. Carries the registered form id.
     Form(&'static str),
+    /// A Lens is open in the Lenses view. Carries its id; the turn looks the
+    /// Lens up to name it (see `lens_context_line`).
+    Lens(String),
 }
 
 impl ViewContext {
@@ -47,6 +50,11 @@ impl ViewContext {
 /// stale or hand-crafted token is simply ignored rather than prompted.
 pub fn parse_view_context(raw: &str) -> Option<ViewContext> {
     let raw = raw.trim();
+    if let Some(id) = raw.strip_prefix("lens/") {
+        // Ids are UUIDs; anything else is not a Lens and never reaches a prompt.
+        let plain = !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        return plain.then(|| ViewContext::Lens(id.to_string()));
+    }
     if let Some(form_id) = raw.strip_prefix("form/") {
         // Resolve against the registry so the id in the prompt is always one
         // the filler can actually look up.
@@ -77,7 +85,20 @@ pub fn view_context_line(ctx: &ViewContext) -> String {
             "CURRENT VIEW: the user has the \"{id}\" form open on screen. A request to add, \
              change or remove a field refers to THIS form."
         ),
+        // Unnamed: the turn replaces this with `lens_context_line` once it has
+        // looked the Lens up; this is the fallback when it no longer exists.
+        ViewContext::Lens(_) => view_context_line(&ViewContext::View("lenses".into())),
     }
+}
+
+/// The context line for an open Lens, named and with its columns, so "este
+/// lens" / "this lens" resolves to it.
+pub fn lens_context_line(name: &str, column_labels: &[&str]) -> String {
+    format!(
+        "CURRENT VIEW: the user has the Lens \"{name}\" open. Its columns are: {}. \
+         A reference to \"this lens\" means it; answer questions about its name or columns from this.",
+        column_labels.join(", ")
+    )
 }
 
 /// Which form a fill turn should target.
@@ -113,6 +134,37 @@ pub fn planner_form_hint(open_form: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_open_lens_is_its_own_context() {
+        // With a Lens open, "este lens" had nothing to resolve to: the token
+        // only said "the lenses view".
+        assert_eq!(
+            parse_view_context("lens/2637fb8b-e741-409c-bbf3-99657cda38b9"),
+            Some(ViewContext::Lens("2637fb8b-e741-409c-bbf3-99657cda38b9".into()))
+        );
+    }
+
+    #[test]
+    fn a_lens_token_must_be_a_plain_id() {
+        for bad in [
+            "lens/",
+            "lens/../settings/ai",
+            "lens/a b",
+            "lens/x\ny",
+            &format!("lens/{}", "a".repeat(80)),
+        ] {
+            assert_eq!(parse_view_context(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_lens_line_names_the_lens_and_its_columns() {
+        let line = lens_context_line("Flight details", &["Flight date", "Origin", "Price"]);
+        assert!(line.contains("\"Flight details\""), "{line}");
+        assert!(line.contains("Flight date, Origin, Price"), "{line}");
+        assert!(line.contains("this lens"), "{line}");
+    }
 
     #[test]
     fn parses_a_main_view() {

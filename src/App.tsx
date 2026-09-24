@@ -55,7 +55,7 @@ import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
-import { isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
+import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
 import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -232,9 +232,10 @@ function AppInner() {
   // it wins over the view behind it — the same precedence an open FORM has
   // over both (registered by the form component itself, see viewContextStore).
   const setBaseView = useViewContextStore((s) => s.setBaseView);
+  const activeLensIdForChat = useLensStore((s) => s.activeLensId);
   useEffect(() => {
-    setBaseView(settingsTab ? `settings/${settingsTab}` : `view/${viewMode}`);
-  }, [viewMode, settingsTab, setBaseView]);
+    setBaseView(baseViewToken(settingsTab, viewMode, activeLensIdForChat));
+  }, [viewMode, settingsTab, activeLensIdForChat, setBaseView]);
   const [classificationRulePrefill, setClassificationRulePrefill] = useState<ClassificationRulePrefill | null>(null);
   const [rulePrefill, setRulePrefill] = useState<RuleFormPrefill | null>(null);
   const [selectedCategories, setSelectedCategories] = usePersistedPref<Set<EmailCategory>>(

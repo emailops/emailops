@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEmailListView, planAccountSwitchView, planViewChange } from './viewNavigation';
+import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from './viewNavigation';
 
 describe('isEmailListView', () => {
   it('recognises every mailbox-backed view', () => {
@@ -74,5 +74,20 @@ describe('planAccountSwitchView', () => {
     expect(planAccountSwitchView('sent')).toBe('inbox');
     expect(planAccountSwitchView('folder:Projects/2026')).toBe('inbox');
     expect(planAccountSwitchView('inbox')).toBe('inbox');
+  });
+});
+
+describe('baseViewToken', () => {
+  it('names the open Lens so the chat can resolve "this lens"', () => {
+    expect(baseViewToken(null, 'lenses', 'lens-1')).toBe('lens/lens-1');
+  });
+
+  it('falls back to the view without a Lens, and elsewhere ignores the Lens', () => {
+    expect(baseViewToken(null, 'lenses', null)).toBe('view/lenses');
+    expect(baseViewToken(null, 'inbox', 'lens-1')).toBe('view/inbox');
+  });
+
+  it('lets an open Settings tab win', () => {
+    expect(baseViewToken('ai', 'lenses', 'lens-1')).toBe('settings/ai');
   });
 });
