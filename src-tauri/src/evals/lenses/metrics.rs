@@ -98,6 +98,33 @@ pub fn evaluate(case: &LensCase, row: Option<&serde_json::Value>, in_scope: bool
     LensReport { checks, passed }
 }
 
+/// One row per template column (plus the scope check first), for the report:
+/// asserted columns carry their verdict, the rest show what was extracted with
+/// `—` as the expectation.
+pub fn field_table(
+    report: &LensReport,
+    schema: &crate::models::lens::LensSchema,
+    row: Option<&serde_json::Value>,
+) -> Vec<FieldCheck> {
+    let mut table: Vec<FieldCheck> = report.checks.iter().filter(|c| c.field == "scope").cloned().collect();
+    for col in &schema.columns {
+        if let Some(check) = report.checks.iter().find(|c| c.field == col.key) {
+            table.push(check.clone());
+            continue;
+        }
+        table.push(FieldCheck {
+            field: col.key.clone(),
+            expected: "—".into(),
+            actual: match row {
+                Some(r) => show(r.get(&col.key).unwrap_or(&serde_json::Value::Null)),
+                None => "(extraction failed)".into(),
+            },
+            ok: true,
+        });
+    }
+    table
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +146,61 @@ mod tests {
             .filter(|c| !c.ok)
             .map(|c| c.field.as_str())
             .collect()
+    }
+
+    fn schema(keys: &[&str]) -> crate::models::lens::LensSchema {
+        crate::models::lens::LensSchema {
+            columns: keys
+                .iter()
+                .map(|k| crate::models::lens::LensColumn {
+                    key: (*k).into(),
+                    label: (*k).into(),
+                    column_type: crate::models::lens::LensColumnType::String,
+                    description: String::new(),
+                    enum_values: None,
+                    required: false,
+                    is_unique_key: false,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_field_table_lists_every_column_with_unchecked_ones_marked() {
+        // The report shows the whole row, not just the asserted columns: a
+        // reader needs to see what the template actually wrote down.
+        let c = case("  contact_email: ana@client.example\n", Some(true));
+        let row = json!({"contact_email": "ana@client.example", "phone": null, "summary": "Pide presupuesto"});
+        let report = evaluate(&c, Some(&row), true);
+        let table = field_table(&report, &schema(&["contact_email", "phone", "summary"]), Some(&row));
+        let got: Vec<(&str, &str, &str, bool)> = table
+            .iter()
+            .map(|r| (r.field.as_str(), r.expected.as_str(), r.actual.as_str(), r.ok))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("scope", "picked up", "picked up", true),
+                (
+                    "contact_email",
+                    "contains \"ana@client.example\"",
+                    "ana@client.example",
+                    true
+                ),
+                ("phone", "—", "(empty)", true),
+                ("summary", "—", "Pide presupuesto", true),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_field_table_keeps_the_failing_verdict() {
+        let c = case("  phone: \"600\"\n", None);
+        let row = json!({"phone": null});
+        let report = evaluate(&c, Some(&row), true);
+        let table = field_table(&report, &schema(&["phone"]), Some(&row));
+        assert_eq!(table.len(), 1);
+        assert!(!table[0].ok);
     }
 
     #[test]

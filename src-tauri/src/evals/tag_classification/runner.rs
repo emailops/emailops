@@ -273,6 +273,7 @@ pub async fn run(cfg: TagRunnerConfig) -> EvalResult<TagEvalSummary> {
                     run.urgency.as_deref().unwrap_or("-")
                 ),
             },
+            evidence: None,
         });
     }
 

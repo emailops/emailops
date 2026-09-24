@@ -376,9 +376,11 @@ def layer_lenses():
                "fuera (`scope`) y, con el extractor de producción, el valor de cada columna: texto = debe aparecer "
                "(sin distinguir mayúsculas), vacío = la columna no debe rellenarse. Sin juez")
     for it in rep["per_item_results"]:
+        ev = it.get("evidence") or {}  # the email, the extracted row, one check row per column
         add("Lenses, tareas y adjuntos", "eval", it["id"], "ok" if it["passed"] else "fail", it.get("detail") or "", None,
             desc=f"Caso sintético de lens_template_eval; puntuación {it.get('score')}", model=rep.get("model") or model,
-            judge="sin juez: comprobaciones por columna y de alcance", harness=harness, checks=[])
+            judge="sin juez: comprobaciones por columna y de alcance", harness=harness,
+            question=ev.get("input", ""), answer=ev.get("output", ""), checks=ev.get("checks", []))
 
 def layer_translation():
     # Language detection + translation on synthetic cases; needs the chat model.

@@ -81,6 +81,26 @@ pub struct ItemResult {
     pub score: Option<f64>,
     /// Human-readable summary (heuristic failures, judge rationale, etc.).
     pub detail: String,
+    /// What the case fed in, what came out, and one row per check — for a
+    /// report that renders the case in full (`make verify`'s informe).
+    /// Optional, so reports without it stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<ItemEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemEvidence {
+    pub input: String,
+    pub output: String,
+    pub checks: Vec<EvidenceCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceCheck {
+    pub name: String,
+    pub expected: String,
+    pub actual: String,
+    pub passed: bool,
 }
 
 impl JsonRunReport {
@@ -160,12 +180,14 @@ mod tests {
             passed: true,
             score: Some(0.9),
             detail: String::new(),
+            evidence: None,
         });
         r.push(ItemResult {
             id: "b".into(),
             passed: false,
             score: Some(0.2),
             detail: "fail".into(),
+            evidence: None,
         });
         assert_eq!(r.total, 2);
         assert_eq!(r.succeeded, 1);
@@ -182,6 +204,7 @@ mod tests {
             passed: true,
             score: None,
             detail: String::new(),
+            evidence: None,
         });
 
         let path = r.write(dir.path()).unwrap();

@@ -13,9 +13,9 @@ use std::time::Instant;
 
 use crate::db::Database;
 use crate::evals::db_source::{prepare_eval_db, EvalDbMode};
-use crate::evals::json_report::{ItemResult, JsonRunReport};
+use crate::evals::json_report::{EvidenceCheck, ItemEvidence, ItemResult, JsonRunReport};
 use crate::evals::lenses::case_loader::{load_lens_cases, LensCase};
-use crate::evals::lenses::metrics::{evaluate, LensReport};
+use crate::evals::lenses::metrics::{evaluate, field_table, LensReport};
 use crate::evals::{EvalError, EvalResult};
 use crate::models::lens::Lens;
 use crate::models::Email;
@@ -77,6 +77,37 @@ fn case_email(case: &LensCase, account_id: &str) -> Email {
         is_sent: false,
         headers: None,
     }
+}
+
+/// The email as the extractor receives it, for the report's "question" block.
+fn email_text(case: &LensCase) -> String {
+    format!(
+        "De: {} <{}>\nAsunto: {}\n\n{}",
+        case.email.from_name,
+        case.email.from_email,
+        case.email.subject,
+        case.email.body.trim_end()
+    )
+}
+
+/// One `column: value` line per extracted column, for the "answer" block.
+fn row_text(lens: &Lens, row: Option<&serde_json::Value>, error: Option<&str>) -> String {
+    let Some(row) = row else {
+        return format!(
+            "(extracción fallida){}",
+            error.map(|e| format!(": {e}")).unwrap_or_default()
+        );
+    };
+    lens.schema
+        .columns
+        .iter()
+        .map(|c| match row.get(&c.key) {
+            None | Some(serde_json::Value::Null) => format!("{}: ∅", c.key),
+            Some(serde_json::Value::String(s)) => format!("{}: {s}", c.key),
+            Some(other) => format!("{}: {other}", c.key),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `key=value` pairs of the extracted row, for the report.
@@ -178,6 +209,19 @@ pub async fn run(cfg: LensRunnerConfig) -> EvalResult<JsonRunReport> {
             passed: scored.passed,
             score: Some(ok / total),
             detail: item_detail(case, &scored, row, result.error_message.as_deref()),
+            evidence: Some(ItemEvidence {
+                input: email_text(case),
+                output: row_text(&lens, row, result.error_message.as_deref()),
+                checks: field_table(&scored, &lens.schema, row)
+                    .into_iter()
+                    .map(|c| EvidenceCheck {
+                        name: c.field,
+                        expected: c.expected,
+                        actual: c.actual,
+                        passed: c.ok,
+                    })
+                    .collect(),
+            }),
         });
     }
     report.write(&cfg.out_dir)?;

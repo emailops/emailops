@@ -115,6 +115,7 @@ pub fn run(cfg: JunkEvalConfig) -> EvalResult<JunkEvalSummary> {
             passed: failures.is_empty(),
             score: Some(if failures.is_empty() { 1.0 } else { 0.0 }),
             detail: failures.join("; "),
+            evidence: None,
         });
         outcomes.push(outcome);
     }
