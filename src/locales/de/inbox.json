@@ -172,5 +172,6 @@
     "confirmFailed": "Nachricht konnte auf dem Server nicht abgelegt werden",
     "notJunkFailed": "Es konnte nicht gespeichert werden, dass diese Nachricht kein Spam ist",
     "hideFlagged": "Spam-Nachrichten ausblenden"
-  }
+  },
+  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar."
 }

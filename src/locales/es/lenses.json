@@ -35,7 +35,33 @@
     "senderEmails": "Correos del remitente",
     "keywordQuery": "Consulta por palabra clave (FTS5)",
     "keywordsBodyHint": "(si no se marca, solo se busca el asunto)",
-    "searchBody": "Buscar dentro del cuerpo del correo"
+    "searchBody": "Buscar dentro del cuerpo del correo",
+    "folders": "Carpetas",
+    "foldersPickAccount": "Elige una cuenta para incluir sus carpetas.",
+    "folderMissing": "Esta carpeta ya no existe en la cuenta — quítala del alcance.",
+    "foldersLoadError": "No se pudieron cargar las carpetas: {{error}}",
+    "help": "Elige qué correos analiza esta lente. Los cambios de alcance se aplican a las próximas ejecuciones; las filas ya extraídas se mantienen hasta que vuelvas a ejecutar el reproceso.",
+    "mailboxNames": {
+      "inbox": "Bandeja de entrada",
+      "sent": "Enviados",
+      "archive": "Archivo",
+      "spam": "Spam",
+      "trash": "Papelera"
+    },
+    "categoryNames": {
+      "Primary": "Principal",
+      "Promotions": "Promociones",
+      "Social": "Social",
+      "Updates": "Notificaciones",
+      "Forums": "Foros"
+    },
+    "errors": {
+      "domainLooksLikeEmail": "\"{{value}}\" parece un correo — ponlo en \"Correos del remitente\" o usa solo el dominio (p. ej. \"{{domain}}\").",
+      "invalidDomain": "\"{{value}}\" no es un dominio válido (se espera algo como \"stripe.com\").",
+      "invalidEmail": "\"{{value}}\" no es una dirección de correo válida."
+    },
+    "keywordPlaceholder": "p. ej. presupuesto OR cotización",
+    "foldersFilter": "Filtrar carpetas…"
   },
   "prompt": {
     "placeholder": "Describe qué extraer de cada correo…"
@@ -50,6 +76,26 @@
     "promptHelp": "Indica al modelo qué extraer. Las descripciones de columnas anteriores también se pasan como esquema de la llamada a herramientas.",
     "previewHelp": "Ejecuta la extracción sobre una muestra pequeña sin guardar.",
     "previewEmpty": "Ningún correo coincidió con el alcance. Prueba a ampliar los filtros.",
+    "subtitle": "Define un filtro, un esquema y un prompt de extracción.",
+    "submit": "Crear lente",
+    "creating": "Creando…",
+    "tabTemplates": "Plantillas",
+    "tabCustom": "Personalizada",
+    "testOnSample": "Probar con 3 correos",
+    "testing": "Probando…",
+    "previewTitle": "Vista previa ({{count}})",
+    "noSubject": "(sin asunto)",
+    "defaultPrompt": "Extrae de este correo los campos de abajo. Deja en null los campos opcionales cuando el correo no contenga esa información.",
+    "defaultSummaryDescription": "Resumen del correo en una frase.",
+    "errors": {
+      "missingKey": "Cada columna necesita una clave.",
+      "invalidKey": "La clave de columna \"{{key}}\" solo admite letras, números y guion bajo, y debe empezar por una letra.",
+      "duplicateKey": "Clave de columna duplicada: \"{{key}}\".",
+      "enumNeedsValues": "La columna de lista \"{{key}}\" necesita al menos un valor.",
+      "nameRequired": "El nombre es obligatorio.",
+      "promptRequired": "El prompt es obligatorio.",
+      "promptBeforePreview": "Añade un prompt antes de probar."
+    },
     "filledFromChatMissing": "Rellenado desde el chat. Falta por rellenar: {{fields}}."
   },
   "identity": {
@@ -70,8 +116,11 @@
       "cadence": "Frecuencia",
       "cancel_url": "Enlace de cancelación",
       "client": "Cliente",
+      "company": "Empresa",
       "confidence": "Confianza",
       "confirmation_code": "N.º de confirmación",
+      "contact_email": "Correo",
+      "contact_name": "Nombre",
       "currency": "Moneda",
       "days_overdue": "Días de retraso",
       "days_silent": "Días sin respuesta",
@@ -82,6 +131,7 @@
       "newsletter": "Boletín",
       "next_renewal": "Próxima renovación",
       "paid": "Pagado",
+      "phone": "Teléfono",
       "priority_guess": "Prioridad",
       "promise": "Compromiso",
       "provider": "Proveedor",
@@ -89,6 +139,7 @@
       "received_date": "Recibido",
       "recipient": "Destinatario",
       "reference": "Referencia",
+      "request_type": "Tipo",
       "sender_name": "De",
       "sent_date": "Enviado",
       "service": "Servicio",
@@ -101,6 +152,20 @@
       "travel_type": "Tipo",
       "vendor": "Proveedor",
       "worth_clicking": "¿Merece abrirlo?"
+    },
+    "add": "+ Añadir columna",
+    "required": "obligatoria",
+    "enumValues": "Valores de la lista (separados por coma)",
+    "types": {
+      "string": "Texto corto",
+      "text": "Texto largo",
+      "number": "Número",
+      "currency": "Importe",
+      "date": "Fecha",
+      "boolean": "Sí/No",
+      "enum": "Lista de valores",
+      "email": "Correo",
+      "url": "URL"
     }
   },
   "table": {
@@ -110,11 +175,22 @@
     "openSourceEmail": "Abrir correo de origen",
     "reextractRow": "Volver a extraer esta fila",
     "includeRow": "Devolver esta fila al Lens",
-    "excludeRow": "Excluir esta fila"
+    "excludeRow": "Excluir esta fila",
+    "filter": {
+      "button": "Filtrar columna",
+      "search": "Buscar valor…",
+      "selectAll": "Seleccionar todo",
+      "empty": "(Vacías)",
+      "apply": "Aceptar",
+      "clear": "Quitar filtro",
+      "noValues": "Aún no hay valores",
+      "noMatches": "Ninguna fila coincide con los filtros de columna."
+    }
   },
   "row": {
     "sourceEmail": "Correo de origen",
-    "closeDrawer": "Cerrar panel"
+    "closeDrawer": "Cerrar panel",
+    "noEmail": "Ningún correo seleccionado."
   },
   "runHistory": {
     "loading": "Cargando…",
@@ -126,12 +202,108 @@
     "ok": "OK",
     "failed": "Fallidos",
     "duration": "Duración",
-    "errorMessages": "Mensajes de error"
+    "title": "Historial de ejecuciones — {{name}}",
+    "kinds": {
+      "backfill": "Reproceso",
+      "incremental": "Incremental",
+      "reextract": "Reextracción",
+      "single": "Individual"
+    },
+    "statuses": {
+      "running": "En curso",
+      "success": "Correcta",
+      "failed": "Fallida",
+      "cancelled": "Cancelada"
+    },
+    "errorsSummary_one": "Ver {{count}} error",
+    "errorsSummary_other": "Ver {{count}} errores",
+    "errorsSummary_many": "Ver {{count}} errores",
+    "runErrorSummary": "Ver el error de la ejecución",
+    "runError": "Error de la ejecución",
+    "failuresRetried": "Las filas que fallaron se han vuelto a procesar después.",
+    "unknownError": "Sin motivo registrado"
   },
   "apply": {
     "applyToAccount": "Aplicar a la cuenta",
     "allAccounts": "Todas las cuentas"
   },
   "showExcludedRows": "Ver filas excluidas",
-  "showLensRows": "Volver al Lens"
+  "showLensRows": "Volver al Lens",
+  "config": {
+    "title": "Configuración — {{name}}",
+    "tabPrompt": "Prompt",
+    "promptHelp": "Este prompt se envía al modelo junto con el contenido de cada correo. Al guardar, todas las filas existentes quedan marcadas como desactualizadas (sube prompt_version) para poder volver a extraerlas.",
+    "promptVersion": "Versión del prompt:",
+    "columnsHelp": "Las columnas en las que se lee cada correo. Cambiarlas marca las filas existentes como desactualizadas para volver a extraerlas."
+  },
+  "view": {
+    "renameTooltip": "Haz clic para renombrar",
+    "rowCount_one": "{{count}} fila",
+    "rowCount_other": "{{count}} filas",
+    "rowCount_many": "{{count}} filas",
+    "running": "↻ en curso",
+    "processedCount": "({{count}} procesados)",
+    "failedCount": "· {{count}} fallidas",
+    "lastRunFailed": "la última ejecución falló",
+    "rowsFailedRetry_one": "{{count}} fila falló en la extracción — pulsa «{{action}}» para reintentar",
+    "rowsFailedRetry_other": "{{count}} filas fallaron en la extracción — pulsa «{{action}}» para reintentar",
+    "rowsFailedRetry_many": "{{count}} filas fallaron en la extracción — pulsa «{{action}}» para reintentar",
+    "config": "Configurar",
+    "history": "Historial",
+    "newLens": "+ Nueva lente",
+    "extractingFrom_one": "Extrayendo de {{count}} correo coincidente — la primera ejecución puede tardar un rato.",
+    "extractingFrom_other": "Extrayendo de {{count}} correos coincidentes — la primera ejecución puede tardar un rato.",
+    "extractingFrom_many": "Extrayendo de {{count}} correos coincidentes — la primera ejecución puede tardar un rato.",
+    "noRowsHelp": "Ejecuta una extracción sobre los correos coincidentes para rellenar esta tabla.",
+    "progress": "{{processed}} de {{total}} procesados ({{pct}} %)",
+    "runningShort": "En curso…",
+    "runningProgress": "En curso… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "Esperando respuesta",
+      "description": "Correos enviados en los que preguntaste algo y no te han contestado."
+    },
+    "promises_made": {
+      "name": "Compromisos adquiridos",
+      "description": "Cosas que te comprometiste a hacer en correos enviados."
+    },
+    "invoices_received": {
+      "name": "Facturas recibidas",
+      "description": "Facturas y cobros dirigidos a ti."
+    },
+    "invoices_sent": {
+      "name": "Facturas enviadas",
+      "description": "Facturas que has enviado a clientes."
+    },
+    "travel": {
+      "name": "Viajes",
+      "description": "Vuelos, hoteles, coches y otras confirmaciones de viaje."
+    },
+    "subscriptions": {
+      "name": "Suscripciones",
+      "description": "Cobros recurrentes de SaaS y renovaciones."
+    },
+    "wise_transfers": {
+      "name": "Transferencias de Wise",
+      "description": "Pagos internacionales recibidos por Wise."
+    },
+    "newsletter_digest": {
+      "name": "Resumen de newsletters",
+      "description": "Resúmenes de una línea de las newsletters recientes."
+    },
+    "contact_form_leads": {
+      "name": "Contactos del formulario web",
+      "description": "Personas que te escribieron desde el formulario de contacto de tu web."
+    }
+  },
+  "chooser": {
+    "title": "Nueva lente",
+    "chat": "Con el chat",
+    "chatHint": "Describe lo que quieres y el asistente rellena la lente por ti.",
+    "manual": "Manual",
+    "manualHint": "Elige una plantilla o configura tú el alcance, las columnas y el prompt.",
+    "chatPrompt": "Crea un AI lens para la cuenta {{account}} que extraiga de los correos de X lo siguiente: [qué campos quieres extraer]",
+    "chatPromptAllAccounts": "Crea un AI lens para todas mis cuentas que extraiga de los correos de X lo siguiente: [qué campos quieres extraer]"
+  }
 }

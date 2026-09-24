@@ -198,7 +198,7 @@ runs every layer once and renders `src-tauri/reports/verify/<stamp>-full/informe
 audits), `cargo test`, vitest, CLI contract, the e2e sweep, the Tag Board oracle, the chat
 evals (judged), the junk detector eval (deterministic, no model), the translation eval and the
 perf budgets. Results are attributed to features through `features.json`.
-`--tier quick` skips the UI, oracle and model-backed eval layers (chat, translation); `--only`/`--skip` take layer names (`git static rust vitest contract e2e oracle evals junk translation perf`).
+`--tier quick` skips the UI, oracle and model-backed eval layers (chat, forms, lenses, translation); `--only`/`--skip` take layer names (`git static rust vitest contract e2e oracle evals junk forms lenses translation perf`).
 
 - **Database.** Every dynamic layer runs on the synthetic demo DB in `.emailops-demo-data/`
   (`make demo-db` output: `emailops.db`, `models/` symlinked to the real app's models). The
@@ -209,9 +209,12 @@ perf budgets. Results are attributed to features through `features.json`.
   DB's `ai_model` preference. The reference run uses `qwen3.6-35b-a3b-ud-q4_k_xl` for both.
 - **Other evals.** `junk` runs `make eval-junk` on `src-tauri/evals/junk/cases` (47 synthetic cases
   plus the false-positive gates); `translation` runs the `translation_eval` example on
-  `src-tauri/evals/translation/cases.yaml` with the same model. Both write the shared
-  `JsonRunReport` under `<run>/layers/`. Evals that sample the production mailbox
-  (classification, drafts, extraction, lenses, agent search) and `private-evals/` stay out.
+  `src-tauri/evals/translation/cases.yaml` with the same model; `lenses` runs `make eval-lenses`
+  (`lens_template_eval`) on `src-tauri/evals/lenses/*.yaml` — synthetic emails through a built-in
+  template's real scope and extractor, checked column by column, reported under "Lenses, tareas y
+  adjuntos". All write the shared `JsonRunReport` under `<run>/layers/`. Evals that sample the
+  production mailbox (classification, drafts, `lens_extract_eval`, agent search) and
+  `private-evals/` stay out.
 - **Chat evals.** `make cli-eval ARGS="--json --judge …"`: each case carries deterministic checks
   (route, tools called, answer contains/not contains, draft link…) **and** an
   `expected_output` golden; the judge (`evals/judge.rs`, same local provider) scores

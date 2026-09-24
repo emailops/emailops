@@ -1,14 +1,15 @@
 // Modal listing the most recent runs for a Lens (most recent first).
 // Sourced from the `lens_runs` table via `list_lens_runs`.
 
-import { format } from 'date-fns';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { formatDayMonthYearTime } from '@/lib/intl';
 import type { LensRunHistoryEntry } from '@/types';
+import { LensRunErrors } from './LensRunErrors';
 
 interface LensRunHistoryDialogProps {
   lensId: string | null;
@@ -48,8 +49,8 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
     <Modal
       open={open}
       onClose={onClose}
-      title={`Run history — ${lensName}`}
-      size="lg"
+      title={t('lenses:runHistory.title', { name: lensName })}
+      size="2xl"
       footer={
         <div className="flex justify-end">
           <button
@@ -82,43 +83,38 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           </thead>
           <tbody>
             {runs.map((r) => (
-              <tr key={r.id} className="border-t border-gray-800">
-                <td className="px-3 py-2 align-top text-gray-300">
-                  {format(new Date(r.startedAt * 1000), 'MMM d, yyyy h:mm a')}
-                </td>
-                <td className="px-3 py-2 align-top text-gray-300">{r.kind}</td>
-                <td className="px-3 py-2 align-top">
-                  <StatusBadge status={r.status} />
-                </td>
-                <td className="px-3 py-2 align-top text-gray-300">{r.processed}</td>
-                <td className="px-3 py-2 align-top text-green-300">{r.succeeded}</td>
-                <td className="px-3 py-2 align-top text-red-300">{r.failed}</td>
-                <td className="px-3 py-2 align-top text-gray-400">{formatDuration(r)}</td>
-              </tr>
+              <Fragment key={r.id}>
+                <tr className="border-t border-gray-800">
+                  <td className="px-3 py-2 align-top text-gray-300">{formatDayMonthYearTime(r.startedAt)}</td>
+                  <td className="px-3 py-2 align-top text-gray-300">
+                    {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-3 py-2 align-top text-gray-300">{r.processed}</td>
+                  <td className="px-3 py-2 align-top text-green-300">{r.succeeded}</td>
+                  <td className="px-3 py-2 align-top text-red-300">{r.failed}</td>
+                  <td className="px-3 py-2 align-top text-gray-400">{formatDuration(r)}</td>
+                </tr>
+                {lensId && (r.failed > 0 || r.errorMessage) && (
+                  <tr>
+                    <td colSpan={7} className="px-3 pb-2">
+                      <LensRunErrors lensId={lensId} run={r} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
-      )}
-      {runs.some((r) => r.errorMessage) && (
-        <details className="mt-3 px-3 text-[11px] text-gray-400">
-          <summary className="cursor-pointer">{t('lenses:runHistory.errorMessages')}</summary>
-          <ul className="mt-2 space-y-1">
-            {runs
-              .filter((r) => r.errorMessage)
-              .map((r) => (
-                <li key={r.id}>
-                  <span className="text-gray-500">{format(new Date(r.startedAt * 1000), 'MMM d, h:mm a')}:</span>{' '}
-                  <span className="text-red-300">{r.errorMessage}</span>
-                </li>
-              ))}
-          </ul>
-        </details>
       )}
     </Modal>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation(['lenses']);
   const cls =
     status === 'success'
       ? 'border-green-700/60 text-green-300 bg-green-900/30'
@@ -129,7 +125,11 @@ function StatusBadge({ status }: { status: string }) {
           : status === 'running'
             ? 'border-blue-700/60 text-blue-300 bg-blue-900/30'
             : 'border-gray-700/60 text-gray-300';
-  return <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>{status}</span>;
+  return (
+    <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>
+      {t(`lenses:runHistory.statuses.${status}`, { defaultValue: status })}
+    </span>
+  );
 }
 
 function formatDuration(r: LensRunHistoryEntry): string {

@@ -57,6 +57,9 @@ interface ChatStore {
   /** Account chat is currently answering from. */
   currentAccountId: string | null;
   messages: ChatMessage[];
+  /** Text another part of the app wants in the panel's input (e.g. "New Lens
+   *  → with the chat"). A fresh nonce re-fires the input even for repeat text. */
+  inputPrefill: { text: string; nonce: number } | null;
   /** id of the assistant message currently receiving tokens, if any */
   streamingMessageId: string | null;
   /** Coarse processing stage of the in-flight turn (routing → retrieving →
@@ -89,6 +92,7 @@ interface ChatStore {
    */
   selectAccount: (accountId: string) => Promise<void>;
   createConversation: (accountId: string, title?: string) => Promise<string>;
+  prefillInput: (text: string) => void;
   /** Create a chat seeded with the cleaned content of an email thread. */
   createConversationFromThread: (accountId: string, threadId: string) => Promise<string>;
   selectConversation: (id: string | null) => Promise<void>;
@@ -158,6 +162,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   currentAccountId: null,
   backgroundTurns: {},
   messages: [],
+  inputPrefill: null,
   streamingMessageId: null,
   streamingPhase: null,
   isSending: false,
@@ -220,6 +225,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const stillThere = previous && get().conversations.some((c) => c.id === previous);
     await get().selectConversation(stillThere ? previous : null);
   },
+
+  prefillInput: (text) => set((s) => ({ inputPrefill: { text, nonce: (s.inputPrefill?.nonce ?? 0) + 1 } })),
 
   createConversation: async (accountId, title) => {
     const conv = await api.createChatConversation(accountId, title);

@@ -1,6 +1,6 @@
 import type { LensColumnType, LensDirection } from '@/types';
 
-import type { DraftColumn } from './LensCreateModal';
+import type { DraftColumn } from './lensDraft';
 
 /**
  * Backend fill values → the Create Lens form's draft state.
@@ -17,6 +17,8 @@ import type { DraftColumn } from './LensCreateModal';
  */
 export interface LensFormPrefill {
   name?: string;
+  /** Address of the account the lens is for (`scopeAccount`); none = all. */
+  accountEmail?: string;
   icon?: string;
   mailboxes?: string[];
   categories?: string[];
@@ -85,6 +87,9 @@ export function toLensFormPrefill(values: Record<string, unknown>): LensFormPref
   const icon = str(values.icon);
   if (icon) prefill.icon = icon;
 
+  const accountEmail = str(values.scopeAccount);
+  if (accountEmail) prefill.accountEmail = accountEmail;
+
   const mailboxes = strList(values.scopeMailboxes);
   if (mailboxes) prefill.mailboxes = mailboxes;
 
@@ -127,6 +132,7 @@ export function toLensFormValues(state: LensFormPrefill): Record<string, unknown
   const values: Record<string, unknown> = {};
   if (state.name) values.name = state.name;
   if (state.icon) values.icon = state.icon;
+  if (state.accountEmail) values.scopeAccount = state.accountEmail;
   if (state.mailboxes?.length) values.scopeMailboxes = state.mailboxes;
   if (state.categories?.length) values.scopeCategories = state.categories;
   if (state.direction) values.scopeDirection = state.direction;
@@ -158,4 +164,11 @@ export function toLensFormValues(state: LensFormPrefill): Record<string, unknown
       });
   }
   return values;
+}
+
+/** The account whose address is `email`, ignoring case; `null` when the
+ *  model named an address that is none of the user's accounts. */
+export function accountIdForEmail(accounts: { id: string; email: string }[], email: string): string | null {
+  const wanted = email.trim().toLowerCase();
+  return accounts.find((a) => a.email.toLowerCase() === wanted)?.id ?? null;
 }

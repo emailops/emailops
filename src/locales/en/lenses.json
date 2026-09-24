@@ -35,7 +35,33 @@
     "senderEmails": "Sender emails",
     "keywordQuery": "Keyword query (FTS5)",
     "keywordsBodyHint": "(when unchecked, only the subject is searched)",
-    "searchBody": "Search inside email body"
+    "searchBody": "Search inside email body",
+    "folders": "Folders",
+    "foldersPickAccount": "Pick an account to include its folders.",
+    "folderMissing": "This folder no longer exists in the account — remove it from the scope.",
+    "foldersLoadError": "Could not load folders: {{error}}",
+    "help": "Choose which emails this Lens analyzes. Scope changes apply to future runs; existing extracted rows stay until you re-run backfill.",
+    "mailboxNames": {
+      "inbox": "Inbox",
+      "sent": "Sent",
+      "archive": "Archive",
+      "spam": "Spam",
+      "trash": "Trash"
+    },
+    "categoryNames": {
+      "Primary": "Primary",
+      "Promotions": "Promotions",
+      "Social": "Social",
+      "Updates": "Updates",
+      "Forums": "Forums"
+    },
+    "errors": {
+      "domainLooksLikeEmail": "\"{{value}}\" looks like an email — put it in \"Sender emails\" instead, or use just the domain (e.g. \"{{domain}}\").",
+      "invalidDomain": "\"{{value}}\" is not a valid domain (expected something like \"stripe.com\").",
+      "invalidEmail": "\"{{value}}\" is not a valid email address."
+    },
+    "keywordPlaceholder": "e.g. quote OR estimate",
+    "foldersFilter": "Filter folders…"
   },
   "prompt": {
     "placeholder": "Describe what to extract from each email…"
@@ -50,6 +76,26 @@
     "promptHelp": "Tell the model what to extract. The column descriptions above are also passed as the tool-call schema.",
     "previewHelp": "Runs extraction against a small sample without saving.",
     "previewEmpty": "No emails matched the scope. Try widening the filters.",
+    "subtitle": "Define a filter, a schema, and an extraction prompt.",
+    "submit": "Create Lens",
+    "creating": "Creating…",
+    "tabTemplates": "Templates",
+    "tabCustom": "Custom",
+    "testOnSample": "Test on 3 emails",
+    "testing": "Testing…",
+    "previewTitle": "Preview ({{count}})",
+    "noSubject": "(no subject)",
+    "defaultPrompt": "Extract the fields below from this email. Leave nullable fields as null when the email does not contain the information.",
+    "defaultSummaryDescription": "One-sentence summary of the email.",
+    "errors": {
+      "missingKey": "Every column needs a key.",
+      "invalidKey": "Column key \"{{key}}\" must be alphanumeric/underscore and start with a letter.",
+      "duplicateKey": "Duplicate column key \"{{key}}\".",
+      "enumNeedsValues": "Enum column \"{{key}}\" needs at least one value.",
+      "nameRequired": "Name is required.",
+      "promptRequired": "Prompt is required.",
+      "promptBeforePreview": "Add a prompt before previewing."
+    },
     "filledFromChatMissing": "Filled in from chat. Still needed: {{fields}}."
   },
   "identity": {
@@ -70,8 +116,11 @@
       "cadence": "Cadence",
       "cancel_url": "Cancel link",
       "client": "Client",
+      "company": "Company",
       "confidence": "Confidence",
       "confirmation_code": "Confirmation #",
+      "contact_email": "Email",
+      "contact_name": "Name",
       "currency": "Currency",
       "days_overdue": "Days overdue",
       "days_silent": "Days silent",
@@ -82,6 +131,7 @@
       "newsletter": "Newsletter",
       "next_renewal": "Next renewal",
       "paid": "Paid",
+      "phone": "Phone",
       "priority_guess": "Priority",
       "promise": "Promise",
       "provider": "Provider",
@@ -89,6 +139,7 @@
       "received_date": "Received",
       "recipient": "Recipient",
       "reference": "Reference",
+      "request_type": "Type",
       "sender_name": "From",
       "sent_date": "Sent",
       "service": "Service",
@@ -101,6 +152,20 @@
       "travel_type": "Type",
       "vendor": "Vendor",
       "worth_clicking": "Worth opening?"
+    },
+    "add": "+ Add column",
+    "required": "required",
+    "enumValues": "Enum values (comma-separated)",
+    "types": {
+      "string": "Short text",
+      "text": "Long text",
+      "number": "Number",
+      "currency": "Amount",
+      "date": "Date",
+      "boolean": "Yes/No",
+      "enum": "List of values",
+      "email": "Email",
+      "url": "URL"
     }
   },
   "table": {
@@ -110,11 +175,22 @@
     "openSourceEmail": "Open source email",
     "reextractRow": "Re-extract this row",
     "includeRow": "Put this row back in the Lens",
-    "excludeRow": "Exclude this row"
+    "excludeRow": "Exclude this row",
+    "filter": {
+      "button": "Filter column",
+      "search": "Search values…",
+      "selectAll": "Select all",
+      "empty": "(Empty)",
+      "apply": "Apply",
+      "clear": "Clear filter",
+      "noValues": "No values yet",
+      "noMatches": "No rows match the column filters."
+    }
   },
   "row": {
     "sourceEmail": "Source email",
-    "closeDrawer": "Close drawer"
+    "closeDrawer": "Close drawer",
+    "noEmail": "No email selected."
   },
   "runHistory": {
     "loading": "Loading…",
@@ -126,12 +202,108 @@
     "ok": "OK",
     "failed": "Failed",
     "duration": "Duration",
-    "errorMessages": "Error messages"
+    "title": "Run history — {{name}}",
+    "kinds": {
+      "backfill": "Backfill",
+      "incremental": "Incremental",
+      "reextract": "Re-extract",
+      "single": "Single"
+    },
+    "statuses": {
+      "running": "Running",
+      "success": "Success",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "errorsSummary_one": "Show {{count}} error",
+    "errorsSummary_other": "Show {{count}} errors",
+    "errorsSummary_many": "Show {{count}} errors",
+    "runErrorSummary": "Show the run error",
+    "runError": "Run error",
+    "failuresRetried": "The rows that failed have been processed again since.",
+    "unknownError": "No reason recorded"
   },
   "apply": {
     "applyToAccount": "Apply to account",
     "allAccounts": "All accounts"
   },
   "showExcludedRows": "Show excluded rows",
-  "showLensRows": "Back to the Lens"
+  "showLensRows": "Back to the Lens",
+  "config": {
+    "title": "Config — {{name}}",
+    "tabPrompt": "Prompt",
+    "promptHelp": "This prompt is sent to the model alongside each email's content. Saving will mark all existing rows as stale (prompt_version bump) so they can be re-extracted.",
+    "promptVersion": "Prompt version:",
+    "columnsHelp": "The columns each email is read into. Changing them marks the existing rows as stale so they can be re-extracted."
+  },
+  "view": {
+    "renameTooltip": "Click to rename",
+    "rowCount_one": "{{count}} row",
+    "rowCount_other": "{{count}} rows",
+    "rowCount_many": "{{count}} rows",
+    "running": "↻ running",
+    "processedCount": "({{count}} processed)",
+    "failedCount": "· {{count}} failed",
+    "lastRunFailed": "last run failed",
+    "rowsFailedRetry_one": "{{count}} row failed extraction — click “{{action}}” to retry",
+    "rowsFailedRetry_other": "{{count}} rows failed extraction — click “{{action}}” to retry",
+    "rowsFailedRetry_many": "{{count}} rows failed extraction — click “{{action}}” to retry",
+    "config": "Config",
+    "history": "History",
+    "newLens": "+ New Lens",
+    "extractingFrom_one": "Extracting from {{count}} matching email — this can take a while on the first run.",
+    "extractingFrom_other": "Extracting from {{count}} matching emails — this can take a while on the first run.",
+    "extractingFrom_many": "Extracting from {{count}} matching emails — this can take a while on the first run.",
+    "noRowsHelp": "Run an extraction over the matching emails to populate this table.",
+    "progress": "{{processed}} of {{total}} processed ({{pct}}%)",
+    "runningShort": "Running…",
+    "runningProgress": "Running… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "Awaiting reply",
+      "description": "Outbound emails where you asked something and got no answer."
+    },
+    "promises_made": {
+      "name": "Promises made",
+      "description": "Things you committed to do in outbound emails."
+    },
+    "invoices_received": {
+      "name": "Invoices received",
+      "description": "Bills and invoices addressed to you."
+    },
+    "invoices_sent": {
+      "name": "Invoices sent",
+      "description": "Invoices you have sent to clients."
+    },
+    "travel": {
+      "name": "Travel",
+      "description": "Flights, hotels, cars, and other travel confirmations."
+    },
+    "subscriptions": {
+      "name": "Subscriptions",
+      "description": "Recurring SaaS bills and renewals."
+    },
+    "wise_transfers": {
+      "name": "Wise transfers",
+      "description": "Cross-border payments via Wise."
+    },
+    "newsletter_digest": {
+      "name": "Newsletter digest",
+      "description": "One-line summaries of recent newsletters."
+    },
+    "contact_form_leads": {
+      "name": "Contact form leads",
+      "description": "People who wrote in through your website's contact form."
+    }
+  },
+  "chooser": {
+    "title": "New Lens",
+    "chat": "With the chat",
+    "chatHint": "Describe what you want and the assistant fills in the Lens for you.",
+    "manual": "Manual",
+    "manualHint": "Pick a template or set up the scope, columns and prompt yourself.",
+    "chatPrompt": "Create an AI lens for the account {{account}} that extracts the following from the emails of X: [which fields you want to extract]",
+    "chatPromptAllAccounts": "Create an AI lens for all my accounts that extracts the following from the emails of X: [which fields you want to extract]"
+  }
 }

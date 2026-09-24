@@ -172,5 +172,6 @@
     "confirmFailed": "No se pudo archivar el mensaje en el servidor",
     "notJunkFailed": "No se pudo registrar que este mensaje no es basura",
     "hideFlagged": "Ocultar mensajes de basura"
-  }
+  },
+  "emailUnavailable": "El correo ya no está disponible."
 }

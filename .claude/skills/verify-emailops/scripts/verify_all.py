@@ -24,7 +24,7 @@ args = ap.parse_args()
 skip = set(filter(None, args.skip.split(",")))
 only = set(filter(None, args.only.split(",")))
 if args.tier == "quick":
-    skip |= {"e2e", "oracle", "evals", "forms", "translation"}
+    skip |= {"e2e", "oracle", "evals", "forms", "lenses", "translation"}
 
 stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 DEMO_DIR = REPO / ".emailops-demo-data"
@@ -361,6 +361,27 @@ def layer_forms():
             desc=f"Caso sintético de form_fill_eval; puntuación {it.get('score')}", model=rep.get("model") or "",
             judge="sin juez: comprobaciones por campo", harness=harness, checks=[])
 
+def layer_lenses():
+    # What the built-in Lens templates extract: synthetic emails, needs the chat model.
+    teardown()
+    out = LAYERS / "lenses"; out.mkdir(exist_ok=True)
+    model = os.environ.get("VERIFY_EVAL_MODEL", "")
+    rc, o, e = sh(f'make eval-lenses ARGS="--out {out}' + (f' --model {model}' if model else '') + '"', timeout=3600)
+    rep = _json_run_report(out)
+    if rep is None:
+        add("Lenses, tareas y adjuntos", "eval", "lens_template_eval (harness)", "fail", (o + e)[-3000:]); return
+    harness = ("lens_template_eval: correos sintéticos en src-tauri/evals/lenses/*.yaml, cada uno con la plantilla "
+               "integrada que debe leerlo. El correo se inserta en una copia de la BD demo por el mismo camino que la "
+               "sincronización (índice FTS incluido); se comprueba que el alcance de la plantilla lo recoge o lo deja "
+               "fuera (`scope`) y, con el extractor de producción, el valor de cada columna: texto = debe aparecer "
+               "(sin distinguir mayúsculas), vacío = la columna no debe rellenarse. Sin juez")
+    for it in rep["per_item_results"]:
+        ev = it.get("evidence") or {}  # the email, the extracted row, one check row per column
+        add("Lenses, tareas y adjuntos", "eval", it["id"], "ok" if it["passed"] else "fail", it.get("detail") or "", None,
+            desc=f"Caso sintético de lens_template_eval; puntuación {it.get('score')}", model=rep.get("model") or model,
+            judge="sin juez: comprobaciones por columna y de alcance", harness=harness,
+            question=ev.get("input", ""), answer=ev.get("output", ""), checks=ev.get("checks", []))
+
 def layer_translation():
     # Language detection + translation on synthetic cases; needs the chat model.
     teardown()
@@ -394,7 +415,7 @@ try:
     # Model-backed evals run before the UI layers: a fresh CLI process with the GPU
     # to itself, instead of right after the dev app's teardown (a 35B run after
     # that teardown once degraded to garbage answers at 5x the latency).
-    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("evals", layer_evals), ("junk", layer_junk), ("forms", layer_forms), ("translation", layer_translation), ("e2e", layer_e2e), ("oracle", layer_oracle), ("perf", layer_perf)]:
+    for name, fn in [("git", layer_git), ("static", layer_static), ("rust", layer_rust), ("vitest", layer_vitest), ("contract", layer_contract), ("evals", layer_evals), ("junk", layer_junk), ("forms", layer_forms), ("lenses", layer_lenses), ("translation", layer_translation), ("e2e", layer_e2e), ("oracle", layer_oracle), ("perf", layer_perf)]:
         layer_run(name, fn)
 finally:
     teardown()

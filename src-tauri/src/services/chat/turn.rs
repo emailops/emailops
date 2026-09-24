@@ -4087,7 +4087,20 @@ pub async fn run_chat_turn(
     // at X" statements in one prompt is one too many.
     if ambient_context.is_none() {
         if let Some(ctx) = view_ctx.as_ref() {
-            prepend_to_final_user_message(&mut initial_messages, &super::view_context::view_context_line(ctx));
+            let line = match ctx {
+                super::view_context::ViewContext::Lens(id) => match db.get_lens(id) {
+                    Ok(lens) => {
+                        let labels: Vec<&str> = lens.schema.columns.iter().map(|c| c.label.as_str()).collect();
+                        super::view_context::lens_context_line(&lens.name, &labels)
+                    }
+                    Err(e) => {
+                        emit_log("warn", &format!("view context: open lens not found ({e})"));
+                        super::view_context::view_context_line(ctx)
+                    }
+                },
+                _ => super::view_context::view_context_line(ctx),
+            };
+            prepend_to_final_user_message(&mut initial_messages, &line);
         }
     }
 
@@ -4516,7 +4529,13 @@ pub async fn run_chat_turn(
             // model numbered its own bullets — so every marker goes; the
             // `email://` links (relinked just above where the answer
             // defined a number) are the turn's citations.
-            let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
+            let tools_ran = tool_traces.iter().any(|t| !t.name.is_empty());
+            let grounding = plan_answer_grounding(
+                &source_email_ids(&sources),
+                &tool_email_refs,
+                &result.content,
+                tools_ran,
+            );
             let citation_range = grounding.citation_range(sources.len());
             result.content = strip_invalid_citations(&result.content, citation_range);
             // A guide-grounded answer that forgot its `help://` link gets the

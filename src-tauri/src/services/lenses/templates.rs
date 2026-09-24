@@ -273,6 +273,49 @@ fn tpl_newsletter_digest() -> LensTemplate {
     }
 }
 
+fn tpl_contact_form_leads() -> LensTemplate {
+    let mut contact_email = col(
+        "contact_email",
+        "Email",
+        LensColumnType::Email,
+        "Email address of the person who filled in the form, taken from the body (NOT the From: header).",
+        true,
+    );
+    contact_email.is_unique_key = true;
+    LensTemplate {
+        key: "contact_form_leads".into(),
+        name: "Contact form leads".into(),
+        icon: "📨".into(),
+        description: "People who wrote in through your website's contact form.".into(),
+        default_scope: LensScope {
+            direction: Some(Direction::Inbound),
+            date_range: last_days(365),
+            // Form mailers vary the subject; the plugin footer in the body is
+            // the stable marker. Implicit AND binds tighter than OR in FTS5.
+            query: Some("contact form OR formulario de contacto OR formulaire de contact OR Kontaktformular".into()),
+            query_search_body: true,
+            ..Default::default()
+        },
+        schema: LensSchema {
+            columns: vec![
+                contact_email,
+                col("contact_name", "Name", LensColumnType::String, "Name of the person who filled in the form.", false),
+                col("company", "Company", LensColumnType::String, "Their company, stated or implied by a non-free-mail email domain.", false),
+                col("phone", "Phone", LensColumnType::String, "Their phone number if they gave one.", false),
+                enum_col(
+                    "request_type",
+                    "Type",
+                    "quote_request = they want to BUY from you (a quote, budget, price or proposal); question = any other enquiry from a prospect or client; sales_pitch = they want to SELL something to you; other = anything else.",
+                    true,
+                    &["quote_request", "question", "sales_pitch", "other"],
+                ),
+                col("summary", "Summary", LensColumnType::Text, "One sentence on what they want.", true),
+            ],
+        },
+        prompt: "You are reading a notification sent by a website contact form (Contact Form 7, Webflow, Formspree and similar). The message starts with header lines (From:, Date:, Subject:) and a blank line; that first From: line is the website or its mailer — NEVER the person who wrote in. Everything after the first blank line is the BODY, even when it repeats its own From:/Subject: lines. The submitter's details are in the BODY, as labelled fields such as 'De:', 'From:', 'Nombre:', 'Name:', 'Email:', 'Correo electrónico:', 'Teléfono:', 'Phone:', or a single line like 'De: Jane Doe jane@example.com'. A 'From:' or 'De:' field inside the body IS the submitter. The footer (e.g. 'This e-mail was sent from a contact form on …' / 'Este mensaje se ha enviado desde un formulario de contacto en …') names the website, not the submitter.\n\nExtract:\n- contact_email: the submitter's email address copied character for character from the body. Do not shorten, correct or invent it; never use the header From: address or the website's own address\n- contact_name: the submitter's name as written in the body\n- company: the company they state; otherwise the organisation implied by their email domain (e.g. 'acme.example' → 'Acme'); null for free mail providers (gmail, hotmail, outlook, yahoo, icloud, …)\n- phone: their phone number if given\n- request_type: quote_request when they want to BUY from you — they ask for a quote, presupuesto, budget, price or proposal; question for any other enquiry from a prospect or client; sales_pitch when THEY want to SELL to you (SEO, advertising, press articles, software, outsourcing); other otherwise\n- summary: one sentence, in the language of the message, on what they want\n\nFor a field the body does not give, return JSON null — never the text \"null\". If the email is not a contact-form notification, return null for every field".into(),
+    }
+}
+
 /// All built-in templates.
 pub fn manifest() -> Vec<LensTemplate> {
     vec![
@@ -284,6 +327,7 @@ pub fn manifest() -> Vec<LensTemplate> {
         tpl_subscriptions(),
         tpl_wise_transfers(),
         tpl_newsletter_digest(),
+        tpl_contact_form_leads(),
     ]
 }
 
@@ -308,10 +352,11 @@ mod tests {
             "subscriptions",
             "wise_transfers",
             "newsletter_digest",
+            "contact_form_leads",
         ] {
             assert!(keys.iter().any(|k| k == expected), "missing template {expected}");
         }
-        assert_eq!(keys.len(), 8);
+        assert_eq!(keys.len(), 9);
     }
 
     #[test]
@@ -338,5 +383,76 @@ mod tests {
             .as_ref()
             .expect("wise scope has sender_domains");
         assert!(domains.iter().any(|d| d == "wise.com"));
+    }
+
+    #[test]
+    fn contact_form_template_keys_rows_on_the_submitter_address() {
+        // One row per person who wrote in: the address comes from the body,
+        // and repeat submissions collapse onto it.
+        let tpl = get("contact_form_leads").expect("contact form template exists");
+        let email = tpl
+            .schema
+            .columns
+            .iter()
+            .find(|c| c.key == "contact_email")
+            .expect("contact_email column");
+        assert_eq!(email.column_type, LensColumnType::Email);
+        assert!(email.required);
+        assert!(email.is_unique_key);
+        assert_eq!(tpl.schema.columns.iter().filter(|c| c.is_unique_key).count(), 1);
+    }
+
+    fn insert_email(db: &crate::db::Database, id: &str, subject: &str, body: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at) \
+             VALUES ('acct', 'imap', 'owner@example.test', 'Owner', 0)",
+            [],
+        )
+        .expect("seed account");
+        conn.execute(
+            "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain, \
+                                 recipients_json, cc_json, snippet, timestamp, mailbox, category, created_at) \
+             VALUES (?1, 'acct', ?1, ?2, 'Website', 'noreply@site.example', 'site.example', '[]', '[]', '', \
+                     strftime('%s','now'), 'inbox', 'primary', 0)",
+            rusqlite::params![id, subject],
+        )
+        .expect("insert email");
+        conn.execute(
+            "INSERT INTO emails_fts (email_id, subject, sender, body) VALUES (?1, ?2, 'Website', ?3)",
+            rusqlite::params![id, subject, body],
+        )
+        .expect("index email");
+    }
+
+    #[test]
+    fn contact_form_scope_finds_form_notifications_by_their_body_footer() {
+        // Form mailers put the site in From: and vary the subject, so the
+        // reliable marker is the plugin footer in the body (English and
+        // Spanish shown), not the subject line.
+        let db = crate::db::Database::new_for_testing().expect("db");
+        insert_email(
+            &db,
+            "es",
+            "Propuesta para Example Studio",
+            "De: Ana Ruiz ana@cliente.example\n\nHola...\n-- \nEste mensaje se ha enviado desde un formulario de contacto en Example Studio",
+        );
+        insert_email(
+            &db,
+            "en",
+            "New message",
+            "From: Sam Lee <sam@buyer.example>\n\nHi...\n-- \nThis e-mail was sent from a contact form on Example Studio",
+        );
+        insert_email(
+            &db,
+            "plain",
+            "Quarterly form update",
+            "Please fill in the tax form by Friday.",
+        );
+
+        let tpl = get("contact_form_leads").expect("contact form template exists");
+        let mut ids = crate::services::lenses::scope::evaluate(&db, &tpl.default_scope).expect("scope");
+        ids.sort();
+        assert_eq!(ids, vec!["en".to_string(), "es".to_string()]);
     }
 }

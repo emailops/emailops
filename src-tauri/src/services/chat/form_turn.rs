@@ -30,15 +30,9 @@ pub fn fill_effect(form: &FormDef, fill: &FormFill) -> ToolEffect {
 /// Deterministic and localised in Rust rather than generated: the useful
 /// content is the form itself, now open on screen, so paying a second model
 /// call to narrate it would be waste — and a generated sentence could claim a
-/// field it did not fill.
-pub fn compose_fill_reply(fill: &FormFill, lang: Language) -> String {
-    let filled = fill.values.len();
-    let opened = match lang {
-        Language::En => format!("I filled in {filled} field(s) — review them and save."),
-        Language::Es => format!("He rellenado {filled} campo(s) — revísalos y guarda."),
-        Language::Fr => format!("J'ai rempli {filled} champ(s) — vérifiez-les et enregistrez."),
-        Language::De => format!("Ich habe {filled} Feld(er) ausgefüllt — prüfen und speichern."),
-    };
+/// field it did not fill. The sentence is the form's own (`FormDef::fill_reply`).
+pub fn compose_fill_reply(form: &FormDef, fill: &FormFill, lang: Language) -> String {
+    let opened = (form.fill_reply)(lang).to_string();
     if fill.missing_required.is_empty() {
         return opened;
     }
@@ -50,6 +44,73 @@ pub fn compose_fill_reply(fill: &FormFill, lang: Language) -> String {
         Language::De => format!("Noch erforderlich: {missing}."),
     };
     format!("{opened} {tail}")
+}
+
+/// The reasoning trace of a form-fill turn: the route, the one completion that
+/// filled the form, and what it filled (or that it produced nothing usable).
+/// Without it the reasoning panel had nothing to show for these turns.
+#[allow(clippy::too_many_arguments)]
+pub fn form_fill_trace(
+    form: &FormDef,
+    fill: Option<&FormFill>,
+    model: &str,
+    fill_ms: i64,
+    prompt_tokens: u32,
+    prefill_ms: Option<i64>,
+    total_ms: i64,
+) -> ChatTrace {
+    let result_preview = match fill {
+        Some(f) => {
+            let filled: Vec<&str> = f.values.keys().map(String::as_str).collect();
+            let mut s = format!("filled: {}", filled.join(", "));
+            if !f.missing_required.is_empty() {
+                s.push_str(&format!(" · missing: {}", f.missing_required.join(", ")));
+            }
+            s
+        }
+        None => "the model produced nothing usable — form opened empty".to_string(),
+    };
+    super::trace_steps::with_steps(ChatTrace {
+        route: RouteDecision {
+            mode: RouteMode::ToolsFirst,
+            reason: format!("form fill ({})", form.id),
+            matched_keywords: vec![],
+            classifier: "planner".to_string(),
+        },
+        retrieval: None,
+        tool_calls: vec![ToolCallTrace {
+            name: "fill_form".to_string(),
+            round: 0,
+            arguments: serde_json::json!({ "form": form.id }),
+            result_chars: i32::try_from(result_preview.len()).unwrap_or(i32::MAX),
+            result_preview,
+            elapsed_ms: fill_ms,
+        }],
+        model: model.to_string(),
+        total_elapsed_ms: total_ms,
+        tool_loop_ms: 0,
+        llm_streaming_ms: None,
+        llm_calls: vec![LlmCallTrace {
+            kind: "form_fill".to_string(),
+            round: 0,
+            latency_ms: fill_ms,
+            tool_calls_requested: 0,
+            failed: fill.is_none(),
+            prompt_tokens: (prompt_tokens > 0).then_some(prompt_tokens),
+            prefill_ms,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            input: None,
+            output: None,
+        }],
+        help: None,
+        steps: Vec::new(),
+    })
 }
 
 /// What the assistant says when the model produced nothing usable. The form
@@ -67,7 +128,9 @@ pub fn compose_empty_reply(lang: Language) -> String {
 // ── Executor ────────────────────────────────────────────────────────────────
 
 use crate::db::Database;
-use crate::models::{ChatPhase, ChatStreamEvent, ChatTrace, RouteDecision, RouteMode};
+use crate::models::{
+    ChatPhase, ChatStreamEvent, ChatTrace, ChatTraceEvent, LlmCallTrace, RouteDecision, RouteMode, ToolCallTrace,
+};
 use crate::services::forms::filler::{fill_form, FillRun};
 use crate::AppError;
 use std::sync::Arc;
@@ -119,7 +182,7 @@ pub(super) async fn run_form_fill_turn(
                     fill.missing_required.len()
                 ),
             );
-            (compose_fill_reply(fill, language), fill_effect(form, fill))
+            (compose_fill_reply(form, fill, language), fill_effect(form, fill))
         }
         None => {
             emit_log("error", &format!("form: could not fill {} [{fill_ms}ms]", form.id));
@@ -147,26 +210,30 @@ pub(super) async fn run_form_fill_turn(
         return Err(e);
     }
 
-    let trace = super::trace_steps::with_steps(ChatTrace {
-        route: RouteDecision {
-            mode: RouteMode::ToolsFirst,
-            reason: format!("form fill ({})", form.id),
-            matched_keywords: vec![],
-            classifier: "planner".to_string(),
-        },
-        retrieval: None,
-        tool_calls: vec![],
-        model: provider.model_name().to_string(),
-        total_elapsed_ms: latency_ms,
-        tool_loop_ms: 0,
-        llm_streaming_ms: None,
-        llm_calls: vec![],
-        help: None,
-        steps: Vec::new(),
-    });
+    let trace = form_fill_trace(
+        form,
+        run.fill.as_ref(),
+        provider.model_name(),
+        fill_ms,
+        run.prompt_tokens,
+        run.prefill_ms,
+        latency_ms,
+    );
     if let Err(e) = db.update_chat_message_trace(assistant_message_id, &trace) {
         emit_log("error", &format!("failed to persist reasoning trace: {e}"));
     }
+    // The live UI gets traces from this event, not from the DB row: without
+    // it the panel showed no reasoning for a form fill until a reload.
+    crate::services::events::emit(
+        "chat-trace",
+        ChatTraceEvent {
+            message_id: assistant_message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            trace,
+            referenced_email_ids: Vec::new(),
+            referenced_draft_ids: Vec::new(),
+        },
+    );
 
     crate::services::events::emit(
         "chat-stream",
@@ -242,15 +309,27 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_fill_is_reported_without_a_missing_list() {
-        let reply = compose_fill_reply(&fill(json!({"name": "X", "promptText": "p"}), &[]), Language::Es);
-        assert!(reply.contains('2'), "reply should count the filled fields: {reply}");
-        assert!(!reply.contains("Falta"));
+    fn the_lens_reply_says_the_lens_is_configured_and_asks_to_review_and_save() {
+        // The form is a draft the model wrote: the user must check it and
+        // press save, or no Lens exists.
+        let reply = compose_fill_reply(
+            &LENS_CREATE,
+            &fill(json!({"name": "X", "promptText": "p"}), &[]),
+            Language::Es,
+        );
+        assert_eq!(
+            reply,
+            "He configurado la lente rellenando el formulario. Puede haber errores o partes incompletas: revísalo y guárdalo para que se cree la lente."
+        );
     }
 
     #[test]
     fn a_partial_fill_names_what_is_still_missing() {
-        let reply = compose_fill_reply(&fill(json!({"name": "X"}), &["columns", "promptText"]), Language::Es);
+        let reply = compose_fill_reply(
+            &LENS_CREATE,
+            &fill(json!({"name": "X"}), &["columns", "promptText"]),
+            Language::Es,
+        );
         assert!(reply.contains("columns"));
         assert!(reply.contains("promptText"));
     }
@@ -258,11 +337,40 @@ mod tests {
     #[test]
     fn every_language_gets_its_own_wording() {
         let f = fill(json!({"name": "X"}), &[]);
-        let replies: Vec<String> = Language::ALL.iter().map(|l| compose_fill_reply(&f, *l)).collect();
+        let replies: Vec<String> = Language::ALL
+            .iter()
+            .map(|l| compose_fill_reply(&LENS_CREATE, &f, *l))
+            .collect();
         let mut unique = replies.clone();
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), Language::ALL.len(), "untranslated reply in {replies:?}");
+    }
+
+    #[test]
+    fn the_trace_shows_the_fill_call_and_what_it_filled() {
+        // The reasoning panel had nothing to show for a form fill: no model
+        // call, no step. It now lists the one completion and its outcome.
+        let f = fill(json!({"name": "X", "columns": []}), &["promptText"]);
+        let trace = form_fill_trace(&LENS_CREATE, Some(&f), "some-model", 5_000, 812, Some(640), 5_200);
+        assert_eq!(trace.model, "some-model");
+        assert_eq!(trace.llm_calls.len(), 1);
+        assert_eq!(trace.llm_calls[0].kind, "form_fill");
+        assert_eq!(trace.llm_calls[0].latency_ms, 5_000);
+        assert_eq!(trace.llm_calls[0].prompt_tokens, Some(812));
+        assert_eq!(trace.tool_calls.len(), 1);
+        let call = &trace.tool_calls[0];
+        assert_eq!(call.name, "fill_form");
+        assert_eq!(call.arguments["form"], "lens.create");
+        assert!(call.result_preview.contains("name"), "{}", call.result_preview);
+        assert!(call.result_preview.contains("promptText"), "{}", call.result_preview);
+        assert_eq!(trace.steps.len(), 3, "route, the model call, the fill");
+    }
+
+    #[test]
+    fn the_trace_of_an_unusable_reply_marks_the_call_failed() {
+        let trace = form_fill_trace(&LENS_CREATE, None, "m", 100, 0, None, 120);
+        assert!(trace.llm_calls[0].failed);
     }
 
     #[test]
