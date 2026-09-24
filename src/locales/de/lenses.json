@@ -49,7 +49,8 @@
     "descriptionPlaceholder": "Was dieses Feld bedeutet — wird in den Prompt des Modells aufgenommen.",
     "promptHelp": "Sag dem Modell, was extrahiert werden soll. Die obigen Spaltenbeschreibungen werden ebenfalls als Schema des Tool-Aufrufs übergeben.",
     "previewHelp": "Führt die Extraktion an einer kleinen Stichprobe aus, ohne zu speichern.",
-    "previewEmpty": "Keine E-Mails entsprachen dem Bereich. Versuche, die Filter zu erweitern."
+    "previewEmpty": "Keine E-Mails entsprachen dem Bereich. Versuche, die Filter zu erweitern.",
+    "filledFromChatMissing": "Aus dem Chat ausgefüllt. Noch erforderlich: {{fields}}."
   },
   "identity": {
     "title": "Identität",

@@ -13,6 +13,12 @@ interface MessageListProps {
   onOpenEmail?: () => void;
   /** Show the emails an answer references in the email list, via this search query. */
   onShowEmailsInList?: (query: string) => void;
+  /** The user marked an answer wrong and said why — run a corrective turn. */
+  onRejectMessage?: (messageId: string, reason: string) => void;
+  /** Ids already marked wrong this session. */
+  rejectedMessageIds?: string[];
+  /** A turn is in flight. */
+  isSending?: boolean;
 }
 
 /**
@@ -68,6 +74,9 @@ export function MessageList({
   accountId,
   onOpenEmail,
   onShowEmailsInList,
+  onRejectMessage,
+  rejectedMessageIds,
+  isSending,
 }: MessageListProps) {
   const { t } = useTranslation(['chat']);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -112,6 +121,9 @@ export function MessageList({
           accountId={accountId}
           onOpenEmail={onOpenEmail}
           onShowEmailsInList={onShowEmailsInList}
+          onReject={onRejectMessage && m.role === 'assistant' ? (reason) => onRejectMessage(m.id, reason) : undefined}
+          isRejected={rejectedMessageIds?.includes(m.id)}
+          isSending={isSending}
         />
       ))}
     </div>

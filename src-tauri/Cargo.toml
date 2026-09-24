@@ -286,6 +286,12 @@ name = "query_plan_eval"
 required-features = ["eval"]
 
 [[example]]
+# Scores how the model fills the app's forms (Create Lens is the pilot) against
+# the synthetic cases in evals/forms. See `make eval-forms`.
+name = "form_fill_eval"
+required-features = ["eval"]
+
+[[example]]
 # Scores the email classifier (intent / topic / urgency) against the labelled
 # synthetic corpus in evals/classification/cases. See `make eval-classify`.
 name = "tag_classification_eval"

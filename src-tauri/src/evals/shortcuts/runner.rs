@@ -235,8 +235,7 @@ async fn run_variant(
         model.to_string(),
         history,
         categories,
-        None,
-        None,
+        chat::TurnContext::default(),
     )
     .await?;
 

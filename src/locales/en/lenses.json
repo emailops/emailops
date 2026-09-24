@@ -49,7 +49,8 @@
     "descriptionPlaceholder": "What this field means — included in the model prompt.",
     "promptHelp": "Tell the model what to extract. The column descriptions above are also passed as the tool-call schema.",
     "previewHelp": "Runs extraction against a small sample without saving.",
-    "previewEmpty": "No emails matched the scope. Try widening the filters."
+    "previewEmpty": "No emails matched the scope. Try widening the filters.",
+    "filledFromChatMissing": "Filled in from chat. Still needed: {{fields}}."
   },
   "identity": {
     "title": "Identity",

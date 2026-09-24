@@ -229,6 +229,78 @@ describe('handleChatToolEffect', () => {
     expect(log).toHaveBeenCalledWith('debug', 'ai', expect.stringContaining('no settings handler'));
   });
 
+  it('opens the named form with the filled values', () => {
+    const openFilledForm = vi.fn();
+    const log = vi.fn();
+    handleChatToolEffect(
+      {
+        kind: 'fillForm',
+        formId: 'lens.create',
+        target: 'view/lenses#create',
+        values: { name: 'Facturas', columns: [{ key: 'amount', label: 'Importe', type: 'currency' }] },
+        missingRequired: [],
+      },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), openFilledForm, log },
+    );
+    expect(openFilledForm).toHaveBeenCalledTimes(1);
+    const [formId, values, missing] = openFilledForm.mock.calls[0];
+    expect(formId).toBe('lens.create');
+    expect(values).toMatchObject({ name: 'Facturas' });
+    expect(missing).toEqual([]);
+  });
+
+  it('forwards the fields the model could not fill so the UI can highlight them', () => {
+    const openFilledForm = vi.fn();
+    handleChatToolEffect(
+      {
+        kind: 'fillForm',
+        formId: 'lens.create',
+        target: 'view/lenses#create',
+        values: { name: 'Facturas' },
+        missingRequired: ['columns', 'promptText'],
+      },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), openFilledForm },
+    );
+    expect(openFilledForm.mock.calls[0][2]).toEqual(['columns', 'promptText']);
+  });
+
+  it('ignores a fillForm for a form id this build does not know', () => {
+    const openFilledForm = vi.fn();
+    const log = vi.fn();
+    handleChatToolEffect(
+      { kind: 'fillForm', formId: 'lens.destroy', target: 'view/lenses#create', values: {}, missingRequired: [] },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), openFilledForm, log },
+    );
+    expect(openFilledForm).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('error', 'ai', expect.stringContaining('unknown form'));
+  });
+
+  it('ignores a fillForm whose values are not an object', () => {
+    const openFilledForm = vi.fn();
+    const log = vi.fn();
+    handleChatToolEffect(
+      {
+        kind: 'fillForm',
+        formId: 'lens.create',
+        target: 'view/lenses#create',
+        values: ['not', 'an', 'object'] as unknown as Record<string, unknown>,
+        missingRequired: [],
+      },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), openFilledForm, log },
+    );
+    expect(openFilledForm).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('error', 'ai', expect.stringContaining('not an object'));
+  });
+
+  it('fillForm without a wired handler is a logged no-op', () => {
+    const log = vi.fn();
+    handleChatToolEffect(
+      { kind: 'fillForm', formId: 'lens.create', target: 'view/lenses#create', values: {}, missingRequired: [] },
+      { openComposeTab: vi.fn(), openThreadReply: vi.fn(), navigateToInbox: vi.fn(), log },
+    );
+    expect(log).toHaveBeenCalledWith('debug', 'ai', expect.stringContaining('no form handler'));
+  });
+
   it('parseNavTarget mirrors the backend allowlists', () => {
     expect(parseNavTarget('settings/privacy')).toEqual({ kind: 'settings', tab: 'privacy' });
     expect(parseNavTarget('view/calendar')).toEqual({ kind: 'view', view: 'calendar' });

@@ -88,9 +88,31 @@ export type ChatToolEffectPayload =
       /** The cited section, e.g. "AI features › Choosing a backend". */
       title: string;
     }
+  | {
+      /** Open one of the app's forms with the fields the model filled in, for
+       *  the user to review and submit. Fired after the query planner returns
+       *  a `form` verdict (see `services::chat::form_turn`). */
+      kind: 'fillForm';
+      /** A key of `services::forms::registry::FORMS`, e.g. `lens.create`. */
+      formId: string;
+      /** `view/<mode>#<anchor>` — where the form lives. */
+      target: string;
+      /** Only keys the form declares, already coerced to their declared kinds. */
+      values: Record<string, unknown>;
+      /** Required fields the model could not fill, so the UI can focus the
+       *  first one instead of the user hunting for it. */
+      missingRequired: string[];
+    }
   // Unknown kinds are passed through so the handler can log them without
   // throwing — future variants on the backend shouldn't crash an older UI.
   | { kind: string; [field: string]: unknown };
+
+/** Forms the chat can fill. Mirrors `FORMS` in
+ *  `src-tauri/src/services/forms/registry.rs`; an id outside this list is
+ *  ignored rather than routed, so a version skew cannot open something that
+ *  does not exist. */
+export const FILLABLE_FORM_IDS = ['lens.create'] as const;
+export type FillableFormId = (typeof FILLABLE_FORM_IDS)[number];
 
 export interface ChatToolEffectHandlers {
   /** Open the composer tab pre-loaded with these fields. Pass `bodyHtml`
@@ -113,6 +135,10 @@ export interface ChatToolEffectHandlers {
   openSettingsTab?: (tab: SettingsTab) => void;
   /** Switch the main view. Same optionality as `openSettingsTab`. */
   navigateToView?: (view: ViewMode) => void;
+  /** Open `formId` pre-filled with `values`, leaving the chat panel visible
+   *  and usable. `missingRequired` names the fields to highlight. Optional so
+   *  older call sites and tests that never fill a form keep compiling. */
+  openFilledForm?: (formId: FillableFormId, values: Record<string, unknown>, missingRequired: string[]) => void;
   /** Optional logger — info/success/error/debug. Matches `useLogStore.addLog`. */
   log?: (level: 'info' | 'success' | 'error' | 'debug', source: 'ai', message: string) => void;
 }
@@ -184,6 +210,26 @@ export function handleChatToolEffect(payload: ChatToolEffectPayload, handlers: C
       }
       handlers.navigateToView(target.view);
       log('success', 'ai', `Opened ${target.view} from chat (${title})`);
+      return;
+    }
+    case 'fillForm': {
+      const p = payload as Extract<ChatToolEffectPayload, { kind: 'fillForm' }>;
+      const formId = FILLABLE_FORM_IDS.find((id) => id === p.formId);
+      if (!formId) {
+        log('error', 'ai', `fillForm effect ignored — unknown form "${String(p.formId)}"`);
+        return;
+      }
+      if (typeof p.values !== 'object' || p.values === null || Array.isArray(p.values)) {
+        log('error', 'ai', `fillForm effect ignored — values is not an object: ${JSON.stringify(payload)}`);
+        return;
+      }
+      if (!handlers.openFilledForm) {
+        log('debug', 'ai', 'fillForm effect ignored — no form handler wired');
+        return;
+      }
+      const missing = Array.isArray(p.missingRequired) ? p.missingRequired.filter((m) => typeof m === 'string') : [];
+      handlers.openFilledForm(formId, p.values, missing);
+      log('success', 'ai', `Opened ${formId} pre-filled from chat (${Object.keys(p.values).length} field(s))`);
       return;
     }
     default:

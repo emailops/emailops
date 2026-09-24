@@ -18,6 +18,7 @@ pub mod case_loader;
 pub mod db_source;
 pub mod email_classification;
 pub mod extraction;
+pub mod forms;
 pub mod harness;
 pub mod json_report;
 pub mod judge;

@@ -49,7 +49,8 @@
     "descriptionPlaceholder": "Qué significa este campo — se incluye en el prompt del modelo.",
     "promptHelp": "Indica al modelo qué extraer. Las descripciones de columnas anteriores también se pasan como esquema de la llamada a herramientas.",
     "previewHelp": "Ejecuta la extracción sobre una muestra pequeña sin guardar.",
-    "previewEmpty": "Ningún correo coincidió con el alcance. Prueba a ampliar los filtros."
+    "previewEmpty": "Ningún correo coincidió con el alcance. Prueba a ampliar los filtros.",
+    "filledFromChatMissing": "Rellenado desde el chat. Falta por rellenar: {{fields}}."
   },
   "identity": {
     "title": "Identidad",
