@@ -1,14 +1,14 @@
 ---
 name: record-emailops-demo
-description: "Record a narrated demo video of the real EmailOps app — a promo, a feature short or a how-to — from the synthetic demo instance, never the developer's mailbox. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots into a 1920x1080 cut with the UI at 1:1 scale, title and section cards, cursor moves, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a demo, promo or tutorial video of EmailOps, or wants an existing one re-cut."
+description: "Record a demo video of the real EmailOps app — a promo, a feature short (vertical 9:16 or 16:9) or a how-to, narrated or text-only — from the synthetic demo instance, never the developer's mailbox. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots with an animated camera that eases from the whole window onto each action (the click, the chat being filled, the result) or as still 1:1 shots, with title and section cards, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a demo, promo or tutorial video of EmailOps, or wants an existing one re-cut."
 argument-hint: <what the video should show, and in which language>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
 
 # Record an EmailOps demo video
 
-Produces a narrated screen recording of the real app: a promo, a feature short,
-or a how-to. Output is an MP4 with no burned-in text, subtitle tracks in as many
+Produces a screen recording of the real app: a promo, a feature short, or a
+how-to, narrated or text-only. Output is an MP4 with no burned-in text, subtitle tracks in as many
 languages as you write, a music-only cut, the narration on its own, and a sheet
 with everything YouTube asks for.
 
@@ -29,7 +29,7 @@ R=.claude/skills/record-emailops-demo/scripts
 | 4. Author | write `plan.json` by hand | shots, narration, captions |
 | 5. Time it | `fit_timings.py` | the same plan, stretched to fit the voice |
 | 6. Speak | `narrate.py` | `vo/line_NN.wav` |
-| 7. Build | `make_manifest.py` + `build_short.py` | silent MP4 + one `.srt` per language |
+| 7. Build | `build_camera.py` (animated camera, the default) or `make_manifest.py` + `build_short.py` (still shots) | silent MP4 + `.srt` |
 | 8. Sound | `mix_audio.py` | narration ducked over a music bed |
 | 9. Ship | `ffmpeg` mux, then copy | the files listed under **Publishing** |
 
@@ -68,17 +68,74 @@ picture. `visibleRow` refuses rows that are not fully on screen for that reason.
 Shoot in this order for an action: the frame **before** the click, then the
 result. The plan puts the marker on the before-frame and cuts to the result.
 
+**Screenshots are retina.** On this Mac `saveScreenshot` writes 2x the CSS
+size (a 1800-wide window gives a 3600-wide PNG), while `rects.json` holds CSS
+pixels. `build_camera.py` takes CSS coordinates and a `css_scale` of 2;
+`build_short.py` wants screenshot pixels, so double everything there. Measure
+positions on the real file or on a copy scaled to exactly the CSS width,
+never on a preview shown at some other width.
+
+**Check the feature's output before you shoot the story around it.** If the
+result is wrong (a column comes back empty, a draft misses the point), stop
+and fix it through `fix-ai-bug`; never stage a result by hand. Say in the
+YouTube sheet which fix the video depends on, so it is not published before
+that fix ships.
+
+**Data the demo lacks goes into a scratch copy, never into the repo's demo
+DB.** Copy the DB with `sqlite3 "file:<db>?immutable=1" ".backup <copy>"`,
+symlink `models`, and add synthetic emails through
+`generate_demo_db.insert_email` (it fills `email_bodies` and the FTS index).
+Point `VERIFY_DATA_DIR` at the copy. For a retake, rebuild the copy rather
+than undoing state in the app: deleting what the last take created leaves
+traces on screen (see gotchas).
+
 ## 3. Cards
 
 ```bash
 python3 $R/make_cards.py cards.json cards/
 ```
 
-Three layouts: `hero` for the opening title, `section` for a feature name,
-`end` for the closing screen with links and the music attribution. Cards are
-1920x1080 and are used uncropped.
+Four layouts: `hero` for the opening title, `section` for a feature name,
+`end` for the closing screen with links and the music attribution, and
+`stack` for free lines of text. Cards are 1920x1080 by default; a vertical
+short passes `"size": [1080, 1300]` (its stage) and uses `stack`.
 
-## 4. Author the plan
+## 4a. Animated camera (default for shorts and how-tos)
+
+The developer wants the picture to **move to where the action is**: start on
+the whole window, then zoom smoothly onto the control about to be clicked,
+the chat box being filled, the form that appeared, the table that came out.
+Static crops that jump between shots read as a slideshow. `build_camera.py`
+does this:
+
+```bash
+uv run --no-project --with pillow python $R/build_camera.py camera.json silent.mp4
+```
+
+`reference/camera.example.json` is a complete, shipped short (the Lens one)
+to copy from. Each screenshot shot has camera keyframes (`cam`), pointer
+keyframes (`ptr`, ending on the target), a `click` time and captions; views
+ease in log space, the pointer glides, a ripple marks the click. Camera
+grammar that worked:
+
+- **Establish, then close in.** The first shot of a section holds `"full"`
+  for ~0.6 s, then eases (~1.2 s) to a view about 700 CSS px wide on the
+  target. The click lands ~0.3 s after the pointer arrives.
+- **Carry the view across the cut.** The result of a click starts on the
+  view the click ended on (`dissolve`), then moves to the next target. The
+  pointer starts where the last click left it.
+- **Follow the work, not the cursor.** Typing: hold on the input and push
+  in slightly. Waiting: move to where the answer will appear. A form: read
+  the answer first, then pull back to the whole form, then close in on the
+  part that matters.
+- **End wide, then zoom onto the result.** Pull back to `"full"` for a beat
+  so the viewer sees where the table lives, then ease onto it with a
+  letterboxed view (`[cx, cy, w, h]` with the table's own aspect) so it fills
+  the width.
+- **Slow the walkthrough.** The how-to part reads better about 1.35x slower
+  than the intro (`"slow": 1.35` on those shots).
+
+## 4. Author the plan (still shots, `build_short.py`)
 
 ```jsonc
 {"size": [1920, 1080], "stage": [0, 0, 1920, 1080],
@@ -117,6 +174,27 @@ ffmpeg -i silent.mp4 -i audio.wav -c:v copy -c:a aac -b:a 192k -shortest final.m
 `fit_timings.py` prints where every line lands and how much silence sits around
 it. Read that table before building: it is the pacing of the video.
 
+## Structure of a feature short
+
+What the developer settled on for a vertical short (Spanish, text only):
+
+1. **Hook** card: the question the viewer has ("¿Quieres extraer los datos
+   de clientes de tu email automáticamente?") plus a one-line answer.
+2. **Problem** card, then a separate **solution** card. One idea per card:
+   a card with five lines above and four below was sent back as too verbose.
+3. **The real example** in the app (the email that shows the problem).
+4. **Concept** card (what the feature is, in two short blocks).
+5. **Section** card ("Cómo crear una Lente"), then the walkthrough with the
+   animated camera, slower.
+6. The **result**, zoomed.
+7. **What happens next** card (e.g. new emails flow into the table). Check
+   the claim in the code first.
+8. **Closing** card.
+
+Text lives on cards and burned captions (Shorts are watched muted); the
+standing title band repeats the hook. Use the UI's own term in each
+language: in Spanish a Lens is always **"Lente"**, never "Lens".
+
 ## Rules that make it watchable
 
 - **One window geometry for the whole video.** Mixing 1800x1100 with 1800x1122
@@ -148,6 +226,10 @@ video description is mandatory**, and the closing card carries it too. Check the
 track is longer than the video before cutting the bed.
 
 ## Publishing
+
+Music without narration: the music-only cut of an earlier promo
+(`emailops-promo-en-sin-voz.mp4`, "Deliberate Thought", CC BY 4.0) is a clean
+bed source: trim it, fade in 1 s and out 3 s, `loudnorm=I=-16:TP=-1.5`.
 
 Copy into `docs/marketing/videos/` (gitignored):
 
