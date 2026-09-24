@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { Modal } from '@/components/common/Modal';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import { formatDateTime } from '@/lib/intl';
+import { formatDayMonthYearTime } from '@/lib/intl';
 import type { LensRunHistoryEntry } from '@/types';
 
 interface LensRunHistoryDialogProps {
@@ -18,7 +18,7 @@ interface LensRunHistoryDialogProps {
 }
 
 export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRunHistoryDialogProps) {
-  const { t, i18n } = useTranslation(['common', 'lenses']);
+  const { t } = useTranslation(['common', 'lenses']);
   const [runs, setRuns] = useState<LensRunHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
       open={open}
       onClose={onClose}
       title={t('lenses:runHistory.title', { name: lensName })}
-      size="lg"
+      size="2xl"
       footer={
         <div className="flex justify-end">
           <button
@@ -83,7 +83,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           <tbody>
             {runs.map((r) => (
               <tr key={r.id} className="border-t border-gray-800">
-                <td className="px-3 py-2 align-top text-gray-300">{formatDateTime(r.startedAt, i18n.language)}</td>
+                <td className="px-3 py-2 align-top text-gray-300">{formatDayMonthYearTime(r.startedAt)}</td>
                 <td className="px-3 py-2 align-top text-gray-300">
                   {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
                 </td>
@@ -107,7 +107,7 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
               .filter((r) => r.errorMessage)
               .map((r) => (
                 <li key={r.id}>
-                  <span className="text-gray-500">{formatDateTime(r.startedAt, i18n.language)}:</span>{' '}
+                  <span className="text-gray-500">{formatDayMonthYearTime(r.startedAt)}:</span>{' '}
                   <span className="text-red-300">{r.errorMessage}</span>
                 </li>
               ))}

@@ -105,6 +105,15 @@ export function formatDateTime(
   return new Intl.DateTimeFormat(locale, options).format(new Date(unixSeconds * 1000));
 }
 
+/** `DD/MM/YYYY HH:mm` in local time — fixed, whatever the UI locale, for
+ *  tables where every row must line up (Lens run history). */
+export function formatDayMonthYearTime(unixSeconds: number | null | undefined): string {
+  if (!unixSeconds) return EM_DASH;
+  const d = new Date(unixSeconds * 1000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** Format a number with locale-aware grouping/decimal separators. */
 export function formatNumber(n: number, locale: string, options?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(locale, options).format(n);
