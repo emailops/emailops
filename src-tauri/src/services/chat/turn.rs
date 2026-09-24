@@ -4237,6 +4237,7 @@ pub async fn run_chat_turn(
                             date: m.date.clone(),
                             subject: m.subject.clone(),
                             finding: m.finding.clone(),
+                            emails: m.emails as u32,
                         })
                         .collect(),
                 },

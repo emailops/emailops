@@ -107,10 +107,19 @@ function ProcessingStatus({
         </div>
         <ul className="space-y-0.5">
           {recent.map((m) => (
-            <li key={m.emailId} className="flex min-w-0 items-baseline gap-1.5">
-              <span className="shrink-0 tabular-nums text-gray-400">{m.date}</span>
-              <EmailRefPill emailId={m.emailId} accountId={accountId} label={m.subject} onOpenEmail={onOpenEmail} />
-              {m.finding && <span className="truncate">— {m.finding}</span>}
+            <li key={m.emailId} className="min-w-0">
+              <div className="flex min-w-0 items-baseline gap-1.5">
+                <span className="shrink-0 tabular-nums text-gray-400">{m.date}</span>
+                <EmailRefPill emailId={m.emailId} accountId={accountId} label={m.subject} onOpenEmail={onOpenEmail} />
+                {m.emails > 1 && (
+                  <span className="shrink-0 text-gray-400">{t('chat:research.threadEmails', { n: m.emails })}</span>
+                )}
+              </div>
+              {m.finding && (
+                <div data-testid="research-recent-finding" className="ml-1 line-clamp-2 text-gray-600">
+                  {m.finding}
+                </div>
+              )}
             </li>
           ))}
         </ul>

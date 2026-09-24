@@ -1261,6 +1261,8 @@ pub struct ResearchMatchPreview {
     pub subject: String,
     /// The first finding the reading step kept for this email.
     pub finding: String,
+    /// Emails of this conversation that matched.
+    pub emails: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

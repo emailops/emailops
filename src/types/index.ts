@@ -585,6 +585,8 @@ export interface ResearchMatchPreview {
   date: string;
   subject: string;
   finding: string;
+  /** Emails of this conversation that matched. */
+  emails: number;
 }
 
 /** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */

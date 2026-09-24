@@ -97,8 +97,9 @@ describe('latest matches while a research reads', () => {
             date: '2025-03-12',
             subject: 'Quote for the dashboard',
             finding: 'Sent a quote of 4,000 EUR',
+            emails: 3,
           },
-          { emailId: 'e2', date: '2025-04-02', subject: 'Re: pricing', finding: 'Follow-up on the quote' },
+          { emailId: 'e2', date: '2025-04-02', subject: 'Re: pricing', finding: 'Follow-up on the quote', emails: 1 },
         ],
       },
     });
@@ -115,5 +116,11 @@ describe('latest matches while a research reads', () => {
     const chips = list?.querySelectorAll('button') ?? [];
     expect(chips.length).toBe(2);
     expect(chips[0].textContent).toContain('Quote for the dashboard');
+    // One entry per conversation, saying how many of its emails matched; the
+    // finding gets its own line instead of being cut to "—…".
+    expect(list?.textContent).toContain('research.threadEmails');
+    const finding = list?.querySelector('[data-testid="research-recent-finding"]');
+    expect(finding?.textContent).toBe('Sent a quote of 4,000 EUR');
+    expect(finding?.className).not.toContain('truncate');
   });
 });

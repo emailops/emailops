@@ -268,6 +268,7 @@
       "quit": "Quitter quand même"
     },
     "statusBar": "Chat : recherche en cours… ({{step}})",
-    "matchesSoFar": "{{n}} correspondances jusqu'ici — les dernières :"
+    "matchesSoFar": "{{n}} correspondances jusqu'ici — les dernières :",
+    "threadEmails": "{{n}} e-mails"
   }
 }

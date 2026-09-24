@@ -298,10 +298,15 @@ pub(crate) fn plan_report_shape(question: &str) -> ReportShape {
     }
 }
 
-/// One email the reading step found relevant, with its first finding.
+/// One conversation the reading step found relevant: its first matching email
+/// (oldest), that email's first finding, and how many of the conversation's
+/// emails were cited. A thread of replies quoting the same request is one
+/// match, not one per reply.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Match {
     pub id: String,
+    /// Emails of this conversation a finding cites.
+    pub emails: usize,
     pub thread_id: String,
     pub date: String,
     pub subject: String,
@@ -325,11 +330,8 @@ fn finding_text(line: &str) -> String {
         .to_string()
 }
 
-/// Every email a finding cites, in reading order (oldest first), each with the
-/// first finding that cites it. Taken from the map notes, before any condense
-/// round, so merging notes for the report never drops a match from the list
-/// or the count.
-pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<Match> {
+/// The first finding citing each email.
+fn first_findings(notes: &[BatchNotes]) -> HashMap<&str, String> {
     let mut first: HashMap<&str, String> = HashMap::new();
     for batch in notes {
         for line in &batch.lines {
@@ -340,26 +342,54 @@ pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec
             }
         }
     }
+    first
+}
+
+/// Every email a finding cites, in reading order — the answer's sources.
+pub(crate) fn matched_email_ids(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<String> {
+    let first = first_findings(notes);
     docs.iter()
-        .filter_map(|d| {
-            first.get(d.id.as_str()).map(|finding| Match {
-                id: d.id.clone(),
-                thread_id: d.thread_id.clone(),
-                date: d.date.clone(),
-                subject: d.subject.clone(),
-                finding: finding.clone(),
-            })
-        })
+        .filter(|d| first.contains_key(d.id.as_str()))
+        .map(|d| d.id.clone())
         .collect()
+}
+
+/// Every conversation a finding cites, in reading order (oldest first), each
+/// with its first matching email and that email's first finding. Taken from the
+/// map notes, before any condense round, so merging notes for the report never
+/// drops a match from the list or the count.
+pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec<Match> {
+    let first = first_findings(notes);
+    let mut out: Vec<Match> = Vec::new();
+    let mut by_thread: HashMap<&str, usize> = HashMap::new();
+    for d in docs {
+        let Some(finding) = first.get(d.id.as_str()) else {
+            continue;
+        };
+        match by_thread.get(d.thread_id.as_str()) {
+            Some(&i) => out[i].emails += 1,
+            None => {
+                by_thread.insert(d.thread_id.as_str(), out.len());
+                out.push(Match {
+                    id: d.id.clone(),
+                    emails: 1,
+                    thread_id: d.thread_id.clone(),
+                    date: d.date.clone(),
+                    subject: d.subject.clone(),
+                    finding: finding.clone(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The exact counts the report states — computed, never left to the model.
 pub(crate) fn counts_line(matches: &[Match]) -> String {
-    let threads: std::collections::HashSet<&str> = matches.iter().map(|m| m.thread_id.as_str()).collect();
+    let emails: usize = matches.iter().map(|m| m.emails).sum();
     format!(
-        "{} emails with relevant findings, in {} conversations",
-        matches.len(),
-        threads.len()
+        "{emails} emails with relevant findings, in {} conversations",
+        matches.len()
     )
 }
 
@@ -394,11 +424,11 @@ pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> Strin
     if matches.is_empty() {
         return String::new();
     }
-    let heading = match language_code {
-        "es" => "Lista completa",
-        "fr" => "Liste complète",
-        "de" => "Vollständige Liste",
-        _ => "Full list",
+    let (heading, emails_word) = match language_code {
+        "es" => ("Lista completa", "correos"),
+        "fr" => ("Liste complète", "e-mails"),
+        "de" => ("Vollständige Liste", "E-Mails"),
+        _ => ("Full list", "emails"),
     };
     let mut out = format!("### {heading} ({})\n\n", matches.len());
     for (i, m) in matches.iter().enumerate() {
@@ -412,8 +442,13 @@ pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> Strin
         } else {
             format!(" — {}", m.finding)
         };
+        let thread = if m.emails > 1 {
+            format!(" ({} {emails_word})", m.emails)
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "{}. {date}[{}](email://{}){finding}\n",
+            "{}. {date}[{}](email://{}){finding}{thread}\n",
             i + 1,
             link_label(&m.subject),
             m.id
@@ -687,6 +722,7 @@ NONE";
     fn m(id: &str, thread: &str, date: &str, finding: &str) -> Match {
         Match {
             id: id.into(),
+            emails: 1,
             thread_id: thread.into(),
             date: date.into(),
             subject: format!("Subject {id}"),
@@ -727,12 +763,63 @@ NONE";
     }
 
     #[test]
+    fn a_conversation_is_one_match_however_many_of_its_emails_are_cited() {
+        // A thread of replies all quoting the same request used to show up as
+        // five matches in the progress, five lines in the list and five in
+        // the count.
+        let docs: Vec<ResearchDoc> = ["e1", "e2", "e3", "e4"]
+            .iter()
+            .map(|id| ResearchDoc {
+                thread_id: if *id == "e4" { "t2".into() } else { "t1".into() },
+                ..doc(id)
+            })
+            .collect();
+        let notes = vec![BatchNotes {
+            lines: vec![
+                "- Budget requested (email://e1)".into(),
+                "- Follow-up on the budget (email://e2)".into(),
+                "- Budget accepted (email://e3)".into(),
+                "- Another client asks (email://e4)".into(),
+            ],
+            cited: ids(&["e1", "e2", "e3", "e4"]),
+        }];
+        let matches = collect_matches(&docs, &notes);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].id, "e1", "the conversation's first matching email");
+        assert_eq!(matches[0].emails, 3);
+        assert_eq!(matches[0].finding, "Budget requested");
+        assert_eq!(matches[1].emails, 1);
+        assert_eq!(
+            matched_email_ids(&docs, &notes),
+            ids(&["e1", "e2", "e3", "e4"]),
+            "every cited email stays a source"
+        );
+    }
+
+    #[test]
     fn counts_are_exact_emails_and_conversations() {
-        let matches = vec![m("e1", "t1", "", ""), m("e2", "t1", "", ""), m("e3", "t2", "", "")];
+        let matches = vec![
+            Match {
+                emails: 2,
+                ..m("e1", "t1", "", "")
+            },
+            m("e3", "t2", "", ""),
+        ];
         assert_eq!(
             counts_line(&matches),
             "3 emails with relevant findings, in 2 conversations"
         );
+    }
+
+    #[test]
+    fn the_full_list_says_how_many_emails_a_conversation_holds() {
+        let matches = vec![Match {
+            emails: 3,
+            ..m("e1", "t1", "2026-01-02", "Budget requested")
+        }];
+        let list = render_match_list(&matches, "es");
+        assert!(list.contains("— Budget requested (3 correos)"), "{list}");
+        assert!(render_match_list(&matches, "en").contains("(3 emails)"));
     }
 
     #[test]

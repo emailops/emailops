@@ -39,9 +39,9 @@ use plan::{
 };
 pub(crate) use prompts::Match;
 use prompts::{
-    assemble_notes, cancelled_note, collect_matches, coverage_line, join_notes, notes_len, parse_map_notes,
-    plan_report_shape, relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt,
-    split_reduce_prompt, BatchNotes, ReportShape, ResearchDoc,
+    assemble_notes, cancelled_note, collect_matches, coverage_line, join_notes, matched_email_ids, notes_len,
+    parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list, report_facts, split_condense_prompt,
+    split_map_prompt, split_reduce_prompt, BatchNotes, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -680,6 +680,7 @@ pub(crate) async fn run_research(
     };
     // Matches as the batches find them, for the progress.
     let mut found: Vec<Match> = Vec::new();
+    let mut all_notes: Vec<BatchNotes> = Vec::new();
 
     // ── Map ──
     progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len(), &found);
@@ -716,7 +717,10 @@ pub(crate) async fn run_research(
         match result {
             Ok(reply) => {
                 let parsed = parse_map_notes(&reply.text, &batch_ids);
-                found.extend(collect_matches(batch, std::slice::from_ref(&parsed)));
+                // Regrouped over everything read so far: a conversation whose
+                // replies land in different batches stays one match.
+                all_notes.push(parsed.clone());
+                found = collect_matches(&docs[..range.end], &all_notes);
                 super::emit_log(
                     "debug",
                     &format!(
@@ -746,9 +750,9 @@ pub(crate) async fn run_research(
     // The matches come from the map notes, before any condense round: the
     // list and the counts must not depend on how the notes were merged.
     let matches = collect_matches(&docs[..read], &notes);
-    run.relevant = matches.iter().map(|m| m.id.clone()).collect();
+    run.relevant = matched_email_ids(&docs[..read], &notes);
     run.trace.emails_analyzed = read as u32;
-    run.trace.relevant_emails = matches.len() as u32;
+    run.trace.relevant_emails = run.relevant.len() as u32;
     let shape = plan_report_shape(input.question);
 
     // Cancelled: no condense, no report — say how far it got and stop.
@@ -1093,8 +1097,11 @@ mod tests {
 
         let answer = run.answer.expect("an answer");
         assert!(answer.starts_with("Resumen:"), "{answer}");
-        assert!(answer.contains("### Lista completa (25)"), "{answer}");
-        assert!(answer.contains("\n25. "), "every match is listed: {answer}");
+        // 25 emails, but the reply in thread t00 is the same conversation:
+        // 24 entries, the first one saying it holds two emails.
+        assert!(answer.contains("### Lista completa (24)"), "{answer}");
+        assert!(answer.contains("\n24. "), "every conversation is listed: {answer}");
+        assert!(answer.contains("(2 correos)"), "{answer}");
         let calls = provider.prefix_completion_calls();
         let reduce_prompt = &calls.last().expect("reduce").1;
         assert!(
@@ -1146,7 +1153,8 @@ mod tests {
             .iter()
             .rfind(|e| e.stage == ResearchStage::Reading)
             .expect("reading events");
-        assert_eq!(last.matches, 30);
+        // 30 emails in 29 conversations (e00 and its reply are one).
+        assert_eq!(last.matches, 29);
     }
 
     #[tokio::test]
