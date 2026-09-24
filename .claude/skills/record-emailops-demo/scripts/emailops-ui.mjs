@@ -105,6 +105,17 @@ export async function openApp({ dir, port = 4445, window = WINDOW } = {}) {
     return r;
   }
 
+  /** Scroll a control into the middle of its scroll container before it is
+   *  measured. Sidebar entries low in the list (Lentes, Memoria) sit under
+   *  the output bar at this window height: measured there, the marker lands
+   *  off the picture. */
+  const reveal = (label) => b.execute((label) => {
+    const el = [...document.querySelectorAll('button,a,[role=button]')]
+      .find((e) => (e.innerText || '').trim() === label);
+    el?.scrollIntoView({ block: 'center' });
+    return !!el;
+  }, label);
+
   /** Click whatever rectOf/visibleRow last measured, so the marker and the
    *  action are the same element. */
   const clickTarget = () => b.execute(() => {
@@ -122,10 +133,14 @@ export async function openApp({ dir, port = 4445, window = WINDOW } = {}) {
     return list ? list.scrollTop : -1;
   }, top);
 
+  // The sidebar speaks the UI language: 'Inbox' in English, 'Bandeja de
+  // entrada' in Spanish. A label that does not match clicks nothing, silently.
+  const INBOX = ['Inbox', 'Bandeja de entrada', 'Posteingang', 'Boîte de réception'];
+
   async function goInbox() {
     const back = await b.$('aria/Back');
     if (await back.isExisting()) { await back.click(); await pause(700); }
-    await clickText('Inbox');
+    for (const label of INBOX) if (await clickText(label)) break;
     await pause(2000);
     await dismissBanner();
     // Virtualised rows arrive late; shooting too early gives an empty list.
@@ -173,6 +188,6 @@ export async function openApp({ dir, port = 4445, window = WINDOW } = {}) {
   }
 
   return { browser: b, rects, pause, shot, clickText, bodyHas, dismissBanner, rectOf,
-           visibleRow, clickTarget, setScroll, goInbox, openChat, typeQuestion,
+           visibleRow, reveal, clickTarget, setScroll, goInbox, openChat, typeQuestion,
            waitForModel, finish };
 }

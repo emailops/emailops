@@ -1,0 +1,722 @@
+{
+ "size": [
+  1080,
+  1920
+ ],
+ "stage": [
+  0,
+  300,
+  1080,
+  1300
+ ],
+ "css_scale": 2,
+ "image_size": [
+  1800,
+  900
+ ],
+ "title": "¿Quieres extraer los datos de clientes de tu email automáticamente?",
+ "title_from": 4.0,
+ "shots": [
+  {
+   "card": "cards/card-hero.png",
+   "dur": 4.0,
+   "srt": "¿Quieres extraer los datos de clientes de tu email automáticamente? Usa Lentes de EmailOps"
+  },
+  {
+   "card": "cards/card-problem.png",
+   "dur": 5.5
+  },
+  {
+   "card": "cards/card-solution.png",
+   "dur": 6.0
+  },
+  {
+   "img": "frames/f01-inbox-before-row.png",
+   "dur": 3.6,
+   "click": 2.9,
+   "cap": [
+    [
+     0,
+     3.6,
+     "Te escriben desde el formulario de tu web"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     0.6,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     1.9,
+     [
+      750.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.4,
+     [
+      1200.0,
+      450.0
+     ]
+    ],
+    [
+     2.6,
+     [
+      838.0,
+      718.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f02-email.png",
+   "dur": 4.4,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0,
+     4.4,
+     "Cada correo trae email, teléfono y empresa, mezclados en el texto"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      750.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ],
+    [
+     0.3,
+     [
+      750.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ],
+    [
+     1.5,
+     [
+      500.0,
+      346.1,
+      575.0,
+      692.1
+     ]
+    ]
+   ]
+  },
+  {
+   "card": "cards/card-lens.png",
+   "dur": 8.5,
+   "srt": "¿Qué es una Lente? Una Lente lee tus correos con IA local y extrae los datos que te interesan a una tabla. Tú dices qué datos quieres. Ella los extrae, y todo en local."
+  },
+  {
+   "card": "cards/card-create.png",
+   "dur": 3.0,
+   "srt": "Cómo crear una Lente"
+  },
+  {
+   "img": "frames/f03-before-lentes.png",
+   "dur": 4.05,
+   "click": 3.4425,
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "Abre Lentes"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     0.945,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     2.565,
+     [
+      350.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.675,
+     [
+      750.0,
+      350.0
+     ]
+    ],
+    [
+     3.105,
+     [
+      117.0,
+      517.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f04-lenses-empty.png",
+   "dur": 4.05,
+   "trans": "dissolve",
+   "click": 3.105,
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "Pulsa «Nueva lente»"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      350.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     0.405,
+     [
+      350.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     2.16,
+     [
+      1300.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.405,
+     [
+      117.0,
+      517.0
+     ]
+    ],
+    [
+     2.7,
+     [
+      1348.0,
+      24.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f05-chooser.png",
+   "dur": 4.05,
+   "trans": "dissolve",
+   "click": 3.0375,
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "Elige «Con el chat»"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      1300.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     0.405,
+     [
+      1300.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     2.0250000000000004,
+     [
+      798.0,
+      482.0,
+      650.0,
+      782.4
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.405,
+     [
+      1348.0,
+      24.0
+     ]
+    ],
+    [
+     2.565,
+     [
+      798.0,
+      482.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f06-chat-prefill.png",
+   "dur": 4.05,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "El chat abre con una petición de ejemplo"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      798.0,
+      482.0,
+      650.0,
+      782.4
+     ]
+    ],
+    [
+     0.405,
+     [
+      798.0,
+      482.0,
+      650.0,
+      782.4
+     ]
+    ],
+    [
+     2.16,
+     [
+      1512.5,
+      553.9,
+      575.0,
+      692.1
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.405,
+     [
+      798.0,
+      482.0
+     ]
+    ],
+    [
+     2.43,
+     [
+      1600.0,
+      760.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f07-typed.png",
+   "dur": 6.21,
+   "trans": "dissolve",
+   "click": 5.3325000000000005,
+   "cap": [
+    [
+     0.0,
+     6.21,
+     "Pide el email, el teléfono y la empresa de quien te escribe"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      1512.5,
+      553.9,
+      575.0,
+      692.1
+     ]
+    ],
+    [
+     3.24,
+     [
+      1550.0,
+      599.1,
+      500.0,
+      601.9
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.0,
+     [
+      1600.0,
+      760.0
+     ]
+    ],
+    [
+     3.5100000000000002,
+     [
+      1600.0,
+      760.0
+     ]
+    ],
+    [
+     4.86,
+     [
+      1761.0,
+      806.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f08-thinking.png",
+   "dur": 2.7,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0.0,
+     2.7,
+     "La IA local lo prepara…"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      1550.0,
+      599.1,
+      500.0,
+      601.9
+     ]
+    ],
+    [
+     0.27,
+     [
+      1550.0,
+      599.1,
+      500.0,
+      601.9
+     ]
+    ],
+    [
+     1.89,
+     [
+      1512.5,
+      346.1,
+      575.0,
+      692.1
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f09-form-filled.png",
+   "dur": 8.1,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "En segundos, el asistente rellena la lente por ti"
+    ],
+    [
+     4.050000000000001,
+     8.100000000000001,
+     "Solo mira los correos del formulario de contacto"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      1512.5,
+      346.1,
+      575.0,
+      692.1
+     ]
+    ],
+    [
+     3.24,
+     [
+      1512.5,
+      346.1,
+      575.0,
+      692.1
+     ]
+    ],
+    [
+     5.13,
+     [
+      710.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f10-columns.png",
+   "dur": 6.21,
+   "trans": "dissolve",
+   "click": 5.13,
+   "cap": [
+    [
+     0.0,
+     6.21,
+     "Tres columnas: email, teléfono y empresa"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      710.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ],
+    [
+     0.54,
+     [
+      710.0,
+      450.0,
+      750.0,
+      900.0
+     ]
+    ],
+    [
+     2.16,
+     [
+      710.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     1.62,
+     [
+      1150.0,
+      650.0
+     ]
+    ],
+    [
+     4.59,
+     [
+      953.0,
+      817.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f11-lens-created.png",
+   "dur": 4.05,
+   "trans": "dissolve",
+   "click": 3.1725000000000003,
+   "cap": [
+    [
+     0.0,
+     4.050000000000001,
+     "Ejecútala"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      710.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     0.405,
+     [
+      710.0,
+      478.7,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     2.0250000000000004,
+     [
+      969.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ]
+   ],
+   "ptr": [
+    [
+     0.405,
+     [
+      953.0,
+      817.0
+     ]
+    ],
+    [
+     2.7,
+     [
+      969.0,
+      31.0
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f12-running.png",
+   "dur": 2.43,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0.0,
+     2.43,
+     "Lee cada correo con IA en tu equipo…"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      969.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ]
+   ]
+  },
+  {
+   "img": "frames/f13-table.png",
+   "dur": 7.0,
+   "trans": "dissolve",
+   "cap": [
+    [
+     0,
+     7.0,
+     "Todos tus contactos, en una tabla"
+    ]
+   ],
+   "cam": [
+    [
+     0.0,
+     [
+      969.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     0.4,
+     [
+      969.0,
+      421.3,
+      700.0,
+      842.6
+     ]
+    ],
+    [
+     1.2,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     2.2,
+     [
+      900.0,
+      450.0,
+      1800.0,
+      900.0
+     ]
+    ],
+    [
+     3.6,
+     [
+      1042.0,
+      242.0,
+      550.0,
+      300.0
+     ]
+    ]
+   ]
+  },
+  {
+   "card": "cards/card-new-mail.png",
+   "dur": 5.0,
+   "srt": "Cuando te lleguen nuevos correos de clientes, sus datos irán a la tabla."
+  },
+  {
+   "card": "cards/card-end.png",
+   "dur": 4.5
+  }
+ ]
+}
