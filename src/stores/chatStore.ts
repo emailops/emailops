@@ -217,6 +217,18 @@ interface BackgroundTurn {
 
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Estimate a research question and hold it for the user to confirm. */
+  /** Drop a research awaiting confirmation and give its question back to
+   *  the input. Its estimate belongs to the conversation (and account) it was
+   *  made in: left on screen elsewhere, it reads as that account's answer. */
+  const dropPendingResearch = () => {
+    const pending = get().pendingResearch;
+    if (!pending) return;
+    set((s) => ({
+      pendingResearch: null,
+      inputPrefill: { text: pending.content, nonce: (s.inputPrefill?.nonce ?? 0) + 1 },
+    }));
+  };
+
   const holdForEstimate = async (content: string, opts: TurnOptions) => {
     const trimmed = content.trim();
     const conversationId = get().activeConversationId;
@@ -300,6 +312,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     selectAccount: async (accountId) => {
       const { currentAccountId, activeConversationId, lastConversationByAccount } = get();
       if (currentAccountId === accountId) return;
+      dropPendingResearch();
 
       // Remember where we were, so switching back returns to it.
       const remembered = { ...lastConversationByAccount };
@@ -361,6 +374,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // batch), and returning before it arrived found no record and showed an
       // empty, finished-looking answer. Re-selecting the open conversation
       // parks and restores it the same way.
+      if (id !== get().activeConversationId) dropPendingResearch();
       const parked = parkRunningTurn(get());
       if (!id) {
         set({
@@ -460,14 +474,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
 
-    cancelResearch: () => {
-      const pending = get().pendingResearch;
-      if (!pending) return;
-      set((s) => ({
-        pendingResearch: null,
-        inputPrefill: { text: pending.content, nonce: (s.inputPrefill?.nonce ?? 0) + 1 },
-      }));
-    },
+    cancelResearch: dropPendingResearch,
 
     stopResearch: async () => {
       const messageId = get().streamingMessageId;

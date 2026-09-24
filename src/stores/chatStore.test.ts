@@ -413,6 +413,36 @@ describe('chatStore research mode', () => {
     vi.mocked(api.estimateResearch).mockResolvedValue(estimate);
   });
 
+  const pending = (content: string) => ({
+    content,
+    opts: {},
+    status: 'ready' as const,
+    estimate: { ...estimate, emails: 0 },
+    error: null,
+  });
+
+  it('switching the chat account drops a pending research and gives its question back', async () => {
+    useChatStore.setState({ currentAccountId: 'acct-a', pendingResearch: pending('los correos con Ana') });
+    vi.mocked(api.listChatConversations).mockResolvedValue([]);
+
+    await useChatStore.getState().selectAccount('acct-b');
+
+    // The estimate was for acct-a: shown under acct-b it reads as that
+    // account's answer.
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('los correos con Ana');
+  });
+
+  it('opening another conversation drops a pending research too', async () => {
+    useChatStore.setState({ pendingResearch: pending('los correos con Ana') });
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+
+    await useChatStore.getState().selectConversation('conv-2');
+
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('los correos con Ana');
+  });
+
   it('sends a normal turn when research mode is off', async () => {
     await useChatStore.getState().sendMessage('q');
     expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(false);
