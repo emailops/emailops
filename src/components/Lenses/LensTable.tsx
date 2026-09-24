@@ -8,6 +8,7 @@ import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { LensColumn, LensColumnFilter, LensRow, LensSortSpec } from '@/types';
 import { LensColumnFilterMenu } from './LensColumnFilterMenu';
+import { DATE_SORT_KEY, nextSort } from './lensSort';
 import { planUrlCell } from './lensUrlCell';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -423,15 +424,13 @@ export function LensTable({
     },
     [t, enT],
   );
-  const toggleSort = (key: string) => {
-    if (!sort || sort.columnKey !== key) {
-      onSortChange({ columnKey: key, direction: 'desc' });
-    } else if (sort.direction === 'desc') {
-      onSortChange({ columnKey: key, direction: 'asc' });
-    } else {
-      onSortChange(null);
-    }
-  };
+  // Columns start descending; the date starts ascending because the default
+  // order is already newest-first.
+  const toggleSort = (key: string) => onSortChange(nextSort(sort, key, key === DATE_SORT_KEY ? 'asc' : 'desc'));
+  const sortArrow = (key: string) =>
+    sort?.columnKey === key && (
+      <span className="ml-1 text-[10px] text-gray-500">{sort.direction === 'asc' ? '▲' : '▼'}</span>
+    );
 
   // Build groups when `groupBy` is set — preserves the incoming row order
   // within each group. The "(none)" bucket catches rows with missing values.
@@ -462,12 +461,14 @@ export function LensTable({
         if (!pa && !pb) return 0;
         if (!pa) return 1;
         if (!pb) return -1;
-        if (pa.year !== pb.year) return pb.year - pa.year;
-        return pb.quarter - pa.quarter;
+        // Oldest quarter first only when the user sorted the dates that way.
+        const dir = sort?.columnKey === DATE_SORT_KEY && sort.direction === 'asc' ? -1 : 1;
+        if (pa.year !== pb.year) return dir * (pb.year - pa.year);
+        return dir * (pb.quarter - pa.quarter);
       });
     }
     return entries;
-  }, [groupBy, rows]);
+  }, [groupBy, rows, sort]);
 
   const colSpan = columns.length + 3;
 
@@ -475,7 +476,13 @@ export function LensTable({
     <table className="w-full text-left text-xs">
       <thead className="sticky top-0 bg-[#252526] text-gray-400">
         <tr>
-          <th className="border-b border-gray-700 px-3 py-2 font-medium whitespace-nowrap">{t('lenses:table.date')}</th>
+          <th
+            className="cursor-pointer select-none border-b border-gray-700 px-3 py-2 font-medium whitespace-nowrap hover:text-gray-200"
+            onClick={() => toggleSort(DATE_SORT_KEY)}
+          >
+            {t('lenses:table.date')}
+            {sortArrow(DATE_SORT_KEY)}
+          </th>
           <th className="border-b border-gray-700 px-3 py-2 font-medium">{t('lenses:table.email')}</th>
           {columns.map((c) => (
             <th
@@ -485,9 +492,7 @@ export function LensTable({
               onClick={() => toggleSort(c.key)}
             >
               {columnHeader(c)}
-              {sort?.columnKey === c.key && (
-                <span className="ml-1 text-[10px] text-gray-500">{sort.direction === 'asc' ? '▲' : '▼'}</span>
-              )}
+              {sortArrow(c.key)}
               <LensColumnFilterMenu
                 lensId={lensId}
                 column={c}
