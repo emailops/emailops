@@ -76,3 +76,44 @@ describe('research status in the bubble', () => {
     expect(stop?.textContent).toContain('research.stopping');
   });
 });
+
+describe('latest matches while a research reads', () => {
+  it('lists the latest matches so the user can judge the run early', () => {
+    const onOpenEmail = vi.fn();
+    useChatStore.setState({
+      researchStopping: false,
+      researchProgress: {
+        messageId: 'm1',
+        conversationId: 'c1',
+        stage: 'reading',
+        batch: 2,
+        batches: 10,
+        emailsRead: 20,
+        emailsTotal: 100,
+        matches: 12,
+        recent: [
+          {
+            emailId: 'e1',
+            date: '2025-03-12',
+            subject: 'Quote for the dashboard',
+            finding: 'Sent a quote of 4,000 EUR',
+          },
+          { emailId: 'e2', date: '2025-04-02', subject: 'Re: pricing', finding: 'Follow-up on the quote' },
+        ],
+      },
+    });
+    act(() =>
+      root.render(
+        <MessageBubble message={message} isStreaming phase="researching" accountId="acc1" onOpenEmail={onOpenEmail} />,
+      ),
+    );
+    const list = container.querySelector('[data-testid="research-recent"]');
+    expect(list?.textContent).toContain('research.matchesSoFar');
+    expect(list?.textContent).toContain('Quote for the dashboard');
+    expect(list?.textContent).toContain('Sent a quote of 4,000 EUR');
+    // Each match is the chat's email chip, which opens the email.
+    const chips = list?.querySelectorAll('button') ?? [];
+    expect(chips.length).toBe(2);
+    expect(chips[0].textContent).toContain('Quote for the dashboard');
+  });
+});

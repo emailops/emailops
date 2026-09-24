@@ -37,6 +37,7 @@ use plan::{
     merge_candidates, plan_batches, plan_condense_groups, plan_estimate, plan_gather, plan_research_budget,
     semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS, REDUCE_MAX_TOKENS,
 };
+pub(crate) use prompts::Match;
 use prompts::{
     assemble_notes, cancelled_note, collect_matches, coverage_line, join_notes, notes_len, parse_map_notes,
     plan_report_shape, relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt,
@@ -522,13 +523,22 @@ impl ResearchStage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Matches shown in the progress while a research reads — enough to see
+/// whether it is finding the right mail, few enough to scan.
+pub(crate) const RECENT_MATCHES: usize = 5;
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResearchProgress {
     pub stage: ResearchStage,
     pub batch: usize,
     pub batches: usize,
     pub emails_read: usize,
     pub emails_total: usize,
+    /// Matches found so far.
+    pub matches: usize,
+    /// The latest [`RECENT_MATCHES`] of them, newest last — so the user can
+    /// see early whether the run is on track and cancel it if not.
+    pub recent: Vec<Match>,
 }
 
 /// What a research run produced.
@@ -657,25 +667,29 @@ pub(crate) async fn run_research(
         },
         ..Default::default()
     };
-    let progress = |stage, batch, batches, emails_read, emails_total| {
+    let progress = |stage, batch, batches, emails_read, emails_total, found: &[Match]| {
         on_progress(ResearchProgress {
             stage,
             batch,
             batches,
             emails_read,
             emails_total,
+            matches: found.len(),
+            recent: found[found.len().saturating_sub(RECENT_MATCHES)..].to_vec(),
         })
     };
+    // Matches as the batches find them, for the progress.
+    let mut found: Vec<Match> = Vec::new();
 
     // ── Map ──
-    progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len());
+    progress(ResearchStage::Reading, 0, 0, 0, prepared.email_ids.len(), &found);
     let docs = load_docs(input.db, &prepared.email_ids, budget.chars_per_email);
     let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch);
     let t_map = std::time::Instant::now();
     let mut notes: Vec<BatchNotes> = Vec::with_capacity(batches.len());
     let mut read = 0;
-    progress(ResearchStage::Reading, 0, batches.len(), 0, docs.len());
+    progress(ResearchStage::Reading, 0, batches.len(), 0, docs.len(), &found);
     for (i, range) in batches.iter().enumerate() {
         if input.stop.load(Ordering::Relaxed) {
             run.trace.stopped = true;
@@ -702,6 +716,7 @@ pub(crate) async fn run_research(
         match result {
             Ok(reply) => {
                 let parsed = parse_map_notes(&reply.text, &batch_ids);
+                found.extend(collect_matches(batch, std::slice::from_ref(&parsed)));
                 super::emit_log(
                     "debug",
                     &format!(
@@ -723,7 +738,7 @@ pub(crate) async fn run_research(
         }
         read = range.end;
         run.trace.batches += 1;
-        progress(ResearchStage::Reading, i + 1, batches.len(), read, docs.len());
+        progress(ResearchStage::Reading, i + 1, batches.len(), read, docs.len(), &found);
     }
     run.trace.map_ms = t_map.elapsed().as_millis() as i64;
     run.analyzed = docs[..read].iter().map(|d| d.id.clone()).collect();
@@ -754,7 +769,7 @@ pub(crate) async fn run_research(
         }
         let mut merged = Vec::with_capacity(groups.len());
         for (j, group) in groups.iter().enumerate() {
-            progress(ResearchStage::Condensing, j, groups.len(), read, docs.len());
+            progress(ResearchStage::Condensing, j, groups.len(), read, docs.len(), &found);
             let block = join_notes(&notes[group.clone()]);
             let (prefix, suffix) = split_condense_prompt(input.condense_template, input.question, &block);
             let (result, trace) = complete(
@@ -797,6 +812,7 @@ pub(crate) async fn run_research(
         batches.len(),
         read,
         docs.len(),
+        &found,
     );
     let notes_block = assemble_notes(&notes, budget.notes_chars);
     let notes_block = if notes_block.trim().is_empty() {
@@ -1087,6 +1103,50 @@ mod tests {
         );
         assert!(reduce_prompt.contains("appended"), "{reduce_prompt}");
         assert_eq!(run.trace.relevant_emails, 25);
+    }
+
+    #[tokio::test]
+    async fn progress_shows_the_latest_matches_while_reading() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 29);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        let budget = plan_research_budget(16384);
+        // Every email of every batch matches: 30 in all, more than the 5 shown.
+        for batch in prepared.email_ids.chunks(budget.max_emails_per_batch) {
+            let reply: String = batch
+                .iter()
+                .map(|id| format!("- due Friday (email://{id})\n"))
+                .collect();
+            provider.push_completion(reply);
+        }
+        provider.push_completion("Informe.");
+        let stop = AtomicBool::new(false);
+        let events = std::sync::Mutex::new(Vec::new());
+        run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|p| {
+            events.lock().unwrap().push(p)
+        })
+        .await;
+
+        let events = events.into_inner().unwrap();
+        let after_first = events
+            .iter()
+            .find(|e| e.stage == ResearchStage::Reading && e.batch == 1)
+            .expect("progress after the first batch");
+        assert_eq!(after_first.matches, 10);
+        assert_eq!(after_first.recent.len(), RECENT_MATCHES);
+        assert_eq!(
+            after_first.recent.last().map(|m| m.id.as_str()),
+            Some("e09"),
+            "newest last"
+        );
+        assert_eq!(after_first.recent[0].finding, "due Friday");
+        let last = events
+            .iter()
+            .rfind(|e| e.stage == ResearchStage::Reading)
+            .expect("reading events");
+        assert_eq!(last.matches, 30);
     }
 
     #[tokio::test]

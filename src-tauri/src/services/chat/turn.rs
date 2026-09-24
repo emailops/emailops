@@ -4228,6 +4228,17 @@ pub async fn run_chat_turn(
                     batches: p.batches as u32,
                     emails_read: p.emails_read as u32,
                     emails_total: p.emails_total as u32,
+                    matches: p.matches as u32,
+                    recent: p
+                        .recent
+                        .iter()
+                        .map(|m| crate::models::ResearchMatchPreview {
+                            email_id: m.id.clone(),
+                            date: m.date.clone(),
+                            subject: m.subject.clone(),
+                            finding: m.finding.clone(),
+                        })
+                        .collect(),
                 },
             );
         };
@@ -4250,6 +4261,8 @@ pub async fn run_chat_turn(
                     batches: 0,
                     emails_read: 0,
                     emails_total: 0,
+                    matches: 0,
+                    recent: Vec::new(),
                 });
                 let today = now_local().format("%Y-%m-%d").to_string();
                 super::research::prepare(&super::research::PrepareInput {

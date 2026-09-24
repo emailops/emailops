@@ -267,6 +267,7 @@
       "keep": "Keep researching",
       "quit": "Quit anyway"
     },
-    "statusBar": "Chat: Research in progress… ({{step}})"
+    "statusBar": "Chat: Research in progress… ({{step}})",
+    "matchesSoFar": "{{n}} matches so far — the latest:"
   }
 }

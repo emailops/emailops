@@ -267,6 +267,7 @@
       "keep": "Weiter recherchieren",
       "quit": "Trotzdem beenden"
     },
-    "statusBar": "Chat: Recherche läuft… ({{step}})"
+    "statusBar": "Chat: Recherche läuft… ({{step}})",
+    "matchesSoFar": "{{n}} Treffer bisher – die neuesten:"
   }
 }

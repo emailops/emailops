@@ -1245,6 +1245,22 @@ pub struct ChatResearchProgressEvent {
     /// Emails read so far / in total.
     pub emails_read: u32,
     pub emails_total: u32,
+    /// Matches found so far.
+    pub matches: u32,
+    /// The latest few matches, newest last: enough for the user to see
+    /// whether the run is finding the right mail and cancel it if not.
+    pub recent: Vec<ResearchMatchPreview>,
+}
+
+/// One match as the research progress shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchMatchPreview {
+    pub email_id: String,
+    pub date: String,
+    pub subject: String,
+    /// The first finding the reading step kept for this email.
+    pub finding: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -5,6 +5,7 @@ import { formatDuration, remainingSeconds } from '@/lib/researchTime';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessage, ChatPhase } from '@/types';
+import { EmailRefPill } from './EmailRefPill';
 import { MarkdownContent } from './MarkdownContent';
 import { ReasoningSection, StatsFooter } from './ReasoningTrace';
 import { buildIdSearchQuery, collectReferencedEmailIds } from './referencedEmails';
@@ -38,7 +39,15 @@ interface MessageBubbleProps {
  *  generating). Shown in place of the bare typing dots once the backend tells
  *  us what it's doing, so a slow prompt-processing pass reads as progress
  *  rather than a hang. */
-function ProcessingStatus({ phase }: { phase: ChatPhase }) {
+function ProcessingStatus({
+  phase,
+  accountId,
+  onOpenEmail,
+}: {
+  phase: ChatPhase;
+  accountId: string;
+  onOpenEmail?: () => void;
+}) {
   const { t } = useTranslation(['chat']);
   const research = useChatStore((s) => s.researchProgress);
   const startedAt = useChatStore((s) => s.researchStartedAt);
@@ -65,7 +74,8 @@ function ProcessingStatus({ phase }: { phase: ChatPhase }) {
     const left = remainingSeconds(research, startedAt, now);
     if (left != null) label += t('chat:processing.research.remaining', { time: formatDuration(left) });
   }
-  return (
+  const recent = phase === 'researching' ? (research?.recent ?? []) : [];
+  const status = (
     <span className="inline-flex items-center gap-2 text-gray-500 flex-wrap">
       <svg className="w-3.5 h-3.5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -84,6 +94,28 @@ function ProcessingStatus({ phase }: { phase: ChatPhase }) {
         </button>
       )}
     </span>
+  );
+  if (recent.length === 0) return status;
+  // The latest matches, newest last: a user who sees the run finding the
+  // wrong mail can cancel it early instead of waiting for the report.
+  return (
+    <div className="space-y-1.5">
+      {status}
+      <div data-testid="research-recent" className="text-xs text-gray-600">
+        <div className="mb-0.5 text-gray-500">
+          {t('chat:research.matchesSoFar', { n: (research?.matches ?? recent.length).toLocaleString() })}
+        </div>
+        <ul className="space-y-0.5">
+          {recent.map((m) => (
+            <li key={m.emailId} className="flex min-w-0 items-baseline gap-1.5">
+              <span className="shrink-0 tabular-nums text-gray-400">{m.date}</span>
+              <EmailRefPill emailId={m.emailId} accountId={accountId} label={m.subject} onOpenEmail={onOpenEmail} />
+              {m.finding && <span className="truncate">— {m.finding}</span>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
@@ -324,7 +356,7 @@ export function MessageBubble({
           <>
             {showTypingDots &&
               (phase ? (
-                <ProcessingStatus phase={phase} />
+                <ProcessingStatus phase={phase} accountId={accountId} onOpenEmail={onOpenEmail} />
               ) : (
                 <span className="inline-flex items-center gap-1 text-gray-500">
                   <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />

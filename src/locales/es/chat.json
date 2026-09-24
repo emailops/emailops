@@ -267,6 +267,7 @@
       "keep": "Seguir investigando",
       "quit": "Salir igualmente"
     },
-    "statusBar": "Chat: investigación en curso… ({{step}})"
+    "statusBar": "Chat: investigación en curso… ({{step}})",
+    "matchesSoFar": "{{n}} coincidencias hasta ahora — las últimas:"
   }
 }

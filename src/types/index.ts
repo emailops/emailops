@@ -573,6 +573,18 @@ export interface ChatResearchProgressEvent {
   batches: number;
   emailsRead: number;
   emailsTotal: number;
+  /** Matches found so far. */
+  matches?: number;
+  /** The latest few matches, newest last. */
+  recent?: ResearchMatchPreview[];
+}
+
+/** One match as the research progress shows it. Mirrors `ResearchMatchPreview`. */
+export interface ResearchMatchPreview {
+  emailId: string;
+  date: string;
+  subject: string;
+  finding: string;
 }
 
 /** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */
