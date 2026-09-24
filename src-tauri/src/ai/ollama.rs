@@ -74,6 +74,14 @@ struct OllamaResponse {
     /// The `response` field may be empty when the model only produces a think block.
     #[serde(default)]
     thinking: String,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
+}
+
+/// Whether Ollama stopped because the reply reached `num_predict`.
+fn stopped_at_limit(done_reason: Option<&str>) -> bool {
+    done_reason == Some("length")
 }
 
 #[derive(Debug, Serialize)]
@@ -175,6 +183,9 @@ pub struct OllamaToolCallFunction {
 #[derive(Debug, Deserialize)]
 struct OllamaChatResponse {
     message: OllamaChatMessage,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -427,10 +438,15 @@ impl OllamaClient {
     }
 
     pub async fn generate(&self, prompt: &str) -> Result<String> {
-        self.generate_with_options(prompt, None).await
+        Ok(self.generate_with_options(prompt, None).await?.0)
     }
 
-    async fn generate_with_options(&self, prompt: &str, sampling: Option<OllamaSamplingOptions>) -> Result<String> {
+    /// The reply, and whether it stopped at `num_predict`.
+    async fn generate_with_options(
+        &self,
+        prompt: &str,
+        sampling: Option<OllamaSamplingOptions>,
+    ) -> Result<(String, bool)> {
         let url = format!("{}/api/generate", self.base_url);
 
         let request = OllamaRequest {
@@ -472,16 +488,19 @@ impl OllamaClient {
         // Thinking models (gemma4, deepseek-r1, qwq) put their scratchpad in
         // `thinking` and leave `response` empty. Fall back to thinking content
         // so callers can still extract JSON from the model's reasoning.
+        let truncated = stopped_at_limit(result.done_reason.as_deref());
         if result.response.is_empty() && !result.thinking.is_empty() {
-            Ok(result.thinking)
+            Ok((result.thinking, truncated))
         } else {
-            Ok(result.response)
+            Ok((result.response, truncated))
         }
     }
 
     pub async fn chat(&self, prompt: &str, think: Option<bool>) -> Result<String> {
-        self.chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded())
-            .await
+        Ok(self
+            .chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded())
+            .await?
+            .0)
     }
 
     async fn chat_with_sampling(
@@ -489,7 +508,7 @@ impl OllamaClient {
         prompt: &str,
         think: Option<bool>,
         sampling: OllamaSamplingOptions,
-    ) -> Result<String> {
+    ) -> Result<(String, bool)> {
         let url = format!("{}/api/chat", self.base_url);
 
         let request = OllamaChatRequest {
@@ -535,11 +554,12 @@ impl OllamaClient {
             .await
             .map_err(|e| AppError::AiError(format!("Failed to parse Ollama chat response: {}", e)))?;
 
+        let truncated = stopped_at_limit(result.done_reason.as_deref());
         let content = result.message.content;
         if content.is_empty() && !result.message.thinking.is_empty() {
-            Ok(result.message.thinking)
+            Ok((result.message.thinking, truncated))
         } else {
-            Ok(content)
+            Ok((content, truncated))
         }
     }
 
@@ -990,7 +1010,7 @@ impl AIProvider for OllamaClient {
     }
 
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
-        let text = if options.think.is_some() {
+        let (text, truncated) = if options.think.is_some() {
             // Some(true) = enable thinking, Some(false) = disable thinking.
             // Both route through /api/chat which is the only endpoint that
             // supports the `think` parameter for thinking models.
@@ -1026,6 +1046,7 @@ impl AIProvider for OllamaClient {
             prefill_ms: None,
             cached_prompt_tokens: None,
             aux_plan: None,
+            truncated,
         })
     }
 
@@ -1710,5 +1731,32 @@ mod pattern_parser_tests {
     fn a_word_containing_id_is_not_an_id_operator() {
         let parsed = parse_search_query_patterns("paid:invoice").unwrap_or_default();
         assert!(parsed.id_filters.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stop_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_generate_reply_that_hit_num_predict_is_truncated() {
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x","done":true,"done_reason":"length"}"#).unwrap();
+        assert!(stopped_at_limit(r.done_reason.as_deref()));
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x","done":true,"done_reason":"stop"}"#).unwrap();
+        assert!(!stopped_at_limit(r.done_reason.as_deref()));
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x"}"#).unwrap();
+        assert!(
+            !stopped_at_limit(r.done_reason.as_deref()),
+            "older servers send no reason"
+        );
+    }
+
+    #[test]
+    fn a_chat_reply_that_hit_num_predict_is_truncated() {
+        let r: OllamaChatResponse = serde_json::from_str(
+            r#"{"message":{"role":"assistant","content":"x"},"done":true,"done_reason":"length"}"#,
+        )
+        .unwrap();
+        assert!(stopped_at_limit(r.done_reason.as_deref()));
     }
 }

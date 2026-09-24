@@ -114,6 +114,7 @@ impl AIProvider for LlamaCppBackend {
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
             aux_plan: outcome.aux_plan,
+            truncated: outcome.truncated,
         })
     }
 
@@ -133,6 +134,7 @@ impl AIProvider for LlamaCppBackend {
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
             aux_plan: outcome.aux_plan,
+            truncated: outcome.truncated,
         })
     }
 

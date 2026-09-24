@@ -43,6 +43,14 @@ struct OpenRouterChatResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessageContent,
+    /// `"length"` when the reply stopped at `max_tokens`.
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+/// Whether the reply stopped at `max_tokens`.
+fn first_choice_truncated(response: &OpenRouterChatResponse) -> bool {
+    response.choices.first().and_then(|c| c.finish_reason.as_deref()) == Some("length")
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,6 +307,7 @@ impl AIProvider for OpenRouterClient {
         let completion_tokens = result.usage.as_ref().and_then(|u| u.completion_tokens).unwrap_or(0);
 
         let cost_usd = cost_from_headers;
+        let truncated = first_choice_truncated(&result);
 
         Ok(CompletionResult {
             text,
@@ -309,6 +318,7 @@ impl AIProvider for OpenRouterClient {
             prefill_ms: None,
             cached_prompt_tokens: None,
             aux_plan: None,
+            truncated,
         })
     }
 
@@ -468,4 +478,22 @@ fn extract_cost_from_response(response: &reqwest::Response) -> f64 {
         }
     }
     0.0
+}
+
+#[cfg(test)]
+mod stop_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_choice_that_hit_max_tokens_is_truncated() {
+        let r: OpenRouterChatResponse =
+            serde_json::from_str(r#"{"choices":[{"message":{"content":"x"},"finish_reason":"length"}],"usage":null}"#)
+                .unwrap();
+        assert!(first_choice_truncated(&r));
+        let r: OpenRouterChatResponse =
+            serde_json::from_str(r#"{"choices":[{"message":{"content":"x"},"finish_reason":"stop"}]}"#).unwrap();
+        assert!(!first_choice_truncated(&r));
+        let r: OpenRouterChatResponse = serde_json::from_str(r#"{"choices":[{"message":{"content":"x"}}]}"#).unwrap();
+        assert!(!first_choice_truncated(&r));
+    }
 }

@@ -105,6 +105,8 @@ pub(crate) struct GenOutcome {
     pub prompt_tokens: u32,
     /// Tokens sampled during generation.
     pub gen_tokens: u32,
+    /// Generation stopped at its token budget, mid-reply.
+    pub truncated: bool,
     /// Wall-clock ms from tokenisation start until the prompt decode finished,
     /// i.e. the latency before the first token can be sampled.
     pub prefill_ms: i64,
@@ -466,6 +468,7 @@ fn generate_with_cache(
             text: String::new(),
             prompt_tokens: 0,
             gen_tokens: 0,
+            truncated: false,
             prefill_ms: 0,
             cached_prompt_tokens: 0,
             prefix_plan: None,
@@ -835,12 +838,15 @@ fn generate_with_cache(
 
     let mut output = String::new();
     let mut n_gen = 0u32;
+    // Set when the model ends the reply itself or the caller stops it.
+    let mut ended = false;
 
     for i in 0..max_gen {
         let token = sampler.sample(ctx, -1);
         sampler.accept(token);
 
         if model.is_eog_token(token) {
+            ended = true;
             break;
         }
 
@@ -854,6 +860,7 @@ fn generate_with_cache(
 
         if let Some(ref mut cb) = on_token {
             if !cb(piece) {
+                ended = true;
                 break; // caller requested early stop
             }
         }
@@ -871,6 +878,7 @@ fn generate_with_cache(
         text: output,
         prompt_tokens: n_prompt as u32,
         gen_tokens: n_gen,
+        truncated: super::planner::ran_out_of_budget(ended, n_gen, max_gen as u32),
         prefill_ms,
         cached_prompt_tokens: lcp as u32,
         prefix_plan: plan_name,

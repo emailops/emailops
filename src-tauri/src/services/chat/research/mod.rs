@@ -984,9 +984,8 @@ pub(crate) async fn run_research(
                 .collect();
             let prose = canonicalize_links(&relink_bare_refs(reply.text.trim(), &subjects), &representative);
             run.answer = Some(if full_list.is_empty() {
-                // Hitting the output budget means the report stopped short.
-                let cut = reply.completion_tokens >= report_tokens;
-                finish_report(&prose, cut, &matches, input.language_code)
+                // The provider says the report stopped at its output limit.
+                finish_report(&prose, reply.truncated, &matches, input.language_code)
             } else {
                 format!("{prose}\n\n{full_list}")
             });
@@ -1191,6 +1190,30 @@ mod tests {
             db.get_preference(MS_PER_EMAIL_PREF).unwrap().is_some(),
             "speed recorded"
         );
+    }
+
+    #[tokio::test]
+    async fn a_report_the_provider_cut_off_ends_with_every_match() {
+        // The provider says the report stopped at its output limit: whatever
+        // it had not reached is lost, so the list carries every match.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 29);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        for _ in 0..3 {
+            provider.push_completion("- Invoice 5 for 100 EUR is due Friday (email://e05)");
+        }
+        provider.push_truncated_completion("Tienes una factura pendiente.\n- Invoice 5 vence el vier");
+        let stop = AtomicBool::new(false);
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
+
+        let answer = run.answer.expect("an answer");
+        assert!(
+            answer.starts_with("Tienes una factura pendiente.\n\n### Lista completa (1)"),
+            "{answer}"
+        );
+        assert!(!answer.contains("vence el vier"), "the broken line goes: {answer}");
     }
 
     #[tokio::test]

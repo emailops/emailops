@@ -159,6 +159,11 @@ pub struct CompletionResult {
     /// one. A run that reports mostly `Reseed` is paying for the slot without
     /// getting anything back.
     pub aux_plan: Option<&'static str>,
+    /// The model stopped because it reached `max_tokens`, not because it had
+    /// finished: the text ends mid-way. From the provider's own stop reason
+    /// (llama.cpp's generation loop, Ollama's `done_reason`, OpenRouter's
+    /// `finish_reason`); `false` when a provider does not say.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -377,6 +382,7 @@ impl FakeAiProvider {
                 prefill_ms: None,
                 cached_prompt_tokens: None,
                 aux_plan: None,
+                truncated: false,
             }),
             chats: RwLock::new(std::collections::VecDeque::new()),
             completion_calls: RwLock::new(Vec::new()),
@@ -422,6 +428,21 @@ impl FakeAiProvider {
                 prefill_ms: None,
                 cached_prompt_tokens: None,
                 aux_plan: None,
+                truncated: false,
+            });
+    }
+
+    /// Queue a canned completion that stopped at its output limit
+    /// (`truncated`), as a provider reports a reply cut off mid-way.
+    pub fn push_truncated_completion(&self, text: impl Into<String>) {
+        self.completions
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(CompletionResult {
+                text: text.into(),
+                model: self.model.clone(),
+                truncated: true,
+                ..Default::default()
             });
     }
 
