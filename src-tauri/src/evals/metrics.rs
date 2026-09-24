@@ -131,6 +131,10 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if let Some(min) = case.expected_min_research_matches {
+        checks.push(check_min_research_matches(min, &outcome.sources_used));
+    }
+
     if !case.expected_cited_subjects.is_empty() {
         checks.push(check_cited_subjects(
             &case.expected_cited_subjects,
@@ -293,6 +297,22 @@ fn check_research_matches(
             "research matched the right conversations".into()
         } else {
             "research matched the wrong set of conversations".into()
+        },
+    }
+}
+
+/// A research run matched at least `min` conversations (its sources).
+fn check_min_research_matches(min: u32, sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
+    let passed = sources.len() >= min as usize;
+    HeuristicCheck {
+        name: "research_recall".into(),
+        passed,
+        expected: format!(">= {min} conversations matched"),
+        actual: format!("{} conversations matched", sources.len()),
+        detail: if passed {
+            "research found every expected conversation".into()
+        } else {
+            "research dropped conversations that answer the question".into()
         },
     }
 }
@@ -904,6 +924,20 @@ mod tests {
     fn research_matches_fail_when_an_expected_conversation_is_missing() {
         let sources = vec![source(1, "a", "Something else")];
         assert!(!check_research_matches(&["privacyhub".into()], &[], &sources).passed);
+    }
+
+    #[test]
+    fn research_recall_passes_when_every_expected_conversation_matched() {
+        let sources: Vec<SourceSummary> = (0..13).map(|i| source(i, "x", "Weekly stats")).collect();
+        assert!(check_min_research_matches(13, &sources).passed);
+    }
+
+    #[test]
+    fn research_recall_fails_when_matches_went_missing() {
+        let sources: Vec<SourceSummary> = (0..9).map(|i| source(i, "x", "Weekly stats")).collect();
+        let check = check_min_research_matches(13, &sources);
+        assert!(!check.passed);
+        assert!(check.actual.contains("9 conversations"), "{}", check.actual);
     }
 
     fn source(n: i32, email_id: &str, subject: &str) -> SourceSummary {

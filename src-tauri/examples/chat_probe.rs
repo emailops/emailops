@@ -153,27 +153,7 @@ async fn run_one(args: Args, prod_db: PathBuf, db_mode: EvalDbMode) -> Result<()
         question: args.question.clone(),
         category: "probe".into(),
         tier: "smoke".into(),
-        model: None,
-        account: None,
-        thread_id: None,
-        thread_subject: None,
-        ambient_thread_id: None,
-        ambient_thread_subject: None,
-        ambient_account: None,
-        expected_route: None,
-        expected_tools_called: vec![],
-        expected_tools_not_called: vec![],
-        expected_answer_contains: vec![],
-        expected_answer_contains_any: vec![],
-        expected_answer_not_contains: vec![],
-        expected_tool_args_contains: vec![],
-        expected_tool_args_not_contains: vec![],
-        expected_help_pages_any: vec![],
-        expected_no_email_sources: false,
-        expected_title_pattern: None,
-        expected_output: None,
-        metrics: vec![],
-        as_of: None,
+        ..Default::default()
     };
 
     let outcome = run_case(db.clone(), &account_id, &model, &case).await?;

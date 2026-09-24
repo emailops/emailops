@@ -24,6 +24,8 @@
   tier: full
   research: true
   expected_min_research_emails: 13
+  # Recall: every digest is one conversation, and every one answers.
+  expected_min_research_matches: 13
   expected_answer_contains_any: ["download"]
   expected_answer_contains: ["](email://"]
   metrics: []
@@ -51,6 +53,14 @@
   tier: full
   research: true
   expected_min_research_emails: 3
+  # Recall: all six 2025 prospect requests in the demo mailbox.
+  expected_research_matches:
+    - "real-time logistics dashboard"
+    - "Rust contractor"
+    - "marketing site rebuild"
+    - "on-device AI feature"
+    - "migrate analytics to self-hosted"
+    - "availability for a contract"
   expected_answer_contains: ["### Full list (", "](email://"]
   metrics: []
 

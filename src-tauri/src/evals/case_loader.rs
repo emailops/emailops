@@ -71,7 +71,7 @@ impl MetricKind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct EvalCase {
     pub id: String,
     pub question: String,
@@ -207,6 +207,12 @@ pub struct EvalCase {
     pub expected_research_matches: Vec<String>,
     #[serde(default)]
     pub forbidden_research_matches: Vec<String>,
+
+    /// Research recall: the run must match at least this many conversations.
+    /// Precision checks alone reward a run that drops real answers — a match
+    /// wrongly read as background disappears from the list without a trace.
+    #[serde(default)]
+    pub expected_min_research_matches: Option<u32>,
 
     /// Case-insensitive subject substrings: every bare `[n]` citation in the
     /// answer must resolve to a numbered source whose subject contains one of
