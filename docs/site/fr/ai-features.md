@@ -139,6 +139,24 @@ passé, dans l'ordre : la route suivie par la question et ce qui l'a décidée, 
 de requêtes, la recherche dans la boîte, les sections des guides utilisées, chaque appel au
 modèle avec sa durée et chaque appel d'outil avec ses arguments et son résultat.
 
+<!-- claim:ai-chat-mailbox-12 -->
+Le mode **Recherche** sert aux questions qui demandent tous les e-mails correspondants, et non
+les quelques-uns qu'une réponse normale lit : *« liste toutes les factures de cette année »*,
+*« combien de clients ont demandé un devis ? »*. Il estime d'abord combien d'e-mails il lirait
+et combien de temps cela prendrait, et demande confirmation avant une exécution importante. Il
+les lit ensuite par lots, et les listes et les décomptes sont exacts, avec un lien vers chaque
+conversation. **Annuler la recherche** interrompt l'exécution.
+
+<!-- claim:ai-chat-mailbox-13 -->
+Demandez quelque chose pour lequel l'application a un formulaire — *« crée une Lens qui suit
+les factures fournisseurs avec montant et date »* — et le vrai formulaire s'ouvre avec les
+champs remplis, pour que vous le relisiez et l'enregistriez. Le chat ne crée jamais rien de
+lui-même.
+
+<!-- claim:ai-chat-mailbox-14 -->
+**Arrêter la génération** interrompt une réponse en cours d'écriture ; ce qui était déjà
+affiché est conservé.
+
 <!-- claim:ai-chat-mailbox-4 -->
 Sous le capot, le chat combine la récupération (recherche sémantique sur vos e-mails indexés)
 et des appels d'outils (interrogations directes de la base). Le mode de routage est
@@ -165,6 +183,11 @@ Les utilisateurs avancés peuvent modifier le prompt système et les prompts de 
 Un bouton **Brouillon IA** à côté de Répondre à tous rédige une réponse ancrée dans le fil que
 vous consultez. Configurez une **persona** (une phrase sur l'identité de rédaction) et un
 **style d'écriture** — ou remplacez tout le modèle de prompt. Les brouillons arrivent dans l'éditeur pour relecture avant tout envoi.
+
+<!-- claim:ai-ai-drafts-2 -->
+Un brouillon lit le fil jusqu'au message auquel vous répondez, jamais les réponses
+postérieures. Vous pouvez dire à l'IA quoi répondre avant qu'elle écrive, et **Régénérer**
+le réécrit.
 
 ## Classification {#classification}
 
@@ -268,6 +291,10 @@ les lignes exclues** les réaffiche pour que vous puissiez en réintégrer une.
 <!-- claim:ai-lenses-2 -->
 Activez-les dans **Paramètres → Filtres dynamiques IA**, puis créez et exécutez chaque vue
 depuis l'entrée **Filtres dynamiques** de la barre latérale.
+
+<!-- claim:ai-lenses-3 -->
+Une Lens peut être limitée à certains **Dossiers** d'un compte, dossiers IMAP personnalisés
+compris.
 
 ## Tout désactiver {#turning-it-all-off}
 

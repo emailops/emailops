@@ -132,6 +132,21 @@ the question took and what decided it, the query planner, the mailbox search, th
 sections used, each model call with its timing, and each tool call with its arguments and
 result.
 
+<!-- claim:ai-chat-mailbox-12 -->
+**Research** mode is for questions that need every matching email rather than the few a
+normal answer reads — *"list every invoice from this year"*, *"how many clients asked for a
+quote?"*. It first estimates how many emails it would read and how long that takes, and asks
+before a large run. It then reads them in batches, and lists and counts come out exact, with
+a link to each matching conversation. **Cancel research** stops a run.
+
+<!-- claim:ai-chat-mailbox-13 -->
+Ask for something the app has a form for — *"create a Lens that tracks supplier invoices with
+amount and date"* — and the real form opens with the fields filled in, for you to review and
+save. Chat never creates anything by itself.
+
+<!-- claim:ai-chat-mailbox-14 -->
+**Stop generating** ends an answer while it is being written; what was already shown is kept.
+
 <!-- claim:ai-chat-mailbox-4 -->
 Under the hood, chat combines retrieval (semantic search over your embedded mail) with
 tool calls (direct lookups against the database). The routing mode is configurable:
@@ -155,6 +170,10 @@ An **AI Draft** button next to Reply All writes a reply grounded in the thread y
 looking at. Configure a **persona** (one sentence on who the AI writes as) and a **writing
 style** — or replace the whole prompt template. Drafts land in
 the composer for you to review before anything is sent.
+
+<!-- claim:ai-ai-drafts-2 -->
+A draft reads the thread up to the message you are answering, never the replies that came
+after it. You can tell the AI what to say before it writes, and **Regenerate** writes it again.
 
 ## Classification {#classification}
 
@@ -251,6 +270,9 @@ sight so you can include one again.
 <!-- claim:ai-lenses-2 -->
 Turn them on in **Settings → AI Lenses**, then create and run individual lenses from the
 **Lenses** entry in the sidebar.
+
+<!-- claim:ai-lenses-3 -->
+A Lens can be limited to chosen **Folders** of an account, custom IMAP folders included.
 
 ## Turning it all off {#turning-it-all-off}
 

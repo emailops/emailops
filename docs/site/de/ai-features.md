@@ -134,6 +134,23 @@ passiert ist: welche Route die Frage genommen hat und was das entschieden hat, d
 Abfrageplaner, die Postfachsuche, die verwendeten Anleitungsabschnitte, jeden Modellaufruf mit
 seiner Dauer und jeden Tool-Aufruf mit Argumenten und Ergebnis.
 
+<!-- claim:ai-chat-mailbox-12 -->
+Der Modus **Recherche** ist für Fragen, die alle passenden E-Mails brauchen statt der wenigen,
+die eine normale Antwort liest — *„liste alle Rechnungen aus diesem Jahr“*, *„wie viele Kunden
+haben ein Angebot angefragt?“*. Er schätzt zuerst, wie viele E-Mails er lesen würde und wie
+lange das dauert, und fragt vor einem großen Durchlauf nach. Dann liest er sie in Stapeln, und
+Listen und Zählungen sind exakt, mit einem Link zu jeder passenden Unterhaltung. **Recherche
+abbrechen** stoppt einen Durchlauf.
+
+<!-- claim:ai-chat-mailbox-13 -->
+Bitten Sie um etwas, für das die App ein Formular hat — *„lege eine Lens an, die
+Lieferantenrechnungen mit Betrag und Datum verfolgt“* — und das echte Formular öffnet sich mit
+ausgefüllten Feldern, damit Sie es prüfen und speichern. Der Chat legt nie selbst etwas an.
+
+<!-- claim:ai-chat-mailbox-14 -->
+**Generierung stoppen** beendet eine Antwort, während sie geschrieben wird; was schon angezeigt
+wurde, bleibt erhalten.
+
 <!-- claim:ai-chat-mailbox-4 -->
 Unter der Haube kombiniert der Chat Retrieval (semantische Suche über Ihre indexierten
 E-Mails) mit Tool-Aufrufen (direkte Abfragen der Datenbank). Der Routing-Modus ist
@@ -157,6 +174,11 @@ Reranking) unter **Einstellungen → KI: Backend & Modelle → Chat-Prompts** be
 Ein Button **KI-Entwurf** neben „Allen antworten“ schreibt eine Antwort, die im gerade
 geöffneten Thread verankert ist. Konfigurieren Sie eine **Persona** (ein Satz dazu, als wer
 die KI schreibt) und einen **Schreibstil** — oder ersetzen Sie die gesamte Prompt-Vorlage. Entwürfe landen im Editor, damit Sie sie vor dem Senden prüfen.
+
+<!-- claim:ai-ai-drafts-2 -->
+Ein Entwurf liest den Thread bis zu der Nachricht, auf die Sie antworten, nie die späteren
+Antworten. Sie können der KI vorher sagen, was sie antworten soll, und **Neu generieren**
+schreibt ihn erneut.
 
 ## Klassifizierung {#classification}
 
@@ -259,6 +281,10 @@ Zeilen anzeigen** holt sie zurück, sodass Sie eine wieder aufnehmen können.
 <!-- claim:ai-lenses-2 -->
 Aktivieren Sie sie unter **Einstellungen → KI-Linsen** und legen Sie einzelne Linsen dann über
 den Eintrag **Linsen** in der Seitenleiste an und führen Sie sie aus.
+
+<!-- claim:ai-lenses-3 -->
+Eine Lens lässt sich auf ausgewählte **Ordner** eines Kontos beschränken, eigene IMAP-Ordner
+eingeschlossen.
 
 ## Alles abschalten {#turning-it-all-off}
 

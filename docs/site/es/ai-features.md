@@ -133,6 +133,22 @@ orden: qué ruta ha seguido la pregunta y qué lo ha decidido, el planificador d
 búsqueda en el buzón, las secciones de las guías usadas, cada llamada al modelo con sus
 tiempos y cada llamada a herramientas con sus argumentos y su resultado.
 
+<!-- claim:ai-chat-mailbox-12 -->
+El modo **Research** sirve para preguntas que necesitan todos los correos que encajan, no
+solo los pocos que lee una respuesta normal: *"lista todas las facturas de este año"*,
+*"¿cuántos clientes pidieron presupuesto?"*. Primero estima cuántos correos leería y cuánto
+tardaría, y pregunta antes de una ejecución grande. Después los lee por lotes, y las listas y
+los recuentos salen exactos, con un enlace a cada conversación. **Cancelar investigación**
+detiene la ejecución.
+
+<!-- claim:ai-chat-mailbox-13 -->
+Pide algo para lo que la app tiene un formulario —*"crea una Lens que siga las facturas de
+proveedores con importe y fecha"*— y se abre el formulario real con los campos rellenos, para
+que lo revises y lo guardes. El chat nunca crea nada por su cuenta.
+
+<!-- claim:ai-chat-mailbox-14 -->
+**Detener generación** corta una respuesta mientras se escribe; lo que ya se mostró se conserva.
+
 <!-- claim:ai-chat-mailbox-4 -->
 Por dentro, el chat combina recuperación (búsqueda semántica sobre tu correo indexado) con
 llamadas a herramientas (consultas directas a la base de datos). El modo de enrutado es
@@ -159,6 +175,10 @@ Un botón **Borrador con IA** junto a Responder a todos redacta una respuesta ba
 que estás viendo. Configura una **persona** (una frase sobre quién escribe) y un **estilo de
 escritura** — o sustituye toda la plantilla del prompt.
 Los borradores aterrizan en el editor para que los revises antes de enviar nada.
+
+<!-- claim:ai-ai-drafts-2 -->
+Un borrador lee el hilo hasta el mensaje al que respondes, nunca las respuestas posteriores.
+Antes de que escriba puedes decirle a la IA qué responder, y **Regenerar** lo vuelve a escribir.
 
 ## Clasificación {#classification}
 
@@ -261,6 +281,10 @@ excluidas** las vuelve a mostrar para que puedas incluir alguna de nuevo.
 <!-- claim:ai-lenses-2 -->
 Actívalas en **Ajustes → Lentes de IA** y después crea y ejecuta cada lente desde la entrada
 **Lentes** de la barra lateral.
+
+<!-- claim:ai-lenses-3 -->
+Una Lens se puede limitar a unas **Carpetas** concretas de una cuenta, incluidas las carpetas
+IMAP personalizadas.
 
 ## Apagarlo todo {#turning-it-all-off}
 

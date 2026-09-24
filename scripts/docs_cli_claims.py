@@ -296,15 +296,16 @@ def exit_codes():
     want_nf = int(re.search(r"`(\d+)` not found", text).group(1))
     want_inv = int(re.search(r"`(\d+)` invalid input", text).group(1))
     rc_nf, _, _ = run("show", "no-such-email-id", "--json")
-    rc_inv, _, _ = run("emails", "--limit", "1", "--json")  # several accounts, no default → invalid input
+    rc_inv, _, _ = run("compose", "--to", "a@example.com", "--subject", "x",
+                       "--body-file", str(work / "no-such-body.txt"), "--json")  # unreadable file → invalid input
     return (rc_nf == want_nf and rc_inv == want_inv, f"no encontrado → {rc_nf}, entrada inválida → {rc_inv}, como dice la doc"
             if rc_nf == want_nf and rc_inv == want_inv else f"no encontrado → {rc_nf} (doc {want_nf}), entrada inválida → {rc_inv} (doc {want_inv})")
 
 
 claim("cli-scripting-json-3", "códigos de salida", exit_codes, covers=["Exit codes are grouped by what you would do about them"],
       partial="se provocan «not found» e «invalid input»; auth, red, IA y cancelación no",
-      how="Lee de la doc el código de «not found» y el de «invalid input», provoca cada error (un id que no existe; una "
-          "orden ambigua con varias cuentas) y compara el código de salida.")
+      how="Lee de la doc el código de «not found» y el de «invalid input», provoca cada error (un id que no existe; un "
+          "--body-file que no existe) y compara el código de salida.")
 
 
 def default_account():

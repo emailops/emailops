@@ -748,9 +748,34 @@ checks = [
   { app = true },
 ]
 
+[ai-chat-mailbox-12]
+checks = [
+  { tests = ['services::chat::research::plan::tests::estimate_uses_the_measured_speed_when_there_is_one', 'services::chat::research::control::tests::an_estimate_is_taken_once_for_the_same_question'], covers = ["It first estimates how many emails it would read and how long that takes"] },
+  { tests = ['services::chat::research::plan::tests::batches_respect_the_count_cap', 'services::chat::research::mode::tests::a_list_answer_states_exact_counts_then_every_match_then_what_was_read', 'services::chat::research::mode::tests::a_count_answer_leads_with_the_number'], covers = ["It then reads them in batches, and lists and counts come out exact"] },
+  { tests = ['services::chat::research::control::tests::stop_reaches_a_live_run_only'], covers = ["Cancel research stops a run."] },
+  { manual = 'A research run needs the local model; the confirmation before a large run and the links are not driven by the docs check.' },
+]
+
+[ai-chat-mailbox-13]
+checks = [
+  { tests = ['services::forms::filler::executor_tests::a_usable_reply_becomes_a_fill', 'services::forms::filler::tests::maps_a_clean_reply_onto_the_declared_fields'] },
+  { manual = 'Filling a form needs the local model; the dialog opening pre-filled is not driven by the docs check.' },
+]
+
+[ai-chat-mailbox-14]
+checks = [
+  { tests = ['services::chat::cancel::tests::a_cancelled_answer_keeps_what_was_shown_then_says_so', 'services::chat::cancel::tests::cancel_reaches_a_running_turn_only'], covers = ["Stop generating ends an answer while it is being written; what was already shown is kept."] },
+]
+
 [ai-ai-drafts-1]
 checks = [
   { app = true },
+]
+
+[ai-ai-drafts-2]
+checks = [
+  { tests = ['services::emails::drafts::tests::thread_up_to_drops_messages_after_the_target', 'services::emails::drafts::tests::thread_up_to_keeps_everything_up_to_and_including_the_target'], covers = ["A draft reads the thread up to the message you are answering, never the replies that came after it."] },
+  { manual = 'Writing a draft needs the local model; the instruction box and Regenerate are not driven by the docs check.' },
 ]
 
 [ai-classification-1]
@@ -842,6 +867,11 @@ checks = [
 checks = [
   { file = 'src/locales/en/settings.json', has = 'AI Lenses', covers = ['Turn them on in Settings → AI Lenses'] },
   { manual = 'The Lenses sidebar entry is exercised by the ai-lenses-1 demo case, which turns the feature on and looks for it; no case names this sentence.' },
+]
+
+[ai-lenses-3]
+checks = [
+  { manual = 'The demo mailbox has no custom IMAP folders to pick, so the folder scope is not driven by the docs check.' },
 ]
 
 [ai-turning-off-1]
