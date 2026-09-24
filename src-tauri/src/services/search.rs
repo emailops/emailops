@@ -1256,6 +1256,7 @@ Return JSON only, no markdown."#,
                 temperature: Some(0.0),
                 max_tokens: Some(300),
                 think: None,
+                json_shape: None,
             }),
         )
         .await?;

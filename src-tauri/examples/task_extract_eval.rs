@@ -58,6 +58,11 @@ struct Args {
     /// Open the production DB in place instead of copying it to a temp DB.
     #[arg(long, hide = true)]
     in_place_dangerous: bool,
+
+    /// Sample only replies — emails that answer an earlier message of their
+    /// thread, where quoted history would be re-read.
+    #[arg(long)]
+    replies_only: bool,
 }
 
 fn main() {
@@ -95,6 +100,7 @@ fn main() {
             EvalDbMode::CopyToTemp
         },
         out_dir,
+        replies_only: args.replies_only,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

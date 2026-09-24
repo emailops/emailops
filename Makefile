@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -190,6 +190,15 @@ eval-plan:
 	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
 	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features eval --example query_plan_eval -- \
 	  --prod-db "$(EMAILOPS_DEMO_DIR)/emailops.db" --account ulises@emailopslabs.dev $(ARGS)
+
+# Check the research answer-form classifier (`chat.research_mode`): list,
+# count or report, one short completion per case. Use it when touching that
+# prompt or the model.
+#   make eval-research-mode
+#   make eval-research-mode ARGS="--case list_and_total_en"
+eval-research-mode:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DATA_DIR="$(EMAILOPS_DEMO_DIR)" cargo run --manifest-path src-tauri/Cargo.toml --features eval --example research_mode_eval -- --prod-db "$(EMAILOPS_DEMO_DIR)/emailops.db" $(ARGS)
 
 # Score how the model fills the app's forms (one completion per case, JSON
 # summary). Use it when touching the `forms.fill` prompt, the forms registry or

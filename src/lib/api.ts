@@ -63,6 +63,7 @@ import type {
   PendingTask,
   QuickFilterStats,
   RefreshServerTotalResponse,
+  ResearchEstimate,
   SendChatResponse,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -1313,6 +1314,13 @@ export async function sendChatMessage(
    * retry is steered by what the user actually objected to.
    */
   correction?: ChatCorrection | null,
+  /**
+   * Research mode for this message: the backend reads many more emails in
+   * batches (map-reduce) and writes a detailed report. Takes minutes.
+   */
+  research = false,
+  /** The estimate the user confirmed: the run reads exactly what it counted. */
+  researchEstimateId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1322,7 +1330,35 @@ export async function sendChatMessage(
     contextAccountId: contextAccountId ?? null,
     contextView: contextView ?? null,
     correction: correction ?? null,
+    research,
+    researchEstimateId: researchEstimateId ?? null,
   });
+}
+
+/** Plan and gather a research question without reading it: how many emails
+ *  it covers and how long reading them would take, for the user to confirm. */
+export async function estimateResearch(
+  conversationId: string,
+  content: string,
+  categories?: EmailCategory[],
+  /** Set when the research retries a rejected answer: the estimate covers the
+   *  original question plus the correction, as the run will. */
+  correction?: ChatCorrection | null,
+): Promise<ResearchEstimate> {
+  return invoke('estimate_research', { conversationId, content, categories, correction: correction ?? null });
+}
+
+/** Cancel the running chat turn answering `messageId`: a normal turn keeps
+ *  what it showed so far; a research run stops at its next batch. Resolves
+ *  false when no turn is running for that message. */
+export async function cancelChatTurn(messageId: string): Promise<boolean> {
+  return invoke('cancel_chat_turn', { messageId });
+}
+
+/** Quit even though a research run is reading (it is lost). Called from the
+ *  confirmation the backend asks for when a close or Cmd+Q arrives mid-run. */
+export async function confirmExit(): Promise<void> {
+  return invoke('confirm_exit');
 }
 
 /** Mirrors `models::ChatCorrection` on the Rust side. */

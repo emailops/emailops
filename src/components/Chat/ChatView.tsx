@@ -38,6 +38,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
   const {
     conversations,
     activeConversationId,
+    currentAccountId,
     messages,
     streamingMessageId,
     streamingPhase,
@@ -82,16 +83,23 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
   // effect just needs to (re)load the conversation list for the current
   // account.
   useEffect(() => {
-    if (!accountId) return;
     // `selectAccount` owns the conversation swap: it remembers where we were
     // and restores the conversation last open for this account this session,
-    // falling back to a fresh chat.
+    // falling back to a fresh chat. It also re-runs when `currentAccountId`
+    // goes null — the chat was reset for an account switch — so the list
+    // reloads even if `accountId` (the first enabled account in "All
+    // accounts") did not change.
+    if (!accountId || currentAccountId === accountId) return;
     void selectAccount(accountId);
+  }, [accountId, selectAccount, currentAccountId]);
+
+  useEffect(() => {
+    if (!accountId) return;
     // Seed the local model's prompt-prefix cache for this account so the
     // first turn skips most of its prefill (also re-seeds after the 30-min
     // idle eviction). Fire-and-forget: a failure just means a cold prefill.
     prewarmChat(accountId).catch(() => {});
-  }, [accountId, selectAccount]);
+  }, [accountId]);
 
   const handleCreate = async () => {
     if (!accountId) return;

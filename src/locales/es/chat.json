@@ -60,7 +60,7 @@
     "retry": "Reintentar",
     "wrong": "La respuesta no es correcta",
     "wrongPrompt": "¿Qué ha fallado?",
-    "wrongPlaceholder": "p. ej. esos correos son de septiembre, no de agosto",
+    "wrongPlaceholder": "Ayuda al modelo a hacerlo mejor — p. ej. esos correos son de septiembre, no de agosto",
     "wrongSubmit": "Reintentar",
     "rejected": "Marcada como incorrecta — reintentada abajo."
   },
@@ -72,7 +72,17 @@
     "retrievingEmail": "Recuperando correo…",
     "generatingDraft": "Generando borrador…",
     "runningTools": "Procesando consulta…",
-    "generating": "Generando…"
+    "researching": "Investigando…",
+    "research": {
+      "gathering": "Research: reuniendo correos…",
+      "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",
+      "condensing": "Research: fusionando notas {{batch}}/{{batches}}…",
+      "writing": "Research: redactando el informe a partir de {{total}} correos…",
+      "remaining": " · quedan ~{{time}}"
+    },
+    "generating": "Generando…",
+    "cancel": "Cancelar",
+    "cancelling": "Cancelando…"
   },
   "reasoning": {
     "show": "Mostrar razonamiento",
@@ -115,7 +125,8 @@
         "fetchMetadata": "Obtener metadatos",
         "threadExpansion": "Expansión del hilo",
         "helpDocs": "Ayuda de EmailOps",
-        "rag": "Recuperación RAG"
+        "rag": "Recuperación RAG",
+        "research": "Research"
       },
       "noCalls": "sin llamadas",
       "fallbackSkipped": "reserva (omitida)",
@@ -135,7 +146,44 @@
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "caché KV {{cached}}/{{total}} tok ({{pct}}%)",
       "kvCacheMiss": "caché KV 0/{{total}} tok (fría)",
-      "helpSections": "{{included}} de {{candidates}} secciones de las guías"
+      "helpSections": "{{included}} de {{candidates}} secciones de las guías",
+      "researchFailed": "{{n}} lotes fallaron"
+    },
+    "flow": {
+      "researchOn": "Modo research",
+      "researchRead": "leídos {{read}} de {{planned}} correos en {{batches}} lotes",
+      "researchFindings": "{{findings}} hallazgos de {{relevant}} correos",
+      "researchStopped": "cancelada por el usuario",
+      "keywords": "palabras clave",
+      "findings": "{{n}} hallazgos",
+      "kind": {
+        "router": "Router",
+        "planner": "Planner (LLM)",
+        "retrieval": "Recuperación RAG",
+        "help": "Ayuda de EmailOps",
+        "tool": "tool_call:",
+        "llmRound": "Ronda LLM {{n}}",
+        "answer": "Respuesta (LLM)",
+        "llmCall": "Llamada LLM",
+        "llmCallN": "Llamada LLM {{n}}/{{total}}"
+      },
+      "section": {
+        "prompt": "prompt",
+        "output": "salida",
+        "details": "detalles"
+      },
+      "detail": {
+        "latency": "latencia",
+        "prefill": "prefill",
+        "kvCache": "caché KV",
+        "cache": "caché",
+        "toolCalls": "llamadas a herramientas",
+        "chars": "caracteres",
+        "hits": "resultados",
+        "route": "ruta",
+        "reason": "motivo",
+        "status": "estado"
+      }
     }
   },
   "sources": {
@@ -200,5 +248,34 @@
   "accountPicker": {
     "label": "Cuenta en la que busca este chat",
     "hint": "El chat responde desde una sola cuenta a la vez. Al cambiarla se inicia una conversación nueva."
+  },
+  "research": {
+    "toggle": "Research",
+    "title": "Modo research: lee muchos más correos por lotes y redacta un análisis detallado. Más lento: puede tardar varios minutos. Se aplica solo al siguiente mensaje.",
+    "hint": "Siguiente mensaje: análisis en profundidad (más lento)",
+    "estimating": "Contando los correos que abarca esta investigación…",
+    "estimate": "Esta investigación leerá {{emails}} correos en {{batches}} lotes · unos {{time}}",
+    "estimateNone": "Ningún correo coincide con esta pregunta: no hay nada que investigar.",
+    "estimateFailed": "No se pudo estimar esta investigación: {{error}}",
+    "start": "Empezar investigación",
+    "cancel": "Cancelar",
+    "stop": "Cancelar investigación",
+    "stopping": "Cancelando…",
+    "filter": "Filtro",
+    "byMeaning": "Reunidos por significado (sin filtro)",
+    "mode": {
+      "list": "Respuesta: lista de todas las coincidencias — sin informe redactado, más rápido",
+      "count": "Respuesta: el número exacto y la lista — sin informe redactado, más rápido",
+      "analysis": "Respuesta: un informe redactado a partir de todas las coincidencias"
+    },
+    "exit": {
+      "title": "Investigación en curso",
+      "body": "Una investigación del chat sigue leyendo tus correos. Si sales ahora se perderá y su respuesta quedará vacía.",
+      "keep": "Seguir investigando",
+      "quit": "Salir igualmente"
+    },
+    "statusBar": "Chat: investigación en curso… ({{step}})",
+    "matchesSoFar": "{{n}} coincidencias hasta ahora — las últimas:",
+    "threadEmails": "{{n}} correos"
   }
 }

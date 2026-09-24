@@ -109,6 +109,7 @@ pub fn form_fill_trace(
             output: None,
         }],
         help: None,
+        research: None,
         steps: Vec::new(),
     })
 }

@@ -45,8 +45,8 @@ impl FieldCheck {
 }
 
 /// Every field a plan can carry, in the order the report lists them.
-const PLAN_FIELDS: [&str; 12] = [
-    "query", "from", "to", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
+const PLAN_FIELDS: [&str; 13] = [
+    "query", "from", "to", "with", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
 ];
 
 /// Every verdict for one case.
@@ -67,6 +67,7 @@ pub fn field_value(plan: &SearchPlan, field: &str) -> Result<Option<String>, Str
         "query" => plan.query.clone(),
         "from" => plan.from.clone(),
         "to" => plan.to.clone(),
+        "with" => plan.with.clone(),
         "subject" => plan.subject.clone(),
         "intent" => plan.intent.clone(),
         "topic" => plan.topic.clone(),
@@ -308,6 +309,14 @@ mod tests {
         let from = report.checks.iter().find(|c| c.field == "from").expect("from row");
         assert_eq!(from.status, CheckStatus::Fail);
         assert!(from.expected.contains("not accounted for"), "{}", from.expected);
+    }
+
+    #[test]
+    fn a_participant_is_scored_like_any_field() {
+        let c = case("id: x\nquestion: q\nexpect:\n  with: marisol\nabsent: [from, to]\n");
+        assert!(evaluate(&c, Some(&plan(r#"{"with": "Marisol"}"#))).passed);
+        let one_side = evaluate(&c, Some(&plan(r#"{"from": "Marisol"}"#)));
+        assert!(!one_side.passed, "{:?}", one_side.checks);
     }
 
     #[test]

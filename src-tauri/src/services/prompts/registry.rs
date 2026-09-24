@@ -151,6 +151,64 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
     },
 ];
 
+const CHAT_RESEARCH_MODE_VARS: &[VariableDef] = &[VariableDef {
+    name: "question",
+    description: "The user's research question.",
+}];
+
+const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
+    },
+    VariableDef {
+        name: "emails",
+        description: "One batch of conversations labelled C1…, their emails labelled E1…: date, sender and recipients (the user as YOU) and what each adds to its thread.",
+    },
+];
+
+const CHAT_RESEARCH_CONDENSE_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "notes",
+        description: "A group of notes from earlier batches, labelled N1… and tagged MATCH or CONTEXT.",
+    },
+];
+
+const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "language_instruction",
+        description: "Which language to reply in (from the AI language setting).",
+    },
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "coverage",
+        description: "How many emails were read, in how many batches, and how many had findings.",
+    },
+    VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
+    },
+    VariableDef {
+        name: "counts",
+        description: "Exact counts of the matching emails and conversations, computed in code; says when the full list is appended.",
+    },
+    VariableDef {
+        name: "notes",
+        description: "The numbered conversations the notes cover, then every note tagged MATCH or CONTEXT and citing conversations as [n].",
+    },
+];
+
 const CHAT_QUERY_REWRITE_VARS: &[VariableDef] = &[VariableDef {
     name: "user_question",
     description: "The raw user question being rewritten for retrieval.",
@@ -355,6 +413,42 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_QUERY_PLAN,
         variables: CHAT_QUERY_PLAN_VARS,
+    },
+    PromptDef {
+        id: "chat.research_mode",
+        label: "Chat — research mode: answer form",
+        description: "Decides whether a research question wants a list, a count or a report. Lists and counts are written in code from the matches, with no report call.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_MODE,
+        variables: CHAT_RESEARCH_MODE_VARS,
+    },
+    PromptDef {
+        id: "chat.research_map",
+        label: "Chat — research mode: reading step",
+        description: "Research mode reads many emails in batches; this prompt extracts, from one batch, the findings relevant to the question.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_MAP,
+        variables: CHAT_RESEARCH_MAP_VARS,
+    },
+    PromptDef {
+        id: "chat.research_condense",
+        label: "Chat — research mode: merging notes",
+        description: "When a research run read so many emails that its notes do not fit the report prompt, this merges groups of notes first.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_CONDENSE,
+        variables: CHAT_RESEARCH_CONDENSE_VARS,
+    },
+    PromptDef {
+        id: "chat.research_reduce",
+        label: "Chat — research mode: report",
+        description: "Research mode's last step: writes the detailed report from the findings of every batch.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_REDUCE,
+        variables: CHAT_RESEARCH_REDUCE_VARS,
     },
     PromptDef {
         id: "forms.fill",

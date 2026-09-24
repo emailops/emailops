@@ -181,6 +181,7 @@ async fn run(args: Args, prod_db: PathBuf) -> Result<(), Box<dyn std::error::Err
             temperature: Some(0.0),
             max_tokens: Some(128),
             think: Some(false),
+            json_shape: None,
         };
         let t = Instant::now();
         let result = provider.complete(&prompt, opts).await;

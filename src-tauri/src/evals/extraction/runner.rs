@@ -35,6 +35,8 @@ pub struct ExtractionRunnerConfig {
     pub prod_db_path: PathBuf,
     pub db_mode: EvalDbMode,
     pub out_dir: PathBuf,
+    /// Sample only replies (emails answering an earlier message of their thread).
+    pub replies_only: bool,
 }
 
 pub async fn run(mut cfg: ExtractionRunnerConfig) -> EvalResult<PathBuf> {
@@ -97,7 +99,7 @@ pub async fn run(mut cfg: ExtractionRunnerConfig) -> EvalResult<PathBuf> {
     let mem_cfg = crate::services::memory::config::get_config(&db)?;
     let task_cfg = crate::services::tasks::config::get_config(&db)?;
     let min_ts = task_cfg.backfill_min_timestamp(chrono::Utc::now().timestamp());
-    let email_ids = sample_primary_email_ids(&db, &account.id, cfg.limit, min_ts)?;
+    let email_ids = sample_primary_email_ids(&db, &account.id, cfg.limit, min_ts, cfg.replies_only)?;
     if email_ids.is_empty() {
         return Err(EvalError::Config(format!(
             "no primary-category emails found for {}",
@@ -280,35 +282,67 @@ fn sample_primary_email_ids(
     account_id: &str,
     limit: usize,
     min_timestamp: Option<i64>,
+    // Only emails that answer an earlier message of their thread — where
+    // quoted history lives, so where an extractor could re-read it.
+    replies_only: bool,
 ) -> EvalResult<Vec<String>> {
     let conn = db.reader();
-    let rows: Vec<String> = if let Some(ts) = min_timestamp {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM emails \
-             WHERE account_id = ?1 \
-               AND is_deleted = 0 \
-               AND category = 'primary' \
-               AND timestamp >= ?2 \
-             ORDER BY timestamp DESC \
-             LIMIT ?3",
-        )?;
-        let out = stmt
-            .query_map(params![account_id, ts, limit as i64], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        out
-    } else {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM emails \
-             WHERE account_id = ?1 \
-               AND is_deleted = 0 \
-               AND category = 'primary' \
-             ORDER BY timestamp DESC \
-             LIMIT ?2",
-        )?;
-        let out = stmt
-            .query_map(params![account_id, limit as i64], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        out
-    };
+    let mut stmt = conn.prepare(
+        "SELECT e.id FROM emails e \
+         WHERE e.account_id = ?1 \
+           AND e.is_deleted = 0 \
+           AND e.category = 'primary' \
+           AND (?2 IS NULL OR e.timestamp >= ?2) \
+           AND (?3 = 0 OR EXISTS ( \
+                 SELECT 1 FROM emails p \
+                 WHERE p.account_id = e.account_id AND p.thread_id = e.thread_id \
+                   AND p.is_deleted = 0 AND p.timestamp < e.timestamp)) \
+         ORDER BY e.timestamp DESC \
+         LIMIT ?4",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![account_id, min_timestamp, replies_only as i64, limit as i64],
+            |r| r.get::<_, String>(0),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+
+    fn seed(db: &Database, id: &str, thread: &str, ts: i64) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails
+             (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+              recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1,'acct',?2,'s','a','a@x.com','x.com','[]','[]','snip',?3,0,'primary',0)",
+            params![id, thread, ts],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn replies_only_samples_emails_that_answer_an_earlier_message() {
+        // Replies are where quoted history lives: the sample that shows whether
+        // an extractor re-reads earlier messages.
+        let db = Database::new_for_testing().unwrap();
+        seed(&db, "first", "t1", 100);
+        seed(&db, "reply", "t1", 200);
+        seed(&db, "alone", "t2", 300);
+        let all = sample_primary_email_ids(&db, "acct", 10, None, false).unwrap();
+        assert_eq!(all, vec!["alone", "reply", "first"]);
+        let replies = sample_primary_email_ids(&db, "acct", 10, None, true).unwrap();
+        assert_eq!(replies, vec!["reply"]);
+    }
 }

@@ -1995,6 +1995,104 @@ mod tests {
         assert!(app.iter().any(|e| e.id == "bad"));
     }
 
+    /// A reply row shows what the reply adds, not the earlier message it
+    /// repeats — even pasted with no "On … wrote:" marker to cut at.
+    #[test]
+    fn search_emails_with_bodies_shows_a_replys_new_content_only() {
+        use crate::services::thread_reader::fixtures::{REPLY_NEW, REQUEST};
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "q1",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Portal budget",
+            REQUEST,
+            t,
+        );
+        seed_email(
+            &db,
+            "q2",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Re: Portal budget",
+            &format!("{REPLY_NEW}\n\n{REQUEST}"),
+            t + 100,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(out.contains(REPLY_NEW), "{out}");
+        assert!(!out.contains(REQUEST), "the repeated request is not re-read: {out}");
+    }
+
+    /// "Emails with Ana": what Ana sent AND what the user sent to her — to
+    /// an address that does not carry her name, found through the addresses
+    /// her own mail comes from.
+    #[test]
+    fn search_emails_with_a_person_finds_mail_either_way() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "w1",
+            "acc",
+            "tw1",
+            "Ana Ruiz",
+            "ar@client.example",
+            "Quote request",
+            "Can you quote?",
+            t,
+        );
+        seed_email(
+            &db,
+            "w2",
+            "acc",
+            "tw2",
+            "Me",
+            "me@mine.example",
+            "My proposal",
+            "Here is my quote.",
+            t + 100,
+        );
+        db.connection()
+            .execute(
+                "UPDATE emails SET recipients_json = '[\"ar@client.example\"]' WHERE id = 'w2'",
+                [],
+            )
+            .unwrap();
+        seed_email(
+            &db,
+            "w3",
+            "acc",
+            "tw3",
+            "Bob",
+            "bob@x.example",
+            "Other",
+            "Unrelated.",
+            t + 200,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "with": "Ana" })),
+        );
+        assert!(out.contains("w1"), "Ana's own mail: {out}");
+        assert!(out.contains("w2"), "mail to her address: {out}");
+        assert!(!out.contains("w3"), "{out}");
+    }
+
     /// `with_bodies` lets the model pull cleaned bodies in the same call
     /// instead of one get_email_body round per row.
     #[test]

@@ -444,6 +444,7 @@ AI_DRAFT
                     temperature: Some(0.0),
                     max_tokens: Some(400),
                     think: Some(false),
+                    json_shape: None,
                 }),
             )
             .await?;

@@ -1026,6 +1026,78 @@ pub struct ToolCallTrace {
     pub elapsed_ms: i64,
 }
 
+/// What a research-mode turn read: how many emails were gathered, how many
+/// map batches ran, and how many emails yielded findings for the report.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchTrace {
+    /// How the answer was delivered: a list or a count written in code, or a
+    /// report written by the model. Older traces read as `analysis`.
+    #[serde(default)]
+    pub mode: ReportMode,
+    /// Context window the batches were sized to.
+    pub n_ctx: u32,
+    /// Emails gathered for reading (what the estimate counted).
+    #[serde(default)]
+    pub planned_emails: u32,
+    /// Candidates from the planner's filter (thread-expanded).
+    pub search_hits: u32,
+    /// Candidates found by meaning (plus keyword hits) for a topic question.
+    #[serde(alias = "retrievalHits")]
+    pub semantic_hits: u32,
+    /// Emails actually read by the map step — fewer than `planned_emails`
+    /// when the user stopped the run.
+    pub emails_analyzed: u32,
+    /// Map batches run.
+    pub batches: u32,
+    pub failed_batches: u32,
+    /// Finding lines kept across all batches.
+    pub findings: u32,
+    /// Emails at least one finding cites.
+    pub relevant_emails: u32,
+    /// Condense calls needed to fit the notes into the report prompt.
+    #[serde(default)]
+    pub condense_calls: u32,
+    /// The user pressed Stop before every batch was read.
+    #[serde(default)]
+    pub stopped: bool,
+    pub gather_ms: i64,
+    pub map_ms: i64,
+    #[serde(default)]
+    pub condense_ms: i64,
+    pub reduce_ms: i64,
+}
+
+/// How a research answer is delivered (see `services::chat::research::mode`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportMode {
+    /// The matching conversations, listed in code — no report call.
+    List,
+    /// How many conversations match, then the list — no report call.
+    Count,
+    /// A report the model writes from every match: trends, summaries,
+    /// comparisons, totals.
+    #[default]
+    Analysis,
+}
+
+/// What a research run would read, shown for the user to confirm before it
+/// starts. `estimate_id` hands the gathered set to the run that follows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchEstimate {
+    pub estimate_id: String,
+    pub emails: u32,
+    pub batches: u32,
+    pub seconds: u64,
+    /// How the answer will be delivered.
+    pub mode: ReportMode,
+    /// The planner's filter, as `search_emails` arguments; `None` when the
+    /// question is gathered by meaning.
+    pub filter: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatTrace {
@@ -1052,6 +1124,9 @@ pub struct ChatTrace {
     /// when the feature is off or the turn short-circuited before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<HelpTrace>,
+    /// Research-mode map-reduce stats. `None` on an ordinary turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<ResearchTrace>,
     /// The turn in execution order — the one ordering every renderer (the
     /// reasoning panel, `emailops-cli chat --trace`, the eval report) walks.
     /// Built by `services::chat::trace_steps::plan_steps`; filled when the turn
@@ -1067,6 +1142,7 @@ pub struct ChatTrace {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TraceStep {
     Route,
+    Research,
     Retrieval,
     Help,
     #[serde(rename_all = "camelCase")]
@@ -1166,8 +1242,47 @@ pub enum ChatPhase {
     /// Running any other tool in the loop — generic fallback when no
     /// tool-specific phase applies.
     RunningTools,
+    /// Research mode: gathering candidates and reading them in batches. The
+    /// `chat-research-progress` event carries the batch counts.
+    Researching,
     /// Streaming the final assistant answer.
     Generating,
+}
+
+/// Progress of a research-mode turn, emitted on `chat-research-progress` as
+/// each stage starts and after every map batch, so a turn that takes minutes
+/// shows how far along it is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatResearchProgressEvent {
+    pub message_id: String,
+    pub conversation_id: String,
+    /// `"gathering"`, `"reading"` or `"writing"`.
+    pub stage: String,
+    /// Batches finished so far / in total (0/0 while gathering).
+    pub batch: u32,
+    pub batches: u32,
+    /// Emails read so far / in total.
+    pub emails_read: u32,
+    pub emails_total: u32,
+    /// Matches found so far.
+    pub matches: u32,
+    /// The latest few matches, newest last: enough for the user to see
+    /// whether the run is finding the right mail and cancel it if not.
+    pub recent: Vec<ResearchMatchPreview>,
+}
+
+/// One match as the research progress shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchMatchPreview {
+    pub email_id: String,
+    pub date: String,
+    pub subject: String,
+    /// The first finding the reading step kept for this email.
+    pub finding: String,
+    /// Emails of this conversation that matched.
+    pub emails: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

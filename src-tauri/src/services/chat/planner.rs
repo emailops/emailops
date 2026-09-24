@@ -98,6 +98,9 @@ pub struct SearchPlan {
     pub query: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    /// A person the mail was exchanged with, in either direction ("emails
+    /// with X"): X sent it, or X is among its recipients.
+    pub with: Option<String>,
     pub subject: Option<String>,
     /// Classifier tags — the planner's way to express a concept ("prospects")
     /// the mailbox never spells out.
@@ -130,6 +133,7 @@ impl SearchPlan {
         self.query.is_none()
             && self.from.is_none()
             && self.to.is_none()
+            && self.with.is_none()
             && self.subject.is_none()
             && self.since.is_none()
             && self.until.is_none()
@@ -164,6 +168,7 @@ impl SearchPlan {
     pub fn has_structural_filter(&self) -> bool {
         self.from.is_some()
             || self.to.is_some()
+            || self.with.is_some()
             || self.subject.is_some()
             || self.since.is_some()
             || self.until.is_some()
@@ -193,6 +198,7 @@ impl SearchPlan {
         put("query", self.query);
         put("from", self.from);
         put("to", self.to);
+        put("with", self.with);
         put("subject", self.subject);
         put("intent", self.intent);
         put("topic", self.topic);
@@ -316,6 +322,7 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
         query: str_field("query"),
         from: str_field("from"),
         to: str_field("to"),
+        with: str_field("with"),
         subject: str_field("subject"),
         intent: str_field("intent").map(|v| v.to_lowercase()),
         topic: str_field("topic").map(|v| v.to_lowercase()),
@@ -497,6 +504,7 @@ pub async fn plan_search(
         temperature: Some(0.0),
         max_tokens: Some(128),
         think: Some(false),
+        json_shape: None,
     };
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => {
@@ -627,6 +635,17 @@ mod tests {
     #[test]
     fn mode_alone_is_not_a_filter() {
         assert_eq!(parse_plan(r#"{"mode":"semantic"}"#), Plan::Defer);
+    }
+
+    #[test]
+    fn parses_a_participant_as_a_filter_in_either_direction() {
+        let p = search(r#"{"with":"Genoveva"}"#);
+        assert_eq!(p.with.as_deref(), Some("Genoveva"));
+        assert!(p.from.is_none() && p.to.is_none());
+        assert!(p.has_structural_filter(), "a person narrows the search like from/to");
+        let call = p.into_tool_call();
+        let args: serde_json::Value = call.function.arguments;
+        assert_eq!(args.get("with").and_then(|v| v.as_str()), Some("Genoveva"));
     }
 
     #[test]

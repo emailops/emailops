@@ -2,9 +2,6 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::{Tool, ToolCtx, ToolError, ToolOutput};
-use crate::services::chat::format_date;
-use crate::services::emails;
-use crate::services::thread_clean;
 
 pub struct GetThreadTool;
 
@@ -40,34 +37,18 @@ impl Tool for GetThreadTool {
         if thread_id.is_empty() {
             return Ok(ToolOutput::text("Error: missing thread_id"));
         }
-        match emails::get_thread(ctx.db, ctx.account_id, thread_id) {
-            Ok(thread) if thread.is_empty() => Ok(ToolOutput::text("No emails found in this thread.")),
-            Ok(thread) => {
-                let mut out = String::new();
-                let mut refs: Vec<String> = Vec::with_capacity(thread.len());
-                // Share one context budget across the whole thread: short
-                // threads keep each message nearly whole, long threads divide
-                // the budget but never drop below the per-email floor. Same
-                // cleaning pipeline as "chat about this thread".
-                let cap = thread_clean::chars_per_email(thread.len());
-                for email in &thread {
-                    let body = emails::get_email_body(ctx.db, &email.id).unwrap_or_default();
-                    let body_text = thread_clean::clean_email_body(&body, cap);
-                    // Tag each block with the email id so the LLM can address
-                    // individual messages in its prose ("the kickoff was
-                    // <email://abc-123>last Tuesday</email://abc-123>…").
-                    out.push_str(&format!(
-                        "--- id={} | {} | from: {} <{}> | date: {} ---\n{}\n\n",
-                        email.id,
-                        email.subject,
-                        email.sender,
-                        email.sender_email,
-                        format_date(email.timestamp),
-                        body_text,
-                    ));
-                    refs.push(email.id.clone());
-                }
-                Ok(ToolOutput::text_with_email_refs(out, refs))
+        // The shared thread reader: each reply's new content only, one
+        // budget for the whole thread, every message tagged with its id so
+        // the model can link it (`email://ID`).
+        use crate::services::thread_reader::{
+            load_thread, read_thread, render_thread, ReadOptions, CHAT_THREAD_BUDGET,
+        };
+        match load_thread(ctx.db, ctx.account_id, thread_id) {
+            Ok(messages) if messages.is_empty() => Ok(ToolOutput::text("No emails found in this thread.")),
+            Ok(messages) => {
+                let read = read_thread(&messages, &ReadOptions::budget(CHAT_THREAD_BUDGET));
+                let refs = read.messages.iter().map(|m| m.id.clone()).collect();
+                Ok(ToolOutput::text_with_email_refs(render_thread(&read), refs))
             }
             Err(e) => Ok(ToolOutput::text(format!("Error: {}", e))),
         }

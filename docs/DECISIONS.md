@@ -1437,3 +1437,271 @@ to it.
 refers to; *persisting rejections to a table for later eval graduation* — the developer
 declined it as scope for now, so the reason steers the retry and is then discarded;
 *a correction-specific route or prompt* — the answer was wrong, not the route.
+
+## 2026-09-23 — Chat research mode is a per-message map-reduce on the auxiliary slot
+
+**Decision:** The chat gets a **Research** toggle next to the category filter. It arms
+research mode for the **next message only** (the send disarms it). A research turn skips
+the heuristic shortcuts and the tool loop. It gathers candidates by paging the query
+planner's `search_emails` filter, adding wide hybrid retrieval when the plan names no
+structural filter. It then reads them in batches with one `complete_with_prefix` call per
+batch (`chat.research_map`), keeping only the findings that cite an email of the batch,
+and writes the report in one more call (`chat.research_reduce`). Batch size, the number
+of batches and the email cap (≤100) come from the context window, so every batch fits
+the map window and all of the notes fit one reduce window. The report is shipped like a
+direct answer: citation cleanup, sources and trace. Bare `(email://ID)` and
+`[email://ID]` references are relinked to `[subject](email://ID)`.
+**Context:** a normal turn answers from about 8 sources or one 25-row page. That suits
+"what did X say?" but is too thin for "what themes came up this quarter?". Measured
+before and after on the developer's mailbox (qwen3.5-4b-q8_0, n_ctx 15360), the same
+question went from 25 rows read in 53 s to 100 emails read in 10 batches in 213 s, with
+35 emails cited. Every research call runs on the one-shot prefix slot (2026-09-19
+entry), so the chat's KV anchor survives for the next ordinary turn, and the map
+instructions stay decoded across batches.
+**Rejected:**
+- *Only raising the existing limits* (more sources, larger pages, more tool rounds):
+  with a 7k-token system prefix in an 8–32k window the prompt front-truncates, and a 4B
+  model loses facts in a long context.
+- *An agentic loop that plans its own sub-queries*: the local 4B model plans long
+  investigations unreliably.
+- *A persistent or per-conversation toggle*: it leaves the chat slow by accident.
+- *Streaming the report through `chat_stream`*: its system prompt would replace the chat
+  anchor, and the 7k chat prefix leaves no room for the notes at 8k. The report is
+  therefore not streamed; progress events cover the wait.
+
+## 2026-09-24 — Research mode has no email cap: estimate, confirm, stop
+
+**Decision:** A research turn reads **every** email its question covers. The planner's
+filter is run in full, straight against the DB (every matching thread, expanded to its
+messages). A topic question with no filter gathers every email within a similarity band of
+the best vector hit, plus every keyword hit. Before anything is sent, the user sees an
+estimate: how many emails, how many batches and roughly how long, timed from this machine's
+last run. They confirm it or cancel it. The confirmed run reads exactly the set the
+estimate counted. While it reads, **Stop** ends the reading and the report is written from
+what has been read. Notes that outgrow one report prompt are merged in rounds by a condense
+step (`chat.research_condense`) before the report. The 50,000-email gather limit is a
+safety net, not a product limit. This supersedes the ≤100-email cap in the 2026-09-23
+entry.
+**Context:** the developer asked for no limit. A cap of 100 also hid a real miss: paging
+through the `search_emails` tool read 25 of 33 contact requests, because of the tool's page
+and tag rules and its 500-row offset clamp. Unbounded reading costs about 1.5–2 s per email
+on the embedded 4B model — about 30 min for 1,000 emails — so the count and time are shown
+before the run starts, and the run can be cut short. Every call still runs on the
+one-shot prefix slot.
+**Rejected:**
+- *A fixed cap (100, or one derived from the window)*: it silently drops part of what the
+  user asked to have read.
+- *Running without an estimate*: a vague question could start hours of work unannounced.
+- *Cancel as abort*: after twenty minutes of reading, the partial report is worth more than
+  nothing.
+- *A fixed top-k for topic questions*: it cuts a large topic short and pads a small one
+  with noise.
+
+## 2026-09-24 — Research lists and counts are built in code; the status bar shows long AI work
+
+**Decision:** The matches a research run finds — every email the reading step cites, each
+with its first finding — are collected in code from the map notes, before any condense
+round. The report prompt receives the exact counts (emails and conversations) as facts it
+must state, not something it counts itself. When the question asks for a list or a count
+("list", "todas", "how many", "cuántos", "combien", "wie viele"…), the report ends with the
+complete numbered list of matches, rendered in code, with no size cap.
+Research sizes its batches to the window the loaded model actually runs with — the
+`AIProvider::context_window()` the llama.cpp actor publishes after clamping the setting to
+RAM, KV fit and the trained window — and falls back to the setting before the model loads.
+Closing the window or quitting (Cmd+Q) while research reads is held by the backend, and
+the frontend asks the user to confirm.
+The log bar shows the long-running AI work in progress: research first, with its step,
+then lens, memory and task backfills, classification, Embeddings, junk scoring and model
+downloads. What is running is polled from the task-queue snapshot; the numbers come from
+each process's own status call or progress event.
+**Context:** a model-written report stops at its output budget (a few dozen lines), and a
+small model's count of its own notes is a guess. The status bar had no view of background
+AI work at all; the queue snapshot was only visible on the Dashboard.
+**Rejected:**
+- *Raising the report's `max_tokens`*: the report would still be bounded, and the count
+  would still be guessed.
+- *Having the model write the list in chunks*: slower, and just as lossy.
+- *A new unified progress event for every job*: it would touch every job module. Their
+  existing status APIs and events already carry the numbers.
+
+## 2026-09-24 — A research run is cancelled, not stopped early; a rejected research is re-researched
+
+**Decision:** The running research's only control is **Cancel**. The run ends at the next
+batch boundary with no condense and no report. Its answer states how far the reading got
+("cancelled after reading 30 of 100 emails"). This replaces "Stop and write report" from
+the entry above. Marking a research answer wrong retries it **as a research**: the new run
+asks the original question plus the user's correction, in every step, and is estimated and
+confirmed first like any research. A research answer's sources — and the chat's "show in
+list" button — are every email the reading found relevant, not only the ones its prose
+links. Coming back to an account (chat account picker or the app's account switch) reopens
+the conversation where a turn is still running.
+**Context:** the developer found "stop and write report" unclear and asked for a plain
+cancel.
+**Rejected:**
+- *Keeping both buttons*: the developer chose one.
+- *Retrying a rejected research as an ordinary turn*: it would answer from one page of
+  results, which is the thing the user rejected.
+
+## 2026-09-24 — One shared thread reader; each email is read for what it adds
+
+**Decision:** Every feature that reads a conversation goes through
+`services/thread_reader.rs`. It covers the chat's thread context, the `get_thread` tool,
+draft generation, research (which now reads, counts and lists **one match per
+conversation**), `search_emails` bodies, and the memory, task and lens extractors. A
+message is read for its *new content*: the cleaned body minus quoted history (attribution
+lines, `>` lines, HTML `<blockquote>`) and minus any paragraph an earlier message in the
+thread already said. So a reply never re-sends the emails it answers. One water-fill
+budget, with an optional focus message and oldest-first drops, replaces the per-feature
+allocators.
+**Context:** each feature cleaned threads its own way. A reply that pasted its
+predecessor without a quote marker was read, and extracted from, twice. Research
+listed one thread's replies as separate matches. The developer asked for one reusable
+reader and for no conversation to appear twice in an answer.
+**Rejected:**
+- *Moving the chat's RAG sources to new content only*: a retrieved reply is often the
+  only hit for its thread, and its quoted history is the context the answer needs. RAG
+  keeps the whole cleaned body.
+- *Deduplicating research matches after the map step*: the model would still read every
+  reply with its history, and the count would stay per email.
+
+## 2026-09-24 — Research knows who the user is; a finding says whether it answers
+
+**Decision:** Research decides what counts from facts code already has. It does not
+leave the model to guess them.
+- **Roles:** every message the reading step sees is rendered with its role decided in
+  code: `From: YOU (the user)` or `To: YOU`.
+- **The user's addresses:** "the user" is every address they send from: the account's
+  own plus each sender of the account's Sent mail. A provider's Sent folder holds only
+  the owner's messages, so send-as aliases show up there with no configuration. A
+  filter the planner puts on the user's address is run once per address, so mail sent
+  from an alias is gathered too.
+- **Direction:** the planner's filter sets the question's direction: a sender filter on
+  the user means *sent*, a recipient filter on the user means *received*. The direction
+  is passed to the map and report steps.
+- **Direction check:** a conversation counts for a *sent* question only if a cited
+  email is the user's own, and the mirror for *received*.
+- **Finding tags:** each finding is tagged `MATCH` (the email answers the question) or
+  `CONTEXT` (related background). Only `MATCH` findings make the list, the count and
+  the sources. An untagged line counts as a match, so a user-edited prompt keeps
+  working.
+- **Report limit:** it is sized from the window: a quarter of it is reserved (1,536 to
+  4,096 tokens), and the actual limit is what the real prompt leaves free, capped at
+  4,096.
+
+**Context:** "which quotes have I sent to clients?" counted quotes the user had received
+(insurance, sworn translations) and listed the user as a client. The prompt never said
+which participant was the user. Code also counted any cited conversation as a match,
+so a correctly written "Requested a quote from X" still became a quote sent. The report
+limit was a fixed 1,536 tokens on a 15k window, and long reports were cut mid-line.
+**Rejected:**
+- *Only rewording the prompt ("be careful about direction")*: the model still could not
+  tell who the user was.
+- *A code-only direction filter*: the user writes in a quote-request thread too, so
+  "sent a quote" versus "asked for a quote" needs the model's judgement. The tag makes
+  that judgement explicit, and code enforces it.
+- *An uncapped report*: a 4B model repeats itself past a few thousand tokens, and
+  every token costs time.
+
+## 2026-09-24 — Research steps talk JSON under an enforced shape; the report cites by number
+
+**Decision:**
+- **Reading step:** it returns one JSON verdict per conversation,
+  `{conversation, text, tag, emails}`. It names conversations and emails by short batch
+  labels (`C1`, `E3`), never by id. The shape is *enforced*:
+  - a GBNF grammar on llama.cpp (`ai::json_shape` renders it), which also confines the
+    labels to the batch's own;
+  - JSON Schema `format` on Ollama;
+  - strict `response_format` on OpenRouter.
+
+  Entries and their text are bounded, so the reply always fits the step's output budget.
+- **Condense step:** it merges notes by label (`N3`), and code keeps which conversations
+  each note covers.
+- **Report:** it cites conversations as `[n]` and code writes every link.
+- **Providers report stop reasons:** each one says when a reply stopped at its token
+  limit (`CompletionResult.truncated`), and a cut reading reply fails its batch loudly
+  instead of losing its tail.
+
+**Context:** a recall eval showed research finding 8 of 13 weekly digests. The reading
+step's 400-token free-text output was cut mid-batch without anyone noticing, and that
+had been happening before the MATCH/CONTEXT tags. Free text also needed five Markdown
+patches (bare `email://` refs, id-labelled links, repeated links and bullets) and a tag
+parser, each covering one way a small model had failed. Ollama never reported token
+counts, so cut detection by counting tokens never worked there.
+
+Enforcing the grammar exposed a latent bug. The actor accepted each sampled token twice
+(`llama_sampler_sample` already accepts), which is harmless for temperature and
+distribution samplers but corrupts a grammar and makes llama.cpp throw. The duplicate
+accept is gone.
+
+**Rejected:**
+- *Raising the free-text output budget*: still unbounded, and still cut without notice
+  on a large batch.
+- *Enabling llama-cpp-2's `common` feature for `json_schema_to_grammar`*: it changes the
+  native build and the Linux/Windows packaging, which has no CI. A small in-house
+  shape→GBNF renderer covers what research needs.
+- *Asking the model to copy email ids*: 16-character ids are easy to mangle, and a
+  grammar over labels makes an invented citation impossible.
+
+## 2026-09-24 — Research answers lists and counts in code; only analysis gets a report
+
+**Decision:** Before reading, a small classifier (`chat.research_mode`, with its reply
+forced to `list` | `count` | `analysis`) decides how the answer is delivered.
+- **List and count:** code writes the answer from the reading step's per-conversation
+  verdicts: the exact counts, every match linked with its verdict, and how much was read.
+  There are no condense or report calls.
+- **Analysis:** only analysis (a trend, a summary, a comparison, a total) runs condense
+  and the report.
+- **When unsure:** the classifier answers `analysis`, which still serves a list, just
+  more slowly.
+- **The user sees the form first:** the confirmation card shows it before the run
+  starts, so a wrong guess can be cancelled.
+
+This replaces the `LIST_CUES` keyword list.
+**Context:** a list question paid for the whole report step — about 100 s on a
+450-email production run — only to have the code-built list appended to it. The keyword
+list also missed plain list questions ("qué presupuestos he enviado"). The per-conversation
+verdicts already hold everything a list needs, and they have already been held to who
+wrote what.
+**Rejected:**
+- *A field on the shared `chat.query_plan` planner*: no extra call, but it would move
+  every normal chat turn and that prompt's eval.
+- *Keeping keyword cues*: fragile across phrasing and languages.
+- *Letting the report decide*: the report is the cost being avoided.
+
+## 2026-09-25 — "Emails with X" is its own filter, in both directions
+
+**Decision:** Search has a `with` filter (the planner field, the `search_emails` argument
+and the research gather). It means "exchanged with X": X is the sender, or X is among
+the recipients or cc. A name is resolved in code to the addresses X writes from (the
+account's most frequent senders matching the name), so mail the user sent to those
+addresses is found even when it doesn't carry X's name. The planner is told: "with X" /
+"con X" with no direction → `with = X`, not `from`/`to`.
+**Context:** "resume todos los correos con Genoveva" was planned as
+`from: genoveva, to: me`. On a real mailbox that missed the 40 threads the user started
+(about 40% of the conversations). `from` and `to` are AND-ed, so no plan could express
+"either way", and a `to` on a name misses mail addressed to a bare address.
+**Rejected:**
+- *Running `from: X` and `to: X` separately and merging*: two limits and two orders,
+  and `to` still misses bare addresses.
+- *Keyword cues for "con"/"with"*: the planner reads the question anyway.
+
+Planner eval: 36/39 → 37/39. Both new "with X" cases pass. One case flipped: "¿cómo creo
+una lens?" now opens the create-lens form instead of the guide answer.
+
+## 2026-09-25 — Any chat turn can be cancelled; it keeps what was shown
+
+**Decision:** Every running chat turn shows Cancel, not only research. A turn registers a
+flag under its assistant message id (`chat::cancel`).
+- **Tool loop:** Cancel raises the flag. The tool loop checks it before each tool and
+  each round, and the token callback returns `false`, which stops generation mid-reply
+  on llama.cpp and Ollama.
+- **The saved answer:** a cancelled turn makes no further model call (no synthesis, no
+  guard retries). It keeps the text the user already saw, followed by a
+  "Cancelled by the user" note in the reply language.
+- **Research:** a cancelled research still stops at its next batch and writes its own
+  note.
+
+**Rejected:**
+- *Discarding the partial answer*: the user saw it, and dropping it looks like data
+  loss.
+- *A separate research-only control*: one Cancel for every turn is simpler to find.

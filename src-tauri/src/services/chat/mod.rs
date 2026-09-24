@@ -16,6 +16,7 @@
 // `chat/tools/*` submodules and external callers reference them at
 // `crate::services::chat::<name>`.
 
+pub mod cancel;
 pub mod tools;
 
 mod conversations;
@@ -27,6 +28,7 @@ pub(crate) mod form_turn;
 // instead of inferring its quality from chat answers.
 pub(crate) mod planner;
 mod prewarm;
+pub mod research;
 pub(crate) mod retrieval;
 mod routing;
 // The turn's trace as one ordered step list — shared by the reasoning panel,
@@ -491,6 +493,8 @@ pub(crate) fn or_fallback_search(
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
+    // "Emails with X" terms: broadening the keywords never drops the person.
+    participants: Option<&[String]>,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
     if tokens.len() < 2 {
@@ -512,6 +516,7 @@ pub(crate) fn or_fallback_search(
             limit,
             false,
             unread_only,
+            participants,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);

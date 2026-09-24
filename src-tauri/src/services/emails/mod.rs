@@ -88,6 +88,51 @@ pub fn save_draft(db: &Arc<Database>, req: &SaveDraftRequest) -> Result<Draft> {
     db.save_draft(req)
 }
 
+/// Most addresses a person's name resolves to. A short name can sit inside
+/// others' ("Ana" in "Mariana"): the most frequent senders come first.
+const MAX_PARTICIPANT_ADDRESSES: usize = 5;
+
+/// What "emails with X" searches for: X itself, plus — when X is a name —
+/// the addresses X has written from, so mail the user sent to those
+/// addresses (which rarely carries the name) is found too. An address is
+/// searched as it is. Lowercased, without repeats. Pure.
+pub fn participant_terms(with: &str, addresses: Vec<String>) -> Vec<String> {
+    let with = with.trim().to_lowercase();
+    if with.is_empty() {
+        return Vec::new();
+    }
+    if with.contains('@') {
+        return vec![with];
+    }
+    let mut terms = vec![with];
+    for address in addresses {
+        let address = address.trim().to_lowercase();
+        if !address.is_empty() && !terms.contains(&address) {
+            terms.push(address);
+        }
+    }
+    terms
+}
+
+/// [`participant_terms`] for `with` in this account's mailbox. A failed
+/// lookup is logged and falls back to the name alone.
+pub fn resolve_participant(db: &Database, account_id: &str, with: &str) -> Vec<String> {
+    let addresses = if with.contains('@') {
+        Vec::new()
+    } else {
+        db.sender_addresses_matching(account_id, with, MAX_PARTICIPANT_ADDRESSES)
+            .unwrap_or_else(|e| {
+                crate::services::logger::log(
+                    "warn",
+                    "chat",
+                    format!("resolving the addresses of a participant failed: {e}"),
+                );
+                Vec::new()
+            })
+    };
+    participant_terms(with, addresses)
+}
+
 /// Low-level mailbox search with explicit filters. Distinct from the
 /// higher-level `services::search::search_emails` (which does pattern
 /// parsing, AI query parsing, RAG hybrid retrieval, etc.) — this one is the
@@ -111,6 +156,9 @@ pub fn search_emails_filtered(
     ascending: bool,
     // `true` keeps only mail the user has not read (filtered in SQL).
     unread_only: bool,
+    // "Emails exchanged with X": the person's name plus the addresses it
+    // resolves to; see `Database::search_emails_ordered`.
+    participants: Option<&[String]>,
 ) -> Result<Vec<Email>> {
     db.search_emails_ordered(
         account_id,
@@ -127,5 +175,27 @@ pub fn search_emails_filtered(
         // Chat never wants spam or phishing in its results.
         true,
         unread_only,
+        participants,
     )
+}
+
+#[cfg(test)]
+mod participant_tests {
+    use super::participant_terms;
+
+    #[test]
+    fn a_name_is_searched_with_the_addresses_it_writes_from() {
+        assert_eq!(
+            participant_terms("Ana", vec!["ar@client.example".into(), "ana@home.example".into()]),
+            vec!["ana", "ar@client.example", "ana@home.example"]
+        );
+    }
+
+    #[test]
+    fn an_address_is_searched_as_it_is() {
+        assert_eq!(
+            participant_terms(" AR@Client.example ", vec!["other@x.example".into()]),
+            vec!["ar@client.example"]
+        );
+    }
 }

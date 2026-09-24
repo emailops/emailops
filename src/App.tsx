@@ -13,6 +13,7 @@ import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBann
 import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
 import { ChatPanelRail } from '@/components/Chat/ChatPanelRail';
 import { ChatView } from '@/components/Chat/ChatView';
+import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
 import { ToastHost } from '@/components/common/ToastHost';
@@ -88,6 +89,7 @@ import type {
   CalendarEvent,
   ChatPhaseEvent,
   ChatRenamedEvent,
+  ChatResearchProgressEvent,
   ChatSourcesEvent,
   ChatStreamEvent,
   ChatTraceEvent,
@@ -821,6 +823,17 @@ function AppInner() {
       }),
     );
     unlisteners.push(
+      listen<ChatResearchProgressEvent>('chat-research-progress', (event) => {
+        useChatStore.getState().handleResearchProgress(event.payload);
+      }),
+    );
+    // The backend held a close / Cmd+Q because research is reading.
+    unlisteners.push(
+      listen('research-exit-requested', () => {
+        useChatStore.getState().handleResearchExitRequested();
+      }),
+    );
+    unlisteners.push(
       listen<ChatSourcesEvent>('chat-sources', (event) => {
         useChatStore.getState().handleSources(event.payload);
       }),
@@ -895,7 +908,9 @@ function AppInner() {
     // syncs proceed independently; progress events drive list refreshes.
     if (isUnified) {
       resetEmails();
-      useChatStore.getState().reset();
+      // Keyed on the account: this effect also re-runs when the account list
+      // reloads, and a same-account reset emptied the chat mid-conversation.
+      useChatStore.getState().resetForAccount(activeAccountId);
 
       if (!useConnectivityStore.getState().isOnline) {
         addLog('info', 'sync', 'Sync skipped — currently offline.');
@@ -923,8 +938,9 @@ function AppInner() {
 
     // Reset emails when switching accounts to avoid showing stale data
     resetEmails();
-    // Also clear any chat state held from the previous account.
-    useChatStore.getState().reset();
+    // Also clear any chat state held from the previous account — only on a
+    // real switch (see `resetForAccount`).
+    useChatStore.getState().resetForAccount(activeAccountId);
 
     // Skip sync for disabled accounts — still load cached emails
     if (!account.enabled) {
@@ -1755,6 +1771,8 @@ function AppInner() {
           onRefreshAfterApply={refreshAfterRuleApply}
         />
       )}
+
+      <ResearchExitDialog />
 
       {accountSettingsAccount && (
         <AccountSettingsDialog

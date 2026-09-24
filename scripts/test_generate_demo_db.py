@@ -120,5 +120,25 @@ class MemoryFactsAreSearchable(unittest.TestCase):
         self.assertEqual(indexed, facts)
 
 
+class ThreadMessagesAreAddressedToTheOtherSide(unittest.TestCase):
+    """A message the owner sends goes to the counterparty. It used to list the
+    owner as its own recipient, so research read "From: YOU, To: YOU" and
+    could not tell a quote the user sent from one the user received."""
+
+    def test_the_owners_messages_go_to_the_counterparty(self):
+        captured = []
+        original_insert, original_tags = gen.insert_email, gen.insert_tags
+        gen.insert_email = lambda conn, **kw: captured.append(kw) or f"id{len(captured)}"
+        gen.insert_tags = lambda *a, **kw: None
+        try:
+            thread = gen.Thread("Ana", "ana@client.example", "Quote", "primary",
+                                [("me", "Here is my quote."), ("them", "Thanks!")])
+            gen._insert_thread(None, gen.LOCALE_EN.work, thread)
+        finally:
+            gen.insert_email, gen.insert_tags = original_insert, original_tags
+        self.assertEqual(captured[0]["recipient_email"], "ana@client.example")
+        self.assertIsNone(captured[1].get("recipient_email"), "their message goes to the owner")
+
+
 if __name__ == "__main__":
     unittest.main()

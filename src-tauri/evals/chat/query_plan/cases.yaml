@@ -319,3 +319,49 @@
     since: "2026-09-21"
     until: "2026-09-28"
   ignore: [mode, to, query, intent, topic, order, limit]
+
+# A document the mail contains (a quote, an invoice…) is a word in the mail,
+# not only a kind of mail. The planner once swapped it for a tag
+# (`intent: request`) and dropped it, so "how many quotes did I send" counted
+# the emails tagged `request` instead of the quotes. A tag may ride along; the
+# word must stay in `query`.
+- id: a_document_word_stays_a_keyword_es
+  question: "cuántos presupuestos he enviado, lista los emails"
+  note: "planned {from: me, intent: request} and dropped 'presupuestos'"
+  today: "2026-09-24"
+  expect:
+    from: "ulises"
+    query: "presupuesto"
+  # 25 is the default page and the order the default one: neither changes
+  # the search.
+  ignore: [intent, topic, mode, to, limit, order]
+
+- id: a_document_word_stays_a_keyword_en
+  question: "how many quotes did I send to clients?"
+  note: "same shape in English"
+  today: "2026-09-24"
+  expect:
+    from: "ulises"
+    query: "quote"
+  ignore: [intent, topic, mode, to, limit, order]
+
+# "With X" names a person without a direction: X's mail AND the user's mail
+# to X. `from`/`to` would keep only one side (a real mailbox lost ~40% of the
+# conversations to `from: X, to: me`).
+- id: with_a_person_is_both_directions_es
+  question: "resume todos los correos con Marisol, uno por línea"
+  note: "planned {from: marisol, to: me} and missed every thread the user started"
+  today: "2026-09-24"
+  expect:
+    with: "marisol"
+  absent: [from, to, since, until]
+  ignore: [query, intent, topic, mode, limit, order]
+
+- id: with_a_person_is_both_directions_en
+  question: "summarise my conversations with Janos"
+  note: "same shape in English"
+  today: "2026-09-24"
+  expect:
+    with: "janos"
+  absent: [from, to, since, until]
+  ignore: [query, intent, topic, mode, limit, order]

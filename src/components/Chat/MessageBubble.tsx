@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { formatDuration, remainingSeconds } from '@/lib/researchTime';
+import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessage, ChatPhase } from '@/types';
+import { EmailRefPill } from './EmailRefPill';
 import { MarkdownContent } from './MarkdownContent';
 import { ReasoningSection, StatsFooter } from './ReasoningTrace';
 import { buildIdSearchQuery, collectReferencedEmailIds } from './referencedEmails';
@@ -36,16 +39,98 @@ interface MessageBubbleProps {
  *  generating). Shown in place of the bare typing dots once the backend tells
  *  us what it's doing, so a slow prompt-processing pass reads as progress
  *  rather than a hang. */
-function ProcessingStatus({ phase }: { phase: ChatPhase }) {
+function ProcessingStatus({
+  phase,
+  accountId,
+  onOpenEmail,
+}: {
+  phase: ChatPhase;
+  accountId: string;
+  onOpenEmail?: () => void;
+}) {
   const { t } = useTranslation(['chat']);
-  return (
-    <span className="inline-flex items-center gap-2 text-gray-500">
+  const research = useChatStore((s) => s.researchProgress);
+  const startedAt = useChatStore((s) => s.researchStartedAt);
+  const stopping = useChatStore((s) => s.turnCancelling);
+  const cancelTurn = useChatStore((s) => s.cancelTurn);
+  // Re-render every few seconds so the time left counts down between batches.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (phase !== 'researching') return;
+    const id = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  let label =
+    phase === 'researching' && research
+      ? t(`chat:processing.research.${research.stage}` as const, {
+          read: research.emailsRead.toLocaleString(),
+          total: research.emailsTotal.toLocaleString(),
+          batch: research.batch,
+          batches: research.batches,
+        })
+      : t(`chat:processing.${phase}` as const);
+  if (phase === 'researching' && research?.stage === 'reading' && startedAt != null) {
+    const left = remainingSeconds(research, startedAt, now);
+    if (left != null) label += t('chat:processing.research.remaining', { time: formatDuration(left) });
+  }
+  const recent = phase === 'researching' ? (research?.recent ?? []) : [];
+  const status = (
+    <span className="inline-flex items-center gap-2 text-gray-500 flex-wrap">
       <svg className="w-3.5 h-3.5 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
       </svg>
-      <span>{t(`chat:processing.${phase}` as const)}</span>
+      <span>{label}</span>
+      {/* Any running turn can be cancelled; a normal one keeps what it
+          already showed. */}
+      <button
+        type="button"
+        data-testid="turn-cancel"
+        disabled={stopping}
+        onClick={() => void cancelTurn()}
+        className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+      >
+        {phase === 'researching'
+          ? stopping
+            ? t('chat:research.stopping')
+            : t('chat:research.stop')
+          : stopping
+            ? t('chat:processing.cancelling')
+            : t('chat:processing.cancel')}
+      </button>
     </span>
+  );
+  if (recent.length === 0) return status;
+  // The latest matches, newest last: a user who sees the run finding the
+  // wrong mail can cancel it early instead of waiting for the report.
+  return (
+    <div className="space-y-1.5">
+      {status}
+      <div data-testid="research-recent" className="text-xs text-gray-600">
+        <div className="mb-0.5 text-gray-500">
+          {t('chat:research.matchesSoFar', { n: (research?.matches ?? recent.length).toLocaleString() })}
+        </div>
+        <ul className="space-y-0.5">
+          {recent.map((m) => (
+            <li key={m.emailId} className="min-w-0">
+              <div className="flex min-w-0 items-baseline gap-1.5">
+                <span className="shrink-0 tabular-nums text-gray-400">{m.date}</span>
+                <EmailRefPill emailId={m.emailId} accountId={accountId} label={m.subject} onOpenEmail={onOpenEmail} />
+                {m.emails > 1 && (
+                  <span className="shrink-0 text-gray-400">{t('chat:research.threadEmails', { n: m.emails })}</span>
+                )}
+              </div>
+              {m.finding && (
+                <div data-testid="research-recent-finding" className="ml-1 line-clamp-2 text-gray-600">
+                  {m.finding}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
@@ -286,7 +371,7 @@ export function MessageBubble({
           <>
             {showTypingDots &&
               (phase ? (
-                <ProcessingStatus phase={phase} />
+                <ProcessingStatus phase={phase} accountId={accountId} onOpenEmail={onOpenEmail} />
               ) : (
                 <span className="inline-flex items-center gap-1 text-gray-500">
                   <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />

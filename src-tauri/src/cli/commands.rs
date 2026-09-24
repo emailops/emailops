@@ -120,7 +120,24 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             fresh,
             thread,
             prewarm,
-        } => run_chat(session, questions, trace, conversation, fresh, thread, prewarm).await,
+            research,
+            estimate,
+        } => {
+            run_chat(
+                session,
+                questions,
+                ChatOptions {
+                    trace,
+                    conversation,
+                    fresh,
+                    thread,
+                    prewarm,
+                    research,
+                    estimate,
+                },
+            )
+            .await
+        }
 
         Command::Sync { account } => {
             // The positional `account` arg overrides the session/global account.
@@ -563,15 +580,49 @@ pub(super) fn collect_referenced_drafts(
 /// Multiple questions run sequentially in ONE process so the model stays
 /// loaded between turns — that's what makes per-turn prefill numbers
 /// comparable (`make cli-bench`).
-async fn run_chat(
-    session: &mut CliSession,
-    questions: Vec<String>,
+/// One human line for a research estimate: "Research estimate: 320 emails in
+/// 12 batches · ~9m 36s · answer: list".
+fn research_estimate_line(est: &crate::models::ResearchEstimate) -> String {
+    let (m, s) = (est.seconds / 60, est.seconds % 60);
+    let time = if m > 0 {
+        format!("{m}m {s:02}s")
+    } else {
+        format!("{s}s")
+    };
+    let answer = match est.mode {
+        crate::models::ReportMode::List => "list",
+        crate::models::ReportMode::Count => "count",
+        crate::models::ReportMode::Analysis => "report",
+    };
+    format!(
+        "Research estimate: {} emails in {} batches · ~{time} · answer: {answer}",
+        est.emails, est.batches
+    )
+}
+
+/// The `chat` subcommand's flags, grouped so `run_chat` stops growing a
+/// parameter per flag.
+struct ChatOptions {
     trace: bool,
     conversation: Option<String>,
     fresh: bool,
     thread: Option<String>,
     prewarm: bool,
-) -> Result<()> {
+    research: bool,
+    /// With `research`: print the estimate and stop, reading nothing.
+    estimate: bool,
+}
+
+async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: ChatOptions) -> Result<()> {
+    let ChatOptions {
+        trace,
+        conversation,
+        fresh,
+        thread,
+        prewarm,
+        research,
+        estimate,
+    } = options;
     let account_id = session.require_account()?;
     let model = session.model.clone();
 
@@ -597,6 +648,22 @@ async fn run_chat(
 
     let registry = Arc::new(crate::services::chat::tools::default_registry());
     let categories: Vec<String> = crate::services::chat::default_categories(&session.db);
+
+    // `--research --estimate`: the confirmation card the app shows before a
+    // research run — plan and gather only, one estimate per question.
+    if research && estimate {
+        for question in &questions {
+            let est =
+                crate::services::chat::research::estimate_for_account(&session.db, &account_id, &categories, question)
+                    .await?;
+            if session.mode == OutputMode::Json {
+                output::emit_ok(serde_json::json!({ "question": question, "estimate": est }))?;
+            } else {
+                println!("{}", research_estimate_line(&est));
+            }
+        }
+        return Ok(());
+    }
 
     // `--thread` is documented as grounding "exactly as the app's chat panel"
     // does, and the panel sends the thread together with the account that owns
@@ -684,6 +751,7 @@ async fn run_chat(
             crate::services::chat::TurnContext {
                 ambient_thread_id: thread.clone(),
                 ambient_account_id: ambient_account.clone(),
+                research,
                 ..Default::default()
             },
         )
@@ -1039,5 +1107,34 @@ mod tests {
         seed_account(&db, "a1", "solo@example.com", true);
         let mut session = test_session(db, Some("a1"));
         dispatch(&mut session, Command::Doctor).await.expect("doctor ok");
+    }
+}
+
+#[cfg(test)]
+mod research_estimate_tests {
+    use super::research_estimate_line;
+    use crate::models::ResearchEstimate;
+
+    fn est(seconds: u64) -> ResearchEstimate {
+        ResearchEstimate {
+            estimate_id: "e".into(),
+            emails: 320,
+            batches: 12,
+            seconds,
+            mode: crate::models::ReportMode::List,
+            filter: None,
+        }
+    }
+
+    #[test]
+    fn the_estimate_line_shows_emails_batches_time_and_answer_form() {
+        assert_eq!(
+            research_estimate_line(&est(576)),
+            "Research estimate: 320 emails in 12 batches · ~9m 36s · answer: list"
+        );
+        assert_eq!(
+            research_estimate_line(&est(42)),
+            "Research estimate: 320 emails in 12 batches · ~42s · answer: list"
+        );
     }
 }

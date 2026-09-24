@@ -405,6 +405,13 @@ pub(crate) fn chat_must_evict_aux(n_prompt: usize, max_gen: usize, n_ctx: usize,
     aux_resident > 0 && n_prompt + max_gen + aux_resident > n_ctx
 }
 
+/// Whether a generation stopped because it spent its token budget: it wrote
+/// `max_gen` tokens and never produced an end-of-generation token (nor was
+/// stopped by its caller). Pure.
+pub(crate) fn ran_out_of_budget(ended: bool, n_gen: u32, max_gen: u32) -> bool {
+    !ended && n_gen >= max_gen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1114,5 +1121,24 @@ mod tests {
         assert!(!chat_must_evict_aux(14000, 1024, 16384, 0));
         // Exactly at the limit is still fine.
         assert!(!chat_must_evict_aux(15000, 1024, 16384, 360));
+    }
+}
+
+#[cfg(test)]
+mod generation_limit_tests {
+    use super::ran_out_of_budget;
+
+    #[test]
+    fn only_a_generation_that_used_its_whole_budget_without_ending_is_cut() {
+        assert!(
+            ran_out_of_budget(false, 512, 512),
+            "no end-of-generation token, budget spent"
+        );
+        assert!(
+            !ran_out_of_budget(true, 512, 512),
+            "it ended on the last token it could write"
+        );
+        assert!(!ran_out_of_budget(true, 40, 512));
+        assert!(!ran_out_of_budget(false, 40, 512), "the caller stopped it early");
     }
 }

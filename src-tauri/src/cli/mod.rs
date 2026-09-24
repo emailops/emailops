@@ -226,6 +226,17 @@ pub enum Command {
         /// numbers reflect the app's real first-turn experience.
         #[arg(long)]
         prewarm: bool,
+        /// Research mode: gather many more emails (paged search + wide
+        /// retrieval), read them in batches sized to the context window, and
+        /// write a detailed report — the app's per-message "Research" toggle.
+        /// Takes minutes on a local model.
+        #[arg(long)]
+        research: bool,
+        /// With `--research`: only plan and gather, and print how many emails
+        /// the research would read, in how many batches and about how long —
+        /// the confirmation card the app shows. Nothing is read or sent.
+        #[arg(long, requires = "research")]
+        estimate: bool,
     },
 
     /// Download new mail for an account.
@@ -763,6 +774,26 @@ mod tests {
     }
 
     #[test]
+    fn chat_research_estimate_flag_parses_and_needs_research() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "q?", "--research", "--estimate"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Chat {
+                research: true,
+                estimate: true,
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["emailops-cli", "chat", "q?", "--estimate"]).is_err());
+    }
+
+    #[test]
+    fn chat_research_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "themes this quarter?", "--research"]);
+        assert!(matches!(cli.command, Some(Command::Chat { research: true, .. })));
+    }
+
+    #[test]
     fn chat_trace_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "chat", "what's new?", "--trace"]);
         match cli.command {
@@ -773,6 +804,8 @@ mod tests {
                 fresh,
                 thread,
                 prewarm,
+                research,
+                estimate,
             }) => {
                 assert_eq!(questions, vec!["what's new?".to_string()]);
                 assert!(trace);
@@ -780,6 +813,8 @@ mod tests {
                 assert!(!fresh);
                 assert!(thread.is_none());
                 assert!(!prewarm);
+                assert!(!research, "research mode is opt-in");
+                assert!(!estimate);
             }
             other => panic!("expected Chat, got {other:?}"),
         }

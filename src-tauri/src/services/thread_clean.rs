@@ -15,34 +15,15 @@
 
 use std::sync::OnceLock;
 
-use chrono::{TimeZone, Utc};
 use regex::Regex;
 
-use crate::models::Email;
 use crate::util::html::decode_html_entities;
-
-/// Per-email floor. Even long threads keep at least this much of each message
-/// so no single email is reduced to a useless stub. Lower than the RAG path's
-/// `MAX_SOURCE_BODY_CHARS` (4000) because thread context concatenates N emails.
-pub const DEFAULT_MAX_CHARS_PER_EMAIL: usize = 2000;
 
 /// Per-email ceiling. A single-message "chat about this email" shows the body
 /// nearly whole instead of clipping it at the floor. Also the cap applied by
 /// the `get_email_body` chat tool, so a long newsletter comes back whole rather
 /// than sliced in half.
 pub const MAX_CHARS_PER_EMAIL: usize = 16000;
-
-/// Total budget shared across the thread; the per-email cap is this divided by
-/// the message count, clamped to `[DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL]`.
-const THREAD_CONTEXT_BUDGET: usize = 12_000;
-
-/// Pick the per-email character cap for a thread of `num_emails` messages.
-/// Few messages get a generous cap (up to the ceiling); long threads divide the
-/// shared budget but never drop below the floor.
-pub fn chars_per_email(num_emails: usize) -> usize {
-    let n = num_emails.max(1);
-    (THREAD_CONTEXT_BUDGET / n).clamp(DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL)
-}
 
 /// Total budget shared across ALL emails preseeded into a multi-email summary
 /// (e.g. the "resumen del día" shortcut). Deliberately far tighter than a
@@ -73,7 +54,14 @@ pub fn summary_chars_per_email(num_emails: usize) -> usize {
 /// line breaks — they're load-bearing for the quote/signature heuristics that
 /// run downstream.
 pub fn clean_email_body(body: &str, max_chars: usize) -> String {
-    let text = to_plain_text(body);
+    // Quoted history in <blockquote> is someone else's earlier message. Only
+    // here: `body_to_plain_text` shows the whole email, quotes included.
+    let body = if looks_like_html(body) {
+        std::borrow::Cow::Owned(drop_blockquotes(body))
+    } else {
+        std::borrow::Cow::Borrowed(body)
+    };
+    let text = to_plain_text(&body);
     let visible = strip_invisible_chars(&text);
     let de_quoted = strip_quoted_replies(&visible);
     let de_signed = strip_signature(&de_quoted);
@@ -176,6 +164,36 @@ fn inline_addr_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"<\s*(?:[^<>\s]+@[^<>\s]+|https?://[^<>\s]+)\s*>").expect("valid regex"))
 }
 
+/// Remove every `<blockquote>…</blockquote>` element, nested ones included.
+/// Mail clients quote the previous message this way — often with no
+/// attribution line the text-level cut could see. Depth-counted rather than a
+/// lazy regex, which would leak the tail of an outer quote after an inner one.
+fn drop_blockquotes(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < html.len() {
+        let rest = &lower[i..];
+        if rest.starts_with("<blockquote") && rest[11..].starts_with(|c: char| c == '>' || c.is_whitespace()) {
+            depth += 1;
+            i += rest.find('>').map_or(rest.len(), |p| p + 1);
+            continue;
+        }
+        if rest.starts_with("</blockquote") && depth > 0 {
+            depth -= 1;
+            i += rest.find('>').map_or(rest.len(), |p| p + 1);
+            continue;
+        }
+        let Some(ch) = html[i..].chars().next() else { break };
+        if depth == 0 {
+            out.push(ch);
+        }
+        i += ch.len_utf8();
+    }
+    out
+}
+
 fn html_to_plain_text(html: &str) -> String {
     // 1. Drop style + script blocks entirely.
     let s = style_block_re().replace_all(html, "");
@@ -190,51 +208,6 @@ fn html_to_plain_text(html: &str) -> String {
 
 fn strip_inline_addr_brackets(text: &str) -> String {
     inline_addr_re().replace_all(text, "").into_owned()
-}
-
-/// Format a thread of emails as a single context string suitable for injection
-/// into the chat system prompt. Emails should be passed in chronological order.
-///
-/// `bodies` maps email_id → raw body. Missing entries are rendered with an
-/// empty body marker rather than skipped — the metadata block still has value.
-pub fn format_thread_context(
-    emails: &[Email],
-    bodies: impl Fn(&str) -> Option<String>,
-    max_chars_per_email: usize,
-) -> String {
-    if emails.is_empty() {
-        return String::new();
-    }
-    let subject = emails.first().map(|e| e.subject.as_str()).unwrap_or("(no subject)");
-    let mut out = String::with_capacity(emails.len() * 1500);
-    out.push_str("EMAIL THREAD CONTEXT\n");
-    out.push_str(&format!("Subject: {}\n", subject));
-    out.push_str(&format!("Messages: {}\n", emails.len()));
-    out.push_str("---\n\n");
-
-    for (idx, email) in emails.iter().enumerate() {
-        let raw_body = bodies(&email.id).unwrap_or_default();
-        let cleaned = clean_email_body(&raw_body, max_chars_per_email);
-        let date = format_date(email.timestamp);
-        out.push_str(&format!(
-            "[{n}] (id: {id}) From: {sender} <{addr}>\n    Date: {date}\n    Subject: {subj}\n\n{body}\n\n",
-            n = idx + 1,
-            id = email.id,
-            sender = email.sender,
-            addr = email.sender_email,
-            date = date,
-            subj = email.subject,
-            body = if cleaned.is_empty() { "(empty)" } else { &cleaned },
-        ));
-    }
-    out
-}
-
-fn format_date(unix_secs: i64) -> String {
-    Utc.timestamp_opt(unix_secs, 0)
-        .single()
-        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // ── Quoted-reply stripping ─────────────────────────────────────────────────
@@ -469,6 +442,37 @@ mod tests {
     }
 
     #[test]
+    fn strips_an_html_blockquote_even_without_an_attribution_line() {
+        // Apple Mail / Thunderbird quote the previous message in a
+        // <blockquote type="cite"> and put nothing recognisable around it.
+        let html = "<p>The budget is 4,000 EUR.</p><blockquote type=\"cite\"><p>Could you send me a budget?</p>\
+                    <blockquote><p>older</p></blockquote><p>still quoted</p></blockquote>";
+        assert_eq!(clean_email_body(html, 1000), "The budget is 4,000 EUR.");
+    }
+
+    #[test]
+    fn the_whole_email_view_keeps_its_blockquotes() {
+        let html = "<p>Answer.</p><blockquote><p>Earlier message.</p></blockquote>";
+        assert!(body_to_plain_text(html).contains("Earlier message."));
+    }
+
+    #[test]
+    fn strips_gmail_html_quote() {
+        let html = "<div dir=\"ltr\">The budget is 4,000 EUR.</div><br><div class=\"gmail_quote\">\
+                    <div class=\"gmail_attr\">On Mon, 1 Jun 2017 at 10:00, Ana &lt;ana@example.com&gt; wrote:<br></div>\
+                    <blockquote class=\"gmail_quote\">Could you send me a budget?</blockquote></div>";
+        assert_eq!(clean_email_body(html, 1000), "The budget is 4,000 EUR.");
+    }
+
+    #[test]
+    fn strips_an_attribution_wrapped_onto_two_lines() {
+        // Plain-text Gmail wraps long attributions: the "wrote:" lands on the
+        // next line, and a one-line check never saw it.
+        let text = "The budget is 4,000 EUR.\n\nEl lun, 1 jun 2017 a las 10:00, Ana Pérez <\nana@example.com> escribió:\n\n> Could you send me a budget?";
+        assert_eq!(clean_email_body(text, 1000), "The budget is 4,000 EUR.");
+    }
+
+    #[test]
     fn strips_rfc_signature() {
         let body = "Sounds good — let's do Wednesday at 10.\n\n-- \nAlice Smith\nCEO @ Acme\nalice@x.com";
         let cleaned = clean_email_body(body, 4000);
@@ -556,28 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn chars_per_email_is_generous_for_single_email_threads() {
-        // A "chat about this email" with one message should show it nearly whole,
-        // not clip it at the old 2000-char floor. A single email gets the whole
-        // shared budget (12000) — below the 16000 ceiling, so the budget binds.
-        assert_eq!(chars_per_email(1), THREAD_CONTEXT_BUDGET);
-        assert_eq!(chars_per_email(2), 6000);
-    }
-
-    #[test]
-    fn chars_per_email_shrinks_then_floors_for_long_threads() {
-        // Many-message threads divide the shared budget but never drop below the
-        // floor, so each email keeps a usable amount of context.
-        assert_eq!(chars_per_email(6), DEFAULT_MAX_CHARS_PER_EMAIL);
-        assert_eq!(chars_per_email(50), DEFAULT_MAX_CHARS_PER_EMAIL);
-    }
-
-    #[test]
-    fn chars_per_email_handles_zero_without_panicking() {
-        assert_eq!(chars_per_email(0), THREAD_CONTEXT_BUDGET);
-    }
-
-    #[test]
     fn summary_chars_per_email_caps_a_single_email_well_below_full_body() {
         // Regression: the "resumen del día" preseed used MAX_CHARS_PER_EMAIL
         // (8000) per row, so one long newsletter ate the whole context and the
@@ -629,84 +611,5 @@ mod tests {
         let cleaned = clean_email_body(body, 4000);
         assert!(cleaned.contains('\u{200D}'), "ZWJ kept inside emoji: {cleaned:?}");
         assert!(cleaned.contains("👨\u{200D}💻"));
-    }
-
-    #[test]
-    fn format_thread_context_includes_metadata() {
-        use crate::models::Email;
-        let e1 = Email {
-            id: "e1".into(),
-            account_id: "a".into(),
-            thread_id: "t".into(),
-            message_id: Some("m1".into()),
-            references: None,
-            subject: "Project kickoff".into(),
-            sender: "Alice".into(),
-            sender_email: "alice@x.com".into(),
-            recipients: vec![],
-            cc: vec![],
-            body: String::new(),
-            snippet: String::new(),
-            timestamp: 1_700_000_000,
-            is_read: true,
-            triage_status: None,
-            category: "primary".into(),
-            mailbox: "inbox".into(),
-            is_sent: false,
-            headers: None,
-        };
-        let mut e2 = e1.clone();
-        e2.id = "e2".into();
-        e2.sender = "Bob".into();
-        e2.sender_email = "bob@y.com".into();
-        e2.timestamp = 1_700_000_900;
-
-        let bodies = |id: &str| match id {
-            "e1" => Some("Hi all — proposing 10am Wed for kickoff.".to_string()),
-            "e2" => Some("Works for me.".to_string()),
-            _ => None,
-        };
-        let out = format_thread_context(&[e1, e2], bodies, 1000);
-        assert!(out.contains("Subject: Project kickoff"));
-        assert!(out.contains("Messages: 2"));
-        assert!(out.contains("[1] (id: e1) From: Alice <alice@x.com>"));
-        assert!(out.contains("[2] (id: e2) From: Bob <bob@y.com>"));
-        assert!(out.contains("proposing 10am Wed"));
-        assert!(out.contains("Works for me."));
-    }
-
-    #[test]
-    fn format_thread_context_exposes_email_ids_for_reply_targeting() {
-        use crate::models::Email;
-        // Thread-bound chat lets the model draft a reply via
-        // generate_email_draft(email_id=...). The model can only do that if the
-        // real email id is visible in the rendered context — otherwise it
-        // invents one and the draft chip is dropped as hallucinated.
-        let e = Email {
-            id: "19e6e27f48f95297".into(),
-            account_id: "a".into(),
-            thread_id: "t".into(),
-            message_id: Some("m1".into()),
-            references: None,
-            subject: "Pedido Apple".into(),
-            sender: "Dani".into(),
-            sender_email: "dani@x.com".into(),
-            recipients: vec![],
-            cc: vec![],
-            body: String::new(),
-            snippet: String::new(),
-            timestamp: 1_700_000_000,
-            is_read: true,
-            triage_status: None,
-            category: "primary".into(),
-            mailbox: "inbox".into(),
-            is_sent: false,
-            headers: None,
-        };
-        let out = format_thread_context(&[e], |_| Some("Body".to_string()), 1000);
-        assert!(
-            out.contains("(id: 19e6e27f48f95297)"),
-            "real email id must appear in the context: {out}"
-        );
     }
 }

@@ -132,6 +132,7 @@ describe('chatStore selectConversation', () => {
       streamingPhase: 'runningTools',
       messages: [],
       error: null,
+      backgroundTurns: {},
     });
   });
 
@@ -377,6 +378,468 @@ describe('a turn that is still generating when you navigate away', () => {
     expect(s.messages.find((m) => m.id === 'a-1')?.content).toBe('Listo');
     expect(s.streamingMessageId).toBeNull();
     expect(s.streamingPhase).toBeNull();
+  });
+});
+
+describe('chatStore research mode', () => {
+  const estimate = {
+    estimateId: 'est-1',
+    emails: 1240,
+    batches: 124,
+    seconds: 2100,
+    mode: 'analysis' as const,
+    filter: { subject: 'x' },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      streamingPhase: null,
+      researchMode: false,
+      researchProgress: null,
+      pendingResearch: null,
+      inputPrefill: null,
+      messages: [],
+      isSending: false,
+      error: null,
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'q' },
+      assistantMessage: assistantMessage('msg-1'),
+    });
+    vi.mocked(api.estimateResearch).mockResolvedValue(estimate);
+  });
+
+  const pending = (content: string) => ({
+    content,
+    opts: {},
+    status: 'ready' as const,
+    estimate: { ...estimate, emails: 0 },
+    error: null,
+  });
+
+  it('switching the chat account drops a pending research and gives its question back', async () => {
+    useChatStore.setState({ currentAccountId: 'acct-a', pendingResearch: pending('los correos con Ana') });
+    vi.mocked(api.listChatConversations).mockResolvedValue([]);
+
+    await useChatStore.getState().selectAccount('acct-b');
+
+    // The estimate was for acct-a: shown under acct-b it reads as that
+    // account's answer.
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('los correos con Ana');
+  });
+
+  it('opening another conversation drops a pending research too', async () => {
+    useChatStore.setState({ pendingResearch: pending('los correos con Ana') });
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+
+    await useChatStore.getState().selectConversation('conv-2');
+
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('los correos con Ana');
+  });
+
+  it('sends a normal turn when research mode is off', async () => {
+    await useChatStore.getState().sendMessage('q');
+    expect(vi.mocked(api.sendChatMessage).mock.calls[0][7]).toBe(false);
+    expect(api.estimateResearch).not.toHaveBeenCalled();
+  });
+
+  it('estimates first and waits for confirmation instead of sending', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    expect(api.estimateResearch).toHaveBeenCalledWith('conv-1', 'themes this quarter?', ['primary'], null);
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
+    const pending = useChatStore.getState().pendingResearch;
+    expect(pending?.status).toBe('ready');
+    expect(pending?.estimate).toEqual(estimate);
+    // Per message: the toggle is spent on this question.
+    expect(useChatStore.getState().researchMode).toBe(false);
+  });
+
+  it('sends the confirmed research with its estimate', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    await useChatStore.getState().confirmResearch();
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[1]).toBe('themes this quarter?');
+    expect(call[7]).toBe(true);
+    expect(call[8]).toBe('est-1');
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+  });
+
+  it('cancelling sends nothing and hands the question back to the input', async () => {
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('themes this quarter?');
+    useChatStore.getState().cancelResearch();
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
+    expect(useChatStore.getState().pendingResearch).toBeNull();
+    expect(useChatStore.getState().inputPrefill?.text).toBe('themes this quarter?');
+  });
+
+  it('shows an estimate that failed', async () => {
+    vi.mocked(api.estimateResearch).mockRejectedValue(new Error('AI is disabled'));
+    useChatStore.getState().setResearchMode(true);
+    await useChatStore.getState().sendMessage('q');
+    const pending = useChatStore.getState().pendingResearch;
+    expect(pending?.status).toBe('error');
+    expect(pending?.error).toContain('AI is disabled');
+  });
+
+  it('stops the running research', async () => {
+    vi.mocked(api.cancelChatTurn).mockResolvedValue(true);
+    useChatStore.setState({ streamingMessageId: 'msg-9' });
+    await useChatStore.getState().cancelTurn();
+    expect(api.cancelChatTurn).toHaveBeenCalledWith('msg-9');
+    expect(useChatStore.getState().turnCancelling).toBe(true);
+  });
+
+  it('tracks progress for the in-flight turn and clears it when the turn ends', async () => {
+    await useChatStore.getState().sendMessage('q');
+    useChatStore.getState().handleResearchProgress({
+      messageId: 'msg-1',
+      conversationId: 'conv-1',
+      stage: 'reading',
+      batch: 2,
+      batches: 5,
+      emailsRead: 20,
+      emailsTotal: 50,
+    });
+    expect(useChatStore.getState().researchProgress?.emailsRead).toBe(20);
+    expect(useChatStore.getState().researchStartedAt).not.toBeNull();
+
+    // A late event from another message is ignored.
+    useChatStore.getState().handleResearchProgress({
+      messageId: 'other',
+      conversationId: 'conv-1',
+      stage: 'writing',
+      batch: 5,
+      batches: 5,
+      emailsRead: 50,
+      emailsTotal: 50,
+    });
+    expect(useChatStore.getState().researchProgress?.stage).toBe('reading');
+
+    useChatStore.getState().handleStreamToken(streamEvent({ messageId: 'msg-1', done: true }));
+    expect(useChatStore.getState().researchProgress).toBeNull();
+    expect(useChatStore.getState().turnCancelling).toBe(false);
+  });
+});
+
+describe('a running turn survives leaving its conversation', () => {
+  function msg(id: string, role: 'user' | 'assistant', content = ''): ChatMessage {
+    return { ...assistantMessage(id), role, content };
+  }
+  const progress = {
+    messageId: 'msg-1',
+    conversationId: 'conv-1',
+    stage: 'reading' as const,
+    batch: 3,
+    batches: 10,
+    emailsRead: 30,
+    emailsTotal: 100,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // A research turn mid-flight in conv-1: no answer text yet, only status.
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: 'conv-1',
+      messages: [msg('user-1', 'user', 'q'), msg('msg-1', 'assistant')],
+      streamingMessageId: 'msg-1',
+      streamingPhase: 'researching',
+      researchProgress: progress,
+      backgroundTurns: {},
+      isSending: false,
+      error: null,
+    });
+    vi.mocked(api.getChatMessages).mockImplementation(async (id: string) =>
+      id === 'conv-1' ? [msg('user-1', 'user', 'q'), msg('msg-1', 'assistant')] : [],
+    );
+  });
+
+  it('restores the status when you come back before any new event arrives', async () => {
+    // A research batch takes ~20 s: leaving and returning inside that window
+    // used to find no background record and show an empty, finished answer.
+    await useChatStore.getState().selectConversation('conv-2');
+    await useChatStore.getState().selectConversation('conv-1');
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBe('msg-1');
+    expect(s.streamingPhase).toBe('researching');
+    expect(s.researchProgress).toEqual(progress);
+  });
+
+  it('keeps the status when the open conversation is selected again', async () => {
+    await useChatStore.getState().selectConversation('conv-1');
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBe('msg-1');
+    expect(s.streamingPhase).toBe('researching');
+    expect(s.researchProgress).toEqual(progress);
+  });
+
+  it('keeps research progress that arrives while the conversation is off screen', async () => {
+    await useChatStore.getState().selectConversation('conv-2');
+    const later = { ...progress, batch: 5, emailsRead: 50 };
+    useChatStore.getState().handleResearchProgress(later);
+    expect(useChatStore.getState().researchProgress).toBeNull();
+
+    await useChatStore.getState().selectConversation('conv-1');
+    expect(useChatStore.getState().researchProgress).toEqual(later);
+  });
+
+  it('does not resurrect a turn that finished while you were away', async () => {
+    await useChatStore.getState().selectConversation('conv-2');
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'msg-1', conversationId: 'conv-1', token: 'Informe', done: true }));
+
+    await useChatStore.getState().selectConversation('conv-1');
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.streamingPhase).toBeNull();
+    expect(s.researchProgress).toBeNull();
+    expect(s.messages.find((m) => m.id === 'msg-1')?.content).toBe('Informe');
+  });
+});
+
+describe('chat reset on account change', () => {
+  const conv = { id: 'c-1', accountId: 'acct-a', title: 'A', createdAt: 0, updatedAt: 0 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      conversations: [conv],
+      activeConversationId: 'c-1',
+      currentAccountId: 'acct-a',
+      resetAccountKey: 'acct-a',
+      messages: [],
+      streamingMessageId: null,
+    });
+  });
+
+  it('keeps the chat when the account did not change', () => {
+    // The account list reloading (accountsLoading flips) re-runs the App
+    // effect for the same account; that emptied the conversation list.
+    useChatStore.getState().resetForAccount('acct-a');
+    expect(useChatStore.getState().conversations).toEqual([conv]);
+    expect(useChatStore.getState().activeConversationId).toBe('c-1');
+  });
+
+  it('clears the chat and forgets the account on a real switch, so it reloads', () => {
+    useChatStore.getState().resetForAccount('acct-b');
+    const s = useChatStore.getState();
+    expect(s.conversations).toEqual([]);
+    expect(s.activeConversationId).toBeNull();
+    // Without this, selectAccount() for the chat's account is a no-op and the
+    // list stays empty until the panel is remounted.
+    expect(s.currentAccountId).toBeNull();
+  });
+
+  it('reloads the list when selectAccount runs after a reset', async () => {
+    useChatStore.getState().resetForAccount('acct-b');
+    vi.mocked(api.listChatConversations).mockResolvedValue([conv]);
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+    await useChatStore.getState().selectAccount('acct-a');
+    expect(api.listChatConversations).toHaveBeenCalledWith('acct-a');
+    expect(useChatStore.getState().conversations).toEqual([conv]);
+  });
+});
+
+describe('the research running anywhere in the app', () => {
+  const progress = {
+    messageId: 'msg-bg',
+    conversationId: 'conv-other',
+    stage: 'reading' as const,
+    batch: 3,
+    batches: 10,
+    emailsRead: 30,
+    emailsTotal: 100,
+  };
+
+  beforeEach(() => {
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      runningResearch: null,
+      backgroundTurns: {},
+      researchExitRequested: false,
+    });
+  });
+
+  it('is tracked whichever conversation it runs in', () => {
+    useChatStore.getState().handleResearchProgress(progress);
+    expect(useChatStore.getState().runningResearch).toEqual(progress);
+  });
+
+  it('ends when its answer is done, even off screen', () => {
+    useChatStore.getState().handleResearchProgress(progress);
+    useChatStore
+      .getState()
+      .handleStreamToken(streamEvent({ messageId: 'msg-bg', conversationId: 'conv-other', done: true }));
+    expect(useChatStore.getState().runningResearch).toBeNull();
+  });
+
+  it('asks before quitting and can be dismissed', () => {
+    useChatStore.getState().handleResearchExitRequested();
+    expect(useChatStore.getState().researchExitRequested).toBe(true);
+    useChatStore.getState().dismissResearchExit();
+    expect(useChatStore.getState().researchExitRequested).toBe(false);
+  });
+});
+
+describe('returning to an account whose research is still running', () => {
+  const convA1 = { id: 'c-a1', accountId: 'acct-a', title: 'A1', createdAt: 0, updatedAt: 0 };
+  const convA2 = { id: 'c-a2', accountId: 'acct-a', title: 'A2', createdAt: 0, updatedAt: 0 };
+  const convB = { id: 'c-b1', accountId: 'acct-b', title: 'B', createdAt: 0, updatedAt: 0 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      streamingMessageId: null,
+      streamingPhase: null,
+      researchProgress: null,
+      runningResearch: null,
+      lastConversationByAccount: {},
+      currentAccountId: null,
+      backgroundTurns: {},
+    });
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+  });
+
+  it('opens the conversation where the research runs, not the last one visited', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA1, convA2]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a1');
+    // A research runs in c-a1 …
+    useChatStore.setState({ streamingMessageId: 'msg-r', streamingPhase: 'researching' });
+    // … the user wanders to c-a2, then to another account.
+    await useChatStore.getState().selectConversation('c-a2');
+    vi.mocked(api.listChatConversations).mockResolvedValue([convB]);
+    await useChatStore.getState().selectAccount('acct-b');
+
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA1, convA2]);
+    await useChatStore.getState().selectAccount('acct-a');
+    expect(useChatStore.getState().activeConversationId).toBe('c-a1');
+    expect(useChatStore.getState().streamingPhase).toBe('researching');
+  });
+
+  it('falls back to the last conversation when nothing runs there', async () => {
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA1, convA2]);
+    await useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectConversation('c-a2');
+    vi.mocked(api.listChatConversations).mockResolvedValue([convB]);
+    await useChatStore.getState().selectAccount('acct-b');
+    vi.mocked(api.listChatConversations).mockResolvedValue([convA1, convA2]);
+    await useChatStore.getState().selectAccount('acct-a');
+    expect(useChatStore.getState().activeConversationId).toBe('c-a2');
+  });
+});
+
+describe('an account reset keeps a running turn', () => {
+  it('parks the running turn so returning to its conversation shows it', () => {
+    useChatStore.setState({
+      activeConversationId: 'c-run',
+      streamingMessageId: 'msg-run',
+      streamingPhase: 'researching',
+      messages: [],
+      backgroundTurns: {},
+      resetAccountKey: 'acct-a',
+    });
+    useChatStore.getState().resetForAccount('acct-b');
+    expect(useChatStore.getState().backgroundTurns['c-run']).toMatchObject({
+      messageId: 'msg-run',
+      phase: 'researching',
+      done: false,
+    });
+  });
+});
+
+describe('retrying a rejected research', () => {
+  const estimate = {
+    estimateId: 'est-9',
+    emails: 40,
+    batches: 4,
+    seconds: 70,
+    mode: 'analysis' as const,
+    filter: null,
+  };
+  const research = {
+    nCtx: 16384,
+    plannedEmails: 40,
+    searchHits: 40,
+    semanticHits: 0,
+    emailsAnalyzed: 40,
+    batches: 4,
+    failedBatches: 0,
+    findings: 5,
+    relevantEmails: 5,
+    condenseCalls: 0,
+    stopped: false,
+    gatherMs: 1,
+    mapMs: 1,
+    condenseMs: 0,
+    reduceMs: 1,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      pendingResearch: null,
+      isSending: false,
+      rejectedMessageIds: [],
+      selectedCategories: ['primary'],
+      messages: [
+        {
+          ...assistantMessage('rep-1'),
+          content: 'report',
+          trace: {
+            route: { mode: 'tools_first', reason: '', matchedKeywords: [], classifier: 'heuristic' },
+            toolCalls: [],
+            model: 'm',
+            totalElapsedMs: 1,
+            research,
+            steps: [],
+          },
+        },
+      ],
+    });
+    vi.mocked(api.estimateResearch).mockResolvedValue(estimate);
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: { ...assistantMessage('u-2'), role: 'user', content: 'faltan los de marzo' },
+      assistantMessage: assistantMessage('msg-2'),
+    });
+  });
+
+  it('re-estimates a new research with the correction before sending', async () => {
+    await useChatStore.getState().retryWithCorrection('rep-1', 'faltan los de marzo');
+    expect(api.sendChatMessage).not.toHaveBeenCalled();
+    expect(api.estimateResearch).toHaveBeenCalledWith('conv-1', 'faltan los de marzo', ['primary'], {
+      rejectedMessageId: 'rep-1',
+      reason: 'faltan los de marzo',
+    });
+    expect(useChatStore.getState().pendingResearch?.status).toBe('ready');
+    expect(useChatStore.getState().rejectedMessageIds).toContain('rep-1');
+  });
+
+  it('sends it as research, with the correction and the estimate, once confirmed', async () => {
+    await useChatStore.getState().retryWithCorrection('rep-1', 'faltan los de marzo');
+    await useChatStore.getState().confirmResearch();
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[6]).toEqual({ rejectedMessageId: 'rep-1', reason: 'faltan los de marzo' });
+    expect(call[7]).toBe(true);
+    expect(call[8]).toBe('est-9');
   });
 });
 

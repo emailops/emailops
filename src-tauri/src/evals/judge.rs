@@ -219,6 +219,7 @@ pub async fn score_with_provider(
         temperature: Some(0.0),
         max_tokens: Some(600),
         think: Some(false),
+        json_shape: None,
     };
     match provider.complete(&prompt, options).await {
         Ok(result) => parse_judge_content(&result.text, case),

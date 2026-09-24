@@ -60,7 +60,7 @@
     "retry": "Retry",
     "wrong": "This answer isn't right",
     "wrongPrompt": "What was wrong with it?",
-    "wrongPlaceholder": "e.g. those emails are from September, not August",
+    "wrongPlaceholder": "Help the model do better — e.g. those emails are from September, not August",
     "wrongSubmit": "Try again",
     "rejected": "Marked as wrong — retried below."
   },
@@ -72,7 +72,17 @@
     "retrievingEmail": "Retrieving email…",
     "generatingDraft": "Generating draft…",
     "runningTools": "Processing prompt…",
-    "generating": "Generating…"
+    "researching": "Researching…",
+    "research": {
+      "gathering": "Research: gathering emails…",
+      "reading": "Research: reading emails {{read}}/{{total}} (batch {{batch}}/{{batches}})…",
+      "condensing": "Research: merging notes {{batch}}/{{batches}}…",
+      "writing": "Research: writing the report from {{total}} emails…",
+      "remaining": " · ~{{time}} left"
+    },
+    "generating": "Generating…",
+    "cancel": "Cancel",
+    "cancelling": "Cancelling…"
   },
   "reasoning": {
     "show": "Show reasoning",
@@ -115,7 +125,8 @@
         "fetchMetadata": "Fetch metadata",
         "threadExpansion": "Thread expansion",
         "helpDocs": "EmailOps help",
-        "rag": "RAG retrieval"
+        "rag": "RAG retrieval",
+        "research": "Research"
       },
       "noCalls": "no calls",
       "fallbackSkipped": "fallback (skipped)",
@@ -135,7 +146,44 @@
       "prefill": "prefill {{latency}}",
       "kvCacheHit": "KV cache {{cached}}/{{total}} tok ({{pct}}%)",
       "kvCacheMiss": "KV cache 0/{{total}} tok (cold)",
-      "helpSections": "{{included}} of {{candidates}} guide sections"
+      "helpSections": "{{included}} of {{candidates}} guide sections",
+      "researchFailed": "{{n}} batches failed"
+    },
+    "flow": {
+      "researchOn": "Research mode",
+      "researchRead": "read {{read}} of {{planned}} emails in {{batches}} batches",
+      "researchFindings": "{{findings}} findings from {{relevant}} emails",
+      "researchStopped": "cancelled by the user",
+      "keywords": "keywords",
+      "findings": "{{n}} findings",
+      "kind": {
+        "router": "Router",
+        "planner": "Planner (LLM)",
+        "retrieval": "RAG retrieval",
+        "help": "EmailOps help",
+        "tool": "tool_call:",
+        "llmRound": "LLM round {{n}}",
+        "answer": "Answer (LLM)",
+        "llmCall": "LLM call",
+        "llmCallN": "LLM call {{n}}/{{total}}"
+      },
+      "section": {
+        "prompt": "prompt",
+        "output": "output",
+        "details": "details"
+      },
+      "detail": {
+        "latency": "latency",
+        "prefill": "prefill",
+        "kvCache": "KV cache",
+        "cache": "cache",
+        "toolCalls": "tool calls",
+        "chars": "chars",
+        "hits": "hits",
+        "route": "route",
+        "reason": "reason",
+        "status": "status"
+      }
     }
   },
   "sources": {
@@ -200,5 +248,34 @@
   "accountPicker": {
     "label": "Account this chat searches",
     "hint": "Chat answers from one account at a time. Switching starts a new conversation."
+  },
+  "research": {
+    "toggle": "Research",
+    "title": "Research mode: reads many more emails in batches and writes a detailed analysis. Slower — can take several minutes. Applies to the next message only.",
+    "hint": "Next message: in-depth analysis (slower)",
+    "estimating": "Counting the emails this research covers…",
+    "estimate": "This research will read {{emails}} emails in {{batches}} batches · about {{time}}",
+    "estimateNone": "No emails match this question — nothing to research.",
+    "estimateFailed": "Could not estimate this research: {{error}}",
+    "start": "Start research",
+    "cancel": "Cancel",
+    "stop": "Cancel research",
+    "stopping": "Cancelling…",
+    "filter": "Filter",
+    "byMeaning": "Gathered by meaning (no filter)",
+    "mode": {
+      "list": "Answer: a list of every match — no written report, faster",
+      "count": "Answer: the exact count and the list — no written report, faster",
+      "analysis": "Answer: a written report across every match"
+    },
+    "exit": {
+      "title": "Research in progress",
+      "body": "A chat research is still reading your emails. If you quit now it is lost and its answer stays empty.",
+      "keep": "Keep researching",
+      "quit": "Quit anyway"
+    },
+    "statusBar": "Chat: Research in progress… ({{step}})",
+    "matchesSoFar": "{{n}} matches so far — the latest:",
+    "threadEmails": "{{n}} emails"
   }
 }

@@ -56,6 +56,7 @@
 // email plaintext, so it is never persisted to disk.
 
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -104,6 +105,8 @@ pub(crate) struct GenOutcome {
     pub prompt_tokens: u32,
     /// Tokens sampled during generation.
     pub gen_tokens: u32,
+    /// Generation stopped at its token budget, mid-reply.
+    pub truncated: bool,
     /// Wall-clock ms from tokenisation start until the prompt decode finished,
     /// i.e. the latency before the first token can be sampled.
     pub prefill_ms: i64,
@@ -172,6 +175,9 @@ struct GenRequest {
     /// system message can still reuse it. `None` disables anchoring.
     system_prefix_bytes: Option<usize>,
     on_token: Option<OnToken>,
+    /// GBNF grammar the reply must follow (`JsonShape::to_gbnf`): tokens
+    /// that would leave it are never sampled. `None` samples freely.
+    grammar: Option<String>,
     reply: tokio::sync::oneshot::Sender<std::result::Result<GenOutcome, String>>,
 }
 
@@ -191,22 +197,33 @@ pub(crate) struct InferenceActorHandle {
     /// and aborts the process if the context outlived us. See
     /// [`InferenceActorHandle::wait_for_exit`].
     thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// The context window the thread settled on (`0` until it has): the
+    /// `chat.n_ctx` setting after the RAM / KV-fit / trained-window clamps.
+    n_ctx: Arc<AtomicU32>,
 }
 
 impl InferenceActorHandle {
+    /// The window this actor runs with, once its thread has computed it.
+    pub(crate) fn n_ctx(&self) -> Option<u32> {
+        Some(self.n_ctx.load(Ordering::Relaxed)).filter(|n| *n > 0)
+    }
+
     /// Spawn the actor thread for `model`. The context is created lazily on
     /// the thread itself (it cannot be sent across). `n_ctx_override` is the
     /// user's configured context window (`0` = auto); the actor resolves the
     /// effective window via [`effective_n_ctx`] once the model is known.
     pub(crate) fn spawn(model: Arc<LlamaModel>, n_ctx_override: u32) -> std::result::Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel::<GenRequest>();
+        let n_ctx = Arc::new(AtomicU32::new(0));
+        let published = Arc::clone(&n_ctx);
         let join = std::thread::Builder::new()
             .name("llama-inference".into())
-            .spawn(move || actor_loop(&model, &rx, n_ctx_override))
+            .spawn(move || actor_loop(&model, &rx, n_ctx_override, &published))
             .map_err(|e| format!("Failed to spawn inference thread: {}", e))?;
         Ok(Self {
             tx,
             thread: Arc::new(Mutex::new(Some(join))),
+            n_ctx,
         })
     }
 
@@ -235,6 +252,7 @@ impl InferenceActorHandle {
         stable_prompt_bytes: Option<usize>,
         system_prefix_bytes: Option<usize>,
         on_token: Option<OnToken>,
+        grammar: Option<String>,
     ) -> std::result::Result<GenOutcome, String> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -247,6 +265,7 @@ impl InferenceActorHandle {
                 stable_prompt_bytes,
                 system_prefix_bytes,
                 on_token,
+                grammar,
                 reply: reply_tx,
             })
             .map_err(|_| "Inference thread is no longer running".to_string())?;
@@ -302,7 +321,7 @@ impl ActorExitWaiter {
     }
 }
 
-fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32) {
+fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32, published_n_ctx: &AtomicU32) {
     // KV bytes per token from the model's real geometry (f16 K+V per layer).
     // Hybrid/SWA layers cap their own KV, so this is a safe upper bound.
     let kv_bytes_per_token = {
@@ -312,6 +331,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     };
     let auto_cap = plan_auto_n_ctx_cap(crate::util::system::total_ram_bytes(), model.size(), kv_bytes_per_token);
     let n_ctx = effective_n_ctx(n_ctx_override, model.n_ctx_train(), auto_cap);
+    published_n_ctx.store(n_ctx, Ordering::Relaxed);
     crate::services::logger::log(
         "info",
         "ai",
@@ -373,6 +393,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             stable_prompt_bytes,
             system_prefix_bytes,
             mut on_token,
+            grammar,
             reply,
         } = req;
         let result = generate_with_cache(
@@ -390,6 +411,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             system_prefix_bytes,
             on_token.as_mut(),
             &mut n_ctx_suggested,
+            grammar.as_deref(),
         );
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
@@ -436,6 +458,7 @@ fn generate_with_cache(
     system_prefix_bytes: Option<usize>,
     mut on_token: Option<&mut OnToken>,
     n_ctx_suggested: &mut bool,
+    grammar: Option<&str>,
 ) -> std::result::Result<GenOutcome, String> {
     // Prefill clock starts before tokenisation: everything up to the first
     // sampled token is latency the user perceives as "thinking".
@@ -453,6 +476,7 @@ fn generate_with_cache(
             text: String::new(),
             prompt_tokens: 0,
             gen_tokens: 0,
+            truncated: false,
             prefill_ms: 0,
             cached_prompt_tokens: 0,
             prefix_plan: None,
@@ -812,22 +836,36 @@ fn generate_with_cache(
     }
     let prefill_ms = t_prefill.elapsed().as_millis() as i64;
 
-    // Sampler chain: temperature → random distribution.
-    // temperature=0 → effectively greedy via a near-zero temp.
+    // Sampler chain: [grammar →] temperature → random distribution.
+    // temperature=0 → effectively greedy via a near-zero temp. A grammar
+    // masks every token that would leave it, so the reply always parses; one
+    // llama.cpp rejects fails the call rather than silently sampling freely.
     let eff_temp = temperature.max(1e-6);
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::temp(eff_temp),
-        LlamaSampler::dist(u32::MAX), // LLAMA_DEFAULT_SEED
-    ]);
+    let mut chain = Vec::with_capacity(3);
+    if let Some(grammar) = grammar {
+        chain.push(
+            LlamaSampler::grammar(model, grammar, "root")
+                .map_err(|e| format!("The reply grammar was rejected: {e}"))?,
+        );
+    }
+    chain.push(LlamaSampler::temp(eff_temp));
+    chain.push(LlamaSampler::dist(u32::MAX)); // LLAMA_DEFAULT_SEED
+    let mut sampler = LlamaSampler::chain_simple(chain);
 
     let mut output = String::new();
     let mut n_gen = 0u32;
+    // Set when the model ends the reply itself or the caller stops it.
+    let mut ended = false;
 
     for i in 0..max_gen {
+        // `sample` already accepts the token into every sampler of the chain
+        // (`llama_sampler_sample` → `llama_sampler_accept`). Accepting it again
+        // is a no-op for temperature and distribution but advances a grammar
+        // twice, which corrupts it and makes llama.cpp throw.
         let token = sampler.sample(ctx, -1);
-        sampler.accept(token);
 
         if model.is_eog_token(token) {
+            ended = true;
             break;
         }
 
@@ -841,6 +879,7 @@ fn generate_with_cache(
 
         if let Some(ref mut cb) = on_token {
             if !cb(piece) {
+                ended = true;
                 break; // caller requested early stop
             }
         }
@@ -858,6 +897,7 @@ fn generate_with_cache(
         text: output,
         prompt_tokens: n_prompt as u32,
         gen_tokens: n_gen,
+        truncated: super::planner::ran_out_of_budget(ended, n_gen, max_gen as u32),
         prefill_ms,
         cached_prompt_tokens: lcp as u32,
         prefix_plan: plan_name,

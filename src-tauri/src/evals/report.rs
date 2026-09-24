@@ -520,7 +520,7 @@ fn step_views(trace: &ChatTrace, outcome: &CaseOutcome) -> Vec<StepView> {
                         ]
                     })
                     .unwrap_or_default(),
-                TraceStep::Route => Vec::new(),
+                TraceStep::Route | TraceStep::Research => Vec::new(),
             };
             StepView {
                 label: step_label(trace, step),
