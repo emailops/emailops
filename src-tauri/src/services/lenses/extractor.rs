@@ -441,14 +441,18 @@ fn validate_against_schema(
     Ok(serde_json::Value::Object(out))
 }
 
+/// Whether a tool-call answer is worth retrying as text. The required columns
+/// decide; a Lens with none (as the chat builds them) has every column count,
+/// since small models tend to fill only the first optional tool argument.
 fn extraction_is_sparse(data: &serde_json::Value, schema: &LensSchema) -> bool {
     let Some(obj) = data.as_object() else {
         return true;
     };
+    let any_required = schema.columns.iter().any(|col| col.required);
     schema
         .columns
         .iter()
-        .filter(|col| col.required)
+        .filter(|col| col.required || !any_required)
         .any(|col| obj.get(&col.key).is_none_or(value_is_empty))
 }
 
@@ -1049,6 +1053,46 @@ mod tests {
         assert_eq!(result.data["invoice_number"], "BCL-0010144");
         assert_eq!(result.data["due_date"], "2026-05-19");
         assert_eq!(result.data["status"], "unpaid");
+    }
+
+    fn all_optional_schema() -> LensSchema {
+        let col = |key: &str| LensColumn {
+            key: key.into(),
+            label: key.into(),
+            column_type: LensColumnType::String,
+            description: String::new(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        };
+        LensSchema {
+            columns: vec![col("email"), col("phone"), col("company")],
+        }
+    }
+
+    #[test]
+    fn with_no_required_column_any_empty_column_is_sparse() {
+        // The chat builds Lenses with every column optional; small models
+        // then fill only the first one. With no column marked required,
+        // every column counts, or the text retry never runs.
+        let schema = all_optional_schema();
+        assert!(extraction_is_sparse(
+            &json!({"email": "ana@client.example", "phone": null, "company": null}),
+            &schema
+        ));
+        assert!(!extraction_is_sparse(
+            &json!({"email": "ana@client.example", "phone": "600 000 111", "company": "Client"}),
+            &schema
+        ));
+    }
+
+    #[test]
+    fn with_required_columns_only_they_decide_sparseness() {
+        // invoice_number and due_date are optional: leaving them empty is fine.
+        assert!(!extraction_is_sparse(
+            &json!({"vendor": "Acme", "amount": {"amount": 10.0, "currency": "EUR"}, "status": "unpaid"}),
+            &invoice_schema()
+        ));
     }
 
     #[test]
