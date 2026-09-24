@@ -36,9 +36,9 @@ use serde::Serialize;
 
 use emailops_lib::db::Database;
 use emailops_lib::evals::db_source::{prepare_eval_db, EvalDbMode};
-use emailops_lib::models::lens::Lens;
+use emailops_lib::evals::lenses::runner::lens_from_template;
 use emailops_lib::services::ai::AiService;
-use emailops_lib::services::lenses::{extractor, scope as scope_eval, templates};
+use emailops_lib::services::lenses::{extractor, scope as scope_eval};
 
 #[derive(Parser, Debug)]
 #[command(name = "lens_extract_eval", about = "Evaluate per-email Lens extraction.")]
@@ -134,39 +134,23 @@ fn main() {
         }
     };
 
-    match rt.block_on(run(source, args.limit, pinned_ids, prod_db, db_mode, out_dir)) {
-        Ok(path) => eprintln!("[lens-extract-eval] done → {}", path.display()),
+    let code = match rt.block_on(run(source, args.limit, pinned_ids, prod_db, db_mode, out_dir)) {
+        Ok(path) => {
+            eprintln!("[lens-extract-eval] done → {}", path.display());
+            0
+        }
         Err(e) => {
             eprintln!("[lens-extract-eval] ERROR: {}", e);
-            std::process::exit(1);
+            1
         }
-    }
+    };
+    // Leaving normally lets ggml's Metal static destructor abort (exit 134).
+    emailops_lib::services::ai::shutdown_and_exit(code);
 }
 
 enum LensSource {
     Stored(String),
     Template(String),
-}
-
-fn lens_from_template(key: &str) -> Result<Lens, String> {
-    let tpl = templates::get(key).ok_or_else(|| format!("no built-in template {key:?}"))?;
-    Ok(Lens {
-        id: format!("template:{key}"),
-        name: tpl.name,
-        icon: Some(tpl.icon),
-        template_key: Some(tpl.key),
-        account_id: None,
-        scope: tpl.default_scope,
-        schema: tpl.schema,
-        prompt_text: tpl.prompt,
-        prompt_version: 1,
-        model_provider: None,
-        model_name: None,
-        is_enabled: true,
-        sort_order: 0,
-        created_at: 0,
-        updated_at: 0,
-    })
 }
 
 async fn run(
@@ -182,7 +166,7 @@ async fn run(
 
     let lens = match source {
         LensSource::Stored(id) => db.get_lens(&id).map_err(|e| e.to_string())?,
-        LensSource::Template(key) => lens_from_template(&key)?,
+        LensSource::Template(key) => lens_from_template(&key).map_err(|e| e.to_string())?,
     };
     eprintln!(
         "[lens-extract-eval] lens = {} ({}), columns = {}",
