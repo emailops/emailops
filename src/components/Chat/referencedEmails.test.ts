@@ -64,3 +64,15 @@ describe('buildIdSearchQuery', () => {
     expect(buildIdSearchQuery(['a', 'acc-1::42'])).toBe('id:a id:acc-1::42');
   });
 });
+
+describe('collectReferencedEmailIds on a research answer', () => {
+  it('lists every match the research found, not only the ones the prose links', () => {
+    const ids = collectReferencedEmailIds({
+      content: 'Themes: pricing, see [the quote](email://b).',
+      sources: [source('a', 1), source('b', 2), source('c', 3)],
+      referencedEmailIds: ['a', 'b', 'c', 'read-but-irrelevant'],
+      trace: { research: { relevantEmails: 3 } } as never,
+    });
+    expect(ids).toEqual(['a', 'b', 'c']);
+  });
+});

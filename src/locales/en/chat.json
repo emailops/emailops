@@ -60,7 +60,7 @@
     "retry": "Retry",
     "wrong": "This answer isn't right",
     "wrongPrompt": "What was wrong with it?",
-    "wrongPlaceholder": "e.g. those emails are from September, not August",
+    "wrongPlaceholder": "Help the model do better — e.g. those emails are from September, not August",
     "wrongSubmit": "Try again",
     "rejected": "Marked as wrong — retried below."
   },
@@ -151,7 +151,7 @@
       "researchOn": "Research mode",
       "researchRead": "read {{read}} of {{planned}} emails in {{batches}} batches",
       "researchFindings": "{{findings}} findings from {{relevant}} emails",
-      "researchStopped": "stopped by the user",
+      "researchStopped": "cancelled by the user",
       "keywords": "keywords",
       "findings": "{{n}} findings",
       "kind": {
@@ -257,8 +257,8 @@
     "estimateFailed": "Could not estimate this research: {{error}}",
     "start": "Start research",
     "cancel": "Cancel",
-    "stop": "Stop and write report",
-    "stopping": "Stopping…",
+    "stop": "Cancel research",
+    "stopping": "Cancelling…",
     "filter": "Filter",
     "byMeaning": "Gathered by meaning (no filter)",
     "exit": {

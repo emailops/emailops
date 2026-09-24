@@ -1523,3 +1523,21 @@ AI work at all; the queue snapshot was only visible on the Dashboard.
 - *Having the model write the list in chunks*: slower, and just as lossy.
 - *A new unified progress event for every job*: it would touch every job module. Their
   existing status APIs and events already carry the numbers.
+
+## 2026-09-24 — A research run is cancelled, not stopped early; a rejected research is re-researched
+
+**Decision:** The running research's only control is **Cancel**. The run ends at the next
+batch boundary with no condense and no report. Its answer states how far the reading got
+("cancelled after reading 30 of 100 emails"). This replaces "Stop and write report" from
+the entry above. Marking a research answer wrong retries it **as a research**: the new run
+asks the original question plus the user's correction, in every step, and is estimated and
+confirmed first like any research. A research answer's sources — and the chat's "show in
+list" button — are every email the reading found relevant, not only the ones its prose
+links. Coming back to an account (chat account picker or the app's account switch) reopens
+the conversation where a turn is still running.
+**Context:** the developer found "stop and write report" unclear and asked for a plain
+cancel.
+**Rejected:**
+- *Keeping both buttons*: the developer chose one.
+- *Retrying a rejected research as an ordinary turn*: it would answer from one page of
+  results, which is the thing the user rejected.

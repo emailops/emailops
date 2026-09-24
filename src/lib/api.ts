@@ -1342,8 +1342,11 @@ export async function estimateResearch(
   conversationId: string,
   content: string,
   categories?: EmailCategory[],
+  /** Set when the research retries a rejected answer: the estimate covers the
+   *  original question plus the correction, as the run will. */
+  correction?: ChatCorrection | null,
 ): Promise<ResearchEstimate> {
-  return invoke('estimate_research', { conversationId, content, categories });
+  return invoke('estimate_research', { conversationId, content, categories, correction: correction ?? null });
 }
 
 /** Stop a running research turn: it stops reading and writes its report from

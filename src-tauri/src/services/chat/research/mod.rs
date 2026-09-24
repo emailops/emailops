@@ -38,9 +38,9 @@ use plan::{
     semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS, REDUCE_MAX_TOKENS,
 };
 use prompts::{
-    assemble_notes, collect_matches, coverage_line, join_notes, notes_len, parse_map_notes, plan_report_shape,
-    relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt,
-    BatchNotes, ReportShape, ResearchDoc,
+    assemble_notes, cancelled_note, collect_matches, coverage_line, join_notes, notes_len, parse_map_notes,
+    plan_report_shape, relink_bare_refs, render_match_list, report_facts, split_condense_prompt, split_map_prompt,
+    split_reduce_prompt, BatchNotes, ReportShape, ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -407,6 +407,47 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     }
 }
 
+// ── Corrections ─────────────────────────────────────────────────────────────
+
+/// The question a corrected research asks: the original question, and what the
+/// user said was wrong with the answer — every step (planner, reading, report)
+/// sees both. Pure.
+pub(crate) fn compose_research_question(original: &str, reason: &str) -> String {
+    format!(
+        "{}\n\n(The user said the previous answer to this question was wrong: {})",
+        original.trim(),
+        reason.trim()
+    )
+}
+
+/// The user question a rejected answer replied to: the last user message before
+/// it in the conversation.
+pub fn original_question(db: &Database, conversation_id: &str, rejected_message_id: &str) -> Option<String> {
+    let messages = db.get_chat_messages(conversation_id).ok()?;
+    let at = messages.iter().position(|m| m.id == rejected_message_id)?;
+    messages[..at]
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+}
+
+/// The research question for a turn: the question itself, or — when the turn
+/// retries a rejected answer — the original question plus the correction.
+pub fn research_question(
+    db: &Database,
+    conversation_id: &str,
+    content: &str,
+    correction: Option<&crate::models::ChatCorrection>,
+) -> String {
+    match correction.and_then(|c| {
+        original_question(db, conversation_id, &c.rejected_message_id).map(|q| compose_research_question(&q, &c.reason))
+    }) {
+        Some(q) => q,
+        None => content.to_string(),
+    }
+}
+
 /// The Tauri/CLI entry point for an estimate: resolves the account's address,
 /// the provider, the window and today's date, then [`estimate`]s.
 pub async fn estimate_for_account(
@@ -457,7 +498,7 @@ pub(crate) struct ResearchInput<'a> {
     pub map_template: &'a str,
     pub condense_template: &'a str,
     pub reduce_template: &'a str,
-    /// Raised by the chat's Stop button: stop reading, write the report.
+    /// Raised by the chat's Cancel button: the run ends without a report.
     pub stop: &'a AtomicBool,
 }
 
@@ -640,7 +681,7 @@ pub(crate) async fn run_research(
             run.trace.stopped = true;
             super::emit_log(
                 "info",
-                &format!("research: stopped by the user after {read} of {} emails", docs.len()),
+                &format!("research: cancelled by the user after {read} of {} emails", docs.len()),
             );
             break;
         }
@@ -694,6 +735,12 @@ pub(crate) async fn run_research(
     run.trace.emails_analyzed = read as u32;
     run.trace.relevant_emails = matches.len() as u32;
     let shape = plan_report_shape(input.question);
+
+    // Cancelled: no condense, no report — say how far it got and stop.
+    if run.trace.stopped {
+        run.answer = Some(cancelled_note(input.language_code, read, docs.len()));
+        return run;
+    }
 
     // ── Condense ──
     let t_condense = std::time::Instant::now();
@@ -1043,16 +1090,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stop_ends_the_reading_and_still_writes_a_report() {
+    async fn cancel_ends_the_run_without_a_report() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         seed(&db, 29);
         let provider = crate::ai::provider::FakeAiProvider::new();
         let categories: Vec<String> = Vec::new();
         let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
         provider.push_completion("- Invoice 0 (email://e00)");
-        provider.push_completion("Informe parcial [Invoice 0](email://e00).");
         let stop = AtomicBool::new(false);
-        // Raise Stop once the first batch has been read.
+        // Cancel once the first batch has been read.
         let on_progress = |p: ResearchProgress| {
             if p.stage == ResearchStage::Reading && p.batch == 1 {
                 stop.store(true, Ordering::Relaxed);
@@ -1063,13 +1109,11 @@ mod tests {
         assert!(run.trace.stopped);
         assert_eq!(run.trace.batches, 1);
         assert_eq!(run.trace.emails_analyzed, 10);
-        assert_eq!(run.trace.planned_emails, 30);
-        assert_eq!(run.answer.as_deref(), Some("Informe parcial [Invoice 0](email://e00)."));
-        let reduce_prompt = &provider.prefix_completion_calls()[1].1;
-        assert!(
-            reduce_prompt.contains("stopped by the user after reading 10 of 30"),
-            "{reduce_prompt}"
-        );
+        // No condense, no report: only the one map call ran.
+        assert_eq!(provider.prefix_completion_calls().len(), 1);
+        assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
+        let answer = run.answer.expect("a cancellation note");
+        assert!(answer.contains("10") && answer.contains("30"), "{answer}");
     }
 
     #[tokio::test]
@@ -1119,6 +1163,40 @@ mod tests {
             "{:?}",
             run.error
         );
+    }
+
+    #[test]
+    fn a_corrected_research_asks_the_original_question_with_the_correction() {
+        let q = compose_research_question("¿cuántos presupuestos envié?", "faltan los de marzo");
+        assert!(q.starts_with("¿cuántos presupuestos envié?"), "{q}");
+        assert!(q.contains("faltan los de marzo"), "{q}");
+    }
+
+    #[test]
+    fn the_original_question_is_the_user_message_before_the_rejected_answer() {
+        let db = Database::new_for_testing().expect("test db");
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+        let conv = db.create_chat_conversation("acct", "t").expect("conversation");
+        db.insert_chat_message(&conv.id, "user", "first question", None)
+            .unwrap();
+        db.insert_chat_message(&conv.id, "assistant", "first answer", None)
+            .unwrap();
+        db.insert_chat_message(&conv.id, "user", "research question", None)
+            .unwrap();
+        let rejected = db
+            .insert_chat_message(&conv.id, "assistant", "wrong report", None)
+            .unwrap();
+        assert_eq!(
+            original_question(&db, &conv.id, &rejected.id).as_deref(),
+            Some("research question")
+        );
+        assert_eq!(original_question(&db, &conv.id, "missing"), None);
     }
 
     #[tokio::test]

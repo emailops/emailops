@@ -223,7 +223,7 @@ pub fn step_detail(trace: &ChatTrace, step: &TraceStep) -> String {
                     d.push_str(&format!(" · {} {plural} failed", r.failed_batches));
                 }
                 if r.stopped {
-                    d.push_str(" · stopped by the user");
+                    d.push_str(" · cancelled by the user");
                 }
                 d
             }
@@ -482,7 +482,7 @@ mod tests {
         let detail = step_detail(&t, &TraceStep::Research);
         assert!(detail.contains("30 by filter + 40 by meaning"), "{detail}");
         assert!(detail.contains("read 60 of 70"), "{detail}");
-        assert!(detail.contains("stopped by the user"), "{detail}");
+        assert!(detail.contains("cancelled by the user"), "{detail}");
         assert!(detail.contains("25 findings from 18 emails"), "{detail}");
         assert!(detail.contains("1 batch failed"), "{detail}");
     }

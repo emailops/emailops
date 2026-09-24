@@ -113,6 +113,9 @@ pub async fn estimate_research(
     conversation_id: String,
     content: String,
     categories: Option<Vec<String>>,
+    // Set when this research retries a rejected answer: the estimate covers
+    // the original question plus the user's correction, as the run will.
+    correction: Option<crate::models::ChatCorrection>,
 ) -> Result<crate::models::ResearchEstimate, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -126,7 +129,8 @@ pub async fn estimate_research(
         .db
         .get_chat_conversation_account(&conversation_id)?
         .ok_or_else(|| AppError::NotFound(format!("conversation {}", conversation_id)))?;
-    chat::research::estimate_for_account(&state.db, &account_id, &categories, question).await
+    let question = chat::research::research_question(&state.db, &conversation_id, question, correction.as_ref());
+    chat::research::estimate_for_account(&state.db, &account_id, &categories, &question).await
 }
 
 /// Stop the research run answering `message_id`: it stops reading and writes

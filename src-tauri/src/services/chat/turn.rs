@@ -4233,10 +4233,14 @@ pub async fn run_chat_turn(
         };
         // The set the user confirmed; plan and gather here only when there is
         // none (CLI, evals, or an estimate that expired).
+        // A retry of a rejected research asks the original question plus the
+        // user's correction; every step sees both.
+        let research_q =
+            super::research::research_question(&db, &conversation_id, &user_question, context.correction.as_ref());
         let confirmed = context
             .research_estimate_id
             .as_deref()
-            .and_then(|id| super::research::take_estimate(id, &account_id, &user_question));
+            .and_then(|id| super::research::take_estimate(id, &account_id, &research_q));
         let prepared = match confirmed {
             Some(p) => p,
             None => {
@@ -4253,7 +4257,7 @@ pub async fn run_chat_turn(
                     provider: provider.as_ref(),
                     account_id: &account_id,
                     categories: &categories,
-                    question: &user_question,
+                    question: &research_q,
                     user_email: &user_email,
                     today: &today,
                 })
@@ -4272,7 +4276,7 @@ pub async fn run_chat_turn(
             super::research::ResearchInput {
                 db: &db,
                 provider: provider.as_ref(),
-                question: &user_question,
+                question: &research_q,
                 prepared: &prepared,
                 n_ctx,
                 language_instruction: &language_instruction,
@@ -4683,7 +4687,14 @@ pub async fn run_chat_turn(
             // model numbered its own bullets — so every marker goes; the
             // `email://` links (relinked just above where the answer
             // defined a number) are the turn's citations.
-            let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
+            // A research answer rests on every email the reading found
+            // relevant, not only the few its prose links: those are its
+            // sources, and what the chat's "show in list" button opens.
+            let grounding = if research_active && !tool_email_refs.is_empty() {
+                AnswerGrounding::Emails(tool_email_refs.clone())
+            } else {
+                plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content)
+            };
             let citation_range = grounding.citation_range(sources.len());
             result.content = strip_invalid_citations(&result.content, citation_range);
             // A guide-grounded answer that forgot its `help://` link gets the

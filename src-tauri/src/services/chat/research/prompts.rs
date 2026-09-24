@@ -379,6 +379,16 @@ pub(crate) fn report_facts(matches: &[Match], shape: ReportShape) -> String {
     facts
 }
 
+/// The answer of a research the user cancelled, in the report's language.
+pub(crate) fn cancelled_note(language_code: &str, read: usize, planned: usize) -> String {
+    match language_code {
+        "es" => format!("Investigación cancelada por el usuario tras leer {read} de {planned} correos."),
+        "fr" => format!("Recherche annulée par l'utilisateur après la lecture de {read} e-mails sur {planned}."),
+        "de" => format!("Recherche vom Benutzer abgebrochen, nachdem {read} von {planned} E-Mails gelesen wurden."),
+        _ => format!("Research cancelled by the user after reading {read} of {planned} emails."),
+    }
+}
+
 /// The complete numbered list of matches, in the report's language.
 pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> String {
     if matches.is_empty() {
@@ -737,6 +747,18 @@ NONE";
         let analysis = report_facts(&matches, ReportShape::Analysis);
         assert!(analysis.contains("2 emails"), "{analysis}");
         assert!(!analysis.contains("appended"), "{analysis}");
+    }
+
+    #[test]
+    fn the_cancellation_note_says_how_far_the_reading_got() {
+        assert_eq!(
+            cancelled_note("es", 10, 30),
+            "Investigación cancelada por el usuario tras leer 10 de 30 correos."
+        );
+        assert_eq!(
+            cancelled_note("en", 0, 30),
+            "Research cancelled by the user after reading 0 of 30 emails."
+        );
     }
 
     #[test]

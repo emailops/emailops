@@ -60,7 +60,7 @@
     "retry": "Réessayer",
     "wrong": "Cette réponse n'est pas correcte",
     "wrongPrompt": "Qu'est-ce qui n'allait pas ?",
-    "wrongPlaceholder": "p. ex. ces e-mails datent de septembre, pas d’août",
+    "wrongPlaceholder": "Aidez le modèle à mieux faire — p. ex. ces e-mails datent de septembre, pas d’août",
     "wrongSubmit": "Réessayer",
     "rejected": "Marquée comme incorrecte — nouvelle tentative ci-dessous."
   },
@@ -151,7 +151,7 @@
       "researchOn": "Mode recherche",
       "researchRead": "{{read}} e-mails lus sur {{planned}} en {{batches}} lots",
       "researchFindings": "{{findings}} constats issus de {{relevant}} e-mails",
-      "researchStopped": "arrêté par l'utilisateur",
+      "researchStopped": "annulée par l'utilisateur",
       "keywords": "mots-clés",
       "findings": "{{n}} constats",
       "kind": {
@@ -257,8 +257,8 @@
     "estimateFailed": "Impossible d'estimer cette recherche : {{error}}",
     "start": "Lancer la recherche",
     "cancel": "Annuler",
-    "stop": "Arrêter et rédiger le rapport",
-    "stopping": "Arrêt en cours…",
+    "stop": "Annuler la recherche",
+    "stopping": "Annulation…",
     "filter": "Filtre",
     "byMeaning": "Rassemblés par le sens (sans filtre)",
     "exit": {

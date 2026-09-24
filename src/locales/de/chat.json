@@ -60,7 +60,7 @@
     "retry": "Erneut versuchen",
     "wrong": "Diese Antwort ist nicht richtig",
     "wrongPrompt": "Was war daran falsch?",
-    "wrongPlaceholder": "z. B. diese E-Mails sind von September, nicht von August",
+    "wrongPlaceholder": "Hilf dem Modell, es besser zu machen — z. B. diese E-Mails sind von September, nicht von August",
     "wrongSubmit": "Erneut versuchen",
     "rejected": "Als falsch markiert — unten erneut versucht."
   },
@@ -151,7 +151,7 @@
       "researchOn": "Recherchemodus",
       "researchRead": "{{read}} von {{planned}} E-Mails in {{batches}} Stapeln gelesen",
       "researchFindings": "{{findings}} Erkenntnisse aus {{relevant}} E-Mails",
-      "researchStopped": "vom Benutzer gestoppt",
+      "researchStopped": "vom Benutzer abgebrochen",
       "keywords": "Schlüsselwörter",
       "findings": "{{n}} Erkenntnisse",
       "kind": {
@@ -257,8 +257,8 @@
     "estimateFailed": "Diese Recherche konnte nicht geschätzt werden: {{error}}",
     "start": "Recherche starten",
     "cancel": "Abbrechen",
-    "stop": "Stoppen und Bericht schreiben",
-    "stopping": "Wird gestoppt…",
+    "stop": "Recherche abbrechen",
+    "stopping": "Wird abgebrochen…",
     "filter": "Filter",
     "byMeaning": "Nach Bedeutung gesammelt (kein Filter)",
     "exit": {
