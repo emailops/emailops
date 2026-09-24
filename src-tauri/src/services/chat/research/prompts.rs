@@ -211,7 +211,8 @@ fn link_label(subject: &str) -> String {
 /// The notes cite as `(email://ID)` and a small model copies that shape (or
 /// writes `[email://ID]`) instead of `[label](email://ID)`, which the chat only
 /// renders as a clickable chip in the link form. Each bare reference to an
-/// email that was read becomes a link labelled with its subject; proper links
+/// email that was read becomes a link labelled with its subject, and so does a
+/// link whose label is its own id (`[email://ID](email://ID)`); proper links
 /// and ids that were never read are left untouched (the link allowlist drops
 /// the latter downstream).
 pub(crate) fn relink_bare_refs(answer: &str, subjects: &HashMap<String, String>) -> String {
@@ -219,16 +220,24 @@ pub(crate) fn relink_bare_refs(answer: &str, subjects: &HashMap<String, String>)
     static BARE_RE: OnceLock<regex::Regex> = OnceLock::new();
     // Hard-coded literal that cannot fail by construction.
     #[allow(clippy::unwrap_used)]
-    let re = BARE_RE.get_or_init(|| regex::Regex::new(r"\[email://([^\]\s]+)\]|\(email://([^)\s]+)\)").unwrap());
+    let re = BARE_RE.get_or_init(|| {
+        regex::Regex::new(r"\[email://([^\]\s]+)\](?:\(email://([^)\s]+)\))?|\(email://([^)\s]+)\)").unwrap()
+    });
     let mut out = String::with_capacity(answer.len());
     let mut last = 0;
     for caps in re.captures_iter(answer) {
         let Some(whole) = caps.get(0) else { continue };
-        let Some(id) = caps.get(1).or_else(|| caps.get(2)).map(|m| m.as_str()) else {
+        // An id-labelled link's own target wins over its label.
+        let Some(id) = caps
+            .get(2)
+            .or_else(|| caps.get(1))
+            .or_else(|| caps.get(3))
+            .map(|m| m.as_str())
+        else {
             continue;
         };
         // `(email://ID)` right after `]` is already the target of a link.
-        let is_link_target = caps.get(2).is_some() && answer[..whole.start()].ends_with(']');
+        let is_link_target = caps.get(3).is_some() && answer[..whole.start()].ends_with(']');
         let Some(subject) = subjects.get(id).filter(|_| !is_link_target) else {
             continue;
         };
@@ -400,8 +409,14 @@ pub(crate) fn collect_matches(docs: &[ResearchDoc], notes: &[BatchNotes]) -> Vec
 
 /// Point every link to an email of a matched conversation at that
 /// conversation's representative, so the report never cites two emails of one
-/// thread. Pure.
+/// thread, then drop the bullets that became a repeat: a link-only bullet
+/// citing a conversation an earlier link-only bullet of the same run already
+/// cites. Pure.
 pub(crate) fn canonicalize_links(answer: &str, representative: &HashMap<String, String>) -> String {
+    drop_repeated_link_bullets(&point_links_at_representatives(answer, representative))
+}
+
+fn point_links_at_representatives(answer: &str, representative: &HashMap<String, String>) -> String {
     use std::sync::OnceLock;
     static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
     // Hard-coded literal that cannot fail by construction.
@@ -412,6 +427,29 @@ pub(crate) fn canonicalize_links(answer: &str, representative: &HashMap<String, 
         format!("email://{}", representative.get(id).map_or(id, String::as_str))
     })
     .into_owned()
+}
+
+/// The email a line cites when it is nothing but a bullet with one link.
+fn link_only_bullet_target(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix(['*', '-'])?.trim();
+    let target = rest.strip_prefix('[')?.split_once("](email://")?.1.strip_suffix(')')?;
+    (!target.contains([')', ' '])).then_some(target)
+}
+
+/// Drops a link-only bullet whose target an earlier bullet of the same run of
+/// link-only bullets already cites. Any other line ends the run.
+fn drop_repeated_link_bullets(answer: &str) -> String {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut kept: Vec<&str> = Vec::new();
+    for line in answer.split('\n') {
+        match link_only_bullet_target(line) {
+            Some(target) if !seen.insert(target) => continue,
+            Some(_) => {}
+            None => seen.clear(),
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
 }
 
 /// The exact counts the report states — computed, never left to the model.
@@ -700,6 +738,24 @@ NONE";
     fn relink_leaves_proper_links_and_unknown_ids_alone() {
         let text = "See [the invoice](email://e1), and [email://zzz].";
         assert_eq!(relink_bare_refs(text, &subjects()), text);
+    }
+
+    #[test]
+    fn relink_relabels_a_link_whose_label_is_its_id() {
+        // What a small model writes when told to cite as a link: the id as label.
+        let out = relink_bare_refs("*   [email://e1](email://e1)", &subjects());
+        assert_eq!(out, "*   [Invoice 42](email://e1)");
+    }
+
+    #[test]
+    fn repeated_link_bullets_collapse_after_canonicalizing() {
+        let map = HashMap::from([("e2".to_string(), "e1".to_string())]);
+        let answer = "*   **Acme:** quote sent.\n    *   [A](email://e1)\n    *   [B](email://e2)\n*   **Beta:** quote.\n    *   [A](email://e1)";
+        assert_eq!(
+            canonicalize_links(answer, &map),
+            "*   **Acme:** quote sent.\n    *   [A](email://e1)\n*   **Beta:** quote.\n    *   [A](email://e1)",
+            "the second cite of one conversation under one bullet goes; another bullet may cite it again"
+        );
     }
 
     #[test]

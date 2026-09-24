@@ -177,12 +177,11 @@ pub(crate) fn plan_condense_groups(note_lens: &[usize], notes_chars: usize) -> O
 /// read (measured, qwen3.5-4b-q8_0, 16k window) plus the report's share.
 pub(crate) const DEFAULT_MS_PER_EMAIL: u64 = 1800;
 
-/// How long a run over `emails` candidates will take, and in how many batches.
-/// `ms_per_email` is what the last run on this machine measured, when known.
-pub(crate) fn plan_estimate(emails: usize, budget: &ResearchBudget, ms_per_email: Option<u64>) -> (usize, u64) {
-    let batches = emails.div_ceil(budget.max_emails_per_batch.max(1));
+/// How long, in seconds, a run reading `emails` will take. `ms_per_email` is
+/// what the last run on this machine measured, when known.
+pub(crate) fn plan_estimate(emails: usize, ms_per_email: Option<u64>) -> u64 {
     let per_email = ms_per_email.filter(|ms| *ms > 0).unwrap_or(DEFAULT_MS_PER_EMAIL);
-    (batches, emails as u64 * per_email / 1000)
+    emails as u64 * per_email / 1000
 }
 
 #[cfg(test)]
@@ -346,9 +345,8 @@ mod tests {
 
     #[test]
     fn estimate_uses_the_measured_speed_when_there_is_one() {
-        let b = plan_research_budget(16384);
-        assert_eq!(plan_estimate(1000, &b, Some(1500)), (100, 1500));
-        assert_eq!(plan_estimate(1000, &b, None), (100, 1800));
-        assert_eq!(plan_estimate(0, &b, None), (0, 0));
+        assert_eq!(plan_estimate(1000, Some(1500)), 1500);
+        assert_eq!(plan_estimate(1000, None), 1800);
+        assert_eq!(plan_estimate(0, None), 0);
     }
 }

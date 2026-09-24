@@ -392,8 +392,13 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
         .ok()
         .flatten()
         .and_then(|s| s.parse::<u64>().ok());
-    let emails = prepared.email_ids.len();
-    let (batches, seconds) = plan_estimate(emails, &budget, ms_per_email);
+    // Batched exactly as the run will batch them: whole conversations, each
+    // read for what its messages add.
+    let docs = load_docs(input.db, &prepared.email_ids, &budget);
+    let emails: usize = docs.iter().map(|d| d.messages.len()).sum();
+    let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
+    let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch).len();
+    let seconds = plan_estimate(emails, ms_per_email);
     let filter = prepared.plan.as_ref().map(filter_arguments);
     super::emit_log(
         "info",
@@ -1364,7 +1369,7 @@ mod tests {
         let input = prepare_input(&db, &provider, &categories);
         let est = estimate(&input).await;
         assert_eq!(est.emails, 41);
-        assert_eq!(est.batches, 5);
+        assert_eq!(est.batches, 4, "40 conversations, ten per batch");
         assert!(est.seconds > 0);
         assert_eq!(
             est.filter.as_ref().and_then(|f| f["from"].as_str()),
@@ -1373,5 +1378,38 @@ mod tests {
         let prepared = take_estimate(&est.estimate_id, "acct", input.question).expect("kept for the run");
         assert_eq!(prepared.email_ids.len(), 41);
         assert!(prepared.planner_call.is_some());
+    }
+
+    #[tokio::test]
+    async fn an_estimate_plans_batches_per_conversation_like_the_run() {
+        // One long thread is one conversation: the run reads it in a single
+        // batch, so the estimate must not count a batch per ten emails.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 0);
+        {
+            let conn = db.connection();
+            for i in 0..30 {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct','big','Invoice run','billing@supplier.example',
+                             'billing@supplier.example','supplier.example','[]','[]','snip',?2,0,'primary',0)",
+                    rusqlite::params![format!("b{i:02}"), 1_780_000_000 + i as i64],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO email_bodies(email_id, body) VALUES (?1, ?2)",
+                    rusqlite::params![format!("b{i:02}"), format!("Payment {i} of 100 EUR received.")],
+                )
+                .unwrap();
+            }
+        }
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "billing@supplier.example"}"#);
+        let categories: Vec<String> = Vec::new();
+        let est = estimate(&prepare_input(&db, &provider, &categories)).await;
+        assert_eq!(est.emails, 30);
+        assert_eq!(est.batches, 1, "one conversation, one batch");
     }
 }
