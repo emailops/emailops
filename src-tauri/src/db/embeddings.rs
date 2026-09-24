@@ -5,6 +5,9 @@ use crate::models::error::Result;
 use rusqlite::params;
 
 /// Convert f32 embedding to raw little-endian bytes for sqlite-vec
+/// sqlite-vec's ceiling on `k` for a KNN query.
+const VEC_MAX_K: usize = 4096;
+
 fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(embedding.len() * 4);
     for &val in embedding {
@@ -74,7 +77,9 @@ impl Database {
         // When an account is specified, pre-filter rowids via embedding_chunks
         // so each account effectively has an independent vector store at the
         // KNN level — vectors from other accounts don't compete for the top-K.
-        let expanded_limit = (limit * 5) as i32;
+        // sqlite-vec rejects k above 4096 — row by row, which the collect
+        // below would turn into an empty result — so the over-fetch is capped.
+        let expanded_limit = (limit.saturating_mul(5)).min(VEC_MAX_K) as i32;
         let knn_results: Vec<(i64, f32)> = {
             let conn = self.reader();
             if let Some(acc) = account_id {
@@ -811,6 +816,23 @@ mod tests {
         assert!(ids.contains(&"e-in"), "inbox email must match, got {:?}", ids);
         assert!(!ids.contains(&"e-spam"), "spam email must be excluded, got {:?}", ids);
         assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
+    }
+
+    // Regression: research mode asked for 1000 candidates, the KNN fetches
+    // 5× that, and sqlite-vec rejects k > 4096. Every row came back as an
+    // error, `filter_map(ok)` dropped them, and the search returned nothing —
+    // no log, no error. A large limit must still find the vectors.
+    #[test]
+    fn vec_search_with_a_large_limit_still_finds_the_vectors() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-1", "acc1", "alice@x.com", "subject", "body", 100);
+        let emb = vec![0.1_f32; 768];
+        db.store_embedding_chunks("e-1", "acc1", std::slice::from_ref(&emb), "test-model", "hash")
+            .unwrap();
+        for (account, limit) in [(Some("acc1"), 1000), (None, 1000), (Some("acc1"), 10_000)] {
+            let hits = db.vec_search(&emb, account, None, limit).unwrap();
+            assert_eq!(hits.len(), 1, "limit {limit}, account {account:?}");
+        }
     }
 
     #[test]
