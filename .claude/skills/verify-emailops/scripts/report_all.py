@@ -61,6 +61,61 @@ for _r in records:
         _models_by_section.setdefault((_r["feature"], _r["type"]), set()).add((_r.get("evidence") or {}).get("model") or "")
 def per_row_model(r): return len(_models_by_section.get((r["feature"], r["type"]), set()) - {""}) > 1
 
+COPY_BUTTON = ('<button type="button" class="copy" title="Copiar la traza entera" aria-label="Copiar la traza entera" onclick="copyTrace(event, this)">'
+               '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>'
+               '<span>Copiar</span></button>')
+
+# Plain-text version of one eval case, built from the rendered block on click
+# (so the page does not carry every prompt twice). Blocks cut at render time
+# stay cut here.
+COPY_JS = r"""
+function traceText(caseEl) {
+  const L = [];
+  const body = el => el ? el.textContent.trim() : '';
+  L.push('Caso: ' + caseEl.dataset.name);
+  for (const d of caseEl.querySelectorAll(':scope > .qa > div')) {
+    const lbl = d.querySelector('.lbl');
+    L.push(body(lbl) + ': ' + d.textContent.slice(lbl ? lbl.textContent.length : 0).trim());
+  }
+  const rows = caseEl.querySelectorAll(':scope > table.checks tbody tr');
+  if (rows.length) {
+    L.push('', 'Checks:');
+    for (const tr of rows) {
+      const c = [...tr.children].map(td => td.textContent.trim());
+      L.push('  [' + (tr.classList.contains('bad') ? 'FALLO' : 'OK') + '] ' + c[0] + ' | esperado: ' + c[1] + ' | obtenido: ' + c[2] + (c[3] ? ' | ' + c[3] : ''));
+    }
+  }
+  if (caseEl.dataset.flow) L.push('', 'Flujo: ' + caseEl.dataset.flow);
+  const trace = caseEl.querySelector(':scope > details.trace');
+  const steps = trace ? trace.querySelectorAll('ol.steps > li.step') : [];
+  if (steps.length) L.push('', 'Traza:');
+  steps.forEach((st, i) => {
+    const head = st.querySelector('.stephead');
+    L.push('', (i + 1) + '. ' + body(head.querySelector('.steplabel')) + ' — ' + body(head.querySelector('.muted')));
+    for (const b of st.querySelectorAll('details.blk')) {
+      const title = b.querySelector('summary').firstChild.textContent.trim();
+      L.push('--- ' + title + ' ---', b.querySelector('pre').textContent);
+    }
+  });
+  const raw = trace ? trace.querySelector(':scope > details:last-of-type') : null;
+  if (raw) L.push('', '--- ' + body(raw.querySelector('summary')) + ' ---', raw.querySelector('pre').textContent);
+  return L.join('\n');
+}
+async function copyTrace(ev, btn) {
+  ev.preventDefault(); ev.stopPropagation();  // a click inside <summary> would toggle the block
+  const text = traceText(btn.closest('.case'));
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    ok = document.execCommand('copy'); ta.remove();
+  }
+  const label = btn.querySelector('span'); const before = label.textContent;
+  label.textContent = ok ? 'Copiada (' + text.length + ' caracteres)' : 'No se pudo copiar';
+  btn.classList.toggle('done', ok);
+  setTimeout(() => { label.textContent = before; btn.classList.remove('done'); }, 2000);
+}
+"""
+
 def eval_case_html(r):
     """Question, golden and answer; every check with the judge's metrics as
     rows of the same table; then the engine trace step by step."""
@@ -80,8 +135,9 @@ def eval_case_html(r):
         # The prompts and outputs are in the steps above; the raw JSON keeps the rest (token and cache counters).
         slim = {**t, "llmCalls": [{k: v for k, v in c.items() if k not in ("input", "output")} for c in t.get("llmCalls") or []]} if steps else t
         raw = f'<details><summary>JSON crudo{" (sin prompts)" if steps else ""}</summary><pre>{E(json.dumps(slim, ensure_ascii=False, indent=2)[:60000])}</pre></details>'
-        out += f'<details><summary>Traza del motor de IA</summary>{steps}{raw}</details>'
-    return out
+        out += f'<details class="trace"><summary>Traza del motor de IA {COPY_BUTTON}</summary>{steps}{raw}</details>'
+    flow = report_trace.flow_summary(t) or ""
+    return f'<div class="case" data-name="{E(r["name"])}" data-flow="{E(flow)}">{out}</div>'
 
 def evidence(r):
     ev = r.get("evidence") or {}; parts = []
@@ -236,6 +292,7 @@ ol.steps{{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}} li.step{
 .stephead{{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}} .steplabel{{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:500}}
 details.blk summary{{font-size:12px;margin:4px 0 0}} details.blk pre{{margin:4px 0 0}}
 nav.toc details.cases summary{{font-size:11.5px;color:var(--muted);margin:2px 0}} nav.toc details.cases li{{padding-left:10px;font-size:11.5px;word-break:break-word}} nav.toc details.cases li.fail a{{color:var(--fail);font-weight:600}}
+button.copy{{display:inline-flex;align-items:center;gap:4px;margin-left:10px;padding:2px 8px;font:inherit;font-size:12px;color:var(--accent);background:var(--panel);border:1px solid var(--line);border-radius:4px;cursor:pointer;vertical-align:middle}} button.copy:hover{{border-color:var(--accent)}} button.copy.done{{color:var(--ok);border-color:var(--ok)}}
 ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 @media (max-width:720px){{ul.index{{columns:1}}}}
 </style>
@@ -281,6 +338,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 </main>
 </div>
 <script>
+{COPY_JS}
 // A link into a collapsed section opens it (and its parents) before jumping.
 function openHash(){{const id=location.hash.slice(1); if(!id) return; let el=document.getElementById(id); if(!el) return; for(let p=el; p; p=p.parentElement) if(p.tagName==='DETAILS') p.open=true; el.scrollIntoView({{block:'start'}});}}
 window.addEventListener('hashchange', openHash); openHash();
