@@ -318,6 +318,37 @@ fn column_to_json_schema(col: &LensColumn) -> serde_json::Value {
     }
 }
 
+/// `s` lowercased, without accents or punctuation: "Ubicación" → "ubicacion".
+fn fold_key(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    s.nfd()
+        .filter(|c| !('\u{0300}'..='\u{036f}').contains(c))
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// The model's value for `col`: under its schema key, or — when the model
+/// keyed it differently — under a key equal to the column's key or label once
+/// case and accents are ignored. Local models often answer in the prompt's
+/// language and echo the label ("fecha") instead of the key ("date").
+fn column_value<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    col: &LensColumn,
+) -> Option<&'a serde_json::Value> {
+    if let Some(v) = obj.get(&col.key) {
+        return Some(v);
+    }
+    let key = fold_key(&col.key);
+    let label = fold_key(&col.label);
+    obj.iter()
+        .find(|(name, _)| {
+            let name = fold_key(name);
+            name == key || (!label.is_empty() && name == label)
+        })
+        .map(|(_, v)| v)
+}
+
 /// Validate the extracted object against the schema and coerce values where
 /// safe (e.g. wrap stray currency strings into the `{amount, currency}` shape).
 /// On validation failure returns the first error message encountered.
@@ -331,7 +362,7 @@ fn validate_against_schema(
 
     let mut out = serde_json::Map::new();
     for col in &schema.columns {
-        let val = match obj.get(&col.key) {
+        let val = match column_value(obj, col) {
             // Small models spell "no value" as the string "null".
             Some(serde_json::Value::String(t)) if t.trim().eq_ignore_ascii_case("null") => serde_json::Value::Null,
             Some(v) => v.clone(),
@@ -773,6 +804,56 @@ mod tests {
         assert_eq!(coerced["vendor"], "Acme");
         assert!(coerced["amount"].is_null());
         assert!(coerced["status"].is_null());
+    }
+
+    fn booking_schema() -> LensSchema {
+        let col = |key: &str, label: &str, column_type: LensColumnType| LensColumn {
+            key: key.into(),
+            label: label.into(),
+            column_type,
+            description: "".into(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        };
+        LensSchema {
+            columns: vec![
+                col("date", "Fecha", LensColumnType::Date),
+                col("location", "Ubicación", LensColumnType::String),
+                col("price", "Precio", LensColumnType::Currency),
+            ],
+        }
+    }
+
+    #[test]
+    fn validate_reads_values_the_model_keyed_by_column_label() {
+        // A local model wrote `submit_extraction({"fecha": …, "ubicacion": …,
+        // "precio": …})` — the Spanish labels, one without its accent — and
+        // every column came back null although the values were right there.
+        let coerced = validate_against_schema(
+            &json!({"fecha": "2026-10-15", "ubicacion": "Marbella", "precio": "412.50"}),
+            &booking_schema(),
+        )
+        .unwrap();
+        assert_eq!(coerced["date"], "2026-10-15");
+        assert_eq!(coerced["location"], "Marbella");
+        assert_eq!(coerced["price"]["amount"], 412.5);
+    }
+
+    #[test]
+    fn validate_prefers_the_schema_key_over_a_label_match() {
+        let coerced = validate_against_schema(
+            &json!({"location": "Madrid", "Ubicación": "Marbella"}),
+            &booking_schema(),
+        )
+        .unwrap();
+        assert_eq!(coerced["location"], "Madrid");
+    }
+
+    #[test]
+    fn validate_reads_a_key_differing_only_in_case() {
+        let coerced = validate_against_schema(&json!({"Date": "2026-10-15"}), &booking_schema()).unwrap();
+        assert_eq!(coerced["date"], "2026-10-15");
     }
 
     #[test]
