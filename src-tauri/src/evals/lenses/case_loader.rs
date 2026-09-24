@@ -2,6 +2,8 @@
 //
 // A case is one synthetic email, the built-in template that should read it,
 // and what the resulting row must contain.
+// A case may bring its own columns and prompt (`lens:`) to stand for a Lens
+// the user built; the template then only supplies the scope.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -9,6 +11,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::evals::{EvalError, EvalResult};
+use crate::models::lens::LensColumn;
 
 /// One Lens extraction case.
 #[derive(Debug, Clone, Deserialize)]
@@ -36,6 +39,19 @@ pub struct LensCase {
     /// means "not checked".
     #[serde(default)]
     pub expect_in_scope: Option<bool>,
+
+    /// Columns and prompt that replace the template's, for a Lens the user
+    /// built themselves (from the chat or by hand). The template still
+    /// supplies the scope.
+    #[serde(default)]
+    pub lens: Option<CaseLens>,
+}
+
+/// A user-built Lens: its own columns and extraction prompt.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaseLens {
+    pub prompt: String,
+    pub columns: Vec<LensColumn>,
 }
 
 /// The synthetic email, as a provider would have delivered it.
@@ -107,9 +123,10 @@ mod tests {
         for case in load_lens_cases(&dir).expect("cases load") {
             let tpl = crate::services::lenses::templates::get(&case.template)
                 .unwrap_or_else(|| panic!("{}: unknown template {}", case.id, case.template));
+            let columns = case.lens.as_ref().map_or(&tpl.schema.columns, |l| &l.columns);
             for field in case.expect.keys() {
                 assert!(
-                    tpl.schema.columns.iter().any(|c| &c.key == field),
+                    columns.iter().any(|c| &c.key == field),
                     "{}: {} is not a column of {}",
                     case.id,
                     field,

@@ -177,7 +177,11 @@ pub async fn run(cfg: LensRunnerConfig) -> EvalResult<JsonRunReport> {
 
     let mut report = JsonRunReport::new("lens_template_eval", &model);
     for case in &cases {
-        let lens = lens_from_template(&case.template)?;
+        let mut lens = lens_from_template(&case.template)?;
+        if let Some(own) = &case.lens {
+            lens.schema.columns.clone_from(&own.columns);
+            lens.prompt_text.clone_from(&own.prompt);
+        }
         let email = case_email(case, &account_id);
         db.insert_email(&email)?;
 

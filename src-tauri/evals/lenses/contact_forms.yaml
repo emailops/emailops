@@ -143,3 +143,32 @@
   expect:
     contact_email: null
     contact_name: null
+
+- id: contact_form_es_all_columns_optional
+  template: contact_form_leads
+  note: "a Lens built from the chat: generic column descriptions, every column optional; small models filled only the first column and left phone and company empty"
+  lens:
+    prompt: "Analiza el cuerpo del mensaje del correo. Este correo proviene de un formulario de contacto de una web. Extrae la dirección de email, el teléfono y la empresa de la persona que rellenó el formulario."
+    columns:
+      - {key: email, label: Dirección de email, type: email, description: "Extrae la dirección de email del remitente del correo."}
+      - {key: telefono, label: Teléfono, type: text, description: "Extrae el número de teléfono de la persona que rellenó el formulario."}
+      - {key: empresa, label: Empresa, type: text, description: "Extrae el nombre de la empresa de la persona que rellenó el formulario."}
+  email:
+    from_name: Example Studio
+    from_email: web@studio.example
+    subject: "Nuevo mensaje del formulario de contacto: Irene Soto"
+    body: |
+      De: Irene Soto <irene@huerta-ejemplo.example>
+      Teléfono: 622 000 904
+      Empresa: Huerta Ejemplo
+
+      Mensaje:
+      Vendemos fruta por suscripción y queremos conectar la tienda online con el reparto. ¿Tenéis disponibilidad en octubre?
+
+      --
+      Este mensaje se ha enviado desde un formulario de contacto en Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    email: irene@huerta-ejemplo.example
+    empresa: Huerta Ejemplo
+    telefono: "622 000 904"
