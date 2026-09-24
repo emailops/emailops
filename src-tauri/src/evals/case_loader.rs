@@ -214,6 +214,11 @@ pub struct EvalCase {
     #[serde(default)]
     pub expected_min_research_matches: Option<u32>,
 
+    /// The answer form research must pick: `list` / `count` (written in code,
+    /// no report call) or `analysis` (a report).
+    #[serde(default)]
+    pub expected_research_mode: Option<crate::models::ReportMode>,
+
     /// Case-insensitive subject substrings: every bare `[n]` citation in the
     /// answer must resolve to a numbered source whose subject contains one of
     /// them — the way the UI resolves it. Catches right facts pinned to the

@@ -91,6 +91,9 @@ function ResearchConfirm() {
             time: formatDuration(estimate.seconds),
           })}
         </div>
+        <div data-testid="research-mode" className="text-xs text-gray-700">
+          {t(`chat:research.mode.${estimate.mode}`)}
+        </div>
         <div className="text-xs text-gray-600">
           {filter ? `${t('chat:research.filter')}: ${filter}` : t('chat:research.byMeaning')}
         </div>

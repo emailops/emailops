@@ -261,6 +261,11 @@
     "stopping": "Wird abgebrochen…",
     "filter": "Filter",
     "byMeaning": "Nach Bedeutung gesammelt (kein Filter)",
+    "mode": {
+      "list": "Antwort: Liste aller Treffer — ohne ausformulierten Bericht, schneller",
+      "count": "Antwort: genaue Anzahl und Liste — ohne ausformulierten Bericht, schneller",
+      "analysis": "Antwort: ein ausformulierter Bericht über alle Treffer"
+    },
     "exit": {
       "title": "Recherche läuft",
       "body": "Eine Chat-Recherche liest noch Ihre E-Mails. Wenn Sie jetzt beenden, geht sie verloren und ihre Antwort bleibt leer.",

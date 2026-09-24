@@ -151,6 +151,11 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
     },
 ];
 
+const CHAT_RESEARCH_MODE_VARS: &[VariableDef] = &[VariableDef {
+    name: "question",
+    description: "The user's research question.",
+}];
+
 const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
     VariableDef {
         name: "question",
@@ -408,6 +413,15 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_QUERY_PLAN,
         variables: CHAT_QUERY_PLAN_VARS,
+    },
+    PromptDef {
+        id: "chat.research_mode",
+        label: "Chat — research mode: answer form",
+        description: "Decides whether a research question wants a list, a count or a report. Lists and counts are written in code from the matches, with no report call.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_MODE,
+        variables: CHAT_RESEARCH_MODE_VARS,
     },
     PromptDef {
         id: "chat.research_map",

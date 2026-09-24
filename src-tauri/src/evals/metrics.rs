@@ -131,6 +131,10 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if let Some(mode) = case.expected_research_mode {
+        checks.push(check_research_mode(mode, outcome.assistant_trace.as_ref()));
+    }
+
     if let Some(min) = case.expected_min_research_matches {
         checks.push(check_min_research_matches(min, &outcome.sources_used));
     }
@@ -297,6 +301,23 @@ fn check_research_matches(
             "research matched the right conversations".into()
         } else {
             "research matched the wrong set of conversations".into()
+        },
+    }
+}
+
+/// Research delivered the answer in the expected form.
+fn check_research_mode(expected: crate::models::ReportMode, trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let got = trace.and_then(|t| t.research.as_ref()).map(|r| r.mode);
+    let passed = got == Some(expected);
+    HeuristicCheck {
+        name: "research_mode".into(),
+        passed,
+        expected: format!("{expected:?}"),
+        actual: got.map_or_else(|| "no research trace".to_string(), |m| format!("{m:?}")),
+        detail: if passed {
+            "research answered in the expected form".into()
+        } else {
+            "research chose the wrong answer form".into()
         },
     }
 }
@@ -924,6 +945,20 @@ mod tests {
     fn research_matches_fail_when_an_expected_conversation_is_missing() {
         let sources = vec![source(1, "a", "Something else")];
         assert!(!check_research_matches(&["privacyhub".into()], &[], &sources).passed);
+    }
+
+    #[test]
+    fn the_research_mode_check_reads_the_trace() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            mode: crate::models::ReportMode::List,
+            ..Default::default()
+        });
+        assert!(check_research_mode(crate::models::ReportMode::List, Some(&trace)).passed);
+        let check = check_research_mode(crate::models::ReportMode::Analysis, Some(&trace));
+        assert!(!check.passed);
+        assert!(check.actual.contains("List"), "{}", check.actual);
+        assert!(!check_research_mode(crate::models::ReportMode::List, None).passed);
     }
 
     #[test]

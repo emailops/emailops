@@ -94,7 +94,14 @@ describe('ChatInput research toggle', () => {
 });
 
 describe('ChatInput research confirmation', () => {
-  const estimate = { estimateId: 'est-1', emails: 1240, batches: 124, seconds: 2100, filter: null };
+  const estimate = {
+    estimateId: 'est-1',
+    emails: 1240,
+    batches: 124,
+    seconds: 2100,
+    mode: 'analysis' as const,
+    filter: null,
+  };
 
   it('shows the estimate with start and cancel, and blocks the input meanwhile', () => {
     const confirmResearch = vi.fn(async () => {});
@@ -112,6 +119,20 @@ describe('ChatInput research confirmation', () => {
     expect(confirmResearch).toHaveBeenCalled();
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="research-cancel"]')?.click());
     expect(cancelResearch).toHaveBeenCalled();
+  });
+
+  it('says how the answer will be delivered', () => {
+    useChatStore.setState({
+      pendingResearch: {
+        content: 'q',
+        opts: {},
+        status: 'ready',
+        estimate: { ...estimate, mode: 'list' },
+        error: null,
+      },
+    });
+    renderInput();
+    expect(container.querySelector('[data-testid="research-mode"]')?.textContent).toContain('research.mode.list');
   });
 
   it('offers no start when nothing matches', () => {

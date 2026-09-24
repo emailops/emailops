@@ -1031,6 +1031,10 @@ pub struct ToolCallTrace {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResearchTrace {
+    /// How the answer was delivered: a list or a count written in code, or a
+    /// report written by the model. Older traces read as `analysis`.
+    #[serde(default)]
+    pub mode: ReportMode,
     /// Context window the batches were sized to.
     pub n_ctx: u32,
     /// Emails gathered for reading (what the estimate counted).
@@ -1064,6 +1068,20 @@ pub struct ResearchTrace {
     pub reduce_ms: i64,
 }
 
+/// How a research answer is delivered (see `services::chat::research::mode`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportMode {
+    /// The matching conversations, listed in code — no report call.
+    List,
+    /// How many conversations match, then the list — no report call.
+    Count,
+    /// A report the model writes from every match: trends, summaries,
+    /// comparisons, totals.
+    #[default]
+    Analysis,
+}
+
 /// What a research run would read, shown for the user to confirm before it
 /// starts. `estimate_id` hands the gathered set to the run that follows.
 #[derive(Debug, Clone, Serialize)]
@@ -1073,6 +1091,8 @@ pub struct ResearchEstimate {
     pub emails: u32,
     pub batches: u32,
     pub seconds: u64,
+    /// How the answer will be delivered.
+    pub mode: ReportMode,
     /// The planner's filter, as `search_emails` arguments; `None` when the
     /// question is gathered by meaning.
     pub filter: Option<serde_json::Value>,

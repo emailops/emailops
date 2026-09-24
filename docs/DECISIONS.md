@@ -1641,3 +1641,29 @@ accept is gone.
   shape→GBNF renderer covers what research needs.
 - *Asking the model to copy email ids*: 16-character ids are easy to mangle, and a
   grammar over labels makes an invented citation impossible.
+
+## 2026-09-24 — Research answers lists and counts in code; only analysis gets a report
+
+**Decision:** Before reading, a small classifier (`chat.research_mode`, with its reply
+forced to `list` | `count` | `analysis`) decides how the answer is delivered.
+- **List and count:** code writes the answer from the reading step's per-conversation
+  verdicts: the exact counts, every match linked with its verdict, and how much was read.
+  There are no condense or report calls.
+- **Analysis:** only analysis (a trend, a summary, a comparison, a total) runs condense
+  and the report.
+- **When unsure:** the classifier answers `analysis`, which still serves a list, just
+  more slowly.
+- **The user sees the form first:** the confirmation card shows it before the run
+  starts, so a wrong guess can be cancelled.
+
+This replaces the `LIST_CUES` keyword list.
+**Context:** a list question paid for the whole report step — about 100 s on a
+450-email production run — only to have the code-built list appended to it. The keyword
+list also missed plain list questions ("qué presupuestos he enviado"). The per-conversation
+verdicts already hold everything a list needs, and they have already been held to who
+wrote what.
+**Rejected:**
+- *A field on the shared `chat.query_plan` planner*: no extra call, but it would move
+  every normal chat turn and that prompt's eval.
+- *Keeping keyword cues*: fragile across phrasing and languages.
+- *Letting the report decide*: the report is the cost being avoided.

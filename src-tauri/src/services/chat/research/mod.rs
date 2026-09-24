@@ -22,6 +22,7 @@
 //! thin executor.
 
 mod control;
+mod mode;
 mod notes;
 mod plan;
 mod prompts;
@@ -44,8 +45,8 @@ use plan::{
     plan_research_budget, semantic_cutoff, GatherStep, CONDENSE_MAX_TOKENS, MAP_MAX_TOKENS,
 };
 use prompts::{
-    cancelled_note, coverage_line, participant, plan_report_shape, recipients, report_facts, split_condense_prompt,
-    split_map_prompt, split_reduce_prompt, DocMessage, ReportShape, ResearchDoc,
+    cancelled_note, coverage_line, participant, recipients, report_facts, split_condense_prompt, split_map_prompt,
+    split_reduce_prompt, DocMessage, ResearchDoc,
 };
 pub(crate) use reading::Match;
 use reading::{collect_matches, enforce_direction, BatchLabels, Finding};
@@ -55,7 +56,7 @@ use crate::ai::provider::{AIProvider, CompletionOptions, CompletionResult};
 use crate::db::emails::search::TagQuery;
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::models::{Email, LlmCallTrace, ResearchEstimate, ResearchTrace, ToolCallTrace};
+use crate::models::{Email, LlmCallTrace, ReportMode, ResearchEstimate, ResearchTrace, ToolCallTrace};
 
 // ── Context window ──────────────────────────────────────────────────────────
 
@@ -139,6 +140,10 @@ pub(crate) struct Prepared {
     /// Every address the user sends from (see `Database::user_addresses`):
     /// who "I" is when reading, and every sender a filter on the user covers.
     pub user_addresses: Vec<String>,
+    /// How the answer will be delivered — a list or count written in code,
+    /// or a report.
+    pub mode: ReportMode,
+    pub mode_call: Option<LlmCallTrace>,
 }
 
 /// Everything planning and gathering read.
@@ -160,10 +165,64 @@ const GATHER_ROUND: i32 = -3;
 pub(crate) async fn prepare(input: &PrepareInput<'_>) -> Prepared {
     let t = std::time::Instant::now();
     let (plan, planner_call) = plan_question(input).await;
+    let (mode, mode_call) = classify_mode(input).await;
     let mut prepared = gather(input, plan).await;
     prepared.planner_call = planner_call;
+    prepared.mode = mode;
+    prepared.mode_call = mode_call;
     prepared.gather_ms = t.elapsed().as_millis() as i64;
     prepared
+}
+
+/// Longest the mode classifier may answer: `{"report": "analysis"}`.
+const MODE_MAX_TOKENS: u32 = 24;
+const MODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How the answer will be delivered (see `mode`). A missing prompt or a failed
+/// call is logged and falls back to the report, which serves any question.
+async fn classify_mode(input: &PrepareInput<'_>) -> (ReportMode, Option<LlmCallTrace>) {
+    classify_question(input.db, input.provider, input.question).await
+}
+
+/// [`classify_mode`] for one question — what the app runs, shared with the
+/// classifier's eval.
+pub(crate) async fn classify_question(
+    db: &Database,
+    provider: &dyn AIProvider,
+    question: &str,
+) -> (ReportMode, Option<LlmCallTrace>) {
+    let template = match crate::services::prompts::get_template(db, "chat.research_mode") {
+        Ok(t) => t,
+        Err(e) => {
+            super::emit_log(
+                "error",
+                &format!("research: mode prompt unavailable ({e}); writing a report"),
+            );
+            return (ReportMode::Analysis, None);
+        }
+    };
+    let (prefix, suffix) = mode::split_mode_prompt(&template, question);
+    let (result, trace) = complete(
+        provider,
+        (&prefix, &suffix),
+        call_options(MODE_MAX_TOKENS, 0.0, Some(mode::mode_shape())),
+        MODE_TIMEOUT,
+        "research_mode",
+        -2,
+    )
+    .await;
+    let mode = match result {
+        Ok(reply) => mode::parse_mode(&reply.text),
+        Err(e) => {
+            super::emit_log(
+                "error",
+                &format!("research: choosing the answer's form failed ({e}); writing a report"),
+            );
+            ReportMode::Analysis
+        }
+    };
+    super::emit_log("info", &format!("research: answer form {mode:?}"));
+    (mode, Some(trace))
 }
 
 /// The query planner's filter for the question; any other verdict (defer, app
@@ -425,15 +484,17 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch).len();
     let seconds = plan_estimate(emails, ms_per_email);
     let filter = prepared.plan.as_ref().map(filter_arguments);
+    let mode = prepared.mode;
     super::emit_log(
         "info",
-        &format!("research: estimate {emails} emails, {batches} batches, ~{seconds}s"),
+        &format!("research: estimate {emails} emails, {batches} batches, ~{seconds}s, {mode:?}"),
     );
     ResearchEstimate {
         estimate_id: store_estimate(input.account_id, input.question, prepared),
         emails: emails as u32,
         batches: batches as u32,
         seconds,
+        mode,
         filter,
     }
 }
@@ -739,6 +800,7 @@ pub(crate) async fn run_research(
     let prepared = input.prepared;
     let mut run = ResearchRun {
         trace: ResearchTrace {
+            mode: prepared.mode,
             n_ctx: budget.n_ctx,
             planned_emails: prepared.email_ids.len() as u32,
             search_hits: prepared.search_hits,
@@ -862,11 +924,23 @@ pub(crate) async fn run_research(
     let emails_read = emails_in(read);
     run.trace.emails_analyzed = emails_read as u32;
     run.trace.relevant_emails = matches.iter().map(|m| m.emails).sum::<usize>() as u32;
-    let shape = plan_report_shape(input.question);
-
     // Cancelled: no condense, no report — say how far it got and stop.
     if run.trace.stopped {
         run.answer = Some(cancelled_note(input.language_code, emails_read, total_emails));
+        return run;
+    }
+
+    // A list or a count is written in code from the matches: no condense, no
+    // report call.
+    if prepared.mode != ReportMode::Analysis {
+        run.answer = Some(mode::list_answer(
+            prepared.mode,
+            &matches,
+            emails_read,
+            run.trace.batches as usize,
+            run.trace.failed_batches as usize,
+            input.language_code,
+        ));
         return run;
     }
 
@@ -948,7 +1022,7 @@ pub(crate) async fn run_research(
         run.trace.batches as usize,
         run.trace.failed_batches as usize,
     );
-    let facts = report_facts(&matches, shape);
+    let facts = report_facts(&matches);
     let (prefix, suffix) = split_reduce_prompt(
         input.reduce_template,
         input.language_instruction,
@@ -972,35 +1046,24 @@ pub(crate) async fn run_research(
     .await;
     run.llm_calls.push(trace);
     run.trace.reduce_ms = t_reduce.elapsed().as_millis() as i64;
-    // Built in code, not written by the model: every match, however many.
-    let full_list = if shape == ReportShape::FullList {
-        render_match_list(&matches, input.language_code)
-    } else {
-        String::new()
-    };
     match result {
         Ok(reply) if !reply.text.trim().is_empty() => {
             // The report cites conversations by number; code writes the links.
             let targets = citation_targets(&order, &docs, &matches, &findings);
             let prose = render_citations(reply.text.trim(), &targets);
-            run.answer = Some(if full_list.is_empty() {
-                // `truncated`: the provider says the report stopped at its
-                // output limit.
-                finish_report(&prose, reply.truncated, &matches, input.language_code)
-            } else {
-                // A list question always ends with the list; a cut report
-                // loses only its broken last line.
-                let kept = finish_report(&prose, reply.truncated, &[], input.language_code);
-                format!("{kept}\n\n{full_list}")
-            });
+            // `truncated`: the provider says the report stopped at its output
+            // limit — the list of every match then closes the answer.
+            run.answer = Some(finish_report(&prose, reply.truncated, &matches, input.language_code));
         }
-        // The report failed but the list stands on its own: ship it.
-        _ if !full_list.is_empty() => run.answer = Some(full_list),
+        // The report failed but the matches stand on their own: list them.
+        _ if !matches.is_empty() => run.answer = Some(render_match_list(&matches, input.language_code)),
         Ok(_) => run.error = Some("the research report came back empty".to_string()),
         Err(e) => run.error = Some(format!("writing the research report failed: {e}")),
     }
 
-    // The next estimate uses what this machine actually took.
+    // The next estimate uses what this machine actually took. Report runs
+    // only (a list returns before this): a list's reading-only pace would make
+    // the next report's estimate short.
     if emails_read > 0 {
         let ms = (run.trace.map_ms + run.trace.condense_ms + run.trace.reduce_ms) as u64 / emails_read as u64;
         if let Err(e) = input.db.set_preference(MS_PER_EMAIL_PREF, &ms.to_string()) {
@@ -1284,39 +1347,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_list_question_gets_every_match_listed_and_counted_exactly() {
+    async fn a_list_question_is_answered_in_code_without_a_report_call() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         seed(&db, 24);
         let provider = crate::ai::provider::FakeAiProvider::new();
         let categories: Vec<String> = Vec::new();
-        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        let mut prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        prepared.mode = ReportMode::List;
         assert_eq!(prepared.email_ids.len(), 25);
         // Every email is a match: 25 emails in 24 conversations (the reply
         // shares e00's thread), read 10 conversations per batch.
         for batch in batches_of(&db, &prepared, 16384) {
             provider.push_completion(all_match(&batch, "Invoice request"));
         }
-        provider.push_completion("Resumen: el proveedor envió facturas mensuales.");
         let stop = AtomicBool::new(false);
-        let mut input = run_input(&db, &provider, &prepared, 16384, &stop);
-        input.question = "Dame una lista con todas las facturas del proveedor";
-        let run = run_research(input, &|_| {}).await;
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
 
+        assert!(
+            run.llm_calls.iter().all(|c| c.kind == "research_map"),
+            "reading only — no condense, no report"
+        );
+        assert_eq!(run.trace.mode, ReportMode::List);
         let answer = run.answer.expect("an answer");
-        assert!(answer.starts_with("Resumen:"), "{answer}");
         // 25 emails, but the reply in thread t00 is the same conversation:
         // 24 entries, the first one saying it holds two emails.
-        assert!(answer.contains("### Lista completa (24)"), "{answer}");
+        assert!(
+            answer.starts_with("24 conversaciones (25 correos) responden a tu pregunta.\n\n### Lista completa (24)"),
+            "{answer}"
+        );
         assert!(answer.contains("\n24. "), "every conversation is listed: {answer}");
         assert!(answer.contains("(2 correos)"), "{answer}");
-        let calls = provider.prefix_completion_calls();
-        let reduce_prompt = &calls.last().expect("reduce").1;
-        assert!(
-            reduce_prompt.contains("25 emails with relevant findings, in 24 conversations"),
-            "{reduce_prompt}"
-        );
-        assert!(reduce_prompt.contains("appended"), "{reduce_prompt}");
         assert_eq!(run.trace.relevant_emails, 25);
+        assert!(
+            db.get_preference(MS_PER_EMAIL_PREF).unwrap().is_none(),
+            "a list's reading-only pace does not set the report estimate"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_estimate_chooses_the_answer_form_and_keeps_it_for_the_run() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 4);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "billing@supplier.example"}"#);
+        provider.push_completion(r#"{"report": "list"}"#);
+        let categories: Vec<String> = Vec::new();
+        let input = prepare_input(&db, &provider, &categories);
+        let est = estimate(&input).await;
+        assert_eq!(est.mode, ReportMode::List);
+        let prepared = take_estimate(&est.estimate_id, "acct", input.question).expect("kept for the run");
+        assert_eq!(prepared.mode, ReportMode::List);
+        assert_eq!(
+            prepared.mode_call.as_ref().map(|c| c.kind.as_str()),
+            Some("research_mode")
+        );
+        let shapes = provider.completion_shapes();
+        assert!(shapes[1].is_some(), "the classifier's reply shape is enforced");
+    }
+
+    #[tokio::test]
+    async fn a_classifier_that_fails_leaves_the_report() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 4);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "billing@supplier.example"}"#);
+        provider.push_completion("not json");
+        let categories: Vec<String> = Vec::new();
+        let prepared = prepare(&prepare_input(&db, &provider, &categories)).await;
+        assert_eq!(prepared.mode, ReportMode::Analysis);
     }
 
     #[tokio::test]

@@ -261,6 +261,11 @@
     "stopping": "Cancelando…",
     "filter": "Filtro",
     "byMeaning": "Reunidos por significado (sin filtro)",
+    "mode": {
+      "list": "Respuesta: lista de todas las coincidencias — sin informe redactado, más rápido",
+      "count": "Respuesta: el número exacto y la lista — sin informe redactado, más rápido",
+      "analysis": "Respuesta: un informe redactado a partir de todas las coincidencias"
+    },
     "exit": {
       "title": "Investigación en curso",
       "body": "Una investigación del chat sigue leyendo tus correos. Si sales ahora se perderá y su respuesta quedará vacía.",

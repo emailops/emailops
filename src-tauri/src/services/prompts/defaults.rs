@@ -301,6 +301,22 @@ JSON:"#;
 
 // ── Chat research mode ──────────────────────────────────────────────────────
 
+/// Research mode: how the answer is delivered. A list or a count is written
+/// in code from the reading step's matches; only `analysis` pays for a report.
+/// Split at `QUESTION: {{question}}` like the other research prompts; the
+/// reply's shape is enforced (see `research::mode`).
+pub const CHAT_RESEARCH_MODE: &str = r#"You decide the form of a research answer. The research reads every conversation that matches the user's question; this step only chooses how the answer is delivered.
+
+- "list": the user wants the items themselves — which ones, what they are, the emails. "Which quotes have I sent?", "list the emails from Acme", "¿qué presupuestos he enviado?", "show me every invoice from 2025".
+- "count": the user wants a number. "How many quotes have I sent?", "¿cuántas facturas recibí?".
+- "analysis": the user wants something worked out across the items — a summary, a trend, a comparison, themes, a total or an average, an explanation. "How have downloads evolved?", "what problems do users report?", "¿cuánto he facturado en total?".
+
+If the question asks for a list and also for something worked out, or you are unsure, answer "analysis".
+
+Reply with the JSON object only: {"report": "list" | "count" | "analysis"}
+
+QUESTION: {{question}}"#;
+
 /// Research-mode map step: one batch of conversations in, one JSON verdict per
 /// relevant conversation out (the shape is enforced — see `research::reading`). The split point for `complete_with_prefix` is
 /// `QUESTION: {{question}}`: the instructions above it are identical on every

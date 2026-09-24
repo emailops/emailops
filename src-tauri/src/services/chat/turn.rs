@@ -4281,6 +4281,9 @@ pub async fn run_chat_turn(
         if let Some(call) = prepared.planner_call.clone() {
             llm_calls.push(call);
         }
+        if let Some(call) = prepared.mode_call.clone() {
+            llm_calls.push(call);
+        }
         tool_traces.extend(prepared.gather_calls.iter().cloned());
         // Read the window now, with the model loaded by the planner: batches
         // and notes are sized to what the runtime really runs with.

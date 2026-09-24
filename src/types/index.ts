@@ -589,8 +589,13 @@ export interface ResearchMatchPreview {
   emails: number;
 }
 
+/** How a research answer is delivered. Mirrors `ReportMode` in Rust. */
+export type ResearchMode = 'list' | 'count' | 'analysis';
+
 /** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */
 export interface ResearchTrace {
+  /** How the answer was delivered; absent on older traces (a report). */
+  mode?: ResearchMode;
   nCtx: number;
   /** Emails gathered for reading (what the estimate counted). */
   plannedEmails: number;
@@ -617,6 +622,9 @@ export interface ResearchEstimate {
   emails: number;
   batches: number;
   seconds: number;
+  /** How the answer will be delivered: a list or a count written from the
+   *  matches (no report call), or a written report. */
+  mode: ResearchMode;
   /** The planner's filter as `search_emails` arguments; null when the
    *  question is gathered by meaning. */
   filter: Record<string, unknown> | null;

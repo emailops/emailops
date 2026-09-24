@@ -23,6 +23,7 @@
   category: research
   tier: full
   research: true
+  expected_research_mode: analysis
   expected_min_research_emails: 13
   # Recall: every digest is one conversation, and every one answers.
   expected_min_research_matches: 13
@@ -38,6 +39,7 @@
   category: research
   tier: full
   research: true
+  expected_research_mode: analysis
   expected_min_research_emails: 10
   expected_answer_contains: ["](email://"]
   metrics: []
@@ -52,6 +54,7 @@
   category: research
   tier: full
   research: true
+  expected_research_mode: list
   expected_min_research_emails: 3
   # Recall: all six 2025 prospect requests in the demo mailbox.
   expected_research_matches:
@@ -74,6 +77,7 @@
   category: research
   tier: full
   research: true
+  expected_research_mode: list
   expected_min_research_emails: 3
   expected_research_matches: ["PrivacyHub analytics migration", "Bahía Studio marketing site"]
   forbidden_research_matches: ["German translation", "landing page illustrations"]

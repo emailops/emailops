@@ -581,7 +581,7 @@ pub(super) fn collect_referenced_drafts(
 /// loaded between turns — that's what makes per-turn prefill numbers
 /// comparable (`make cli-bench`).
 /// One human line for a research estimate: "Research estimate: 320 emails in
-/// 12 batches · ~9m 36s".
+/// 12 batches · ~9m 36s · answer: list".
 fn research_estimate_line(est: &crate::models::ResearchEstimate) -> String {
     let (m, s) = (est.seconds / 60, est.seconds % 60);
     let time = if m > 0 {
@@ -589,8 +589,13 @@ fn research_estimate_line(est: &crate::models::ResearchEstimate) -> String {
     } else {
         format!("{s}s")
     };
+    let answer = match est.mode {
+        crate::models::ReportMode::List => "list",
+        crate::models::ReportMode::Count => "count",
+        crate::models::ReportMode::Analysis => "report",
+    };
     format!(
-        "Research estimate: {} emails in {} batches · ~{time}",
+        "Research estimate: {} emails in {} batches · ~{time} · answer: {answer}",
         est.emails, est.batches
     )
 }
@@ -1116,19 +1121,20 @@ mod research_estimate_tests {
             emails: 320,
             batches: 12,
             seconds,
+            mode: crate::models::ReportMode::List,
             filter: None,
         }
     }
 
     #[test]
-    fn the_estimate_line_shows_emails_batches_and_time() {
+    fn the_estimate_line_shows_emails_batches_time_and_answer_form() {
         assert_eq!(
             research_estimate_line(&est(576)),
-            "Research estimate: 320 emails in 12 batches · ~9m 36s"
+            "Research estimate: 320 emails in 12 batches · ~9m 36s · answer: list"
         );
         assert_eq!(
             research_estimate_line(&est(42)),
-            "Research estimate: 320 emails in 12 batches · ~42s"
+            "Research estimate: 320 emails in 12 batches · ~42s · answer: list"
         );
     }
 }

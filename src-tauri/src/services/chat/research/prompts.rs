@@ -178,79 +178,6 @@ pub(crate) fn coverage_line(
 
 // ── Matches, exact counts, full list ─────────────────────────────────────────
 
-/// What the report must carry besides the model's prose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReportShape {
-    /// "List every…", "how many…": the report ends with the complete,
-    /// numbered list of matches, built in code — a model-written list stops at
-    /// its output budget (a few dozen lines) and a model's count is a guess.
-    FullList,
-    /// Themes, trends, summaries: the prose is the answer.
-    Analysis,
-}
-
-/// Words that ask for an enumeration or a count, EN/ES/FR/DE. Matched as
-/// whole words or phrases on the lowercased question.
-const LIST_CUES: &[&str] = &[
-    // EN
-    "list",
-    "all the",
-    "every",
-    "each",
-    "how many",
-    "number of",
-    "count",
-    "enumerate",
-    "table",
-    // ES
-    "lista",
-    "listado",
-    "todas",
-    "todos",
-    "cada",
-    "cuántos",
-    "cuántas",
-    "cuantos",
-    "cuantas",
-    "número de",
-    "numero de",
-    "enumera",
-    "tabla",
-    // FR
-    "liste",
-    "toutes",
-    "tous",
-    "chaque",
-    "combien",
-    "nombre de",
-    // DE
-    "liste",
-    "alle",
-    "jede",
-    "jeder",
-    "wie viele",
-    "anzahl",
-    "tabelle",
-];
-
-/// Whether the question wants the full list of matches appended. Pure.
-pub(crate) fn plan_report_shape(question: &str) -> ReportShape {
-    let q = format!(" {} ", question.to_lowercase());
-    let is_word_char = |c: char| c.is_alphanumeric();
-    let hit = LIST_CUES.iter().any(|cue| {
-        q.match_indices(cue).any(|(i, _)| {
-            let before = q[..i].chars().next_back().is_none_or(|c| !is_word_char(c));
-            let after = q[i + cue.len()..].chars().next().is_none_or(|c| !is_word_char(c));
-            before && after
-        })
-    });
-    if hit {
-        ReportShape::FullList
-    } else {
-        ReportShape::Analysis
-    }
-}
-
 /// The exact counts the report states — computed, never left to the model.
 pub(crate) fn counts_line(matches: &[Match]) -> String {
     let emails: usize = matches.iter().map(|m| m.emails).sum();
@@ -260,20 +187,12 @@ pub(crate) fn counts_line(matches: &[Match]) -> String {
     )
 }
 
-/// The facts line of the report prompt: the exact counts, and — when the full
-/// list will be appended — that the model must not try to write it out.
-pub(crate) fn report_facts(matches: &[Match], shape: ReportShape) -> String {
-    let mut facts = format!(
+/// The facts line of the report prompt: the exact counts, computed in code.
+pub(crate) fn report_facts(matches: &[Match]) -> String {
+    format!(
         "{} (exact — computed from every email read; state these numbers, never count the notes yourself).",
         counts_line(matches)
-    );
-    if shape == ReportShape::FullList && !matches.is_empty() {
-        facts.push_str(&format!(
-            " The complete numbered list of all {} matches is appended after your report automatically: do not reproduce it item by item — give the total, then group, summarise and highlight.",
-            matches.len()
-        ));
-    }
-    facts
+    )
 }
 
 /// The answer of a research the user cancelled, in the report's language.
@@ -459,33 +378,6 @@ mod tests {
 
     // ── matches, counts, full list ──
 
-    #[test]
-    fn a_list_or_count_question_gets_the_full_list() {
-        for q in [
-            "dame una lista con todas las peticiones de contacto",
-            "List every invoice from Hetzner",
-            "¿Cuántas facturas he recibido este año?",
-            "how many customers wrote about pricing?",
-            "enumera los proveedores",
-            "combien de demandes de contact ?",
-            "Wie viele Rechnungen?",
-            "all the emails where someone asks for a demo",
-        ] {
-            assert_eq!(plan_report_shape(q), ReportShape::FullList, "{q}");
-        }
-    }
-
-    #[test]
-    fn an_analysis_question_gets_no_appended_list() {
-        for q in [
-            "¿Qué temas principales han salido con clientes?",
-            "Research how downloads evolved over the last 3 months",
-            "summarise the recurring issues users report",
-        ] {
-            assert_eq!(plan_report_shape(q), ReportShape::Analysis, "{q}");
-        }
-    }
-
     fn m(id: &str, thread: &str, date: &str, finding: &str) -> Match {
         Match {
             id: id.into(),
@@ -513,17 +405,13 @@ mod tests {
     }
 
     #[test]
-    fn report_facts_give_exact_counts_and_announce_the_list_only_when_appended() {
+    fn report_facts_give_exact_counts() {
         let matches = vec![m("e1", "t1", "", ""), m("e2", "t2", "", "")];
-        let list = report_facts(&matches, ReportShape::FullList);
+        let facts = report_facts(&matches);
         assert!(
-            list.contains("2 emails with relevant findings, in 2 conversations"),
-            "{list}"
+            facts.contains("2 emails with relevant findings, in 2 conversations"),
+            "{facts}"
         );
-        assert!(list.contains("appended"), "{list}");
-        let analysis = report_facts(&matches, ReportShape::Analysis);
-        assert!(analysis.contains("2 emails"), "{analysis}");
-        assert!(!analysis.contains("appended"), "{analysis}");
     }
 
     #[test]

@@ -261,6 +261,11 @@
     "stopping": "Annulation…",
     "filter": "Filtre",
     "byMeaning": "Rassemblés par le sens (sans filtre)",
+    "mode": {
+      "list": "Réponse : la liste de tous les résultats — sans rapport rédigé, plus rapide",
+      "count": "Réponse : le nombre exact et la liste — sans rapport rédigé, plus rapide",
+      "analysis": "Réponse : un rapport rédigé à partir de tous les résultats"
+    },
     "exit": {
       "title": "Recherche en cours",
       "body": "Une recherche du chat lit encore vos e-mails. Si vous quittez maintenant, elle sera perdue et sa réponse restera vide.",

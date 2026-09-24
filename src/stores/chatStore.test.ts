@@ -382,7 +382,14 @@ describe('a turn that is still generating when you navigate away', () => {
 });
 
 describe('chatStore research mode', () => {
-  const estimate = { estimateId: 'est-1', emails: 1240, batches: 124, seconds: 2100, filter: { subject: 'x' } };
+  const estimate = {
+    estimateId: 'est-1',
+    emails: 1240,
+    batches: 124,
+    seconds: 2100,
+    mode: 'analysis' as const,
+    filter: { subject: 'x' },
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -728,7 +735,14 @@ describe('an account reset keeps a running turn', () => {
 });
 
 describe('retrying a rejected research', () => {
-  const estimate = { estimateId: 'est-9', emails: 40, batches: 4, seconds: 70, filter: null };
+  const estimate = {
+    estimateId: 'est-9',
+    emails: 40,
+    batches: 4,
+    seconds: 70,
+    mode: 'analysis' as const,
+    filter: null,
+  };
   const research = {
     nCtx: 16384,
     plannedEmails: 40,

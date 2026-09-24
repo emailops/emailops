@@ -347,11 +347,16 @@ pub(crate) fn finish_report(report: &str, cut: bool, matches: &[Match], language
     }
 }
 
-/// The complete numbered list of matches, in the report's language.
+/// The complete numbered list of matches, oldest first, in the report's
+/// language. (Reading order follows each conversation's first gathered email;
+/// the list follows the email it links.)
 pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> String {
     if matches.is_empty() {
         return String::new();
     }
+    let mut matches: Vec<&Match> = matches.iter().collect();
+    // ISO dates sort as text; the sort is stable, so ties keep reading order.
+    matches.sort_by(|a, b| a.date.cmp(&b.date));
     let (heading, emails_word) = match language_code {
         "es" => ("Lista completa", "correos"),
         "fr" => ("Liste complète", "e-mails"),
@@ -534,6 +539,19 @@ mod tests {
             subject: format!("Subject {id}"),
             finding: "quote".into(),
         }
+    }
+
+    #[test]
+    fn the_full_list_is_in_date_order() {
+        let mut late = a_match("late");
+        late.date = "2024-02-20".into();
+        let mut early = a_match("early");
+        early.date = "2024-02-13".into();
+        let list = render_match_list(&[late, early], "en");
+        assert!(
+            list.find("email://early").unwrap() < list.find("email://late").unwrap(),
+            "{list}"
+        );
     }
 
     #[test]
