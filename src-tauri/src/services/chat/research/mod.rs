@@ -39,9 +39,10 @@ use plan::{
 };
 pub(crate) use prompts::Match;
 use prompts::{
-    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, join_notes, matched_email_ids,
-    notes_len, parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list, report_facts,
-    split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes, DocMessage, ReportShape, ResearchDoc,
+    assemble_notes, cancelled_note, canonicalize_links, collect_matches, coverage_line, finish_report, join_notes,
+    matched_email_ids, notes_len, parse_map_notes, plan_report_shape, relink_bare_refs, render_match_list,
+    report_facts, split_condense_prompt, split_map_prompt, split_reduce_prompt, BatchNotes, DocMessage, ReportShape,
+    ResearchDoc,
 };
 
 use super::planner::SearchPlan;
@@ -949,7 +950,9 @@ pub(crate) async fn run_research(
                 .collect();
             let prose = canonicalize_links(&relink_bare_refs(reply.text.trim(), &subjects), &representative);
             run.answer = Some(if full_list.is_empty() {
-                prose
+                // Hitting the output budget means the report stopped short.
+                let cut = reply.completion_tokens >= REDUCE_MAX_TOKENS;
+                finish_report(&prose, cut, &matches, input.language_code)
             } else {
                 format!("{prose}\n\n{full_list}")
             });

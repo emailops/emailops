@@ -488,6 +488,22 @@ pub(crate) fn cancelled_note(language_code: &str, read: usize, planned: usize) -
 }
 
 /// The complete numbered list of matches, in the report's language.
+/// A report that ran out of output budget ends mid-line and loses every match
+/// it had not reached: drop the broken last line and end with the list of all
+/// matches, built in code. A complete report is left as written. Pure.
+pub(crate) fn finish_report(report: &str, cut: bool, matches: &[Match], language_code: &str) -> String {
+    if !cut {
+        return report.to_string();
+    }
+    let kept = report.rsplit_once('\n').map_or("", |(head, _)| head).trim_end();
+    let list = render_match_list(matches, language_code);
+    match (kept.is_empty(), list.is_empty()) {
+        (_, true) => kept.to_string(),
+        (true, false) => list,
+        (false, false) => format!("{kept}\n\n{list}"),
+    }
+}
+
 pub(crate) fn render_match_list(matches: &[Match], language_code: &str) -> String {
     if matches.is_empty() {
         return String::new();
@@ -843,6 +859,25 @@ NONE";
             subject: format!("Subject {id}"),
             finding: finding.into(),
         }
+    }
+
+    #[test]
+    fn a_cut_report_drops_its_broken_line_and_ends_with_every_match() {
+        let matches = vec![
+            m("e1", "t1", "2024-01-02", "quote A"),
+            m("e9", "t9", "2024-03-04", "quote B"),
+        ];
+        let cut = "Summary.\n*   **A:** sent.\n    *   [email://e9";
+        assert_eq!(
+            finish_report(cut, true, &matches, "en"),
+            format!("Summary.\n*   **A:** sent.\n\n{}", render_match_list(&matches, "en"))
+        );
+    }
+
+    #[test]
+    fn a_complete_report_is_left_as_written() {
+        let matches = vec![m("e1", "t1", "", "")];
+        assert_eq!(finish_report("All done.", false, &matches, "en"), "All done.");
     }
 
     #[test]
