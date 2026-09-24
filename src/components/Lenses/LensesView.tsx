@@ -47,6 +47,8 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     setShowExcluded,
     createOpen,
     setCreateOpen,
+    columnFilters,
+    setColumnFilter,
   } = useLensStore();
 
   // A chat fill addressed to `lens.create` opens the dialog. The modal itself
@@ -334,7 +336,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           <EmptyState onCreate={() => setCreateOpen(true)} />
         ) : isLoadingRows ? (
           <div className="p-8 text-center text-xs text-gray-500">{t('lenses:loadingRows')}</div>
-        ) : rows.length === 0 ? (
+        ) : rows.length === 0 && columnFilters.length === 0 ? (
           <NoRowsState
             onRun={() => void runLens(activeLens.id, 'backfill')}
             isRunning={isRunning}
@@ -356,6 +358,9 @@ export function LensesView({ initialLensId }: LensesViewProps) {
             isExcludedView={showExcluded}
             onOpenRow={setDrawerRow}
             groupBy={groupBy}
+            lensId={activeLens.id}
+            columnFilters={columnFilters}
+            onColumnFilter={(key, filter) => void setColumnFilter(key, filter)}
           />
         )}
       </div>

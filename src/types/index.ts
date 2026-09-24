@@ -1102,6 +1102,20 @@ export interface LensSortSpec {
   direction: 'asc' | 'desc';
 }
 
+/** Excel-style filter on one column: rows whose value is in `values`, plus
+ *  empty cells when `includeEmpty`. Nothing selected keeps no rows. */
+export interface LensColumnFilter {
+  key: string;
+  values: string[];
+  includeEmpty: boolean;
+}
+
+/** One distinct value of a column (`null` = empty cells) and its row count. */
+export interface LensColumnValueCount {
+  value: string | null;
+  count: number;
+}
+
 export type LensRunKind = 'backfill' | 'incremental' | 'reextract' | 'single';
 
 export interface LensRunHandle {

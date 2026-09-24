@@ -42,6 +42,8 @@ import type {
   JunkStats,
   JunkVerdict,
   Lens,
+  LensColumnFilter,
+  LensColumnValueCount,
   LensPreviewRow,
   LensRowsPage,
   LensRunHandle,
@@ -1632,16 +1634,23 @@ export async function createLensFromTemplate(templateKey: string, name?: string,
 
 export async function getLensRows(
   lensId: string,
-  opts: { sort?: LensSortSpec; limit?: number; offset?: number } = {},
+  opts: { sort?: LensSortSpec; filters?: LensColumnFilter[]; limit?: number; offset?: number } = {},
 ): Promise<LensRowsPage> {
   // Backend SortSpec is `{ key, desc }` — translate from the UI shape.
   const sortPayload = opts.sort ? { key: opts.sort.columnKey, desc: opts.sort.direction === 'desc' } : null;
   return invoke('get_lens_rows', {
     lensId,
     sort: sortPayload,
+    filters: opts.filters?.length ? opts.filters : null,
     limit: opts.limit ?? null,
     offset: opts.offset ?? null,
   });
+}
+
+/** Distinct values of one Lens column with their row counts (empty cells
+ *  first), for the Excel-style column filter. */
+export async function getLensColumnValues(lensId: string, key: string): Promise<LensColumnValueCount[]> {
+  return invoke('get_lens_column_values', { lensId, key });
 }
 
 export async function updateLensRowOverride(

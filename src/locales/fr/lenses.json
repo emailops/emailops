@@ -175,7 +175,17 @@
     "openSourceEmail": "Ouvrir l'e-mail source",
     "reextractRow": "Réextraire cette ligne",
     "includeRow": "Remettre cette ligne dans le Lens",
-    "excludeRow": "Exclure cette ligne"
+    "excludeRow": "Exclure cette ligne",
+    "filter": {
+      "button": "Filtrer la colonne",
+      "search": "Rechercher une valeur…",
+      "selectAll": "Tout sélectionner",
+      "empty": "(Vides)",
+      "apply": "Appliquer",
+      "clear": "Retirer le filtre",
+      "noValues": "Pas encore de valeurs",
+      "noMatches": "Aucune ligne ne correspond aux filtres de colonne."
+    }
   },
   "row": {
     "sourceEmail": "E-mail source",

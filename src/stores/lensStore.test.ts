@@ -274,3 +274,23 @@ describe('create dialog', () => {
     expect(lensReducer(opened, { type: 'SET_CREATE_OPEN', open: false }).createOpen).toBe(false);
   });
 });
+
+describe('column filters', () => {
+  const acme = { key: 'vendor', values: ['Acme'], includeEmpty: false };
+
+  it('sets, replaces and clears one filter per column', () => {
+    let s = lensReducer(initialLensState, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: acme });
+    expect(s.columnFilters).toEqual([acme]);
+    const globex = { ...acme, values: ['Globex'] };
+    s = lensReducer(s, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: globex });
+    expect(s.columnFilters).toEqual([globex]);
+    s = lensReducer(s, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: null });
+    expect(s.columnFilters).toEqual([]);
+  });
+
+  it('drops the filters when another Lens is selected', () => {
+    // Column keys belong to one Lens's schema.
+    const s = lensReducer(initialLensState, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: acme });
+    expect(lensReducer(s, { type: 'SET_ACTIVE_LENS_ID', lensId: 'other' }).columnFilters).toEqual([]);
+  });
+});

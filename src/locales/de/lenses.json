@@ -175,7 +175,17 @@
     "openSourceEmail": "Quell-E-Mail öffnen",
     "reextractRow": "Diese Zeile erneut extrahieren",
     "includeRow": "Diese Zeile wieder in den Lens aufnehmen",
-    "excludeRow": "Diese Zeile ausschließen"
+    "excludeRow": "Diese Zeile ausschließen",
+    "filter": {
+      "button": "Spalte filtern",
+      "search": "Wert suchen…",
+      "selectAll": "Alle auswählen",
+      "empty": "(Leer)",
+      "apply": "Anwenden",
+      "clear": "Filter entfernen",
+      "noValues": "Noch keine Werte",
+      "noMatches": "Keine Zeile entspricht den Spaltenfiltern."
+    }
   },
   "row": {
     "sourceEmail": "Quell-E-Mail",

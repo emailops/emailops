@@ -6,7 +6,8 @@ import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
-import type { LensColumn, LensRow, LensSortSpec } from '@/types';
+import type { LensColumn, LensColumnFilter, LensRow, LensSortSpec } from '@/types';
+import { LensColumnFilterMenu } from './LensColumnFilterMenu';
 import { planUrlCell } from './lensUrlCell';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ interface CellProps {
 }
 
 function Cell({ column, value, hasOverride }: CellProps) {
+  const { t } = useTranslation(['common']);
   const fmt = useFormatters();
   if (value === null || value === undefined || value === '') {
     return <span className="text-gray-600">—</span>;
@@ -116,7 +118,7 @@ function Cell({ column, value, hasOverride }: CellProps) {
     case 'date':
       return <span className={cls}>{String(value)}</span>;
     case 'boolean':
-      return <span className={cls}>{value ? 'yes' : 'no'}</span>;
+      return <span className={cls}>{value ? t('common:actions.yes') : t('common:actions.no')}</span>;
     case 'number':
       return <span className={cls}>{fmt.number(Number(value))}</span>;
     case 'url': {
@@ -386,6 +388,10 @@ export interface LensTableProps {
   isExcludedView: boolean;
   onOpenRow: (row: LensRow) => void;
   groupBy?: string | null;
+  /** Lens the rows belong to — the column filter asks the backend for values. */
+  lensId: string;
+  columnFilters: LensColumnFilter[];
+  onColumnFilter: (key: string, filter: LensColumnFilter | null) => void;
 }
 
 export function LensTable({
@@ -400,6 +406,9 @@ export function LensTable({
   isExcludedView,
   onOpenRow,
   groupBy,
+  lensId,
+  columnFilters,
+  onColumnFilter,
 }: LensTableProps) {
   const { t, i18n } = useTranslation(['lenses']);
   const enT = useMemo(() => i18n.getFixedT('en', 'lenses'), [i18n]);
@@ -479,12 +488,25 @@ export function LensTable({
               {sort?.columnKey === c.key && (
                 <span className="ml-1 text-[10px] text-gray-500">{sort.direction === 'asc' ? '▲' : '▼'}</span>
               )}
+              <LensColumnFilterMenu
+                lensId={lensId}
+                column={c}
+                active={columnFilters.find((f) => f.key === c.key)}
+                onApply={(filter) => onColumnFilter(c.key, filter)}
+              />
             </th>
           ))}
           <th className="border-b border-gray-700 px-3 py-2" />
         </tr>
       </thead>
       <tbody>
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={colSpan} className="px-3 py-8 text-center text-gray-500">
+              {t('lenses:table.filter.noMatches')}
+            </td>
+          </tr>
+        )}
         {groups
           ? groups.map(([label, bucket]) => (
               <Fragment key={label}>

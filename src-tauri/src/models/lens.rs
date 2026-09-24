@@ -183,6 +183,28 @@ pub struct LensRowsPage {
     pub total: i64,
 }
 
+/// Excel-style filter on one column: keep rows whose value is one of
+/// `values` (compared as text), plus empty cells when `include_empty`.
+/// Nothing selected keeps no rows.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnFilter {
+    pub key: String,
+    #[serde(default)]
+    pub values: Vec<String>,
+    #[serde(default)]
+    pub include_empty: bool,
+}
+
+/// One distinct value of a column and how many rows carry it. `value` is
+/// `None` for empty cells.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnValueCount {
+    pub value: Option<String>,
+    pub count: i64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SortSpec {

@@ -175,7 +175,17 @@
     "openSourceEmail": "Open source email",
     "reextractRow": "Re-extract this row",
     "includeRow": "Put this row back in the Lens",
-    "excludeRow": "Exclude this row"
+    "excludeRow": "Exclude this row",
+    "filter": {
+      "button": "Filter column",
+      "search": "Search values…",
+      "selectAll": "Select all",
+      "empty": "(Empty)",
+      "apply": "Apply",
+      "clear": "Clear filter",
+      "noValues": "No values yet",
+      "noMatches": "No rows match the column filters."
+    }
   },
   "row": {
     "sourceEmail": "Source email",
