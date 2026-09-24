@@ -398,7 +398,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   setActiveTab: (tabId) => set({ activeTabId: tabId ?? null }),
 
-  fetchEmails: async (accountId, filter, selectedCategories, silent = false, mailbox) => {
+  fetchEmails: async (accountId, filter, _selectedCategories, silent = false, mailbox) => {
     // Skip while navigateToEmail is loading — it manages its own fetching.
     // Not on navigationMode: that flag outlives the navigation (it keeps the
     // category filter off the navigated list), and gating on it swallowed
@@ -443,7 +443,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
       if (searchQuery) {
         // Search mode — use search API, preserve backend result order (relevance for RAG)
-        const result = await api.searchEmails(accountId, searchQuery, true, selectedCategories);
+        const result = await api.searchEmails(accountId, searchQuery, true);
         emails = result.emails;
         totalCount = result.emails.length;
       } else if (filter) {

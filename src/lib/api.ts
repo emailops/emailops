@@ -539,14 +539,10 @@ export interface SearchResult {
   searchMethod: SearchMethod;
 }
 
-/** `accountId: null` searches across every enabled account (unified view). */
-export async function searchEmails(
-  accountId: string | null,
-  query?: string,
-  useAi?: boolean,
-  categories?: EmailCategory[],
-): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi, categories });
+/** `accountId: null` searches across every enabled account (unified view).
+ *  Search spans every category — the inbox tab does not narrow it. */
+export async function searchEmails(accountId: string | null, query?: string, useAi?: boolean): Promise<SearchResult> {
+  return invoke('search_emails', { accountId, query, useAi });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {

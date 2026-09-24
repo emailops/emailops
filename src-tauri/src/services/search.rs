@@ -93,7 +93,7 @@ pub(crate) fn parse_tag_token(raw: &str) -> Option<crate::db::emails::search::Ta
 }
 
 /// Run `db.search_emails` once per target account and merge the results
-/// newest-first, truncated to `limit`. Pattern parsing and every other
+/// newest-first, up to `limit` per account. Pattern parsing and every other
 /// search decision happens once in the caller — only the DB call fans out.
 #[allow(clippy::too_many_arguments)]
 fn db_search_merged(
@@ -140,9 +140,9 @@ fn db_search_merged(
         )?);
     }
     // Each per-account result is newest-first; merge to a single newest-first
-    // list and truncate to the same limit a single-account search gets.
+    // list. No global truncation: `limit` applies per account, otherwise the
+    // busiest account fills the whole window and the others vanish.
     merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
-    merged.truncate(limit.max(0) as usize);
     Ok(merged)
 }
 
@@ -1366,6 +1366,35 @@ mod tests {
             vec!["e2", "e1"],
             "both enabled accounts merged newest-first; disabled acc3 excluded"
         );
+    }
+
+    // A busy account must not crowd a quieter one out of a unified search:
+    // each account keeps its own newest-`limit` window in the merged list.
+    #[tokio::test]
+    async fn search_unified_keeps_every_accounts_matches_when_one_account_fills_the_limit() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "busy", "busy@ex.com", true);
+        seed_account(&db, "quiet", "quiet@ex.com", true);
+        seed_searchable_email(&db, "quiet-1", "quiet", "tq", "Invoice old", 1);
+        for i in 0..101 {
+            seed_searchable_email(
+                &db,
+                &format!("busy-{i}"),
+                "busy",
+                &format!("tb{i}"),
+                "Invoice new",
+                1_000 + i,
+            );
+        }
+
+        let result = search_emails(&db, None, "invoice", false, None, None).await.unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
+
+        assert!(
+            ids.contains(&"quiet-1"),
+            "the quiet account's match must survive the merge"
+        );
+        assert_eq!(ids.last(), Some(&"quiet-1"), "merged list stays newest-first");
     }
 
     // Single-account behavior must stay exactly as before.
