@@ -80,7 +80,9 @@
       "writing": "Research: writing the report from {{total}} emails…",
       "remaining": " · ~{{time}} left"
     },
-    "generating": "Generating…"
+    "generating": "Generating…",
+    "cancel": "Cancel",
+    "cancelling": "Cancelling…"
   },
   "reasoning": {
     "show": "Show reasoning",

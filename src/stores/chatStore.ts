@@ -80,7 +80,7 @@ interface ChatStore {
   /** When the in-flight research started reading (ms), for the time left. */
   researchStartedAt: number | null;
   /** The user pressed Stop; the run is finishing its batch and the report. */
-  researchStopping: boolean;
+  turnCancelling: boolean;
   /** A research question awaiting the user's go-ahead: its estimate (how many
    *  emails, how long) is shown before anything is sent. */
   pendingResearch: PendingResearch | null;
@@ -155,8 +155,9 @@ interface ChatStore {
   confirmResearch: () => Promise<void>;
   /** Drop the pending research question and hand its text back to the input. */
   cancelResearch: () => void;
-  /** Stop the running research: it writes its report from what it has read. */
-  stopResearch: () => Promise<void>;
+  /** Cancel the running turn: a normal one keeps what it showed, a research
+   *  run stops at its next batch. */
+  cancelTurn: () => Promise<void>;
   /** Load persisted categories preference from the DB (called once on mount). */
   loadCategoriesPref: () => Promise<void>;
   /** Update the current selection + persist it so the next session reuses it. */
@@ -263,7 +264,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     researchMode: false,
     researchProgress: null,
     researchStartedAt: null,
-    researchStopping: false,
+    turnCancelling: false,
     runningResearch: null,
     researchExitRequested: false,
     pendingResearch: null,
@@ -476,14 +477,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     cancelResearch: dropPendingResearch,
 
-    stopResearch: async () => {
+    cancelTurn: async () => {
       const messageId = get().streamingMessageId;
       if (!messageId) return;
-      set({ researchStopping: true });
+      set({ turnCancelling: true });
       try {
-        await api.stopResearch(messageId);
+        await api.cancelChatTurn(messageId);
       } catch (e) {
-        set({ researchStopping: false, error: errorText(e) });
+        set({ turnCancelling: false, error: errorText(e) });
       }
     },
 
@@ -535,7 +536,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         streamingPhase: null,
         researchProgress: null,
         researchStartedAt: null,
-        researchStopping: false,
+        turnCancelling: false,
       });
 
       try {
@@ -621,7 +622,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           streamingPhase,
           researchProgress,
           researchStartedAt: evt.done ? null : s.researchStartedAt,
-          researchStopping: evt.done ? false : s.researchStopping,
+          turnCancelling: evt.done ? false : s.turnCancelling,
           error,
         };
       });

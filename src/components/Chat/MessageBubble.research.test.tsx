@@ -44,7 +44,7 @@ function render() {
 
 describe('research status in the bubble', () => {
   it('shows the batch progress, the time left and a stop button', () => {
-    const stopResearch = vi.fn(async () => {});
+    const cancelTurn = vi.fn(async () => {});
     useChatStore.setState({
       researchProgress: {
         messageId: 'm1',
@@ -56,24 +56,36 @@ describe('research status in the bubble', () => {
         emailsTotal: 100,
       },
       researchStartedAt: Date.now() - 60_000,
-      researchStopping: false,
-      stopResearch,
+      turnCancelling: false,
+      cancelTurn,
     });
     render();
     expect(container.textContent).toContain('processing.research.reading');
     expect(container.textContent).toContain('processing.research.remaining');
-    const stop = container.querySelector<HTMLButtonElement>('[data-testid="research-stop"]');
+    const stop = container.querySelector<HTMLButtonElement>('[data-testid="turn-cancel"]');
     expect(stop?.textContent).toContain('research.stop');
     act(() => stop?.click());
-    expect(stopResearch).toHaveBeenCalled();
+    expect(cancelTurn).toHaveBeenCalled();
   });
 
   it('says it is stopping once asked', () => {
-    useChatStore.setState({ researchStopping: true });
+    useChatStore.setState({ turnCancelling: true });
     render();
-    const stop = container.querySelector<HTMLButtonElement>('[data-testid="research-stop"]');
+    const stop = container.querySelector<HTMLButtonElement>('[data-testid="turn-cancel"]');
     expect(stop?.disabled).toBe(true);
     expect(stop?.textContent).toContain('research.stopping');
+  });
+});
+
+describe('cancelling a running turn', () => {
+  it('offers Cancel on an ordinary turn too, not only on research', () => {
+    const cancelTurn = vi.fn(async () => {});
+    useChatStore.setState({ turnCancelling: false, cancelTurn, researchProgress: null });
+    act(() => root.render(<MessageBubble message={message} isStreaming phase="generating" accountId="acc1" />));
+    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="turn-cancel"]');
+    expect(cancel?.textContent).toContain('processing.cancel');
+    act(() => cancel?.click());
+    expect(cancelTurn).toHaveBeenCalled();
   });
 });
 
@@ -81,7 +93,7 @@ describe('latest matches while a research reads', () => {
   it('lists the latest matches so the user can judge the run early', () => {
     const onOpenEmail = vi.fn();
     useChatStore.setState({
-      researchStopping: false,
+      turnCancelling: false,
       researchProgress: {
         messageId: 'm1',
         conversationId: 'c1',

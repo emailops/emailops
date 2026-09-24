@@ -1348,10 +1348,11 @@ export async function estimateResearch(
   return invoke('estimate_research', { conversationId, content, categories, correction: correction ?? null });
 }
 
-/** Stop a running research turn: it stops reading and writes its report from
- *  what it has read. Resolves false when no run is live for that message. */
-export async function stopResearch(messageId: string): Promise<boolean> {
-  return invoke('stop_research', { messageId });
+/** Cancel the running chat turn answering `messageId`: a normal turn keeps
+ *  what it showed so far; a research run stops at its next batch. Resolves
+ *  false when no turn is running for that message. */
+export async function cancelChatTurn(messageId: string): Promise<boolean> {
+  return invoke('cancel_chat_turn', { messageId });
 }
 
 /** Quit even though a research run is reading (it is lost). Called from the

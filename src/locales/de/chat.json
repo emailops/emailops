@@ -80,7 +80,9 @@
       "writing": "Recherche: Bericht aus {{total}} E-Mails wird verfasst…",
       "remaining": " · noch ~{{time}}"
     },
-    "generating": "Antwort generieren…"
+    "generating": "Antwort generieren…",
+    "cancel": "Abbrechen",
+    "cancelling": "Wird abgebrochen…"
   },
   "reasoning": {
     "show": "Begründung anzeigen",

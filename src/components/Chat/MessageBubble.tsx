@@ -51,8 +51,8 @@ function ProcessingStatus({
   const { t } = useTranslation(['chat']);
   const research = useChatStore((s) => s.researchProgress);
   const startedAt = useChatStore((s) => s.researchStartedAt);
-  const stopping = useChatStore((s) => s.researchStopping);
-  const stopResearch = useChatStore((s) => s.stopResearch);
+  const stopping = useChatStore((s) => s.turnCancelling);
+  const cancelTurn = useChatStore((s) => s.cancelTurn);
   // Re-render every few seconds so the time left counts down between batches.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -82,17 +82,23 @@ function ProcessingStatus({
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
       </svg>
       <span>{label}</span>
-      {phase === 'researching' && (
-        <button
-          type="button"
-          data-testid="research-stop"
-          disabled={stopping}
-          onClick={() => void stopResearch()}
-          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-        >
-          {stopping ? t('chat:research.stopping') : t('chat:research.stop')}
-        </button>
-      )}
+      {/* Any running turn can be cancelled; a normal one keeps what it
+          already showed. */}
+      <button
+        type="button"
+        data-testid="turn-cancel"
+        disabled={stopping}
+        onClick={() => void cancelTurn()}
+        className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+      >
+        {phase === 'researching'
+          ? stopping
+            ? t('chat:research.stopping')
+            : t('chat:research.stop')
+          : stopping
+            ? t('chat:processing.cancelling')
+            : t('chat:processing.cancel')}
+      </button>
     </span>
   );
   if (recent.length === 0) return status;

@@ -1632,6 +1632,53 @@ struct ToolLoopOutcome {
     /// caller's direct-answer path must NOT re-emit the answer as a single
     /// `chat-stream` token — doing so would duplicate the whole bubble.
     answer_streamed_live: bool,
+    /// The user cancelled the turn: the loop stopped at the first chance it
+    /// had and made no model call after it (see `chat::cancel`).
+    cancelled: bool,
+}
+
+/// What a cancelled turn keeps: the reply the user already saw (when the
+/// loop streamed it live), then a note — streamed to the bubble now, since
+/// no model call follows. No model call is made here.
+fn cancelled_turn_result(
+    messages: &[AiMessage],
+    streamed_live: bool,
+    language_code: &str,
+    conversation_id: &str,
+    message_id: &str,
+) -> crate::ai::provider::ChatStreamResult {
+    let partial = if streamed_live {
+        messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let content = super::cancel::cancelled_answer(&partial, language_code);
+    let shown = partial.trim_end();
+    // `cancelled_answer` starts with what was shown: stream only the rest.
+    let token = content.get(shown.len()..).unwrap_or(&content).to_string();
+    emit_log("info", "turn cancelled by the user");
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token,
+            done: false,
+            error: None,
+            token_count: None,
+            latency_ms: None,
+            replace: None,
+        },
+    );
+    crate::ai::provider::ChatStreamResult {
+        content,
+        ..Default::default()
+    }
 }
 
 /// How `run_chat_turn` should turn the tool loop's final messages into the
@@ -2088,7 +2135,10 @@ async fn run_tool_loop(
     app_help: bool,
     tool_traces: &mut Vec<ToolCallTrace>,
     llm_calls: &mut Vec<LlmCallTrace>,
+    // Raised by the chat's Cancel button (see `chat::cancel`).
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> ToolLoopOutcome {
+    let is_cancelled = || cancel.load(std::sync::atomic::Ordering::Relaxed);
     // Feature-flag–aware: tools whose `is_available(db)` returns false are
     // omitted from the array the LLM sees.
     let tools = registry.definitions(db.as_ref());
@@ -2166,6 +2216,9 @@ async fn run_tool_loop(
             });
 
             for tc in &tool_calls {
+                if is_cancelled() {
+                    break;
+                }
                 let name = &tc.function.name;
                 let args = &tc.function.arguments;
 
@@ -2258,6 +2311,10 @@ async fn run_tool_loop(
     }
 
     for round in 0..MAX_TOOL_ROUNDS {
+        if is_cancelled() {
+            emit_log("info", "tool_loop: cancelled by the user");
+            break;
+        }
         // Snapshot the prompt sent to the model so the reasoning panel can
         // show exactly what each tool round received. Dev-only — release
         // builds skip the formatting to avoid the per-round allocation cost.
@@ -2295,6 +2352,7 @@ async fn run_tool_loop(
             let conv_for_token = conversation_id.to_string();
             let msg_for_token = message_id.to_string();
             let streamed_flag = streamed_any.clone();
+            let cancel_flag = Arc::clone(&cancel);
             Box::new(move |token: String| {
                 if !token.is_empty() {
                     streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2312,12 +2370,14 @@ async fn run_tool_loop(
                         },
                     );
                 }
-                true
+                // `false` stops the generation mid-reply.
+                !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             })
         } else {
             // Nudge still possible: buffer silently. Any prose this round is a
             // potential tool-call announcement we may discard, so never ship it.
-            Box::new(|_token: String| true)
+            let cancel_flag = Arc::clone(&cancel);
+            Box::new(move |_token: String| !cancel_flag.load(std::sync::atomic::Ordering::Relaxed))
         };
         let call_result = provider
             .chat_stream_with_tools(messages.clone(), tools.clone(), on_token)
@@ -2350,6 +2410,19 @@ async fn run_tool_loop(
                     trace.output = Some(format_response_for_trace(&r.message));
                 }
                 llm_calls.push(trace);
+                if is_cancelled() {
+                    // Keep what the user already saw of this reply; run
+                    // nothing it asked for.
+                    if last_round_streamed_live {
+                        answer_streamed_live = true;
+                        messages.push(AiMessage {
+                            role: "assistant".to_string(),
+                            content: r.message.content.clone(),
+                            tool_calls: None,
+                        });
+                    }
+                    break;
+                }
                 r.message
             }
             Err(e) => {
@@ -2643,6 +2716,7 @@ async fn run_tool_loop(
         aggregated_email_refs,
         aggregated_draft_refs,
         answer_streamed_live,
+        cancelled: is_cancelled(),
     }
 }
 
@@ -2885,6 +2959,8 @@ async fn run_thread_bound_turn(
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
 ) -> Result<()> {
+    // Registered for the whole turn: the chat's Cancel button finds it here.
+    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     /// Bounded so a stuck local model can't leave the UI thinking forever.
     /// Matches the existing final-stream timeout in `run_chat_turn`.
     const STREAM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -2995,6 +3071,7 @@ async fn run_thread_bound_turn(
         false,
         &mut tool_traces,
         &mut llm_calls,
+        Arc::clone(&turn_guard.flag),
     )
     .await;
     let tool_loop_ms = t_tool_loop.elapsed().as_millis() as i64;
@@ -3017,7 +3094,15 @@ async fn run_thread_bound_turn(
     });
 
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Generating);
-    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.failed_without_answer {
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.cancelled {
+        Ok(cancelled_turn_result(
+            &outcome.messages,
+            outcome.answer_streamed_live,
+            language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        ))
+    } else if outcome.failed_without_answer {
         let detail = outcome
             .error
             .clone()
@@ -3545,6 +3630,8 @@ pub async fn run_chat_turn(
     // parameter per feature.
     context: TurnContext,
 ) -> Result<()> {
+    // Registered for the whole turn: the chat's Cancel button finds it here.
+    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     let turn_start = std::time::Instant::now();
 
     // Destructured back into locals so the body below reads unchanged.
@@ -4382,6 +4469,7 @@ pub async fn run_chat_turn(
             app_help,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::clone(&turn_guard.flag),
         )
         .await;
         let elapsed = t_tool_loop.elapsed().as_millis() as i64;
@@ -4431,7 +4519,18 @@ pub async fn run_chat_turn(
     // timeout in `chat_stream`, and a silent hang here is exactly what
     // freezes the "thinking…" indicator on the client. Fail fast instead.
     const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
-    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if loop_failed_without_answer {
+    // A cancelled research already wrote its own note; any other cancelled
+    // turn keeps what was shown and makes no further model call.
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if turn_guard.is_cancelled() && !research_active
+    {
+        Ok(cancelled_turn_result(
+            &final_messages,
+            loop_answer_streamed_live,
+            ai_language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        ))
+    } else if loop_failed_without_answer {
         let detail = loop_error
             .clone()
             .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
@@ -5617,6 +5716,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cancelled_turn_calls_the_model_no_more() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "An answer the user no longer wants.".to_string(),
+            tool_calls: None,
+        });
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            Some(vec![ai_tool_call("search_emails")]),
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            cancel,
+        )
+        .await;
+
+        assert!(outcome.cancelled);
+        assert!(llm_calls.is_empty(), "no model call after the cancel: {llm_calls:?}");
+        assert!(tool_traces.is_empty(), "no tool runs either");
+    }
+
+    #[tokio::test]
     async fn loop_repairs_idless_body_reads_with_search_result_refs() {
         // End-to-end through run_tool_loop: a preseeded search returns email
         // refs, then the model batches TWO get_email_body({}) calls with no
@@ -5708,6 +5845,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6304,6 +6442,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 

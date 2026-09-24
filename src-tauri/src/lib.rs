@@ -638,7 +638,7 @@ pub fn run() {
             commands::chat::get_chat_messages,
             commands::chat::send_chat_message,
             commands::chat::estimate_research,
-            commands::chat::stop_research,
+            commands::chat::cancel_chat_turn,
             commands::chat::confirm_exit,
             commands::chat::prewarm_chat,
             commands::memory::list_pending_tasks,

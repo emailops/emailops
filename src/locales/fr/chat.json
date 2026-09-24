@@ -80,7 +80,9 @@
       "writing": "Recherche : rédaction du rapport à partir de {{total}} e-mails…",
       "remaining": " · reste ~{{time}}"
     },
-    "generating": "Génération…"
+    "generating": "Génération…",
+    "cancel": "Annuler",
+    "cancelling": "Annulation…"
   },
   "reasoning": {
     "show": "Afficher le raisonnement",

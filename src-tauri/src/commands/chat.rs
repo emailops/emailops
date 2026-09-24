@@ -133,11 +133,12 @@ pub async fn estimate_research(
     chat::research::estimate_for_account(&state.db, &account_id, &categories, &question).await
 }
 
-/// Stop the research run answering `message_id`: it stops reading and writes
-/// its report from what it has read. `false` when no run is live.
+/// Cancel the chat turn answering `message_id` — a normal turn stops at its
+/// next chance (mid-reply included) and keeps what was shown; a research run
+/// stops at its next batch. `false` when no turn is running.
 #[tauri::command]
-pub async fn stop_research(message_id: String) -> Result<bool, AppError> {
-    Ok(chat::research::request_stop(&message_id))
+pub async fn cancel_chat_turn(message_id: String) -> Result<bool, AppError> {
+    Ok(chat::cancel::request_cancel(&message_id))
 }
 
 /// The user chose to quit while research runs: let the next exit through and

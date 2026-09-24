@@ -16,6 +16,7 @@
 // `chat/tools/*` submodules and external callers reference them at
 // `crate::services::chat::<name>`.
 
+pub mod cancel;
 pub mod tools;
 
 mod conversations;

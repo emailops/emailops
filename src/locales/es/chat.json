@@ -80,7 +80,9 @@
       "writing": "Research: redactando el informe a partir de {{total}} correos…",
       "remaining": " · quedan ~{{time}}"
     },
-    "generating": "Generando…"
+    "generating": "Generando…",
+    "cancel": "Cancelar",
+    "cancelling": "Cancelando…"
   },
   "reasoning": {
     "show": "Mostrar razonamiento",

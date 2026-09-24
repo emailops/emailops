@@ -1687,3 +1687,21 @@ addresses is found even when it doesn't carry X's name. The planner is told: "wi
 
 Planner eval: 36/39 → 37/39. Both new "with X" cases pass. One case flipped: "¿cómo creo
 una lens?" now opens the create-lens form instead of the guide answer.
+
+## 2026-09-25 — Any chat turn can be cancelled; it keeps what was shown
+
+**Decision:** Every running chat turn shows Cancel, not only research. A turn registers a
+flag under its assistant message id (`chat::cancel`).
+- **Tool loop:** Cancel raises the flag. The tool loop checks it before each tool and
+  each round, and the token callback returns `false`, which stops generation mid-reply
+  on llama.cpp and Ollama.
+- **The saved answer:** a cancelled turn makes no further model call (no synthesis, no
+  guard retries). It keeps the text the user already saw, followed by a
+  "Cancelled by the user" note in the reply language.
+- **Research:** a cancelled research still stops at its next batch and writes its own
+  note.
+
+**Rejected:**
+- *Discarding the partial answer*: the user saw it, and dropping it looks like data
+  loss.
+- *A separate research-only control*: one Cancel for every turn is simpler to find.

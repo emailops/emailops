@@ -491,11 +491,11 @@ describe('chatStore research mode', () => {
   });
 
   it('stops the running research', async () => {
-    vi.mocked(api.stopResearch).mockResolvedValue(true);
+    vi.mocked(api.cancelChatTurn).mockResolvedValue(true);
     useChatStore.setState({ streamingMessageId: 'msg-9' });
-    await useChatStore.getState().stopResearch();
-    expect(api.stopResearch).toHaveBeenCalledWith('msg-9');
-    expect(useChatStore.getState().researchStopping).toBe(true);
+    await useChatStore.getState().cancelTurn();
+    expect(api.cancelChatTurn).toHaveBeenCalledWith('msg-9');
+    expect(useChatStore.getState().turnCancelling).toBe(true);
   });
 
   it('tracks progress for the in-flight turn and clears it when the turn ends', async () => {
@@ -526,7 +526,7 @@ describe('chatStore research mode', () => {
 
     useChatStore.getState().handleStreamToken(streamEvent({ messageId: 'msg-1', done: true }));
     expect(useChatStore.getState().researchProgress).toBeNull();
-    expect(useChatStore.getState().researchStopping).toBe(false);
+    expect(useChatStore.getState().turnCancelling).toBe(false);
   });
 });
 
