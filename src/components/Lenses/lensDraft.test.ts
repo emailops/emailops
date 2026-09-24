@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { LensTemplate } from '@/types';
 
-import { draftFromTemplate, scopeFromDraft } from './lensDraft';
+import { draftColumnsFromSchema, draftFromTemplate, schemaFromDraftColumns, scopeFromDraft } from './lensDraft';
 
 const template: LensTemplate = {
   key: 'contact_form_leads',
@@ -108,5 +108,69 @@ describe('scopeFromDraft', () => {
     expect(scope.querySearchBody).toBeUndefined();
     expect(scope.direction).toBe('outbound');
     expect(scope.dateRange).toBeNull();
+  });
+});
+
+describe('draftColumnsFromSchema / schemaFromDraftColumns', () => {
+  const identity = (_key: string, fallback: string) => fallback;
+
+  it('round-trips a stored schema through the editor rows', () => {
+    const drafts = draftColumnsFromSchema(template.schema.columns, identity);
+    expect(schemaFromDraftColumns(drafts)).toEqual({
+      ok: true,
+      columns: template.schema.columns.map((c) => ({
+        key: c.key,
+        label: c.label,
+        type: c.type,
+        description: c.description,
+        required: c.required,
+        ...(c.isUniqueKey ? { isUniqueKey: true } : {}),
+        ...(c.enumValues ? { enumValues: c.enumValues } : {}),
+      })),
+    });
+  });
+
+  const row = (over: Partial<ReturnType<typeof draftColumnsFromSchema>[number]>) => ({
+    key: 'amount',
+    label: 'Amount',
+    type: 'number' as const,
+    description: '',
+    required: false,
+    isUniqueKey: false,
+    enumValues: '',
+    ...over,
+  });
+
+  it('rejects a row without a key', () => {
+    expect(schemaFromDraftColumns([row({ key: ' ' })])).toEqual({
+      ok: false,
+      error: { code: 'missingKey', params: {} },
+    });
+  });
+
+  it('rejects a key that is not an identifier', () => {
+    expect(schemaFromDraftColumns([row({ key: '1 total' })])).toEqual({
+      ok: false,
+      error: { code: 'invalidKey', params: { key: '1 total' } },
+    });
+  });
+
+  it('rejects a repeated key', () => {
+    expect(schemaFromDraftColumns([row({}), row({})])).toEqual({
+      ok: false,
+      error: { code: 'duplicateKey', params: { key: 'amount' } },
+    });
+  });
+
+  it('rejects a list column with no values', () => {
+    expect(schemaFromDraftColumns([row({ type: 'enum' })])).toEqual({
+      ok: false,
+      error: { code: 'enumNeedsValues', params: { key: 'amount' } },
+    });
+  });
+
+  it('falls back to the key when the label is blank', () => {
+    const result = schemaFromDraftColumns([row({ label: '  ' })]);
+    expect(result.ok && result.columns[0].label).toBe('amount');
   });
 });

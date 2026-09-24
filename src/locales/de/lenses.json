@@ -233,7 +233,8 @@
     "title": "Konfiguration — {{name}}",
     "tabPrompt": "Prompt",
     "promptHelp": "Dieser Prompt wird zusammen mit dem Inhalt jeder E-Mail an das Modell gesendet. Beim Speichern werden alle vorhandenen Zeilen als veraltet markiert (prompt_version wird erhöht), damit sie neu extrahiert werden können.",
-    "promptVersion": "Prompt-Version:"
+    "promptVersion": "Prompt-Version:",
+    "columnsHelp": "Die Spalten, in die jede E-Mail gelesen wird. Änderungen markieren die vorhandenen Zeilen als veraltet, damit sie neu extrahiert werden können."
   },
   "view": {
     "renameTooltip": "Zum Umbenennen klicken",

@@ -3,7 +3,7 @@
 // The form is the only path to a new Lens, so every scope field a template
 // can carry must survive the round trip.
 
-import type { LensColumnType, LensDirection, LensScope, LensTemplate } from '@/types';
+import type { LensColumn, LensColumnType, LensDirection, LensScope, LensTemplate } from '@/types';
 
 import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
@@ -47,15 +47,7 @@ export function draftFromTemplate(tpl: LensTemplate, localize: (key: string, fal
     icon: tpl.icon,
     templateKey: tpl.key,
     prompt: tpl.prompt,
-    columns: tpl.schema.columns.map((c) => ({
-      key: c.key,
-      label: localize(`lenses:columns.builtin.${c.key}`, c.label),
-      type: c.type,
-      description: c.description,
-      required: c.required,
-      isUniqueKey: c.isUniqueKey ?? false,
-      enumValues: (c.enumValues ?? []).join(', '),
-    })),
+    columns: draftColumnsFromSchema(tpl.schema.columns, localize),
     form: {
       accountId: s.accountIds?.length === 1 ? s.accountIds[0] : '',
       mailboxes: s.mailboxes ?? [],
@@ -89,4 +81,58 @@ export function scopeFromDraft(form: ScopeForm): LensScope {
   // Only sent when true — the backend defaults to subject-only search.
   if (form.querySearchBody) scope.querySearchBody = true;
   return scope;
+}
+
+/** Stored columns as editor rows (labels localized where a translation exists). */
+export function draftColumnsFromSchema(
+  columns: LensColumn[],
+  localize: (key: string, fallback: string) => string,
+): DraftColumn[] {
+  return columns.map((c) => ({
+    key: c.key,
+    label: localize(`lenses:columns.builtin.${c.key}`, c.label),
+    type: c.type,
+    description: c.description,
+    required: c.required,
+    isUniqueKey: c.isUniqueKey ?? false,
+    enumValues: (c.enumValues ?? []).join(', '),
+  }));
+}
+
+/** Why a set of editor rows is not a valid schema; `code` names a
+ *  `lenses:create.errors.*` message. */
+export interface ColumnsError {
+  code: 'missingKey' | 'invalidKey' | 'duplicateKey' | 'enumNeedsValues';
+  params: { key?: string };
+}
+
+/** Editor rows as a schema, or the first reason they are not one. */
+export function schemaFromDraftColumns(
+  drafts: DraftColumn[],
+): { ok: true; columns: LensColumn[] } | { ok: false; error: ColumnsError } {
+  const columns: LensColumn[] = [];
+  for (const d of drafts) {
+    const key = d.key.trim();
+    if (!key) return { ok: false, error: { code: 'missingKey', params: {} } };
+    if (!/^[a-z][a-z0-9_]*$/i.test(key)) return { ok: false, error: { code: 'invalidKey', params: { key } } };
+    if (columns.some((c) => c.key === key)) return { ok: false, error: { code: 'duplicateKey', params: { key } } };
+    const col: LensColumn = {
+      key,
+      label: d.label.trim() || key,
+      type: d.type,
+      description: d.description.trim(),
+      required: d.required,
+      ...(d.isUniqueKey ? { isUniqueKey: true } : {}),
+    };
+    if (d.type === 'enum') {
+      const values = d.enumValues
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      if (values.length === 0) return { ok: false, error: { code: 'enumNeedsValues', params: { key } } };
+      col.enumValues = values;
+    }
+    columns.push(col);
+  }
+  return { ok: true, columns };
 }

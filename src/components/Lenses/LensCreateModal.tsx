@@ -19,15 +19,14 @@ import type {
   CreateLensInput,
   Lens,
   LensColumn,
-  LensColumnType,
   LensDirection,
   LensPreviewRow,
   LensScope,
   LensTemplate,
 } from '@/types';
-
+import { LensColumnsEditor } from './LensColumnsEditor';
 import { LensFolderChips } from './LensFolderChips';
-import { type DraftColumn, draftFromTemplate, scopeFromDraft } from './lensDraft';
+import { type DraftColumn, draftFromTemplate, schemaFromDraftColumns, scopeFromDraft } from './lensDraft';
 import { accountIdForEmail, toLensFormPrefill, toLensFormValues } from './lensPrefill';
 import { withoutFolderMailboxes } from './scopeFolders';
 import { validateSenderDomains, validateSenderEmails } from './scopeValidation';
@@ -38,24 +37,8 @@ interface LensCreateModalProps {
   onCreated: (lens: Lens) => void;
 }
 
-const COLUMN_TYPES: LensColumnType[] = [
-  'string',
-  'text',
-  'number',
-  'currency',
-  'date',
-  'boolean',
-  'enum',
-  'email',
-  'url',
-];
-
 const MAILBOXES = ['inbox', 'sent', 'archive', 'spam', 'trash'] as const;
 const CATEGORIES = ['Primary', 'Promotions', 'Social', 'Updates', 'Forums'] as const;
-
-function newColumn(): DraftColumn {
-  return { key: '', label: '', type: 'string', description: '', required: false, isUniqueKey: false, enumValues: '' };
-}
 
 export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalProps) {
   const { t } = useTranslation(['common', 'lenses']);
@@ -223,52 +206,14 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
     setter(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   };
 
-  const updateColumn = (idx: number, patch: Partial<DraftColumn>) => {
-    setColumns((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
-  };
-  const removeColumn = (idx: number) => {
-    setColumns((prev) => prev.filter((_, i) => i !== idx));
-  };
-  const addColumn = () => setColumns((prev) => [...prev, newColumn()]);
-
   /** Build LensScope+LensSchema from the form, or set an error and return null. */
   const buildScopeAndSchema = (): { scope: LensScope; schema: { columns: LensColumn[] } } | null => {
-    const finalisedColumns: LensColumn[] = [];
-    for (const c of columns) {
-      const key = c.key.trim();
-      if (!key) {
-        setError(t('lenses:create.errors.missingKey'));
-        return null;
-      }
-      if (!/^[a-z][a-z0-9_]*$/i.test(key)) {
-        setError(t('lenses:create.errors.invalidKey', { key }));
-        return null;
-      }
-      if (finalisedColumns.some((existing) => existing.key === key)) {
-        setError(t('lenses:create.errors.duplicateKey', { key }));
-        return null;
-      }
-      const col: LensColumn = {
-        key,
-        label: c.label.trim() || key,
-        type: c.type,
-        description: c.description.trim(),
-        required: c.required,
-        ...(c.isUniqueKey ? { isUniqueKey: true } : {}),
-      };
-      if (c.type === 'enum') {
-        const values = c.enumValues
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (values.length === 0) {
-          setError(t('lenses:create.errors.enumNeedsValues', { key }));
-          return null;
-        }
-        col.enumValues = values;
-      }
-      finalisedColumns.push(col);
+    const built = schemaFromDraftColumns(columns);
+    if (!built.ok) {
+      setError(t(`lenses:create.errors.${built.error.code}`, built.error.params));
+      return null;
     }
+    const finalisedColumns = built.columns;
     const inputError = validateSenderDomains(senderDomains).error ?? validateSenderEmails(senderEmails).error;
     if (inputError) {
       setError(t(`lenses:scope.errors.${inputError.code}`, inputError.params));
@@ -609,133 +554,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
             </section>
 
             {/* Schema */}
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[11px] uppercase tracking-wider text-gray-500">{t('lenses:columns.title')}</h3>
-                <button
-                  type="button"
-                  onClick={addColumn}
-                  className="rounded border border-gray-600 px-2 py-0.5 text-[11px] text-gray-200 hover:bg-gray-700"
-                >
-                  {t('lenses:columns.add')}
-                </button>
-              </div>
-              <div className="space-y-2">
-                {columns.map((c, idx) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: column rows have no stable id during creation; reorder/remove would still re-render correctly because inputs are uncontrolled
-                  <div key={idx} className="rounded border border-gray-700 bg-[#1e1e1e]/60 p-3">
-                    <div className="grid grid-cols-12 gap-2">
-                      <label className="col-span-3 block">
-                        <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                          {t('lenses:columns.key')}
-                        </span>
-                        <input
-                          type="text"
-                          data-testid="lens-create-column-key"
-                          value={c.key}
-                          onChange={(e) => updateColumn(idx, { key: e.target.value })}
-                          placeholder="amount" // i18n-ignore: example column key (technical identifier)
-                          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
-                        />
-                      </label>
-                      <label className="col-span-3 block">
-                        <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                          {t('lenses:columns.label')}
-                        </span>
-                        <input
-                          type="text"
-                          value={c.label}
-                          onChange={(e) => updateColumn(idx, { label: e.target.value })}
-                          placeholder={t('lenses:columns.builtin.amount')}
-                          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
-                        />
-                      </label>
-                      <label className="col-span-3 block">
-                        <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                          {t('lenses:columns.type')}
-                        </span>
-                        <Select
-                          value={c.type}
-                          options={COLUMN_TYPES.map((colType) => ({
-                            value: colType,
-                            label: t(`lenses:columns.types.${colType}`),
-                          }))}
-                          onChange={(value) => updateColumn(idx, { type: value as LensColumnType })}
-                          ariaLabel={t('lenses:columns.type')}
-                          size="xs"
-                          fullWidth
-                        />
-                      </label>
-                      <div className="col-span-2 flex items-end gap-3">
-                        <label className="flex items-center gap-1 text-[11px] text-gray-300">
-                          <input
-                            type="checkbox"
-                            checked={c.required}
-                            onChange={(e) => updateColumn(idx, { required: e.target.checked })}
-                          />
-                          {t('lenses:columns.required')}
-                        </label>
-                        <label
-                          className="flex items-center gap-1 text-[11px] text-gray-300"
-                          title={t('lenses:create.uniqueKeyTooltip')}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={c.isUniqueKey}
-                            onChange={(e) => {
-                              // Only one column can be unique key at a time.
-                              if (e.target.checked) {
-                                setColumns((cols) => cols.map((col, i) => ({ ...col, isUniqueKey: i === idx })));
-                              } else {
-                                updateColumn(idx, { isUniqueKey: false });
-                              }
-                            }}
-                          />
-                          {t('lenses:create.uniqueKey')}
-                        </label>
-                      </div>
-                      <div className="col-span-1 flex items-end justify-end">
-                        <button
-                          type="button"
-                          onClick={() => removeColumn(idx)}
-                          className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-300"
-                          title={t('lenses:create.removeColumn')}
-                          aria-label={t('lenses:create.removeColumn')}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                    <label className="mt-2 block">
-                      <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                        {t('lenses:columns.description')}
-                      </span>
-                      <input
-                        type="text"
-                        value={c.description}
-                        onChange={(e) => updateColumn(idx, { description: e.target.value })}
-                        placeholder={t('lenses:create.descriptionPlaceholder')}
-                        className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
-                      />
-                    </label>
-                    {c.type === 'enum' && (
-                      <label className="mt-2 block">
-                        <span className="mb-1 block text-[10px] uppercase text-gray-500">
-                          {t('lenses:columns.enumValues')}
-                        </span>
-                        <input
-                          type="text"
-                          value={c.enumValues}
-                          onChange={(e) => updateColumn(idx, { enumValues: e.target.value })}
-                          placeholder="paid, unpaid, refunded" // i18n-ignore: example enum values
-                          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
-                        />
-                      </label>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
+            <LensColumnsEditor columns={columns} onChange={setColumns} />
 
             {/* Prompt */}
             <section className="space-y-2">

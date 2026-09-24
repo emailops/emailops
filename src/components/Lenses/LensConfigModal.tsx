@@ -13,7 +13,9 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useLensStore } from '@/stores/lensStore';
 import type { Lens, LensDirection, LensScope } from '@/types';
 
+import { LensColumnsEditor } from './LensColumnsEditor';
 import { LensFolderChips } from './LensFolderChips';
+import { type DraftColumn, draftColumnsFromSchema, schemaFromDraftColumns } from './lensDraft';
 import { withoutFolderMailboxes } from './scopeFolders';
 import { type ScopeInputError, validateSenderDomains, validateSenderEmails } from './scopeValidation';
 
@@ -31,7 +33,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   const accounts = useAccountStore((s) => s.accounts);
   const updateLens = useLensStore((s) => s.updateLens);
 
-  const [activeTab, setActiveTab] = useState<'scope' | 'prompt'>('scope');
+  const [activeTab, setActiveTab] = useState<'scope' | 'columns' | 'prompt'>('scope');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +47,14 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   const [senderEmails, setSenderEmails] = useState('');
   const [query, setQuery] = useState('');
   const [querySearchBody, setQuerySearchBody] = useState(true);
+
+  // ── Columns state ────────────────────────────────────────────────────────
+  // Stored labels are shown as they are: this edits the Lens, not a template.
+  const initialColumns = useMemo(
+    () => (lens ? draftColumnsFromSchema(lens.schema.columns, (_key, fallback) => fallback) : []),
+    [lens],
+  );
+  const [columns, setColumns] = useState<DraftColumn[]>([]);
 
   // ── Prompt state ─────────────────────────────────────────────────────────
   const [promptText, setPromptText] = useState('');
@@ -63,9 +73,10 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     setQuery(s.query ?? '');
     setQuerySearchBody(s.querySearchBody ?? false);
     setPromptText(lens.promptText);
+    setColumns(initialColumns);
     setActiveTab('scope');
     setError(null);
-  }, [open, lens]);
+  }, [open, lens, initialColumns]);
 
   const domainCheck = useMemo(() => validateSenderDomains(senderDomains), [senderDomains]);
   const emailCheck = useMemo(() => validateSenderEmails(senderEmails), [senderEmails]);
@@ -88,19 +99,28 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   };
 
   const promptDirty = promptText.trim() !== (lens?.promptText ?? '').trim();
+  const columnsDirty = JSON.stringify(columns) !== JSON.stringify(initialColumns);
 
   const saveDisabled =
     isSaving ||
     (activeTab === 'scope' && (!!domainCheck.error || !!emailCheck.error)) ||
-    (activeTab === 'prompt' && !promptDirty);
+    (activeTab === 'prompt' && !promptDirty) ||
+    (activeTab === 'columns' && !columnsDirty);
 
   const handleSave = async () => {
     if (!lens) return;
-    setIsSaving(true);
     setError(null);
+    const built = activeTab === 'columns' ? schemaFromDraftColumns(columns) : null;
+    if (built && !built.ok) {
+      setError(t(`lenses:create.errors.${built.error.code}`, built.error.params));
+      return;
+    }
+    setIsSaving(true);
     try {
       if (activeTab === 'scope') {
         await updateLens(lens.id, { scope: buildScope() });
+      } else if (built?.ok) {
+        await updateLens(lens.id, { schema: { columns: built.columns } });
       } else {
         await updateLens(lens.id, { promptText });
       }
@@ -125,7 +145,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
       open={open}
       onClose={onClose}
       title={t('lenses:config.title', { name: lens.name })}
-      size="lg"
+      size="2xl"
       footer={
         <div className="flex justify-end gap-2">
           <button
@@ -149,7 +169,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     >
       {/* Tab bar */}
       <div className="mb-4 flex border-b border-gray-700">
-        {(['scope', 'prompt'] as const).map((tab) => (
+        {(['scope', 'columns', 'prompt'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -158,7 +178,11 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
               activeTab === tab ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            {tab === 'scope' ? t('lenses:scope.title') : t('lenses:config.tabPrompt')}
+            {tab === 'scope'
+              ? t('lenses:scope.title')
+              : tab === 'columns'
+                ? t('lenses:columns.title')
+                : t('lenses:config.tabPrompt')}
           </button>
         ))}
       </div>
@@ -314,6 +338,15 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
             </label>
           </div>
 
+          {error && <div className="text-xs text-red-400">{error}</div>}
+        </div>
+      )}
+
+      {/* Columns tab */}
+      {activeTab === 'columns' && (
+        <div className="space-y-3 text-xs text-gray-300">
+          <p className="text-[11px] text-gray-500">{t('lenses:config.columnsHelp')}</p>
+          <LensColumnsEditor columns={columns} onChange={setColumns} />
           {error && <div className="text-xs text-red-400">{error}</div>}
         </div>
       )}

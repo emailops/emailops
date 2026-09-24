@@ -233,7 +233,8 @@
     "title": "Configuration — {{name}}",
     "tabPrompt": "Prompt",
     "promptHelp": "Ce prompt est envoyé au modèle avec le contenu de chaque e-mail. L'enregistrement marque toutes les lignes existantes comme obsolètes (hausse de prompt_version) afin de pouvoir les réextraire.",
-    "promptVersion": "Version du prompt :"
+    "promptVersion": "Version du prompt :",
+    "columnsHelp": "Les colonnes dans lesquelles chaque e-mail est lu. Les modifier marque les lignes existantes comme obsolètes afin de pouvoir les réextraire."
   },
   "view": {
     "renameTooltip": "Cliquez pour renommer",

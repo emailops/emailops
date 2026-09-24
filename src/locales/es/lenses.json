@@ -233,7 +233,8 @@
     "title": "Configuración — {{name}}",
     "tabPrompt": "Prompt",
     "promptHelp": "Este prompt se envía al modelo junto con el contenido de cada correo. Al guardar, todas las filas existentes quedan marcadas como desactualizadas (sube prompt_version) para poder volver a extraerlas.",
-    "promptVersion": "Versión del prompt:"
+    "promptVersion": "Versión del prompt:",
+    "columnsHelp": "Las columnas en las que se lee cada correo. Cambiarlas marca las filas existentes como desactualizadas para volver a extraerlas."
   },
   "view": {
     "renameTooltip": "Haz clic para renombrar",

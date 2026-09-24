@@ -233,7 +233,8 @@
     "title": "Config — {{name}}",
     "tabPrompt": "Prompt",
     "promptHelp": "This prompt is sent to the model alongside each email's content. Saving will mark all existing rows as stale (prompt_version bump) so they can be re-extracted.",
-    "promptVersion": "Prompt version:"
+    "promptVersion": "Prompt version:",
+    "columnsHelp": "The columns each email is read into. Changing them marks the existing rows as stale so they can be re-extracted."
   },
   "view": {
     "renameTooltip": "Click to rename",
