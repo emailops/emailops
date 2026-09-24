@@ -294,3 +294,12 @@ describe('column filters', () => {
     expect(lensReducer(s, { type: 'SET_ACTIVE_LENS_ID', lensId: 'other' }).columnFilters).toEqual([]);
   });
 });
+
+describe('create chooser', () => {
+  it('starts closed and opens/closes through SET_CREATE_CHOOSER_OPEN', () => {
+    expect(initialLensState.createChooserOpen).toBe(false);
+    const opened = lensReducer(initialLensState, { type: 'SET_CREATE_CHOOSER_OPEN', open: true });
+    expect(opened.createChooserOpen).toBe(true);
+    expect(opened.createOpen).toBe(false);
+  });
+});

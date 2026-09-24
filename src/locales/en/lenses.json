@@ -295,5 +295,14 @@
       "name": "Contact form leads",
       "description": "People who wrote in through your website's contact form."
     }
+  },
+  "chooser": {
+    "title": "New Lens",
+    "chat": "With the chat",
+    "chatHint": "Describe what you want and the assistant fills in the Lens for you.",
+    "manual": "Manual",
+    "manualHint": "Pick a template or set up the scope, columns and prompt yourself.",
+    "chatPrompt": "Create an AI lens for the account {{account}} that extracts the following from the emails of X: [which fields you want to extract]",
+    "chatPromptAllAccounts": "Create an AI lens for all my accounts that extracts the following from the emails of X: [which fields you want to extract]"
   }
 }

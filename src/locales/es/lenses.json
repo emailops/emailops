@@ -295,5 +295,14 @@
       "name": "Contactos del formulario web",
       "description": "Personas que te escribieron desde el formulario de contacto de tu web."
     }
+  },
+  "chooser": {
+    "title": "Nueva lente",
+    "chat": "Con el chat",
+    "chatHint": "Describe lo que quieres y el asistente rellena la lente por ti.",
+    "manual": "Manual",
+    "manualHint": "Elige una plantilla o configura tú el alcance, las columnas y el prompt.",
+    "chatPrompt": "Crea un AI lens para la cuenta {{account}} que extraiga de los correos de X lo siguiente: [qué campos quieres extraer]",
+    "chatPromptAllAccounts": "Crea un AI lens para todas mis cuentas que extraiga de los correos de X lo siguiente: [qué campos quieres extraer]"
   }
 }

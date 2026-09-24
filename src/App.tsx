@@ -1408,7 +1408,11 @@ function AppInner() {
               <MemoryView accountId={effectiveAccountId} />
             </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
-            <LensesView />
+            <LensesView
+              onCreateWithChat={(prompt) => {
+                void handleNewChat().then(() => useChatStore.getState().prefillInput(prompt));
+              }}
+            />
           ) : viewMode === 'tagboard' && aiEnabled ? (
             // The board is a list surface like the inbox: it owns the left
             // pane and hands the selected thread to the same EmailView. Both

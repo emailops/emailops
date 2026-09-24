@@ -295,5 +295,14 @@
       "name": "Kontaktformular-Anfragen",
       "description": "Personen, die dir über das Kontaktformular deiner Website geschrieben haben."
     }
+  },
+  "chooser": {
+    "title": "Neue Linse",
+    "chat": "Mit dem Chat",
+    "chatHint": "Beschreibe, was du willst, und der Assistent füllt die Linse für dich aus.",
+    "manual": "Manuell",
+    "manualHint": "Wähle eine Vorlage oder richte Umfang, Spalten und Prompt selbst ein.",
+    "chatPrompt": "Erstelle eine AI-Lens für das Konto {{account}}, die aus den E-Mails von X Folgendes extrahiert: [welche Felder du extrahieren möchtest]",
+    "chatPromptAllAccounts": "Erstelle eine AI-Lens für alle meine Konten, die aus den E-Mails von X Folgendes extrahiert: [welche Felder du extrahieren möchtest]"
   }
 }

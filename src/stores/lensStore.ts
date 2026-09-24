@@ -51,6 +51,8 @@ export interface LensState {
   showExcluded: boolean;
   /** Create dialog open — in the store so the sidebar "+" can open it. */
   createOpen: boolean;
+  /** "With the chat or by hand?" chooser shown before creating a Lens. */
+  createChooserOpen: boolean;
   /** Excel-style filters on the active Lens's columns, one per column. */
   columnFilters: LensColumnFilter[];
   sort: LensSortSpec | null;
@@ -68,6 +70,7 @@ export const initialLensState: LensState = {
   isLoadingRows: false,
   showExcluded: false,
   createOpen: false,
+  createChooserOpen: false,
   columnFilters: [],
   sort: null,
   error: null,
@@ -91,6 +94,7 @@ export type LensAction =
   | { type: 'INCLUDE_ROW'; emailId: string }
   | { type: 'SET_SHOW_EXCLUDED'; showExcluded: boolean }
   | { type: 'SET_CREATE_OPEN'; open: boolean }
+  | { type: 'SET_CREATE_CHOOSER_OPEN'; open: boolean }
   | { type: 'SET_COLUMN_FILTER'; key: string; filter: LensColumnFilter | null }
   | { type: 'SET_RUN_STATUS'; lensId: string; status: LensStatus };
 
@@ -155,6 +159,8 @@ export function lensReducer(state: LensState, action: LensAction): LensState {
       return { ...state, showExcluded: action.showExcluded, isLoadingRows: true };
     case 'SET_CREATE_OPEN':
       return { ...state, createOpen: action.open };
+    case 'SET_CREATE_CHOOSER_OPEN':
+      return { ...state, createChooserOpen: action.open };
     case 'SET_COLUMN_FILTER': {
       const others = state.columnFilters.filter((f) => f.key !== action.key);
       return { ...state, columnFilters: action.filter ? [...others, action.filter] : others };
@@ -214,6 +220,7 @@ interface LensStore extends LensState {
 
   // CRUD
   setCreateOpen: (open: boolean) => void;
+  setCreateChooserOpen: (open: boolean) => void;
   /** `null` clears the column's filter. Refetches the rows. */
   setColumnFilter: (key: string, filter: LensColumnFilter | null) => Promise<void>;
   createLens: (input: CreateLensInput) => Promise<Lens>;
@@ -381,6 +388,7 @@ export const useLensStore = create<LensStore>((set, get) => ({
   },
 
   setCreateOpen: (open) => dispatch(set, { type: 'SET_CREATE_OPEN', open }),
+  setCreateChooserOpen: (open) => dispatch(set, { type: 'SET_CREATE_CHOOSER_OPEN', open }),
 
   setColumnFilter: async (key, filter) => {
     dispatch(set, { type: 'SET_COLUMN_FILTER', key, filter });

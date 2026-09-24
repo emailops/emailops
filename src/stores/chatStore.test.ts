@@ -379,3 +379,14 @@ describe('a turn that is still generating when you navigate away', () => {
     expect(s.streamingPhase).toBeNull();
   });
 });
+
+describe('prefillInput', () => {
+  it('queues text for the chat input, with a new nonce each time so a repeat still lands', () => {
+    useChatStore.setState({ inputPrefill: null });
+    useChatStore.getState().prefillInput('crea un AI lens');
+    const first = useChatStore.getState().inputPrefill;
+    expect(first?.text).toBe('crea un AI lens');
+    useChatStore.getState().prefillInput('crea un AI lens');
+    expect(useChatStore.getState().inputPrefill?.nonce).not.toBe(first?.nonce);
+  });
+});

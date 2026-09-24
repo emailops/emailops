@@ -13,6 +13,7 @@ import { useLogStore } from '@/stores/logStore';
 import type { LensColumn, LensRow } from '@/types';
 
 import { LensConfigModal } from './LensConfigModal';
+import { LensCreateChooser } from './LensCreateChooser';
 import { LensCreateModal } from './LensCreateModal';
 import { LensRowDrawer } from './LensRowDrawer';
 import { LensRunHistoryDialog } from './LensRunHistoryDialog';
@@ -21,9 +22,12 @@ import { EmptyState, LensTable, NoRowsState } from './LensTable';
 interface LensesViewProps {
   /** When non-null, focus this Lens on mount. */
   initialLensId?: string | null;
+  /** "New Lens → with the chat": open the chat panel on a new conversation
+   *  with `prompt` in its input. */
+  onCreateWithChat?: (prompt: string) => void;
 }
 
-export function LensesView({ initialLensId }: LensesViewProps) {
+export function LensesView({ initialLensId, onCreateWithChat }: LensesViewProps) {
   const { t } = useTranslation(['common', 'lenses']);
   const {
     lenses,
@@ -47,6 +51,8 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     setShowExcluded,
     createOpen,
     setCreateOpen,
+    createChooserOpen,
+    setCreateChooserOpen,
     columnFilters,
     setColumnFilter,
   } = useLensStore();
@@ -289,7 +295,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           )}
           <button
             type="button"
-            onClick={() => setCreateOpen(true)}
+            onClick={() => setCreateChooserOpen(true)}
             className="rounded bg-blue-600 whitespace-nowrap px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
           >
             {t('lenses:view.newLens')}
@@ -333,7 +339,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto">
         {!activeLens ? (
-          <EmptyState onCreate={() => setCreateOpen(true)} />
+          <EmptyState onCreate={() => setCreateChooserOpen(true)} />
         ) : isLoadingRows ? (
           <div className="p-8 text-center text-xs text-gray-500">{t('lenses:loadingRows')}</div>
         ) : rows.length === 0 && columnFilters.length === 0 ? (
@@ -375,6 +381,19 @@ export function LensesView({ initialLensId }: LensesViewProps) {
       />
 
       <LensConfigModal lens={activeLens} open={showConfig} onClose={() => setShowConfig(false)} />
+
+      <LensCreateChooser
+        open={createChooserOpen}
+        onClose={() => setCreateChooserOpen(false)}
+        onManual={() => {
+          setCreateChooserOpen(false);
+          setCreateOpen(true);
+        }}
+        onChat={(prompt) => {
+          setCreateChooserOpen(false);
+          onCreateWithChat?.(prompt);
+        }}
+      />
 
       <LensCreateModal
         open={createOpen}

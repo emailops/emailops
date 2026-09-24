@@ -138,7 +138,7 @@ export function Sidebar({
   const { enabled: aiEnabled } = useAiStore();
   // Lenses sub-list under the "Lenses" entry. We load the list once when AI is
   // enabled so the sidebar shows them even before the user opens the Lenses view.
-  const { lenses, activeLensId, initialize: initializeLenses, setCreateOpen: openCreateLens } = useLensStore();
+  const { lenses, activeLensId, initialize: initializeLenses, setCreateChooserOpen: openCreateLens } = useLensStore();
 
   const { t } = useTranslation(['common', 'sidebar', 'chat', 'tagboard']);
   const [accountsOpen, setAccountsOpen] = useState(true);

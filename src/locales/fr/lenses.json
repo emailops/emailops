@@ -295,5 +295,14 @@
       "name": "Contacts du formulaire web",
       "description": "Personnes qui vous ont écrit via le formulaire de contact de votre site."
     }
+  },
+  "chooser": {
+    "title": "Nouvelle lentille",
+    "chat": "Avec le chat",
+    "chatHint": "Décrivez ce que vous voulez et l’assistant remplit la lentille pour vous.",
+    "manual": "Manuel",
+    "manualHint": "Choisissez un modèle ou configurez vous-même le périmètre, les colonnes et le prompt.",
+    "chatPrompt": "Crée un AI lens pour le compte {{account}} qui extrait des e-mails de X les éléments suivants : [quels champs veux-tu extraire]",
+    "chatPromptAllAccounts": "Crée un AI lens pour tous mes comptes qui extrait des e-mails de X les éléments suivants : [quels champs veux-tu extraire]"
   }
 }
