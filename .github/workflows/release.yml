@@ -26,6 +26,16 @@ on:
         required: false
         type: boolean
         default: false
+      targets:
+        description: "Which installers to build. `all` is what a release ships; a single target is for a dry-run beta build (the other legs are skipped)."
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-vulkan
+          - windows-cuda
+          - linux
   # push:
   #   tags:
   #     - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -50,44 +60,48 @@ jobs:
   #   .../releases/latest/download/EmailOps-linux.AppImage
   release:
     name: Release (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
+    if: ${{ inputs.targets != 'windows-cuda' }}
+    # One runner image per platform, both pinned:
+    #
+    # Pinned to 22.04, NOT ubuntu-latest. glibc is only backward
+    # compatible: a binary built against glibc 2.35 runs on 2.39, but not
+    # the reverse — so the runner image sets the *minimum* glibc a user
+    # needs, and `ubuntu-latest` silently raises that floor whenever
+    # GitHub rolls the image. It rolled to 24.04 (glibc 2.39), which made
+    # the .deb and .AppImage refuse to start on Ubuntu 22.04 with
+    # "version `GLIBC_2.38' not found" — a release regression with no
+    # accompanying code change. 22.04 is the oldest LTS that still ships
+    # libwebkit2gtk-4.1 (the .deb's declared dependency), so it is the
+    # lowest floor reachable without a Tauri webkit downgrade, and it
+    # covers 22.04/24.04/25.x, Debian 12+, and RHEL 9 derivatives.
+    # When GitHub retires the 22.04 image, replace this with a
+    # `container: ubuntu:22.04` on a newer runner rather than bumping it.
+    #
+    # Pinned to windows-2022, NOT windows-latest, for the same reason
+    # the Linux leg is pinned above: `windows-latest` silently moved to
+    # a new image mid-investigation (Visual Studio 18 Enterprise / MSVC
+    # 14.51, in place of VS 2022 Build Tools / MSVC 14.44), and that
+    # newer toolset hits a C1041 "cannot open program database" during
+    # CMake's own internal C-compiler-ABI-detection try_compile for
+    # llama-cpp-sys-2's vulkan-shaders-gen sub-project — a step that
+    # runs during `cmake -B` (configure), before this job's cargo
+    # invocation ever gets a chance to influence build parallelism.
+    # windows-2022 keeps the known-good VS 2022 Build Tools toolset
+    # this pipeline was built and validated against.
+    #
+    # Derived from `matrix.platform` rather than listed in a matrix `include`:
+    # the `targets` input filters the platform axis below, and an `include`
+    # entry for a filtered-out platform would be added back as a new leg.
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
     timeout-minutes: 90
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Pinned to 22.04, NOT ubuntu-latest. glibc is only backward
-          # compatible: a binary built against glibc 2.35 runs on 2.39, but not
-          # the reverse — so the runner image sets the *minimum* glibc a user
-          # needs, and `ubuntu-latest` silently raises that floor whenever
-          # GitHub rolls the image. It rolled to 24.04 (glibc 2.39), which made
-          # the .deb and .AppImage refuse to start on Ubuntu 22.04 with
-          # "version `GLIBC_2.38' not found" — a release regression with no
-          # accompanying code change. 22.04 is the oldest LTS that still ships
-          # libwebkit2gtk-4.1 (the .deb's declared dependency), so it is the
-          # lowest floor reachable without a Tauri webkit downgrade, and it
-          # covers 22.04/24.04/25.x, Debian 12+, and RHEL 9 derivatives.
-          # When GitHub retires the 22.04 image, replace this with a
-          # `container: ubuntu:22.04` on a newer runner rather than bumping it.
-          - os: ubuntu-22.04
-            platform: linux
-            target: x86_64-unknown-linux-gnu
-          # Pinned to windows-2022, NOT windows-latest, for the same reason
-          # the Linux leg is pinned above: `windows-latest` silently moved to
-          # a new image mid-investigation (Visual Studio 18 Enterprise / MSVC
-          # 14.51, in place of VS 2022 Build Tools / MSVC 14.44), and that
-          # newer toolset hits a C1041 "cannot open program database" during
-          # CMake's own internal C-compiler-ABI-detection try_compile for
-          # llama-cpp-sys-2's vulkan-shaders-gen sub-project — a step that
-          # runs during `cmake -B` (configure), before this job's cargo
-          # invocation ever gets a chance to influence build parallelism.
-          # windows-2022 keeps the known-good VS 2022 Build Tools toolset
-          # this pipeline was built and validated against.
-          - os: windows-2022
-            platform: windows
-            target: x86_64-pc-windows-msvc
+        # `all` builds both; a single target builds one (`windows-cuda` skips
+        # this job outright via the `if` above: an empty matrix is an error).
+        platform: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["windows"]' || inputs.targets == 'linux' && '["linux"]' || '["linux","windows"]') }}
 
     steps:
       - uses: actions/checkout@v7
@@ -114,9 +128,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform == 'windows' && 'x86_64-pc-windows-msvc' || 'x86_64-unknown-linux-gnu' }}
 
-      # Key includes matrix.os, not just matrix.platform: pinning the Linux
+      # Key includes the runner image, not just the platform: pinning the Linux
       # leg to ubuntu-22.04 (see above) while the cache key stayed
       # "release-linux" restored artifacts built on the previously-used
       # ubuntu-latest (24.04, glibc 2.39) — which then failed to even
@@ -125,7 +139,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: release-${{ matrix.os }}
+          key: release-${{ matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -410,6 +424,7 @@ jobs:
   # release tag.
   release-windows-cuda:
     name: Release (windows-cuda)
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'windows-cuda' }}
     runs-on: windows-2022
     # 90 min (matching the Vulkan legs) wasn't enough on the very first run:
     # that measured a Build step still going at 82 min when the job was
