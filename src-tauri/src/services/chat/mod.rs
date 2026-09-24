@@ -492,6 +492,8 @@ pub(crate) fn or_fallback_search(
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
+    // "Emails with X" terms: broadening the keywords never drops the person.
+    participants: Option<&[String]>,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
     if tokens.len() < 2 {
@@ -513,6 +515,7 @@ pub(crate) fn or_fallback_search(
             limit,
             false,
             unread_only,
+            participants,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);

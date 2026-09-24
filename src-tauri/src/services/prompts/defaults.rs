@@ -227,6 +227,7 @@ Fields (use null when the question does not imply them):
   mode    : "semantic" when the question DESCRIBES the mail and its words may differ from the mail's ("emails where I ask a supplier for a quote"); omit for exact words (names, codes, invoice numbers)
   from    : sender filter
   to      : recipient filter — only when the question says who received the mail
+  with    : a person the mail was exchanged with, either way
   subject : subject keywords
   since   : ISO date YYYY-MM-DD (range start)
   until   : ISO date YYYY-MM-DD (range end)
@@ -245,6 +246,7 @@ Rules:
 - "sent to me" / "my inbox" / "I received" -> the user is the RECIPIENT -> to = {{user_email}}.
 - A named recipient: "to X" / "a X" / "para X" / "que le envié a X" -> to = X (the name), NOT query.
   A named sender: "from X" / "de X" -> from = X. Never put a person/company name in query.
+- "with X" / "con X" (no direction) -> with = X, not from/to.
 - "last" / "latest" / "most recent" / "última" -> order = "newest", small limit (e.g. 3-5).
 - Every other question -> NO limit. A question about a kind of mail, a sender or a period asks
   for all of it; the search returns a full page and the user can ask for the next one. A limit

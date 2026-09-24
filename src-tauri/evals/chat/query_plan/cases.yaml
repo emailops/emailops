@@ -344,3 +344,24 @@
     from: "ulises"
     query: "quote"
   ignore: [intent, topic, mode, to, limit, order]
+
+# "With X" names a person without a direction: X's mail AND the user's mail
+# to X. `from`/`to` would keep only one side (a real mailbox lost ~40% of the
+# conversations to `from: X, to: me`).
+- id: with_a_person_is_both_directions_es
+  question: "resume todos los correos con Marisol, uno por línea"
+  note: "planned {from: marisol, to: me} and missed every thread the user started"
+  today: "2026-09-24"
+  expect:
+    with: "marisol"
+  absent: [from, to, since, until]
+  ignore: [query, intent, topic, mode, limit, order]
+
+- id: with_a_person_is_both_directions_en
+  question: "summarise my conversations with Janos"
+  note: "same shape in English"
+  today: "2026-09-24"
+  expect:
+    with: "janos"
+  absent: [from, to, since, until]
+  ignore: [query, intent, topic, mode, limit, order]

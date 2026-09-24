@@ -358,8 +358,14 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan) -> Vec<String> {
         .collect();
     // Same rule as `search_emails`: a named sender / recipient / subject is
     // not narrowed by the chat's category scope.
-    let explicit = plan.from.is_some() || plan.to.is_some() || plan.subject.is_some();
+    let explicit = plan.from.is_some() || plan.to.is_some() || plan.with.is_some() || plan.subject.is_some();
     let categories = (!explicit && !input.categories.is_empty()).then_some(input.categories);
+    // "With X": X's name plus the addresses X writes from, either direction.
+    let participants: Vec<String> = plan
+        .with
+        .as_deref()
+        .map(|w| crate::services::emails::resolve_participant(input.db, input.account_id, w))
+        .unwrap_or_default();
     let matches = crate::services::emails::search_emails_filtered(
         input.db,
         input.account_id,
@@ -374,6 +380,7 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan) -> Vec<String> {
         GATHER_LIMIT,
         false,
         plan.unread == Some(true),
+        (!participants.is_empty()).then_some(participants.as_slice()),
     );
     let matches = match matches {
         Ok(m) => m,
@@ -1655,5 +1662,37 @@ mod tests {
         ids.sort();
         // r00 is the seed's own reply from the account address.
         assert_eq!(ids, ["r00", "s1", "s2"], "the alias's mail too, never the client's");
+    }
+
+    #[tokio::test]
+    async fn research_with_a_person_gathers_mail_either_way() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 0);
+        {
+            let conn = db.connection();
+            let insert = |id: &str, sender: &str, address: &str, to: &str| {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct',?1,'Quote',?2,?3,'d',?4,'[]','snip',1780000000,1,'primary',0)",
+                    rusqlite::params![id, sender, address, format!("[\"{to}\"]")],
+                )
+                .unwrap();
+            };
+            insert("a1", "Ana Ruiz", "ar@client.example", "me@example.com");
+            insert("a2", "Me", "me@example.com", "ar@client.example");
+            insert("b1", "Bob", "bob@x.example", "me@example.com");
+        }
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let plan = SearchPlan {
+            with: Some("Ana".into()),
+            ..Default::default()
+        };
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(plan)).await;
+        let mut ids = prepared.email_ids.clone();
+        ids.sort();
+        assert_eq!(ids, ["a1", "a2"], "hers and the user's to her, not Bob's");
     }
 }

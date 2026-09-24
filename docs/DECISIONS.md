@@ -1667,3 +1667,23 @@ wrote what.
   every normal chat turn and that prompt's eval.
 - *Keeping keyword cues*: fragile across phrasing and languages.
 - *Letting the report decide*: the report is the cost being avoided.
+
+## 2026-09-25 — "Emails with X" is its own filter, in both directions
+
+**Decision:** Search has a `with` filter (the planner field, the `search_emails` argument
+and the research gather). It means "exchanged with X": X is the sender, or X is among
+the recipients or cc. A name is resolved in code to the addresses X writes from (the
+account's most frequent senders matching the name), so mail the user sent to those
+addresses is found even when it doesn't carry X's name. The planner is told: "with X" /
+"con X" with no direction → `with = X`, not `from`/`to`.
+**Context:** "resume todos los correos con Genoveva" was planned as
+`from: genoveva, to: me`. On a real mailbox that missed the 40 threads the user started
+(about 40% of the conversations). `from` and `to` are AND-ed, so no plan could express
+"either way", and a `to` on a name misses mail addressed to a bare address.
+**Rejected:**
+- *Running `from: X` and `to: X` separately and merging*: two limits and two orders,
+  and `to` still misses bare addresses.
+- *Keyword cues for "con"/"with"*: the planner reads the question anyway.
+
+Planner eval: 36/39 → 37/39. Both new "with X" cases pass. One case flipped: "¿cómo creo
+una lens?" now opens the create-lens form instead of the guide answer.
