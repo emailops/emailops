@@ -802,17 +802,17 @@ mod tests {
     // ── who wrote to whom ──
 
     fn me() -> Vec<String> {
-        vec!["gero@x.example".to_string(), "gero@work.example".to_string()]
+        vec!["sam@x.example".to_string(), "sam@work.example".to_string()]
     }
 
     #[test]
     fn an_alias_the_user_sends_from_is_the_user_too() {
-        assert_eq!(participant("Gero", "Gero@Work.example", &me()), USER_LABEL);
+        assert_eq!(participant("Sam", "Sam@Work.example", &me()), USER_LABEL);
     }
 
     #[test]
     fn the_user_is_named_as_you() {
-        assert_eq!(participant("Gero", "GERO@x.example", &me()), USER_LABEL);
+        assert_eq!(participant("Sam", "SAM@x.example", &me()), USER_LABEL);
         assert_eq!(participant("Ana", "ana@x.example", &me()), "Ana <ana@x.example>");
         assert_eq!(participant("", "ana@x.example", &me()), "ana@x.example");
         assert_eq!(participant("ana@x.example", "ana@x.example", &[]), "ana@x.example");
@@ -820,7 +820,7 @@ mod tests {
 
     #[test]
     fn recipients_name_the_user_as_you() {
-        let to = vec!["ana@x.example".to_string(), "Gero <gero@x.example>".to_string()];
+        let to = vec!["ana@x.example".to_string(), "Sam <sam@x.example>".to_string()];
         assert_eq!(recipients(&to, &me()), format!("ana@x.example, {USER_LABEL}"));
         assert_eq!(recipients(&[], &me()), "");
     }
