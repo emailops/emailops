@@ -3,9 +3,7 @@
 //! Works on all four AI providers (Ollama / OpenRouter / llamacpp / vllm-metal)
 //! because all of them declare `capabilities().tools = true`.
 
-use std::sync::{Arc, OnceLock};
-
-use regex::Regex;
+use std::sync::Arc;
 
 use crate::services::app_handle::AppHandle;
 use serde_json::json;
@@ -132,136 +130,55 @@ pub async fn extract_email(
         }
     };
 
-    let mut result = run_model_extraction(provider.as_ref(), lens, tool_extracted, &system_msg, &user_msg).await;
-    if result.status == ExtractionStatus::Ok {
-        fill_unique_email_from_body(&mut result.data, &lens.schema, &body_text, &email.sender_email);
-    }
-    Ok(result)
-}
-
-/// Validate the tool-call extraction and fall back to the plain-text prompt
-/// when it is invalid, missing or sparse.
-async fn run_model_extraction(
-    provider: &dyn AIProvider,
-    lens: &Lens,
-    tool_extracted: std::result::Result<serde_json::Value, String>,
-    system_msg: &str,
-    user_msg: &str,
-) -> ExtractionResult {
     let mut best_data = match tool_extracted {
         Ok(extracted) => match validate_against_schema(&extracted, &lens.schema) {
             Ok(coerced) => coerced,
-            Err(msg) => match extract_via_text_prompt(provider, lens, system_msg, user_msg).await {
+            Err(msg) => match extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
                 Ok(text_data) => {
-                    return ExtractionResult {
+                    return Ok(ExtractionResult {
                         data: text_data,
                         status: ExtractionStatus::Ok,
                         error_message: None,
-                    };
+                    });
                 }
                 Err(text_msg) => {
-                    return ExtractionResult {
+                    return Ok(ExtractionResult {
                         data: extracted,
                         status: ExtractionStatus::Failed,
                         error_message: Some(format!("{msg}; text retry failed: {text_msg}")),
-                    };
+                    });
                 }
             },
         },
         Err(tool_msg) => {
-            return match extract_via_text_prompt(provider, lens, system_msg, user_msg).await {
-                Ok(text_data) => ExtractionResult {
+            return match extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
+                Ok(text_data) => Ok(ExtractionResult {
                     data: text_data,
                     status: ExtractionStatus::Ok,
                     error_message: None,
-                },
-                Err(text_msg) => ExtractionResult {
+                }),
+                Err(text_msg) => Ok(ExtractionResult {
                     data: serde_json::Value::Null,
                     status: ExtractionStatus::Failed,
                     error_message: Some(format!("{tool_msg}; text retry failed: {text_msg}")),
-                },
+                }),
             };
         }
     };
 
     if extraction_is_sparse(&best_data, &lens.schema) {
-        if let Ok(text_data) = extract_via_text_prompt(provider, lens, system_msg, user_msg).await {
+        if let Ok(text_data) = extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
             if extraction_score(&text_data, &lens.schema) > extraction_score(&best_data, &lens.schema) {
                 best_data = text_data;
             }
         }
     }
 
-    ExtractionResult {
+    Ok(ExtractionResult {
         data: best_data,
         status: ExtractionStatus::Ok,
         error_message: None,
-    }
-}
-
-// Hard-coded literal — `Regex::new` cannot fail on it.
-#[allow(clippy::expect_used)]
-fn email_address_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}").expect("valid regex")
     })
-}
-
-/// The one address in `body` that is not from the sender's domain, if there is
-/// exactly one. Forwarding mailers (website contact forms, booking sites) send
-/// from their own domain and name the real person only in the body; small
-/// models regularly miss it there. Several candidates are ambiguous → `None`.
-pub(crate) fn body_email_fallback(body: &str, sender_email: &str) -> Option<String> {
-    let sender_domain = sender_email.rsplit_once('@').map(|(_, d)| d.to_lowercase());
-    let from_sender = |addr: &str| {
-        let domain = addr.rsplit_once('@').map(|(_, d)| d.to_lowercase()).unwrap_or_default();
-        sender_domain
-            .as_deref()
-            .is_some_and(|sd| domain == sd || domain.ends_with(&format!(".{sd}")))
-    };
-    let mut found: Vec<&str> = Vec::new();
-    for m in email_address_re().find_iter(body) {
-        let addr = m.as_str().trim_end_matches('.');
-        if from_sender(addr) || found.iter().any(|f| f.eq_ignore_ascii_case(addr)) {
-            continue;
-        }
-        found.push(addr);
-    }
-    match found.as_slice() {
-        [only] => Some((*only).to_string()),
-        _ => None,
-    }
-}
-
-/// Fill an empty unique-key `Email` column from the body (see
-/// [`body_email_fallback`]). Never overrides a value the model returned, never
-/// fills a row the model left entirely empty, and leaves other email columns
-/// to the model.
-pub(crate) fn fill_unique_email_from_body(
-    data: &mut serde_json::Value,
-    schema: &LensSchema,
-    body: &str,
-    sender_email: &str,
-) {
-    let Some(obj) = data.as_object_mut() else {
-        return;
-    };
-    // An all-null row is the model saying "nothing here" — keep it empty.
-    if obj.values().all(serde_json::Value::is_null) {
-        return;
-    }
-    for col in schema
-        .columns
-        .iter()
-        .filter(|c| c.is_unique_key && c.column_type == LensColumnType::Email)
-    {
-        if obj.get(&col.key).is_none_or(serde_json::Value::is_null) {
-            if let Some(addr) = body_email_fallback(body, sender_email) {
-                obj.insert(col.key.clone(), serde_json::Value::String(addr));
-            }
-        }
-    }
 }
 
 /// Build the JSON-schema tool definition. PRD §7.4 maps each `LensColumnType`
@@ -856,95 +773,6 @@ mod tests {
         assert_eq!(coerced["vendor"], "Acme");
         assert!(coerced["amount"].is_null());
         assert!(coerced["status"].is_null());
-    }
-
-    // ── Unique-key email fallback ───────────────────────────────────────────
-
-    const CF7_EN_BODY: &str = "From: Sam Lee <Sam.Lee.Home@gmail.com>\nSubject: Question\n\nMessage Body:\nAre you available?\n\n-- \nThis e-mail was sent from a contact form on Example Studio (https://studio.example)";
-
-    #[test]
-    fn body_fallback_finds_the_one_address_outside_the_sender_domain() {
-        assert_eq!(
-            body_email_fallback(CF7_EN_BODY, "wordpress@studio.example"),
-            Some("Sam.Lee.Home@gmail.com".to_string())
-        );
-    }
-
-    #[test]
-    fn body_fallback_ignores_the_sites_own_addresses() {
-        // The form footer or signature often carries the site's own contact
-        // address; it is never the submitter.
-        let body = format!("{CF7_EN_BODY}\nQuestions? info@studio.example or help@mail.studio.example");
-        assert_eq!(
-            body_email_fallback(&body, "wordpress@studio.example"),
-            Some("Sam.Lee.Home@gmail.com".to_string())
-        );
-    }
-
-    #[test]
-    fn body_fallback_treats_a_repeated_address_as_one() {
-        let body = "Email: ana@client.example\nReply to ana@client.example. or ANA@client.example";
-        assert_eq!(
-            body_email_fallback(body, "noreply@site.example"),
-            Some("ana@client.example".to_string())
-        );
-    }
-
-    #[test]
-    fn body_fallback_refuses_to_guess_between_several_addresses() {
-        let body = "From: a@one.example\nCc: b@two.example";
-        assert_eq!(body_email_fallback(body, "noreply@site.example"), None);
-        assert_eq!(body_email_fallback("no address here", "noreply@site.example"), None);
-    }
-
-    fn email_col(key: &str, unique: bool) -> LensColumn {
-        LensColumn {
-            key: key.into(),
-            label: key.into(),
-            column_type: LensColumnType::Email,
-            description: "".into(),
-            enum_values: None,
-            required: false,
-            is_unique_key: unique,
-        }
-    }
-
-    #[test]
-    fn fallback_fills_only_an_empty_unique_key_email_column() {
-        let schema = LensSchema {
-            columns: vec![email_col("contact_email", true), email_col("cc", false)],
-        };
-        let mut data = json!({"contact_email": null, "cc": null, "summary": "Asks about availability"});
-        fill_unique_email_from_body(&mut data, &schema, CF7_EN_BODY, "wordpress@studio.example");
-        assert_eq!(data["contact_email"], "Sam.Lee.Home@gmail.com");
-        assert!(data["cc"].is_null(), "non-key email columns are left to the model");
-    }
-
-    #[test]
-    fn fallback_leaves_a_row_the_model_found_nothing_in_empty() {
-        // All-null means the model judged the email irrelevant (e.g. not a
-        // contact form); an address in its body must not turn it into a row.
-        let schema = LensSchema {
-            columns: vec![email_col("contact_email", true), email_col("cc", false)],
-        };
-        let mut data = json!({"contact_email": null, "cc": null});
-        fill_unique_email_from_body(
-            &mut data,
-            &schema,
-            "Write to ana@client.example",
-            "noreply@site.example",
-        );
-        assert!(data["contact_email"].is_null());
-    }
-
-    #[test]
-    fn fallback_never_overrides_what_the_model_extracted() {
-        let schema = LensSchema {
-            columns: vec![email_col("contact_email", true)],
-        };
-        let mut data = json!({"contact_email": "picked@model.example"});
-        fill_unique_email_from_body(&mut data, &schema, CF7_EN_BODY, "wordpress@studio.example");
-        assert_eq!(data["contact_email"], "picked@model.example");
     }
 
     #[test]
