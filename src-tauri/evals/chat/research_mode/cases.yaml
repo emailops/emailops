@@ -1,0 +1,64 @@
+# Research answer-form classifier (`chat.research_mode`).
+#
+# A list or a count is written in code from the matches, with no report call;
+# only "analysis" pays for a report. The costly mistake is a question that
+# needs something worked out (a total, a trend, a comparison) classified as a
+# list: the user gets items without the answer. When a question wants both,
+# the right answer is "analysis". EN and ES, since the user works in both.
+#
+#   make eval-research-mode
+
+# ── list ──
+- id: quotes_sent_es
+  question: "que presupuestos he enviado a clientes"
+  expect: list
+- id: quotes_sent_en
+  question: "Which quotes have I sent to clients?"
+  expect: list
+- id: list_emails_from_sender_en
+  question: "List the emails from Acme about the migration"
+  expect: list
+- id: supplier_invoices_es
+  question: "Dame una lista de las facturas que me mandó el proveedor este año"
+  expect: list
+- id: prospect_requests_en
+  question: "Show me every prospect request I got in 2025"
+  expect: list
+- id: clients_asking_for_proposals_es
+  question: "¿Qué clientes me han pedido propuesta?"
+  expect: list
+
+# ── count ──
+- id: how_many_quotes_en
+  question: "How many quotes have I sent this year?"
+  expect: count
+- id: how_many_invoices_es
+  question: "¿Cuántas facturas recibí en 2025?"
+  expect: count
+- id: how_many_quotes_no_accents_es
+  question: "cuantos presupuestos he enviado"
+  expect: count
+
+# ── analysis ──
+- id: downloads_trend_en
+  question: "How have EmailOps downloads evolved over the last 3 months, week by week?"
+  expect: analysis
+- id: recurring_problems_es
+  question: "¿Qué problemas reportan los usuarios y cuáles se repiten?"
+  expect: analysis
+- id: total_invoiced_es
+  question: "¿Cuánto he facturado en total este año?"
+  expect: analysis
+- id: summarise_client_en
+  question: "Summarise my conversations with Lumen Health"
+  expect: analysis
+- id: compare_years_en
+  question: "Compare the quotes I sent this year with last year's"
+  expect: analysis
+# A list AND something worked out: the report, never a bare list.
+- id: list_and_total_en
+  question: "List the quotes I sent and tell me which were accepted and the total amount"
+  expect: analysis
+- id: list_and_trend_es
+  question: "lista las facturas del proveedor y dime si el importe ha subido"
+  expect: analysis

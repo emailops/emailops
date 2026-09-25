@@ -71,7 +71,7 @@ impl MetricKind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct EvalCase {
     pub id: String,
     pub question: String,
@@ -187,6 +187,37 @@ pub struct EvalCase {
     /// about the app, which the guides answer.
     #[serde(default)]
     pub expected_no_email_sources: bool,
+
+    /// Run the turn in research mode (the chat's per-message "Research"
+    /// toggle): paged search + wide retrieval, read in batches, one report.
+    #[serde(default)]
+    pub research: bool,
+
+    /// Research-mode coverage floor: the turn must have read at least this
+    /// many emails. Absence skips the check.
+    #[serde(default)]
+    pub expected_min_research_emails: Option<u32>,
+
+    /// Research precision, as case-insensitive subject substrings of the
+    /// conversations the run matched (its sources): each `expected` one must
+    /// be among them, no `forbidden` one may be. Pins a run that reads the
+    /// right mail but counts the wrong conversations — a quote the user
+    /// received counted as one the user sent.
+    #[serde(default)]
+    pub expected_research_matches: Vec<String>,
+    #[serde(default)]
+    pub forbidden_research_matches: Vec<String>,
+
+    /// Research recall: the run must match at least this many conversations.
+    /// Precision checks alone reward a run that drops real answers — a match
+    /// wrongly read as background disappears from the list without a trace.
+    #[serde(default)]
+    pub expected_min_research_matches: Option<u32>,
+
+    /// The answer form research must pick: `list` / `count` (written in code,
+    /// no report call) or `analysis` (a report).
+    #[serde(default)]
+    pub expected_research_mode: Option<crate::models::ReportMode>,
 
     /// Case-insensitive subject substrings: every bare `[n]` citation in the
     /// answer must resolve to a numbered source whose subject contains one of

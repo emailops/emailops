@@ -1,11 +1,12 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ParsedSearchQuery, SearchMethod, SearchResult, SenderSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
+import { accountColorClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
-import type { Email, EmailCategory } from '@/types';
+import type { Email } from '@/types';
 
 /** Detect an autocomplete trigger (`from:` or `to:` token) at the cursor position.
  *  Returns the field, the prefix typed so far, and the token's start index.
@@ -36,7 +37,6 @@ interface SearchBarProps {
   onApplySearch: (query: string) => void;
   /** Apply search with pre-fetched results to avoid a duplicate backend call */
   onApplySearchWithResults: (query: string, emails: Email[]) => void;
-  selectedCategories: EmailCategory[];
   onClose: () => void;
 }
 
@@ -45,7 +45,6 @@ export function SearchBar({
   onSelectEmail,
   onApplySearch,
   onApplySearchWithResults,
-  selectedCategories,
   onClose,
 }: SearchBarProps) {
   const { t, i18n } = useTranslation(['common', 'inbox']);
@@ -55,6 +54,12 @@ export function SearchBar({
   // needs one concrete account, so it falls back to the first enabled one.
   const hasAccounts = useAccountStore((s) => s.accounts.length > 0);
   const effectiveAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
+  // Unified results mix accounts: each hit names its account with a chip.
+  const accounts = useAccountStore((s) => s.accounts);
+  const accountEmailById = useMemo(
+    () => (accountId === null ? new Map(accounts.map((a) => [a.id, a.email])) : null),
+    [accountId, accounts],
+  );
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<SearchResult | null>(null);
@@ -129,7 +134,7 @@ export function SearchBar({
       setIsSearching(true);
       setSearchError(null);
 
-      const promise = api.searchEmails(accountId, searchQuery, true, selectedCategories);
+      const promise = api.searchEmails(accountId, searchQuery, true);
       inFlightRef.current = { query: searchQuery, promise };
 
       try {
@@ -161,7 +166,7 @@ export function SearchBar({
         }
       }
     },
-    [accountId, hasAccounts, selectedCategories],
+    [accountId, hasAccounts],
   );
 
   /** Fetch sender suggestions for the current autocomplete trigger */
@@ -490,8 +495,26 @@ export function SearchBar({
                     className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
                   >
                     <div className="flex items-center justify-between">
-                      <span className={`font-medium ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}>
-                        {emailWithScore.sender}
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`font-medium truncate ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}
+                        >
+                          {emailWithScore.sender}
+                        </span>
+                        {accountEmailById && (
+                          <span
+                            data-testid="account-chip"
+                            className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(emailWithScore.accountId)}`}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate">
+                              {accountEmailById.get(emailWithScore.accountId) ?? emailWithScore.accountId}
+                            </span>
+                          </span>
+                        )}
                       </span>
                       <div className="flex items-center gap-2">
                         {emailWithScore.relevanceScore !== null && (

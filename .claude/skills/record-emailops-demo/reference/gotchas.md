@@ -35,6 +35,30 @@ doubles the drawing but the screenshot is still the same pixel size, the layout
 reflows, and the chat composer falls off the bottom of the window. Frame the
 crop wider instead.
 
+**The UI language changes every label.** With `ui_language=es` the sidebar
+says "Bandeja de entrada", "Lentes"; the buttons say "Nueva lente", "Con el
+chat", "Crear lente", "Ejecutar reproceso". A few stay English ("Send",
+"Reply", "Back"). Read the DOM before writing selectors for a localized take.
+
+**The first inbox row is above `visibleRow`'s margin.** It sits at about 65 px
+and the helper wants 80, so it is never picked. Target the second or third
+row.
+
+**Low sidebar entries are hidden under the output bar.** At this window
+height "Lentes" measured at y=936 on a 938-tall viewport: clicked fine, but the
+marker was off the picture. Call `reveal(label)` before `rectOf`.
+
+**A Lens is not run when it is created.** After "Crear lente" the table is
+empty until "Ejecutar reproceso" is clicked. A re-run skips rows already
+extracted; use the row's ↻ to re-extract.
+
+**Deleting the open Lens leaves a red "Lens … not found" banner** that shows
+up in the next take. Rebuild the scratch data dir instead of deleting.
+
+**A dev build is linked to the checked-out branch.** Switching branches, or
+stashing a file, while the launcher runs makes Tauri rebuild the app under
+you. Finish the shoot first.
+
 ## The launcher
 
 `verify.sh launch` with no `VERIFY_DATA_DIR` targets the repo-local demo dir. If
@@ -74,3 +98,14 @@ It reads as a blank band at the bottom of the video. Crop the screenshot to
 **A caption on one shot of a multi-shot line disappears mid-sentence.** The SRT
 merges consecutive identical captions, so repeat the caption on each shot the
 line is heard over.
+
+## The review
+
+**Contact sheets lie about geometry.** A frame scaled to 2000 px for viewing
+is not in CSS pixels (1800) nor screenshot pixels (3600). A crop measured on
+it came out 11 % off and cut the table's first column. Scale previews to
+exactly the CSS width, or measure on the file.
+
+**zsh does not split `$var` into words.** `for t in $ts` with `ts="2 9 18"`
+runs once with the whole string. Use an array: `ts=(2 9 18)`.
+

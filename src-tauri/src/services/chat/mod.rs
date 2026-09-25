@@ -16,19 +16,27 @@
 // `chat/tools/*` submodules and external callers reference them at
 // `crate::services::chat::<name>`.
 
+pub mod cancel;
 pub mod tools;
 
 mod conversations;
+// "This answer is wrong" — the per-turn instruction that steers the retry.
+pub(crate) mod correction;
+// The short-circuit turn that fills an app form after a `form` planner verdict.
+pub(crate) mod form_turn;
 // `pub(crate)` for the query-planner eval harness, which scores it directly
 // instead of inferring its quality from chat answers.
 pub(crate) mod planner;
 mod prewarm;
+pub mod research;
 pub(crate) mod retrieval;
 mod routing;
 // The turn's trace as one ordered step list — shared by the reasoning panel,
 // the CLI and the eval report.
 pub mod trace_steps;
 mod turn;
+// What the user has on screen, as one validated per-turn context line.
+pub(crate) mod view_context;
 
 // ── Re-exports for external callers (commands/, evals/) ──────────────────────
 pub use conversations::{
@@ -45,7 +53,7 @@ pub use retrieval::{
 // the re-export reads as unused on a default `--no-default-features` build.
 #[allow(unused_imports)]
 pub(crate) use retrieval::{smart_body_slice, MAX_SOURCE_BODY_CHARS};
-pub use turn::{build_prompt, run_chat_turn};
+pub use turn::{build_prompt, run_chat_turn, TurnContext};
 // Tool-call salvage parsers — used as the secondary/tertiary fallback by the
 // embedded llama.cpp tool-call parsing chain (`ai/llama_cpp/runtime.rs`) after
 // `parse_qwen_tool_calls` (the primary). Only the llamacpp feature consumes
@@ -242,8 +250,15 @@ impl AnswerGrounding {
 /// produced them. The emails the answer links — Sources or tool results, in
 /// link order, each once — are its sources; a link outside both sets is
 /// ignored. An answer that links nothing falls back to the tool emails, and
-/// with none of those either the Sources stand.
-pub(crate) fn plan_answer_grounding(source_ids: &[String], tool_email_ids: &[String], answer: &str) -> AnswerGrounding {
+/// with none of those either the Sources stand — unless tools ran (`tools_ran`)
+/// and the answer does not cite a Source either: it was answered from tools
+/// that return no emails (lenses, tasks, calendar), so it rests on no email.
+pub(crate) fn plan_answer_grounding(
+    source_ids: &[String],
+    tool_email_ids: &[String],
+    answer: &str,
+    tools_ran: bool,
+) -> AnswerGrounding {
     let mut linked: Vec<String> = Vec::new();
     for id in linked_email_ids(answer) {
         if (tool_email_ids.contains(&id) || source_ids.contains(&id)) && !linked.contains(&id) {
@@ -256,7 +271,25 @@ pub(crate) fn plan_answer_grounding(source_ids: &[String], tool_email_ids: &[Str
     if !tool_email_ids.is_empty() {
         return AnswerGrounding::Emails(tool_email_ids.to_vec());
     }
+    if tools_ran && !cites_a_source(answer, source_ids.len()) {
+        return AnswerGrounding::Emails(Vec::new());
+    }
     AnswerGrounding::Sources
+}
+
+/// Whether `answer` has a bare `[n]` (not a `[n](…)` link) naming one of the
+/// `source_count` Sources.
+fn cites_a_source(answer: &str, source_count: usize) -> bool {
+    use std::sync::OnceLock;
+    static MARKER_RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    let marker_re = MARKER_RE.get_or_init(|| regex::Regex::new(r"\[(\d+)\]").unwrap());
+    marker_re.captures_iter(answer).any(|c| {
+        let followed_by_link = answer[c.get(0).map_or(0, |m| m.end())..].starts_with('(');
+        let n: usize = c[1].parse().unwrap_or(0);
+        !followed_by_link && (1..=source_count).contains(&n)
+    })
 }
 
 /// The ids of the `[label](email://ID)` links in `answer`, in order, repeats
@@ -460,6 +493,8 @@ pub(crate) fn or_fallback_search(
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
+    // "Emails with X" terms: broadening the keywords never drops the person.
+    participants: Option<&[String]>,
 ) -> Option<Vec<Email>> {
     let tokens: Vec<&str> = query.split_whitespace().filter(|t| t.len() >= 3).take(8).collect();
     if tokens.len() < 2 {
@@ -481,6 +516,7 @@ pub(crate) fn or_fallback_search(
             limit,
             false,
             unread_only,
+            participants,
         ) {
             for e in rs {
                 by_id.entry(e.id.clone()).or_insert(e);
@@ -884,8 +920,28 @@ mod tests {
     // neither the pre-retrieved Sources stay as they are.
 
     #[test]
+    fn grounding_drops_the_sources_when_a_tool_answered_without_emails() {
+        // A RAG-first turn pre-retrieved 10 emails, then the model answered
+        // from list_lenses and linked nothing: the answer is about lenses, so
+        // "10 sources used" and "Show 10 emails in list" pointed at nothing.
+        let plan = plan_answer_grounding(
+            &ids(&["s1", "s2"]),
+            &[],
+            "You have these lenses: Invoices, Travel.",
+            true,
+        );
+        assert_eq!(plan, AnswerGrounding::Emails(Vec::new()));
+    }
+
+    #[test]
+    fn grounding_keeps_the_sources_a_tool_turn_still_cites() {
+        let plan = plan_answer_grounding(&ids(&["s1", "s2"]), &[], "The invoice is due March 3rd [2].", true);
+        assert_eq!(plan, AnswerGrounding::Sources);
+    }
+
+    #[test]
     fn grounding_keeps_the_sources_when_nothing_is_linked_and_no_tool_returned_an_email() {
-        let plan = plan_answer_grounding(&ids(&["s1", "s2"]), &[], "March 3rd [2].");
+        let plan = plan_answer_grounding(&ids(&["s1", "s2"]), &[], "March 3rd [2].", false);
         assert_eq!(plan, AnswerGrounding::Sources);
     }
 
@@ -895,13 +951,14 @@ mod tests {
             &ids(&["s1"]),
             &ids(&["t1", "t2", "t3"]),
             "See [the claim](email://t3) and [the order](email://t1).",
+            false,
         );
         assert_eq!(plan, AnswerGrounding::Emails(ids(&["t3", "t1"])));
     }
 
     #[test]
     fn grounding_narrows_a_rag_answer_to_the_sources_it_links() {
-        let plan = plan_answer_grounding(&ids(&["s1", "s2", "s3"]), &[], "See [the ticket](email://s2).");
+        let plan = plan_answer_grounding(&ids(&["s1", "s2", "s3"]), &[], "See [the ticket](email://s2).", false);
         assert_eq!(plan, AnswerGrounding::Emails(ids(&["s2"])));
     }
 
@@ -911,27 +968,33 @@ mod tests {
             &ids(&["s1", "s2"]),
             &ids(&["t1", "t2"]),
             "[the ticket](email://s2) and [the reply](email://t1)",
+            false,
         );
         assert_eq!(plan, AnswerGrounding::Emails(ids(&["s2", "t1"])));
     }
 
     #[test]
     fn grounding_falls_back_to_the_tool_emails_when_nothing_is_linked() {
-        let plan = plan_answer_grounding(&ids(&["s1"]), &ids(&["t1", "t2"]), "Write to help@vendor.example.");
+        let plan = plan_answer_grounding(
+            &ids(&["s1"]),
+            &ids(&["t1", "t2"]),
+            "Write to help@vendor.example.",
+            false,
+        );
         assert_eq!(plan, AnswerGrounding::Emails(ids(&["t1", "t2"])));
     }
 
     #[test]
     fn grounding_ignores_a_link_outside_the_sources_and_tool_emails() {
-        let with_tools = plan_answer_grounding(&ids(&["s1"]), &ids(&["t1"]), "See [it](email://bogus).");
+        let with_tools = plan_answer_grounding(&ids(&["s1"]), &ids(&["t1"]), "See [it](email://bogus).", false);
         assert_eq!(with_tools, AnswerGrounding::Emails(ids(&["t1"])));
-        let rag_only = plan_answer_grounding(&ids(&["s1"]), &[], "See [it](email://bogus).");
+        let rag_only = plan_answer_grounding(&ids(&["s1"]), &[], "See [it](email://bogus).", false);
         assert_eq!(rag_only, AnswerGrounding::Sources);
     }
 
     #[test]
     fn grounding_lists_a_repeatedly_linked_email_once() {
-        let plan = plan_answer_grounding(&[], &ids(&["t1", "t2"]), "[a](email://t2) and [b](email://t2).");
+        let plan = plan_answer_grounding(&[], &ids(&["t1", "t2"]), "[a](email://t2) and [b](email://t2).", false);
         assert_eq!(plan, AnswerGrounding::Emails(ids(&["t2"])));
     }
 

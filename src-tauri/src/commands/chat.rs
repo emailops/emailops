@@ -103,6 +103,53 @@ pub async fn get_chat_messages(
     chat::get_messages(&state.db, &conversation_id)
 }
 
+// ── Research mode ──────────────────────────────────────────────────────────
+
+/// Plan and gather a research question, and say how many emails it would read
+/// and how long that would take, for the user to confirm before it starts.
+#[tauri::command]
+pub async fn estimate_research(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    content: String,
+    categories: Option<Vec<String>>,
+    // Set when this research retries a rejected answer: the estimate covers
+    // the original question plus the user's correction, as the run will.
+    correction: Option<crate::models::ChatCorrection>,
+) -> Result<crate::models::ResearchEstimate, AppError> {
+    if !state.db.is_ai_enabled()? {
+        return Err(AppError::AiDisabled);
+    }
+    let question = content.trim();
+    if question.is_empty() {
+        return Err(AppError::InvalidInput("Message is empty".into()));
+    }
+    let categories = resolve_categories(&state, categories);
+    let account_id = state
+        .db
+        .get_chat_conversation_account(&conversation_id)?
+        .ok_or_else(|| AppError::NotFound(format!("conversation {}", conversation_id)))?;
+    let question = chat::research::research_question(&state.db, &conversation_id, question, correction.as_ref());
+    chat::research::estimate_for_account(&state.db, &account_id, &categories, &question).await
+}
+
+/// Cancel the chat turn answering `message_id` — a normal turn stops at its
+/// next chance (mid-reply included) and keeps what was shown; a research run
+/// stops at its next batch. `false` when no turn is running.
+#[tauri::command]
+pub async fn cancel_chat_turn(message_id: String) -> Result<bool, AppError> {
+    Ok(chat::cancel::request_cancel(&message_id))
+}
+
+/// The user chose to quit while research runs: let the next exit through and
+/// quit now. The runs are lost — their answers stay empty.
+#[tauri::command]
+pub async fn confirm_exit(app: AppHandle) -> Result<(), AppError> {
+    chat::research::confirm_exit();
+    app.exit(0);
+    Ok(())
+}
+
 // ── Send a message ─────────────────────────────────────────────────────────
 
 /// Response from `send_chat_message`: contains the pre-created user and
@@ -144,6 +191,22 @@ pub async fn send_chat_message(
     // reading a thread from any of them. Looking the thread up under the chat's
     // account found nothing and silently dropped the context.
     context_account_id: Option<String>,
+    // What the user has on screen this turn: `view/<name>`, `settings/<tab>`,
+    // or `form/<form id>` plus that form's current values. Lets "esto"/"aquí"
+    // resolve, and lets "añade una columna de IVA" edit the form in front of
+    // the user. Validated backend-side (`chat::view_context`), so an
+    // unrecognised token is dropped rather than prompted.
+    context_view: Option<crate::models::ChatViewContext>,
+    // Set when the user pressed "this answer is wrong" and said why. Runs an
+    // ordinary new turn with a short correction instruction; the rejected
+    // answer stays in the conversation.
+    correction: Option<crate::models::ChatCorrection>,
+    // Research mode for this one message: read many more emails in batches
+    // (map-reduce) — slower, for questions that need a broad analysis.
+    research: Option<bool>,
+    // The estimate the user confirmed (`estimate_research`): the run reads
+    // exactly the emails it counted.
+    research_estimate_id: Option<String>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -223,6 +286,8 @@ pub async fn send_chat_message(
     let categories_for_task = categories.clone();
     let ambient_thread_for_task = context_thread_id.clone();
     let ambient_account_for_task = context_account_id.clone();
+    let view_for_task = context_view.clone();
+    let correction_for_task = correction.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
     state
         .ai_queue
@@ -238,8 +303,14 @@ pub async fn send_chat_message(
                 model_for_task,
                 history,
                 categories_for_task,
-                ambient_thread_for_task,
-                ambient_account_for_task,
+                chat::TurnContext {
+                    ambient_thread_id: ambient_thread_for_task,
+                    ambient_account_id: ambient_account_for_task,
+                    view: view_for_task,
+                    correction: correction_for_task,
+                    research: research.unwrap_or(false),
+                    research_estimate_id: research_estimate_id.clone(),
+                },
             )
             .await
             {

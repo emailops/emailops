@@ -1,0 +1,174 @@
+# What the "Contact form leads" template extracts.
+#
+# A website contact form mails the site owner from the site's own mailer; the
+# person who wrote in is only named in the body. Every case pins what a person
+# reading the email would write down: whose address it is, their name, what
+# kind of message it is — and which columns must stay empty rather than be
+# guessed. `expect_in_scope` checks the template's own scope (the plugin
+# footer, searched in the body) reaches the email at all.
+#
+# Matching: a string must appear in the column, case-insensitively; null means
+# the column must be empty. Synthetic senders and sites only.
+
+- id: contact_form_es_sales_pitch
+  template: contact_form_leads
+  note: "the canonical Spanish layout (De: Nombre dirección) with a vendor pitching SEO articles"
+  email:
+    from_name: Example Studio
+    from_email: wordpress@studio.example
+    subject: Propuesta para Example Studio
+    body: |
+      De: Laura Pérez laura.perez@prensa-digital.example
+
+      Cuerpo del mensaje:
+      Propuesta para Example Studio.
+
+      Hola, un placer saludarte. Podríamos publicar cada mes artículos sobre Example Studio en decenas de periódicos digitales, sin marcarlos como publicidad, para mejorar tu posicionamiento.
+
+      ¿Me facilitas un teléfono para ofrecerte un mes gratuito?
+
+      --
+      Este mensaje se ha enviado desde un formulario de contacto en Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    contact_email: laura.perez@prensa-digital.example
+    contact_name: Laura
+    request_type: sales_pitch
+
+- id: contact_form_es_quote_fields
+  template: contact_form_leads
+  note: "labelled fields, a prospect asking for a quote — the lead the template exists to find"
+  email:
+    from_name: Example Studio
+    from_email: wordpress@studio.example
+    subject: Nuevo mensaje desde la web
+    body: |
+      Nombre: Marta Gil
+      Correo electrónico: marta.gil@construcciones-norte.example
+      Teléfono: +34 600 000 111
+      Empresa: Construcciones Norte
+
+      Mensaje:
+      Hola, necesitamos renovar la plataforma de gestión de obras. ¿Nos podéis enviar un presupuesto para una auditoría técnica y un plan de migración?
+
+      --
+      Este mensaje se ha enviado desde un formulario de contacto en Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    contact_email: marta.gil@construcciones-norte.example
+    contact_name: Marta Gil
+    company: Construcciones Norte
+    phone: "600 000 111"
+    request_type: quote_request
+
+- id: contact_form_cf7_en
+  template: contact_form_leads
+  note: "Contact Form 7's English default repeats From:/Subject: in the body and wraps the address in <>, which the HTML stripper used to delete"
+  email:
+    from_name: Example Studio
+    from_email: wordpress@studio.example
+    subject: Example Studio "Question about availability"
+    body: |
+      From: Sam Lee <sam.lee.home@gmail.com>
+      Subject: Question about availability
+
+      Message Body:
+      Hi, do you take on part-time CTO engagements for early-stage startups, and are you available from next month?
+
+      --
+      This e-mail was sent from a contact form on Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    contact_email: sam.lee.home@gmail.com
+    contact_name: Sam Lee
+    company: null
+    request_type: question
+
+- id: contact_form_fr_question
+  template: contact_form_leads
+  note: "French plugin footer and field labels"
+  email:
+    from_name: Atelier Exemple
+    from_email: noreply@atelier.example
+    subject: Nouveau message de contact
+    body: |
+      Nom : Claire Martin
+      E-mail : claire.martin@boulangerie-martin.example
+
+      Message :
+      Bonjour, proposez-vous un accompagnement technique pour une petite boutique en ligne ?
+
+      --
+      Cet e-mail a été envoyé via le formulaire de contact de Atelier Exemple
+  expect_in_scope: true
+  expect:
+    contact_email: claire.martin@boulangerie-martin.example
+    contact_name: Claire Martin
+    request_type: question
+
+- id: contact_form_cc_address_is_not_the_submitter
+  template: contact_form_leads
+  note: "the message names a second address to copy; the row belongs to whoever filled in the form"
+  email:
+    from_name: Example Studio
+    from_email: wordpress@studio.example
+    subject: Solicitud de presupuesto
+    body: |
+      Nombre: Diego Ramos
+      Correo electrónico: diego@ramos-logistica.example
+
+      Mensaje:
+      Queremos un presupuesto para integrar nuestro ERP. Por favor, poned en copia a nuestra responsable de compras, compras@ramos-logistica.example.
+
+      --
+      Este mensaje se ha enviado desde un formulario de contacto en Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    contact_email: diego@ramos-logistica.example
+    contact_name: Diego Ramos
+    request_type: quote_request
+
+- id: ordinary_email_is_not_a_lead
+  template: contact_form_leads
+  note: "an ordinary email that mentions a form and one outside address: the scope must skip it, and if extracted anyway no contact may be invented"
+  email:
+    from_name: Gestoría Norte
+    from_email: avisos@gestoria-norte.example
+    subject: Formulario trimestral
+    body: |
+      Hola, recuerda enviar el formulario del IVA trimestral firmado antes del viernes a presentaciones@hacienda-ejemplo.example.
+
+      Un saludo.
+  expect_in_scope: false
+  expect:
+    contact_email: null
+    contact_name: null
+
+- id: contact_form_es_all_columns_optional
+  template: contact_form_leads
+  note: "a Lens built from the chat: generic column descriptions, every column optional; small models filled only the first column and left phone and company empty"
+  lens:
+    prompt: "Analiza el cuerpo del mensaje del correo. Este correo proviene de un formulario de contacto de una web. Extrae la dirección de email, el teléfono y la empresa de la persona que rellenó el formulario."
+    columns:
+      - {key: email, label: Dirección de email, type: email, description: "Extrae la dirección de email del remitente del correo."}
+      - {key: telefono, label: Teléfono, type: text, description: "Extrae el número de teléfono de la persona que rellenó el formulario."}
+      - {key: empresa, label: Empresa, type: text, description: "Extrae el nombre de la empresa de la persona que rellenó el formulario."}
+  email:
+    from_name: Example Studio
+    from_email: web@studio.example
+    subject: "Nuevo mensaje del formulario de contacto: Irene Soto"
+    body: |
+      De: Irene Soto <irene@huerta-ejemplo.example>
+      Teléfono: 622 000 904
+      Empresa: Huerta Ejemplo
+
+      Mensaje:
+      Vendemos fruta por suscripción y queremos conectar la tienda online con el reparto. ¿Tenéis disponibilidad en octubre?
+
+      --
+      Este mensaje se ha enviado desde un formulario de contacto en Example Studio (https://studio.example)
+  expect_in_scope: true
+  expect:
+    email: irene@huerta-ejemplo.example
+    empresa: Huerta Ejemplo
+    telefono: "622 000 904"

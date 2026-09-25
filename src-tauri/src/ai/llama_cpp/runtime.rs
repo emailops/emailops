@@ -59,8 +59,10 @@ static GEMMA4_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 use tokio::sync::{Mutex, Semaphore};
 
 /// How often the idle-eviction background task wakes up to check if loaded
-/// models have been unused long enough to drop.
-const EVICTION_POLL_INTERVAL_SECS: u64 = 60;
+/// models have been unused long enough to drop. Short, so a keep-alive of `0`
+/// ("free it after use") frees the memory within seconds of the answer; each
+/// wake-up is two atomic loads.
+const EVICTION_POLL_INTERVAL_SECS: u64 = 10;
 
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -318,6 +320,12 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
     use crate::ai::gpu_plan::{classify_device, GpuDevice, RawDeviceType};
     use llama_cpp_2::LlamaBackendDeviceType as Ty;
 
+    // The hardware's own answer to "is this memory shared with the CPU?". On
+    // macOS the only GPU backend ggml builds is Metal, so Metal's answer is the
+    // answer for every GPU device in the list; elsewhere there is none and
+    // classify_device falls back to ggml's type and the backend name.
+    let unified = metal_has_unified_memory();
+
     llama_cpp_2::list_llama_ggml_backend_devices()
         .into_iter()
         .map(|d| {
@@ -328,8 +336,9 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
                 Ty::Accelerator => RawDeviceType::Accelerator,
                 Ty::Unknown => RawDeviceType::Unknown,
             };
+            let gpu = matches!(raw, RawDeviceType::Gpu | RawDeviceType::IntegratedGpu);
             GpuDevice {
-                kind: classify_device(&d.backend, raw),
+                kind: classify_device(&d.backend, raw, if gpu { unified } else { None }),
                 name: d.name,
                 backend: d.backend,
                 memory_free: d.memory_free as u64,
@@ -337,6 +346,38 @@ fn probe_devices() -> Vec<crate::ai::gpu_plan::GpuDevice> {
             }
         })
         .collect()
+}
+
+/// Whether this Mac's GPU shares memory with the CPU, as Metal itself reports it.
+///
+/// ggml knows this (`has_unified_memory`, read from the same property) but its
+/// generic device properties do not carry it, and it types the Metal device as
+/// a plain `Gpu`; without asking here, the only clue left is the backend name,
+/// which ggml has already renamed once ("Metal" → "MTL").
+#[cfg(target_os = "macos")]
+fn metal_has_unified_memory() -> Option<bool> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+
+    #[link(name = "Metal", kind = "framework")]
+    extern "C" {
+        fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
+    }
+
+    // SAFETY: MTLCreateSystemDefaultDevice takes no arguments and returns either
+    // nil (no Metal device) or a +1 retained id<MTLDevice> under the Create rule;
+    // Retained takes that ownership and releases it on drop.
+    let device = unsafe { Retained::from_raw(MTLCreateSystemDefaultDevice()) }?;
+    // SAFETY: hasUnifiedMemory is a BOOL property every MTLDevice implements
+    // (macOS 10.15+, below this app's 12.0 floor), taking no arguments.
+    let unified: bool = unsafe { msg_send![&*device, hasUnifiedMemory] };
+    Some(unified)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn metal_has_unified_memory() -> Option<bool> {
+    None
 }
 
 /// The device list for planning decisions made outside the loader — currently
@@ -437,7 +478,8 @@ impl LlamaCppRuntime {
         runtime
     }
 
-    /// Override the idle-eviction window. 0 pins the model forever.
+    /// Override the idle-eviction window, as `services::ai::keep_alive_from_pref`
+    /// reads it: `KEEP_ALIVE_FOREVER` pins the model, `0` frees it after use.
     pub fn set_keep_alive_secs(&self, secs: u32) {
         self.keep_alive_secs.store(secs, Ordering::Relaxed);
     }
@@ -512,12 +554,8 @@ impl LlamaCppRuntime {
                 };
 
                 let keep_alive = runtime.keep_alive_secs.load(Ordering::Relaxed);
-                if keep_alive == 0 {
-                    continue; // eviction disabled
-                }
-
                 let idle = now_secs().saturating_sub(runtime.last_used.load(Ordering::Relaxed));
-                if idle < keep_alive as i64 {
+                if !crate::services::ai::should_evict(keep_alive, idle) {
                     continue;
                 }
 
@@ -665,6 +703,13 @@ impl LlamaCppRuntime {
         let model = Arc::new(model);
         *guard = Some(model.clone());
         Ok(model)
+    }
+
+    /// The context window the chat model runs with, once its actor exists.
+    /// `None` before the first chat call (the model loads lazily) or while
+    /// the actor is being replaced.
+    pub fn chat_context_window(&self) -> Option<u32> {
+        self.chat_actor.try_lock().ok()?.as_ref()?.n_ctx()
     }
 
     /// Get (or lazily spawn) the persistent inference actor for the chat
@@ -963,6 +1008,7 @@ impl LlamaCppRuntime {
         let actor = self.get_chat_actor().await?;
         let temperature = opts.temperature.unwrap_or(0.8) as f32;
         let max_tokens = opts.max_tokens.unwrap_or(2048) as usize;
+        let grammar = opts.json_shape.as_ref().map(|shape| shape.to_gbnf());
 
         // Instruction-tuned models (Gemma 4, Llama 3, Qwen) require chat-template
         // turn tokens to produce output — a raw prompt makes the model emit EOG
@@ -995,7 +1041,7 @@ impl LlamaCppRuntime {
             // cached — its prompt would evict the reusable chat prefix. The
             // invariant head, when the caller marked one, rides its own
             // sequence instead of being re-processed every call.
-            .generate(prompt_str, temperature, max_tokens, false, aux_prefix_bytes, None, None, None)
+            .generate(prompt_str, temperature, max_tokens, false, aux_prefix_bytes, None, None, None, grammar)
             .await
             .map_err(AppError::AiError)?;
 
@@ -1065,6 +1111,7 @@ impl LlamaCppRuntime {
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
+                None,
             )
             .await
             .map_err(AppError::AiError)?;
@@ -1134,6 +1181,7 @@ impl LlamaCppRuntime {
                 None,
                 stable_bytes,
                 system_bytes,
+                None,
                 None,
             )
             .await
@@ -1224,6 +1272,7 @@ impl LlamaCppRuntime {
                 stable_bytes,
                 system_bytes,
                 Some(actor_cb),
+                None,
             )
             .await
             .map_err(AppError::AiError)?;
@@ -1343,6 +1392,7 @@ impl LlamaCppRuntime {
             temperature: Some(0.0),
             max_tokens: Some(1),
             think: Some(false),
+            json_shape: None,
         };
         // Tiny prompt; we throw the output away. Errors bubble up so the
         // caller can log them, but warmup failures must not block startup.
@@ -1386,7 +1436,7 @@ impl LlamaCppRuntime {
 
         let t = std::time::Instant::now();
         let outcome = actor
-            .generate(prompt_str, 0.0, 0, true, None, stable_bytes, system_bytes, None)
+            .generate(prompt_str, 0.0, 0, true, None, stable_bytes, system_bytes, None, None)
             .await
             .map_err(AppError::AiError)?;
         crate::services::logger::log(

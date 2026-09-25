@@ -46,6 +46,9 @@ pub struct AiCapability {
     /// RAM the smallest catalog chat model needs, so the UI can explain *why*
     /// local AI is unavailable instead of just hiding the option.
     pub min_ram_gb_for_local_ai: u64,
+    /// Download size, in bytes, of that same least demanding chat model — the
+    /// disk figure the first-run wizard shows next to the RAM one.
+    pub min_download_bytes_for_local_ai: u64,
     /// e.g. "macos", "linux", "windows".
     pub os: String,
     /// e.g. "aarch64", "x86_64".
@@ -66,6 +69,18 @@ fn min_chat_model_ram_gb() -> u64 {
         // falling back to the historical 8 GB floor beats reporting 0 (which
         // would claim every machine is capable).
         .unwrap_or(8)
+}
+
+/// Download size of the least demanding chat model — the model
+/// [`min_chat_model_ram_gb`] describes, so the wizard's RAM and disk figures
+/// always refer to the same model. Derived for the same reason.
+fn min_chat_model_download_bytes() -> u64 {
+    CATALOG
+        .iter()
+        .filter(|m| matches!(m.kind, ModelKind::Chat))
+        .min_by_key(|m| m.min_ram_gb)
+        .map(|m| m.size_bytes)
+        .unwrap_or(0)
 }
 
 /// Pure decision: can this machine plausibly run a local chat model?
@@ -98,6 +113,7 @@ pub fn ai_capability_from(
         embedded_ai_available: runtime_runs_here,
         total_ram_gb,
         min_ram_gb_for_local_ai: min_chat_ram_gb,
+        min_download_bytes_for_local_ai: min_chat_model_download_bytes(),
         os: os.to_string(),
         arch: arch.to_string(),
     }
@@ -366,6 +382,21 @@ mod tests {
         // Embedding models are far smaller; they must not drag the floor down,
         // since being able to embed is not being able to chat.
         assert!(min_chat_model_ram_gb() > 1);
+    }
+
+    #[test]
+    fn the_disk_figure_is_the_download_of_the_model_the_ram_figure_describes() {
+        // The first-run wizard pairs "N GB+ RAM" with a disk figure. Both must
+        // describe the same model — the least demanding chat model — and come
+        // from the catalog: the disk half was a hardcoded "~5 GB" that no model
+        // in the catalog weighs, contradicting the docs' ~3 GB.
+        let cap = ai_capability_from("macos", "aarch64", 16, min_chat_model_ram_gb(), true);
+        let smallest = CATALOG
+            .iter()
+            .filter(|m| matches!(m.kind, ModelKind::Chat))
+            .min_by_key(|m| m.min_ram_gb)
+            .expect("the catalog has a chat model");
+        assert_eq!(cap.min_download_bytes_for_local_ai, smallest.size_bytes);
     }
 
     #[tokio::test]

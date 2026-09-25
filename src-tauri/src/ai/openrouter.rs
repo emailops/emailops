@@ -26,6 +26,20 @@ struct OpenRouterChatRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
+    /// Structured output: the reply must follow a JSON Schema.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+}
+
+/// OpenRouter's structured-output request for `shape`, strict so the model
+/// may not add or drop fields.
+fn response_format(shape: Option<&crate::ai::json_shape::JsonShape>) -> Option<serde_json::Value> {
+    shape.map(|shape| {
+        serde_json::json!({
+            "type": "json_schema",
+            "json_schema": { "name": "reply", "strict": true, "schema": shape.to_json_schema() },
+        })
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +57,14 @@ struct OpenRouterChatResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessageContent,
+    /// `"length"` when the reply stopped at `max_tokens`.
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+/// Whether the reply stopped at `max_tokens`.
+fn first_choice_truncated(response: &OpenRouterChatResponse) -> bool {
+    response.choices.first().and_then(|c| c.finish_reason.as_deref()) == Some("length")
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,6 +275,7 @@ impl AIProvider for OpenRouterClient {
             stream: false,
             max_tokens: options.max_tokens,
             temperature: options.temperature,
+            response_format: response_format(options.json_shape.as_ref()),
         };
 
         let response = self
@@ -299,6 +322,7 @@ impl AIProvider for OpenRouterClient {
         let completion_tokens = result.usage.as_ref().and_then(|u| u.completion_tokens).unwrap_or(0);
 
         let cost_usd = cost_from_headers;
+        let truncated = first_choice_truncated(&result);
 
         Ok(CompletionResult {
             text,
@@ -309,6 +333,7 @@ impl AIProvider for OpenRouterClient {
             prefill_ms: None,
             cached_prompt_tokens: None,
             aux_plan: None,
+            truncated,
         })
     }
 
@@ -468,4 +493,33 @@ fn extract_cost_from_response(response: &reqwest::Response) -> f64 {
         }
     }
     0.0
+}
+
+#[cfg(test)]
+mod stop_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_json_shape_becomes_a_strict_response_format() {
+        use crate::ai::json_shape::JsonShape;
+        let shape = JsonShape::object(vec![("tag", JsonShape::one_of(&["match", "context"]))]);
+        let format = response_format(Some(&shape)).expect("a format");
+        assert_eq!(format["type"], "json_schema");
+        assert_eq!(format["json_schema"]["strict"], true);
+        assert_eq!(format["json_schema"]["schema"], shape.to_json_schema());
+        assert!(response_format(None).is_none());
+    }
+
+    #[test]
+    fn a_choice_that_hit_max_tokens_is_truncated() {
+        let r: OpenRouterChatResponse =
+            serde_json::from_str(r#"{"choices":[{"message":{"content":"x"},"finish_reason":"length"}],"usage":null}"#)
+                .unwrap();
+        assert!(first_choice_truncated(&r));
+        let r: OpenRouterChatResponse =
+            serde_json::from_str(r#"{"choices":[{"message":{"content":"x"},"finish_reason":"stop"}]}"#).unwrap();
+        assert!(!first_choice_truncated(&r));
+        let r: OpenRouterChatResponse = serde_json::from_str(r#"{"choices":[{"message":{"content":"x"}}]}"#).unwrap();
+        assert!(!first_choice_truncated(&r));
+    }
 }

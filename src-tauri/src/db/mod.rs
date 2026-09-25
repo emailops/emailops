@@ -544,11 +544,13 @@ impl Database {
     }
 
     /// Per-feature gate for AI Lenses and the chat's lens-display tools.
+    /// Default `true` (Lenses left the experimental stage) to match
+    /// `useLensesEnabledStore` in `featureToggleStore.ts`.
     pub fn is_lenses_enabled(&self) -> Result<bool> {
         Ok(self
             .get_preference("lenses_enabled")?
             .map(|v| v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false))
+            .unwrap_or(true))
     }
 
     /// Per-feature gate for AI draft generation and the chat's draft tools.
@@ -999,9 +1001,10 @@ mod feature_flag_tests {
     }
 
     #[test]
-    fn is_lenses_enabled_defaults_false_when_unset() {
+    fn is_lenses_enabled_defaults_true_when_unset() {
+        // Lenses left the experimental stage: on unless the user turned them off.
         let db = Database::new_for_testing().expect("create test db");
-        assert!(!db.is_lenses_enabled().expect("read pref"));
+        assert!(db.is_lenses_enabled().expect("read pref"));
     }
 
     #[test]

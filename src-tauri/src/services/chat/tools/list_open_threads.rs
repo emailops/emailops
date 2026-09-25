@@ -39,13 +39,36 @@ impl Tool for ListOpenThreadsTool {
             match memory::list_open_threads(ctx.db, ctx.account_id, awaiting, limit) {
                 Ok(threads) if threads.is_empty() => "No open threads.".to_string(),
                 Ok(threads) => {
+                    // Who wrote last and which email to link: without them the
+                    // model named the user as the sender and invented ids.
+                    let thread_ids: Vec<String> = threads.iter().map(|t| t.thread_id.clone()).collect();
+                    let inbound = match ctx.db.latest_inbound_by_thread(ctx.account_id, &thread_ids) {
+                        Ok(inbound) => inbound,
+                        Err(e) => return Ok(ToolOutput::text(format!("Thread list error: {}", e))),
+                    };
                     let mut out = String::new();
                     for t in &threads {
                         let summary = t.summary.clone().unwrap_or_default();
                         let deadline = t.deadline_at.map(format_date).unwrap_or_else(|| "-".into());
+                        let last_inbound = inbound
+                            .get(&t.thread_id)
+                            .map(|e| {
+                                let from = if e.sender.trim().is_empty() {
+                                    e.sender_email.clone()
+                                } else {
+                                    format!("{} <{}>", e.sender, e.sender_email)
+                                };
+                                format!(
+                                    " from=\"{}\" last_inbound={} email_id={}",
+                                    from,
+                                    format_date(e.timestamp),
+                                    e.email_id
+                                )
+                            })
+                            .unwrap_or_default();
                         out.push_str(&format!(
-                            "- thread_id={} awaiting={} deadline={} summary=\"{}\"\n",
-                            t.thread_id, t.awaiting, deadline, summary
+                            "- thread_id={} awaiting={}{} deadline={} summary=\"{}\"\n",
+                            t.thread_id, t.awaiting, last_inbound, deadline, summary
                         ));
                     }
                     out

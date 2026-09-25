@@ -6,9 +6,9 @@
 // states (no selection yet, selection has no source email). Loading and
 // error states are handled internally so every panel looks consistent.
 
-import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import { useRemoteContentPolicy } from '@/hooks/useRemoteContentPolicy';
 import * as api from '@/lib/api';
 import { sanitizeEmailHtmlFull, senderName } from '@/lib/emailFormatting';
@@ -40,7 +40,8 @@ export function EmailPreviewById({
   missingSourceMessage,
   hasSelection = false,
 }: EmailPreviewByIdProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
+  const fmt = useFormatters();
   const [email, setEmail] = useState<Email | null>(null);
   const [body, setBody] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
@@ -109,19 +110,23 @@ export function EmailPreviewById({
   if (loadError || !email) {
     return (
       <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-gray-50 px-8 text-center">
-        {loadError ?? 'Email no longer available.'}
+        {loadError ?? t('inbox:emailUnavailable')}
       </div>
     );
   }
 
+  // Own light surface: hosts differ (the Lens drawer is dark) and the header
+  // uses dark text, matching the light-only email frame below it.
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden bg-white">
       <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-        <h2 className="text-base font-semibold text-gray-900 truncate">{email.subject || '(no subject)'}</h2>
+        <h2 className="text-base font-semibold text-gray-900 truncate">
+          {email.subject || t('common:labels.noSubject')}
+        </h2>
         <div className="text-xs text-gray-500 mt-1">
           <span className="font-medium text-gray-700">{senderName(email)}</span>
           <span> &lt;{email.senderEmail}&gt;</span>
-          <span> · {format(new Date(email.timestamp * 1000), 'MMM d, yyyy · h:mm a')}</span>
+          <span> · {fmt.dateTime(email.timestamp)}</span>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 email-body-content">

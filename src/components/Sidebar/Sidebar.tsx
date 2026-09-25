@@ -138,7 +138,7 @@ export function Sidebar({
   const { enabled: aiEnabled } = useAiStore();
   // Lenses sub-list under the "Lenses" entry. We load the list once when AI is
   // enabled so the sidebar shows them even before the user opens the Lenses view.
-  const { lenses, activeLensId, initialize: initializeLenses } = useLensStore();
+  const { lenses, activeLensId, initialize: initializeLenses, setCreateChooserOpen: openCreateLens } = useLensStore();
 
   const { t } = useTranslation(['common', 'sidebar', 'chat', 'tagboard']);
   const [accountsOpen, setAccountsOpen] = useState(true);
@@ -877,6 +877,20 @@ export function Sidebar({
                       </svg>
                       <span className="flex-1">{t('sidebar:lenses')}</span>
                       {lenses.length > 0 && <span className="text-xs text-gray-500">{lenses.length}</span>}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSetViewMode('lenses');
+                        openCreateLens(true);
+                      }}
+                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors flex-shrink-0"
+                      title={t('sidebar:newLens')}
+                      aria-label={t('sidebar:newLens')}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
                     </button>
                     {lenses.length > 0 && (
                       <button

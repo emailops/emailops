@@ -1,48 +1,37 @@
-//! Clean an email thread for use as chat context.
+//! Read an email body for a model without what its thread already said.
 //!
-//! Email bodies, especially in long threads, contain a lot of noise that wastes
-//! the LLM's context window: quoted reply blocks, signatures, "Sent from my
-//! iPhone" stubs, legal disclaimers, tracking pixels, repeated boilerplate.
-//! This module strips that noise so the model sees just the substantive
-//! conversation.
+//! A reply carries the conversation before it as quoted text, often with a
+//! signature the thread has seen before. Re-reading that wastes the context
+//! window. But a quote is not always history: in a one-message thread, a
+//! forward, or a reply to mail that was never synced, the quote is the only
+//! copy. So nothing is cut on a marker alone — **a block goes only when the
+//! thread already contains it**:
 //!
-//! Pipeline per body:
-//!   1. HTML → text (reuses [`strip_html_for_fts`]).
-//!   2. Drop quoted reply blocks (Gmail/Outlook headers, `>`-prefixed lines).
-//!   3. Drop the signature block (RFC 3676 `-- ` delimiter, common stubs).
-//!   4. Collapse whitespace.
-//!   5. Cap length per email at `max_chars`.
+//!   1. [`normalize_body`]: HTML → text with nothing removed (`<blockquote>`
+//!      content becomes `> ` lines, like a plain-text quote).
+//!   2. [`segment`]: the markers ("On … wrote:", Outlook `From:/Sent:`
+//!      headers, "Original/Forwarded message", `>` lines, the `-- ` signature
+//!      delimiter) only split the text into own / quoted / signature blocks.
+//!   3. [`new_text`]: a quoted or signature block is dropped when ~80% of its
+//!      5-word runs appear in the earlier messages ([`History`]); an own
+//!      paragraph when it repeats one of theirs. "Sent from my iPhone" stubs
+//!      always go. Everything else stays.
+//!
+//! [`clean_email_body`] reads a body with no thread around it, so only stubs
+//! and whitespace go; `thread_reader` supplies the history for a thread.
 
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use chrono::{TimeZone, Utc};
 use regex::Regex;
 
-use crate::models::Email;
 use crate::util::html::decode_html_entities;
-
-/// Per-email floor. Even long threads keep at least this much of each message
-/// so no single email is reduced to a useless stub. Lower than the RAG path's
-/// `MAX_SOURCE_BODY_CHARS` (4000) because thread context concatenates N emails.
-pub const DEFAULT_MAX_CHARS_PER_EMAIL: usize = 2000;
 
 /// Per-email ceiling. A single-message "chat about this email" shows the body
 /// nearly whole instead of clipping it at the floor. Also the cap applied by
 /// the `get_email_body` chat tool, so a long newsletter comes back whole rather
 /// than sliced in half.
 pub const MAX_CHARS_PER_EMAIL: usize = 16000;
-
-/// Total budget shared across the thread; the per-email cap is this divided by
-/// the message count, clamped to `[DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL]`.
-const THREAD_CONTEXT_BUDGET: usize = 12_000;
-
-/// Pick the per-email character cap for a thread of `num_emails` messages.
-/// Few messages get a generous cap (up to the ceiling); long threads divide the
-/// shared budget but never drop below the floor.
-pub fn chars_per_email(num_emails: usize) -> usize {
-    let n = num_emails.max(1);
-    (THREAD_CONTEXT_BUDGET / n).clamp(DEFAULT_MAX_CHARS_PER_EMAIL, MAX_CHARS_PER_EMAIL)
-}
 
 /// Total budget shared across ALL emails preseeded into a multi-email summary
 /// (e.g. the "resumen del día" shortcut). Deliberately far tighter than a
@@ -73,12 +62,19 @@ pub fn summary_chars_per_email(num_emails: usize) -> usize {
 /// line breaks — they're load-bearing for the quote/signature heuristics that
 /// run downstream.
 pub fn clean_email_body(body: &str, max_chars: usize) -> String {
-    let text = to_plain_text(body);
-    let visible = strip_invisible_chars(&text);
-    let de_quoted = strip_quoted_replies(&visible);
-    let de_signed = strip_signature(&de_quoted);
-    let collapsed = collapse_whitespace(&de_signed);
-    truncate_chars(&collapsed, max_chars)
+    truncate_chars(&new_text(&normalize_body(body), &History::default()), max_chars)
+}
+
+/// A body as plain text with nothing removed: HTML → text (quoted
+/// `<blockquote>` content turned into `> ` lines), entities decoded,
+/// invisible spacers dropped, `<addr>` without its brackets.
+pub fn normalize_body(body: &str) -> String {
+    let text = if looks_like_html(body) {
+        prefix_blockquote_lines(&html_to_plain_text(&mark_blockquotes(body)))
+    } else {
+        strip_inline_addr_brackets(body)
+    };
+    strip_invisible_chars(&text)
 }
 
 /// Render an email body as readable plain text **without** dropping any
@@ -133,6 +129,8 @@ fn to_plain_text(body: &str) -> String {
 fn looks_like_html(body: &str) -> bool {
     static MARKERS: &[&str] = &[
         "<html", "<body", "<div", "<p>", "<p ", "<br", "<table", "<span", "</p>", "</div>",
+        // Plain text some clients wrap in <pre> with its `<`/`>` escaped.
+        "<pre",
     ];
     // Lowercase a bounded prefix — bodies can be megabytes.
     let prefix: String = body.chars().take(4096).collect::<String>().to_lowercase();
@@ -172,8 +170,53 @@ fn any_tag_re() -> &'static Regex {
 fn inline_addr_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // <foo@bar.tld> and <https://...> tokens that show up in plain-text bodies
-    // (mailto display form, RFC 3986 angle-bracket URIs).
-    RE.get_or_init(|| Regex::new(r"<\s*(?:[^<>\s]+@[^<>\s]+|https?://[^<>\s]+)\s*>").expect("valid regex"))
+    // (mailto display form, RFC 3986 angle-bracket URIs). Group 1 is the
+    // address itself, which is content: only the brackets go.
+    RE.get_or_init(|| Regex::new(r"<\s*([^<>\s]+@[^<>\s]+|https?://[^<>\s]+)\s*>").expect("valid regex"))
+}
+
+// Private-use characters survive tag stripping and never occur in mail text.
+const QUOTE_OPEN: char = '\u{E000}';
+const QUOTE_CLOSE: char = '\u{E001}';
+
+/// Put every `<blockquote>` / `</blockquote>` on a line of its own as a marker
+/// character, so [`prefix_blockquote_lines`] can quote its text after the tags
+/// are gone. Mail clients quote the previous message this way, often with no
+/// attribution line around it.
+fn mark_blockquotes(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0;
+    while i < html.len() {
+        let rest = &lower[i..];
+        let open = rest.starts_with("<blockquote") && rest[11..].starts_with(|c: char| c == '>' || c.is_whitespace());
+        if open || rest.starts_with("</blockquote") {
+            out.push('\n');
+            out.push(if open { QUOTE_OPEN } else { QUOTE_CLOSE });
+            out.push('\n');
+            i += rest.find('>').map_or(rest.len(), |p| p + 1);
+            continue;
+        }
+        let Some(ch) = html[i..].chars().next() else { break };
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Turn the lines between blockquote markers into `> ` lines.
+fn prefix_blockquote_lines(text: &str) -> String {
+    let mut depth = 0usize;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        match line.trim() {
+            t if t == QUOTE_OPEN.to_string() => depth += 1,
+            t if t == QUOTE_CLOSE.to_string() => depth = depth.saturating_sub(1),
+            t if depth > 0 && !t.is_empty() => out.push(format!("> {t}")),
+            _ => out.push(line.to_string()),
+        }
+    }
+    out.join("\n")
 }
 
 fn html_to_plain_text(html: &str) -> String {
@@ -189,136 +232,324 @@ fn html_to_plain_text(html: &str) -> String {
 }
 
 fn strip_inline_addr_brackets(text: &str) -> String {
-    inline_addr_re().replace_all(text, "").into_owned()
+    inline_addr_re().replace_all(text, "$1").into_owned()
 }
 
-/// Format a thread of emails as a single context string suitable for injection
-/// into the chat system prompt. Emails should be passed in chronological order.
-///
-/// `bodies` maps email_id → raw body. Missing entries are rendered with an
-/// empty body marker rather than skipped — the metadata block still has value.
-pub fn format_thread_context(
-    emails: &[Email],
-    bodies: impl Fn(&str) -> Option<String>,
-    max_chars_per_email: usize,
-) -> String {
-    if emails.is_empty() {
-        return String::new();
+// ── Thread history ─────────────────────────────────────────────────────────
+
+/// Words per run when comparing a block with the thread: long enough that
+/// common phrases do not match by accident, short enough to survive a client
+/// re-wrapping lines.
+const SHINGLE_WORDS: usize = 5;
+/// Share of a block's runs the thread must already contain for it to go.
+const KNOWN_PERCENT: usize = 80;
+/// Own paragraphs shorter than this are never treated as repeats: "Thanks!",
+/// "Best," and one-word answers recur legitimately.
+const MIN_REPEAT_CHARS: usize = 40;
+
+/// What the earlier messages of a thread said, as [`match_key`] text and its
+/// 5-word runs. Built from each message's whole normalized body, quotes
+/// included, so a later reply quoting any of it is recognised.
+#[derive(Debug, Default, Clone)]
+pub struct History {
+    text: String,
+    shingles: HashSet<String>,
+}
+
+impl History {
+    /// Add one message (the output of [`normalize_body`]).
+    pub fn add(&mut self, normalized: &str) {
+        let key = match_key(normalized);
+        self.shingles.extend(shingles(&key));
+        self.text.push_str(&key);
+        self.text.push('\n');
     }
-    let subject = emails.first().map(|e| e.subject.as_str()).unwrap_or("(no subject)");
-    let mut out = String::with_capacity(emails.len() * 1500);
-    out.push_str("EMAIL THREAD CONTEXT\n");
-    out.push_str(&format!("Subject: {}\n", subject));
-    out.push_str(&format!("Messages: {}\n", emails.len()));
-    out.push_str("---\n\n");
 
-    for (idx, email) in emails.iter().enumerate() {
-        let raw_body = bodies(&email.id).unwrap_or_default();
-        let cleaned = clean_email_body(&raw_body, max_chars_per_email);
-        let date = format_date(email.timestamp);
-        out.push_str(&format!(
-            "[{n}] (id: {id}) From: {sender} <{addr}>\n    Date: {date}\n    Subject: {subj}\n\n{body}\n\n",
-            n = idx + 1,
-            id = email.id,
-            sender = email.sender,
-            addr = email.sender_email,
-            date = date,
-            subj = email.subject,
-            body = if cleaned.is_empty() { "(empty)" } else { &cleaned },
-        ));
+    /// Does the thread already contain `text`? Short text must appear whole;
+    /// longer text when [`KNOWN_PERCENT`] of its runs do. Empty text is known.
+    fn knows(&self, text: &str) -> bool {
+        let key = match_key(text);
+        let words = key.split_whitespace().count();
+        if words == 0 {
+            return true;
+        }
+        if words < SHINGLE_WORDS {
+            return self.text.contains(&key);
+        }
+        let runs = shingles(&key);
+        let known = runs.iter().filter(|r| self.shingles.contains(*r)).count();
+        known * 100 >= runs.len() * KNOWN_PERCENT
     }
-    out
 }
 
-fn format_date(unix_secs: i64) -> String {
-    Utc.timestamp_opt(unix_secs, 0)
-        .single()
-        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+/// How two copies of a text compare across clients: `>` quote prefixes
+/// removed, lowercased, whitespace (line breaks included) collapsed.
+fn match_key(text: &str) -> String {
+    text.lines()
+        .map(|l| {
+            l.trim_start()
+                .trim_start_matches(|c: char| c == '>' || c.is_whitespace())
+        })
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
-// ── Quoted-reply stripping ─────────────────────────────────────────────────
+fn shingles(key: &str) -> Vec<String> {
+    let words: Vec<&str> = key.split_whitespace().collect();
+    words.windows(SHINGLE_WORDS).map(|w| w.join(" ")).collect()
+}
 
-/// Drop quoted-reply blocks. Matches:
-///   - "On {date}, {Name} <{email}> wrote:" (Gmail-style, multi-locale)
-///   - "From: ... Sent: ... To: ... Subject: ..." (Outlook header block)
-///   - "-----Original Message-----" + locale variants
-///   - Contiguous lines starting with `>` (RFC 3676 quote prefix)
-///
-/// Heuristic, not perfect: we cut at the *first* match and drop everything
-/// after, since once a reply quote starts the rest of the body is almost always
-/// quoted history.
-fn strip_quoted_replies(text: &str) -> String {
+// ── Segmentation ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BlockKind {
+    /// What the sender wrote.
+    Own,
+    /// Quoted or forwarded text: `>` lines, or everything after an
+    /// attribution / Outlook header / "Original/Forwarded message" line.
+    Quoted,
+    /// After a `-- ` delimiter.
+    Signature,
+    /// "Sent from my iPhone" and the like.
+    Stub,
+}
+
+#[derive(Debug)]
+struct Block<'a> {
+    kind: BlockKind,
+    /// The lines that announced the block (attribution, headers, `--`):
+    /// shown with it, never compared with the thread.
+    header: Vec<&'a str>,
+    lines: Vec<&'a str>,
+}
+
+/// A line that is only one of these (dashes around it allowed) starts quoted
+/// or forwarded text. Matched on the whole line: the words inside a sentence
+/// ("te reenvío el mensaje original") are prose, not a marker.
+const ORIGINAL_MARKERS: [&str; 5] = [
+    "original message",
+    "forwarded message",
+    "mensaje original",
+    "mensaje reenviado",
+    "ursprüngliche nachricht",
+];
+
+/// Header lines of a quoted or forwarded message (Outlook, Gmail forwards).
+const HEADER_KEYS: [&str; 20] = [
+    "From:",
+    "Sent:",
+    "To:",
+    "Cc:",
+    "CC:",
+    "Subject:",
+    "Date:",
+    "De:",
+    "Enviado:",
+    "Para:",
+    "Asunto:",
+    "Fecha:",
+    "Von:",
+    "Gesendet:",
+    "An:",
+    "Betreff:",
+    "Datum:",
+    "Envoyé:",
+    "À:",
+    "Objet:",
+];
+
+fn is_header_line(line: &str) -> bool {
+    let t = line.trim();
+    HEADER_KEYS.iter().any(|k| t.starts_with(k))
+}
+
+/// How many header lines run from `start`.
+fn header_run(lines: &[&str], start: usize) -> usize {
+    lines.iter().skip(start).take_while(|l| is_header_line(l)).count()
+}
+
+/// If quoted or forwarded text starts at line `i`, how many lines announce
+/// it: the marker, attribution or header lines.
+fn quote_header_len(lines: &[&str], i: usize) -> Option<usize> {
+    let t = lines[i].trim();
+    if t.is_empty() {
+        return None;
+    }
+    let lower = t.to_lowercase();
+    if ORIGINAL_MARKERS.contains(&lower.trim_matches(|c: char| c == '-' || c.is_whitespace())) {
+        return Some(1 + header_run(lines, i + 1));
+    }
+    // "On <date>, <name> wrote:" and its es/fr/de variants.
+    if let Some(n) = attribution_len(lines, i) {
+        return Some(n);
+    }
+    // Outlook header: a "From:" line followed by "Sent:" / "Subject:" within
+    // the next few lines. Bare "From:" alone is too easy to false-positive
+    // (some bodies talk about "from" addresses), so require the second
+    // header line to confirm.
+    if (t.starts_with("From:") || t.starts_with("De:") || t.starts_with("Von:"))
+        && has_outlook_header_followup(lines, i)
+    {
+        return Some(header_run(lines, i).max(1));
+    }
+    None
+}
+
+/// Split a normalized body into blocks. Pure; markers only decide where a
+/// block starts, never what is removed.
+fn segment(text: &str) -> Vec<Block<'_>> {
     let lines: Vec<&str> = text.lines().collect();
-
-    // Patterns that indicate "quoted history starts here".
-    let original_markers: [&str; 6] = [
-        "-----Original Message-----",
-        "-------- Forwarded Message --------",
-        "-------- Original Message --------",
-        "Mensaje original",
-        "Mensaje reenviado",
-        "Ursprüngliche Nachricht",
-    ];
-
-    let mut cut_at: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if let Some(h) = quote_header_len(&lines, i) {
+            // Once a quote is announced, the rest of the body is that message.
+            let end = (i + h).min(lines.len());
+            blocks.push(Block {
+                kind: BlockKind::Quoted,
+                header: lines[i..end].to_vec(),
+                lines: lines[end..].to_vec(),
+            });
+            break;
+        }
+        if t.starts_with('>') {
+            let start = i;
+            while i < lines.len() {
+                let here = lines[i].trim();
+                let next_quoted = lines.get(i + 1).is_some_and(|n| n.trim().starts_with('>'));
+                if here.starts_with('>') || (here.is_empty() && next_quoted) {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            blocks.push(Block {
+                kind: BlockKind::Quoted,
+                header: Vec::new(),
+                lines: lines[start..i].to_vec(),
+            });
             continue;
         }
-        // Hard markers — case-insensitive substring match.
-        let lower = trimmed.to_lowercase();
-        if original_markers.iter().any(|m| lower.contains(&m.to_lowercase())) {
-            cut_at = Some(i);
-            break;
+        if t == "--" {
+            let start = i;
+            i += 1;
+            while i < lines.len() && !lines[i].trim().starts_with('>') && quote_header_len(&lines, i).is_none() {
+                i += 1;
+            }
+            blocks.push(Block {
+                kind: BlockKind::Signature,
+                header: vec![lines[start]],
+                lines: lines[start + 1..i].to_vec(),
+            });
+            continue;
         }
-        // "On <date>, <name> wrote:" / "On <date> at <time>, <name> wrote:"
-        // Localised variants: "El <date>, <name> escribió:", "Le <date>, ... a écrit:",
-        // "Am <date> schrieb <name>:".
-        if line_is_reply_attribution(trimmed) {
-            cut_at = Some(i);
-            break;
-        }
-        // Outlook header: a "From:" line followed by "Sent:" / "Subject:" within
-        // the next few lines. Bare "From:" alone is too easy to false-positive
-        // (some bodies talk about "from" addresses), so require the second
-        // header line to confirm.
-        if (trimmed.starts_with("From:") || trimmed.starts_with("De:") || trimmed.starts_with("Von:"))
-            && has_outlook_header_followup(&lines, i)
-        {
-            cut_at = Some(i);
-            break;
-        }
-    }
-
-    let kept: Vec<&str> = match cut_at {
-        Some(i) => lines[..i].to_vec(),
-        None => lines,
-    };
-
-    // Drop any trailing run of `>`-prefixed lines (quote prefix style).
-    let mut end = kept.len();
-    while end > 0 {
-        let l = kept[end - 1].trim_start();
-        if l.starts_with('>') || l.is_empty() {
-            end -= 1;
+        let kind = if t.chars().count() <= 60 && is_mobile_stub(t) {
+            BlockKind::Stub
         } else {
-            break;
+            BlockKind::Own
+        };
+        match blocks.last_mut() {
+            Some(b) if b.kind == kind && kind == BlockKind::Own => b.lines.push(lines[i]),
+            _ => blocks.push(Block {
+                kind,
+                header: Vec::new(),
+                lines: vec![lines[i]],
+            }),
+        }
+        i += 1;
+    }
+    blocks
+}
+
+/// A normalized body without what `history` already contains. Pure.
+pub fn new_text(normalized: &str, history: &History) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut seen_here: HashSet<String> = HashSet::new();
+    for block in segment(normalized) {
+        match block.kind {
+            BlockKind::Stub => {}
+            BlockKind::Own => {
+                let text = block
+                    .lines
+                    .iter()
+                    .map(|l| if l.trim().is_empty() { "" } else { l })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let kept: Vec<&str> = text
+                    .split("\n\n")
+                    .filter(|para| {
+                        let key = match_key(para);
+                        let repeat = key.chars().count() >= MIN_REPEAT_CHARS
+                            && (history.text.contains(&key) || !seen_here.insert(key.clone()));
+                        !repeat
+                    })
+                    .collect();
+                parts.push(kept.join("\n\n"));
+            }
+            BlockKind::Quoted | BlockKind::Signature => {
+                if !history.knows(&block.lines.join("\n")) {
+                    parts.extend(block.header.iter().chain(block.lines.iter()).map(|l| l.to_string()));
+                }
+            }
         }
     }
-    kept[..end].join("\n")
+    collapse_whitespace(&parts.join("\n"))
+}
+
+/// Only what the sender wrote: no quoted text, signature or stub, known to
+/// the thread or not. For samples of how someone writes.
+pub fn own_text(body: &str) -> String {
+    let normalized = normalize_body(body);
+    let own: Vec<&str> = segment(&normalized)
+        .into_iter()
+        .filter(|b| b.kind == BlockKind::Own)
+        .flat_map(|b| b.lines)
+        .collect();
+    collapse_whitespace(&own.join("\n"))
+}
+
+/// If an attribution starts at line `i`, how many lines it spans: one, or up
+/// to three when a client wrapped it so its "wrote:" lands on a later line
+/// ("On <date>, <name> <addr>" / "[addr]> wrote:").
+fn attribution_len(lines: &[&str], i: usize) -> Option<usize> {
+    let mut joined = lines[i].trim().to_string();
+    if line_is_reply_attribution(&joined) {
+        return Some(1);
+    }
+    for (n, next) in lines.iter().skip(i + 1).take(2).enumerate() {
+        let next = next.trim();
+        if next.is_empty() {
+            return None;
+        }
+        joined.push(' ');
+        joined.push_str(next);
+        if line_is_reply_attribution(&joined) {
+            return Some(n + 2);
+        }
+    }
+    None
 }
 
 fn line_is_reply_attribution(line: &str) -> bool {
-    // Lowercased once so we can do plain substring tests.
-    let l = line.to_lowercase();
+    // Lowercased once so we can do plain substring tests. French puts a
+    // (non-breaking) space before the colon: "a écrit :".
+    let lower = line.to_lowercase();
+    let l = match lower.trim_end().strip_suffix(':') {
+        Some(head) => format!("{}:", head.trim_end()),
+        None => lower,
+    };
     let starts_with_attr = l.starts_with("on ") || l.starts_with("el ") || l.starts_with("le ") || l.starts_with("am ");
     if !starts_with_attr {
         return false;
     }
-    // Ends with "wrote:" / "escribió:" / "a écrit:" / "schrieb:"  …possibly
-    // with a stray hard space or unicode quote char.
+    // German names the sender after the verb: "Am <date> schrieb <name>:".
+    if l.starts_with("am ") && l.contains(" schrieb ") && l.ends_with(':') {
+        return true;
+    }
+    // Ends with "wrote:" / "escribió:" / "a écrit:" / "schrieb:".
     l.ends_with("wrote:")
         || l.ends_with("escribió:")
         || l.ends_with("escribio:")
@@ -353,39 +584,6 @@ fn has_outlook_header_followup(lines: &[&str], from_idx: usize) -> bool {
         }
     }
     false
-}
-
-// ── Signature stripping ────────────────────────────────────────────────────
-
-/// Drop the signature. Recognises:
-///   - "\n-- \n" (RFC 3676 sig delimiter — note the trailing space on `--`).
-///   - Trailing short blocks containing "Sent from my iPhone" / similar.
-fn strip_signature(text: &str) -> String {
-    // RFC 3676 — split at the FIRST occurrence so multi-stamped sigs don't slip through.
-    if let Some(pos) = text.find("\n-- \n") {
-        return text[..pos].to_string();
-    }
-    if let Some(pos) = text.find("\n--\n") {
-        // Tolerate the variant without trailing space (common in plain-text
-        // emails sent through clients that strip trailing whitespace).
-        return text[..pos].to_string();
-    }
-
-    // Tail-stub heuristic: the last non-empty line matches a short canned phrase.
-    let mut lines: Vec<&str> = text.lines().collect();
-    while let Some(last) = lines.last() {
-        let l = last.trim();
-        if l.is_empty() {
-            lines.pop();
-            continue;
-        }
-        if is_mobile_stub(l) {
-            lines.pop();
-            continue;
-        }
-        break;
-    }
-    lines.join("\n")
 }
 
 fn is_mobile_stub(line: &str) -> bool {
@@ -440,39 +638,254 @@ fn truncate_chars(text: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    /// `body` read as the next message of a thread whose earlier messages are `earlier`.
+    fn reply(body: &str, earlier: &[&str]) -> String {
+        let mut history = History::default();
+        for e in earlier {
+            history.add(&normalize_body(e));
+        }
+        new_text(&normalize_body(body), &history)
+    }
+
+    // ── what the thread already contains is dropped ──
+
     #[test]
-    fn strips_gmail_quoted_reply() {
+    fn a_gmail_quote_of_an_earlier_message_is_dropped() {
         let body = "Thanks, that works for me.\n\nOn Wed, Apr 15, 2026 at 10:00 AM, Alice <alice@x.com> wrote:\n> Are you free Wednesday?\n> Let me know.";
-        let cleaned = clean_email_body(body, 4000);
-        assert_eq!(cleaned, "Thanks, that works for me.");
+        assert_eq!(
+            reply(body, &["Are you free Wednesday?\nLet me know."]),
+            "Thanks, that works for me."
+        );
     }
 
     #[test]
-    fn strips_outlook_header_block() {
+    fn an_outlook_header_block_quoting_an_earlier_message_is_dropped() {
         let body = "Sounds good.\n\nFrom: Alice <alice@x.com>\nSent: Wednesday, April 15, 2026 10:00 AM\nTo: Bob\nSubject: Meeting\n\nAre you free Wednesday?";
-        let cleaned = clean_email_body(body, 4000);
-        assert_eq!(cleaned, "Sounds good.");
+        assert_eq!(reply(body, &["Are you free Wednesday?"]), "Sounds good.");
     }
 
     #[test]
-    fn strips_original_message_marker() {
+    fn an_original_message_marker_quoting_an_earlier_message_is_dropped() {
         let body = "Replying inline.\n\n-----Original Message-----\nFrom: Alice\nThe original body here.";
-        let cleaned = clean_email_body(body, 4000);
-        assert_eq!(cleaned, "Replying inline.");
+        assert_eq!(reply(body, &["The original body here."]), "Replying inline.");
     }
 
     #[test]
-    fn strips_spanish_attribution() {
+    fn a_spanish_attribution_quoting_an_earlier_message_is_dropped() {
         let body = "Vale, perfecto.\n\nEl mié, 15 abr 2026 a las 10:00, Alice <alice@x.com> escribió:\n> ¿Tienes hueco el miércoles?";
-        let cleaned = clean_email_body(body, 4000);
-        assert_eq!(cleaned, "Vale, perfecto.");
+        assert_eq!(reply(body, &["¿Tienes hueco el miércoles?"]), "Vale, perfecto.");
     }
 
     #[test]
-    fn strips_rfc_signature() {
+    fn an_html_blockquote_of_earlier_messages_is_dropped() {
+        // Apple Mail / Thunderbird quote the previous message in a
+        // <blockquote type="cite"> and put nothing recognisable around it.
+        let html = "<p>The budget is 4,000 EUR.</p><blockquote type=\"cite\"><p>Could you send me a budget?</p>\
+                    <blockquote><p>older</p></blockquote><p>still quoted</p></blockquote>";
+        let earlier = "<p>Could you send me a budget?</p><blockquote><p>older</p></blockquote><p>still quoted</p>";
+        assert_eq!(reply(html, &[earlier]), "The budget is 4,000 EUR.");
+    }
+
+    #[test]
+    fn the_whole_email_view_keeps_its_blockquotes() {
+        let html = "<p>Answer.</p><blockquote><p>Earlier message.</p></blockquote>";
+        assert!(body_to_plain_text(html).contains("Earlier message."));
+    }
+
+    #[test]
+    fn a_gmail_html_quote_of_an_earlier_message_is_dropped() {
+        let html = "<div dir=\"ltr\">The budget is 4,000 EUR.</div><br><div class=\"gmail_quote\">\
+                    <div class=\"gmail_attr\">On Mon, 1 Jun 2017 at 10:00, Ana &lt;ana@example.com&gt; wrote:<br></div>\
+                    <blockquote class=\"gmail_quote\">Could you send me a budget?</blockquote></div>";
+        assert_eq!(
+            reply(html, &["Could you send me a budget?"]),
+            "The budget is 4,000 EUR."
+        );
+    }
+
+    #[test]
+    fn an_attribution_wrapped_onto_two_lines_is_recognised() {
+        // Plain-text Gmail wraps long attributions: the "wrote:" lands on the
+        // next line, and a one-line check never saw it.
+        let text = "The budget is 4,000 EUR.\n\nEl lun, 1 jun 2017 a las 10:00, Ana Pérez <\nana@example.com> escribió:\n\n> Could you send me a budget?";
+        assert_eq!(
+            reply(text, &["Could you send me a budget?"]),
+            "The budget is 4,000 EUR."
+        );
+    }
+
+    #[test]
+    fn an_attribution_whose_wrote_lands_on_the_next_line_is_recognised() {
+        let body = "Sounds good.\n\nOn Wed, 26 Feb 2025 at 10:48, Sam Lee <sam@example.com>\nwrote:\n\n> Are you free?";
+        assert_eq!(reply(body, &["Are you free?"]), "Sounds good.");
+    }
+
+    #[test]
+    fn a_reply_wrapped_in_a_pre_block_is_read_as_html() {
+        // Some clients send plain text inside <pre style="white-space:pre-wrap">
+        // with its `<`/`>` escaped: the `&gt; ` quote prefix and the escaped
+        // address stayed as entities, so no quote marker was ever seen.
+        let body = "<pre style=\"white-space:pre-wrap\">Hi,\r\n\r\nJust following up on our earlier email.\r\n\r\n\
+                    Best,\r\nSam\r\n\r\nOn Wed, February 26, 2025 10:48 AM, Sam Lee &lt;sam@example.com&gt;\r\n\
+                    [sam@example.com]&gt; wrote:\r\n\r\n&gt; Dear team,\r\n&gt;\r\n&gt; We looked at your website.\r\n&gt;\r\n</pre>";
+        assert_eq!(
+            reply(body, &["Dear team,\n\nWe looked at your website."]),
+            "Hi,\n\nJust following up on our earlier email.\n\nBest,\nSam"
+        );
+    }
+
+    #[test]
+    fn a_marker_line_framed_by_dashes_is_recognised() {
+        let body = "Replying inline.\n\n-------- Mensaje original --------\nDe: Ana\nOld text.";
+        assert_eq!(reply(body, &["Old text."]), "Replying inline.");
+    }
+
+    #[test]
+    fn a_signature_the_thread_already_showed_is_dropped() {
         let body = "Sounds good — let's do Wednesday at 10.\n\n-- \nAlice Smith\nCEO @ Acme\nalice@x.com";
+        let earlier = "Are you free?\n\n-- \nAlice Smith\nCEO @ Acme\nalice@x.com";
+        assert_eq!(reply(body, &[earlier]), "Sounds good — let's do Wednesday at 10.");
+    }
+
+    #[test]
+    fn interleaved_answers_stay_and_the_known_quote_lines_go() {
+        let body = "> Could you send me a budget for the portal?\nThe budget is 4,000 EUR.\n> When can you start?\nNext Monday.";
+        let earlier = "Could you send me a budget for the portal?\n\nWhen can you start?";
+        assert_eq!(reply(body, &[earlier]), "The budget is 4,000 EUR.\nNext Monday.");
+    }
+
+    #[test]
+    fn a_paragraph_repeated_from_an_earlier_message_is_dropped() {
+        let ask = "Could you send me a budget for the customer portal mock-up before Friday?";
+        assert_eq!(reply(&format!("Sure, 4,000 EUR.\n\n{ask}"), &[ask]), "Sure, 4,000 EUR.");
+    }
+
+    #[test]
+    fn own_text_is_what_the_sender_wrote_and_nothing_quoted() {
+        // Style samples: how the user writes, never the words they quote.
+        let body = "Happy to help, Thursday works.\n\nOn Mon, 1 Jun 2017, Ana wrote:\n> Can we meet?\n\n-- \nUlises\n\nSent from my iPhone";
+        assert_eq!(own_text(body), "Happy to help, Thursday works.");
+    }
+
+    #[test]
+    fn a_thunderbird_quote_of_an_earlier_message_is_dropped() {
+        let html = "<p>Sounds good.</p><div class=\"moz-cite-prefix\">On 01/06/2017 10:00, Ana wrote:<br></div>\
+                    <blockquote type=\"cite\"><p>Can we meet Thursday afternoon?</p></blockquote>";
+        assert_eq!(reply(html, &["Can we meet Thursday afternoon?"]), "Sounds good.");
+    }
+
+    #[test]
+    fn an_outlook_html_reply_quoting_an_earlier_message_is_dropped() {
+        let html = "<div>Perfecto.</div><div id=\"divRplyFwdMsg\"><b>De:</b> Ana &lt;ana@example.com&gt;<br>\
+                    <b>Enviado:</b> lunes, 1 de junio de 2017 10:00<br><b>Para:</b> Ulises<br><b>Asunto:</b> Reunión</div>\
+                    <div>¿Nos vemos el jueves por la tarde?</div>";
+        assert_eq!(reply(html, &["¿Nos vemos el jueves por la tarde?"]), "Perfecto.");
+    }
+
+    #[test]
+    fn a_french_attribution_with_a_space_before_the_colon_is_recognised() {
+        let body =
+            "D'accord.\n\nLe lun. 1 juin 2017 à 10:00, Ana <ana@example.com> a écrit\u{a0}:\n> On se voit jeudi ?";
+        assert_eq!(reply(body, &["On se voit jeudi ?"]), "D'accord.");
+    }
+
+    #[test]
+    fn a_german_attribution_with_the_name_after_schrieb_is_recognised() {
+        let body = "Passt.\n\nAm 01.06.2017 um 10:00 schrieb Ana <ana@example.com>:\n> Treffen wir uns am Donnerstag?";
+        assert_eq!(reply(body, &["Treffen wir uns am Donnerstag?"]), "Passt.");
+    }
+
+    #[test]
+    fn an_outlook_forward_with_a_note_keeps_the_forwarded_message() {
+        let body = "Te paso esto.\n\nDe: Ana <ana@example.com>\nEnviado: lunes, 1 de junio de 2017 10:00\n\
+                    Para: Ulises\nAsunto: RV: Presupuesto\n\nEl presupuesto es de 4.000 EUR.";
         let cleaned = clean_email_body(body, 4000);
-        assert_eq!(cleaned, "Sounds good — let's do Wednesday at 10.");
+        assert!(
+            cleaned.starts_with("Te paso esto.") && cleaned.contains("4.000 EUR"),
+            "{cleaned:?}"
+        );
+    }
+
+    // ── what the thread does not contain is kept ──
+
+    #[test]
+    fn a_quote_of_a_message_not_in_the_thread_is_kept() {
+        // A one-message thread: the quoted message was never synced (another
+        // account, older than the sync window), so the quote is the only copy.
+        let body = "Thanks, that works for me.\n\nOn Wed, Apr 15, 2026 at 10:00 AM, Alice <alice@x.com> wrote:\n> Are you free Wednesday?";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.starts_with("Thanks, that works for me."), "{cleaned:?}");
+        assert!(cleaned.contains("Are you free Wednesday?"), "{cleaned:?}");
+    }
+
+    #[test]
+    fn a_quote_only_partly_in_the_thread_is_kept() {
+        let body = "OK.\n\nOn Mon, 1 Jun 2017, Ana wrote:\n> The budget is 4,000 EUR for the portal mock-up.\n\
+                    > Also, the hosting will cost another 300 EUR per month from July onwards.";
+        let cleaned = reply(body, &["The budget is 4,000 EUR for the portal mock-up."]);
+        assert!(cleaned.contains("the hosting will cost another 300 EUR"), "{cleaned:?}");
+    }
+
+    #[test]
+    fn a_signature_seen_for_the_first_time_is_kept() {
+        let body = "Sounds good.\n\n-- \nAlice Smith\nCEO @ Acme\n+34 600 000 000";
+        assert!(clean_email_body(body, 4000).contains("+34 600 000 000"));
+    }
+
+    #[test]
+    fn a_contact_form_footer_is_kept() {
+        let body = "De: Sam sam@example.com\nAsunto: Consulta\n\nCuerpo del mensaje:\nHola\n\n--\n\
+                    Este mensaje se ha enviado desde un formulario de contacto en Example (https://example.com)";
+        assert!(clean_email_body(body, 4000).contains("formulario de contacto en Example"));
+    }
+
+    #[test]
+    fn a_forward_with_a_note_keeps_the_forwarded_message() {
+        let body = "FYI, see below.\n\n---------- Forwarded message ---------\nFrom: Ana <ana@example.com>\n\
+                    Subject: Budget\n\nThe budget is 4,000 EUR.";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.starts_with("FYI, see below."), "{cleaned:?}");
+        assert!(
+            cleaned.contains("ana@example.com") && cleaned.contains("The budget is 4,000 EUR."),
+            "{cleaned:?}"
+        );
+    }
+
+    #[test]
+    fn an_apple_mail_forward_in_a_blockquote_is_kept() {
+        let html = "<div>FYI</div><div>Begin forwarded message:</div><blockquote type=\"cite\"><div>The budget is 4,000 EUR.</div></blockquote>";
+        assert!(clean_email_body(html, 4000).contains("The budget is 4,000 EUR."));
+    }
+
+    #[test]
+    fn a_form_notification_opening_with_from_and_subject_lines_is_kept() {
+        let body = "From: Sam Lee <sam.lee@example.com>\nSubject: Question about availability\n\n\
+                    Message Body:\nAre you available from next month?\n\n--\nSent from a contact form";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.contains("sam.lee@example.com"), "{cleaned:?}");
+        assert!(cleaned.contains("Are you available from next month?"), "{cleaned:?}");
+    }
+
+    #[test]
+    fn a_forward_with_no_note_keeps_the_forwarded_message() {
+        let body = "---------- Forwarded message ---------\nFrom: Ana <ana@example.com>\nSubject: Budget\n\nThe budget is 4,000 EUR.";
+        assert!(clean_email_body(body, 4000).contains("The budget is 4,000 EUR."));
+    }
+
+    #[test]
+    fn a_plain_text_address_in_angle_brackets_is_kept() {
+        let body = "Write to Irene Soto <irene@example.com> about the order.";
+        assert_eq!(
+            clean_email_body(body, 4000),
+            "Write to Irene Soto irene@example.com about the order."
+        );
+    }
+
+    #[test]
+    fn a_marker_phrase_inside_a_sentence_is_prose() {
+        let body = "Te reenvío el mensaje original que pediste.\n\nEl presupuesto es de 4.000 EUR.";
+        let cleaned = reply(body, &["El presupuesto es de 4.000 EUR. Otra cosa distinta aquí."]);
+        assert!(cleaned.starts_with("Te reenvío el mensaje original"), "{cleaned:?}");
     }
 
     #[test]
@@ -556,28 +969,6 @@ mod tests {
     }
 
     #[test]
-    fn chars_per_email_is_generous_for_single_email_threads() {
-        // A "chat about this email" with one message should show it nearly whole,
-        // not clip it at the old 2000-char floor. A single email gets the whole
-        // shared budget (12000) — below the 16000 ceiling, so the budget binds.
-        assert_eq!(chars_per_email(1), THREAD_CONTEXT_BUDGET);
-        assert_eq!(chars_per_email(2), 6000);
-    }
-
-    #[test]
-    fn chars_per_email_shrinks_then_floors_for_long_threads() {
-        // Many-message threads divide the shared budget but never drop below the
-        // floor, so each email keeps a usable amount of context.
-        assert_eq!(chars_per_email(6), DEFAULT_MAX_CHARS_PER_EMAIL);
-        assert_eq!(chars_per_email(50), DEFAULT_MAX_CHARS_PER_EMAIL);
-    }
-
-    #[test]
-    fn chars_per_email_handles_zero_without_panicking() {
-        assert_eq!(chars_per_email(0), THREAD_CONTEXT_BUDGET);
-    }
-
-    #[test]
     fn summary_chars_per_email_caps_a_single_email_well_below_full_body() {
         // Regression: the "resumen del día" preseed used MAX_CHARS_PER_EMAIL
         // (8000) per row, so one long newsletter ate the whole context and the
@@ -629,84 +1020,5 @@ mod tests {
         let cleaned = clean_email_body(body, 4000);
         assert!(cleaned.contains('\u{200D}'), "ZWJ kept inside emoji: {cleaned:?}");
         assert!(cleaned.contains("👨\u{200D}💻"));
-    }
-
-    #[test]
-    fn format_thread_context_includes_metadata() {
-        use crate::models::Email;
-        let e1 = Email {
-            id: "e1".into(),
-            account_id: "a".into(),
-            thread_id: "t".into(),
-            message_id: Some("m1".into()),
-            references: None,
-            subject: "Project kickoff".into(),
-            sender: "Alice".into(),
-            sender_email: "alice@x.com".into(),
-            recipients: vec![],
-            cc: vec![],
-            body: String::new(),
-            snippet: String::new(),
-            timestamp: 1_700_000_000,
-            is_read: true,
-            triage_status: None,
-            category: "primary".into(),
-            mailbox: "inbox".into(),
-            is_sent: false,
-            headers: None,
-        };
-        let mut e2 = e1.clone();
-        e2.id = "e2".into();
-        e2.sender = "Bob".into();
-        e2.sender_email = "bob@y.com".into();
-        e2.timestamp = 1_700_000_900;
-
-        let bodies = |id: &str| match id {
-            "e1" => Some("Hi all — proposing 10am Wed for kickoff.".to_string()),
-            "e2" => Some("Works for me.".to_string()),
-            _ => None,
-        };
-        let out = format_thread_context(&[e1, e2], bodies, 1000);
-        assert!(out.contains("Subject: Project kickoff"));
-        assert!(out.contains("Messages: 2"));
-        assert!(out.contains("[1] (id: e1) From: Alice <alice@x.com>"));
-        assert!(out.contains("[2] (id: e2) From: Bob <bob@y.com>"));
-        assert!(out.contains("proposing 10am Wed"));
-        assert!(out.contains("Works for me."));
-    }
-
-    #[test]
-    fn format_thread_context_exposes_email_ids_for_reply_targeting() {
-        use crate::models::Email;
-        // Thread-bound chat lets the model draft a reply via
-        // generate_email_draft(email_id=...). The model can only do that if the
-        // real email id is visible in the rendered context — otherwise it
-        // invents one and the draft chip is dropped as hallucinated.
-        let e = Email {
-            id: "19e6e27f48f95297".into(),
-            account_id: "a".into(),
-            thread_id: "t".into(),
-            message_id: Some("m1".into()),
-            references: None,
-            subject: "Pedido Apple".into(),
-            sender: "Dani".into(),
-            sender_email: "dani@x.com".into(),
-            recipients: vec![],
-            cc: vec![],
-            body: String::new(),
-            snippet: String::new(),
-            timestamp: 1_700_000_000,
-            is_read: true,
-            triage_status: None,
-            category: "primary".into(),
-            mailbox: "inbox".into(),
-            is_sent: false,
-            headers: None,
-        };
-        let out = format_thread_context(&[e], |_| Some("Body".to_string()), 1000);
-        assert!(
-            out.contains("(id: 19e6e27f48f95297)"),
-            "real email id must appear in the context: {out}"
-        );
     }
 }

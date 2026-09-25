@@ -1,0 +1,86 @@
+# Research mode: the chat's per-message "Research" toggle.
+#
+# A normal turn answers from ~8 retrieved sources or one page of 25 search
+# rows. Research mode pages the planner's filter (or pulls a wide retrieval
+# set when the question names no filter), reads every candidate in batches
+# sized to the context window, and writes one report from the findings — see
+# `services/chat/research.rs`.
+#
+# WHAT THESE ASSERT
+# Coverage first (`expected_min_research_emails`): a fluent report built from
+# three emails is exactly the failure this mode exists to prevent, and it
+# would pass any answer-text check. Then that the report is about the subject
+# and cites with real `email://` links — the notes cite as `(email://ID)` and a
+# small model copies that shape, which the chat would not render as a chip.
+#
+# Slow by design (minutes per case on a local model), so `full`, never `smoke`.
+
+# The demo mailbox holds 13 weekly stats digests over the last 3 months; a
+# normal turn reads a page of them, research must read them all.
+- id: research_reads_every_weekly_digest_en
+  question: "Research in depth how EmailOps downloads and usage have evolved over the last 3 months, week by week"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_research_mode: analysis
+  expected_min_research_emails: 13
+  # Recall: every digest is one conversation, and every one answers.
+  expected_min_research_matches: 13
+  expected_answer_contains_any: ["download"]
+  expected_answer_contains: ["](email://"]
+  metrics: []
+
+# No date window or sender: the gather falls to wide retrieval, so this pins
+# the retrieval branch of `plan_gather`.
+- id: research_topic_question_without_a_filter_en
+  question: "Research what users have reported about problems or bugs in EmailOps and summarise the recurring issues"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_research_mode: analysis
+  expected_min_research_emails: 10
+  expected_answer_contains: ["](email://"]
+  metrics: []
+
+# A list question: the report closes with the complete numbered list of
+# matches, built in code (a model-written list stops at its output budget),
+# and states the exact count. The demo mailbox's 2025 prospect requests are the
+# persona's canonical "list them all" query.
+- id: research_lists_every_prospect_request_with_an_exact_count_en
+  question: "Give me a list of all the prospect requests I received in 2025, with who asked and what for"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_research_mode: list
+  expected_min_research_emails: 3
+  # Recall: all six 2025 prospect requests in the demo mailbox.
+  expected_research_matches:
+    - "real-time logistics dashboard"
+    - "Rust contractor"
+    - "marketing site rebuild"
+    - "on-device AI feature"
+    - "migrate analytics to self-hosted"
+    - "availability for a contract"
+  expected_answer_contains: ["### Full list (", "](email://"]
+  metrics: []
+
+# Direction: "quotes I sent to clients" must count the two quotes the user
+# sent, not the quote the user asked a translation agency for (the user writes
+# in that thread too — only who sent the quote to whom tells it apart) nor one
+# a designer sent unasked.
+- id: research_counts_only_the_quotes_the_user_sent_en
+  question: "Which quotes have I sent to clients?"
+  account: "ulises@emailopslabs.dev"
+  category: research
+  tier: full
+  research: true
+  expected_research_mode: list
+  expected_min_research_emails: 3
+  expected_research_matches: ["PrivacyHub analytics migration", "Bahía Studio marketing site"]
+  forbidden_research_matches: ["German translation", "landing page illustrations"]
+  expected_answer_contains_any: ["8,400", "8.400", "8400"]
+  expected_answer_contains: ["](email://"]
+  metrics: []

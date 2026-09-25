@@ -8,6 +8,7 @@
     "ui",
     "oracle",
     "eval",
+    "doc",
     "static",
     "perf"
   ],
@@ -165,7 +166,8 @@
         "ai::ollama",
         "db::chat",
         "commands::chat",
-        "ai::provider"
+        "ai::provider",
+        "services::forms"
       ],
       "vitest": [
         "src/components/Chat",
@@ -173,11 +175,14 @@
         "src/lib/chatPanelLayout",
         "src/lib/chatToolEffects",
         "src/stores/chatStore",
-        "src/lib/reasoning"
+        "src/lib/reasoning",
+        "src/stores/formFillStore",
+        "src/stores/viewContextStore"
       ],
       "e2e": [
         "Chat",
-        "Vistas/Memory"
+        "Vistas/Memory",
+        "Chat/Formularios"
       ],
       "evals": [
         "demo_",

@@ -42,7 +42,8 @@ fn emit_embedding_error(app: &AppHandle, message: &str) {
 }
 
 /// `account_id: None` searches across every enabled account (unified
-/// "All accounts" view).
+/// "All accounts" view). Search spans every category: the inbox's category
+/// tab narrows the list, not a search.
 #[tauri::command]
 pub async fn search_emails(
     app: AppHandle,
@@ -50,7 +51,6 @@ pub async fn search_emails(
     account_id: Option<String>,
     query: String,
     use_ai: Option<bool>,
-    categories: Option<Vec<String>>,
 ) -> Result<SearchResult, AppError> {
     let cmd_start = std::time::Instant::now();
     // Master AI switch overrides any caller request: when AI is disabled the
@@ -59,15 +59,11 @@ pub async fn search_emails(
     // parameter through the service signature.
     let ai_master_enabled = state.db.is_ai_enabled()?;
     let use_ai_flag = use_ai.unwrap_or(true) && ai_master_enabled;
-    let category_count = categories.as_ref().map_or(0, Vec::len);
     emit_log(
         &app,
         "info",
         "search",
-        &format!(
-            "Searching: \"{}\" (AI: {}, categories: {})",
-            query, use_ai_flag, category_count
-        ),
+        &format!("Searching: \"{}\" (AI: {})", query, use_ai_flag),
     );
 
     let result = services::search::search_emails(
@@ -75,7 +71,7 @@ pub async fn search_emails(
         account_id.as_deref(),
         &query,
         use_ai_flag,
-        categories.as_deref(),
+        None,
         Some(app.clone()),
     )
     .await?;

@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
-    CreateLensInput, Lens, LensRowsPage, LensRunHandle, LensRunHistoryEntry, LensRunKind, LensSchema, LensScope,
-    LensStatus, LensSummary, PreviewRow, SortSpec, UpdateLensInput,
+    ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRowsPage, LensRunFailure, LensRunHandle,
+    LensRunHistoryEntry, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, SortSpec,
+    UpdateLensInput,
 };
 use crate::models::AppLogEvent;
 use crate::services::ai::AiService;
@@ -25,14 +26,24 @@ fn cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     CANCEL_FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_cancel_flag(lens_id: &str) -> Arc<AtomicBool> {
-    let flag = Arc::new(AtomicBool::new(false));
+/// Claim a lens for a run, or `None` when one is already queued or running.
+///
+/// The cancel-flag map doubles as the registry of in-flight runs: an entry
+/// exists from the moment `run_lens` submits until the runner clears it. A
+/// second click while that entry is there must be a no-op — the queue does not
+/// deduplicate (`services::task_queue::submit_with_priority`), so without this
+/// each click piled another identical backfill onto the AI queue.
+fn try_register_cancel_flag(lens_id: &str) -> Option<Arc<AtomicBool>> {
     // A poisoned mutex here means another thread panicked while holding the
     // lock — there is no meaningful recovery for the cancel-flags map.
     #[allow(clippy::expect_used)]
     let mut guard = cancel_flags().lock().expect("cancel-flags mutex poisoned");
+    if guard.contains_key(lens_id) {
+        return None;
+    }
+    let flag = Arc::new(AtomicBool::new(false));
     guard.insert(lens_id.to_string(), flag.clone());
-    flag
+    Some(flag)
 }
 
 fn clear_cancel_flag(lens_id: &str) {
@@ -131,12 +142,38 @@ pub async fn get_lens_rows(
     state: State<'_, AppState>,
     lens_id: String,
     sort: Option<SortSpec>,
+    filters: Option<Vec<ColumnFilter>>,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<LensRowsPage> {
-    state
-        .db
-        .get_lens_rows(&lens_id, sort.as_ref(), limit.unwrap_or(200), offset.unwrap_or(0))
+    state.db.get_lens_rows_filtered(
+        &lens_id,
+        sort.as_ref(),
+        filters.as_deref().unwrap_or_default(),
+        limit.unwrap_or(200),
+        offset.unwrap_or(0),
+    )
+}
+
+/// Rows that failed while one run ran, for the run history's error detail.
+#[tauri::command]
+pub async fn list_lens_run_failures(
+    state: State<'_, AppState>,
+    lens_id: String,
+    run_id: String,
+) -> Result<Vec<LensRunFailure>> {
+    state.db.list_lens_run_failures(&lens_id, &run_id)
+}
+
+/// Distinct values of one column with their row counts, for the Excel-style
+/// column filter.
+#[tauri::command]
+pub async fn get_lens_column_values(
+    state: State<'_, AppState>,
+    lens_id: String,
+    key: String,
+) -> Result<Vec<ColumnValueCount>> {
+    state.db.get_lens_column_values(&lens_id, &key)
 }
 
 /// The rows the user has excluded, so the "include" command below has a screen
@@ -197,14 +234,30 @@ pub async fn run_lens(
     let lens_id_for_cleanup = lens_id.clone();
     let app_for_task = app.clone();
     let label = format!("lens:{kind}:{lens_id}", kind = kind.as_str());
-    let cancel = register_cancel_flag(&lens_id);
+    // A run for this lens may already be queued or running. Claim it, or tell
+    // the user it is already on its way instead of queueing a duplicate.
+    let Some(cancel) = try_register_cancel_flag(&lens_id) else {
+        emit_log(
+            &app,
+            "info",
+            &format!("Lens run already queued or running ({label}) — ignoring the repeated request"),
+        );
+        return Ok(LensRunHandle {
+            run_id: String::new(),
+            lens_id,
+        });
+    };
     let cancel_for_task = cancel.clone();
 
     // Submit to the background AI queue so the user-facing thread returns
     // immediately. Progress and completion are reported via `app-log`.
+    // The user is watching a button for this, so it goes ahead of the
+    // background classify/junk/embed backlog — on a concurrency-1 queue that
+    // backlog is hours, and the run looked like it had done nothing at all.
+    emit_log(&app, "info", &format!("Lens run queued ({label})"));
     state
         .ai_background
-        .submit_named(&label, async move {
+        .submit_priority(&label, async move {
             let result = match kind {
                 LensRunKind::Backfill | LensRunKind::Incremental => {
                     runner::backfill_lens(
@@ -306,9 +359,13 @@ pub async fn reextract_lens_row(
     let lens_id_owned = lens_id.clone();
     let email_id_owned = email_id.clone();
 
+    // The user is watching a button for this, so it goes ahead of the
+    // background classify/junk/embed backlog — on a concurrency-1 queue that
+    // backlog is hours, and the run looked like it had done nothing at all.
+    emit_log(&app, "info", &format!("Lens run queued ({label})"));
     state
         .ai_background
-        .submit_named(&label, async move {
+        .submit_priority(&label, async move {
             if let Err(e) = runner::reextract_row(db, provider, lens_id_owned, email_id_owned, Some(app.clone())).await
             {
                 let _ = app.emit(
@@ -380,4 +437,53 @@ pub async fn preview_lens_extraction(
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bug this pins: "Run backfill" left the button clickable, and every
+    /// click pushed another identical backfill onto a concurrency-1 queue that
+    /// already had ~50 tasks on it. The cancel-flag map is the registry of
+    /// runs that are queued-or-running, so claiming it is what makes a second
+    /// submission a no-op.
+    #[test]
+    fn a_lens_can_be_claimed_once_while_a_run_is_in_flight() {
+        let lens = "test-lens-claim-once";
+        clear_cancel_flag(lens);
+
+        assert!(
+            try_register_cancel_flag(lens).is_some(),
+            "the first submission must claim the lens"
+        );
+        assert!(
+            try_register_cancel_flag(lens).is_none(),
+            "a second click must not queue another run for the same lens"
+        );
+
+        clear_cancel_flag(lens);
+        assert!(
+            try_register_cancel_flag(lens).is_some(),
+            "once the run finishes the lens can be run again"
+        );
+        clear_cancel_flag(lens);
+    }
+
+    #[test]
+    fn claiming_one_lens_does_not_block_another() {
+        let a = "test-lens-independent-a";
+        let b = "test-lens-independent-b";
+        clear_cancel_flag(a);
+        clear_cancel_flag(b);
+
+        assert!(try_register_cancel_flag(a).is_some());
+        assert!(
+            try_register_cancel_flag(b).is_some(),
+            "a run on one lens must not stop a different lens from starting"
+        );
+
+        clear_cancel_flag(a);
+        clear_cancel_flag(b);
+    }
 }

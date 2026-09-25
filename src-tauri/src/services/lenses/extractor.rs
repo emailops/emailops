@@ -55,8 +55,6 @@ pub async fn extract_email(
     let email = db
         .get_email_by_id(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("email {email_id}")))?;
-    let body = db.get_email_body(email_id).unwrap_or_default();
-
     let max_body_chars = db
         .get_preference("lenses.max_body_chars")
         .ok()
@@ -64,7 +62,7 @@ pub async fn extract_email(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_BODY_CHARS);
 
-    let body_text = clean_and_trim_body(&body, max_body_chars);
+    let body_text = body_for_extraction(db, &email, max_body_chars);
 
     // 2. Build the tool definition from the Lens schema.
     let tool = build_tool_definition(&lens.schema);
@@ -222,6 +220,7 @@ async fn extract_via_text_prompt(
                 temperature: Some(0.0),
                 max_tokens: Some(1024),
                 think: Some(false),
+                json_shape: None,
             },
         )
         .await
@@ -318,6 +317,37 @@ fn column_to_json_schema(col: &LensColumn) -> serde_json::Value {
     }
 }
 
+/// `s` lowercased, without accents or punctuation: "Ubicación" → "ubicacion".
+fn fold_key(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    s.nfd()
+        .filter(|c| !('\u{0300}'..='\u{036f}').contains(c))
+        .flat_map(char::to_lowercase)
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// The model's value for `col`: under its schema key, or — when the model
+/// keyed it differently — under a key equal to the column's key or label once
+/// case and accents are ignored. Local models often answer in the prompt's
+/// language and echo the label ("fecha") instead of the key ("date").
+fn column_value<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    col: &LensColumn,
+) -> Option<&'a serde_json::Value> {
+    if let Some(v) = obj.get(&col.key) {
+        return Some(v);
+    }
+    let key = fold_key(&col.key);
+    let label = fold_key(&col.label);
+    obj.iter()
+        .find(|(name, _)| {
+            let name = fold_key(name);
+            name == key || (!label.is_empty() && name == label)
+        })
+        .map(|(_, v)| v)
+}
+
 /// Validate the extracted object against the schema and coerce values where
 /// safe (e.g. wrap stray currency strings into the `{amount, currency}` shape).
 /// On validation failure returns the first error message encountered.
@@ -331,7 +361,12 @@ fn validate_against_schema(
 
     let mut out = serde_json::Map::new();
     for col in &schema.columns {
-        let val = obj.get(&col.key).cloned().unwrap_or(serde_json::Value::Null);
+        let val = match column_value(obj, col) {
+            // Small models spell "no value" as the string "null".
+            Some(serde_json::Value::String(t)) if t.trim().eq_ignore_ascii_case("null") => serde_json::Value::Null,
+            Some(v) => v.clone(),
+            None => serde_json::Value::Null,
+        };
 
         if val.is_null() {
             // Store null and continue — even for 'required' columns.
@@ -405,14 +440,18 @@ fn validate_against_schema(
     Ok(serde_json::Value::Object(out))
 }
 
+/// Whether a tool-call answer is worth retrying as text. The required columns
+/// decide; a Lens with none (as the chat builds them) has every column count,
+/// since small models tend to fill only the first optional tool argument.
 fn extraction_is_sparse(data: &serde_json::Value, schema: &LensSchema) -> bool {
     let Some(obj) = data.as_object() else {
         return true;
     };
+    let any_required = schema.columns.iter().any(|col| col.required);
     schema
         .columns
         .iter()
-        .filter(|col| col.required)
+        .filter(|col| col.required || !any_required)
         .any(|col| obj.get(&col.key).is_none_or(value_is_empty))
 }
 
@@ -440,6 +479,15 @@ fn value_is_empty(value: &serde_json::Value) -> bool {
 /// Strip HTML, collapse whitespace, and truncate to `max_chars` (from the
 /// bottom — header context at the top is more important than trailing
 /// footers/quoted blocks).
+/// The text a lens reads for one email: what it adds to its thread (not its
+/// quoted history, which the earlier messages were already read for),
+/// cleaned and cut to `max_chars`.
+pub(crate) fn body_for_extraction(db: &Database, email: &crate::models::Email, max_chars: usize) -> String {
+    let raw = db.get_email_body(&email.id).unwrap_or_default();
+    let new_content = crate::services::thread_reader::message_new_content(db, email, &raw);
+    clean_and_trim_body(&new_content, max_chars)
+}
+
 pub(crate) fn clean_and_trim_body(body: &str, max_chars: usize) -> String {
     let stripped = crate::util::html::strip_html_for_fts(body);
     let normalised = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -634,6 +682,22 @@ fn parse_localised_number(raw: &str) -> Option<f64> {
 }
 
 #[cfg(test)]
+mod thread_tests {
+    use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    #[test]
+    fn a_lens_reads_a_replys_new_content_not_its_quoted_history() {
+        let db = Database::new_for_testing().unwrap();
+        fixtures::seed_quoting_thread(&db);
+        let email = db.get_email_by_id("e2").unwrap().expect("e2");
+        let text = body_for_extraction(&db, &email, DEFAULT_MAX_BODY_CHARS);
+        assert!(text.contains(fixtures::REPLY_NEW), "{text}");
+        assert!(!text.contains(fixtures::REQUEST), "{text}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -768,6 +832,78 @@ mod tests {
         assert_eq!(coerced["vendor"], "Acme");
         assert!(coerced["amount"].is_null());
         assert!(coerced["status"].is_null());
+    }
+
+    fn booking_schema() -> LensSchema {
+        let col = |key: &str, label: &str, column_type: LensColumnType| LensColumn {
+            key: key.into(),
+            label: label.into(),
+            column_type,
+            description: "".into(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        };
+        LensSchema {
+            columns: vec![
+                col("date", "Fecha", LensColumnType::Date),
+                col("location", "Ubicación", LensColumnType::String),
+                col("price", "Precio", LensColumnType::Currency),
+            ],
+        }
+    }
+
+    #[test]
+    fn validate_reads_values_the_model_keyed_by_column_label() {
+        // A local model wrote `submit_extraction({"fecha": …, "ubicacion": …,
+        // "precio": …})` — the Spanish labels, one without its accent — and
+        // every column came back null although the values were right there.
+        let coerced = validate_against_schema(
+            &json!({"fecha": "2026-10-15", "ubicacion": "Marbella", "precio": "412.50"}),
+            &booking_schema(),
+        )
+        .unwrap();
+        assert_eq!(coerced["date"], "2026-10-15");
+        assert_eq!(coerced["location"], "Marbella");
+        assert_eq!(coerced["price"]["amount"], 412.5);
+    }
+
+    #[test]
+    fn validate_prefers_the_schema_key_over_a_label_match() {
+        let coerced = validate_against_schema(
+            &json!({"location": "Madrid", "Ubicación": "Marbella"}),
+            &booking_schema(),
+        )
+        .unwrap();
+        assert_eq!(coerced["location"], "Madrid");
+    }
+
+    #[test]
+    fn validate_reads_a_key_differing_only_in_case() {
+        let coerced = validate_against_schema(&json!({"Date": "2026-10-15"}), &booking_schema()).unwrap();
+        assert_eq!(coerced["date"], "2026-10-15");
+    }
+
+    #[test]
+    fn validate_treats_the_text_null_as_a_missing_value() {
+        // Small local models answer "null" (a string) for fields they cannot
+        // fill; stored as-is it shows up in the table as the word "null" and,
+        // on a unique-key column, merges every such row into one.
+        let schema = LensSchema {
+            columns: vec![LensColumn {
+                key: "contact_email".into(),
+                label: "Email".into(),
+                column_type: LensColumnType::Email,
+                description: "".into(),
+                enum_values: None,
+                required: false,
+                is_unique_key: true,
+            }],
+        };
+        for text in ["null", "NULL", " null "] {
+            let coerced = validate_against_schema(&json!({ "contact_email": text }), &schema).unwrap();
+            assert!(coerced["contact_email"].is_null(), "{text:?} should become null");
+        }
     }
 
     #[test]
@@ -941,6 +1077,46 @@ mod tests {
         assert_eq!(result.data["invoice_number"], "BCL-0010144");
         assert_eq!(result.data["due_date"], "2026-05-19");
         assert_eq!(result.data["status"], "unpaid");
+    }
+
+    fn all_optional_schema() -> LensSchema {
+        let col = |key: &str| LensColumn {
+            key: key.into(),
+            label: key.into(),
+            column_type: LensColumnType::String,
+            description: String::new(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        };
+        LensSchema {
+            columns: vec![col("email"), col("phone"), col("company")],
+        }
+    }
+
+    #[test]
+    fn with_no_required_column_any_empty_column_is_sparse() {
+        // The chat builds Lenses with every column optional; small models
+        // then fill only the first one. With no column marked required,
+        // every column counts, or the text retry never runs.
+        let schema = all_optional_schema();
+        assert!(extraction_is_sparse(
+            &json!({"email": "ana@client.example", "phone": null, "company": null}),
+            &schema
+        ));
+        assert!(!extraction_is_sparse(
+            &json!({"email": "ana@client.example", "phone": "600 000 111", "company": "Client"}),
+            &schema
+        ));
+    }
+
+    #[test]
+    fn with_required_columns_only_they_decide_sparseness() {
+        // invoice_number and due_date are optional: leaving them empty is fine.
+        assert!(!extraction_is_sparse(
+            &json!({"vendor": "Acme", "amount": {"amount": 10.0, "currency": "EUR"}, "status": "unpaid"}),
+            &invoice_schema()
+        ));
     }
 
     #[test]

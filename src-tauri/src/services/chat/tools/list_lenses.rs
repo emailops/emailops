@@ -65,6 +65,7 @@ mod tests {
     #[test]
     fn gated_off_when_lenses_disabled() {
         let db = Database::new_for_testing().expect("db");
+        db.set_preference("lenses_enabled", "false").unwrap();
         assert!(!ListLensesTool.is_available(&db));
     }
 

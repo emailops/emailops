@@ -42,8 +42,11 @@ import type {
   JunkStats,
   JunkVerdict,
   Lens,
+  LensColumnFilter,
+  LensColumnValueCount,
   LensPreviewRow,
   LensRowsPage,
+  LensRunFailure,
   LensRunHandle,
   LensRunHistoryEntry,
   LensRunKind,
@@ -60,6 +63,7 @@ import type {
   PendingTask,
   QuickFilterStats,
   RefreshServerTotalResponse,
+  ResearchEstimate,
   SendChatResponse,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -539,14 +543,10 @@ export interface SearchResult {
   searchMethod: SearchMethod;
 }
 
-/** `accountId: null` searches across every enabled account (unified view). */
-export async function searchEmails(
-  accountId: string | null,
-  query?: string,
-  useAi?: boolean,
-  categories?: EmailCategory[],
-): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi, categories });
+/** `accountId: null` searches across every enabled account (unified view).
+ *  Search spans every category — the inbox tab does not narrow it. */
+export async function searchEmails(accountId: string | null, query?: string, useAi?: boolean): Promise<SearchResult> {
+  return invoke('search_emails', { accountId, query, useAi });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {
@@ -1102,6 +1102,8 @@ export interface AiCapability {
   totalRamGb: number;
   /** RAM the smallest catalog chat model needs, so the UI can say why. */
   minRamGbForLocalAi: number;
+  /** Download size of that same model, for the wizard's disk figure. */
+  minDownloadBytesForLocalAi: number;
   os: string;
   arch: string;
 }
@@ -1297,6 +1299,28 @@ export async function sendChatMessage(
    * context.
    */
   contextAccountId?: string | null,
+  /**
+   * What the user has on screen this turn: `view/<mode>`, `settings/<tab>`, or
+   * `form/<form id>` plus that form's current values. Lets "esto"/"aquí"
+   * resolve, and lets "añade una columna de IVA" edit the form in front of the
+   * user. The backend re-validates the token against its own allowlists, so an
+   * unknown one is dropped rather than prompted.
+   */
+  contextView?: ChatViewContext | null,
+  /**
+   * Set when the user pressed "this answer is wrong" and said why. The backend
+   * runs an ordinary new turn with a short correction instruction prepended to
+   * the user message, so the wrong answer stays visible in the history and the
+   * retry is steered by what the user actually objected to.
+   */
+  correction?: ChatCorrection | null,
+  /**
+   * Research mode for this message: the backend reads many more emails in
+   * batches (map-reduce) and writes a detailed report. Takes minutes.
+   */
+  research = false,
+  /** The estimate the user confirmed: the run reads exactly what it counted. */
+  researchEstimateId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1304,7 +1328,53 @@ export async function sendChatMessage(
     categories,
     contextThreadId: contextThreadId ?? null,
     contextAccountId: contextAccountId ?? null,
+    contextView: contextView ?? null,
+    correction: correction ?? null,
+    research,
+    researchEstimateId: researchEstimateId ?? null,
   });
+}
+
+/** Plan and gather a research question without reading it: how many emails
+ *  it covers and how long reading them would take, for the user to confirm. */
+export async function estimateResearch(
+  conversationId: string,
+  content: string,
+  categories?: EmailCategory[],
+  /** Set when the research retries a rejected answer: the estimate covers the
+   *  original question plus the correction, as the run will. */
+  correction?: ChatCorrection | null,
+): Promise<ResearchEstimate> {
+  return invoke('estimate_research', { conversationId, content, categories, correction: correction ?? null });
+}
+
+/** Cancel the running chat turn answering `messageId`: a normal turn keeps
+ *  what it showed so far; a research run stops at its next batch. Resolves
+ *  false when no turn is running for that message. */
+export async function cancelChatTurn(messageId: string): Promise<boolean> {
+  return invoke('cancel_chat_turn', { messageId });
+}
+
+/** Quit even though a research run is reading (it is lost). Called from the
+ *  confirmation the backend asks for when a close or Cmd+Q arrives mid-run. */
+export async function confirmExit(): Promise<void> {
+  return invoke('confirm_exit');
+}
+
+/** Mirrors `models::ChatCorrection` on the Rust side. */
+export interface ChatCorrection {
+  /** The assistant message the user marked wrong. */
+  rejectedMessageId: string;
+  /** What the user said was wrong with it, in their own words. */
+  reason: string;
+}
+
+/** Mirrors `models::ChatViewContext` on the Rust side. */
+export interface ChatViewContext {
+  /** `view/<mode>`, `settings/<tab>`, or `form/<form id>`. */
+  token: string;
+  /** The values already in the open form. Only meaningful for a `form/` token. */
+  formValues?: Record<string, unknown> | null;
 }
 
 /**
@@ -1597,16 +1667,28 @@ export async function createLensFromTemplate(templateKey: string, name?: string,
 
 export async function getLensRows(
   lensId: string,
-  opts: { sort?: LensSortSpec; limit?: number; offset?: number } = {},
+  opts: { sort?: LensSortSpec; filters?: LensColumnFilter[]; limit?: number; offset?: number } = {},
 ): Promise<LensRowsPage> {
   // Backend SortSpec is `{ key, desc }` — translate from the UI shape.
   const sortPayload = opts.sort ? { key: opts.sort.columnKey, desc: opts.sort.direction === 'desc' } : null;
   return invoke('get_lens_rows', {
     lensId,
     sort: sortPayload,
+    filters: opts.filters?.length ? opts.filters : null,
     limit: opts.limit ?? null,
     offset: opts.offset ?? null,
   });
+}
+
+/** Rows that failed extraction while one run ran, for the run history. */
+export async function listLensRunFailures(lensId: string, runId: string): Promise<LensRunFailure[]> {
+  return invoke('list_lens_run_failures', { lensId, runId });
+}
+
+/** Distinct values of one Lens column with their row counts (empty cells
+ *  first), for the Excel-style column filter. */
+export async function getLensColumnValues(lensId: string, key: string): Promise<LensColumnValueCount[]> {
+  return invoke('get_lens_column_values', { lensId, key });
 }
 
 export async function updateLensRowOverride(

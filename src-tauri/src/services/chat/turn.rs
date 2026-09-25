@@ -57,6 +57,23 @@ fn now_local() -> chrono::NaiveDateTime {
     now_utc().naive_utc() + chrono::Duration::seconds(crate::services::clock::utc_offset_secs() as i64)
 }
 
+/// The seven days after `today`, each with its weekday, so the model reads
+/// "pasado mañana" or "el jueves" off a list instead of counting days itself.
+pub(crate) fn next_days_line(today: chrono::NaiveDate) -> String {
+    (1..=7)
+        .map(|n| {
+            let day = today + chrono::Duration::days(n);
+            let label = day.format("%a %Y-%m-%d");
+            match n {
+                1 => format!("{label} (tomorrow)"),
+                2 => format!("{label} (day after tomorrow)"),
+                _ => label.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Format a message list as readable text for the reasoning panel (and for
 /// Phoenix tracing when enabled). Shows each message's role, content, and any
 /// tool calls — including tool-result messages that carry search_emails
@@ -247,6 +264,7 @@ from this mailbox as if they answered the question."
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("user_identity", user_identity);
     tpl_vars.insert("tools_section", tools_section.to_string());
@@ -1158,6 +1176,56 @@ fn repair_missing_email_id(
     Some(next)
 }
 
+/// Most edits between a miscopied `email_id` and the result it was meant to
+/// be. Ids are long hex strings, so two slips still leave one clear match.
+const MAX_EMAIL_ID_EDITS: usize = 2;
+
+/// Deterministically repair an `email_id` the model miscopied from a tool
+/// result (observed: `…f9e99306` written as `…f9e9306`, so the draft tool
+/// answered "email not found" and the turn gave up). When the id is not one
+/// this turn's results listed and exactly ONE listed id is within
+/// `MAX_EMAIL_ID_EDITS`, swap it in. Returns the wrong id when it did.
+fn repair_mangled_email_id(args: &mut serde_json::Value, available_refs: &[String]) -> Option<String> {
+    let wrong = args.get("email_id")?.as_str()?.trim().to_string();
+    if wrong.is_empty() || available_refs.contains(&wrong) {
+        return None;
+    }
+    let mut close = available_refs
+        .iter()
+        .filter(|r| crate::services::junk::lookalike::edit_distance(r, &wrong) <= MAX_EMAIL_ID_EDITS);
+    let right = close.next()?.clone();
+    if close.next().is_some() {
+        return None;
+    }
+    args.as_object_mut()?
+        .insert("email_id".to_string(), serde_json::Value::String(right));
+    Some(wrong)
+}
+
+/// Deterministically repair a `generate_email_draft` call that dropped
+/// `instructions`: pass the user's own request instead, so what they asked
+/// the draft to say ("proposing a call next week") reaches the generator.
+///
+/// Only when this message is itself a draft request (`wants_email_draft`) —
+/// a bare "sí" carries no content. Returns true when the args were modified.
+fn repair_missing_draft_instructions(args: &mut serde_json::Value, user_question: &str) -> bool {
+    let has_instructions = args
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    if has_instructions || !wants_email_draft(user_question) {
+        return false;
+    }
+    let Some(obj) = args.as_object_mut() else {
+        return false;
+    };
+    obj.insert(
+        "instructions".to_string(),
+        serde_json::Value::String(user_question.trim().to_string()),
+    );
+    true
+}
+
 /// Canonical, argument-order-independent key for a tool call (`name|args`), so
 /// two calls that differ only in JSON key order are recognised as the same.
 /// Used by the tool loop to spot a model re-issuing an identical call instead
@@ -1564,6 +1632,53 @@ struct ToolLoopOutcome {
     /// caller's direct-answer path must NOT re-emit the answer as a single
     /// `chat-stream` token — doing so would duplicate the whole bubble.
     answer_streamed_live: bool,
+    /// The user cancelled the turn: the loop stopped at the first chance it
+    /// had and made no model call after it (see `chat::cancel`).
+    cancelled: bool,
+}
+
+/// What a cancelled turn keeps: the reply the user already saw (when the
+/// loop streamed it live), then a note — streamed to the bubble now, since
+/// no model call follows. No model call is made here.
+fn cancelled_turn_result(
+    messages: &[AiMessage],
+    streamed_live: bool,
+    language_code: &str,
+    conversation_id: &str,
+    message_id: &str,
+) -> crate::ai::provider::ChatStreamResult {
+    let partial = if streamed_live {
+        messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let content = super::cancel::cancelled_answer(&partial, language_code);
+    let shown = partial.trim_end();
+    // `cancelled_answer` starts with what was shown: stream only the rest.
+    let token = content.get(shown.len()..).unwrap_or(&content).to_string();
+    emit_log("info", "turn cancelled by the user");
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token,
+            done: false,
+            error: None,
+            token_count: None,
+            latency_ms: None,
+            replace: None,
+        },
+    );
+    crate::ai::provider::ChatStreamResult {
+        content,
+        ..Default::default()
+    }
 }
 
 /// How `run_chat_turn` should turn the tool loop's final messages into the
@@ -2020,7 +2135,10 @@ async fn run_tool_loop(
     app_help: bool,
     tool_traces: &mut Vec<ToolCallTrace>,
     llm_calls: &mut Vec<LlmCallTrace>,
+    // Raised by the chat's Cancel button (see `chat::cancel`).
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> ToolLoopOutcome {
+    let is_cancelled = || cancel.load(std::sync::atomic::Ordering::Relaxed);
     // Feature-flag–aware: tools whose `is_available(db)` returns false are
     // omitted from the array the LLM sees.
     let tools = registry.definitions(db.as_ref());
@@ -2098,6 +2216,9 @@ async fn run_tool_loop(
             });
 
             for tc in &tool_calls {
+                if is_cancelled() {
+                    break;
+                }
                 let name = &tc.function.name;
                 let args = &tc.function.arguments;
 
@@ -2190,6 +2311,10 @@ async fn run_tool_loop(
     }
 
     for round in 0..MAX_TOOL_ROUNDS {
+        if is_cancelled() {
+            emit_log("info", "tool_loop: cancelled by the user");
+            break;
+        }
         // Snapshot the prompt sent to the model so the reasoning panel can
         // show exactly what each tool round received. Dev-only — release
         // builds skip the formatting to avoid the per-round allocation cost.
@@ -2227,6 +2352,7 @@ async fn run_tool_loop(
             let conv_for_token = conversation_id.to_string();
             let msg_for_token = message_id.to_string();
             let streamed_flag = streamed_any.clone();
+            let cancel_flag = Arc::clone(&cancel);
             Box::new(move |token: String| {
                 if !token.is_empty() {
                     streamed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2244,12 +2370,14 @@ async fn run_tool_loop(
                         },
                     );
                 }
-                true
+                // `false` stops the generation mid-reply.
+                !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             })
         } else {
             // Nudge still possible: buffer silently. Any prose this round is a
             // potential tool-call announcement we may discard, so never ship it.
-            Box::new(|_token: String| true)
+            let cancel_flag = Arc::clone(&cancel);
+            Box::new(move |_token: String| !cancel_flag.load(std::sync::atomic::Ordering::Relaxed))
         };
         let call_result = provider
             .chat_stream_with_tools(messages.clone(), tools.clone(), on_token)
@@ -2282,6 +2410,19 @@ async fn run_tool_loop(
                     trace.output = Some(format_response_for_trace(&r.message));
                 }
                 llm_calls.push(trace);
+                if is_cancelled() {
+                    // Keep what the user already saw of this reply; run
+                    // nothing it asked for.
+                    if last_round_streamed_live {
+                        answer_streamed_live = true;
+                        messages.push(AiMessage {
+                            role: "assistant".to_string(),
+                            content: r.message.content.clone(),
+                            tool_calls: None,
+                        });
+                    }
+                    break;
+                }
                 r.message
             }
             Err(e) => {
@@ -2403,6 +2544,23 @@ async fn run_tool_loop(
                         "tool_loop: search_emails had no filters — injected address from the question ({})",
                         truncate_chars(&tc.function.arguments.to_string(), 200)
                     ),
+                );
+            }
+            if let Some(wrong) = repair_mangled_email_id(&mut tc.function.arguments, &aggregated_email_refs) {
+                emit_log(
+                    "info",
+                    &format!(
+                        "tool_loop: {} email_id {wrong} matched no result — corrected to the one it resembles",
+                        tc.function.name
+                    ),
+                );
+            }
+            if tc.function.name == "generate_email_draft"
+                && repair_missing_draft_instructions(&mut tc.function.arguments, user_question)
+            {
+                emit_log(
+                    "info",
+                    "tool_loop: generate_email_draft had no instructions — passed the user's request",
                 );
             }
             if tc.function.name == "get_email_body" {
@@ -2558,6 +2716,7 @@ async fn run_tool_loop(
         aggregated_email_refs,
         aggregated_draft_refs,
         answer_streamed_live,
+        cancelled: is_cancelled(),
     }
 }
 
@@ -2800,6 +2959,8 @@ async fn run_thread_bound_turn(
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
 ) -> Result<()> {
+    // Registered for the whole turn: the chat's Cancel button finds it here.
+    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     /// Bounded so a stuck local model can't leave the UI thinking forever.
     /// Matches the existing final-stream timeout in `run_chat_turn`.
     const STREAM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -2852,6 +3013,7 @@ async fn run_thread_bound_turn(
     tpl_vars.insert("today", today);
     tpl_vars.insert("tomorrow", tomorrow);
     tpl_vars.insert("weekday", weekday);
+    tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
     tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
     // Empty rather than omitted, for the same reason: the identity block only
@@ -2909,6 +3071,7 @@ async fn run_thread_bound_turn(
         false,
         &mut tool_traces,
         &mut llm_calls,
+        Arc::clone(&turn_guard.flag),
     )
     .await;
     let tool_loop_ms = t_tool_loop.elapsed().as_millis() as i64;
@@ -2931,7 +3094,15 @@ async fn run_thread_bound_turn(
     });
 
     emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Generating);
-    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.failed_without_answer {
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if outcome.cancelled {
+        Ok(cancelled_turn_result(
+            &outcome.messages,
+            outcome.answer_streamed_live,
+            language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        ))
+    } else if outcome.failed_without_answer {
         let detail = outcome
             .error
             .clone()
@@ -3084,6 +3255,7 @@ async fn run_thread_bound_turn(
                 llm_streaming_ms: None,
                 llm_calls: llm_calls.clone(),
                 help: None,
+                research: None,
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -3413,6 +3585,34 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
     }
 }
 
+/// The per-turn context the chat panel supplies alongside the question.
+///
+/// Every field here is ephemeral by contract: none of it is persisted onto the
+/// conversation, and all of it renders into the FINAL USER MESSAGE, never the
+/// system prompt — a per-turn byte in the system message invalidates the
+/// llama.cpp KV prefix for every later turn.
+#[derive(Debug, Clone, Default)]
+pub struct TurnContext {
+    /// Thread the user has open in the main view, offered as ambient context.
+    pub ambient_thread_id: Option<String>,
+    /// Account owning `ambient_thread_id`, when the caller knows it. Not
+    /// assumed to equal the chat's account: in unified mode the panel runs on
+    /// one account while the open thread can belong to any of them.
+    pub ambient_account_id: Option<String>,
+    /// What the user has on screen (`view/…`, `settings/…`, `form/<id>`) plus
+    /// the values of an open form.
+    pub view: Option<crate::models::ChatViewContext>,
+    /// Set when this turn is a retry of an answer the user marked wrong.
+    pub correction: Option<crate::models::ChatCorrection>,
+    /// Research mode: read far more of the mailbox in batches (map-reduce,
+    /// see `research`) instead of answering from one page of results. Slower
+    /// by design; the user opts in per message.
+    pub research: bool,
+    /// The estimate the user confirmed before a research turn: the run reads
+    /// the set it counted. `None` plans and gathers inside the turn.
+    pub research_estimate_id: Option<String>,
+}
+
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
@@ -3424,13 +3624,40 @@ pub async fn run_chat_turn(
     model: String,
     history: Vec<ChatMessage>,
     categories: Vec<String>,
-    ambient_thread_id: Option<String>,
-    // Account owning `ambient_thread_id`, when the caller knows it. See
-    // `ChatTurnMode::AmbientThread` for why this cannot be assumed to equal
-    // `account_id`.
-    ambient_account_id: Option<String>,
+    // Everything the panel knows about this one turn that is not the question:
+    // the thread on screen, the view on screen, and whether this is a retry of
+    // an answer the user rejected. Grouped so the signature stops growing a
+    // parameter per feature.
+    context: TurnContext,
 ) -> Result<()> {
+    // Registered for the whole turn: the chat's Cancel button finds it here.
+    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     let turn_start = std::time::Instant::now();
+
+    // Destructured back into locals so the body below reads unchanged.
+    // A research question is about the mailbox, not the email on screen, so
+    // the open thread is not offered as context on a research turn.
+    let ambient_thread_id = if context.research {
+        None
+    } else {
+        context.ambient_thread_id.clone()
+    };
+    let ambient_account_id = context.ambient_account_id.clone();
+
+    // Validated once: an unrecognised token is dropped here and can never
+    // reach a prompt (see `view_context`).
+    let view_ctx = context
+        .view
+        .as_ref()
+        .and_then(|v| super::view_context::parse_view_context(&v.token));
+    let open_form_id = view_ctx
+        .as_ref()
+        .and_then(super::view_context::ViewContext::open_form_id);
+    let context_form_values = context
+        .view
+        .as_ref()
+        .and_then(|v| v.form_values.clone())
+        .unwrap_or_else(|| serde_json::json!({}));
 
     // Build the configured AI provider from DB preferences, but let the
     // per-turn `model` argument (CLI `--model`, REPL `/model`, eval case model)
@@ -3509,6 +3736,12 @@ pub async fn run_chat_turn(
     };
 
     if let Some(system_messages) = thread_context {
+        if context.research {
+            emit_log(
+                "info",
+                "research mode ignored: this conversation is about one thread, answering from it",
+            );
+        }
         return run_thread_bound_turn(
             db,
             provider,
@@ -3619,7 +3852,13 @@ pub async fn run_chat_turn(
                 && db.calendar_enabled(&a.id).unwrap_or(false)
         })
         .unwrap_or(false);
-    let mut preseeded_tool_calls = if ambient_context.is_some() {
+    // Research mode plans and gathers on its own (`research::prepare`, or the
+    // estimate the user confirmed); a shortcut or the turn's planner would
+    // answer from one page and skip the reading it was asked to do. The
+    // toggle is the user saying the question is about the mailbox, so no
+    // planner verdict (app help, a form) takes the turn elsewhere.
+    let research_active = context.research && ambient_context.is_none();
+    let mut preseeded_tool_calls = if ambient_context.is_some() || research_active {
         None
     } else {
         heuristic_direct_tools(&user_question, calendar_available)
@@ -3659,8 +3898,12 @@ pub async fn run_chat_turn(
     let mut app_help = false;
     // The guide page the planner picked for it, when it named one.
     let mut help_page: Option<String> = None;
+    // The app form the planner asked us to fill. `Some` short-circuits the
+    // whole turn right after the planner — see the block below the match.
+    let mut form_to_fill: Option<&'static crate::services::forms::FormDef> = None;
     if preseeded_tool_calls.is_none()
         && ambient_context.is_none()
+        && !research_active
         && (route.mode == RouteMode::ToolsFirst || asked_planner)
         && planner_enabled(&db)
     {
@@ -3675,6 +3918,10 @@ pub async fn run_chat_turn(
             &today,
             &user_question,
             &glossary,
+            open_form_id,
+            // Only forms whose feature is switched on: routing to a disabled
+            // one would spend a turn opening a view the user cannot reach.
+            &crate::services::forms::registry::catalog(&db),
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -3743,6 +3990,17 @@ pub async fn run_chat_turn(
                 help_page = page;
                 emit_log("info", &format!("route: {:?} ({})", route.mode, route.reason));
             }
+            super::planner::Plan::FormFill(form_id) => {
+                // "crea una lens de facturas": there is nothing to retrieve and
+                // no tool to call — one focused completion fills the form and
+                // the frontend opens it. Handled below, outside this match, so
+                // the borrow on `route`/`planner_trace` ends first.
+                emit_log("info", &format!("planner: fill form {form_id} [{plan_ms}ms]"));
+                planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
+                route = super::routing::planner_help_route();
+                form_to_fill = super::view_context::resolve_target_form(Some(form_id), open_form_id)
+                    .and_then(|id| crate::services::forms::registry::lookup_available(&db, id));
+            }
             super::planner::Plan::Defer => {
                 emit_log("debug", &format!("planner: deferred to model loop [{plan_ms}ms]"));
                 planner_trace = Some(build_planner_trace(plan_ms, plan_outcome.as_str(), plan_telemetry));
@@ -3754,6 +4012,28 @@ pub async fn run_chat_turn(
         }
     }
 
+    // ── 1b. Fill an app form and stop ───────────────────────────────────
+    // A `form` verdict means the user asked to CREATE something the app has a
+    // form for. Nothing below this point applies: no sources to retrieve, no
+    // tools to call, no answer to synthesise — the form itself is the answer.
+    if let Some(form) = form_to_fill {
+        let today = now_local().format("%Y-%m-%d").to_string();
+        let language = crate::services::i18n::resolve_ai_language(&db)?;
+        return super::form_turn::run_form_fill_turn(
+            &db,
+            provider.as_ref(),
+            &conversation_id,
+            &assistant_message_id,
+            form,
+            language,
+            &today,
+            &context_form_values,
+            &user_question,
+            turn_start,
+        )
+        .await;
+    }
+
     // ── 2. Retrieve sources (skipped entirely when route == ToolsFirst) ─
     // Match by reference so we can still read `route` later when assembling the
     // final ChatTrace.
@@ -3761,6 +4041,10 @@ pub async fn run_chat_turn(
     emit_log("info", "stage: retrieve");
     let (sources, retrieval_trace, query_embedding): (Vec<ScoredEmail>, Option<RetrievalTrace>, Option<Vec<f32>>) =
         match &route.mode {
+            _ if research_active => {
+                emit_log("info", "retrieve: skipped (research mode gathers its own candidates)");
+                (Vec::new(), None, None)
+            }
             RouteMode::ToolsFirst => {
                 emit_log("info", "retrieve: skipped (ToolsFirst route)");
                 (Vec::new(), None, None)
@@ -3811,7 +4095,8 @@ pub async fn run_chat_turn(
     let ai_language = crate::services::i18n::resolve_ai_language(&db)?;
     let planner_says_app_help = planner_trace.as_ref().map(|_| app_help);
     let (help_sources, help_trace): (Vec<crate::services::help_docs::HelpSource>, Option<HelpTrace>) =
-        if help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
+        if !research_active
+            && help_lookup_wanted(ambient_context.is_some(), planner_says_app_help)
             && db.is_help_docs_enabled().unwrap_or(true)
         {
             // Text index on demand (one hash + one COUNT when up to date), so
@@ -3913,6 +4198,46 @@ pub async fn run_chat_turn(
         ambient_context.as_deref(),
     );
 
+    // What the user has on screen, so "esto" / "aquí" resolve. Same placement
+    // rule as everything else in this block: per-turn content goes in the final
+    // user message, never the system message, or the KV prefix is invalidated
+    // on every navigation. Skipped on an ambient-thread turn — the OPEN EMAIL
+    // block already names what the user is looking at, and two "you are looking
+    // at X" statements in one prompt is one too many.
+    if ambient_context.is_none() {
+        if let Some(ctx) = view_ctx.as_ref() {
+            let line = match ctx {
+                super::view_context::ViewContext::Lens(id) => match db.get_lens(id) {
+                    Ok(lens) => {
+                        let labels: Vec<&str> = lens.schema.columns.iter().map(|c| c.label.as_str()).collect();
+                        super::view_context::lens_context_line(&lens.name, &labels)
+                    }
+                    Err(e) => {
+                        emit_log("warn", &format!("view context: open lens not found ({e})"));
+                        super::view_context::view_context_line(ctx)
+                    }
+                },
+                _ => super::view_context::view_context_line(ctx),
+            };
+            prepend_to_final_user_message(&mut initial_messages, &line);
+        }
+    }
+
+    // A retry of an answer the user rejected. Prepended AFTER the view line so
+    // it ends up closest to the question — a small model weights the end of the
+    // prompt most, and the correction is the thing it must not ignore.
+    if let Some(correction) = context.correction.as_ref() {
+        let rejected = db
+            .get_chat_messages(&conversation_id)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|m| m.id == correction.rejected_message_id)
+            .map(|m| m.content);
+        if let Some(block) = super::correction::render_correction_block(correction, rejected.as_deref()) {
+            prepend_to_final_user_message(&mut initial_messages, &block);
+        }
+    }
+
     // The EmailOps-help block rides in the final user message for the same
     // reason as the memory header below: it varies per turn, and any per-turn
     // byte in the system message would invalidate the KV prefix.
@@ -3948,6 +4273,8 @@ pub async fn run_chat_turn(
 
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+    // Set by the research branch below; `None` on an ordinary turn.
+    let mut research_trace: Option<crate::models::ResearchTrace> = None;
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
     // The planner ran before the loop; surface it first in the timeline.
     if let Some(pt) = planner_trace.take() {
@@ -3969,7 +4296,158 @@ pub async fn run_chat_turn(
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
         tool_email_refs,
-    ) = {
+    ) = if research_active {
+        // Research mode replaces the tool loop: gather → read in batches →
+        // write the report, all as one-shot completions on the auxiliary
+        // prefix slot, so the chat's KV anchor is untouched for the next turn.
+        // The report comes back as a finished assistant answer, so the path
+        // below ships it like any direct answer (citation cleanup, sources,
+        // trace) without a second model call.
+        emit_log("info", "stage: research");
+        emit_phase(&conversation_id, &assistant_message_id, ChatPhase::Researching);
+        let t_research = std::time::Instant::now();
+        let map_template = crate::services::prompts::get_template(&db, "chat.research_map")?;
+        let condense_template = crate::services::prompts::get_template(&db, "chat.research_condense")?;
+        let reduce_template = crate::services::prompts::get_template(&db, "chat.research_reduce")?;
+        let language = ai_language.english_name();
+        let language_instruction = if language.is_empty() {
+            "Reply in the language the user writes in.".to_string()
+        } else {
+            format!("Reply in {language}.")
+        };
+        let progress_conversation = conversation_id.clone();
+        let progress_message = assistant_message_id.clone();
+        let on_progress = move |p: super::research::ResearchProgress| {
+            crate::services::events::emit(
+                "chat-research-progress",
+                crate::models::ChatResearchProgressEvent {
+                    message_id: progress_message.clone(),
+                    conversation_id: progress_conversation.clone(),
+                    stage: p.stage.as_str().to_string(),
+                    batch: p.batch as u32,
+                    batches: p.batches as u32,
+                    emails_read: p.emails_read as u32,
+                    emails_total: p.emails_total as u32,
+                    matches: p.matches as u32,
+                    recent: p
+                        .recent
+                        .iter()
+                        .map(|m| crate::models::ResearchMatchPreview {
+                            email_id: m.id.clone(),
+                            date: m.date.clone(),
+                            subject: m.subject.clone(),
+                            finding: m.finding.clone(),
+                            emails: m.emails as u32,
+                        })
+                        .collect(),
+                },
+            );
+        };
+        // The set the user confirmed; plan and gather here only when there is
+        // none (CLI, evals, or an estimate that expired).
+        // A retry of a rejected research asks the original question plus the
+        // user's correction; every step sees both.
+        let research_q =
+            super::research::research_question(&db, &conversation_id, &user_question, context.correction.as_ref());
+        let confirmed = context
+            .research_estimate_id
+            .as_deref()
+            .and_then(|id| super::research::take_estimate(id, &account_id, &research_q));
+        let prepared = match confirmed {
+            Some(p) => p,
+            None => {
+                on_progress(super::research::ResearchProgress {
+                    stage: super::research::ResearchStage::Gathering,
+                    batch: 0,
+                    batches: 0,
+                    emails_read: 0,
+                    emails_total: 0,
+                    matches: 0,
+                    recent: Vec::new(),
+                });
+                let today = now_local().format("%Y-%m-%d").to_string();
+                super::research::prepare(&super::research::PrepareInput {
+                    db: &db,
+                    provider: provider.as_ref(),
+                    account_id: &account_id,
+                    categories: &categories,
+                    question: &research_q,
+                    user_email: &user_email,
+                    today: &today,
+                })
+                .await
+            }
+        };
+        if let Some(call) = prepared.planner_call.clone() {
+            llm_calls.push(call);
+        }
+        if let Some(call) = prepared.mode_call.clone() {
+            llm_calls.push(call);
+        }
+        tool_traces.extend(prepared.gather_calls.iter().cloned());
+        // Read the window now, with the model loaded by the planner: batches
+        // and notes are sized to what the runtime really runs with.
+        let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref());
+        let guard = super::research::register_run(&assistant_message_id);
+        let run = super::research::run_research(
+            super::research::ResearchInput {
+                db: &db,
+                provider: provider.as_ref(),
+                question: &research_q,
+                prepared: &prepared,
+                n_ctx,
+                language_instruction: &language_instruction,
+                language_code: ai_language.as_code(),
+                map_template: &map_template,
+                condense_template: &condense_template,
+                reduce_template: &reduce_template,
+                stop: &guard.flag,
+            },
+            &on_progress,
+        )
+        .await;
+        drop(guard);
+        let elapsed = t_research.elapsed().as_millis() as i64;
+        emit_log(
+            "info",
+            &format!(
+                "research: done ({} emails read in {} batches, {} relevant, n_ctx={}) [{}ms]",
+                run.trace.emails_analyzed, run.trace.batches, run.trace.relevant_emails, n_ctx, elapsed
+            ),
+        );
+        llm_calls.extend(run.llm_calls);
+        research_trace = Some(run.trace);
+        let (messages, failed) = match run.answer {
+            Some(answer) => (
+                vec![
+                    AiMessage {
+                        role: "user".to_string(),
+                        content: user_question.clone(),
+                        tool_calls: None,
+                    },
+                    AiMessage {
+                        role: "assistant".to_string(),
+                        content: answer,
+                        tool_calls: None,
+                    },
+                ],
+                false,
+            ),
+            None => (Vec::new(), true),
+        };
+        (
+            messages,
+            elapsed,
+            failed,
+            run.error,
+            // Every email read may be linked; the ones a finding cites are the
+            // answer's sources when it links none itself.
+            run.analyzed,
+            Vec::new(),
+            false,
+            run.relevant,
+        )
+    } else {
         emit_log("info", "stage: tool_loop");
         emit_phase(&conversation_id, &assistant_message_id, ChatPhase::RunningTools);
         let t_tool_loop = std::time::Instant::now();
@@ -3991,6 +4469,7 @@ pub async fn run_chat_turn(
             app_help,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::clone(&turn_guard.flag),
         )
         .await;
         let elapsed = t_tool_loop.elapsed().as_millis() as i64;
@@ -4040,7 +4519,18 @@ pub async fn run_chat_turn(
     // timeout in `chat_stream`, and a silent hang here is exactly what
     // freezes the "thinking…" indicator on the client. Fail fast instead.
     const STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
-    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if loop_failed_without_answer {
+    // A cancelled research already wrote its own note; any other cancelled
+    // turn keeps what was shown and makes no further model call.
+    let stream_result: Result<crate::ai::provider::ChatStreamResult> = if turn_guard.is_cancelled() && !research_active
+    {
+        Ok(cancelled_turn_result(
+            &final_messages,
+            loop_answer_streamed_live,
+            ai_language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        ))
+    } else if loop_failed_without_answer {
         let detail = loop_error
             .clone()
             .unwrap_or_else(|| "tool-call loop failed before producing any answer".to_string());
@@ -4057,12 +4547,15 @@ pub async fn run_chat_turn(
                 aggregated_email_refs.push(id.clone());
             }
         }
-        let contradiction_retry_messages: Option<Vec<AiMessage>> = if aggregated_email_refs.is_empty() && !ambient_turn
-        {
-            None
-        } else {
-            Some(final_messages.clone())
-        };
+        // A research report is not retried: it rests on notes, not on the
+        // tool transcript the guard would replay, and a "nothing relevant"
+        // report is a legitimate finding after reading the whole set.
+        let contradiction_retry_messages: Option<Vec<AiMessage>> =
+            if research_active || (aggregated_email_refs.is_empty() && !ambient_turn) {
+                None
+            } else {
+                Some(final_messages.clone())
+            };
         match plan_answer(final_messages) {
             // The tool loop ended with a direct assistant text answer — reuse it
             // as-is and SKIP the re-stream. Otherwise we'd be appending the answer
@@ -4323,7 +4816,20 @@ pub async fn run_chat_turn(
             // model numbered its own bullets — so every marker goes; the
             // `email://` links (relinked just above where the answer
             // defined a number) are the turn's citations.
-            let grounding = plan_answer_grounding(&source_email_ids(&sources), &tool_email_refs, &result.content);
+            let tools_ran = tool_traces.iter().any(|t| !t.name.is_empty());
+            // A research answer rests on every email the reading found
+            // relevant, not only the few its prose links: those are its
+            // sources, and what the chat's "show in list" button opens.
+            let grounding = if research_active && !tool_email_refs.is_empty() {
+                AnswerGrounding::Emails(tool_email_refs.clone())
+            } else {
+                plan_answer_grounding(
+                    &source_email_ids(&sources),
+                    &tool_email_refs,
+                    &result.content,
+                    tools_ran,
+                )
+            };
             let citation_range = grounding.citation_range(sources.len());
             result.content = strip_invalid_citations(&result.content, citation_range);
             // A guide-grounded answer that forgot its `help://` link gets the
@@ -4564,6 +5070,7 @@ pub async fn run_chat_turn(
                 llm_streaming_ms: if streaming_happened { Some(streaming_ms) } else { None },
                 llm_calls: llm_calls.clone(),
                 help: help_trace.clone(),
+                research: research_trace.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -4996,6 +5503,63 @@ mod tests {
         assert!(matches!(plan_answer(messages), AnswerPlan::StreamSynthesis(_)));
     }
 
+    /// The draft for Kwame failed with "email not found": the model copied
+    /// `demo_9470b630f9e99306` from the search result as `…f9e9306`.
+    #[test]
+    fn a_miscopied_email_id_is_corrected_to_the_one_result_it_resembles() {
+        let refs = vec!["demo_9470b630f9e99306".to_string(), "demo_1111aaaa2222bbbb".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_9470b630f9e9306" });
+        assert_eq!(
+            repair_mangled_email_id(&mut args, &refs).as_deref(),
+            Some("demo_9470b630f9e9306")
+        );
+        assert_eq!(args["email_id"], "demo_9470b630f9e99306");
+    }
+
+    #[test]
+    fn a_known_or_unrecognisable_email_id_is_left_alone() {
+        let refs = vec!["demo_9470b630f9e99306".to_string()];
+        let mut known = serde_json::json!({ "email_id": "demo_9470b630f9e99306" });
+        assert_eq!(repair_mangled_email_id(&mut known, &refs), None);
+        let mut other = serde_json::json!({ "email_id": "demo_ffffffffffffffff" });
+        assert_eq!(repair_mangled_email_id(&mut other, &refs), None);
+        assert_eq!(other["email_id"], "demo_ffffffffffffffff");
+    }
+
+    #[test]
+    fn an_email_id_close_to_two_results_is_ambiguous_and_left_alone() {
+        let refs = vec!["demo_aaaa1".to_string(), "demo_aaaa2".to_string()];
+        let mut args = serde_json::json!({ "email_id": "demo_aaaa" });
+        assert_eq!(repair_mangled_email_id(&mut args, &refs), None);
+    }
+
+    /// "write an email to Kwame proposing a call next week" drafted with only
+    /// `email_id`: the call proposal never reached the draft generator.
+    #[test]
+    fn draft_repair_passes_the_users_request_as_instructions() {
+        let q = "write an email to Kwame proposing a call next week about his Ollama question";
+        let mut args = serde_json::json!({ "email_id": "e1" });
+        assert!(repair_missing_draft_instructions(&mut args, q));
+        assert_eq!(args["instructions"], q);
+    }
+
+    #[test]
+    fn draft_repair_keeps_instructions_the_model_wrote() {
+        let mut args = serde_json::json!({ "email_id": "e1", "instructions": "keep it short" });
+        assert!(!repair_missing_draft_instructions(&mut args, "write a reply to Kwame"));
+        assert_eq!(args["instructions"], "keep it short");
+    }
+
+    /// A bare confirmation carries no content; the request it confirms was
+    /// in an earlier turn the model already read.
+    #[test]
+    fn draft_repair_skips_a_bare_confirmation() {
+        for q in ["sí", "ok, hazlo", "yes please"] {
+            let mut args = serde_json::json!({ "email_id": "e1", "instructions": "  " });
+            assert!(!repair_missing_draft_instructions(&mut args, q), "{q}");
+        }
+    }
+
     #[test]
     fn repair_fills_from_when_question_names_one_address() {
         // The production failure: the model issues search_emails({}) even
@@ -5152,6 +5716,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cancelled_turn_calls_the_model_no_more() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "An answer the user no longer wants.".to_string(),
+            tool_calls: None,
+        });
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            Some(vec![ai_tool_call("search_emails")]),
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            cancel,
+        )
+        .await;
+
+        assert!(outcome.cancelled);
+        assert!(llm_calls.is_empty(), "no model call after the cancel: {llm_calls:?}");
+        assert!(tool_traces.is_empty(), "no tool runs either");
+    }
+
+    #[tokio::test]
     async fn loop_repairs_idless_body_reads_with_search_result_refs() {
         // End-to-end through run_tool_loop: a preseeded search returns email
         // refs, then the model batches TWO get_email_body({}) calls with no
@@ -5243,6 +5845,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -5839,6 +6442,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6288,6 +6892,25 @@ mod tests {
         );
     }
 
+    /// "¿qué tengo pasado mañana?" on a Tuesday was asked of the calendar as
+    /// Wednesday: the prompt gave today and tomorrow only, so every other
+    /// relative day was the model's own (wrong) arithmetic.
+    #[test]
+    fn next_days_line_names_the_coming_week_with_weekdays() {
+        let tuesday = chrono::NaiveDate::from_ymd_opt(2026, 9, 22).expect("date");
+        let line = next_days_line(tuesday);
+        assert!(
+            line.starts_with("Wed 2026-09-23 (tomorrow), Thu 2026-09-24 (day after tomorrow), Fri 2026-09-25"),
+            "{line}"
+        );
+        assert!(line.ends_with("Tue 2026-09-29"), "{line}");
+    }
+
+    #[test]
+    fn the_chat_system_prompt_lists_the_coming_days() {
+        assert!(crate::services::prompts::defaults::CHAT_SYSTEM.contains("{{next_days}}"));
+    }
+
     #[test]
     fn thread_bound_binds_every_chat_system_placeholder() {
         // `prompts::render` leaves unknown placeholders INTACT (prompts/mod.rs),
@@ -6304,6 +6927,10 @@ mod tests {
         vars.insert("today", "2026-01-01".to_string());
         vars.insert("tomorrow", "2026-01-02".to_string());
         vars.insert("weekday", "Thursday".to_string());
+        vars.insert(
+            "next_days",
+            next_days_line(chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("date")),
+        );
         vars.insert("language_instruction", "Reply in Spanish.".to_string());
         vars.insert("tools_section", String::new());
         vars.insert("user_identity", String::new());
@@ -6807,8 +7434,8 @@ mod tests {
     fn prompt_hides_lens_tools_when_lenses_disabled() {
         use crate::services::chat::tools::default_registry;
         let db = Database::new_for_testing().expect("test db");
-        // Lenses default OFF — confirm the section omits them entirely so a
-        // user who never enabled the feature doesn't get tool calls for it.
+        // A user who turned Lenses off gets no tool calls for them.
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let tools_section = default_registry().render_system_prompt_section(&db);
         let msgs = build_prompt(&[], &[], "show me invoices lens", "en", "", tpl(), &tools_section);
         let sys = &msgs[0].1;

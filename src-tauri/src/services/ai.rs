@@ -168,20 +168,39 @@ fn get_or_create_llamacpp_runtime(
     runtime
 }
 
-/// Read the `chat.keep_alive_seconds` preference (default 30 min). Values
-/// below 60 s are clamped up to avoid accidentally disabling cache reuse
-/// with a mis-typed preference.
+/// `keep_alive_secs` value meaning "never evict" (Settings writes `-1`).
+pub const KEEP_ALIVE_FOREVER: u32 = u32::MAX;
+
+/// Idle seconds a `0` keep-alive still waits before freeing the model: long
+/// enough to span the gaps between one turn's tool rounds, so the model is
+/// freed after the answer rather than reloaded in the middle of it.
+const KEEP_ALIVE_ZERO_GRACE_SECS: i64 = 5;
+
+/// Read the `chat.keep_alive_seconds` preference (default 30 min).
 pub fn load_keep_alive_secs(db: &Database) -> u32 {
-    let raw = db
-        .get_preference("chat.keep_alive_seconds")
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(DEFAULT_KEEP_ALIVE_SECS);
-    if raw == 0 {
-        0 // explicit 0 → disable eviction (pin forever)
-    } else {
-        raw.max(60)
+    keep_alive_from_pref(db.get_preference("chat.keep_alive_seconds").ok().flatten().as_deref())
+}
+
+/// The keep-alive a preference value asks for, as Settings writes it:
+/// negative → [`KEEP_ALIVE_FOREVER`], `0` → free the model after use, other
+/// values in seconds with a one-minute floor (so a mistyped handful of
+/// seconds does not throw away the prompt cache every turn). Missing or
+/// unparseable → the 30-minute default.
+pub fn keep_alive_from_pref(raw: Option<&str>) -> u32 {
+    match raw.and_then(|s| s.trim().parse::<i64>().ok()) {
+        None => DEFAULT_KEEP_ALIVE_SECS,
+        Some(n) if n < 0 => KEEP_ALIVE_FOREVER,
+        Some(0) => 0,
+        Some(n) => u32::try_from(n).unwrap_or(KEEP_ALIVE_FOREVER - 1).max(60),
+    }
+}
+
+/// Whether a model idle for `idle_secs` should be dropped under `keep_alive`.
+pub fn should_evict(keep_alive: u32, idle_secs: i64) -> bool {
+    match keep_alive {
+        KEEP_ALIVE_FOREVER => false,
+        0 => idle_secs >= KEEP_ALIVE_ZERO_GRACE_SECS,
+        secs => idle_secs >= i64::from(secs),
     }
 }
 
@@ -202,8 +221,10 @@ pub fn load_n_ctx_override(db: &Database) -> u32 {
 /// Format `keep_alive_secs` for Ollama's `keep_alive` field. Ollama accepts
 /// "30m", "1h", "-1" (forever), "0" (unload immediately).
 fn format_ollama_keep_alive(secs: u32) -> String {
-    if secs == 0 {
-        "-1".to_string() // 0 in our pref = pin forever; matches llama.cpp path
+    if secs == KEEP_ALIVE_FOREVER {
+        "-1".to_string()
+    } else if secs == 0 {
+        "0".to_string()
     } else if secs.is_multiple_of(3600) {
         format!("{}h", secs / 3600)
     } else if secs.is_multiple_of(60) {
@@ -668,6 +689,20 @@ impl AiService {
     }
 
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {
+        self.complete_with_prefix("", prompt, operation, options).await
+    }
+
+    /// [`complete`](Self::complete) for a prompt whose `prefix` is identical
+    /// on every call (a fixed instruction block) and whose `suffix` is the
+    /// per-call part. Backends with a persistent KV cache keep the prefix
+    /// decoded between calls; the others see `prefix + suffix`.
+    pub async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        operation: &str,
+        options: Option<CompletionOptions>,
+    ) -> Result<String> {
         let mut opts = options.unwrap_or_default();
         // Apply thinking preference from config if not explicitly set
         if opts.think.is_none() {
@@ -677,15 +712,20 @@ impl AiService {
             }
         }
         let t = std::time::Instant::now();
-        let result = self.provider.complete(prompt, opts).await?;
+        let result = if prefix.is_empty() {
+            self.provider.complete(suffix, opts).await?
+        } else {
+            self.provider.complete_with_prefix(prefix, suffix, opts).await?
+        };
         let latency_ms = t.elapsed().as_millis() as u64;
         self.check_budget(result.cost_usd)?;
         self.record_usage(&result, operation)?;
+        let input = format!("{prefix}{suffix}");
         crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
             trace_name: operation,
             name: operation,
             model: &result.model,
-            input: prompt,
+            input: &input,
             output: &result.text,
             prompt_tokens: result.prompt_tokens,
             completion_tokens: result.completion_tokens,
@@ -994,5 +1034,62 @@ mod url_validation_tests {
     fn rejects_malformed_input() {
         assert!(validate_ai_base_url("not a url").is_err());
         assert!(validate_ai_base_url("http://").is_err());
+    }
+}
+
+// "Keep model loaded" as Settings writes it: minutes × 60, `-1` to pin the
+// model forever, `0` to free it right after use. The backend used to read `0`
+// as "pin forever" and fail to parse `-1` (falling back to 30 minutes), so the
+// two values the help text documents did the opposite of what it says.
+#[cfg(test)]
+mod keep_alive_tests {
+    use super::*;
+
+    #[test]
+    fn minus_one_pins_the_model_forever() {
+        assert_eq!(keep_alive_from_pref(Some("-1")), KEEP_ALIVE_FOREVER);
+    }
+
+    #[test]
+    fn zero_frees_the_model_after_use() {
+        assert_eq!(keep_alive_from_pref(Some("0")), 0);
+    }
+
+    #[test]
+    fn a_few_seconds_are_raised_to_a_minute_and_minutes_are_kept() {
+        assert_eq!(keep_alive_from_pref(Some("30")), 60);
+        assert_eq!(keep_alive_from_pref(Some("1800")), 1800);
+    }
+
+    #[test]
+    fn missing_or_garbage_means_the_default() {
+        assert_eq!(keep_alive_from_pref(None), DEFAULT_KEEP_ALIVE_SECS);
+        assert_eq!(keep_alive_from_pref(Some("soon")), DEFAULT_KEEP_ALIVE_SECS);
+    }
+
+    #[test]
+    fn a_pinned_model_is_never_evicted() {
+        assert!(!should_evict(KEEP_ALIVE_FOREVER, 10 * 24 * 3600));
+    }
+
+    #[test]
+    fn zero_evicts_once_the_turn_is_over_but_not_between_its_rounds() {
+        // A chat turn's tool rounds leave the model briefly idle; freeing it
+        // there would reload it mid-answer.
+        assert!(!should_evict(0, 2));
+        assert!(should_evict(0, 10));
+    }
+
+    #[test]
+    fn a_duration_evicts_only_after_it_has_passed() {
+        assert!(!should_evict(1800, 100));
+        assert!(should_evict(1800, 1800));
+    }
+
+    #[test]
+    fn ollama_gets_its_own_spelling_of_forever_and_now() {
+        assert_eq!(format_ollama_keep_alive(KEEP_ALIVE_FOREVER), "-1");
+        assert_eq!(format_ollama_keep_alive(0), "0");
+        assert_eq!(format_ollama_keep_alive(1800), "30m");
     }
 }

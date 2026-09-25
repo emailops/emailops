@@ -16,6 +16,7 @@ pub mod emails;
 pub mod embeddings;
 pub mod events;
 pub mod filters;
+pub mod forms;
 pub mod help_docs;
 pub mod i18n;
 pub mod junk;
@@ -39,6 +40,7 @@ pub mod tag_priority;
 pub mod task_queue;
 pub mod tasks;
 pub mod thread_clean;
+pub mod thread_reader;
 pub mod translation;
 // Desktop-only: the GitHub-release update checker. Meaningless for a served app.
 #[cfg(feature = "desktop")]

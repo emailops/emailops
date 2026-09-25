@@ -14,10 +14,11 @@ STATUSES = ("ok", "fail", "skip", "info")
 
 
 def previous_run(run_dir):
-    """Latest `*-full` sibling older than run_dir, or None."""
+    """Latest `*-full` sibling older than run_dir that recorded its commit, or None."""
     run_dir = pathlib.Path(run_dir)
     older = sorted(p for p in run_dir.parent.glob("[0-9]*-full")
-                   if p.name < run_dir.name and (p / "results.json").exists())
+                   if p.name < run_dir.name and (p / "results.json").exists()
+                   and json.loads((p / "results.json").read_text()).get("meta", {}).get("commit"))
     return older[-1] if older else None
 
 

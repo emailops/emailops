@@ -264,3 +264,42 @@ describe('selectLenses', () => {
     expect(selectLenses(s)).toBe(lenses);
   });
 });
+
+describe('create dialog', () => {
+  it('starts closed and opens/closes through SET_CREATE_OPEN', () => {
+    // Lives in the store so the sidebar "+" can open it from any view.
+    expect(initialLensState.createOpen).toBe(false);
+    const opened = lensReducer(initialLensState, { type: 'SET_CREATE_OPEN', open: true });
+    expect(opened.createOpen).toBe(true);
+    expect(lensReducer(opened, { type: 'SET_CREATE_OPEN', open: false }).createOpen).toBe(false);
+  });
+});
+
+describe('column filters', () => {
+  const acme = { key: 'vendor', values: ['Acme'], includeEmpty: false };
+
+  it('sets, replaces and clears one filter per column', () => {
+    let s = lensReducer(initialLensState, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: acme });
+    expect(s.columnFilters).toEqual([acme]);
+    const globex = { ...acme, values: ['Globex'] };
+    s = lensReducer(s, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: globex });
+    expect(s.columnFilters).toEqual([globex]);
+    s = lensReducer(s, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: null });
+    expect(s.columnFilters).toEqual([]);
+  });
+
+  it('drops the filters when another Lens is selected', () => {
+    // Column keys belong to one Lens's schema.
+    const s = lensReducer(initialLensState, { type: 'SET_COLUMN_FILTER', key: 'vendor', filter: acme });
+    expect(lensReducer(s, { type: 'SET_ACTIVE_LENS_ID', lensId: 'other' }).columnFilters).toEqual([]);
+  });
+});
+
+describe('create chooser', () => {
+  it('starts closed and opens/closes through SET_CREATE_CHOOSER_OPEN', () => {
+    expect(initialLensState.createChooserOpen).toBe(false);
+    const opened = lensReducer(initialLensState, { type: 'SET_CREATE_CHOOSER_OPEN', open: true });
+    expect(opened.createChooserOpen).toBe(true);
+    expect(opened.createOpen).toBe(false);
+  });
+});

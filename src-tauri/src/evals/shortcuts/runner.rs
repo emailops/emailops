@@ -235,8 +235,7 @@ async fn run_variant(
         model.to_string(),
         history,
         categories,
-        None,
-        None,
+        chat::TurnContext::default(),
     )
     .await?;
 
@@ -289,5 +288,6 @@ async fn run_variant(
         open_thread: None,
         // Shortcuts are mailbox fast paths; they never serve the guides.
         help_sections: Vec::new(),
+        memory: None,
     })
 }

@@ -120,5 +120,48 @@ class MemoryFactsAreSearchable(unittest.TestCase):
         self.assertEqual(indexed, facts)
 
 
+class ThreadMessagesAreAddressedToTheOtherSide(unittest.TestCase):
+    """A message the owner sends goes to the counterparty. It used to list the
+    owner as its own recipient, so research read "From: YOU, To: YOU" and
+    could not tell a quote the user sent from one the user received."""
+
+    def test_the_owners_messages_go_to_the_counterparty(self):
+        captured = []
+        original_insert, original_tags = gen.insert_email, gen.insert_tags
+        gen.insert_email = lambda conn, **kw: captured.append(kw) or f"id{len(captured)}"
+        gen.insert_tags = lambda *a, **kw: None
+        try:
+            thread = gen.Thread("Ana", "ana@client.example", "Quote", "primary",
+                                [("me", "Here is my quote."), ("them", "Thanks!")])
+            gen._insert_thread(None, gen.LOCALE_EN.work, thread)
+        finally:
+            gen.insert_email, gen.insert_tags = original_insert, original_tags
+        self.assertEqual(captured[0]["recipient_email"], "ana@client.example")
+        self.assertIsNone(captured[1].get("recipient_email"), "their message goes to the owner")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvoiceReadStateDoesNotDependOnDrawOrder(unittest.TestCase):
+    # Chat evals ask for the oldest unread email and for unread BorgBase mail.
+    # Read state used to be a random draw, so three demo threads added elsewhere
+    # in the generator shifted it and those evals failed on a correct answer.
+
+    def test_the_unread_invoices_stay_unread_whatever_the_draw(self):
+        for subject in gen.UNREAD_INVOICES_EN:
+            self.assertFalse(gen.invoice_is_read(subject, "en", roll=0.0), subject)
+
+    def test_every_other_english_invoice_is_read_whatever_the_draw(self):
+        self.assertTrue(gen.invoice_is_read("Fly.io invoice — March 2026", "en", roll=0.99))
+
+    def test_the_evals_unread_invoices_are_listed(self):
+        self.assertEqual(
+            gen.UNREAD_INVOICES_EN,
+            {
+                "BorgBase invoice for January 2026",
+                "Your Hetzner Cloud invoice for February 2026",
+                "BorgBase invoice for April 2026",
+            },
+        )

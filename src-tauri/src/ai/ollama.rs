@@ -56,6 +56,9 @@ struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    /// A JSON Schema the reply must follow (Ollama's structured outputs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaSamplingOptions>,
     /// `keep_alive` controls how long Ollama keeps the model resident in RAM
@@ -74,6 +77,14 @@ struct OllamaResponse {
     /// The `response` field may be empty when the model only produces a think block.
     #[serde(default)]
     thinking: String,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
+}
+
+/// Whether Ollama stopped because the reply reached `num_predict`.
+fn stopped_at_limit(done_reason: Option<&str>) -> bool {
+    done_reason == Some("length")
 }
 
 #[derive(Debug, Serialize)]
@@ -81,6 +92,9 @@ struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaChatMessage>,
     stream: bool,
+    /// See `OllamaRequest::format`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +189,9 @@ pub struct OllamaToolCallFunction {
 #[derive(Debug, Deserialize)]
 struct OllamaChatResponse {
     message: OllamaChatMessage,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -427,10 +444,16 @@ impl OllamaClient {
     }
 
     pub async fn generate(&self, prompt: &str) -> Result<String> {
-        self.generate_with_options(prompt, None).await
+        Ok(self.generate_with_options(prompt, None, None).await?.0)
     }
 
-    async fn generate_with_options(&self, prompt: &str, sampling: Option<OllamaSamplingOptions>) -> Result<String> {
+    /// The reply, and whether it stopped at `num_predict`.
+    async fn generate_with_options(
+        &self,
+        prompt: &str,
+        sampling: Option<OllamaSamplingOptions>,
+        format: Option<serde_json::Value>,
+    ) -> Result<(String, bool)> {
         let url = format!("{}/api/generate", self.base_url);
 
         let request = OllamaRequest {
@@ -439,6 +462,7 @@ impl OllamaClient {
             stream: false,
             options: sampling,
             keep_alive: Some(self.keep_alive.clone()),
+            format,
         };
 
         let response = self
@@ -472,16 +496,19 @@ impl OllamaClient {
         // Thinking models (gemma4, deepseek-r1, qwq) put their scratchpad in
         // `thinking` and leave `response` empty. Fall back to thinking content
         // so callers can still extract JSON from the model's reasoning.
+        let truncated = stopped_at_limit(result.done_reason.as_deref());
         if result.response.is_empty() && !result.thinking.is_empty() {
-            Ok(result.thinking)
+            Ok((result.thinking, truncated))
         } else {
-            Ok(result.response)
+            Ok((result.response, truncated))
         }
     }
 
     pub async fn chat(&self, prompt: &str, think: Option<bool>) -> Result<String> {
-        self.chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded())
-            .await
+        Ok(self
+            .chat_with_sampling(prompt, think, OllamaSamplingOptions::grounded(), None)
+            .await?
+            .0)
     }
 
     async fn chat_with_sampling(
@@ -489,7 +516,8 @@ impl OllamaClient {
         prompt: &str,
         think: Option<bool>,
         sampling: OllamaSamplingOptions,
-    ) -> Result<String> {
+        format: Option<serde_json::Value>,
+    ) -> Result<(String, bool)> {
         let url = format!("{}/api/chat", self.base_url);
 
         let request = OllamaChatRequest {
@@ -505,6 +533,7 @@ impl OllamaClient {
             tools: None,
             options: Some(sampling),
             keep_alive: Some(self.keep_alive.clone()),
+            format,
         };
 
         let response = self
@@ -535,11 +564,12 @@ impl OllamaClient {
             .await
             .map_err(|e| AppError::AiError(format!("Failed to parse Ollama chat response: {}", e)))?;
 
+        let truncated = stopped_at_limit(result.done_reason.as_deref());
         let content = result.message.content;
         if content.is_empty() && !result.message.thinking.is_empty() {
-            Ok(result.message.thinking)
+            Ok((result.message.thinking, truncated))
         } else {
-            Ok(content)
+            Ok((content, truncated))
         }
     }
 
@@ -560,6 +590,7 @@ impl OllamaClient {
             tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -617,6 +648,7 @@ impl OllamaClient {
             tools: None,
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -721,6 +753,7 @@ impl OllamaClient {
             tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
             options: Some(OllamaSamplingOptions::grounded()),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
 
         let response = self
@@ -931,6 +964,13 @@ impl AIProvider for OllamaClient {
         ProviderType::Ollama
     }
 
+    /// Every sampled request carries `num_ctx` from [`OllamaSamplingOptions::grounded`].
+    fn context_window(&self) -> Option<u32> {
+        OllamaSamplingOptions::grounded()
+            .num_ctx
+            .and_then(|n| u32::try_from(n).ok())
+    }
+
     fn model_name(&self) -> &str {
         &self.model
     }
@@ -983,7 +1023,8 @@ impl AIProvider for OllamaClient {
     }
 
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
-        let text = if options.think.is_some() {
+        let format = options.json_shape.as_ref().map(|shape| shape.to_json_schema());
+        let (text, truncated) = if options.think.is_some() {
             // Some(true) = enable thinking, Some(false) = disable thinking.
             // Both route through /api/chat which is the only endpoint that
             // supports the `think` parameter for thinking models.
@@ -994,7 +1035,7 @@ impl AIProvider for OllamaClient {
             if let Some(max_tokens) = options.max_tokens {
                 sampling.num_predict = Some(max_tokens as i32);
             }
-            self.chat_with_sampling(prompt, options.think, sampling).await?
+            self.chat_with_sampling(prompt, options.think, sampling, format).await?
         } else {
             let sampling = if options.temperature.is_some() || options.max_tokens.is_some() {
                 let mut s = OllamaSamplingOptions::grounded();
@@ -1008,7 +1049,7 @@ impl AIProvider for OllamaClient {
             } else {
                 None
             };
-            self.generate_with_options(prompt, sampling).await?
+            self.generate_with_options(prompt, sampling, format).await?
         };
         Ok(CompletionResult {
             text,
@@ -1019,6 +1060,7 @@ impl AIProvider for OllamaClient {
             prefill_ms: None,
             cached_prompt_tokens: None,
             aux_plan: None,
+            truncated,
         })
     }
 
@@ -1135,6 +1177,7 @@ impl AIProvider for OllamaClient {
                 num_predict: Some(1),
             }),
             keep_alive: Some(self.keep_alive.clone()),
+            format: None,
         };
         // Generous timeout: the first load of a multi-GB GGUF on a cold
         // system can take tens of seconds. We don't care about the output.
@@ -1703,5 +1746,53 @@ mod pattern_parser_tests {
     fn a_word_containing_id_is_not_an_id_operator() {
         let parsed = parse_search_query_patterns("paid:invoice").unwrap_or_default();
         assert!(parsed.id_filters.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stop_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_json_shape_is_sent_as_the_format_schema() {
+        use crate::ai::json_shape::JsonShape;
+        let shape = JsonShape::object(vec![("tag", JsonShape::one_of(&["match", "context"]))]);
+        let request = OllamaRequest {
+            model: "m".into(),
+            prompt: "p".into(),
+            stream: false,
+            options: None,
+            keep_alive: None,
+            format: Some(shape.to_json_schema()),
+        };
+        let body = serde_json::to_value(&request).unwrap();
+        assert_eq!(body["format"], shape.to_json_schema());
+        let request = OllamaRequest {
+            format: None,
+            ..request
+        };
+        assert!(serde_json::to_value(&request).unwrap().get("format").is_none());
+    }
+
+    #[test]
+    fn a_generate_reply_that_hit_num_predict_is_truncated() {
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x","done":true,"done_reason":"length"}"#).unwrap();
+        assert!(stopped_at_limit(r.done_reason.as_deref()));
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x","done":true,"done_reason":"stop"}"#).unwrap();
+        assert!(!stopped_at_limit(r.done_reason.as_deref()));
+        let r: OllamaResponse = serde_json::from_str(r#"{"response":"x"}"#).unwrap();
+        assert!(
+            !stopped_at_limit(r.done_reason.as_deref()),
+            "older servers send no reason"
+        );
+    }
+
+    #[test]
+    fn a_chat_reply_that_hit_num_predict_is_truncated() {
+        let r: OllamaChatResponse = serde_json::from_str(
+            r#"{"message":{"role":"assistant","content":"x"},"done":true,"done_reason":"length"}"#,
+        )
+        .unwrap();
+        assert!(stopped_at_limit(r.done_reason.as_deref()));
     }
 }

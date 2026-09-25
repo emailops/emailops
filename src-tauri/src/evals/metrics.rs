@@ -119,6 +119,26 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         checks.push(check_no_email_sources(&outcome.sources_used));
     }
 
+    if let Some(min) = case.expected_min_research_emails {
+        checks.push(check_research_coverage(min, outcome.assistant_trace.as_ref()));
+    }
+
+    if !case.expected_research_matches.is_empty() || !case.forbidden_research_matches.is_empty() {
+        checks.push(check_research_matches(
+            &case.expected_research_matches,
+            &case.forbidden_research_matches,
+            &outcome.sources_used,
+        ));
+    }
+
+    if let Some(mode) = case.expected_research_mode {
+        checks.push(check_research_mode(mode, outcome.assistant_trace.as_ref()));
+    }
+
+    if let Some(min) = case.expected_min_research_matches {
+        checks.push(check_min_research_matches(min, &outcome.sources_used));
+    }
+
     if !case.expected_cited_subjects.is_empty() {
         checks.push(check_cited_subjects(
             &case.expected_cited_subjects,
@@ -227,6 +247,97 @@ fn check_help_pages_any(pages: &[String], trace: Option<&ChatTrace>) -> Heuristi
 /// Assert that no mailbox email was fed to the model as a RAG source — a
 /// question about the app must be answered from the guides, not from an
 /// email that happens to discuss the same topic.
+/// A research-mode turn must have read at least `min` emails — the whole point
+/// of the mode is coverage, and a planner filter that pages nothing or a
+/// retrieval that silently fails would still yield a fluent report.
+fn check_research_coverage(min: u32, trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let read = trace
+        .and_then(|t| t.research.as_ref())
+        .map(|r| (r.emails_analyzed, r.batches));
+    let passed = read.is_some_and(|(emails, _)| emails >= min);
+    HeuristicCheck {
+        name: "research_coverage".into(),
+        passed,
+        expected: format!(">= {min} emails read"),
+        actual: match read {
+            Some((emails, batches)) => format!("{emails} emails read in {batches} batches"),
+            None => "no research trace (the turn did not run research mode)".into(),
+        },
+        detail: if passed {
+            "research mode read the expected share of the mailbox".into()
+        } else {
+            "research mode read fewer emails than the case requires".into()
+        },
+    }
+}
+
+/// The conversations a research run matched are its sources: each `expected`
+/// subject substring must be among them and no `forbidden` one may be.
+fn check_research_matches(
+    expected: &[String],
+    forbidden: &[String],
+    sources: &[crate::evals::harness::SourceSummary],
+) -> HeuristicCheck {
+    let has = |needle: &String| {
+        let needle = needle.to_lowercase();
+        sources.iter().find(|s| s.subject.to_lowercase().contains(&needle))
+    };
+    let missing: Vec<&str> = expected
+        .iter()
+        .filter(|e| has(e).is_none())
+        .map(String::as_str)
+        .collect();
+    let wrong: Vec<&str> = forbidden.iter().filter_map(has).map(|s| s.subject.as_str()).collect();
+    let passed = missing.is_empty() && wrong.is_empty();
+    HeuristicCheck {
+        name: "research_matches".into(),
+        passed,
+        expected: format!("matches {expected:?}, never {forbidden:?}"),
+        actual: format!(
+            "{} conversations matched; missing {missing:?}; wrongly matched {wrong:?}",
+            sources.len()
+        ),
+        detail: if passed {
+            "research matched the right conversations".into()
+        } else {
+            "research matched the wrong set of conversations".into()
+        },
+    }
+}
+
+/// Research delivered the answer in the expected form.
+fn check_research_mode(expected: crate::models::ReportMode, trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let got = trace.and_then(|t| t.research.as_ref()).map(|r| r.mode);
+    let passed = got == Some(expected);
+    HeuristicCheck {
+        name: "research_mode".into(),
+        passed,
+        expected: format!("{expected:?}"),
+        actual: got.map_or_else(|| "no research trace".to_string(), |m| format!("{m:?}")),
+        detail: if passed {
+            "research answered in the expected form".into()
+        } else {
+            "research chose the wrong answer form".into()
+        },
+    }
+}
+
+/// A research run matched at least `min` conversations (its sources).
+fn check_min_research_matches(min: u32, sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
+    let passed = sources.len() >= min as usize;
+    HeuristicCheck {
+        name: "research_recall".into(),
+        passed,
+        expected: format!(">= {min} conversations matched"),
+        actual: format!("{} conversations matched", sources.len()),
+        detail: if passed {
+            "research found every expected conversation".into()
+        } else {
+            "research dropped conversations that answer the question".into()
+        },
+    }
+}
+
 fn check_no_email_sources(sources: &[crate::evals::harness::SourceSummary]) -> HeuristicCheck {
     let passed = sources.is_empty();
     HeuristicCheck {
@@ -579,6 +690,7 @@ mod tests {
             tool_loop_ms: 0,
             llm_streaming_ms: None,
             help: None,
+            research: None,
             llm_calls: vec![],
             steps: vec![],
         }
@@ -599,6 +711,37 @@ mod tests {
             ..Default::default()
         });
         trace
+    }
+
+    // ── expected_min_research_emails ───────────────────────────────────────
+
+    #[test]
+    fn research_coverage_passes_when_enough_emails_were_read() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 13,
+            batches: 2,
+            ..Default::default()
+        });
+        let check = check_research_coverage(10, Some(&trace));
+        assert!(check.passed, "{}", check.detail);
+    }
+
+    #[test]
+    fn research_coverage_fails_when_too_few_emails_were_read() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 4,
+            ..Default::default()
+        });
+        assert!(!check_research_coverage(10, Some(&trace)).passed);
+    }
+
+    #[test]
+    fn research_coverage_fails_when_the_turn_did_not_research() {
+        let check = check_research_coverage(10, Some(&trace_with(vec![])));
+        assert!(!check.passed);
+        assert!(check.actual.contains("no research"), "{}", check.actual);
     }
 
     #[test]
@@ -777,6 +920,60 @@ mod tests {
     // that found its evidence through a tool (whose results carry no number)
     // numbered those emails itself, so `[1]` rendered as an unrelated shipping
     // notice while the answer's facts came from the vendor's support mail.
+
+    // ── expected / forbidden research matches ─────────────────────────────
+
+    #[test]
+    fn research_matches_pass_with_every_expected_and_no_forbidden_conversation() {
+        let sources = vec![source(1, "a", "Re: Proposal: PrivacyHub migration")];
+        let check = check_research_matches(&["privacyhub".into()], &["translation".into()], &sources);
+        assert!(check.passed, "{}", check.actual);
+    }
+
+    #[test]
+    fn research_matches_fail_on_a_forbidden_conversation() {
+        let sources = vec![
+            source(1, "a", "Proposal: PrivacyHub migration"),
+            source(2, "b", "Re: Quote request: German translation"),
+        ];
+        let check = check_research_matches(&["privacyhub".into()], &["translation".into()], &sources);
+        assert!(!check.passed);
+        assert!(check.actual.contains("German translation"), "{}", check.actual);
+    }
+
+    #[test]
+    fn research_matches_fail_when_an_expected_conversation_is_missing() {
+        let sources = vec![source(1, "a", "Something else")];
+        assert!(!check_research_matches(&["privacyhub".into()], &[], &sources).passed);
+    }
+
+    #[test]
+    fn the_research_mode_check_reads_the_trace() {
+        let mut trace = trace_with(vec![]);
+        trace.research = Some(crate::models::ResearchTrace {
+            mode: crate::models::ReportMode::List,
+            ..Default::default()
+        });
+        assert!(check_research_mode(crate::models::ReportMode::List, Some(&trace)).passed);
+        let check = check_research_mode(crate::models::ReportMode::Analysis, Some(&trace));
+        assert!(!check.passed);
+        assert!(check.actual.contains("List"), "{}", check.actual);
+        assert!(!check_research_mode(crate::models::ReportMode::List, None).passed);
+    }
+
+    #[test]
+    fn research_recall_passes_when_every_expected_conversation_matched() {
+        let sources: Vec<SourceSummary> = (0..13).map(|i| source(i, "x", "Weekly stats")).collect();
+        assert!(check_min_research_matches(13, &sources).passed);
+    }
+
+    #[test]
+    fn research_recall_fails_when_matches_went_missing() {
+        let sources: Vec<SourceSummary> = (0..9).map(|i| source(i, "x", "Weekly stats")).collect();
+        let check = check_min_research_matches(13, &sources);
+        assert!(!check.passed);
+        assert!(check.actual.contains("9 conversations"), "{}", check.actual);
+    }
 
     fn source(n: i32, email_id: &str, subject: &str) -> SourceSummary {
         SourceSummary {

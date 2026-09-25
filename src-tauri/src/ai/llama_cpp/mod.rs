@@ -60,6 +60,10 @@ impl AIProvider for LlamaCppBackend {
         &self.embedding_model_name
     }
 
+    fn context_window(&self) -> Option<u32> {
+        self.runtime.chat_context_window()
+    }
+
     async fn is_available(&self) -> bool {
         self.runtime.is_ready()
     }
@@ -110,6 +114,7 @@ impl AIProvider for LlamaCppBackend {
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
             aux_plan: outcome.aux_plan,
+            truncated: outcome.truncated,
         })
     }
 
@@ -129,6 +134,7 @@ impl AIProvider for LlamaCppBackend {
             prefill_ms: Some(outcome.prefill_ms),
             cached_prompt_tokens: Some(outcome.cached_prompt_tokens),
             aux_plan: outcome.aux_plan,
+            truncated: outcome.truncated,
         })
     }
 

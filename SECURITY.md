@@ -28,8 +28,9 @@ In scope:
 - The EmailOps desktop application (Tauri + Rust + React/TypeScript).
 - Local SQLite database handling, OAuth token storage, and the OS keychain
   integration.
-- Email HTML rendering / sanitization pipeline (the sandboxed iframe and
-  the DOMPurify policy in `src/lib/sanitizeEmailHtml.ts`).
+- Email HTML rendering / sanitization pipeline (the sandboxed iframe and the
+  DOMPurify policies in `src/components/shared/EmailHtmlFrame.tsx` and
+  `src/lib/emailFormatting.ts`).
 - Code that ships in the released desktop application.
 
 Out of scope:

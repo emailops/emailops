@@ -125,6 +125,7 @@ async fn run_case(ai: &AiService, db: &Arc<Database>, case: &TranslationCase) ->
                 passed,
                 score: Some(if passed { 1.0 } else { 0.0 }),
                 detail: format!("detected={} expected={}", result.language, expected),
+                evidence: None,
             })
         }
         CaseKind::Translate => {
@@ -164,6 +165,7 @@ async fn run_case(ai: &AiService, db: &Arc<Database>, case: &TranslationCase) ->
                 } else {
                     failures.join("; ")
                 },
+                evidence: None,
             })
         }
     }
@@ -203,6 +205,7 @@ pub async fn run(cfg: TranslationEvalConfig) -> EvalResult<PathBuf> {
                 passed: false,
                 score: Some(0.0),
                 detail: format!("ERROR: {e}"),
+                evidence: None,
             },
         };
         eprintln!(

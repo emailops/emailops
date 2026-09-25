@@ -6,6 +6,7 @@ import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
 import type { CatalogModel } from '@/types';
+import { BackgroundActivityStatus } from './BackgroundActivityStatus';
 
 /** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
 const LOG_TIME_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -205,7 +206,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
     <div className="flex flex-col border-t border-gray-700 bg-[#1e1e1e] text-gray-300 text-xs font-mono">
       {/* Header bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-gray-700 select-none">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <button onClick={toggle} className="flex items-center gap-1.5 hover:text-white transition-colors">
             <svg
               className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`}
@@ -226,6 +227,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
               {sourceFilter !== 'all' && ` / ${entries.length}`} {visibleEntries.length === 1 ? 'entry' : 'entries'}
             </span>
           )}
+          <BackgroundActivityStatus />
         </div>
 
         <div className="flex items-center gap-2">

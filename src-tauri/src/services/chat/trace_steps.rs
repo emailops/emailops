@@ -23,7 +23,13 @@ use crate::models::{CacheAction, CacheActionKind, ChatTrace, KvCacheStats, LlmCa
 /// tools as there are, each round takes its `tool_calls_requested` slice
 /// instead. A `final_stream` never owns tools.
 pub fn plan_steps(trace: &ChatTrace) -> Vec<TraceStep> {
-    let mut steps = vec![TraceStep::Route];
+    // A research turn opens with its summary, so the mode reads before the
+    // steps it changed.
+    let mut steps = if trace.research.is_some() {
+        vec![TraceStep::Research, TraceStep::Route]
+    } else {
+        vec![TraceStep::Route]
+    };
     let llm_step = |index: usize| {
         let call = &trace.llm_calls[index];
         TraceStep::Llm {
@@ -133,6 +139,22 @@ fn describe_anchor(before: u32, after: u32) -> String {
 /// (HTTP providers, traces from before the plan was recorded).
 pub fn cache_action(call: &LlmCallTrace) -> Option<CacheAction> {
     let plan = call.prefix_plan.as_deref()?;
+    // One-shot calls (planner, research) use the auxiliary prefix slot, not
+    // the chat anchor: their plan is the slot's own verdict.
+    if call.kind == "planner" || call.kind.starts_with("research_") {
+        let (kind, detail) = match plan {
+            "Reuse" => (CacheActionKind::Extend, "one-shot slot: instructions reused"),
+            "Reseed" => (CacheActionKind::ColdFresh, "one-shot slot: instructions decoded"),
+            _ => (
+                CacheActionKind::ColdFresh,
+                "one-shot slot not used (window below 16k or evicted)",
+            ),
+        };
+        return Some(CacheAction {
+            kind,
+            detail: detail.to_string(),
+        });
+    }
     let before = call.sys_cached_before.unwrap_or(0);
     let after = call.sys_cached_after.unwrap_or(0);
     let dropped = call.dropped_front_tokens.unwrap_or(0);
@@ -187,6 +209,26 @@ pub fn step_detail(trace: &ChatTrace, step: &TraceStep) -> String {
                 format!("{mode} · {}", trace.route.reason)
             }
         }
+        TraceStep::Research => match &trace.research {
+            Some(r) => {
+                let mut d = format!(
+                    "gathered {} by filter + {} by meaning · read {} of {} · {} findings from {} emails",
+                    r.search_hits, r.semantic_hits, r.emails_analyzed, r.planned_emails, r.findings, r.relevant_emails
+                );
+                if r.condense_calls > 0 {
+                    d.push_str(&format!(" · {} condense calls", r.condense_calls));
+                }
+                if r.failed_batches > 0 {
+                    let plural = if r.failed_batches == 1 { "batch" } else { "batches" };
+                    d.push_str(&format!(" · {} {plural} failed", r.failed_batches));
+                }
+                if r.stopped {
+                    d.push_str(" · cancelled by the user");
+                }
+                d
+            }
+            None => String::new(),
+        },
         TraceStep::Retrieval => match &trace.retrieval {
             Some(r) => format!(
                 "{} vec + {} fts → top {} · {} ms{}",
@@ -257,6 +299,10 @@ pub fn step_label(trace: &ChatTrace, step: &TraceStep) -> String {
                 format!("route: {} (matched: {})", r.classifier, r.matched_keywords.join(", "))
             }
         }
+        TraceStep::Research => match &trace.research {
+            Some(r) => format!("research ({} emails, {} batches)", r.emails_analyzed, r.batches),
+            None => "research".into(),
+        },
         TraceStep::Retrieval => "RAG retrieval".into(),
         TraceStep::Help => match &trace.help {
             Some(h) => format!("guides ({} of {} sections)", h.included, h.candidates),
@@ -330,6 +376,7 @@ mod tests {
             llm_streaming_ms: None,
             llm_calls,
             help: None,
+            research: None,
             steps: vec![],
         }
     }
@@ -349,6 +396,7 @@ mod tests {
             .iter()
             .map(|s| match s {
                 TraceStep::Route => "route".into(),
+                TraceStep::Research => "research".into(),
                 TraceStep::Retrieval => "rag".into(),
                 TraceStep::Help => "help".into(),
                 TraceStep::Llm { index, .. } => {
@@ -361,6 +409,83 @@ mod tests {
     }
 
     // ── Order (ported from src/lib/reasoningTrace.ts `buildFlow`) ────────
+
+    #[test]
+    fn a_one_shot_call_reports_its_prefix_slot_not_the_chat_anchor() {
+        // Planner and research calls run on the auxiliary slot, which reports
+        // Reuse / Reseed / Bypass. Reading that as a chat plan printed "cold
+        // prefill · no anchor seeded (sys_tok=0 …)" under every batch.
+        let mut c = llm("research_map", 0, 0);
+        c.prefix_plan = Some("Reuse".into());
+        let a = cache_action(&c).expect("an action");
+        assert_eq!(a.kind, CacheActionKind::Extend);
+        assert!(a.detail.contains("instructions reused"), "{}", a.detail);
+        assert!(!a.detail.contains("anchor"), "{}", a.detail);
+
+        c.prefix_plan = Some("Reseed".into());
+        assert_eq!(cache_action(&c).map(|a| a.kind), Some(CacheActionKind::ColdFresh));
+        c.prefix_plan = Some("Bypass".into());
+        let a = cache_action(&c).expect("an action");
+        assert!(a.detail.contains("not used"), "{}", a.detail);
+    }
+
+    #[test]
+    fn a_research_turn_reads_header_router_planner_gather_map_condense_reduce() {
+        let mut t = trace(
+            "heuristic",
+            vec![
+                llm("planner", -2, 0),
+                llm("research_map", 0, 0),
+                llm("research_map", 1, 0),
+                llm("research_condense", 0, 0),
+                llm("research_reduce", -1, 0),
+            ],
+            vec![tool("search_emails", -3), tool("search_emails", -3)],
+        );
+        t.research = Some(crate::models::ResearchTrace {
+            emails_analyzed: 20,
+            batches: 2,
+            ..Default::default()
+        });
+        assert_eq!(
+            tags(&t),
+            [
+                "research",
+                "route",
+                "llm:planner/-2",
+                "tool:search_emails",
+                "tool:search_emails",
+                "llm:research_map/0",
+                "llm:research_map/1",
+                "llm:research_condense/0",
+                "llm:research_reduce/-1"
+            ]
+        );
+    }
+
+    #[test]
+    fn research_step_label_and_detail_carry_the_counts() {
+        let mut t = trace("planner", vec![], vec![]);
+        t.research = Some(crate::models::ResearchTrace {
+            planned_emails: 70,
+            search_hits: 30,
+            semantic_hits: 40,
+            emails_analyzed: 60,
+            stopped: true,
+            batches: 6,
+            failed_batches: 1,
+            findings: 25,
+            relevant_emails: 18,
+            ..Default::default()
+        });
+        assert_eq!(step_label(&t, &TraceStep::Research), "research (60 emails, 6 batches)");
+        let detail = step_detail(&t, &TraceStep::Research);
+        assert!(detail.contains("30 by filter + 40 by meaning"), "{detail}");
+        assert!(detail.contains("read 60 of 70"), "{detail}");
+        assert!(detail.contains("cancelled by the user"), "{detail}");
+        assert!(detail.contains("25 findings from 18 emails"), "{detail}");
+        assert!(detail.contains("1 batch failed"), "{detail}");
+    }
 
     #[test]
     fn the_route_always_comes_first() {
@@ -733,9 +858,7 @@ mod tests {
         planner.prefill_ms = Some(8);
         planner.prompt_tokens = Some(1777);
         planner.cached_prompt_tokens = Some(1757);
-        planner.prefix_plan = Some("ColdPrefill".into());
-        planner.sys_cached_before = Some(0);
-        planner.sys_cached_after = Some(0);
+        planner.prefix_plan = Some("Reuse".into());
         let mut round = llm("tool_round", 0, 1);
         round.latency_ms = 1100;
         round.failed = true;
@@ -756,7 +879,7 @@ mod tests {
             details(&t),
             [
                 "rag_first · planner found no single search",
-                "219 ms · prefill 8 ms · KV cache 1757/1777 tok (99%) · cold prefill · no anchor seeded (sys_tok=0 — system prefix not detected this call)",
+                "219 ms · prefill 8 ms · KV cache 1757/1777 tok (99%) · one-shot slot: instructions reused",
                 "20 vec + 30 fts → top 9 · 7 ms",
                 "sim 0.81 · 7 ms",
                 "1100 ms · 1 tool call · FAILED",

@@ -99,7 +99,7 @@ await step('Cuentas', 'volver a la cuenta de trabajo', 'la cuenta demo-acct-work
 
 // ---------- Otras vistas ----------
 if (!(await exists('button=Spam'))) { await click('button=Other Views'); await sleep(800); }
-const optional = { Calendar: 'el calendario solo se activa en cuentas Gmail/Outlook', Lenses: 'AI Lenses es experimental y está desactivado' };
+const optional = { Calendar: 'el calendario solo se activa en cuentas Gmail/Outlook' };
 for (const view of ['Tag Board', 'Attachments', 'Drafts', 'Sent', 'Calendar', 'Spam', 'Deleted', 'Contacts', 'Dashboard', 'Tasks', 'Lenses', 'Memory']) {
   await step('Vistas', view, `la vista ${view} abre sin errores y con contenido`, async () => {
     const sel = `button*=${view}`;
@@ -263,6 +263,73 @@ await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y "Open
   if (!(await exists('aria/Open chat panel'))) return `FAIL: sin botón "Open chat panel" tras cerrar (cerrado=${closed})`;
   await click('aria/Open chat panel'); await sleep(1200);
   return ok(closed && await exists('button=Send'), 'cerrado y reabierto desde la cabecera', closed ? 'no se reabrió' : 'no se cerró');
+});
+
+// ---------- Chat → formularios (después del chat: reusa el modelo ya cargado) ----------
+// Cubre las tres piezas nuevas de una sola pasada por la UI real: el veredicto `form` del
+// query planner, el efecto FillForm que abre "Crear Lens" ya relleno, y el contrato de que
+// el panel de chat sigue visible Y utilizable mientras el formulario está abierto.
+await step('Chat/Formularios', 'rellenar Crear Lens desde el chat', 'pedir una lens abre el formulario con nombre y columnas ya puestos en menos de 120 s', async () => {
+  if (!(await exists('button=Send'))) { if (await exists('aria/Open chat panel')) { await click('aria/Open chat panel'); await sleep(1200); } }
+  if (!(await exists('button=Send'))) return 'FAIL: no hay panel de chat desde el que pedirlo';
+  await type('textarea[placeholder^="Ask about your emails"]', 'crea una lens para seguir las facturas de mis proveedores con el importe, la fecha y el proveedor');
+  await click('button=Send');
+  const t0 = Date.now(); let opened = false;
+  while (Date.now() - t0 < 120000) {
+    await sleep(5000);
+    if (await exists('[data-testid="lens-create-name"]')) { opened = true; break; }
+  }
+  const secs = Math.round((Date.now() - t0) / 1000);
+  if (!opened) return `FAIL: el formulario no se abrió tras ${secs} s`;
+  const name = await js(() => document.querySelector('[data-testid="lens-create-name"]')?.value || '');
+  const cols = await js(() => document.querySelectorAll('[data-testid="lens-create-column-key"]').length);
+  const filledCols = await js(() => [...document.querySelectorAll('[data-testid="lens-create-column-key"]')].filter(i => i.value.trim()).length);
+  return ok(name.trim().length > 0 && filledCols >= 2,
+    `${secs} s; nombre "${name}", ${filledCols}/${cols} columnas con clave`,
+    `nombre "${name}", ${filledCols}/${cols} columnas con clave`);
+});
+await step('Chat/Formularios', 'el chat sigue visible y usable', 'con el formulario abierto el panel de chat se ve y acepta otro mensaje', async () => {
+  if (!(await exists('[data-testid="lens-create-name"]'))) return 'SKIP: el formulario no está abierto';
+  // Visible: el diálogo no bloqueante se aparta del dock en vez de taparlo.
+  const sendVisible = await js(() => {
+    const btns = [...document.querySelectorAll('button')].filter(x => x.textContent.trim() === 'Send');
+    if (!btns.length) return false;
+    const r = btns[0].getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  if (!sendVisible) return 'FAIL: el botón Send del chat no está visible con el formulario abierto';
+  // Usable: sin trampa de puntero — lo que hay bajo el cursor en el cuadro de texto ES el cuadro de texto.
+  const reachable = await js(() => {
+    const ta = document.querySelector('textarea[placeholder^="Ask about your emails"]');
+    if (!ta) return false;
+    const r = ta.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!top && (top === ta || ta.contains(top));
+  });
+  return ok(reachable, 'panel visible y el cuadro de texto recibe el puntero', 'algo tapa el cuadro de texto del chat');
+});
+await step('Chat/Formularios', 'cerrar sin guardar', 'Cancel cierra el formulario sin crear la lens', async () => {
+  if (!(await exists('[data-testid="lens-create-name"]'))) return 'SKIP: el formulario no está abierto';
+  await click('button=Cancel'); await sleep(1000);
+  return ok(!(await exists('[data-testid="lens-create-name"]')), 'formulario cerrado', 'el formulario sigue abierto');
+});
+
+// ---------- Chat → respuesta incorrecta ----------
+await step('Chat', 'marcar respuesta incorrecta', 'el botón pide el motivo antes de reintentar y no reintenta en vacío', async () => {
+  if (!(await exists('[data-testid="chat-mark-wrong"]'))) return 'SKIP: no hay respuesta terminada que marcar';
+  await click('[data-testid="chat-mark-wrong"]'); await sleep(600);
+  if (!(await exists('[data-testid="chat-wrong-reason"]'))) return 'FAIL: no pide el motivo';
+  const disabled = await js(() => document.querySelector('[data-testid="chat-wrong-submit"]')?.disabled);
+  return ok(disabled === true, 'pide el motivo y el botón está inhabilitado en vacío', `botón habilitado sin motivo (disabled=${disabled})`);
+});
+await step('Chat', 'reintento correctivo', 'con un motivo escrito, reintentar marca la respuesta y lanza un turno nuevo', async () => {
+  if (!(await exists('[data-testid="chat-wrong-reason"]'))) return 'SKIP: el cuadro de motivo no está abierto';
+  await type('[data-testid="chat-wrong-reason"]', 'faltan facturas de este mes');
+  await click('[data-testid="chat-wrong-submit"]'); await sleep(3000);
+  const marked = await exists('[data-testid="chat-rejected-note"]');
+  const asked = (await bodyText()).includes('faltan facturas de este mes');
+  return ok(marked && asked, 'respuesta marcada y motivo enviado como turno nuevo',
+    `marcada=${marked}, motivo en la conversación=${asked}`);
 });
 
 fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(results, null, 2));

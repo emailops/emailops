@@ -82,6 +82,7 @@
     "showRemoteImagesHint": "Das Laden von Bildern kann den Absender darüber informieren, dass du diese E-Mail geöffnet hast.",
     "reply": "Antworten",
     "replyAll": "Allen antworten",
+    "aiDraft": "KI-Entwurf",
     "aiDraftTitle": "Antwort mit KI erzeugen (verwendet die Empfänger von Allen antworten)",
     "openInNewTab": "In neuem Tab öffnen",
     "deleteThread": "Thread löschen",
@@ -171,5 +172,6 @@
     "confirmFailed": "Nachricht konnte auf dem Server nicht abgelegt werden",
     "notJunkFailed": "Es konnte nicht gespeichert werden, dass diese Nachricht kein Spam ist",
     "hideFlagged": "Spam-Nachrichten ausblenden"
-  }
+  },
+  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar."
 }

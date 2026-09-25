@@ -210,6 +210,25 @@ pub enum ToolEffect {
     /// the UI can say what it opened.
     #[serde(rename_all = "camelCase")]
     NavigateTo { target: String, title: String },
+    /// Open one of the app's forms with the fields the model filled in, for
+    /// the user to review and submit. Fired by `run_form_fill_turn` (not a
+    /// tool) after the query planner returns a `form` verdict.
+    ///
+    /// `form_id` is a key of `services::forms::registry::FORMS` and `target`
+    /// is that form's `view/<name>#<anchor>`; both are re-validated on the
+    /// frontend. `values` carries only keys the form declares, already coerced
+    /// to their declared kinds, so the receiving component can spread it onto
+    /// its state without re-checking types.
+    ///
+    /// `missing_required` names the fields the model could not fill, so the UI
+    /// can focus the first one instead of the user hunting for it.
+    #[serde(rename_all = "camelCase")]
+    FillForm {
+        form_id: String,
+        target: String,
+        values: serde_json::Value,
+        missing_required: Vec<String>,
+    },
 }
 
 /// Errors the registry surfaces to the chat loop.
@@ -620,13 +639,14 @@ mod tests {
 
     #[test]
     fn definitions_omits_tools_whose_feature_is_disabled() {
-        // Lenses is the only tool here, gated on `lenses_enabled` — which
-        // defaults to false. Registry should expose zero tools to the LLM.
+        // Lenses is the only tool here, gated on `lenses_enabled`, which the
+        // user turned off. Registry should expose zero tools to the LLM.
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         assert!(
             registry.definitions(&db).is_empty(),
-            "lenses-gated tool should be hidden when lenses_enabled defaults to false"
+            "lenses-gated tool should be hidden when lenses_enabled is false"
         );
     }
 
@@ -723,6 +743,7 @@ mod tests {
     #[test]
     fn get_returns_none_for_disabled_tool() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         assert!(registry.get("get_lens_data", &db).is_none());
     }
@@ -730,6 +751,7 @@ mod tests {
     #[test]
     fn lookup_returns_some_for_disabled_tool_so_loop_can_distinguish() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         // Distinguishing "unknown" from "disabled" lets the chat loop give
         // the LLM a better error message.
@@ -822,6 +844,7 @@ mod tests {
     #[test]
     fn render_system_prompt_section_omits_gated_tools() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![
             Arc::new(FakeToolWithSummary),
             make_tool("hidden", only_when_lenses),
@@ -1105,6 +1128,64 @@ mod tests {
     }
 
     // ── search_contacts ─────────────────────────────────────────────────
+
+    /// "who am I still owing a reply to?" listed every thread as "from
+    /// Ulises" with invented `email://` ids: the tool printed thread ids and
+    /// summaries only, so there was no sender to name and no email to link.
+    #[test]
+    fn list_open_threads_names_the_latest_inbound_sender_and_email() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "in-1",
+            "acc",
+            "t1",
+            "Nadia Brunner",
+            "nadia@example.org",
+            "Second account?",
+            "q",
+            100,
+        );
+        seed_email(
+            &db,
+            "in-2",
+            "acc",
+            "t1",
+            "Nadia Brunner",
+            "nadia@example.org",
+            "Re: Second account?",
+            "q",
+            300,
+        );
+        seed_email(&db, "out-1", "acc", "t1", "Me", "acc", "Re: Second account?", "a", 200);
+        db.upsert_thread_state(&crate::models::ThreadState {
+            account_id: "acc".into(),
+            thread_id: "t1".into(),
+            awaiting: "user".into(),
+            last_inbound_at: Some(300),
+            last_outbound_at: Some(200),
+            last_touched_at: 300,
+            summary: Some("How do I add a second account?".into()),
+            commitment: None,
+            deadline_at: None,
+            participants: vec!["nadia@example.org".into()],
+            updated_at: 300,
+        })
+        .expect("thread state");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "list_open_threads",
+            &arg(serde_json::json!({"awaiting": "user"})),
+        );
+        assert!(out.contains("from=\"Nadia Brunner <nadia@example.org>\""), "{out}");
+        assert!(
+            out.contains("email_id=in-2"),
+            "latest inbound, not the user's own reply: {out}"
+        );
+    }
 
     #[test]
     fn search_contacts_resolves_name_plus_domain() {
@@ -1916,6 +1997,104 @@ mod tests {
             .search_emails("acc", "traffic", None, None, None, None, None, None, None, 10)
             .expect("search");
         assert!(app.iter().any(|e| e.id == "bad"));
+    }
+
+    /// A reply row shows what the reply adds, not the earlier message it
+    /// repeats — even pasted with no "On … wrote:" marker to cut at.
+    #[test]
+    fn search_emails_with_bodies_shows_a_replys_new_content_only() {
+        use crate::services::thread_reader::fixtures::{REPLY_NEW, REQUEST};
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "q1",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Portal budget",
+            REQUEST,
+            t,
+        );
+        seed_email(
+            &db,
+            "q2",
+            "acc",
+            "t9",
+            "Ana",
+            "ana@example.com",
+            "Re: Portal budget",
+            &format!("{REPLY_NEW}\n\n{REQUEST}"),
+            t + 100,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "ana@example.com", "with_bodies": true })),
+        );
+        assert!(out.contains(REPLY_NEW), "{out}");
+        assert!(!out.contains(REQUEST), "the repeated request is not re-read: {out}");
+    }
+
+    /// "Emails with Ana": what Ana sent AND what the user sent to her — to
+    /// an address that does not carry her name, found through the addresses
+    /// her own mail comes from.
+    #[test]
+    fn search_emails_with_a_person_finds_mail_either_way() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        seed_email(
+            &db,
+            "w1",
+            "acc",
+            "tw1",
+            "Ana Ruiz",
+            "ar@client.example",
+            "Quote request",
+            "Can you quote?",
+            t,
+        );
+        seed_email(
+            &db,
+            "w2",
+            "acc",
+            "tw2",
+            "Me",
+            "me@mine.example",
+            "My proposal",
+            "Here is my quote.",
+            t + 100,
+        );
+        db.connection()
+            .execute(
+                "UPDATE emails SET recipients_json = '[\"ar@client.example\"]' WHERE id = 'w2'",
+                [],
+            )
+            .unwrap();
+        seed_email(
+            &db,
+            "w3",
+            "acc",
+            "tw3",
+            "Bob",
+            "bob@x.example",
+            "Other",
+            "Unrelated.",
+            t + 200,
+        );
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "with": "Ana" })),
+        );
+        assert!(out.contains("w1"), "Ana's own mail: {out}");
+        assert!(out.contains("w2"), "mail to her address: {out}");
+        assert!(!out.contains("w3"), "{out}");
     }
 
     /// `with_bodies` lets the model pull cleaned bodies in the same call

@@ -138,6 +138,10 @@ pub struct CompletionOptions {
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
     pub think: Option<bool>,
+    /// The reply must take this JSON shape. Enforced where the provider can
+    /// (a grammar on llama.cpp, `format` on Ollama, `response_format` on
+    /// OpenRouter); `None` leaves the reply free text.
+    pub json_shape: Option<crate::ai::json_shape::JsonShape>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -159,6 +163,11 @@ pub struct CompletionResult {
     /// one. A run that reports mostly `Reseed` is paying for the slot without
     /// getting anything back.
     pub aux_plan: Option<&'static str>,
+    /// The model stopped because it reached `max_tokens`, not because it had
+    /// finished: the text ends mid-way. From the provider's own stop reason
+    /// (llama.cpp's generation loop, Ollama's `done_reason`, OpenRouter's
+    /// `finish_reason`); `false` when a provider does not say.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -215,6 +224,14 @@ pub trait AIProvider: Send + Sync {
         options: CompletionOptions,
     ) -> Result<CompletionResult> {
         self.complete(&format!("{prefix}{suffix}"), options).await
+    }
+
+    /// The context window, in tokens, the loaded chat model actually runs
+    /// with. `None` when unknown (the model is not loaded yet, or the backend
+    /// does not say). Callers that size prompts to the window (research mode)
+    /// fall back to the configured value.
+    fn context_window(&self) -> Option<u32> {
+        None
     }
 
     /// Generate a single embedding vector.
@@ -345,6 +362,7 @@ pub struct FakeAiProvider {
     chats: RwLock<std::collections::VecDeque<AiMessage>>,
     /// Calls recorded for later assertion.
     completion_calls: RwLock<Vec<String>>,
+    completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     embed_calls: RwLock<Vec<String>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
@@ -369,9 +387,11 @@ impl FakeAiProvider {
                 prefill_ms: None,
                 cached_prompt_tokens: None,
                 aux_plan: None,
+                truncated: false,
             }),
             chats: RwLock::new(std::collections::VecDeque::new()),
             completion_calls: RwLock::new(Vec::new()),
+            completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             embed_calls: RwLock::new(Vec::new()),
             prewarm_calls: RwLock::new(Vec::new()),
@@ -414,6 +434,21 @@ impl FakeAiProvider {
                 prefill_ms: None,
                 cached_prompt_tokens: None,
                 aux_plan: None,
+                truncated: false,
+            });
+    }
+
+    /// Queue a canned completion that stopped at its output limit
+    /// (`truncated`), as a provider reports a reply cut off mid-way.
+    pub fn push_truncated_completion(&self, text: impl Into<String>) {
+        self.completions
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(CompletionResult {
+                text: text.into(),
+                model: self.model.clone(),
+                truncated: true,
+                ..Default::default()
             });
     }
 
@@ -438,6 +473,15 @@ impl FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(msg);
+    }
+
+    /// The JSON shape each `complete` call asked for (`None` for free text),
+    /// in call order.
+    pub fn completion_shapes(&self) -> Vec<Option<crate::ai::json_shape::JsonShape>> {
+        self.completion_shapes
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Every prompt passed to `complete`, in call order.
@@ -560,11 +604,15 @@ impl AIProvider for FakeAiProvider {
         }])
     }
 
-    async fn complete(&self, prompt: &str, _options: CompletionOptions) -> Result<CompletionResult> {
+    async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
         self.completion_calls
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(prompt.to_string());
+        self.completion_shapes
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(options.json_shape);
         if let Some(message) = self
             .completion_failure
             .read()

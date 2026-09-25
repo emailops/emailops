@@ -134,6 +134,10 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
         description: "Today's weekday name in English (e.g. Thursday), so the model never guesses weekdays from ISO dates.",
     },
     VariableDef {
+        name: "next_days",
+        description: "The seven days after today with their weekdays (e.g. 'Wed 2026-09-23 (tomorrow), Thu 2026-09-24 (day after tomorrow), …'), so relative days are read, not computed.",
+    },
+    VariableDef {
         name: "language_instruction",
         description: "Reply-language instruction (default: 'Reply in the language the user writes in.').",
     },
@@ -144,6 +148,64 @@ const CHAT_SYSTEM_VARS: &[VariableDef] = &[
     VariableDef {
         name: "tools_section",
         description: "`Tools:` section auto-generated from the registry; lists the tools the LLM may call this turn, honouring Settings feature flags.",
+    },
+];
+
+const CHAT_RESEARCH_MODE_VARS: &[VariableDef] = &[VariableDef {
+    name: "question",
+    description: "The user's research question.",
+}];
+
+const CHAT_RESEARCH_MAP_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
+    },
+    VariableDef {
+        name: "emails",
+        description: "One batch of conversations labelled C1…, their emails labelled E1…: date, sender and recipients (the user as YOU) and what each adds to its thread.",
+    },
+];
+
+const CHAT_RESEARCH_CONDENSE_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "notes",
+        description: "A group of notes from earlier batches, labelled N1… and tagged MATCH or CONTEXT.",
+    },
+];
+
+const CHAT_RESEARCH_REDUCE_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "language_instruction",
+        description: "Which language to reply in (from the AI language setting).",
+    },
+    VariableDef {
+        name: "question",
+        description: "The user's research question.",
+    },
+    VariableDef {
+        name: "coverage",
+        description: "How many emails were read, in how many batches, and how many had findings.",
+    },
+    VariableDef {
+        name: "direction",
+        description: "Whether the question is about mail the user sent or received (from the search plan); empty when neither.",
+    },
+    VariableDef {
+        name: "counts",
+        description: "Exact counts of the matching emails and conversations, computed in code; says when the full list is appended.",
+    },
+    VariableDef {
+        name: "notes",
+        description: "The numbered conversations the notes cover, then every note tagged MATCH or CONTEXT and citing conversations as [n].",
     },
 ];
 
@@ -203,6 +265,43 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
     VariableDef {
         name: "guide_pages",
         description: "One line per bundled user guide — `page: title — description` — so a question about EmailOps names the page that answers it.",
+    },
+    VariableDef {
+        name: "form_catalog",
+        description: "One line per fillable app form — `id: what it creates` — so a request to create something routes to the form instead of the tool loop.",
+    },
+    VariableDef {
+        name: "open_form",
+        description: "Names the form you currently have open on screen, so \"add a column for VAT\" is recognised as editing it. Empty when no form is open.",
+    },
+];
+
+const FORMS_FILL_VARS: &[VariableDef] = &[
+    VariableDef {
+        name: "language",
+        description: "The language every human-readable value the model writes must be in — your AI output language.",
+    },
+    VariableDef {
+        name: "today",
+        description: "Current date (UTC) as YYYY-MM-DD, for resolving relative dates into field values.",
+    },
+    VariableDef {
+        name: "form_id",
+        description: "Id of the form being filled, from the forms registry (e.g. `lens.create`).",
+    },
+    VariableDef {
+        name: "fields",
+        description:
+            "The form's field definitions as JSON — key, kind, allowed options and a description written for the model.",
+    },
+    VariableDef {
+        name: "current_values",
+        description:
+            "The values already on screen when the user is editing an open form, as JSON — empty for a fresh form.",
+    },
+    VariableDef {
+        name: "request",
+        description: "The user's request in their own words.",
     },
 ];
 
@@ -314,6 +413,51 @@ pub const PROMPTS: &[PromptDef] = &[
         advanced: true,
         default_template: defaults::CHAT_QUERY_PLAN,
         variables: CHAT_QUERY_PLAN_VARS,
+    },
+    PromptDef {
+        id: "chat.research_mode",
+        label: "Chat — research mode: answer form",
+        description: "Decides whether a research question wants a list, a count or a report. Lists and counts are written in code from the matches, with no report call.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_MODE,
+        variables: CHAT_RESEARCH_MODE_VARS,
+    },
+    PromptDef {
+        id: "chat.research_map",
+        label: "Chat — research mode: reading step",
+        description: "Research mode reads many emails in batches; this prompt extracts, from one batch, the findings relevant to the question.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_MAP,
+        variables: CHAT_RESEARCH_MAP_VARS,
+    },
+    PromptDef {
+        id: "chat.research_condense",
+        label: "Chat — research mode: merging notes",
+        description: "When a research run read so many emails that its notes do not fit the report prompt, this merges groups of notes first.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_CONDENSE,
+        variables: CHAT_RESEARCH_CONDENSE_VARS,
+    },
+    PromptDef {
+        id: "chat.research_reduce",
+        label: "Chat — research mode: report",
+        description: "Research mode's last step: writes the detailed report from the findings of every batch.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_RESEARCH_REDUCE,
+        variables: CHAT_RESEARCH_REDUCE_VARS,
+    },
+    PromptDef {
+        id: "forms.fill",
+        label: "Chat — form filling",
+        description: "Turns a request like \"create a lens tracking supplier invoices\" into the fields of the matching app form, for you to review before saving.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::FORMS_FILL,
+        variables: FORMS_FILL_VARS,
     },
 ];
 

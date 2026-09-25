@@ -93,7 +93,7 @@
   expected_tools_not_called: ["generate_email_draft"]
   expected_answer_not_contains:
     - "](draft://"
-  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone» (5 de septiembre de 2026), mostrado con su enlace email://, sin crear ningún borrador."
+  expected_output: "El primer correo enviado desde la cuenta es «New EmailOps version», el que abre ese hilo, mostrado con su enlace email://, sin crear ningún borrador."
   metrics:
     - answer_relevancy
     - faithfulness
@@ -103,7 +103,7 @@
 # no ascending sort, so the oldest match was structurally unreachable. The
 # planner now maps "primer/first/oldest" -> order=oldest, limit=1, and the tool
 # threads ascending sort down to the DB. Asserts route + search_emails + a
-# grounded email:// chip (the oldest sent email, 2026-06-11 in the demo set).
+# grounded email:// chip (the oldest sent email, «New EmailOps version»).
 - id: demo_planner_oldest
   question: "muéstrame el primer correo que envié"
   account: "ulises@emailopslabs.dev"
@@ -113,7 +113,10 @@
   expected_tools_called: ["search_emails"]
   expected_answer_contains:
     - "email://"
-  expected_output: "El primer correo enviado desde la cuenta es «Invoice #2026-014 — May milestone», del 5 de septiembre de 2026, con su enlace email://."
+  # The demo DB is regenerated with dates relative to today: name the email, never its date.
+  # The oldest mail the user sent opens the «New EmailOps version» thread, whose
+  # later replies make it the newest thread by last message.
+  expected_output: "El primer correo enviado desde la cuenta es «New EmailOps version», el que abre ese hilo, con su enlace email://."
   metrics:
     - answer_relevancy
     - faithfulness

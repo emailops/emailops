@@ -11,13 +11,22 @@ cards.json:
       "subtitle": "The local AI email client"},
      {"name": "card-ask",   "layout": "section", "title": "Ask your inbox",
       "subtitle": "A question in plain language"},
+     {"name": "card-lens",  "layout": "stack",   "lines": [
+        {"text": "¿Qué es una Lente?", "size": 80, "gap": 60},
+        {"text": "Una Lente lee tus correos", "size": 58},
+        {"text": "Tú dices qué datos quieres.", "size": 58, "color": "blue"}]},
      {"name": "card-end",   "layout": "end",     "title": "EmailOps",
       "subtitle": "Free · Open source · Apache-2.0",
       "lines": ["getemailops.com", "github.com/emailops/emailops",
                 "macOS · Windows · Linux"],
       "footnote": "Synthetic demo data · Music by Kevin MacLeod (CC BY 4.0)"}]}
 
-Cards are 1920x1080 and are used uncropped, so they land 1:1 in the video.
+Cards are 1920x1080 by default and are used uncropped, so they land 1:1 in
+the video. For a vertical short pass "size": [1080, 1300] (the short's stage)
+and use the "stack" layout: its lines are centred as a block, each with its
+own size, colour ("white", "blue", "grey" or an 0xRRGGBB value) and the gap
+below it (default: 0.45 x its size). Keep a card to one idea: two short
+blocks read on a phone, five lines of small text do not.
 """
 import json
 import subprocess
@@ -69,11 +78,27 @@ def layout_end(font, card):
     return parts
 
 
-LAYOUTS = {"hero": layout_hero, "section": layout_section, "end": layout_end}
+COLOURS = {"white": WHITE, "blue": BLUE, "grey": GREY}
+
+
+def layout_stack(font, card):
+    lines = card["lines"]
+    heights = [ln["size"] + ln.get("gap", round(0.45 * ln["size"])) for ln in lines]
+    y = (SIZE[1] - (sum(heights) - lines[-1].get("gap", round(0.45 * lines[-1]["size"])))) // 2
+    parts = []
+    for ln, h in zip(lines, heights):
+        parts.append(text(font, ln["text"], ln["size"], y, COLOURS.get(ln.get("color", "white"), ln.get("color"))))
+        y += h
+    return parts
+
+
+LAYOUTS = {"hero": layout_hero, "section": layout_section, "end": layout_end, "stack": layout_stack}
 
 
 def main(spec_path, out_dir):
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+    global SIZE
+    SIZE = tuple(spec.get("size", SIZE))
     font = spec.get("font", "/System/Library/Fonts/HelveticaNeue.ttc")
     bg = spec.get("bg", "0x0f172a")
     out = Path(out_dir)

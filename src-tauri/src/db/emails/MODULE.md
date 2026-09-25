@@ -4,7 +4,7 @@
 
 All SQL queries that read or write the `emails`, `email_bodies`, `email_tags`, and `email_attachment_meta` tables.
 
-- **crud.rs** — INSERT / UPDATE / DELETE: `upsert_email`, `mark_as_read`, `delete_email`, `mark_body_downloaded`, etc. Also the optimistic-sent surface (V010 `emails.pending_sync`): `insert_sent_email_local` (single-row insert that mirrors batch.rs — emails row + body + manual FTS — and sets `pending_sync`), `get_pending_sent_emails`, `delete_pending_sent_emails` (hard delete, guarded to `pending_sync = 1` rows), `update_email_thread_id`, `clear_stale_pending_sent`.
+- **crud.rs** — INSERT / UPDATE / DELETE: `upsert_email`, `mark_as_read`, `delete_email`, `mark_body_downloaded`, etc. Also the optimistic-sent surface (V010 `emails.pending_sync`): `insert_sent_email_local` (single-row insert that mirrors batch.rs — emails row + body + manual FTS — and sets `pending_sync`), `get_pending_sent_emails`, `delete_pending_sent_emails` (hard delete, guarded to `pending_sync = 1` rows), `update_email_thread_id`, `clear_stale_pending_sent`. Reads for drafts: `get_user_replies_to_correspondent` (the user's past messages in threads where a given sender wrote; voice samples).
 - **batch.rs** — batch upsert for sync loops: `upsert_emails_batch(conn, emails)` — always runs in one transaction.
 - **search.rs** — FTS5 and structured filter queries: `search_emails`, `get_filtered_emails`, `get_emails_with_cursor`
 - **autocomplete.rs** — sender/recipient autocomplete (`autocomplete_senders`, `autocomplete_recipients`). Both scope the contact pool to `is_deleted = 0 AND mailbox NOT IN ('spam','trash')` — a spam sender is not a correspondent, and suggesting one puts a phishing address one keystroke from being mailed. Custom IMAP folders (`mailbox = 'folder:…'`) stay in scope. `autocomplete_recipients` ranks `domain_match → direct_contact → freq → recency`, where `direct_contact` demotes addresses that only ever shared a To/Cc line on *received* mail (strangers on misdirected/harvested mail) below people the user actually corresponds with. Both then drop machine-generated envelope addresses (`is_machine_generated_address`: VERP `=` locals, opaque random tokens, hex/UUID tags, `bounces.` domains); `autocomplete_recipients` additionally drops unattended mailboxes (`is_no_reply_address`), which `autocomplete_senders` keeps because a no-reply sender is a useful search facet. The queries over-fetch 12x so a prefix dominated by filtered addresses still returns a full page.
@@ -53,4 +53,4 @@ Every dedup/count/CTE under `AllEnabled` must key on `(account_id, thread_id)`
 
 - Business logic (classification decisions, draft assembly) — `services/`
 - Vector/embedding queries — `db/embeddings.rs`
-- Schema migrations — `db/schema.rs`
+- Schema migrations — `src-tauri/migrations/`

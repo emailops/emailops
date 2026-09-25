@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.10] — 2026-09-25
+
+### Added
+
+- **Research mode in chat.** A per-message toggle reads every email that
+  matches a question, in batches, instead of the handful of sources a normal
+  answer uses. It estimates the size first and asks before a large run, can be
+  stopped, re-researches when you correct it, and answers counts and lists
+  exactly, with a link to each matching conversation. Also available from the
+  CLI.
+- **Create a Lens from chat.** Ask for one ("track my suppliers' invoices with
+  amount and date") and the Create Lens form opens with the fields filled in,
+  for you to review and save. The chat never creates it by itself.
+- **Steer AI reply drafts.** Drafts are written from what the thread actually
+  says up to the message being answered, in your own voice, and you can tell
+  the draft what to say.
+- **Lens improvements.** Lenses can scope custom IMAP folders; a new
+  contact-form template; Excel-style column filters and sorting by date; each
+  run's errors in a row of their own. Creating a Lens asks whether to build it
+  with the chat or by hand.
+- **Reopen the chat from any view.** A collapsed chat leaves a slim rail on
+  the right edge.
+- **Cancel a running chat turn.**
+- The status bar shows long-running AI work.
+
+### Changed
+
+- **Lenses are on by default** and no longer marked experimental. Turn them off
+  in Settings → AI Lenses.
+- "Emails with X" searches mail both from and to X.
+- The chat takes the open Lens as context and leaves out unrelated sources.
+- Calendar questions without a date range also list the past 7 days.
+- The error shown when an account's sign-in cannot be refreshed is clearer.
+
+### Fixed
+
+- **Search from All accounts covers every account.** The busiest account no
+  longer fills the results, each hit shows its account, and the selected
+  category tab no longer narrows the search.
+- **Email text stays readable with macOS in dark mode.** Newsletters with
+  dark-mode styles no longer show white text on the white reading pane.
+- Chat state is kept when leaving a running turn or reloading accounts, and
+  switching account or conversation drops a pending research.
+- A Lens whose columns are all optional retries extraction when a column comes
+  back empty, and values the model keyed by column label are read.
+- **The AI no longer throws away what an email is about.** Quoted text,
+  signatures and repeated paragraphs are left out only when an earlier
+  message of the same conversation already contains them. Forwards (with or
+  without a note, Apple Mail's included), quotes of mail that was never
+  synced, contact-form notifications and a first signature now reach the
+  chat, drafts, Lenses, Tasks and Memory whole, so Lenses fill in a form's
+  sender again. Replies in French and German, and bodies some clients wrap
+  in `<pre>`, are recognised as replies.
+- **"The first email I sent" finds the first one.** Oldest-first searches ranked
+  a conversation by its latest reply, so a thread started months ago and
+  answered yesterday was skipped.
+- Semantic search no longer fails on large mailboxes.
+- AI providers report when a reply was cut at its output limit.
+- The installation guide explains the Windows SmartScreen warning.
+
 ## [0.6.9] — 2026-09-22
 
 ### Added

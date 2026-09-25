@@ -137,6 +137,13 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             .unwrap_or_default(),
     };
     let default_today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    // Every form, regardless of the copied DB's feature toggles: a planner case
+    // is about the routing decision, not about which features this install has on.
+    let forms_catalog = crate::services::forms::registry::FORMS
+        .iter()
+        .map(|f| format!("- {}: {}", f.id, f.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // `--json` prints ONE object on stdout and nothing else, so a script can
     // parse it without filtering progress lines out first.
@@ -157,6 +164,10 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             &today,
             &case.question,
             &glossary,
+            case.open_form.as_deref(),
+            // The harness scores the routing, so it always shows the model the
+            // full catalog rather than whatever the copied DB happens to enable.
+            &forms_catalog,
         )
         .await;
         let latency_ms = started.elapsed().as_millis();
@@ -169,11 +180,15 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             Plan::AppHelp(page) => page.clone(),
             _ => None,
         };
+        let form_id = match &planned.plan {
+            Plan::FormFill(id) => Some(*id),
+            _ => None,
+        };
         let plan = match planned.plan {
             Plan::Search(plan) => Some(*plan),
-            Plan::Defer | Plan::AppHelp(_) => None,
+            Plan::Defer | Plan::AppHelp(_) | Plan::FormFill(_) => None,
         };
-        let report = evaluate_outcome(&case, plan.as_ref(), outcome, help_page.as_deref());
+        let report = evaluate_outcome(&case, plan.as_ref(), outcome, help_page.as_deref(), form_id);
         if !cfg.json_stdout {
             println!(
                 "[plan-eval] {} {} ({}/{} checks, {latency_ms}ms)",

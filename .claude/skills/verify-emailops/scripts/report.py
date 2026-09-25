@@ -134,7 +134,7 @@ pre{{background:var(--panel);border:1px solid var(--line);border-radius:6px;padd
 <h2>Qué cubre y qué no</h2>
 <ul class="limits">
   <li><b>Cubierto:</b> inbox (lista, abrir y cerrar hilo, menú de fila), búsqueda (resultados, vacío, limpiar), cambio de cuenta y vista unificada, Tag Board (bloques, rango, buscador, abrir hilo), Compose (campos, Send deshabilitado, envío sin credenciales, borrador y descarte), Ajustes (todas las pestañas), chat (pregunta con respuesta correcta en 5 s, nuevo chat) y la apertura de Attachments, Drafts, Sent, Spam, Deleted, Contacts, Dashboard, Tasks y Memory.</li>
-  <li><b>No aplicable con la BD demo:</b> pestañas de categoría (solo Gmail), Calendar (solo Gmail/Outlook), AI Lenses (experimental, desactivado), envío real y sincronización (las cuentas demo no tienen credenciales).</li>
+  <li><b>No aplicable con la BD demo:</b> pestañas de categoría (solo Gmail), Calendar (solo Gmail/Outlook), envío real y sincronización (las cuentas demo no tienen credenciales).</li>
   <li><b>No cubierto:</b> AI Draft y traducción, gestos de arrastrar y soltar (reordenar bloques, mover correos a carpetas), acciones sobre adjuntos, menús nativos, comportamiento en pantallas estrechas.</li>
   <li><b>Cómo repetirlo:</b> desde la raíz del repo, con la instancia de verificación levantada.</li>
 </ul>

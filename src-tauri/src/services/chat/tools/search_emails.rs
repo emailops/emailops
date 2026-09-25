@@ -31,10 +31,15 @@ fn total_count_note(shown: usize, offset: i32, total: i32) -> Option<String> {
     } else {
         total.to_string()
     };
+    // "muéstrame los últimos 5 correos de X" listed 5 and never said there
+    // were 13: the total has to be something to say, not just a range.
     let tail = if last < total {
-        "call next_page for the next ones, or narrow with since/until, from, or a keyword"
+        format!(
+            "tell the user there are {total_text} in total; call next_page for the next ones, or narrow with \
+since/until, from, or a keyword"
+        )
     } else {
-        "this is the last page"
+        "this is the last page".to_string()
     };
     Some(format!(
         "(showing {first}-{last} of {total_text} matching threads — {tail})"
@@ -97,6 +102,24 @@ fn no_match_message(account_email: &str, prefix: &str, parenthetical: Option<&st
     }
 }
 
+/// The zero-result line for this call, plus a pointer to the calendar when
+/// the account has one: a question about something scheduled searched the
+/// mailbox, found nothing and gave up while the event sat in the calendar.
+fn empty_result(ctx: &ToolCtx<'_>, prefix: &str, parenthetical: Option<&str>) -> String {
+    let mut out = no_match_message(&scoped_account_email(ctx), prefix, parenthetical);
+    let has_calendar = ctx.db.get_account(ctx.account_id).ok().flatten().is_some_and(|a| {
+        crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
+            && ctx.db.calendar_enabled(&a.id).unwrap_or(false)
+    });
+    if has_calendar {
+        out.push_str(
+            " If the question is about a meeting or another scheduled event, call list_calendar_events \
+now (with no range it covers last week and the next) and answer from it — do not offer to check.",
+        );
+    }
+    out
+}
+
 /// How many candidates the semantic ranker is asked for when other filters
 /// still have to be applied on top of it: meaning-ranked hits are cheap to
 /// over-fetch and a sender or date filter can discard most of them.
@@ -110,6 +133,9 @@ const SEMANTIC_OVERFETCH: usize = 40;
 pub(crate) struct PostFilters<'a> {
     pub from: Option<&'a str>,
     pub to: Option<&'a str>,
+    /// "Emails with X": any of these terms in the sender, recipients or cc
+    /// (see `emails::participant_terms`). Empty is no filter.
+    pub participants: &'a [String],
     pub since: Option<i64>,
     pub until: Option<i64>,
     /// Intent / topic filters that must ALL hold on the email.
@@ -169,6 +195,16 @@ pub(crate) fn semantic_post_filter(
                     return false;
                 }
             }
+            if !f.participants.is_empty() {
+                let exchanged = f.participants.iter().any(|p| {
+                    contains_ci(&e.sender, p)
+                        || contains_ci(&e.sender_email, p)
+                        || e.recipients.iter().chain(e.cc.iter()).any(|r| contains_ci(r, p))
+                });
+                if !exchanged {
+                    return false;
+                }
+            }
             if f.since.is_some_and(|s| e.timestamp < s) || f.until.is_some_and(|u| e.timestamp >= u) {
                 return false;
             }
@@ -216,6 +252,7 @@ fn parameters_schema_with(glossary: &TagGlossary) -> Value {
             "mode": { "type": "string", "enum": ["keyword", "semantic"], "description": "How `query` is matched. 'keyword' (default): exact full-text match — best for names, codes, invoice numbers and distinctive words. 'semantic': meaning-based ranking of the whole mailbox — use when the question describes mail by meaning and the wording may differ ('emails where I ask a supplier for a quote', 'someone unhappy with a delivery'), when no intent/topic tag fits, or after a keyword search found nothing relevant. Semantic results are ranked by relevance, not date; the other filters still apply." },
             "from": { "type": "string", "description": "Filter by sender. Matches email address prefix (e.g. 'alice@emailops.com') or display name substring (e.g. 'Alice Smith')." },
             "to": { "type": "string", "description": "Filter by recipient — use this when the user says 'enviada a X' / 'sent to X' / 'para X'. Matches the To/CC field (substring, e.g. 'billing@emailops.com' or 'emailops.com')." },
+            "with": { "type": "string", "description": "A person the mail was exchanged with, in either direction — use for 'emails with X' / 'correos con X' / 'my conversations with X'. Matches X as the sender or among the recipients, including mail sent to the addresses X writes from. Use instead of from/to when the question gives no direction." },
             "subject": { "type": "string", "description": "Filter by subject keywords (FTS5 match on subject column)." },
             "since": { "type": "string", "description": "Only return emails on or after this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: '2026-04-17' for today." },
             "until": { "type": "string", "description": "Only return emails strictly before this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: use until='2026-04-18' together with since='2026-04-17' to get today's emails only." },
@@ -267,6 +304,16 @@ impl Tool for SearchEmailsTool {
             .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .filter(|s| !s.is_empty());
+        let with_filter = args
+            .get("with")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        // The person's name plus the addresses they write from.
+        let participants: Vec<String> = with_filter
+            .map(|w| emails::resolve_participant(ctx.db, ctx.account_id, w))
+            .unwrap_or_default();
+        let participants_arg: Option<&[String]> = (!participants.is_empty()).then_some(participants.as_slice());
         let subject_filter = args
             .get("subject")
             .and_then(|v| v.as_str())
@@ -319,6 +366,7 @@ impl Tool for SearchEmailsTool {
         if query.is_empty()
             && from_filter.is_none()
             && to_filter.is_none()
+            && with_filter.is_none()
             && subject_filter.is_none()
             && since_str.is_none()
             && until_str.is_none()
@@ -363,7 +411,8 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
         // scope is meant for broad keyword/RAG retrieval; when the user names a
         // target we return the newest matching mail regardless of Gmail category
         // — a newsletter landing in `updates` must still surface for `from:X`.
-        let has_explicit_target = from_filter.is_some() || to_filter.is_some() || subject_filter.is_some();
+        let has_explicit_target =
+            from_filter.is_some() || to_filter.is_some() || with_filter.is_some() || subject_filter.is_some();
         let cat_filter: Option<&[String]> = if has_explicit_target || ctx.categories.is_empty() {
             None
         } else {
@@ -392,6 +441,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     let post = PostFilters {
                         from: from_filter,
                         to: to_filter,
+                        participants: &participants,
                         since: since_ts,
                         until: until_ts,
                         tags: &tag_filters,
@@ -427,6 +477,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             offset + limit,
             ascending,
             unread_only,
+            participants_arg,
         );
 
         // Each successful branch below builds `ToolOutput::text_with_email_refs`
@@ -448,7 +499,9 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             for e in emails {
                 if let Ok(body) = emails::get_email_body(ctx.db, &e.id) {
                     if !body.is_empty() {
-                        map.insert(e.id.clone(), thread_clean::clean_email_body(&body, per_email));
+                        // What the email adds to its thread, not what it repeats.
+                        let new = crate::services::thread_reader::message_new_content(ctx.db, e, &body);
+                        map.insert(e.id.clone(), thread_clean::clean_email_body(&new, per_email));
                     }
                 }
             }
@@ -485,6 +538,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     (offset + limit) * 2,
                     ascending,
                     unread_only,
+                    participants_arg,
                 )
                 .unwrap_or_default();
                 let mut rows = tagged;
@@ -539,6 +593,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         COUNT_PROBE_LIMIT,
                         ascending,
                         unread_only,
+                        participants_arg,
                     )
                     .map(|all| all.len() as i32)
                     .unwrap_or(offset + emails.len() as i32)
@@ -589,6 +644,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         limit,
                         ascending,
                         unread_only,
+                        participants_arg,
                     );
                     match &retry {
                         Ok(emails) if !emails.is_empty() => {
@@ -600,8 +656,8 @@ showing recent matches without since/until instead)\n",
                             return Ok(ToolOutput::text_with_email_refs(out, ids(emails)));
                         }
                         Ok(_) => {
-                            return Ok(ToolOutput::text(no_match_message(
-                                &scoped_account_email(ctx),
+                            return Ok(ToolOutput::text(empty_result(
+                                ctx,
                                 "",
                                 Some("also tried without the date window"),
                             )));
@@ -623,17 +679,14 @@ showing recent matches without since/until instead)\n",
                     tag_filter_arg,
                     limit,
                     unread_only,
+                    participants_arg,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");
                     out.push_str(&render_rows(ctx, &merged, None));
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
-                Ok(ToolOutput::text(no_match_message(
-                    &scoped_account_email(ctx),
-                    mode_note.unwrap_or_default(),
-                    None,
-                )))
+                Ok(ToolOutput::text(empty_result(ctx, mode_note.unwrap_or_default(), None)))
             }
         }
     }
@@ -704,8 +757,8 @@ impl SearchEmailsTool {
         kept.extend(rest);
         kept.truncate(limit as usize);
         if kept.is_empty() {
-            return Ok(ToolOutput::text(no_match_message(
-                &scoped_account_email(ctx),
+            return Ok(ToolOutput::text(empty_result(
+                ctx,
                 "",
                 Some("semantic search; try other words, or drop a filter"),
             )));
@@ -719,8 +772,12 @@ impl SearchEmailsTool {
         if include_bodies {
             let cleaned: std::collections::HashMap<String, String> = bodies
                 .into_iter()
-                .filter(|(id, _)| kept.iter().any(|e| &e.id == id))
-                .map(|(id, b)| (id, thread_clean::clean_email_body(&b, per_email)))
+                .filter_map(|(id, b)| {
+                    let email = kept.iter().find(|e| e.id == id)?;
+                    // What the email adds to its thread, not what it repeats.
+                    let new = crate::services::thread_reader::message_new_content(ctx.db, email, &b);
+                    Some((id, thread_clean::clean_email_body(&new, per_email)))
+                })
                 .collect();
             out.push_str(&render_rows(ctx, &kept, Some(&cleaned)));
         } else {
@@ -770,7 +827,7 @@ mod tests {
         assert_eq!(
             total_count_note(25, 0, 156).as_deref(),
             Some(
-                "(showing 1-25 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+                "(showing 1-25 of 156 matching threads — tell the user there are 156 in total; call next_page for the next ones, or narrow with since/until, from, or a keyword)"
             )
         );
     }
@@ -780,7 +837,7 @@ mod tests {
         assert_eq!(
             total_count_note(25, 25, 156).as_deref(),
             Some(
-                "(showing 26-50 of 156 matching threads — call next_page for the next ones, or narrow with since/until, from, or a keyword)"
+                "(showing 26-50 of 156 matching threads — tell the user there are 156 in total; call next_page for the next ones, or narrow with since/until, from, or a keyword)"
             )
         );
     }
@@ -1125,6 +1182,40 @@ different one)"
             "empty result must name the mailbox it searched: {}",
             out.text
         );
+    }
+
+    /// "cuándo es la demo del sprint" searched the mailbox, found nothing and
+    /// asked the user for context: the demo was on the calendar all along.
+    #[tokio::test]
+    async fn zero_results_point_to_the_calendar_when_the_account_has_one() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@acme.com', 'Test', 0),
+                        ('imap', 'imap', 'me@imap.test', 'Test', 0)",
+                [],
+            )
+            .unwrap();
+        let categories: Vec<String> = Vec::new();
+        for (account, expect_hint) in [("acct", true), ("imap", false)] {
+            let ctx = ToolCtx {
+                db: &db,
+                account_id: account,
+                categories: &categories,
+                page: None,
+            };
+            let out = SearchEmailsTool
+                .execute(&ctx, json!({"query": "demo", "limit": 5}))
+                .await
+                .expect("tool ran");
+            assert_eq!(
+                out.text.contains("list_calendar_events"),
+                expect_hint,
+                "{account}: {}",
+                out.text
+            );
+        }
     }
 
     #[tokio::test]

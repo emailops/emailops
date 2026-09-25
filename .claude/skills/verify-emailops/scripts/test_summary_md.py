@@ -67,7 +67,17 @@ class SummaryTest(unittest.TestCase):
             root = pathlib.Path(d)
             for name in ("20260913-100000-full", "20260914-232040-full", "20260915-105800-gpu-oom", "20260915-110600-full"):
                 (root / name).mkdir()
-                (root / name / "results.json").write_text("{}")
+                (root / name / "results.json").write_text('{"meta": {"commit": "f911f3d x"}}')
+            self.assertEqual(summary_md.previous_run(root / "20260915-110600-full"), root / "20260914-232040-full")
+
+    def test_previous_run_skips_a_run_recorded_without_a_commit(self):
+        # A run started outside a git checkout records commit null; it cannot be named as a baseline.
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            for name, commit in (("20260914-232040-full", '"f911f3d x"'), ("20260915-100000-full", "null"),
+                                 ("20260915-110600-full", '"a1b2c3d y"')):
+                (root / name).mkdir()
+                (root / name / "results.json").write_text('{"meta": {"commit": %s}}' % commit)
             self.assertEqual(summary_md.previous_run(root / "20260915-110600-full"), root / "20260914-232040-full")
 
 

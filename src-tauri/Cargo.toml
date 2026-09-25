@@ -1,6 +1,6 @@
 [package]
 name = "emailops"
-version = "0.6.9"
+version = "0.6.10"
 description = "Privacy-first, AI-native email client"
 authors = ["Gero DP"]
 edition = "2021"
@@ -286,6 +286,24 @@ name = "query_plan_eval"
 required-features = ["eval"]
 
 [[example]]
+# Checks the research answer-form classifier (`chat.research_mode`): list,
+# count or report, one short completion per case. See `make eval-research-mode`.
+name = "research_mode_eval"
+required-features = ["eval"]
+
+[[example]]
+# Scores how the model fills the app's forms (Create Lens is the pilot) against
+# the synthetic cases in evals/forms. See `make eval-forms`.
+name = "form_fill_eval"
+required-features = ["eval"]
+
+[[example]]
+# Field-by-field check of what built-in Lens templates extract from the
+# synthetic emails in evals/lenses. See `make eval-lenses`.
+name = "lens_template_eval"
+required-features = ["eval"]
+
+[[example]]
 # Scores the email classifier (intent / topic / urgency) against the labelled
 # synthetic corpus in evals/classification/cases. See `make eval-classify`.
 name = "tag_classification_eval"
@@ -374,3 +392,7 @@ tauri-plugin-shell = { version = "2", optional = true }
 # exists on Apple platforms (Vulkan/CPU builds have no equivalent).
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+# Asks Metal whether the GPU shares memory with the CPU (`hasUnifiedMemory`):
+# ggml's generic device properties drop that field, so it is read at the source.
+# Already in the tree through Tauri; this only makes the use direct.
+objc2 = "0.6"

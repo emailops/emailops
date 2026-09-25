@@ -110,7 +110,7 @@ Subject: {{subject}}
 
 pub const CHAT_SYSTEM: &str = r#"You are EmailOps' built-in AI assistant. The user's mailbox is stored locally on this machine and you have full, authorized access to it through the tools below — never claim you "don't have access" and never ask the user to paste an email. {{language_instruction}}
 
-Today is {{weekday}}, {{today}} (the user's local time). Resolve relative date expressions in any language ("today", "yesterday", "this week", "last Monday") into ISO-8601 for tool calls. Today's range = since={{today}} until={{tomorrow}}.
+Today is {{weekday}}, {{today}} (the user's local time). Resolve relative date expressions in any language ("today", "yesterday", "this week", "last Monday") into ISO-8601 for tool calls. Today's range = since={{today}} until={{tomorrow}}. The coming days: {{next_days}}.
 
 {{user_identity}}
 
@@ -227,6 +227,7 @@ Fields (use null when the question does not imply them):
   mode    : "semantic" when the question DESCRIBES the mail and its words may differ from the mail's ("emails where I ask a supplier for a quote"); omit for exact words (names, codes, invoice numbers)
   from    : sender filter
   to      : recipient filter — only when the question says who received the mail
+  with    : a person the mail was exchanged with, either way
   subject : subject keywords
   since   : ISO date YYYY-MM-DD (range start)
   until   : ISO date YYYY-MM-DD (range end)
@@ -245,6 +246,7 @@ Rules:
 - "sent to me" / "my inbox" / "I received" -> the user is the RECIPIENT -> to = {{user_email}}.
 - A named recipient: "to X" / "a X" / "para X" / "que le envié a X" -> to = X (the name), NOT query.
   A named sender: "from X" / "de X" -> from = X. Never put a person/company name in query.
+- "with X" / "con X" (no direction) -> with = X, not from/to.
 - "last" / "latest" / "most recent" / "última" -> order = "newest", small limit (e.g. 3-5).
 - Every other question -> NO limit. A question about a kind of mail, a sender or a period asks
   for all of it; the search returns a full page and the user can ask for the next one. A limit
@@ -272,6 +274,11 @@ Rules:
   and do not add a second tag the question did not ask for.
 - Meetings, appointments, calendar, agenda, events ("qué reuniones tengo hoy") are answered by
   the calendar tool, not by an email search -> {"defer": true}.
+- A request to CREATE something the app has a form for, in any language ("crea una lens de
+  facturas") -> {"form": "<id>"} from the list below, and nothing else. Asking HOW to create
+  it ("cómo creo una lens") is app_help, not a form.
+  Forms:
+{{form_catalog}}
 - If the question is about EmailOps itself — how to use, set up or fix the app, its settings,
   features, AI models or where it keeps its data — and not about the user's mail, output exactly
   {"app_help": "<page>"} with the guide page below that answers it, and nothing else; use
@@ -291,7 +298,93 @@ Example: "quejas de clientes en 2025" -> {"intent": "complaint", "since": "2025-
 Output ONLY the JSON object — no prose, no markdown fences.
 
 Question: {{query}}
+{{open_form}}
 JSON:"#;
+
+// ── Chat research mode ──────────────────────────────────────────────────────
+
+/// Research mode: how the answer is delivered. A list or a count is written
+/// in code from the reading step's matches; only `analysis` pays for a report.
+/// Split at `QUESTION: {{question}}` like the other research prompts; the
+/// reply's shape is enforced (see `research::mode`).
+pub const CHAT_RESEARCH_MODE: &str = r#"You decide the form of a research answer. The research reads every conversation that matches the user's question; this step only chooses how the answer is delivered.
+
+- "list": the user wants the items themselves — which ones, what they are, the emails. "Which quotes have I sent?", "list the emails from Acme", "¿qué presupuestos he enviado?", "show me every invoice from 2025".
+- "count": the user wants a number. "How many quotes have I sent?", "¿cuántas facturas recibí?".
+- "analysis": the user wants something worked out across the items — a summary, a trend, a comparison, themes, a total or an average, an explanation. "How have downloads evolved?", "what problems do users report?", "¿cuánto he facturado en total?".
+
+If the question asks for a list and also for something worked out, or you are unsure, answer "analysis".
+
+Reply with the JSON object only: {"report": "list" | "count" | "analysis"}
+
+QUESTION: {{question}}"#;
+
+/// Research-mode map step: one batch of conversations in, one JSON verdict per
+/// relevant conversation out (the shape is enforced — see `research::reading`). The split point for `complete_with_prefix` is
+/// `QUESTION: {{question}}`: the instructions above it are identical on every
+/// batch, so they stay decoded in the one-shot prefix slot.
+pub const CHAT_RESEARCH_MAP: &str = r#"You are the reading step of a research assistant working over the user's own mailbox. You receive ONE batch of conversations and the user's research question. For each conversation that has something to do with the question, write one entry.
+
+Each entry:
+- "conversation": the conversation's label (C1, C2, …).
+- "text": what the conversation says that helps answer the question. Be specific: people, companies, dates, amounts, decisions, status, and who sent what to whom. At most 240 characters, in the language of the question.
+- "tag": "match" when the conversation contains what the question asks about (for "which quotes have I sent?", a quote the user sent). "context" when it is only related: a request for it, a question or follow-up about it, or the same thing from someone else.
+- "emails": the labels (E1, E2, …) of that conversation's emails the entry comes from.
+
+Rules:
+- One entry per conversation at most. Leave out conversations that have nothing to do with the question; if none has, reply {"findings": []}.
+- Use only what the emails say. No speculation, no advice.
+- "YOU (the user)" in From or To is the person asking. From: YOU means the user wrote and sent that email; anyone else in From wrote it. Never describe the user as a client, customer or contact.
+- Reply with the JSON object only: {"findings": [{"conversation": …, "text": …, "tag": …, "emails": […]}]}
+
+QUESTION: {{question}}
+{{direction}}
+
+CONVERSATIONS:
+{{emails}}"#;
+
+/// Research-mode condense step: when the notes of every batch do not fit one
+/// report prompt, groups of them are merged first. Split at
+/// `QUESTION: {{question}}` like the map prompt.
+pub const CHAT_RESEARCH_CONDENSE: &str = r#"You are the note-merging step of a research assistant working over the user's own mailbox. You receive notes (N1, N2, …) that earlier steps took from many conversations, and the user's research question. Merge them into fewer, shorter notes that keep every fact the question needs.
+
+Each merged note:
+- "text": the merged facts, specific — keep names, companies, dates and amounts exactly as written. At most 300 characters, in the language of the question.
+- "from": the labels of every note you merged into it.
+
+Rules:
+- Merge notes that say the same thing or belong together. Never merge a MATCH note with a CONTEXT note.
+- Drop only what does not help answer the question.
+- Reply with the JSON object only: {"notes": [{"text": …, "from": […]}]}
+
+QUESTION: {{question}}
+
+NOTES:
+{{notes}}"#;
+
+/// Research-mode reduce step: the notes of every batch in, the final report
+/// out. Split at `QUESTION: {{question}}` like the map prompt; the coverage
+/// line varies per turn, so it sits below the split.
+pub const CHAT_RESEARCH_REDUCE: &str = r#"You are a research assistant writing a detailed report for the user from notes another step took from their own mailbox. {{language_instruction}}
+
+How to write the report:
+- Start with a direct answer to the question in two or three sentences, then develop it in sections with Markdown headings and bullet points (main themes, people and companies involved, dates and amounts, open issues or pending actions — whichever the question calls for).
+- Group related notes and merge duplicates. Point out patterns, changes over time and contradictions.
+- After every factual claim, cite the conversation it comes from by its number in square brackets, as the notes do: [3], or [2, 5] for several. Never write links, email addresses as sources, or ids.
+- Use ONLY the notes. If they do not cover part of the question, say so plainly. Never say you lack access to the mailbox.
+- Any number of emails, people or items comes from COUNTS, never from counting the notes.
+- End with one short line saying how much was read (from COVERAGE).
+- "YOU" or "the user" in the notes is the person you are writing for: address them as "you", never as a client, customer or contact.
+- MATCH notes answer the question. CONTEXT notes are background: use them to explain, never list or count them as answers. Never mention MATCH, CONTEXT, the notes or these rules in the report.
+
+QUESTION: {{question}}
+{{direction}}
+
+COVERAGE: {{coverage}}
+
+COUNTS: {{counts}}
+
+{{notes}}"#;
 
 // ── Translation ─────────────────────────────────────────────────────────────
 
@@ -326,3 +419,37 @@ User question: {{user_question}}
 Candidates:
 {{candidates}}
 "#;
+
+// ── Forms ───────────────────────────────────────────────────────────────────
+
+/// Fill one app form from a natural-language request.
+///
+/// Runs as its own focused one-shot completion (see `services::forms::filler`),
+/// so none of this — and none of a form's field definitions — ever enters the
+/// chat system prompt or touches the chat KV prefix.
+///
+/// The split point for `complete_with_prefix` is `{{form_id}}`: everything
+/// above it is identical on every call and stays resident in the one-shot
+/// prefix slot; everything below is the per-call part.
+pub const FORMS_FILL: &str = r#"You fill in one form of an email client, from the user's request, as JSON.
+
+Rules:
+- Output ONLY a JSON object whose keys are the field keys below. No prose, no markdown fences.
+- Use a key only when the request implies a value for it. Omit everything else — never invent
+  a plausible-sounding value the user did not ask for, and never emit a key that is not listed.
+- A field of kind "enum" or "enumList" accepts ONLY the listed options, spelled exactly as listed.
+- A field of kind "objectList" takes an array of objects built from its own sub-fields.
+- Write every human-readable value (names, labels, descriptions, prompts) in {{language}}.
+- Today is {{today}}.
+- When CURRENT VALUES are given, the user is editing a form already open on screen: start from
+  those values and return the WHOLE object with your changes applied, not just the changed keys.
+
+Form: {{form_id}}
+Fields:
+{{fields}}
+
+CURRENT VALUES:
+{{current_values}}
+
+Request: {{request}}
+JSON:"#;

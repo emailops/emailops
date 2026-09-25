@@ -42,11 +42,15 @@ impl Tool for GetEmailBodyTool {
         match emails::get_email_body(ctx.db, email_id) {
             Ok(body) if body.is_empty() => Ok(ToolOutput::text("Email body is empty or not yet downloaded.")),
             Ok(body) => {
-                // Reuse the same cleaning pipeline as "chat about this email"
-                // (strip HTML, quoted replies, signatures, invisible chars) at
-                // the single-email ceiling, so the model gets the body nearly
-                // whole instead of a 3000-char slice cut mid-sentence.
-                let text = thread_clean::clean_email_body(&body, thread_clean::MAX_CHARS_PER_EMAIL);
+                // Read it in its thread, like "chat about this email": what the
+                // thread already has (quoted history, a repeated signature)
+                // goes, a forward or a quote of unsynced mail stays. Capped at
+                // the single-email ceiling rather than a slice cut mid-sentence.
+                let new = match ctx.db.get_email_by_id(email_id) {
+                    Ok(Some(email)) => crate::services::thread_reader::message_new_content(ctx.db, &email, &body),
+                    _ => body,
+                };
+                let text = thread_clean::clean_email_body(&new, thread_clean::MAX_CHARS_PER_EMAIL);
                 // Whitelist the email the LLM just read so any
                 // `email://EMAIL_ID` link it emits ("here's the relevant
                 // excerpt from <email://X>...") passes validation.
@@ -54,5 +58,28 @@ impl Tool for GetEmailBodyTool {
             }
             Err(e) => Ok(ToolOutput::text(format!("Error: {}", e))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::db::Database;
+    use crate::services::thread_reader::fixtures;
+
+    #[tokio::test]
+    async fn a_reply_is_read_without_the_quote_its_thread_already_has() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acct",
+            categories: &[],
+            page: None,
+        };
+        let out = GetEmailBodyTool.execute(&ctx, json!({"email_id": "e2"})).await.unwrap();
+        assert_eq!(out.text, fixtures::REPLY_NEW);
     }
 }

@@ -6,9 +6,9 @@ description: "Drive the real EmailOps desktop app (Tauri 2 + React, macOS) the w
 # Verify EmailOps
 
 EmailOps is a Tauri 2 desktop app: Rust backend, React/TypeScript frontend rendered in
-a WKWebView. The user touches the **desktop window** (primary surface). Secondary
-surfaces, verified elsewhere: `emailops-cli` (headless, `make cli-*`, see root
-`CLAUDE.md`) and the iOS build (`scripts/ios.sh`, no tap tooling).
+a WKWebView. The user touches the **desktop window** (primary surface). The one
+secondary surface, verified elsewhere, is `emailops-cli` (headless, `make cli-*`,
+see root `CLAUDE.md`). There is no mobile build.
 
 Everything below goes through one helper so the next agent never re-derives it:
 
@@ -198,7 +198,7 @@ runs every layer once and renders `src-tauri/reports/verify/<stamp>-full/informe
 audits), `cargo test`, vitest, CLI contract, the e2e sweep, the Tag Board oracle, the chat
 evals (judged), the junk detector eval (deterministic, no model), the translation eval and the
 perf budgets. Results are attributed to features through `features.json`.
-`--tier quick` skips the UI, oracle and model-backed eval layers (chat, translation); `--only`/`--skip` take layer names (`git static rust vitest contract e2e oracle evals junk translation perf`).
+`--tier quick` skips the UI, oracle and model-backed eval layers (chat, forms, lenses, translation); `--only`/`--skip` take layer names (`git static rust vitest contract e2e oracle evals junk forms lenses translation perf`).
 
 - **Database.** Every dynamic layer runs on the synthetic demo DB in `.emailops-demo-data/`
   (`make demo-db` output: `emailops.db`, `models/` symlinked to the real app's models). The
@@ -209,14 +209,23 @@ perf budgets. Results are attributed to features through `features.json`.
   DB's `ai_model` preference. The reference run uses `qwen3.6-35b-a3b-ud-q4_k_xl` for both.
 - **Other evals.** `junk` runs `make eval-junk` on `src-tauri/evals/junk/cases` (47 synthetic cases
   plus the false-positive gates); `translation` runs the `translation_eval` example on
-  `src-tauri/evals/translation/cases.yaml` with the same model. Both write the shared
-  `JsonRunReport` under `<run>/layers/`. Evals that sample the production mailbox
-  (classification, drafts, extraction, lenses, agent search) and `private-evals/` stay out.
+  `src-tauri/evals/translation/cases.yaml` with the same model; `lenses` runs `make eval-lenses`
+  (`lens_template_eval`) on `src-tauri/evals/lenses/*.yaml` — synthetic emails through a built-in
+  template's real scope and extractor, checked column by column, reported under "Lenses, tareas y
+  adjuntos". All write the shared `JsonRunReport` under `<run>/layers/`. Evals that sample the
+  production mailbox (classification, drafts, `lens_extract_eval`, agent search) and
+  `private-evals/` stay out.
 - **Chat evals.** `make cli-eval ARGS="--json --judge …"`: each case carries deterministic checks
   (route, tools called, answer contains/not contains, draft link…) **and** an
   `expected_output` golden; the judge (`evals/judge.rs`, same local provider) scores
-  `answer_relevancy` / `faithfulness` against it, threshold 0.7. The report shows question,
-  answer, golden, judge scores and the collapsible AI trace for failures.
+  `answer_relevancy` / `faithfulness` against it, threshold 0.7. Every case row shows its flow
+  (`route → planner → search_emails → answer`, the labels `services::chat::trace_steps` uses);
+  its block holds question, golden, answer, one checks table where each judge metric is a row
+  against the threshold, and the AI trace step by step with prompts, outputs and tool I/O as
+  plain text (`scripts/report_trace.py`; tests: `python3 -m unittest test_report_trace`). The
+  index lists every case of each subsection, collapsed, failures first.
+  A copy button on each trace puts the whole case (question, golden, answer, checks, flow,
+  every step's text, raw JSON) on the clipboard as plain text, ready to paste into a chat.
 - **Private run.** `make verify-private` (`scripts/verify_private.sh` → `verify_private.py`) runs the
   suites that need the real mailbox: `private-evals/chat/cases` through the same judged CLI
   harness and the private junk golden set, against the `make eval-snapshot` copy of the

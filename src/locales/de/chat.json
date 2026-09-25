@@ -57,7 +57,12 @@
     "streaming": "Wird generiert…",
     "stopped": "Generierung gestoppt",
     "error": "Etwas ist schiefgelaufen",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "wrong": "Diese Antwort ist nicht richtig",
+    "wrongPrompt": "Was war daran falsch?",
+    "wrongPlaceholder": "Hilf dem Modell, es besser zu machen — z. B. diese E-Mails sind von September, nicht von August",
+    "wrongSubmit": "Erneut versuchen",
+    "rejected": "Als falsch markiert — unten erneut versucht."
   },
   "processing": {
     "routing": "Route bestimmen…",
@@ -67,7 +72,17 @@
     "retrievingEmail": "E-Mail abrufen…",
     "generatingDraft": "Entwurf generieren…",
     "runningTools": "Anfrage verarbeiten…",
-    "generating": "Antwort generieren…"
+    "researching": "Recherche läuft…",
+    "research": {
+      "gathering": "Recherche: E-Mails werden gesammelt…",
+      "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",
+      "condensing": "Recherche: Notizen zusammenführen {{batch}}/{{batches}}…",
+      "writing": "Recherche: Bericht aus {{total}} E-Mails wird verfasst…",
+      "remaining": " · noch ~{{time}}"
+    },
+    "generating": "Antwort generieren…",
+    "cancel": "Abbrechen",
+    "cancelling": "Wird abgebrochen…"
   },
   "reasoning": {
     "show": "Begründung anzeigen",
@@ -110,7 +125,8 @@
         "fetchMetadata": "Metadaten abrufen",
         "threadExpansion": "Thread-Erweiterung",
         "helpDocs": "EmailOps-Hilfe",
-        "rag": "RAG-Abruf"
+        "rag": "RAG-Abruf",
+        "research": "Recherche"
       },
       "noCalls": "keine Aufrufe",
       "fallbackSkipped": "Fallback (übersprungen)",
@@ -130,7 +146,44 @@
       "prefill": "Prefill {{latency}}",
       "kvCacheHit": "KV-Cache {{cached}}/{{total}} Tok ({{pct}} %)",
       "kvCacheMiss": "KV-Cache 0/{{total}} Tok (kalt)",
-      "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten"
+      "helpSections": "{{included}} von {{candidates}} Anleitungsabschnitten",
+      "researchFailed": "{{n}} Stapel fehlgeschlagen"
+    },
+    "flow": {
+      "researchOn": "Recherchemodus",
+      "researchRead": "{{read}} von {{planned}} E-Mails in {{batches}} Stapeln gelesen",
+      "researchFindings": "{{findings}} Erkenntnisse aus {{relevant}} E-Mails",
+      "researchStopped": "vom Benutzer abgebrochen",
+      "keywords": "Schlüsselwörter",
+      "findings": "{{n}} Erkenntnisse",
+      "kind": {
+        "router": "Router",
+        "planner": "Planer (LLM)",
+        "retrieval": "RAG-Retrieval",
+        "help": "EmailOps-Hilfe",
+        "tool": "tool_call:",
+        "llmRound": "LLM-Runde {{n}}",
+        "answer": "Antwort (LLM)",
+        "llmCall": "LLM-Aufruf",
+        "llmCallN": "LLM-Aufruf {{n}}/{{total}}"
+      },
+      "section": {
+        "prompt": "Prompt",
+        "output": "Ausgabe",
+        "details": "Details"
+      },
+      "detail": {
+        "latency": "Latenz",
+        "prefill": "Prefill",
+        "kvCache": "KV-Cache",
+        "cache": "Cache",
+        "toolCalls": "Tool-Aufrufe",
+        "chars": "Zeichen",
+        "hits": "Treffer",
+        "route": "Route",
+        "reason": "Grund",
+        "status": "Status"
+      }
     }
   },
   "sources": {
@@ -171,7 +224,7 @@
     "expand": "Vollständige Chat-Ansicht öffnen",
     "resize": "Chat-Panel skalieren",
     "conversationPicker": "Unterhaltung wechseln",
-    "emptyHint": "Frag zur geöffneten E-Mail oder zu allem in deinem Posteingang.",
+    "emptyHint": "Frag zur geöffneten E-Mail, zu allem in deinem Posteingang oder dazu, wie man etwas in EmailOps macht.",
     "context": {
       "using": "Wird als Kontext verwendet",
       "remove": "Diesen Thread nicht als Kontext verwenden",
@@ -195,5 +248,34 @@
   "accountPicker": {
     "label": "Konto, in dem dieser Chat sucht",
     "hint": "Der Chat antwortet immer nur aus einem Konto. Ein Wechsel startet eine neue Unterhaltung."
+  },
+  "research": {
+    "toggle": "Recherche",
+    "title": "Recherchemodus: liest deutlich mehr E-Mails in Stapeln und verfasst eine ausführliche Analyse. Langsamer – kann mehrere Minuten dauern. Gilt nur für die nächste Nachricht.",
+    "hint": "Nächste Nachricht: gründliche Analyse (langsamer)",
+    "estimating": "Zähle die E-Mails, die diese Recherche abdeckt…",
+    "estimate": "Diese Recherche liest {{emails}} E-Mails in {{batches}} Stapeln · etwa {{time}}",
+    "estimateNone": "Keine E-Mail passt zu dieser Frage – nichts zu recherchieren.",
+    "estimateFailed": "Diese Recherche konnte nicht geschätzt werden: {{error}}",
+    "start": "Recherche starten",
+    "cancel": "Abbrechen",
+    "stop": "Recherche abbrechen",
+    "stopping": "Wird abgebrochen…",
+    "filter": "Filter",
+    "byMeaning": "Nach Bedeutung gesammelt (kein Filter)",
+    "mode": {
+      "list": "Antwort: Liste aller Treffer — ohne ausformulierten Bericht, schneller",
+      "count": "Antwort: genaue Anzahl und Liste — ohne ausformulierten Bericht, schneller",
+      "analysis": "Antwort: ein ausformulierter Bericht über alle Treffer"
+    },
+    "exit": {
+      "title": "Recherche läuft",
+      "body": "Eine Chat-Recherche liest noch Ihre E-Mails. Wenn Sie jetzt beenden, geht sie verloren und ihre Antwort bleibt leer.",
+      "keep": "Weiter recherchieren",
+      "quit": "Trotzdem beenden"
+    },
+    "statusBar": "Chat: Recherche läuft… ({{step}})",
+    "matchesSoFar": "{{n}} Treffer bisher – die neuesten:",
+    "threadEmails": "{{n}} E-Mails"
   }
 }

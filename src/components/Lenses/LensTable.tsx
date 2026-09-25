@@ -6,7 +6,9 @@ import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
-import type { LensColumn, LensRow, LensSortSpec } from '@/types';
+import type { LensColumn, LensColumnFilter, LensRow, LensSortSpec } from '@/types';
+import { LensColumnFilterMenu } from './LensColumnFilterMenu';
+import { DATE_SORT_KEY, nextSort } from './lensSort';
 import { planUrlCell } from './lensUrlCell';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -21,8 +23,11 @@ const BUILTIN_COLUMN_KEYS = [
   'cadence',
   'cancel_url',
   'client',
+  'company',
   'confidence',
   'confirmation_code',
+  'contact_email',
+  'contact_name',
   'currency',
   'days_overdue',
   'days_silent',
@@ -33,6 +38,7 @@ const BUILTIN_COLUMN_KEYS = [
   'newsletter',
   'next_renewal',
   'paid',
+  'phone',
   'priority_guess',
   'promise',
   'provider',
@@ -40,6 +46,7 @@ const BUILTIN_COLUMN_KEYS = [
   'received_date',
   'recipient',
   'reference',
+  'request_type',
   'sender_name',
   'sent_date',
   'service',
@@ -93,6 +100,7 @@ interface CellProps {
 }
 
 function Cell({ column, value, hasOverride }: CellProps) {
+  const { t } = useTranslation(['common']);
   const fmt = useFormatters();
   if (value === null || value === undefined || value === '') {
     return <span className="text-gray-600">—</span>;
@@ -111,7 +119,7 @@ function Cell({ column, value, hasOverride }: CellProps) {
     case 'date':
       return <span className={cls}>{String(value)}</span>;
     case 'boolean':
-      return <span className={cls}>{value ? 'yes' : 'no'}</span>;
+      return <span className={cls}>{value ? t('common:actions.yes') : t('common:actions.no')}</span>;
     case 'number':
       return <span className={cls}>{fmt.number(Number(value))}</span>;
     case 'url': {
@@ -314,7 +322,7 @@ function LensTableRow({
           title={t('lenses:table.openSourceEmail')}
         >
           <div className="truncate text-gray-200" title={row.emailSubject}>
-            {row.emailSubject || '(no subject)'}
+            {row.emailSubject || t('lenses:create.noSubject')}
           </div>
           <div className="truncate text-[11px] text-gray-500" title={row.emailSender}>
             {row.emailSender}
@@ -381,6 +389,10 @@ export interface LensTableProps {
   isExcludedView: boolean;
   onOpenRow: (row: LensRow) => void;
   groupBy?: string | null;
+  /** Lens the rows belong to — the column filter asks the backend for values. */
+  lensId: string;
+  columnFilters: LensColumnFilter[];
+  onColumnFilter: (key: string, filter: LensColumnFilter | null) => void;
 }
 
 export function LensTable({
@@ -395,6 +407,9 @@ export function LensTable({
   isExcludedView,
   onOpenRow,
   groupBy,
+  lensId,
+  columnFilters,
+  onColumnFilter,
 }: LensTableProps) {
   const { t, i18n } = useTranslation(['lenses']);
   const enT = useMemo(() => i18n.getFixedT('en', 'lenses'), [i18n]);
@@ -409,15 +424,13 @@ export function LensTable({
     },
     [t, enT],
   );
-  const toggleSort = (key: string) => {
-    if (!sort || sort.columnKey !== key) {
-      onSortChange({ columnKey: key, direction: 'desc' });
-    } else if (sort.direction === 'desc') {
-      onSortChange({ columnKey: key, direction: 'asc' });
-    } else {
-      onSortChange(null);
-    }
-  };
+  // Columns start descending; the date starts ascending because the default
+  // order is already newest-first.
+  const toggleSort = (key: string) => onSortChange(nextSort(sort, key, key === DATE_SORT_KEY ? 'asc' : 'desc'));
+  const sortArrow = (key: string) =>
+    sort?.columnKey === key && (
+      <span className="ml-1 text-[10px] text-gray-500">{sort.direction === 'asc' ? '▲' : '▼'}</span>
+    );
 
   // Build groups when `groupBy` is set — preserves the incoming row order
   // within each group. The "(none)" bucket catches rows with missing values.
@@ -448,12 +461,14 @@ export function LensTable({
         if (!pa && !pb) return 0;
         if (!pa) return 1;
         if (!pb) return -1;
-        if (pa.year !== pb.year) return pb.year - pa.year;
-        return pb.quarter - pa.quarter;
+        // Oldest quarter first only when the user sorted the dates that way.
+        const dir = sort?.columnKey === DATE_SORT_KEY && sort.direction === 'asc' ? -1 : 1;
+        if (pa.year !== pb.year) return dir * (pb.year - pa.year);
+        return dir * (pb.quarter - pa.quarter);
       });
     }
     return entries;
-  }, [groupBy, rows]);
+  }, [groupBy, rows, sort]);
 
   const colSpan = columns.length + 3;
 
@@ -461,7 +476,13 @@ export function LensTable({
     <table className="w-full text-left text-xs">
       <thead className="sticky top-0 bg-[#252526] text-gray-400">
         <tr>
-          <th className="border-b border-gray-700 px-3 py-2 font-medium whitespace-nowrap">{t('lenses:table.date')}</th>
+          <th
+            className="cursor-pointer select-none border-b border-gray-700 px-3 py-2 font-medium whitespace-nowrap hover:text-gray-200"
+            onClick={() => toggleSort(DATE_SORT_KEY)}
+          >
+            {t('lenses:table.date')}
+            {sortArrow(DATE_SORT_KEY)}
+          </th>
           <th className="border-b border-gray-700 px-3 py-2 font-medium">{t('lenses:table.email')}</th>
           {columns.map((c) => (
             <th
@@ -471,15 +492,26 @@ export function LensTable({
               onClick={() => toggleSort(c.key)}
             >
               {columnHeader(c)}
-              {sort?.columnKey === c.key && (
-                <span className="ml-1 text-[10px] text-gray-500">{sort.direction === 'asc' ? '▲' : '▼'}</span>
-              )}
+              {sortArrow(c.key)}
+              <LensColumnFilterMenu
+                lensId={lensId}
+                column={c}
+                active={columnFilters.find((f) => f.key === c.key)}
+                onApply={(filter) => onColumnFilter(c.key, filter)}
+              />
             </th>
           ))}
           <th className="border-b border-gray-700 px-3 py-2" />
         </tr>
       </thead>
       <tbody>
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={colSpan} className="px-3 py-8 text-center text-gray-500">
+              {t('lenses:table.filter.noMatches')}
+            </td>
+          </tr>
+        )}
         {groups
           ? groups.map(([label, bucket]) => (
               <Fragment key={label}>
@@ -488,7 +520,8 @@ export function LensTable({
                     colSpan={colSpan}
                     className="border-b border-gray-700 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400"
                   >
-                    {label} <span className="ml-1 text-gray-500">({bucket.length})</span>
+                    {label === '(none)' ? t('lenses:noneOption') : label}{' '}
+                    <span className="ml-1 text-gray-500">({bucket.length})</span>
                   </td>
                 </tr>
                 {bucket.map((row) => (
@@ -560,18 +593,14 @@ export function NoRowsState({
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <h2 className="text-base font-semibold text-gray-200">{t('lenses:emptyRows')}</h2>
       <p className="max-w-md text-xs text-gray-400">
-        {isRunning && total > 0
-          ? `Extracting from ${total} matching email${total === 1 ? '' : 's'} — this can take a while on the first run.`
-          : 'Run an extraction over the matching emails to populate this table.'}
+        {isRunning && total > 0 ? t('lenses:view.extractingFrom', { count: total }) : t('lenses:view.noRowsHelp')}
       </p>
       {isRunning && total > 0 && (
         <div className="w-72 max-w-full">
           <div className="h-1.5 w-full overflow-hidden rounded bg-gray-800">
             <div className="h-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
-          <p className="mt-1 text-[11px] text-gray-500">
-            {processed} of {total} processed ({pct}%)
-          </p>
+          <p className="mt-1 text-[11px] text-gray-500">{t('lenses:view.progress', { processed, total, pct })}</p>
         </div>
       )}
       <button
@@ -580,7 +609,11 @@ export function NoRowsState({
         disabled={isRunning}
         className="mt-2 rounded bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
       >
-        {isRunning ? (total > 0 ? `Running… ${processed}/${total}` : 'Running…') : 'Run backfill'}
+        {isRunning
+          ? total > 0
+            ? t('lenses:view.runningProgress', { processed, total })
+            : t('lenses:view.runningShort')
+          : t('lenses:runBackfill')}
       </button>
     </div>
   );

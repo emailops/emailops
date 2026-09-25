@@ -44,3 +44,11 @@ export function planViewChange(mode: ViewMode, layout: InboxLayout): ViewChangeP
 export function planAccountSwitchView(current: ViewMode): ViewMode {
   return current === 'tagboard' ? 'tagboard' : 'inbox';
 }
+
+/** The view token the chat gets as context: the open Settings tab, else the
+ *  open Lens (`lens/<id>`, so "this lens" resolves), else the main view. */
+export function baseViewToken(settingsTab: string | null, viewMode: string, activeLensId: string | null): string {
+  if (settingsTab) return `settings/${settingsTab}`;
+  if (viewMode === 'lenses' && activeLensId) return `lens/${activeLensId}`;
+  return `view/${viewMode}`;
+}

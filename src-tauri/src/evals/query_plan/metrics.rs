@@ -45,8 +45,8 @@ impl FieldCheck {
 }
 
 /// Every field a plan can carry, in the order the report lists them.
-const PLAN_FIELDS: [&str; 12] = [
-    "query", "from", "to", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
+const PLAN_FIELDS: [&str; 13] = [
+    "query", "from", "to", "with", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
 ];
 
 /// Every verdict for one case.
@@ -67,6 +67,7 @@ pub fn field_value(plan: &SearchPlan, field: &str) -> Result<Option<String>, Str
         "query" => plan.query.clone(),
         "from" => plan.from.clone(),
         "to" => plan.to.clone(),
+        "with" => plan.with.clone(),
         "subject" => plan.subject.clone(),
         "intent" => plan.intent.clone(),
         "topic" => plan.topic.clone(),
@@ -108,7 +109,32 @@ pub fn evaluate_outcome(
     planned: PlannedOutcome<'_>,
     outcome: PlanOutcome,
     help_page: Option<&str>,
+    form_id: Option<&str>,
 ) -> PlanReport {
+    let is_form = outcome == PlanOutcome::FormFill;
+    if case.expect_form.is_some() || is_form {
+        let want = case.expect_form.as_deref();
+        let verdict_ok = want.is_some() && is_form;
+        let mut checks = vec![FieldCheck::verdict(
+            "form",
+            want.unwrap_or("NOT a form request"),
+            outcome.as_str(),
+            verdict_ok,
+        )];
+        // Which form it picked matters as much as picking one at all: filling
+        // the wrong form is worse than deferring.
+        if verdict_ok {
+            let picked = form_id.unwrap_or("(none)");
+            checks.push(FieldCheck::verdict(
+                "form_id",
+                want.unwrap_or_default(),
+                picked,
+                want == Some(picked),
+            ));
+        }
+        let passed = checks.iter().all(FieldCheck::passed);
+        return PlanReport { checks, passed };
+    }
     let is_app_help = outcome == PlanOutcome::AppHelp;
     if case.expect_app_help || is_app_help {
         let verdict_ok = case.expect_app_help && is_app_help;
@@ -286,6 +312,14 @@ mod tests {
     }
 
     #[test]
+    fn a_participant_is_scored_like_any_field() {
+        let c = case("id: x\nquestion: q\nexpect:\n  with: marisol\nabsent: [from, to]\n");
+        assert!(evaluate(&c, Some(&plan(r#"{"with": "Marisol"}"#))).passed);
+        let one_side = evaluate(&c, Some(&plan(r#"{"from": "Marisol"}"#)));
+        assert!(!one_side.passed, "{:?}", one_side.checks);
+    }
+
+    #[test]
     fn an_ignored_field_is_shown_without_scoring_it() {
         // `order: newest` is the tool's own default, so a case may say it does
         // not care — but it has to say so.
@@ -325,9 +359,9 @@ mod tests {
     #[test]
     fn an_app_help_case_wants_the_app_help_verdict() {
         let c = case("id: x\nquestion: q\nexpect_app_help: true\n");
-        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, None).passed);
+        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, None, None).passed);
 
-        let report = evaluate_outcome(&c, None, PlanOutcome::Deferred, None);
+        let report = evaluate_outcome(&c, None, PlanOutcome::Deferred, None, None);
         assert!(!report.passed);
         assert_eq!(report.checks[0].actual, "defer");
     }
@@ -335,14 +369,14 @@ mod tests {
     #[test]
     fn a_defer_case_fails_on_an_app_help_verdict() {
         let c = case("id: x\nquestion: q\nexpect_defer: true\n");
-        assert!(evaluate_outcome(&c, None, PlanOutcome::Deferred, None).passed);
-        assert!(!evaluate_outcome(&c, None, PlanOutcome::AppHelp, None).passed);
+        assert!(evaluate_outcome(&c, None, PlanOutcome::Deferred, None, None).passed);
+        assert!(!evaluate_outcome(&c, None, PlanOutcome::AppHelp, None, None).passed);
     }
 
     #[test]
     fn a_search_case_fails_on_an_app_help_verdict() {
         let c = case("id: x\nquestion: q\nexpect:\n  from: marisol\n");
-        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None);
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None, None);
         assert!(!report.passed);
         assert_eq!(report.checks[0].actual, "app_help");
     }
@@ -351,7 +385,7 @@ mod tests {
     fn a_search_case_still_scores_its_fields() {
         let c = case("id: x\nquestion: q\nexpect:\n  from: marisol\n");
         let p = plan(r#"{"from": "Marisol"}"#);
-        assert!(evaluate_outcome(&c, Some(&p), PlanOutcome::Search, None).passed);
+        assert!(evaluate_outcome(&c, Some(&p), PlanOutcome::Search, None, None).passed);
     }
 
     // The planner also names the guide page; a case can pin which pages
@@ -361,14 +395,14 @@ mod tests {
     fn an_app_help_case_scores_the_page_it_names() {
         let c =
             case("id: x\nquestion: q\nexpect_app_help: true\nexpect_help_page_any: [ai-features, getting-started]\n");
-        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("ai-features")).passed);
+        assert!(evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("ai-features"), None).passed);
 
-        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("troubleshooting"));
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, Some("troubleshooting"), None);
         assert!(!report.passed);
         let page = report.checks.iter().find(|c| c.field == "page").expect("page row");
         assert_eq!(page.actual, "troubleshooting");
 
-        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None);
+        let report = evaluate_outcome(&c, None, PlanOutcome::AppHelp, None, None);
         assert!(!report.passed, "a verdict without a page misses the expected page");
     }
 

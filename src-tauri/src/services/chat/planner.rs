@@ -31,6 +31,11 @@ pub enum Plan {
     /// without mailbox retrieval. Carries the guide page the planner picked
     /// (a stem from `help_docs::corpus::PAGES`), when it named a known one.
     AppHelp(Option<String>),
+    /// A request to fill in one of the app's forms ("crea una lens que…").
+    /// Carries the registered form id — a `&'static str` borrowed from
+    /// `services::forms::registry`, so an id that reached this variant is
+    /// always one the filler can look up.
+    FormFill(&'static str),
 }
 
 /// Why the planner did or did not produce a filter.
@@ -48,6 +53,8 @@ pub enum PlanOutcome {
     Deferred,
     /// The model said the question is about EmailOps itself.
     AppHelp,
+    /// The model said the question asks to fill one of the app's forms.
+    FormFill,
     /// Valid JSON, but nothing to search on.
     EmptyFilter,
     /// No JSON object in the reply.
@@ -62,6 +69,7 @@ impl PlanOutcome {
             PlanOutcome::Search => "search",
             PlanOutcome::Deferred => "defer",
             PlanOutcome::AppHelp => "app_help",
+            PlanOutcome::FormFill => "form_fill",
             PlanOutcome::EmptyFilter => "empty_filter",
             PlanOutcome::Unparseable => "unparseable",
             PlanOutcome::ProviderError => "provider_error",
@@ -90,6 +98,9 @@ pub struct SearchPlan {
     pub query: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    /// A person the mail was exchanged with, in either direction ("emails
+    /// with X"): X sent it, or X is among its recipients.
+    pub with: Option<String>,
     pub subject: Option<String>,
     /// Classifier tags — the planner's way to express a concept ("prospects")
     /// the mailbox never spells out.
@@ -122,6 +133,7 @@ impl SearchPlan {
         self.query.is_none()
             && self.from.is_none()
             && self.to.is_none()
+            && self.with.is_none()
             && self.subject.is_none()
             && self.since.is_none()
             && self.until.is_none()
@@ -156,6 +168,7 @@ impl SearchPlan {
     pub fn has_structural_filter(&self) -> bool {
         self.from.is_some()
             || self.to.is_some()
+            || self.with.is_some()
             || self.subject.is_some()
             || self.since.is_some()
             || self.until.is_some()
@@ -185,6 +198,7 @@ impl SearchPlan {
         put("query", self.query);
         put("from", self.from);
         put("to", self.to);
+        put("with", self.with);
         put("subject", self.subject);
         put("intent", self.intent);
         put("topic", self.topic);
@@ -276,6 +290,14 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
         }
         _ => {}
     }
+    // A request to fill one of the app's forms. Resolved against the registry
+    // here so a hallucinated id never reaches the filler — it falls through to
+    // the ordinary tool loop instead, which is the safe default.
+    if let Some(serde_json::Value::String(id)) = obj.get("form") {
+        if let Some(form) = crate::services::forms::registry::lookup(id.trim()) {
+            return (Plan::FormFill(form.id), PlanOutcome::FormFill);
+        }
+    }
     let str_field = |key: &str| {
         obj.get(key)
             .and_then(|v| v.as_str())
@@ -300,6 +322,7 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
         query: str_field("query"),
         from: str_field("from"),
         to: str_field("to"),
+        with: str_field("with"),
         subject: str_field("subject"),
         intent: str_field("intent").map(|v| v.to_lowercase()),
         topic: str_field("topic").map(|v| v.to_lowercase()),
@@ -384,6 +407,8 @@ pub(crate) fn split_planner_prompt(
     today: &str,
     query: &str,
     glossary: &TagGlossary,
+    open_form: Option<&str>,
+    form_catalog: &str,
 ) -> (String, String) {
     let mut vars = std::collections::HashMap::new();
     vars.insert("user_email", user_email.to_string());
@@ -395,6 +420,13 @@ pub(crate) fn split_planner_prompt(
     vars.insert("intent_definitions", TagGlossary::render_lines(&glossary.intents));
     vars.insert("topic_definitions", TagGlossary::render_lines(&glossary.topics));
     vars.insert("guide_pages", render_guide_pages());
+    // One `id: summary` line per fillable form. Static and tiny (asserted in
+    // `forms::registry`), so it lives in the planner's cached head and costs
+    // nothing per turn.
+    vars.insert("form_catalog", form_catalog.to_string());
+    // Per-call, so the template places it AFTER `{{query}}` — inside the tail
+    // that is re-rendered every call, never in the cached head.
+    vars.insert("open_form", super::view_context::planner_form_hint(open_form));
     // Deterministic Monday-anchored week ranges so "this week" / "last week"
     // never rely on the model's weekday arithmetic. Empty on an unparseable
     // date — the template's generic relative-date rule still applies.
@@ -464,12 +496,15 @@ pub async fn plan_search(
     today: &str,
     query: &str,
     glossary: &TagGlossary,
+    open_form: Option<&str>,
+    form_catalog: &str,
 ) -> PlanRun {
-    let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary);
+    let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary, open_form, form_catalog);
     let opts = CompletionOptions {
         temperature: Some(0.0),
         max_tokens: Some(128),
         think: Some(false),
+        json_shape: None,
     };
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => {
@@ -505,7 +540,7 @@ mod tests {
         query: &str,
         glossary: &TagGlossary,
     ) -> String {
-        let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary);
+        let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary, None, TEST_CATALOG);
         format!("{prefix}{suffix}")
     }
 
@@ -516,6 +551,11 @@ mod tests {
 
     use super::*;
     use crate::services::classification::ClassificationConfig;
+
+    /// The forms catalog these tests render with. Fixed rather than read from a
+    /// DB: what the planner does with the catalog is what matters here, not
+    /// which features happen to be on.
+    const TEST_CATALOG: &str = "- lens.create: Create a Lens";
 
     fn search(text: &str) -> SearchPlan {
         match parse_plan(text) {
@@ -595,6 +635,17 @@ mod tests {
     #[test]
     fn mode_alone_is_not_a_filter() {
         assert_eq!(parse_plan(r#"{"mode":"semantic"}"#), Plan::Defer);
+    }
+
+    #[test]
+    fn parses_a_participant_as_a_filter_in_either_direction() {
+        let p = search(r#"{"with":"Genoveva"}"#);
+        assert_eq!(p.with.as_deref(), Some("Genoveva"));
+        assert!(p.from.is_none() && p.to.is_none());
+        assert!(p.has_structural_filter(), "a person narrows the search like from/to");
+        let call = p.into_tool_call();
+        let args: serde_json::Value = call.function.arguments;
+        assert_eq!(args.get("with").and_then(|v| v.as_str()), Some("Genoveva"));
     }
 
     #[test]
@@ -794,6 +845,8 @@ mod tests {
             "2026-06-30",
             "q",
             &g,
+            None,
+            TEST_CATALOG,
         );
         assert!(
             head.contains("ai-features: "),
@@ -1087,6 +1140,8 @@ mod tests {
             "2026-06-15",
             "mail from marisol",
             &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
         )
         .await;
 
@@ -1107,6 +1162,8 @@ mod tests {
             "2026-06-15",
             "mail from marisol",
             &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
         )
         .await;
 
@@ -1124,6 +1181,8 @@ mod tests {
             "2026-06-15",
             "mail from marisol",
             &glossary,
+            None,
+            TEST_CATALOG,
         );
 
         assert_eq!(
@@ -1147,8 +1206,24 @@ mod tests {
     fn the_prefix_is_identical_for_two_questions_asked_the_same_day() {
         let glossary = TagGlossary::defaults();
         let template = crate::services::prompts::defaults::CHAT_QUERY_PLAN;
-        let (first, _) = split_planner_prompt(template, "me@example.test", "2026-06-15", "one", &glossary);
-        let (second, _) = split_planner_prompt(template, "me@example.test", "2026-06-15", "another", &glossary);
+        let (first, _) = split_planner_prompt(
+            template,
+            "me@example.test",
+            "2026-06-15",
+            "one",
+            &glossary,
+            None,
+            TEST_CATALOG,
+        );
+        let (second, _) = split_planner_prompt(
+            template,
+            "me@example.test",
+            "2026-06-15",
+            "another",
+            &glossary,
+            None,
+            TEST_CATALOG,
+        );
 
         assert_eq!(first, second);
     }
@@ -1162,6 +1237,8 @@ mod tests {
             "2026-06-15",
             "q",
             &glossary,
+            None,
+            TEST_CATALOG,
         );
 
         assert_eq!(prefix, "Plan a search. Today is 2026-06-15.");

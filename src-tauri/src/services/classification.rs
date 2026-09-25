@@ -829,6 +829,7 @@ pub(crate) async fn classify_with_provider(
         temperature: Some(0.0),
         max_tokens: Some(256),
         think: None,
+        json_shape: None,
     };
 
     let t = std::time::Instant::now();

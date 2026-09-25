@@ -82,6 +82,7 @@
     "showRemoteImagesHint": "Charger les images peut informer l'expéditeur que vous avez ouvert ce courriel.",
     "reply": "Répondre",
     "replyAll": "Répondre à tous",
+    "aiDraft": "Brouillon IA",
     "aiDraftTitle": "Générer une réponse avec l'IA (utilise les destinataires de Répondre à tous)",
     "openInNewTab": "Ouvrir dans un nouvel onglet",
     "deleteThread": "Supprimer le fil",
@@ -171,5 +172,6 @@
     "confirmFailed": "Impossible de classer le message sur le serveur",
     "notJunkFailed": "Impossible d'enregistrer que ce message n'est pas indésirable",
     "hideFlagged": "Masquer les indésirables"
-  }
+  },
+  "emailUnavailable": "Cet e-mail n’est plus disponible."
 }

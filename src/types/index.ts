@@ -560,7 +560,75 @@ export type ChatPhase =
   | 'retrievingEmail'
   | 'generatingDraft'
   | 'runningTools'
+  | 'researching'
   | 'generating';
+
+/** Progress of a research-mode turn, fired on `chat-research-progress`.
+ *  Mirrors `ChatResearchProgressEvent` in Rust. */
+export interface ChatResearchProgressEvent {
+  messageId: string;
+  conversationId: string;
+  stage: 'gathering' | 'reading' | 'condensing' | 'writing';
+  batch: number;
+  batches: number;
+  emailsRead: number;
+  emailsTotal: number;
+  /** Matches found so far. */
+  matches?: number;
+  /** The latest few matches, newest last. */
+  recent?: ResearchMatchPreview[];
+}
+
+/** One match as the research progress shows it. Mirrors `ResearchMatchPreview`. */
+export interface ResearchMatchPreview {
+  emailId: string;
+  date: string;
+  subject: string;
+  finding: string;
+  /** Emails of this conversation that matched. */
+  emails: number;
+}
+
+/** How a research answer is delivered. Mirrors `ReportMode` in Rust. */
+export type ResearchMode = 'list' | 'count' | 'analysis';
+
+/** What a research-mode turn read. Mirrors `ResearchTrace` in Rust. */
+export interface ResearchTrace {
+  /** How the answer was delivered; absent on older traces (a report). */
+  mode?: ResearchMode;
+  nCtx: number;
+  /** Emails gathered for reading (what the estimate counted). */
+  plannedEmails: number;
+  searchHits: number;
+  semanticHits: number;
+  /** Emails read — fewer than `plannedEmails` when the user stopped it. */
+  emailsAnalyzed: number;
+  batches: number;
+  failedBatches: number;
+  findings: number;
+  relevantEmails: number;
+  condenseCalls: number;
+  stopped: boolean;
+  gatherMs: number;
+  mapMs: number;
+  condenseMs: number;
+  reduceMs: number;
+}
+
+/** What a research run would read, for the user to confirm. Mirrors
+ *  `ResearchEstimate` in Rust. */
+export interface ResearchEstimate {
+  estimateId: string;
+  emails: number;
+  batches: number;
+  seconds: number;
+  /** How the answer will be delivered: a list or a count written from the
+   *  matches (no report call), or a written report. */
+  mode: ResearchMode;
+  /** The planner's filter as `search_emails` arguments; null when the
+   *  question is gathered by meaning. */
+  filter: Record<string, unknown> | null;
+}
 
 export interface ChatPhaseEvent {
   messageId: string;
@@ -701,6 +769,8 @@ export interface ChatTrace {
   llmCalls?: LlmCallTrace[];
   /** What the EmailOps-help lookup (bundled guides) did this turn. */
   help?: HelpTrace | null;
+  /** Research-mode stats; absent on an ordinary turn. */
+  research?: ResearchTrace | null;
   /** The turn in execution order, built by the backend
    *  (`services::chat::trace_steps`) — the one ordering the reasoning panel,
    *  the CLI and the eval report all walk. */
@@ -725,6 +795,7 @@ export interface CacheAction {
 /** Mirrors `TraceStep`. `llm` / `tool` index into `llmCalls` / `toolCalls`. */
 export type TraceStep =
   | { type: 'route' }
+  | { type: 'research' }
   | { type: 'retrieval' }
   | { type: 'help' }
   | { type: 'llm'; index: number; kvCache: KvCacheStats | null; cacheAction: CacheAction | null }
@@ -1102,6 +1173,20 @@ export interface LensSortSpec {
   direction: 'asc' | 'desc';
 }
 
+/** Excel-style filter on one column: rows whose value is in `values`, plus
+ *  empty cells when `includeEmpty`. Nothing selected keeps no rows. */
+export interface LensColumnFilter {
+  key: string;
+  values: string[];
+  includeEmpty: boolean;
+}
+
+/** One distinct value of a column (`null` = empty cells) and its row count. */
+export interface LensColumnValueCount {
+  value: string | null;
+  count: number;
+}
+
 export type LensRunKind = 'backfill' | 'incremental' | 'reextract' | 'single';
 
 export interface LensRunHandle {
@@ -1134,6 +1219,15 @@ export interface LensRunHistoryEntry {
   succeeded: number;
   failed: number;
   errorMessage: string | null;
+}
+
+/** A row that failed extraction while one run ran (run history detail). */
+export interface LensRunFailure {
+  emailId: string;
+  subject: string;
+  sender: string;
+  errorMessage: string | null;
+  extractedAt: number;
 }
 
 export interface LensTemplate {

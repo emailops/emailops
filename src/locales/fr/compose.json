@@ -51,7 +51,9 @@
     "tone": "Ton",
     "toneFormal": "Formel",
     "toneCasual": "Décontracté",
-    "toneFriendly": "Cordial"
+    "toneFriendly": "Cordial",
+    "instructionPlaceholder": "Dites à l'IA quoi répondre (facultatif), p. ex. accepter mais proposer jeudi",
+    "regenerate": "Régénérer"
   },
   "feedback": {
     "general": {
@@ -93,5 +95,11 @@
     "subject": "Objet",
     "to": "À",
     "cc": "Cc"
+  },
+  "sendWarnings": {
+    "missingAttachment": "Le message mentionne une pièce jointe, mais aucun fichier n'est joint.",
+    "unfilledPlaceholder": "Il reste des champs à compléter : {{items}}",
+    "review": "Vérifier",
+    "sendAnyway": "Envoyer quand même"
   }
 }

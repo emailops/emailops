@@ -597,6 +597,7 @@ impl Database {
             false,
             false,
             false,
+            None,
         )
     }
 
@@ -625,6 +626,11 @@ impl Database {
         // `true` keeps only mail the user has not read. Applied in SQL, so an
         // `ascending` + `limit` query returns the oldest UNREAD email.
         unread_only: bool,
+        // "Emails exchanged with X": an email matches when any of these terms
+        // is in its sender (name or address), recipients or cc. Pass the
+        // person's name and the addresses it resolves to (see
+        // `sender_addresses_matching`).
+        participants: Option<&[String]>,
     ) -> Result<Vec<Email>> {
         self.search_emails_inner(
             account_id,
@@ -640,7 +646,32 @@ impl Database {
             ascending,
             exclude_spam,
             unread_only,
+            participants,
         )
+    }
+
+    /// The addresses a person has written from, found by name or address
+    /// fragment among the account's senders, most frequent first. Resolves
+    /// "emails with Ana" to the addresses her mail comes from, so mail the
+    /// user sent to those addresses — which rarely carries her name — is
+    /// found too.
+    pub fn sender_addresses_matching(&self, account_id: &str, needle: &str, limit: usize) -> Result<Vec<String>> {
+        let needle = needle.trim().to_lowercase();
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT lower(trim(sender_email)) AS addr FROM emails
+             WHERE account_id = ?1 AND trim(sender_email) != ''
+               AND (lower(sender) LIKE ?2 OR lower(sender_email) LIKE ?2)
+             GROUP BY addr ORDER BY COUNT(*) DESC, addr LIMIT ?3",
+        )?;
+        let pattern = format!("%{needle}%");
+        let rows = stmt.query_map(rusqlite::params![account_id, pattern, limit as i64], |r| {
+            r.get::<_, String>(0)
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -659,7 +690,14 @@ impl Database {
         ascending: bool,
         exclude_spam: bool,
         unread_only: bool,
+        participants: Option<&[String]>,
     ) -> Result<Vec<Email>> {
+        let participants: Vec<String> = participants
+            .unwrap_or_default()
+            .iter()
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
         // ── Date-only fast path (no text filters) ────────────────────────────────
         // When there are no text-based filters (keyword, from, to, subject, tag),
         // thread deduplication is wrong: the user wants ALL emails in the window,
@@ -669,6 +707,7 @@ impl Database {
             || from_filter.is_some()
             || to_filter.is_some()
             || subject_filter.is_some()
+            || !participants.is_empty()
             || tag_filters.map(|t| !t.is_empty()).unwrap_or(false);
 
         if !has_text_filter {
@@ -686,6 +725,10 @@ impl Database {
 
         let conn = self.reader();
         let order_clause = thread_order_clause("e", ascending);
+        // Each thread is represented by one matching email: the latest one
+        // newest-first, the earliest one oldest-first — otherwise a thread the
+        // user started long ago and replied to yesterday sorts by yesterday.
+        let thread_pick = if ascending { "MIN" } else { "MAX" };
 
         // ── CTE: find thread_ids that contain a matching email ────────────────────
         // All filter conditions apply to the same email row (`match_e`) so that
@@ -922,6 +965,22 @@ impl Database {
             param_idx += 1;
         }
 
+        // Participants: any term in the sender (name or address), recipients
+        // or cc. JSON arrays again, so LIKE — same cost as the `to` filter.
+        if !participants.is_empty() {
+            let mut any_term = Vec::with_capacity(participants.len());
+            for term in &participants {
+                any_term.push(format!(
+                    "(lower(match_e.sender) LIKE ?{i} OR lower(match_e.sender_email) LIKE ?{i} \
+                     OR lower(match_e.recipients_json) LIKE ?{i} OR lower(match_e.cc_json) LIKE ?{i})",
+                    i = param_idx
+                ));
+                params_vec.push(Box::new(format!("%{term}%")));
+                param_idx += 1;
+            }
+            cte_conditions.push(format!("({})", any_term.join(" OR ")));
+        }
+
         // Subject filter — route through FTS5 subject column instead of LIKE '%…%'.
         // FTS5 `subject:{term}*` uses the inverted index on the subject field.
         if let Some(subj) = subject_filter {
@@ -1070,7 +1129,7 @@ impl Database {
                 "SELECT {cols}
                  FROM emails e
                  INNER JOIN (
-                     SELECT thread_id AS tid, MAX(timestamp) AS max_ts
+                     SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
                      FROM emails
                      WHERE account_id = ?1 AND is_deleted = 0 AND id IN ({phs})
                      GROUP BY thread_id
@@ -1081,6 +1140,7 @@ impl Database {
                 phs = id_phs.join(", "),
                 cols = EMAIL_COLUMNS,
                 order = order_clause,
+                thread_pick = thread_pick,
                 limit_idx = limit_idx,
             );
 
@@ -1117,7 +1177,7 @@ impl Database {
                  WHERE {cte_where}
              ),
              thread_latest AS (
-                 SELECT thread_id AS tid, MAX(timestamp) AS max_ts
+                 SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
                  FROM filter_match
                  GROUP BY thread_id
              )
@@ -1131,6 +1191,7 @@ impl Database {
             cte_where = cte_where,
             cols = EMAIL_COLUMNS,
             order = order_clause,
+            thread_pick = thread_pick,
             limit_idx = param_idx,
         );
 
@@ -2237,6 +2298,7 @@ mod tests {
                 true,
                 false,
                 false,
+                None,
             )
             .unwrap();
         assert_eq!(
@@ -2244,6 +2306,70 @@ mod tests {
             Some("old"),
             "ascending must surface the oldest (first) matching email"
         );
+    }
+
+    /// A thread the user started long ago and replied to recently.
+    fn seed_long_running_thread(db: &Database, account: &str) {
+        insert_search_email(
+            db,
+            "opener",
+            account,
+            "t-long",
+            "Me",
+            "me@example.com",
+            "Kickoff",
+            "b",
+            100,
+        );
+        insert_search_email(
+            db,
+            "reply",
+            account,
+            "t-long",
+            "Me",
+            "me@example.com",
+            "Re: Kickoff",
+            "b",
+            900,
+        );
+        insert_search_email(
+            db,
+            "single",
+            account,
+            "t-single",
+            "Me",
+            "me@example.com",
+            "Invoice",
+            "b",
+            500,
+        );
+    }
+
+    fn oldest_first(db: &Database, from: Option<&str>, subject: Option<&str>) -> Vec<String> {
+        db.search_emails_ordered(
+            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect()
+    }
+
+    #[test]
+    fn oldest_first_ranks_a_thread_by_its_earliest_match_not_its_latest_reply() {
+        // "The first email I sent" was answered with a September email because
+        // a June thread's latest reply made it sort last.
+        let db = Database::new_for_testing().unwrap();
+        seed_long_running_thread(&db, "acc1");
+        assert_eq!(oldest_first(&db, Some("me@example.com"), None), vec!["opener"]);
+    }
+
+    #[test]
+    fn oldest_first_ranks_by_earliest_match_on_the_general_path_too() {
+        // A subject filter without `from` takes the general (CTE) path.
+        let db = Database::new_for_testing().unwrap();
+        seed_long_running_thread(&db, "acc1");
+        assert_eq!(oldest_first(&db, None, Some("Kickoff")), vec!["opener"]);
     }
 
     #[test]
@@ -3471,5 +3597,122 @@ mod tests {
         eprintln!("\n══════════════════════════════════════════════════════════════");
         eprintln!("  Report complete");
         eprintln!("══════════════════════════════════════════════════════════════\n");
+    }
+
+    // ── participants ("emails exchanged with X") ──
+
+    fn set_recipients(db: &Database, id: &str, recipients: &[&str]) {
+        db.connection()
+            .execute(
+                "UPDATE emails SET recipients_json = ?1 WHERE id = ?2",
+                rusqlite::params![serde_json::to_string(recipients).unwrap(), id],
+            )
+            .unwrap();
+    }
+
+    fn exchanged_with(db: &Database, participants: &[String]) -> Vec<String> {
+        let mut ids: Vec<String> = db
+            .search_emails_ordered(
+                "acc1",
+                "",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                50,
+                false,
+                false,
+                false,
+                Some(participants),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn seed_exchange(db: &Database) {
+        insert_search_email(db, "e1", "acc1", "t1", "Ana Ruiz", "ana@x.example", "Hola", "body", 100);
+        insert_search_email(
+            db,
+            "e2",
+            "acc1",
+            "t2",
+            "Me",
+            "me@mine.example",
+            "Propuesta",
+            "body",
+            200,
+        );
+        set_recipients(db, "e2", &["ana@x.example"]);
+        insert_search_email(db, "e3", "acc1", "t3", "Bob", "bob@y.example", "Otro", "body", 300);
+        insert_search_email(
+            db,
+            "e4",
+            "acc1",
+            "t4",
+            "Me",
+            "me@mine.example",
+            "Sin nombre",
+            "body",
+            400,
+        );
+        set_recipients(db, "e4", &["gm@we.example"]);
+    }
+
+    #[test]
+    fn a_participant_matches_whether_they_sent_or_received_the_email() {
+        let db = Database::new_for_testing().unwrap();
+        seed_exchange(&db);
+        assert_eq!(exchanged_with(&db, &["ana".to_string()]), vec!["e1", "e2"]);
+    }
+
+    #[test]
+    fn a_participant_named_only_by_name_needs_their_address_to_match_mail_to_them() {
+        let db = Database::new_for_testing().unwrap();
+        seed_exchange(&db);
+        // e4 went to gm@we.example: the name alone is nowhere in it.
+        assert!(exchanged_with(&db, &["genoveva".to_string()]).is_empty());
+        assert_eq!(
+            exchanged_with(&db, &["genoveva".to_string(), "gm@we.example".to_string()]),
+            vec!["e4"]
+        );
+    }
+
+    #[test]
+    fn a_name_resolves_to_the_addresses_it_has_written_from() {
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "t1",
+            "Genoveva Mendoza",
+            "gm@we.example",
+            "a",
+            "b",
+            1,
+        );
+        insert_search_email(
+            &db,
+            "e2",
+            "acc1",
+            "t2",
+            "Genoveva M.",
+            "genoveva@home.example",
+            "a",
+            "b",
+            2,
+        );
+        insert_search_email(&db, "e3", "acc1", "t3", "Bob", "bob@y.example", "a", "b", 3);
+        insert_search_email(&db, "e4", "acc2", "t4", "Genoveva", "other@acct.example", "a", "b", 4);
+        let mut found = db.sender_addresses_matching("acc1", "genoveva", 10).unwrap();
+        found.sort();
+        assert_eq!(found, vec!["genoveva@home.example", "gm@we.example"]);
     }
 }

@@ -11,6 +11,7 @@ import {
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
+import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { MessageList } from './MessageList';
@@ -50,6 +51,7 @@ export function ChatPanel({
   const {
     conversations,
     activeConversationId,
+    currentAccountId,
     messages,
     streamingMessageId,
     streamingPhase,
@@ -60,10 +62,16 @@ export function ChatPanel({
     createConversation,
     selectConversation,
     sendMessage,
+    retryWithCorrection,
+    rejectedMessageIds,
     loadCategoriesPref,
     categoriesLoaded,
+    inputPrefill,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
+  // What the user has on screen, sent with each turn so "esto" / "aquí"
+  // resolve and an open form can be edited from here.
+  const viewContext = useChatViewContext();
 
   // Whether the offered context is armed. Keyed by thread so moving to another
   // thread re-arms it — a dismissal applies to the thread it was made on, not
@@ -79,6 +87,10 @@ export function ChatPanel({
   const contextOffer = planChatContextOffer(context, accountId, isConversationThreadBound(messages));
   const offeredContext = contextOffer.kind === 'offered' ? contextOffer.context : null;
   const contextActive = offeredContext !== null && dismissedContextKey !== contextKey;
+  // The thread binding for this turn. Hoisted so the retry path sends the same
+  // grounding the rejected answer was produced with — retrying a thread-bound
+  // answer against the whole mailbox would "fix" it by changing the question.
+  const turnContext = chatTurnContext(offeredContext, contextActive);
 
   useEffect(() => {
     if (!categoriesLoaded) void loadCategoriesPref();
@@ -88,13 +100,20 @@ export function ChatPanel({
   // the local model's prompt-prefix cache. Both surfaces share one store, so
   // whichever mounts first does the work and the other reuses it.
   useEffect(() => {
-    if (!accountId) return;
     // `selectAccount` owns the conversation swap: it remembers where we were
     // and restores the conversation last open for this account this session,
-    // falling back to a fresh chat.
+    // falling back to a fresh chat. It also re-runs when `currentAccountId`
+    // goes null — the chat was reset for an account switch — so the list
+    // reloads even if `accountId` (the first enabled account in "All
+    // accounts") did not change.
+    if (!accountId || currentAccountId === accountId) return;
     void selectAccount(accountId);
+  }, [accountId, selectAccount, currentAccountId]);
+
+  useEffect(() => {
+    if (!accountId) return;
     prewarmChat(accountId).catch(() => {});
-  }, [accountId, selectAccount]);
+  }, [accountId]);
 
   const handleSend = async (content: string) => {
     if (!activeConversationId) {
@@ -112,8 +131,7 @@ export function ChatPanel({
     // The thread's OWN account travels with it — in unified mode it differs
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
-    const turnContext = chatTurnContext(offeredContext, contextActive);
-    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null);
+    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null, viewContext);
   };
 
   const header = (
@@ -189,7 +207,7 @@ export function ChatPanel({
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {showEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500">
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm leading-relaxed text-gray-500">
             {t('chat:panel.emptyHint')}
           </div>
         ) : isLoadingMessages ? (
@@ -204,6 +222,17 @@ export function ChatPanel({
             accountId={accountId}
             onOpenEmail={onNavigateToInbox}
             onShowEmailsInList={onShowEmailsInList}
+            onRejectMessage={(messageId, reason) =>
+              void retryWithCorrection(
+                messageId,
+                reason,
+                turnContext?.threadId ?? null,
+                turnContext?.accountId ?? null,
+                viewContext,
+              )
+            }
+            rejectedMessageIds={rejectedMessageIds}
+            isSending={isSending}
           />
         )}
         {error && <div className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}
@@ -212,6 +241,8 @@ export function ChatPanel({
       <ChatInput
         compact
         onSend={handleSend}
+        prefillText={inputPrefill?.text}
+        prefillNonce={inputPrefill?.nonce}
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={

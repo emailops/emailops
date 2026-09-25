@@ -51,7 +51,7 @@ export function LensRowDrawer({ row, onClose }: LensRowDrawerProps) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden">
-          <EmailPreviewById accountId={row.accountId} emailId={row.emailId} emptyMessage="No email selected." />
+          <EmailPreviewById accountId={row.accountId} emailId={row.emailId} emptyMessage={t('lenses:row.noEmail')} />
         </div>
       </div>
     </div>

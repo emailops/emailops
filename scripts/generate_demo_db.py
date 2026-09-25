@@ -904,6 +904,41 @@ WORK_THREADS_EN += [
            days_ago=6, read=False),
 ]
 
+# Quotes in both directions, for research questions like "which quotes have I
+# sent to clients?": two the user sends to clients, and one the user asks a
+# supplier for. The last is the hard negative — the user writes in that thread
+# too, so only who sent the quote to whom tells it apart.
+WORK_THREADS_EN += [
+    Thread("Janos Kovacs", "janos@privacyhub.eu",
+           "Proposal and quote: PrivacyHub analytics migration", "primary",
+           [("me",
+             "Hi Janos,\n\nAs promised, here is my proposal for moving PrivacyHub's "
+             "analytics to a self-hosted setup: discovery, event-schema migration, "
+             "dashboards and a two-week parallel run. Quote: 8,400 EUR + VAT, six "
+             "weeks, 50% on signature. Happy to walk you through it.\n\nUlises"),
+            ("them",
+             "Thanks Ulises, this is clear. I'll review it with the team and get back "
+             "to you next week.\n\nJanos")],
+           days_ago=21),
+    Thread("Carla Méndez", "carla@bahiastudio.co",
+           "Quote: Bahía Studio marketing site rebuild", "primary",
+           [("me",
+             "Hi Carla,\n\nFollowing your request, my quote for rebuilding the "
+             "marketing site: 5,200 EUR + VAT for design system, six pages and the "
+             "CMS migration, four weeks from kick-off.\n\nBest,\nUlises")],
+           mailbox="sent", days_ago=17),
+    Thread("Lena Fischer", "lena@wortwerk.example",
+           "Quote request: German translation of the EmailOps docs", "primary",
+           [("me",
+             "Hi Lena,\n\nCould you send me a quote for translating the EmailOps "
+             "user docs (about 12,000 words) into German?\n\nThanks,\nUlises"),
+            ("them",
+             "Hi Ulises,\n\nHappy to help. Our quote: 0.09 EUR per word, 1,080 EUR "
+             "in total, delivered in ten working days.\n\nLena Fischer\nWortwerk "
+             "Translations")],
+           days_ago=14),
+]
+
 PERSONAL_THREADS_EN: list[Thread] = [
     # Imported from the maintainer's mailbox, anonymised (see private-evals/imports/):
     # an airline e-ticket plus its check-in reminder, for single-fact questions.
@@ -1198,6 +1233,7 @@ def _insert_thread(conn: sqlite3.Connection, account: Account, thread: Thread) -
             mailbox=thread.mailbox,
             category=thread.category,
             thread_id=thread_id,
+            recipient_email=thread.sender_email if who == "me" else None,
         )
         insert_tags(conn, email_id, subject, body, s_email)
 
@@ -1936,6 +1972,7 @@ def insert_email(
     mailbox: str,
     category: str,
     thread_id: str | None = None,
+    recipient_email: str | None = None,
 ) -> str:
     # Deliberately NOT keyed on `timestamp`: demo mail is anchored to "now", so
     # timestamps shift on every generation and would re-key everything. `body`
@@ -1945,7 +1982,8 @@ def insert_email(
     sender_domain = sender_email.split("@")[-1].lower()
 
     snippet = body.replace("\n", " ").strip()[:180]
-    recipients_json = json.dumps([account.email])
+    # Mail the owner sends goes to its counterparty; everything else to the owner.
+    recipients_json = json.dumps([recipient_email or account.email])
     cc_json = "[]"
     now = now_s()
     html_body = make_email_html(body, sender_name)
@@ -2510,6 +2548,25 @@ def _month_label_from_filename(filename: str, locale_code: str) -> str:
     return next(iter(table.values()))
 
 
+# English invoices the chat evals ask about as unread ("oldest unread email",
+# "unread mail from BorgBase"); every other English invoice is read. Explicit
+# rather than a random draw: a draw depends on how many draws came before, so
+# adding a demo email anywhere upstream silently changed which invoices were
+# unread and those evals failed on correct answers.
+UNREAD_INVOICES_EN = {
+    "BorgBase invoice for January 2026",
+    "Your Hetzner Cloud invoice for February 2026",
+    "BorgBase invoice for April 2026",
+}
+
+
+def invoice_is_read(subject: str, locale_code: str, roll: float) -> bool:
+    if locale_code == "en":
+        return subject not in UNREAD_INVOICES_EN
+    # Invoices skew "already seen" — they're transactional notifications.
+    return roll < 0.85
+
+
 def populate_invoice_emails(
     conn: sqlite3.Connection,
     locale: Locale,
@@ -2536,8 +2593,8 @@ def populate_invoice_emails(
             timestamp = epoch_for(2026, month_num, RNG.randint(2, 6))
         else:
             timestamp = pick_timestamp_within_days(45)
-        # Invoices skew "already seen" — they're transactional notifications.
-        is_read = RNG.random() < 0.85
+        # Draw even when the locale ignores it, so every later draw stays put.
+        is_read = invoice_is_read(subject, locale.code, RNG.random())
 
         email_id = insert_email(
             conn,

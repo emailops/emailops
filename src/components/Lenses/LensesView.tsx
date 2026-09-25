@@ -7,11 +7,13 @@ import { useTranslation } from 'react-i18next';
 
 import { Select } from '@/components/shared/Select';
 import { errorText } from '@/lib/errors';
+import { useChatFilledForm } from '@/stores/formFillStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import type { LensColumn, LensRow } from '@/types';
 
 import { LensConfigModal } from './LensConfigModal';
+import { LensCreateChooser } from './LensCreateChooser';
 import { LensCreateModal } from './LensCreateModal';
 import { LensRowDrawer } from './LensRowDrawer';
 import { LensRunHistoryDialog } from './LensRunHistoryDialog';
@@ -20,9 +22,12 @@ import { EmptyState, LensTable, NoRowsState } from './LensTable';
 interface LensesViewProps {
   /** When non-null, focus this Lens on mount. */
   initialLensId?: string | null;
+  /** "New Lens → with the chat": open the chat panel on a new conversation
+   *  with `prompt` in its input. */
+  onCreateWithChat?: (prompt: string) => void;
 }
 
-export function LensesView({ initialLensId }: LensesViewProps) {
+export function LensesView({ initialLensId, onCreateWithChat }: LensesViewProps) {
   const { t } = useTranslation(['common', 'lenses']);
   const {
     lenses,
@@ -44,9 +49,21 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     startStatusListener,
     showExcluded,
     setShowExcluded,
+    createOpen,
+    setCreateOpen,
+    createChooserOpen,
+    setCreateChooserOpen,
+    columnFilters,
+    setColumnFilter,
   } = useLensStore();
 
-  const [showCreate, setShowCreate] = useState(false);
+  // A chat fill addressed to `lens.create` opens the dialog. The modal itself
+  // consumes the values; this only decides that it should be on screen, so the
+  // user sees the form appear with the fields already in it.
+  const pendingLensFill = useChatFilledForm('lens.create');
+  useEffect(() => {
+    if (pendingLensFill) setCreateOpen(true);
+  }, [pendingLensFill, setCreateOpen]);
   const [drawerRow, setDrawerRow] = useState<LensRow | null>(null);
   // "quarter" is a synthetic group derived from the email timestamp; the rest
   // are schema column keys. Default to quarter so the table opens with a
@@ -129,7 +146,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
     <div className="flex h-full flex-1 flex-col overflow-hidden bg-[#1e1e1e] text-gray-200">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-40 flex-1">
           {activeLens && renaming ? (
             <input
               ref={renameInputRef}
@@ -146,49 +163,52 @@ export function LensesView({ initialLensId }: LensesViewProps) {
           ) : (
             <h1
               className={`truncate text-sm font-semibold text-gray-100 ${activeLens ? 'cursor-text hover:text-white' : ''}`}
-              title={activeLens ? 'Click to rename' : undefined}
+              title={activeLens ? t('lenses:view.renameTooltip') : undefined}
               onClick={() => {
                 if (!activeLens) return;
                 setRenameValue(activeLens.name);
                 setRenaming(true);
               }}
             >
-              {activeLens ? activeLens.name : 'Lenses'}
+              {activeLens ? activeLens.name : t('lenses:title')}
             </h1>
           )}
           {activeLens && (
             <p className="mt-0.5 truncate text-xs text-gray-400">
               {/* Backend returns total = -1 when COUNT is skipped (infinite scroll); */}
               {/* in that case fall back to the count of rows currently loaded. */}
-              {totalRows >= 0 ? totalRows : rows.length} row
-              {(totalRows >= 0 ? totalRows : rows.length) === 1 ? '' : 's'}
+              {t('lenses:view.rowCount', { count: totalRows >= 0 ? totalRows : rows.length })}
               {isRunning && (
                 <span className="ml-2 text-blue-400">
-                  ↻ running{' '}
+                  {t('lenses:view.running')}{' '}
                   {(status?.total ?? 0) > 0
                     ? `${status?.processed ?? 0}/${status?.total ?? 0} (${Math.min(
                         100,
                         Math.round(((status?.processed ?? 0) / Math.max(1, status?.total ?? 1)) * 100),
                       )}%)`
-                    : `(${status?.processed ?? 0} processed)`}
-                  {(status?.failed ?? 0) > 0 && <span className="ml-1 text-red-400">· {status?.failed} failed</span>}
+                    : t('lenses:view.processedCount', { count: status?.processed ?? 0 })}
+                  {(status?.failed ?? 0) > 0 && (
+                    <span className="ml-1 text-red-400">
+                      {t('lenses:view.failedCount', { count: status?.failed ?? 0 })}
+                    </span>
+                  )}
                 </span>
               )}
               {status?.state === 'error' && (
                 <span className="ml-2 text-red-400" title={status.lastError ?? undefined}>
-                  last run failed{status.lastError ? `: ${status.lastError}` : ''}
+                  {t('lenses:view.lastRunFailed')}
+                  {status.lastError ? `: ${status.lastError}` : ''}
                 </span>
               )}
               {!isRunning && status && status.failed > 0 && (
                 <span className="ml-2 text-yellow-400">
-                  {status.failed} row{status.failed === 1 ? '' : 's'} failed extraction — click &ldquo;Run
-                  backfill&rdquo; to retry
+                  {t('lenses:view.rowsFailedRetry', { count: status.failed, action: t('lenses:runBackfill') })}
                 </span>
               )}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {activeLens && (
             <label className="flex items-center gap-1 text-[11px] text-gray-400">
               {t('lenses:groupBy')}
@@ -211,7 +231,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => void cancelRun(activeLens.id)}
-                  className="rounded border border-yellow-600 px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900/30"
+                  className="rounded border border-yellow-600 whitespace-nowrap px-3 py-1 text-xs text-yellow-300 hover:bg-yellow-900/30"
                 >
                   {t('lenses:cancelRun')}
                 </button>
@@ -219,7 +239,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => void runLens(activeLens.id, 'backfill')}
-                  className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                  className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 >
                   {t('lenses:runBackfill')}
                 </button>
@@ -227,18 +247,18 @@ export function LensesView({ initialLensId }: LensesViewProps) {
               <button
                 type="button"
                 onClick={() => setShowConfig(true)}
-                className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:configTooltip')}
               >
-                Config
+                {t('lenses:view.config')}
               </button>
               <button
                 type="button"
                 onClick={() => setShowHistory(true)}
-                className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                className="rounded border border-gray-600 whitespace-nowrap px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
                 title={t('lenses:historyTooltip')}
               >
-                History
+                {t('lenses:view.history')}
               </button>
               {confirmDelete ? (
                 <button
@@ -257,7 +277,7 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                           .addLog('error', 'system', `Failed to delete Lens "${name}": ${errorText(e)}`);
                       });
                   }}
-                  className="rounded border border-red-500 bg-red-900/40 px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-900/60"
+                  className="rounded border border-red-500 bg-red-900/40 whitespace-nowrap px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-900/60"
                   title={t('lenses:deleteConfirmTooltip')}
                 >
                   {t('lenses:deleteConfirm')}
@@ -266,19 +286,19 @@ export function LensesView({ initialLensId }: LensesViewProps) {
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
-                  className="rounded border border-red-700/60 px-3 py-1 text-xs text-red-300 hover:bg-red-900/40"
+                  className="rounded border border-red-700/60 whitespace-nowrap px-3 py-1 text-xs text-red-300 hover:bg-red-900/40"
                 >
-                  Delete
+                  {t('common:actions.delete')}
                 </button>
               )}
             </>
           )}
           <button
             type="button"
-            onClick={() => setShowCreate(true)}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
+            onClick={() => setCreateChooserOpen(true)}
+            className="rounded bg-blue-600 whitespace-nowrap px-3 py-1 text-xs font-medium text-white hover:bg-blue-500"
           >
-            + New Lens
+            {t('lenses:view.newLens')}
           </button>
         </div>
       </div>
@@ -319,10 +339,10 @@ export function LensesView({ initialLensId }: LensesViewProps) {
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto">
         {!activeLens ? (
-          <EmptyState onCreate={() => setShowCreate(true)} />
+          <EmptyState onCreate={() => setCreateChooserOpen(true)} />
         ) : isLoadingRows ? (
           <div className="p-8 text-center text-xs text-gray-500">{t('lenses:loadingRows')}</div>
-        ) : rows.length === 0 ? (
+        ) : rows.length === 0 && columnFilters.length === 0 ? (
           <NoRowsState
             onRun={() => void runLens(activeLens.id, 'backfill')}
             isRunning={isRunning}
@@ -344,6 +364,9 @@ export function LensesView({ initialLensId }: LensesViewProps) {
             isExcludedView={showExcluded}
             onOpenRow={setDrawerRow}
             groupBy={groupBy}
+            lensId={activeLens.id}
+            columnFilters={columnFilters}
+            onColumnFilter={(key, filter) => void setColumnFilter(key, filter)}
           />
         )}
       </div>
@@ -359,11 +382,24 @@ export function LensesView({ initialLensId }: LensesViewProps) {
 
       <LensConfigModal lens={activeLens} open={showConfig} onClose={() => setShowConfig(false)} />
 
+      <LensCreateChooser
+        open={createChooserOpen}
+        onClose={() => setCreateChooserOpen(false)}
+        onManual={() => {
+          setCreateChooserOpen(false);
+          setCreateOpen(true);
+        }}
+        onChat={(prompt) => {
+          setCreateChooserOpen(false);
+          onCreateWithChat?.(prompt);
+        }}
+      />
+
       <LensCreateModal
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
         onCreated={(lens) => {
-          setShowCreate(false);
+          setCreateOpen(false);
           void selectLens(lens.id);
         }}
       />

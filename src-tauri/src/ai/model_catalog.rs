@@ -627,4 +627,103 @@ mod recommendation_tests {
             Some("qwen3.6-35b-a3b-ud-q4_k_xl")
         );
     }
+
+    // ── Contract: the published docs quote this catalog ──────────────────────
+    // docs/site/<lang>/ai-features.md renders the catalog as a table, generated
+    // from CATALOG (see crate::docs_sourcegen), and getting-started.md names the
+    // model the first-run wizard recommends, in hand-written prose. A model
+    // added, resized or retired here must fail below rather than in a user's
+    // download.
+
+    fn published_doc(lang: &str, page: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../docs/site")
+            .join(lang)
+            .join(page);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    }
+
+    /// The download-size column as the docs spell it: decimal GB, one place.
+    fn published_size(bytes: u64) -> String {
+        if bytes >= 1_000_000_000 {
+            format!("~{:.1} GB", bytes as f64 / 1e9)
+        } else {
+            format!("~{} MB", (bytes as f64 / 1e6).round() as u64)
+        }
+    }
+
+    /// The catalog table as `lang` prints it: chat models as a ladder by the
+    /// memory they ask for (then by download), the embedding model last.
+    fn catalog_table(lang: &str) -> String {
+        use crate::docs_sourcegen::{localized_decimal, unit};
+        let (header, embedding) = match lang {
+            "en" => (
+                ["Model", "Download size", "Memory EmailOps asks for"],
+                "embeddings, bundled",
+            ),
+            "es" => (
+                ["Modelo", "Tamaño de descarga", "Memoria que pide EmailOps"],
+                "embeddings, incluido",
+            ),
+            "fr" => (
+                ["Modèle", "Taille de téléchargement", "Mémoire exigée par EmailOps"],
+                "embeddings, inclus",
+            ),
+            "de" => (
+                ["Modell", "Downloadgröße", "Von EmailOps verlangter Speicher"],
+                "Embeddings, mitgeliefert",
+            ),
+            other => panic!("no catalog table header for {other}"),
+        };
+        let mut models: Vec<&CatalogModel> = CATALOG.iter().collect();
+        models.sort_by_key(|m| (m.kind == ModelKind::Embedding, m.min_ram_gb, m.size_bytes));
+        let mut out = format!("| {} |\n|---|---|---|\n", header.join(" | "));
+        for m in models {
+            let name = match m.kind {
+                ModelKind::Embedding => format!("{} *({embedding})*", m.display_name),
+                ModelKind::Chat => m.display_name.to_string(),
+            };
+            let size = published_size(m.size_bytes);
+            let (num, u) = size.trim_start_matches('~').split_once(' ').expect("size has a unit");
+            out.push_str(&format!(
+                "| {name} | ~{} {} | {} {} |\n",
+                localized_decimal(lang, num),
+                unit(lang, u),
+                m.min_ram_gb,
+                unit(lang, "GB")
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn published_model_table_is_generated_from_the_catalog() {
+        crate::docs_sourcegen::ensure_all("ai-features.md", "model-catalog", catalog_table);
+    }
+
+    #[test]
+    fn getting_started_anchors_the_recommendation_to_a_machine_size() {
+        // The wizard's pick is a function of the machine, not a constant: the
+        // same catalog recommends 4B at 16 GB and 35B A3B at 64. A doc that
+        // names one model flatly is wrong for most readers, so the published
+        // sentence must tie the model it names to the memory it assumes.
+        let md = published_doc("en", "getting-started.md");
+        let anchor = regex::Regex::new(r"on a (\d+) GB machine that is \*\*([^*]+)\*\*").expect("static pattern");
+        let found = anchor.captures(&md).unwrap_or_else(|| {
+            panic!(
+                "getting-started.md must anchor its recommendation, e.g. \
+                 \"on a 16 GB machine that is **Qwen 3.5 4B**\" — the wizard's \
+                 pick varies with installed memory"
+            )
+        });
+        let ram: u64 = found[1].parse().expect("digits");
+        let named = found[2].trim();
+        let actual = recommended_chat_model(CATALOG, ram, None).expect("a model fits at this size");
+        assert_eq!(
+            actual.display_name, named,
+            "getting-started.md says a {ram} GB machine is recommended {named}, \
+             but recommended_chat_model picks {}",
+            actual.display_name
+        );
+    }
 }

@@ -219,7 +219,11 @@ export function LensScopeEditor({ lens, open, onClose }: LensScopeEditorProps) {
                 domainCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
               }`}
             />
-            {domainCheck.error && <p className="mt-1 text-[10px] text-red-400">{domainCheck.error}</p>}
+            {domainCheck.error && (
+              <p className="mt-1 text-[10px] text-red-400">
+                {t(`lenses:scope.errors.${domainCheck.error.code}`, domainCheck.error.params)}
+              </p>
+            )}
           </label>
         </div>
 
@@ -234,7 +238,11 @@ export function LensScopeEditor({ lens, open, onClose }: LensScopeEditorProps) {
               emailCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
             }`}
           />
-          {emailCheck.error && <p className="mt-1 text-[10px] text-red-400">{emailCheck.error}</p>}
+          {emailCheck.error && (
+            <p className="mt-1 text-[10px] text-red-400">
+              {t(`lenses:scope.errors.${emailCheck.error.code}`, emailCheck.error.params)}
+            </p>
+          )}
         </label>
 
         <label className="block">
@@ -243,7 +251,7 @@ export function LensScopeEditor({ lens, open, onClose }: LensScopeEditorProps) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder='e.g. "invoice" OR "receipt"' // i18n-ignore: FTS5 query syntax sample
+            placeholder={t('lenses:scope.keywordPlaceholder')}
             className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
           />
         </label>

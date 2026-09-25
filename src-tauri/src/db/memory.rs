@@ -11,6 +11,16 @@ use crate::models::error::{AppError, Result};
 use crate::models::{InteractionEvent, MemoryFact, PendingTask, ThreadState};
 use rusqlite::{params, Row};
 
+/// The newest email in a thread that the account received rather than sent —
+/// who the user owes a reply to, and which email to link.
+#[derive(Debug, Clone)]
+pub struct InboundEmail {
+    pub email_id: String,
+    pub sender: String,
+    pub sender_email: String,
+    pub timestamp: i64,
+}
+
 const PIPELINE_MEMORY_FACTS: &str = "memory_facts";
 const PIPELINE_TASKS: &str = "tasks";
 
@@ -441,6 +451,52 @@ impl Database {
             |row| row.get(0),
         )
         .map_err(AppError::from)
+    }
+
+    /// The newest email in each of `thread_ids` that the account did not send
+    /// itself, keyed by thread id. Threads with no inbound email are absent.
+    pub fn latest_inbound_by_thread(
+        &self,
+        account_id: &str,
+        thread_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, InboundEmail>> {
+        let mut out = std::collections::HashMap::new();
+        if thread_ids.is_empty() {
+            return Ok(out);
+        }
+        let placeholders = std::iter::repeat_n("?", thread_ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT thread_id, id, sender, sender_email, timestamp
+             FROM emails
+             WHERE account_id = ?1 AND is_deleted = 0
+               AND thread_id IN ({placeholders})
+               AND lower(sender_email) != (SELECT lower(email) FROM accounts WHERE id = ?1)
+             ORDER BY timestamp DESC, id DESC"
+        );
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + thread_ids.len());
+        bound.push(&account_id);
+        for t in thread_ids {
+            bound.push(t);
+        }
+        let mut rows = stmt.query(bound.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let thread_id: String = row.get(0)?;
+            if out.contains_key(&thread_id) {
+                continue;
+            }
+            out.insert(
+                thread_id,
+                InboundEmail {
+                    email_id: row.get(1)?,
+                    sender: row.get(2)?,
+                    sender_email: row.get(3)?,
+                    timestamp: row.get(4)?,
+                },
+            );
+        }
+        Ok(out)
     }
 
     // ── Pending tasks ────────────────────────────────────────────────────────
