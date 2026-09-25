@@ -148,7 +148,7 @@ les lit ensuite par lots, et les listes et les décomptes sont exacts, avec un l
 conversation. **Annuler la recherche** interrompt l'exécution.
 
 <!-- claim:ai-chat-mailbox-13 -->
-Demandez quelque chose pour lequel l'application a un formulaire — *« crée une Lens qui suit
+Demandez quelque chose pour lequel l'application a un formulaire — *« crée un filtre dynamique qui suit
 les factures fournisseurs avec montant et date »* — et le vrai formulaire s'ouvre avec les
 champs remplis, pour que vous le relisiez et l'enregistriez. Le chat ne crée jamais rien de
 lui-même.
@@ -283,17 +283,17 @@ informations** ; ce qu'elle a appris est listé sous **Mémoire** dans la barre 
 ## Lentilles {#lenses}
 
 <!-- claim:ai-lenses-1 -->
-*Expérimental.* Des vues typées sur votre boîte — des projections structurées, enregistrées et
+Des vues typées sur votre boîte — des projections structurées, enregistrées et
 extraites par l'IA (par exemple « toutes les factures avec montant et échéance ») que vous
 créez et exécutez depuis la barre latérale. Une ligne exclue disparaît de la vue ; **Afficher
 les lignes exclues** les réaffiche pour que vous puissiez en réintégrer une.
 
 <!-- claim:ai-lenses-2 -->
-Activez-les dans **Paramètres → Filtres dynamiques IA**, puis créez et exécutez chaque vue
-depuis l'entrée **Filtres dynamiques** de la barre latérale.
+Les filtres dynamiques sont activés par défaut : créez et exécutez chaque vue depuis l'entrée
+**Filtres dynamiques** de la barre latérale. Désactivez-les dans **Paramètres → Filtres dynamiques IA**.
 
 <!-- claim:ai-lenses-3 -->
-Une Lens peut être limitée à certains **Dossiers** d'un compte, dossiers IMAP personnalisés
+Un filtre dynamique peut être limité à certains **Dossiers** d'un compte, dossiers IMAP personnalisés
 compris.
 
 ## Tout désactiver {#turning-it-all-off}

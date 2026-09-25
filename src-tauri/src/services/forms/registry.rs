@@ -364,9 +364,10 @@ mod tests {
 
     #[test]
     fn a_form_whose_feature_is_off_is_not_offered_to_the_planner() {
-        // Lenses is off by default. Offering the form anyway would route a turn
+        // With Lenses turned off, offering the form anyway would route a turn
         // to a view the user cannot even open.
         let db = Database::new_for_testing().expect("create test db");
+        db.set_preference("lenses_enabled", "false").expect("disable lenses");
         let catalog = catalog(&db);
         assert!(!catalog.contains("lens.create"), "catalog: {catalog}");
         assert!(catalog.contains("none available"));
@@ -375,6 +376,7 @@ mod tests {
     #[test]
     fn lookup_available_refuses_a_form_whose_feature_is_off() {
         let db = Database::new_for_testing().expect("create test db");
+        db.set_preference("lenses_enabled", "false").expect("disable lenses");
         assert!(lookup_available(&db, "lens.create").is_none());
         // The un-gated lookup still finds it, so the parser can resolve the id
         // before the turn decides whether it is actionable.

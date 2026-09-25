@@ -7434,8 +7434,8 @@ mod tests {
     fn prompt_hides_lens_tools_when_lenses_disabled() {
         use crate::services::chat::tools::default_registry;
         let db = Database::new_for_testing().expect("test db");
-        // Lenses default OFF — confirm the section omits them entirely so a
-        // user who never enabled the feature doesn't get tool calls for it.
+        // A user who turned Lenses off gets no tool calls for them.
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let tools_section = default_registry().render_system_prompt_section(&db);
         let msgs = build_prompt(&[], &[], "show me invoices lens", "en", "", tpl(), &tools_section);
         let sys = &msgs[0].1;

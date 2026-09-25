@@ -248,8 +248,9 @@ def reset_ui_prefs():
     `chat_panel_open`: UI state the sweep itself toggles, so a run that dies
     mid-sweep would otherwise change the next run's starting state.
 
-    `lenses_enabled`: Lenses is experimental and off by default, and the
-    Chat/Formularios steps drive the Create Lens form. It is also the gate the
+    `lenses_enabled`: on by default, but a run that turned it off (the docs
+    check flips it) must not leave the Chat/Formularios steps, which drive the
+    Create Lens form, with nothing to open. It is also the gate the
     backend reads (`forms::registry::LENS_CREATE.available`), so with it off the
     chat correctly refuses to route there and those steps would have nothing to
     measure."""

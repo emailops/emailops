@@ -639,13 +639,14 @@ mod tests {
 
     #[test]
     fn definitions_omits_tools_whose_feature_is_disabled() {
-        // Lenses is the only tool here, gated on `lenses_enabled` — which
-        // defaults to false. Registry should expose zero tools to the LLM.
+        // Lenses is the only tool here, gated on `lenses_enabled`, which the
+        // user turned off. Registry should expose zero tools to the LLM.
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         assert!(
             registry.definitions(&db).is_empty(),
-            "lenses-gated tool should be hidden when lenses_enabled defaults to false"
+            "lenses-gated tool should be hidden when lenses_enabled is false"
         );
     }
 
@@ -742,6 +743,7 @@ mod tests {
     #[test]
     fn get_returns_none_for_disabled_tool() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         assert!(registry.get("get_lens_data", &db).is_none());
     }
@@ -749,6 +751,7 @@ mod tests {
     #[test]
     fn lookup_returns_some_for_disabled_tool_so_loop_can_distinguish() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![make_tool("get_lens_data", only_when_lenses)]);
         // Distinguishing "unknown" from "disabled" lets the chat loop give
         // the LLM a better error message.
@@ -841,6 +844,7 @@ mod tests {
     #[test]
     fn render_system_prompt_section_omits_gated_tools() {
         let db = Database::new_for_testing().expect("test db");
+        db.set_preference("lenses_enabled", "false").expect("pref");
         let registry = ToolRegistry::with_tools(vec![
             Arc::new(FakeToolWithSummary),
             make_tool("hidden", only_when_lenses),

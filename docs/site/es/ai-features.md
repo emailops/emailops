@@ -142,7 +142,7 @@ los recuentos salen exactos, con un enlace a cada conversación. **Cancelar inve
 detiene la ejecución.
 
 <!-- claim:ai-chat-mailbox-13 -->
-Pide algo para lo que la app tiene un formulario —*"crea una Lens que siga las facturas de
+Pide algo para lo que la app tiene un formulario —*"crea una lente que siga las facturas de
 proveedores con importe y fecha"*— y se abre el formulario real con los campos rellenos, para
 que lo revises y lo guardes. El chat nunca crea nada por su cuenta.
 
@@ -273,17 +273,17 @@ ha aprendido aparece en **Memoria**, en la barra lateral.
 ## Lentes {#lenses}
 
 <!-- claim:ai-lenses-1 -->
-*Experimental.* Vistas tipadas sobre tu buzón — proyecciones estructuradas, guardadas y
+Vistas tipadas sobre tu buzón — proyecciones estructuradas, guardadas y
 extraídas por IA (piensa en "todas las facturas con importe y vencimiento") que creas y
 ejecutas desde la barra lateral. Una fila que excluyes desaparece de la vista; **Ver filas
 excluidas** las vuelve a mostrar para que puedas incluir alguna de nuevo.
 
 <!-- claim:ai-lenses-2 -->
-Actívalas en **Ajustes → Lentes de IA** y después crea y ejecuta cada lente desde la entrada
-**Lentes** de la barra lateral.
+Las lentes están activadas por defecto: crea y ejecuta cada lente desde la entrada **Lentes**
+de la barra lateral. Desactívalas en **Ajustes → Lentes de IA**.
 
 <!-- claim:ai-lenses-3 -->
-Una Lens se puede limitar a unas **Carpetas** concretas de una cuenta, incluidas las carpetas
+Una lente se puede limitar a unas **Carpetas** concretas de una cuenta, incluidas las carpetas
 IMAP personalizadas.
 
 ## Apagarlo todo {#turning-it-all-off}

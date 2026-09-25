@@ -65,7 +65,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'junk' },
   { id: 'tasks', experimental: true, needsAi: true },
   { id: 'memory', experimental: true, needsAi: true },
-  { id: 'lenses', experimental: true, needsAi: true },
+  { id: 'lenses', needsAi: true },
   { id: 'aidrafts', needsAi: true },
   { id: 'aitranslation', needsAi: true },
   { id: 'aisearch', needsAi: true },
@@ -229,9 +229,7 @@ export function SettingsDialog({
               onChangeExperimentalEnabled={onChangeMemoriesEnabled}
             />
           )}
-          {tab === 'lenses' && (
-            <LensesSettings experimentalEnabled={lensesEnabled} onChangeExperimentalEnabled={onChangeLensesEnabled} />
-          )}
+          {tab === 'lenses' && <LensesSettings enabled={lensesEnabled} onChangeEnabled={onChangeLensesEnabled} />}
           {tab === 'aidrafts' && <AiDraftsSettings />}
           {tab === 'aitranslation' && <AiTranslationSettings />}
           {tab === 'aisearch' && <AiSearchSettings activeAccountId={effectiveAccountId} />}

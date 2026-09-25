@@ -262,14 +262,14 @@ learned is listed under **Memory** in the sidebar.
 ## Lenses {#lenses}
 
 <!-- claim:ai-lenses-1 -->
-*Experimental.* Schema-typed views over your mailbox — saved, AI-extracted structured
+Schema-typed views over your mailbox — saved, AI-extracted structured
 projections (think "all invoices with amount and due date") that you create and run from the
 sidebar. A row you exclude stays out of the view; **Show excluded rows** brings them back into
 sight so you can include one again.
 
 <!-- claim:ai-lenses-2 -->
-Turn them on in **Settings → AI Lenses**, then create and run individual lenses from the
-**Lenses** entry in the sidebar.
+Lenses are on by default: create and run individual lenses from the **Lenses** entry in the
+sidebar. Turn them off in **Settings → AI Lenses**.
 
 <!-- claim:ai-lenses-3 -->
 A Lens can be limited to chosen **Folders** of an account, custom IMAP folders included.

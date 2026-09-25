@@ -467,7 +467,7 @@ export default (h) => async function demoCases() {
     doc.match(/from the sidebar/);
     return ok((await buttons()).some((x) => /^Lenses/.test(x)), 'al activarlas, Lenses aparece en la barra lateral', 'no aparece');
   });
-  // Put the demo DB back: `make verify` shares it and expects Lenses off.
+  // Put the demo DB back as it was: `make verify` shares it.
   if (!wasOn) {
     await tab('AI Lenses');
     await flipLenses();

@@ -143,7 +143,7 @@ Listen und Zählungen sind exakt, mit einem Link zu jeder passenden Unterhaltung
 abbrechen** stoppt einen Durchlauf.
 
 <!-- claim:ai-chat-mailbox-13 -->
-Bitten Sie um etwas, für das die App ein Formular hat — *„lege eine Lens an, die
+Bitten Sie um etwas, für das die App ein Formular hat — *„lege eine Linse an, die
 Lieferantenrechnungen mit Betrag und Datum verfolgt“* — und das echte Formular öffnet sich mit
 ausgefüllten Feldern, damit Sie es prüfen und speichern. Der Chat legt nie selbst etwas an.
 
@@ -273,17 +273,17 @@ Fakten zu merken**; Gelerntes steht unter **Gedächtnis** in der Seitenleiste.
 ## Linsen {#lenses}
 
 <!-- claim:ai-lenses-1 -->
-*Experimentell.* Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
+Typisierte Sichten auf Ihr Postfach — gespeicherte, per KI extrahierte
 strukturierte Projektionen (etwa „alle Rechnungen mit Betrag und Fälligkeit“), die Sie in der
 Seitenleiste anlegen und ausführen. Eine ausgeschlossene Zeile bleibt aus der Sicht; **Ausgeschlossene
 Zeilen anzeigen** holt sie zurück, sodass Sie eine wieder aufnehmen können.
 
 <!-- claim:ai-lenses-2 -->
-Aktivieren Sie sie unter **Einstellungen → KI-Linsen** und legen Sie einzelne Linsen dann über
-den Eintrag **Linsen** in der Seitenleiste an und führen Sie sie aus.
+Linsen sind standardmäßig aktiviert: Legen Sie einzelne Linsen über den Eintrag **Linsen** in der
+Seitenleiste an und führen Sie sie aus. Deaktivieren Sie sie unter **Einstellungen → KI-Linsen**.
 
 <!-- claim:ai-lenses-3 -->
-Eine Lens lässt sich auf ausgewählte **Ordner** eines Kontos beschränken, eigene IMAP-Ordner
+Eine Linse lässt sich auf ausgewählte **Ordner** eines Kontos beschränken, eigene IMAP-Ordner
 eingeschlossen.
 
 ## Alles abschalten {#turning-it-all-off}

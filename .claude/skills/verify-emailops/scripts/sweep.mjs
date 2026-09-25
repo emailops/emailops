@@ -99,7 +99,7 @@ await step('Cuentas', 'volver a la cuenta de trabajo', 'la cuenta demo-acct-work
 
 // ---------- Otras vistas ----------
 if (!(await exists('button=Spam'))) { await click('button=Other Views'); await sleep(800); }
-const optional = { Calendar: 'el calendario solo se activa en cuentas Gmail/Outlook', Lenses: 'AI Lenses es experimental y está desactivado' };
+const optional = { Calendar: 'el calendario solo se activa en cuentas Gmail/Outlook' };
 for (const view of ['Tag Board', 'Attachments', 'Drafts', 'Sent', 'Calendar', 'Spam', 'Deleted', 'Contacts', 'Dashboard', 'Tasks', 'Lenses', 'Memory']) {
   await step('Vistas', view, `la vista ${view} abre sin errores y con contenido`, async () => {
     const sel = `button*=${view}`;

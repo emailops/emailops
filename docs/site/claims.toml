@@ -865,7 +865,8 @@ checks = [
 
 [ai-lenses-2]
 checks = [
-  { file = 'src/locales/en/settings.json', has = 'AI Lenses', covers = ['Turn them on in Settings → AI Lenses'] },
+  { tests = ['db::feature_flag_tests::is_lenses_enabled_defaults_true_when_unset'], covers = ['Lenses are on by default'] },
+  { file = 'src/locales/en/settings.json', has = 'AI Lenses', covers = ['Turn them off in Settings → AI Lenses.'] },
   { manual = 'The Lenses sidebar entry is exercised by the ai-lenses-1 demo case, which turns the feature on and looks for it; no case names this sentence.' },
 ]
 
