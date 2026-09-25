@@ -98,7 +98,7 @@
   tier: smoke
   expected_answer_contains_any: ["webhook", "timeout", "rollback", "revert"]
   expected_tools_not_called: ["generate_email_draft"]
-  expected_output: "Hilo de tres mensajes del 9 de septiembre. Marisol avisa de que desde esa mañana algunos pedidos se quedan en 'processing' y no pasan a 'shipped', con clientes escribiendo, y pide que lo mires cuanto antes. Tú respondes que el webhook del transportista agota el tiempo en los reintentos, que reviertes el cambio de la cola y añades un timeout más largo. Marisol confirma que los pedidos vuelven a avanzar y agradece la rapidez. Estado: resuelto. Enlaces email:// a los tres mensajes."
+  expected_output: "Hilo de tres mensajes. Marisol avisa de que desde esa mañana algunos pedidos se quedan en 'processing' y no pasan a 'shipped', con clientes escribiendo, y pide que lo mires cuanto antes. Tú respondes que el webhook del transportista agota el tiempo en los reintentos, que reviertes el cambio de la cola y añades un timeout más largo. Marisol confirma que los pedidos vuelven a avanzar y agradece la rapidez. Estado: resuelto. Enlaces email:// a los tres mensajes."
   metrics: [answer_relevancy, faithfulness]
 
 - id: ts_marisol_where_we_stand
