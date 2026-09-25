@@ -970,6 +970,22 @@ pub async fn sync_account_with_provider(
             ),
         }
 
+        match crate::services::attachment_suggestions::refresh_after_sync(db, app.as_ref(), account_id) {
+            Ok(n) if n > 0 => emit_account_log(
+                "debug",
+                "sync",
+                &account.email,
+                &format!("{n} suggested attachment rules pending review"),
+            ),
+            Ok(_) => {}
+            Err(e) => emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Attachment rule suggestions failed (non-fatal): {e}"),
+            ),
+        }
+
         match crate::services::tag_priority::update_from_new_emails(db, account_id, &account.email, &all_new_ids) {
             Ok(n) => emit_account_log(
                 "debug",

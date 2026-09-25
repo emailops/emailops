@@ -5,7 +5,9 @@ use tauri::{AppHandle, State};
 
 use crate::db::Database;
 use crate::models::error::AppError;
-use crate::models::{Attachment, AttachmentRule, EmailAttachmentMeta};
+use crate::models::{
+    Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus, EmailAttachmentMeta,
+};
 use crate::services;
 use crate::AppState;
 
@@ -118,6 +120,50 @@ pub async fn list_attachment_rules(
     account_id: String,
 ) -> Result<Vec<AttachmentRule>, AppError> {
     services::attachments::list_rules(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn list_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::list_suggestions(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn refresh_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::refresh_suggestions(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn dismiss_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<(), AppError> {
+    services::attachment_suggestions::set_suggestion_status(
+        &state.db,
+        &account_id,
+        &suggestion_id,
+        AttachmentRuleSuggestionStatus::Dismissed,
+    )
+}
+
+#[tauri::command]
+pub async fn accept_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<(), AppError> {
+    services::attachment_suggestions::set_suggestion_status(
+        &state.db,
+        &account_id,
+        &suggestion_id,
+        AttachmentRuleSuggestionStatus::Accepted,
+    )
 }
 
 #[tauri::command]

@@ -1,7 +1,10 @@
+use std::collections::HashSet;
+
 use rusqlite::params;
 
 use crate::models::error::Result;
-use crate::models::{Attachment, AttachmentRule};
+use crate::models::{Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus};
+use crate::services::attachment_suggestions::{AttachmentObservation, SuggestionCandidate};
 
 use super::Database;
 
@@ -307,6 +310,154 @@ impl Database {
         Ok(all_tags.into_iter().collect())
     }
 
+    // --- Attachment rule suggestions ---
+
+    /// Every attachment on the account's received mail (inbox, not deleted)
+    /// since `since` — the input of the suggestion miner. Sent, spam and
+    /// trash mail never make a rule candidate.
+    pub fn get_attachment_observations(&self, account_id: &str, since: i64) -> Result<Vec<AttachmentObservation>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT m.email_id, e.sender_email, e.subject, e.timestamp, m.filename, m.mime_type
+             FROM email_attachment_meta m
+             JOIN emails e ON e.id = m.email_id
+             WHERE m.account_id = ?1
+               AND e.timestamp >= ?2
+               AND e.is_deleted = 0
+               AND e.mailbox = 'inbox'
+               AND e.is_sent = 0",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id, since], |row| {
+                Ok(AttachmentObservation {
+                    email_id: row.get(0)?,
+                    sender_email: row.get(1)?,
+                    subject: row.get(2)?,
+                    timestamp: row.get(3)?,
+                    filename: row.get(4)?,
+                    mime_type: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Keys of suggestions the user already accepted or dismissed.
+    pub fn get_resolved_attachment_rule_suggestion_keys(&self, account_id: &str) -> Result<HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT suggestion_key FROM attachment_rule_suggestions
+             WHERE account_id = ?1 AND status <> 'pending'",
+        )?;
+        let keys = stmt
+            .query_map(params![account_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<HashSet<String>>>()?;
+        Ok(keys)
+    }
+
+    /// Replace the account's pending suggestions with `candidates` in one
+    /// transaction. A candidate whose key is already pending keeps its row
+    /// id (so a UI holding it stays valid) and gets fresh counts; pending
+    /// rows no longer proposed are removed; resolved rows are never touched.
+    pub fn replace_pending_attachment_rule_suggestions(
+        &self,
+        account_id: &str,
+        candidates: &[SuggestionCandidate],
+        now: i64,
+    ) -> Result<()> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+
+        let pending_keys: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT suggestion_key FROM attachment_rule_suggestions
+                 WHERE account_id = ?1 AND status = 'pending'",
+            )?;
+            let keys = stmt
+                .query_map(params![account_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            keys
+        };
+        let proposed: HashSet<&str> = candidates.iter().map(|c| c.key.as_str()).collect();
+        for key in pending_keys.iter().filter(|k| !proposed.contains(k.as_str())) {
+            tx.execute(
+                "DELETE FROM attachment_rule_suggestions
+                 WHERE account_id = ?1 AND suggestion_key = ?2 AND status = 'pending'",
+                params![account_id, key],
+            )?;
+        }
+
+        for c in candidates {
+            tx.execute(
+                "INSERT INTO attachment_rule_suggestions
+                 (id, account_id, suggestion_key, name, sender_email_pattern, filename_pattern, tags_json,
+                  email_count, first_seen, last_seen, sample_filenames_json, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12, ?12)
+                 ON CONFLICT (account_id, suggestion_key) DO UPDATE SET
+                    name = excluded.name,
+                    sender_email_pattern = excluded.sender_email_pattern,
+                    filename_pattern = excluded.filename_pattern,
+                    tags_json = excluded.tags_json,
+                    email_count = excluded.email_count,
+                    first_seen = excluded.first_seen,
+                    last_seen = excluded.last_seen,
+                    sample_filenames_json = excluded.sample_filenames_json,
+                    updated_at = excluded.updated_at
+                 WHERE status = 'pending'",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    account_id,
+                    c.key,
+                    c.name,
+                    c.sender_email_pattern,
+                    c.filename_pattern,
+                    serde_json::to_string(&c.tags)?,
+                    c.email_count,
+                    c.first_seen,
+                    c.last_seen,
+                    serde_json::to_string(&c.sample_filenames)?,
+                    now,
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Pending suggestions, most recurring first.
+    pub fn get_pending_attachment_rule_suggestions(&self, account_id: &str) -> Result<Vec<AttachmentRuleSuggestion>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, account_id, name, sender_email_pattern, filename_pattern, tags_json, email_count,
+                    first_seen, last_seen, sample_filenames_json, status, created_at, updated_at
+             FROM attachment_rule_suggestions
+             WHERE account_id = ?1 AND status = 'pending'
+             ORDER BY email_count DESC, last_seen DESC, id",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id], row_to_attachment_rule_suggestion)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Returns `false` when no suggestion with that id belongs to the account.
+    pub fn set_attachment_rule_suggestion_status(
+        &self,
+        account_id: &str,
+        suggestion_id: &str,
+        status: AttachmentRuleSuggestionStatus,
+        now: i64,
+    ) -> Result<bool> {
+        let conn = self.connection();
+        let changed = conn.execute(
+            "UPDATE attachment_rule_suggestions SET status = ?1, updated_at = ?2
+             WHERE id = ?3 AND account_id = ?4",
+            params![status.as_str(), now, suggestion_id, account_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Get emails matching a rule's criteria for retroactive application.
     pub fn get_emails_matching_rule(&self, account_id: &str) -> Result<Vec<(String, String, String)>> {
         let conn = self.reader();
@@ -334,6 +485,28 @@ fn row_to_attachment_rule(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRul
         enabled: enabled != 0,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+    })
+}
+
+fn row_to_attachment_rule_suggestion(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRuleSuggestion> {
+    let tags_json: String = row.get(5)?;
+    let samples_json: String = row.get(9)?;
+    let status: String = row.get(10)?;
+    Ok(AttachmentRuleSuggestion {
+        id: row.get(0)?,
+        account_id: row.get(1)?,
+        name: row.get(2)?,
+        sender_email_pattern: row.get(3)?,
+        filename_pattern: row.get(4)?,
+        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+        email_count: row.get(6)?,
+        first_seen: row.get(7)?,
+        last_seen: row.get(8)?,
+        sample_filenames: serde_json::from_str(&samples_json).unwrap_or_default(),
+        // The CHECK constraint limits the column to the three variants.
+        status: AttachmentRuleSuggestionStatus::parse(&status).unwrap_or(AttachmentRuleSuggestionStatus::Pending),
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
