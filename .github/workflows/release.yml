@@ -473,15 +473,23 @@ jobs:
       # Version pinned to what was actually validated end-to-end on a real
       # Tesla T4 (build + install + real GPU offload confirmed via nvidia-smi
       # and an explicit `llamacpp: ... offloading all layers` log line) —
-      # not just "whatever's latest". `method: local` (the action's default)
-      # downloads and silently runs NVIDIA's own installer, same as the
-      # manual install this was validated against; sub-packages filtering is
-      # Linux-only in this action, so it isn't set here.
+      # not just "whatever's latest".
+      #
+      # `sub-packages` + `method: network`: the network installer downloads
+      # only the listed components (the action appends `_13.0` to each name,
+      # matching the silent-install IDs in NVIDIA's Windows install guide).
+      # Without the list it installs the whole toolkit — Nsight, docs, every
+      # math library — which took 10-27 min per run for nothing ggml-cuda
+      # uses. The list is what ggml-cuda compiles and links against: the
+      # compiler (nvcc + its CUDA 13 split-outs crt/nvvm), cudart, cuBLAS,
+      # NVRTC, NVTX, the CCCL headers (`thrust`) and the MSBuild/CMake
+      # integration CMake's CUDA language support needs.
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: "13.0.0"
           method: network
+          sub-packages: '["nvcc", "crt", "nvvm", "cudart", "cublas", "cublas_dev", "nvrtc", "nvrtc_dev", "nvtx", "cuda_profiler_api", "thrust", "visual_studio_integration"]'
 
       - run: npm ci
 
@@ -506,6 +514,16 @@ jobs:
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
           DYNAMIC_BACKENDS: "1"
           CARGO_FEATURES: cuda
+          # Forwarded to CMake by llama-cpp-sys-2's build.rs (every CMAKE_*
+          # env var becomes a -D). Left unset, ggml-cuda compiles every kernel
+          # for 7 targets under CUDA 13 (75v 80v 86 89 90v 120a 121a), and
+          # nvcc for those was ~95 of this job's 111 build minutes. Native
+          # code for the desktop families (RTX 30/40/50); the Turing PTX
+          # (75-virtual) is JIT-compiled by the driver on everything else —
+          # RTX 20 and datacenter parts (A100/H100/GB10) — which costs a
+          # slower first launch and possibly throughput there. See
+          # docs/DECISIONS.md ("Windows CUDA build targets desktop GPUs").
+          CMAKE_CUDA_ARCHITECTURES: "75-virtual;86-real;89-real;120a-real"
         run: make build-windows
 
       - name: Verify

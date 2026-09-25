@@ -1705,3 +1705,21 @@ flag under its assistant message id (`chat::cancel`).
 - *Discarding the partial answer*: the user saw it, and dropping it looks like data
   loss.
 - *A separate research-only control*: one Cancel for every turn is simpler to find.
+
+## 2026-09-25 — Windows CUDA build targets desktop GPUs
+
+**Decision:** The Windows CUDA release asset compiles native code for RTX 30/40/50
+(`86-real;89-real;120a-real`), plus Turing PTX (`75-virtual`) that the driver
+JIT-compiles on every other GPU. The list is set with `CMAKE_CUDA_ARCHITECTURES` in
+`release.yml`.
+**Context:** That job set the release's length. Measured on the 25/09/2026 run: 111 min
+of build, ~95 of them in nvcc, because ggml-cuda's default list under CUDA 13 has 7
+targets. The other 3 are datacenter parts (A100, H100, GB10) that a desktop mail client
+is unlikely to run on.
+**Rejected:**
+- *Keeping all 7 targets*: it makes every release slower for GPUs this app is unlikely
+  to run on.
+- *PTX only (`75-virtual;89-real`)*: RTX 30/50 owners would pay the JIT on first
+  launch and could lose throughput, and those are the users the asset is for.
+- *Publishing without the CUDA asset and attaching it later*: it changes when a release
+  goes out, not how long the build takes.
