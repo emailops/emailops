@@ -1752,8 +1752,9 @@ is unlikely to run on.
 
 **Decision:** `scripts/build_platform.sh` no longer forces `--jobs 1` on Windows Vulkan
 builds. The C1041 PDB race it worked around is covered by three later fixes: the Ninja
-generator, `CL=/FS`, and the short `CARGO_TARGET_DIR` (C:/ct). Pending confirmation by a
-`windows-vulkan` dry run before the next release.
+generator, `CL=/FS`, and the short `CARGO_TARGET_DIR` (C:/ct). Confirmed by a
+`windows-vulkan` dry run (run 36119358082): no C1041, the smoke test passed, pass 1 took
+22m57s (was 43m53s) and the job 35 min (was 54).
 **Context:** `--jobs 1` serialized every Rust crate, not just the CMake build. On the
 25/09/2026 release run, pass 1 took 43m53s on Windows against 17m05s on Linux. After the
 CUDA job was trimmed, the 54-minute Windows Vulkan leg became the next-longest part of
