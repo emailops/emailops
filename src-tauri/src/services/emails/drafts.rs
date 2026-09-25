@@ -416,7 +416,7 @@ async fn retrieve_rag_sources(db: &Arc<Database>, email: &Email, user_email: &st
             .unwrap_or_else(|| candidate.clone());
 
         let body = db.get_email_body(&context_email.id).unwrap_or_default();
-        let body_clean = crate::services::thread_clean::clean_email_body(&body, usize::MAX);
+        let body_clean = crate::services::thread_reader::message_new_content(db, &context_email, &body);
         let snippet = if body_clean.trim().is_empty() {
             truncate_utf8(&context_email.snippet, RAG_SNIPPET_CHARS).to_string()
         } else {
@@ -587,7 +587,7 @@ fn load_style_samples(db: &Database, email: &Email, user_email: &str) -> Vec<Str
     replies
         .iter()
         .filter_map(|r| match db.get_email_body(&r.id) {
-            Ok(raw) => Some(crate::services::thread_clean::clean_email_body(&raw, usize::MAX)),
+            Ok(raw) => Some(crate::services::thread_clean::own_text(&raw)),
             Err(e) => {
                 emit_log("warn", &format!("style sample body unavailable for {} ({})", r.id, e));
                 None

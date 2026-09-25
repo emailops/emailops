@@ -6,9 +6,11 @@
 //! extracts facts from each reply extracts the same facts again and again.
 //! This module reads a thread once, as a unit:
 //!
-//! - each message is reduced to its **new content** — quoted history and
-//!   signature stripped (`thread_clean`), quote-prefixed lines dropped, and
-//!   any paragraph an earlier message of the thread already said removed;
+//! - each message is reduced to its **new content**: a quoted block or a
+//!   signature goes only when an earlier message of the thread already
+//!   contains it, and an own paragraph only when it repeats one
+//!   (`thread_clean::new_text`) — a forward, or a quote of mail that was never
+//!   synced, stays;
 //! - one **total** character budget is shared across the messages
 //!   ([`allocate_budget`]): short messages whole, long ones a fair share, the
 //!   oldest dropped when a share would be too small to be useful, and an
@@ -20,11 +22,9 @@
 //! reply drafts, research, and the per-email extractors (memory, tasks,
 //! lenses) via [`message_new_content`]. Pure core, thin loaders at the end.
 
-use std::collections::HashSet;
-
 use crate::db::Database;
 use crate::models::Email;
-use crate::services::thread_clean::clean_email_body;
+use crate::services::thread_clean::{clean_email_body, new_text, normalize_body, History};
 
 /// One message of a thread as stored: raw body, before any cleaning.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,52 +104,24 @@ pub const MIN_CHARS_PER_MESSAGE: usize = 300;
 /// The chat's thread budget (open email, conversation about a thread,
 /// `get_thread`).
 pub const CHAT_THREAD_BUDGET: usize = 16_000;
-/// Paragraphs shorter than this are never treated as repeats: "Thanks!",
-/// "Best," and one-word answers recur legitimately.
-const MIN_REPEAT_CHARS: usize = 40;
-
-/// Whitespace-collapsed, lowercased: how two copies of one paragraph compare
-/// across clients that re-wrap lines.
-fn normalize(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
-}
-
 /// Each message's new content: what it adds to the thread. Pure.
 ///
-/// Three passes: `clean_email_body` cuts at the quote markers it knows
-/// ("On … wrote:", Outlook headers, "Original Message") and drops the
-/// signature; lines quoted with `>` are dropped wherever they sit (interleaved
-/// answers); and any paragraph an earlier message of the thread already
-/// contained is dropped — the catch-all for pasted or forwarded history no
-/// marker announces.
+/// Every message is compared with the ones before it ([`History`] holds their
+/// whole bodies, quotes included): quoted text, signatures and paragraphs the
+/// thread already has are dropped, anything else — a forward, a quote of mail
+/// that was never synced, a first signature — stays. A message with no body
+/// falls back to its list preview.
 pub fn new_content(messages: &[ThreadMessage]) -> Vec<String> {
-    let mut history = String::new();
+    let mut history = History::default();
     let mut out = Vec::with_capacity(messages.len());
     for m in messages {
-        let cleaned = clean_email_body(&m.body, usize::MAX);
-        if cleaned.trim().is_empty() {
+        let normalized = normalize_body(&m.body);
+        if normalized.trim().is_empty() {
             out.push(m.snippet.trim().to_string());
             continue;
         }
-        let unquoted: Vec<&str> = cleaned.lines().filter(|l| !l.trim_start().starts_with('>')).collect();
-        let unquoted = unquoted.join("\n");
-        let mut kept: Vec<String> = Vec::new();
-        let mut seen_here: HashSet<String> = HashSet::new();
-        for para in unquoted.split("\n\n") {
-            let para = para.trim_matches('\n').trim_end();
-            if para.trim().is_empty() {
-                continue;
-            }
-            let norm = normalize(para);
-            let repeat = norm.chars().count() >= MIN_REPEAT_CHARS
-                && (history.contains(&norm) || !seen_here.insert(norm.clone()));
-            if !repeat {
-                kept.push(para.to_string());
-            }
-        }
-        history.push_str(&normalize(&cleaned));
-        history.push('\n');
-        out.push(kept.join("\n\n"));
+        out.push(new_text(&normalized, &history));
+        history.add(&normalized);
     }
     out
 }
@@ -400,10 +372,18 @@ mod tests {
     }
 
     #[test]
-    fn interleaved_quote_lines_are_dropped() {
+    fn interleaved_quote_lines_go_only_when_the_thread_has_them() {
+        // `ASK` is m1's text; "Anything else?" quotes something this thread
+        // never had, so it is the only copy and stays.
         let body = format!("> {ASK}\nThe budget is 4,000 EUR.\n> Anything else?\nNo, that is all.");
         let new = new_content(&[msg("m1", 1, ASK), msg("m2", 2, &body)]);
-        assert_eq!(new[1], "The budget is 4,000 EUR.\nNo, that is all.");
+        assert_eq!(new[1], "The budget is 4,000 EUR.\n> Anything else?\nNo, that is all.");
+    }
+
+    #[test]
+    fn a_one_message_thread_keeps_a_forwarded_message() {
+        let body = "FYI\n\n---------- Forwarded message ---------\nFrom: Ana <ana@example.com>\nSubject: Budget\n\nThe budget is 4,000 EUR.";
+        assert!(new_content(&[msg("m1", 1, body)])[0].contains("The budget is 4,000 EUR."));
     }
 
     #[test]
