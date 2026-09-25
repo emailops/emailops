@@ -318,7 +318,7 @@ impl Database {
     pub fn get_attachment_observations(&self, account_id: &str, since: i64) -> Result<Vec<AttachmentObservation>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
-            "SELECT m.email_id, e.sender_email, e.subject, e.timestamp, m.filename, m.mime_type
+            "SELECT m.email_id, e.sender_email, e.sender, e.subject, e.timestamp, m.filename, m.mime_type
              FROM email_attachment_meta m
              JOIN emails e ON e.id = m.email_id
              WHERE m.account_id = ?1
@@ -332,10 +332,11 @@ impl Database {
                 Ok(AttachmentObservation {
                     email_id: row.get(0)?,
                     sender_email: row.get(1)?,
-                    subject: row.get(2)?,
-                    timestamp: row.get(3)?,
-                    filename: row.get(4)?,
-                    mime_type: row.get(5)?,
+                    sender_name: row.get(2)?,
+                    subject: row.get(3)?,
+                    timestamp: row.get(4)?,
+                    filename: row.get(5)?,
+                    mime_type: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

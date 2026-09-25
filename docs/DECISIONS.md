@@ -1752,8 +1752,9 @@ is unlikely to run on.
 
 **Decision:** EmailOps proposes candidate attachment rules from recurring document
 attachments (PDF, office, XML/ZIP e-invoices — never images, `.ics` or signatures):
-at least 3 emails spanning 2+ calendar months from one sender (senders of one
-corporate domain pooled; personal providers never), with a filename glob generalised
+at least 2 emails in 2 different calendar months from one sender (many providers
+send one invoice a month; senders of one corporate domain pooled, personal providers
+never — those are named after the sender's display name), with a filename glob generalised
 from numbers, dates and month names. Mining is a deterministic heuristic, re-run after
 every sync that brought new mail and when the rules modal opens; a badge on the
 sidebar's Attachments entry and the "Manage Rules" button shows the pending count.

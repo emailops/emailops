@@ -22,6 +22,8 @@ use crate::models::{AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSugg
 pub struct AttachmentObservation {
     pub email_id: String,
     pub sender_email: String,
+    /// Display name from the From header; may be empty.
+    pub sender_name: String,
     pub subject: String,
     pub timestamp: i64,
     pub filename: String,
@@ -50,8 +52,8 @@ pub struct SuggestionCandidate {
 pub struct SuggestionParams {
     /// Distinct emails carrying the document.
     pub min_emails: usize,
-    /// Distinct calendar months those emails span — a burst of three
-    /// attachments on one day is a conversation, not a recurring document.
+    /// Distinct calendar months those emails span — a burst of attachments
+    /// on one day is a conversation, not a recurring document.
     pub min_distinct_months: usize,
     pub max_suggestions: usize,
 }
@@ -59,7 +61,9 @@ pub struct SuggestionParams {
 impl Default for SuggestionParams {
     fn default() -> Self {
         Self {
-            min_emails: 3,
+            // Many providers send one invoice a month: two months of it is
+            // already a pattern worth proposing.
+            min_emails: 2,
             min_distinct_months: 2,
             max_suggestions: 20,
         }
@@ -244,7 +248,14 @@ fn build_candidate(group: &[&AttachmentObservation], filename_pattern: Option<St
             .map(|c| c.to_uppercase().chain(chars).collect())
             .unwrap_or_default()
     } else {
-        label
+        // A person on gmail.com & co: their display name reads better than
+        // the address (the address still goes in the sender pattern).
+        by_recency
+            .iter()
+            .map(|o| o.sender_name.trim())
+            .find(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&newest_sender))
+            .map(str::to_string)
+            .unwrap_or(label)
     };
     let name = match tags.first().filter(|_| tags.len() > usize::from(corporate)) {
         Some(kind) => format!("{display_label} · {kind}"),
@@ -628,6 +639,7 @@ mod tests {
         AttachmentObservation {
             email_id: email_id.to_string(),
             sender_email: sender.to_string(),
+            sender_name: String::new(),
             subject: "Your document".to_string(),
             timestamp: ts,
             filename: filename.to_string(),
@@ -742,8 +754,45 @@ mod tests {
     }
 
     #[test]
-    fn fewer_than_min_emails_is_not_recurring() {
-        assert!(plan(&monthly("billing@acme.com", "Factura", 2)).is_empty());
+    fn a_single_email_is_not_recurring() {
+        assert!(plan(&monthly("billing@acme.com", "Factura", 1)).is_empty());
+    }
+
+    #[test]
+    fn two_monthly_invoices_are_already_recurring() {
+        let out = plan(&monthly("billing@acme.com", "Factura", 2));
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].filename_pattern.as_deref(), Some("Factura_*.pdf"));
+    }
+
+    #[test]
+    fn two_unrelated_documents_in_two_months_fall_back_to_an_extension_pattern() {
+        let o = vec![
+            obs("e1", "office@acme.com", JAN_15, "report.pdf"),
+            obs("e2", "office@acme.com", JAN_15 + 40 * DAY, "minutes.pdf"),
+        ];
+
+        let out = plan(&o);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].filename_pattern.as_deref(), Some("*.pdf"));
+    }
+
+    #[test]
+    fn a_personal_sender_candidate_is_named_after_their_display_name() {
+        let mut o = monthly("ana@gmail.com", "Documento", 2);
+        o[0].sender_name = "Ana Gestoría".into();
+        o[1].sender_name = "Ana Gestoría".into();
+
+        assert_eq!(plan(&o)[0].name, "Ana Gestoría");
+    }
+
+    #[test]
+    fn a_personal_sender_without_display_name_is_named_after_the_address() {
+        let o = monthly("ana@gmail.com", "Documento", 2);
+
+        assert_eq!(plan(&o)[0].name, "ana@gmail.com");
     }
 
     #[test]
@@ -788,9 +837,9 @@ mod tests {
 
     #[test]
     fn personal_domain_senders_are_never_merged() {
-        let mut o = monthly("ana@gmail.com", "Invoice", 2);
-        let mut other = monthly("luis@gmail.com", "Invoice", 4);
-        other.drain(..2);
+        let mut o = monthly("ana@gmail.com", "Invoice", 1);
+        let mut other = monthly("luis@gmail.com", "Invoice", 2);
+        other.drain(..1);
         o.extend(other);
 
         assert!(plan(&o).is_empty());
