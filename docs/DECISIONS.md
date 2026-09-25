@@ -1747,3 +1747,22 @@ is unlikely to run on.
   launch and could lose throughput, and those are the users the asset is for.
 - *Publishing without the CUDA asset and attaching it later*: it changes when a release
   goes out, not how long the build takes.
+
+## 2026-09-25 — Suggested attachment rules are mined heuristically and always confirmed
+
+**Decision:** EmailOps proposes candidate attachment rules from recurring document
+attachments (PDF, office, XML/ZIP e-invoices — never images, `.ics` or signatures):
+at least 3 emails spanning 2+ calendar months from one sender (senders of one
+corporate domain pooled; personal providers never), with a filename glob generalised
+from numbers, dates and month names. Mining is a deterministic heuristic, re-run after
+every sync that brought new mail and when the rules modal opens; a badge on the
+sidebar's Attachments entry and the "Manage Rules" button shows the pending count.
+A candidate is never turned into a rule automatically: "Review" opens the regular rule
+form prefilled (apply-to-existing on), and only saving it accepts the suggestion.
+Accepted and dismissed candidates are remembered by key and never proposed again.
+**Context:** Users had to hand-write a rule per invoice sender; the recurring-document
+pattern is visible in `email_attachment_meta` without reading bodies.
+**Rejected:** LLM-based detection (slower, non-deterministic, unnecessary for a
+sender × filename × cadence pattern); one-click creation without review (a wrong
+glob silently downloads the wrong files); computing only when the modal opens (the
+user would never discover the feature without a proactive signal).
