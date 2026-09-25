@@ -1,6 +1,6 @@
 ---
 name: record-emailops-demo
-description: "Record a demo video of the real EmailOps app — a promo, a feature short (vertical 9:16 or 16:9) or a how-to, narrated or text-only — from the synthetic demo instance, never the developer's mailbox. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots with an animated camera that eases from the whole window onto each action (the click, the chat being filled, the result) or as still 1:1 shots, with title and section cards, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a demo, promo or tutorial video of EmailOps, or wants an existing one re-cut."
+description: "Record a demo video of the real EmailOps app — a promo, a feature short (vertical 9:16 or 16:9) or a how-to, narrated or text-only — from the synthetic demo instance, never the developer's mailbox. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots with an animated camera that eases from the whole window onto each action (the click, the chat being filled, the result) or as still 1:1 shots, with title and section cards, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a 16:9 promo, a narrated demo or a tutorial video of EmailOps, or wants one re-cut. For a short (YouTube Shorts, Reels, TikTok, any vertical clip) use record-emailops-short instead — it is the default for shorts."
 argument-hint: <what the video should show, and in which language>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
@@ -174,26 +174,13 @@ ffmpeg -i silent.mp4 -i audio.wav -c:v copy -c:a aac -b:a 192k -shortest final.m
 `fit_timings.py` prints where every line lands and how much silence sits around
 it. Read that table before building: it is the pacing of the video.
 
-## Structure of a feature short
+## Shorts live in another skill
 
-What the developer settled on for a vertical short (Spanish, text only):
-
-1. **Hook** card: the question the viewer has ("¿Quieres extraer los datos
-   de clientes de tu email automáticamente?") plus a one-line answer.
-2. **Problem** card, then a separate **solution** card. One idea per card:
-   a card with five lines above and four below was sent back as too verbose.
-3. **The real example** in the app (the email that shows the problem).
-4. **Concept** card (what the feature is, in two short blocks).
-5. **Section** card ("Cómo crear una Lente"), then the walkthrough with the
-   animated camera, slower.
-6. The **result**, zoomed.
-7. **What happens next** card (e.g. new emails flow into the table). Check
-   the claim in the code first.
-8. **Closing** card.
-
-Text lives on cards and burned captions (Shorts are watched muted); the
-standing title band repeats the hook. Use the UI's own term in each
-language: in Spanish a Lens is always **"Lente"**, never "Lens".
+Vertical shorts use **`record-emailops-short`** (POV → antes → después,
+kinetic captions, typed prompts, split screen). This skill's capture tooling
+(`emailops-ui.mjs`, the data notes above) is what that skill shoots with; its
+composers here (`build_camera.py`, `build_short.py`) are for 16:9 promos and
+narrated walkthroughs.
 
 ## Rules that make it watchable
 
