@@ -37,6 +37,8 @@ No unreleased changes yet.
 
 ### Changed
 
+- **Lenses are on by default** and no longer marked experimental. Turn them off
+  in Settings → AI Lenses.
 - "Emails with X" searches mail both from and to X.
 - The chat takes the open Lens as context and leaves out unrelated sources.
 - Calendar questions without a date range also list the past 7 days.
@@ -53,6 +55,17 @@ No unreleased changes yet.
   switching account or conversation drops a pending research.
 - A Lens whose columns are all optional retries extraction when a column comes
   back empty, and values the model keyed by column label are read.
+- **The AI no longer throws away what an email is about.** Quoted text,
+  signatures and repeated paragraphs are left out only when an earlier
+  message of the same conversation already contains them. Forwards (with or
+  without a note, Apple Mail's included), quotes of mail that was never
+  synced, contact-form notifications and a first signature now reach the
+  chat, drafts, Lenses, Tasks and Memory whole, so Lenses fill in a form's
+  sender again. Replies in French and German, and bodies some clients wrap
+  in `<pre>`, are recognised as replies.
+- **"The first email I sent" finds the first one.** Oldest-first searches ranked
+  a conversation by its latest reply, so a thread started months ago and
+  answered yesterday was skipped.
 - Semantic search no longer fails on large mailboxes.
 - AI providers report when a reply was cut at its output limit.
 - The installation guide explains the Windows SmartScreen warning.
