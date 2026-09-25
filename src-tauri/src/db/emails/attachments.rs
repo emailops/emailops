@@ -38,6 +38,46 @@ impl Database {
         Ok(stats)
     }
 
+    /// Record the attachments a provider reported for one email. Idempotent
+    /// (`ON CONFLICT DO NOTHING`), so re-recording a known email is harmless.
+    pub fn insert_attachment_infos(
+        &self,
+        email_id: &str,
+        account_id: &str,
+        infos: &[crate::sync::provider::AttachmentInfo],
+    ) -> Result<()> {
+        let metas: Vec<_> = infos
+            .iter()
+            .map(|info| {
+                (
+                    email_id.to_string(),
+                    account_id.to_string(),
+                    info.attachment_id.clone(),
+                    info.filename.clone(),
+                    info.mime_type.clone(),
+                    info.size,
+                    info.inline_data.clone(),
+                )
+            })
+            .collect();
+        self.insert_email_attachment_metas_batch(&metas)
+    }
+
+    /// Ids of the account's emails with no attachment metadata at all — the
+    /// candidates of the one-time attachment backfill.
+    pub fn get_email_ids_without_attachment_meta(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT e.id FROM emails e
+             WHERE e.account_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM email_attachment_meta m WHERE m.email_id = e.id)",
+        )?;
+        let ids = stmt
+            .query_map(rusqlite::params![account_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<String>>>()?;
+        Ok(ids)
+    }
+
     /// Insert multiple attachment meta records in a single transaction.
     /// Each tuple is (email_id, account_id, provider_attachment_id, filename, mime_type, file_size, inline_data).
     /// `inline_data` is Some(base64) for IMAP attachments whose bytes are embedded inline;

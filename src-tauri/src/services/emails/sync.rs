@@ -253,6 +253,77 @@ fn take_sync_abort(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>
     requested
 }
 
+/// End-of-sync attachment upkeep, non-fatal: the one-time backfill of
+/// attachment metadata lost to an old sync bug (see
+/// `attachment_backfill`), then a re-mine of attachment rule suggestions
+/// when new mail arrived or the backfill recovered attachments.
+async fn finish_attachment_upkeep(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn EmailProvider,
+    app: Option<&AppHandle>,
+    sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    synced_any: bool,
+) {
+    use super::attachment_backfill::{backfill_attachment_meta, BackfillOutcome};
+
+    // Peek, don't take: the sync loop that follows still has to see the flag.
+    let abort_requested = || {
+        sync_abort_flags
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&account.id)
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    };
+    let recovered = match backfill_attachment_meta(db, provider, &account.id, &account.email, &abort_requested).await {
+        Ok(BackfillOutcome::Completed {
+            fetched,
+            recovered,
+            failed,
+        }) => {
+            emit_account_log(
+                if failed == 0 { "success" } else { "warn" },
+                "sync",
+                &account.email,
+                &format!(
+                    "Attachment check: recovered attachments of {recovered} of {fetched} stored emails                      ({failed} could not be fetched)"
+                ),
+            );
+            recovered
+        }
+        Ok(BackfillOutcome::Aborted { recovered }) => recovered,
+        Ok(BackfillOutcome::AlreadyDone | BackfillOutcome::Unsupported) => 0,
+        Err(e) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Attachment check failed (non-fatal, retried next sync): {e}"),
+            );
+            0
+        }
+    };
+
+    if !synced_any && recovered == 0 {
+        return;
+    }
+    match crate::services::attachment_suggestions::refresh_after_sync(db, app, &account.id) {
+        Ok(n) if n > 0 => emit_account_log(
+            "debug",
+            "sync",
+            &account.email,
+            &format!("{n} suggested attachment rules pending review"),
+        ),
+        Ok(_) => {}
+        Err(e) => emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!("Attachment rule suggestions failed (non-fatal): {e}"),
+        ),
+    }
+}
+
 /// Core sync logic with an already-built `EmailProvider`. Accepts
 /// `app: Option<AppHandle>` so integration tests can pass `None` and use a
 /// `FakeEmailProvider` without needing a live Tauri runtime.
@@ -650,7 +721,17 @@ pub async fn sync_account_with_provider(
                         })
                         .collect();
                     if !metas.is_empty() {
-                        let _ = db.insert_email_attachment_metas_batch(&metas);
+                        // Never discard this error: before the insert tolerated a
+                        // repeated filename, one such email silently dropped the
+                        // attachments of its whole chunk.
+                        if let Err(e) = db.insert_email_attachment_metas_batch(&metas) {
+                            emit_account_log(
+                                "error",
+                                "sync",
+                                &account.email,
+                                &format!("Could not record attachments of {} emails: {e}", chunk_emails.len()),
+                            );
+                        }
                     }
 
                     let ids_to_remove: Vec<String> = chunk_emails.iter().map(|(e, _)| e.id.clone()).collect();
@@ -790,6 +871,15 @@ pub async fn sync_account_with_provider(
             );
         }
         pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
+        finish_attachment_upkeep(
+            db,
+            account,
+            email_provider.as_ref(),
+            app.as_ref(),
+            &sync_abort_flags,
+            false,
+        )
+        .await;
 
         db.upsert_sync_status(account_id, "idle", Some(chrono::Utc::now().timestamp()), None)?;
         // Terminal progress event clears the UI spinner. No output-panel log
@@ -846,6 +936,16 @@ pub async fn sync_account_with_provider(
                                 email.account_id = account_id.to_string();
                                 match db.insert_email(&email) {
                                     Ok(_) => {
+                                        if let Err(e) =
+                                            db.insert_attachment_infos(&email.id, account_id, &attachment_infos)
+                                        {
+                                            emit_account_log(
+                                                "error",
+                                                "sync",
+                                                &account.email,
+                                                &format!("Could not record attachments of {}: {e}", email.id),
+                                            );
+                                        }
                                         let _ = db.remove_failed_email(account_id, email_id);
                                         synced_count += 1;
                                         all_new_ids.push(email.id.clone());
@@ -970,22 +1070,6 @@ pub async fn sync_account_with_provider(
             ),
         }
 
-        match crate::services::attachment_suggestions::refresh_after_sync(db, app.as_ref(), account_id) {
-            Ok(n) if n > 0 => emit_account_log(
-                "debug",
-                "sync",
-                &account.email,
-                &format!("{n} suggested attachment rules pending review"),
-            ),
-            Ok(_) => {}
-            Err(e) => emit_account_log(
-                "warn",
-                "sync",
-                &account.email,
-                &format!("Attachment rule suggestions failed (non-fatal): {e}"),
-            ),
-        }
-
         match crate::services::tag_priority::update_from_new_emails(db, account_id, &account.email, &all_new_ids) {
             Ok(n) => emit_account_log(
                 "debug",
@@ -1012,6 +1096,15 @@ pub async fn sync_account_with_provider(
         );
     }
     pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
+    finish_attachment_upkeep(
+        db,
+        account,
+        email_provider.as_ref(),
+        app.as_ref(),
+        &sync_abort_flags,
+        synced_count > 0,
+    )
+    .await;
 
     // Classify, extract memory, and generate embeddings on a final pass.
     if let Some(ref a) = app {

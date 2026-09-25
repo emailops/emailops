@@ -331,7 +331,15 @@ impl OutlookClient {
         // there really are none.
         let (attachments, inline_images) = match msg.has_attachments {
             Some(false) => (Vec::new(), Vec::new()),
-            _ => self.list_attachments(&msg.id).await.unwrap_or_default(),
+            _ => match self.list_attachments(&msg.id).await {
+                Ok(found) => found,
+                // Non-fatal for the message, but never silent: an error here
+                // stores the email with no attachment rows at all.
+                Err(e) => {
+                    self.log(&format!("Graph: could not list attachments for {}: {e}", msg.id));
+                    (Vec::new(), Vec::new())
+                }
+            },
         };
 
         let (mut email, category) = parse_message(msg);
@@ -789,6 +797,27 @@ impl OutlookClient {
 impl EmailProvider for OutlookClient {
     async fn get_profile(&self) -> Result<(String, String)> {
         self.get_profile().await
+    }
+
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        let mut ids = Vec::new();
+        let mut url = Some(build_attachments_list_url(&self.base_url));
+        while let Some(current) = url {
+            let response = self
+                .send_get_with_retry(&current, "list messages with attachments")
+                .await?;
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(AppError::SyncError(format!(
+                    "Failed to list messages with attachments: {error_text}"
+                )));
+            }
+            let list: GraphMessageList = response.json().await?;
+            ids.extend(list.value.into_iter().map(|r| r.id));
+            // `@odata.nextLink` is a complete URL carrying the $skiptoken.
+            url = list.next_link.filter(|link| !link.is_empty());
+        }
+        Ok(Some(ids))
     }
 
     async fn list_messages(
@@ -1307,6 +1336,16 @@ fn build_inbox_list_url(base: &str, top: u32, after_timestamp: Option<i64>, befo
     url
 }
 
+/// Every message with attachments, in any folder, ids only — the backfill
+/// candidates. `hasAttachments` is filterable without an `$orderby`.
+fn build_attachments_list_url(base: &str) -> String {
+    format!(
+        "{}/me/messages?$top=1000&$select=id&$filter={}",
+        base,
+        urlencoding::encode("hasAttachments eq true")
+    )
+}
+
 /// One sub-response of a `$batch`, resolved back to the slot it answers.
 #[derive(Debug)]
 struct GraphBatchSubResponse {
@@ -1692,6 +1731,14 @@ mod tests {
         );
         // The receivedDateTime bound is present (url-encoded space → %20).
         assert!(url.contains("receivedDateTime%20ge"), "got: {url}");
+    }
+
+    #[test]
+    fn attachments_list_url_filters_on_has_attachments_across_folders() {
+        let url = build_attachments_list_url(GRAPH_API_BASE);
+        assert!(url.starts_with(&format!("{GRAPH_API_BASE}/me/messages?")), "{url}");
+        assert!(url.contains("$select=id"), "{url}");
+        assert!(url.contains("$filter=hasAttachments%20eq%20true"), "{url}");
     }
 
     #[test]

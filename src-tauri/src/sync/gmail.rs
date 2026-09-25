@@ -1465,6 +1465,22 @@ impl EmailProvider for GmailClient {
         Ok((message_refs, token))
     }
 
+    /// `has:attachment` over the whole mailbox (spam/trash excluded), ids only.
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        let mut ids = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let (refs, next) = self
+                .list_messages(500, token.as_deref(), None, None, Some("has:attachment"))
+                .await?;
+            ids.extend(refs.into_iter().map(|r| r.id));
+            match next.filter(|t| !t.is_empty()) {
+                Some(t) => token = Some(t),
+                None => return Ok(Some(ids)),
+            }
+        }
+    }
+
     /// Map the message's current labels to its mailbox (`format=minimal`, so
     /// no body is transferred). A Gmail id survives every label change, so the
     /// header is not needed and the id comes back unchanged. A 404 means the

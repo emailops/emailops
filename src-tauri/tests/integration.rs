@@ -4839,3 +4839,157 @@ async fn outlook_client_list_messages_against_cassette_mock() {
     assert_eq!(refs[1].id, "AAMkAD-msg-002");
     assert!(next_page.is_none(), "cassette response had no @odata.nextLink");
 }
+
+// ── Attachment metadata: retry path + one-time backfill ─────────────────────
+
+fn pdf_attachment(id: &str, filename: &str) -> AttachmentInfo {
+    AttachmentInfo {
+        attachment_id: id.to_string(),
+        filename: filename.to_string(),
+        mime_type: "application/pdf".to_string(),
+        size: 1_000,
+        inline_data: None,
+    }
+}
+
+const ATTACHMENT_BACKFILL_DONE: &str = "attachment_meta_backfill_done:";
+
+/// Regression: a download that failed and was retried on the next sync stored
+/// the email but never its attachment metadata, so the attachment was invisible
+/// to the UI, to rules and to rule suggestions.
+#[tokio::test]
+async fn a_retried_download_records_the_emails_attachments() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rt", "rt@example.com")).unwrap();
+    // Below the floor, so only the retry pass (which fetches by id) reaches it.
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-rt", Some(floor)).unwrap();
+    db.add_failed_email("acc-rt", "retried", "HTTP 500").unwrap();
+    // Keep the one-time backfill out of it: this test is about the retry path.
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-rt"), "1")
+        .unwrap();
+    let account = db.get_account("acc-rt").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("rt@example.com", "Rt");
+    provider.add_message(
+        make_email_with("retried", "acc-rt", floor - 86_400, "billing@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+    // Retries only run on a sync that brought new mail.
+    provider.add_message(
+        make_email_with("new", "acc-rt", floor + 86_400, "someone@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert!(
+        db.get_email("retried").unwrap().is_some(),
+        "the retry pass stores the email"
+    );
+    let metas = db.get_email_attachment_metas("retried").unwrap();
+    assert_eq!(metas.len(), 1, "the retried email's attachment must be recorded");
+    assert_eq!(metas[0].filename, "Invoice_0001.pdf");
+}
+
+/// Mail stored before attachment metadata was reliably recorded (a failed
+/// batch insert used to be discarded silently) has none, and incremental sync
+/// never revisits stored mail. The first sync after upgrading fills the gap.
+#[tokio::test]
+async fn the_first_sync_backfills_attachment_metadata_missing_from_stored_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-bf", "bf@example.com")).unwrap();
+    let stored = make_email_with("stored-without-meta", "acc-bf", 1_750_000_000, "billing@x.com", "inbox");
+    db.insert_email(&stored).unwrap();
+    let account = db.get_account("acc-bf").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("bf@example.com", "Bf");
+    provider.add_message(
+        stored,
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert_eq!(db.get_email_attachment_metas("stored-without-meta").unwrap().len(), 1);
+    assert!(
+        db.get_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-bf"))
+            .unwrap()
+            .is_some(),
+        "a completed backfill is remembered"
+    );
+}
+
+#[tokio::test]
+async fn the_attachment_backfill_runs_once_per_account() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-once", "once@example.com"))
+        .unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-once"), "1")
+        .unwrap();
+    let stored = make_email_with(
+        "stored-without-meta",
+        "acc-once",
+        1_750_000_000,
+        "billing@x.com",
+        "inbox",
+    );
+    db.insert_email(&stored).unwrap();
+    let account = db.get_account("acc-once").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("once@example.com", "Once");
+    provider.add_message(
+        stored,
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+    let calls = provider.call_log();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let calls = calls.read().unwrap().clone();
+    assert!(
+        !calls.iter().any(|c| c == "list_message_ids_with_attachments"),
+        "a finished backfill must not query the provider again, got {calls:?}"
+    );
+    assert!(db.get_email_attachment_metas("stored-without-meta").unwrap().is_empty());
+}

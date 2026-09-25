@@ -467,6 +467,15 @@ pub trait EmailProvider: Send + Sync {
         Ok(results)
     }
 
+    /// Ids of every message in the mailbox that carries attachments, when the
+    /// provider can answer with a cheap server-side search (Gmail
+    /// `has:attachment`, Graph `hasAttachments eq true`). `None` when it cannot.
+    /// Drives the one-time attachment-metadata backfill, which then fetches
+    /// only those messages instead of the whole mailbox.
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+
     // ── Folder management ─────────────────────────────────────────────────
     //
     // IMAP-only in v1: only the IMAP adapter overrides these; callers gate
@@ -901,6 +910,18 @@ impl EmailProvider for FakeEmailProvider {
             .collect();
         let next_page = (next_offset < total && !refs.is_empty()).then(|| next_offset.to_string());
         Ok((refs, next_page))
+    }
+
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        self.record_call("list_message_ids_with_attachments");
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Some(
+            guard
+                .iter()
+                .filter(|m| !m.attachments.is_empty())
+                .map(|m| m.email.id.clone())
+                .collect(),
+        ))
     }
 
     /// Overrides the sequential default purely to record the call, so a test

@@ -1,3 +1,4 @@
+mod attachment_backfill;
 mod compose;
 mod drafts;
 mod events;
@@ -17,6 +18,7 @@ use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
+pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
 pub use compose::{
     compose_draft, delete_draft, plan_compose, pull_provider_drafts, refresh_provider_drafts, send_draft, ComposeInput,
     ComposePlan,
