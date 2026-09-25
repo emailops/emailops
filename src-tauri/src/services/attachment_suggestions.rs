@@ -141,8 +141,9 @@ const MONTH_NAMES: &str = "january|february|march|april|may|june|july|august|sep
     |januar|februar|märz|maerz|juni|juli|oktober|dezember|okt|dez";
 
 /// Generalise a filename into the glob its siblings share: month names and
-/// every run of digits (with the separators between them — dates, invoice
-/// numbers) become one `*`, and the extension is lowercased.
+/// every run of digits (with the separators between them — dates, ISO
+/// timestamps, invoice numbers) become one `*`, and the extension is
+/// lowercased.
 pub fn filename_family(filename: &str) -> String {
     use std::sync::LazyLock;
 
@@ -151,7 +152,8 @@ pub fn filename_family(filename: &str) -> String {
     static MONTH: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(&format!(r"(?i)(^|[^\p{{L}}])(?:{MONTH_NAMES})([^\p{{L}}]|$)")).unwrap());
     #[allow(clippy::unwrap_used)] // infallible by construction: literal pattern
-    static NUMBER_RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\d(?:[\d\-_./ ]*\d)?").unwrap());
+    static NUMBER_RUN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\d(?:[\d\-_./: ]*\d|T\d)*Z?").unwrap());
     // `Factura_*_*` (month then year) is one variable part, not two.
     #[allow(clippy::unwrap_used)] // infallible by construction: literal pattern
     static WILDCARD_RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*(?:[\-_./ ]*\*)+").unwrap());
@@ -167,6 +169,43 @@ pub fn filename_family(filename: &str) -> String {
         Some(ext) => format!("{stem}.{ext}"),
         None => stem.into_owned(),
     }
+}
+
+/// Fewer fixed letters/digits than this and a family pattern (`*F*.pdf`)
+/// says nothing a plain `*.pdf` does not.
+const MIN_FIXED_CHARS: usize = 3;
+
+/// The pattern a document is grouped and matched by: its [`filename_family`],
+/// or just `*.<ext>` when the family keeps too little fixed text.
+fn family_pattern(filename: &str) -> String {
+    let family = filename_family(filename);
+    let stem = family.rsplit_once('.').map_or(family.as_str(), |(stem, _)| stem);
+    if stem.chars().filter(|c| c.is_alphanumeric()).count() >= MIN_FIXED_CHARS {
+        return family;
+    }
+    match extension(filename) {
+        Some(ext) => format!("*.{ext}"),
+        None => family,
+    }
+}
+
+/// Second-level labels that are part of a public suffix (`acme.co.uk`,
+/// `acme.com.es`) rather than the organisation's name.
+const SECOND_LEVEL_SUFFIXES: &[&str] = &["co", "com", "org", "net", "gob", "gov", "edu", "ac"];
+
+/// The organisation label of a domain: `mail.acme.com` → `acme`,
+/// `shop.acme.co.uk` → `acme`. Mail senders sit on subdomains
+/// (`mail.`, `email.`, `em.`) that are not the company name.
+fn organisation_label(domain: &str) -> String {
+    let labels: Vec<&str> = domain.trim_matches('.').split('.').filter(|l| !l.is_empty()).collect();
+    let n = labels.len();
+    let idx = match n {
+        0 => return String::new(),
+        1 => 0,
+        _ if n >= 3 && labels[n - 1].len() == 2 && SECOND_LEVEL_SUFFIXES.contains(&labels[n - 2]) => n - 3,
+        _ => n - 2,
+    };
+    labels[idx].to_ascii_lowercase()
 }
 
 fn month_index(timestamp: i64) -> i64 {
@@ -237,7 +276,11 @@ fn build_candidate(group: &[&AttachmentObservation], filename_pattern: Option<St
 
     let domain = crate::util::email_addr::extract_domain(&newest_sender).unwrap_or_default();
     let corporate = !domain.is_empty() && !crate::util::email_addr::is_personal_email_domain(&domain);
-    let label = crate::util::email_addr::company_label_for(&domain, Some(&newest_sender));
+    let label = if corporate {
+        organisation_label(&domain)
+    } else {
+        crate::util::email_addr::company_label_for(&domain, Some(&newest_sender))
+    };
 
     let mut tags = kind_tags(group);
     let display_label = if corporate {
@@ -313,7 +356,7 @@ pub fn plan_suggestions(
         let mut by_family: BTreeMap<String, Vec<&AttachmentObservation>> = BTreeMap::new();
         for o in group {
             by_family
-                .entry(filename_family(&o.filename).to_lowercase())
+                .entry(family_pattern(&o.filename).to_lowercase())
                 .or_default()
                 .push(o);
         }
@@ -323,7 +366,7 @@ pub fn plan_suggestions(
             .filter(|family| is_recurring(family, &params))
             .map(|family| {
                 let newest = family.iter().max_by_key(|o| o.timestamp).map(|o| o.filename.as_str());
-                (family.as_slice(), newest.map(filename_family))
+                (family.as_slice(), newest.map(family_pattern))
             })
             .collect();
 
@@ -730,6 +773,40 @@ mod tests {
     fn filename_family_keeps_month_letters_inside_words() {
         assert_eq!(filename_family("summary.pdf"), "summary.pdf");
         assert_eq!(filename_family("mayor-report.pdf"), "mayor-report.pdf");
+    }
+
+    #[test]
+    fn filename_family_collapses_an_iso_timestamp_into_one_wildcard() {
+        assert_eq!(
+            filename_family("cursor_analytics_2025-10-09T09:14:00Z.csv"),
+            "cursor_analytics_*.csv"
+        );
+        assert_eq!(filename_family("EMI 1T.pdf"), "EMI *T.pdf");
+    }
+
+    #[test]
+    fn a_family_with_almost_no_fixed_text_falls_back_to_the_extension() {
+        let o = vec![
+            obs("e1", "office@acme.com", JAN_15, "12F34.pdf"),
+            obs("e2", "office@acme.com", JAN_15 + 40 * DAY, "56F78.pdf"),
+        ];
+
+        assert_eq!(plan(&o)[0].filename_pattern.as_deref(), Some("*.pdf"));
+    }
+
+    #[test]
+    fn candidates_are_named_after_the_registrable_domain_not_the_mail_subdomain() {
+        let out = plan(&monthly("invoice@mail.acme.com", "Invoice", 2));
+
+        assert_eq!(out[0].name, "Acme · invoice");
+        assert_eq!(out[0].tags, vec!["invoice".to_string(), "acme".to_string()]);
+    }
+
+    #[test]
+    fn a_two_level_public_suffix_is_skipped_when_naming() {
+        let out = plan(&monthly("billing@shop.acme.co.uk", "Invoice", 2));
+
+        assert_eq!(out[0].name, "Acme · invoice");
     }
 
     #[test]
