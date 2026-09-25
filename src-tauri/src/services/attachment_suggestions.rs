@@ -244,6 +244,45 @@ fn covered_by_existing_rule(group: &[&AttachmentObservation], rules: &[Attachmen
     covered * 2 > group.len()
 }
 
+/// A rule the user already made for this sender: one of its sender patterns
+/// matches a sender of the group, or names the same organisation (a rule for
+/// `invoicing@email.acme.com` covers what `billing@acme.com` sends). A new
+/// suggestion next to it would only be noise — the user extends their rule.
+fn similar_rule_exists(group: &[&AttachmentObservation], rules: &[AttachmentRule]) -> bool {
+    use crate::util::email_addr::is_personal_email_domain;
+
+    let group_orgs: HashSet<String> = group
+        .iter()
+        .filter_map(|o| crate::util::email_addr::extract_domain(&o.sender_email))
+        .filter(|d| !is_personal_email_domain(d))
+        .map(|d| organisation_label(&d))
+        .collect();
+
+    rules
+        .iter()
+        .filter_map(|r| r.sender_email_pattern.as_deref())
+        .flat_map(|p| p.split(','))
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .any(|pattern| {
+            if group
+                .iter()
+                .any(|o| super::attachments::matches_glob(pattern, &o.sender_email))
+            {
+                return true;
+            }
+            let domain = pattern
+                .rsplit('@')
+                .next()
+                .unwrap_or(pattern)
+                .trim_matches(|c| c == '*' || c == '.');
+            !domain.is_empty()
+                && !domain.contains('*')
+                && !is_personal_email_domain(domain)
+                && group_orgs.contains(&organisation_label(domain))
+        })
+}
+
 fn kind_tags(group: &[&AttachmentObservation]) -> Vec<String> {
     let haystacks: Vec<String> = group
         .iter()
@@ -380,7 +419,7 @@ pub fn plan_suggestions(
         }
 
         for (members, pattern) in recurring {
-            if covered_by_existing_rule(members, existing_rules) {
+            if covered_by_existing_rule(members, existing_rules) || similar_rule_exists(members, existing_rules) {
                 continue;
             }
             let candidate = build_candidate(members, pattern);
@@ -969,11 +1008,47 @@ mod tests {
     }
 
     #[test]
-    fn existing_rule_for_other_documents_does_not_suppress() {
+    fn any_rule_for_the_same_sender_suppresses_the_candidate() {
         let o = monthly("billing@acme.com", "Factura", 3);
         let out = plan_suggestions(
             &o,
             &[rule("billing@acme.com", Some("contract*.pdf"))],
+            &HashSet::new(),
+            SuggestionParams::default(),
+        );
+        assert!(out.is_empty(), "the user already handles this sender");
+    }
+
+    #[test]
+    fn a_rule_for_another_address_of_the_same_organisation_suppresses_the_candidate() {
+        let o = monthly("billing@acme.com", "Factura", 3);
+        let out = plan_suggestions(
+            &o,
+            &[rule("invoicing@email.acme.com", None)],
+            &HashSet::new(),
+            SuggestionParams::default(),
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_rule_for_another_person_on_a_personal_provider_does_not_suppress() {
+        let o = monthly("ana@gmail.com", "Documento", 2);
+        let out = plan_suggestions(
+            &o,
+            &[rule("luis@gmail.com", None)],
+            &HashSet::new(),
+            SuggestionParams::default(),
+        );
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_rule_for_an_unrelated_sender_does_not_suppress() {
+        let o = monthly("billing@acme.com", "Factura", 3);
+        let out = plan_suggestions(
+            &o,
+            &[rule("*@globex.com", None)],
             &HashSet::new(),
             SuggestionParams::default(),
         );

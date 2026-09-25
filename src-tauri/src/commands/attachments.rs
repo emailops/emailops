@@ -337,8 +337,31 @@ pub async fn apply_rule_retroactively(
     rule_id: String,
     account_id: String,
 ) -> Result<u32, AppError> {
-    services::attachments::apply_rule_retroactively(&state.db, &rule_id, &account_id, &state.app_data_dir, Some(&app))
-        .await
+    use tauri::Emitter;
+    // Progress for the rule card's bar; the payload names the rule so a
+    // second apply running at the same time updates its own card.
+    let progress_app = app.clone();
+    let progress_rule = rule_id.clone();
+    let on_progress = move |p: services::attachments::RetroProgress| {
+        let payload = serde_json::json!({
+            "ruleId": progress_rule,
+            "processed": p.processed,
+            "total": p.total,
+            "saved": p.saved,
+        });
+        if let Err(e) = progress_app.emit("attachment-rule-apply-progress", payload) {
+            eprintln!("[attachments] could not emit apply progress: {e}");
+        }
+    };
+    services::attachments::apply_rule_retroactively(
+        &state.db,
+        &rule_id,
+        &account_id,
+        &state.app_data_dir,
+        Some(&app),
+        &on_progress,
+    )
+    .await
 }
 
 #[tauri::command]

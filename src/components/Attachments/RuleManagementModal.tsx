@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 import { RuleSuggestionList } from './RuleSuggestionList';
+import { TagPicker } from './TagPicker';
 
 export interface RuleFormPrefill {
   name: string;
@@ -41,6 +43,27 @@ interface RuleManagementModalProps {
   onRefreshSuggestions: () => void;
   onDismissSuggestion: (suggestionId: string) => Promise<void>;
   onAcceptSuggestion: (suggestionId: string) => Promise<void>;
+  /** Tags already on collected attachments, offered by the tag picker. */
+  existingTags: string[];
+}
+
+/** Progress of applying one rule to existing mail, per rule id. */
+interface ApplyState {
+  processed: number;
+  total: number;
+  saved: number;
+  status: 'running' | 'done' | 'failed';
+}
+
+function isApplyProgress(p: unknown): p is { ruleId: string; processed: number; total: number; saved: number } {
+  if (typeof p !== 'object' || p === null) return false;
+  const o = p as Record<string, unknown>;
+  return (
+    typeof o.ruleId === 'string' &&
+    typeof o.processed === 'number' &&
+    typeof o.total === 'number' &&
+    typeof o.saved === 'number'
+  );
 }
 
 interface RuleFormState {
@@ -48,7 +71,7 @@ interface RuleFormState {
   senderEmailPattern: string;
   subjectPattern: string;
   filenamePattern: string;
-  tags: string;
+  tags: string[];
   applyToExisting: boolean;
 }
 
@@ -57,7 +80,7 @@ const EMPTY_FORM: RuleFormState = {
   senderEmailPattern: '',
   subjectPattern: '',
   filenamePattern: '',
-  tags: '',
+  tags: [],
   applyToExisting: true,
 };
 
@@ -74,6 +97,7 @@ export function RuleManagementModal({
   onRefreshSuggestions,
   onDismissSuggestion,
   onAcceptSuggestion,
+  existingTags,
 }: RuleManagementModalProps) {
   const { t } = useTranslation(['common', 'attachments']);
   const hasPrefill = !!prefill;
@@ -86,7 +110,7 @@ export function RuleManagementModal({
           senderEmailPattern: prefill.senderEmailPattern,
           subjectPattern: prefill.subjectPattern,
           filenamePattern: '',
-          tags: '',
+          tags: [],
           applyToExisting: true,
         }
       : EMPTY_FORM,
@@ -95,7 +119,9 @@ export function RuleManagementModal({
   // accepts it, cancelling leaves it pending.
   const [reviewingSuggestionId, setReviewingSuggestionId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [applyingRuleId, setApplyingRuleId] = useState<string | null>(null);
+  // Applying a rule to existing mail runs in the background; each rule card
+  // shows its own progress, fed by `attachment-rule-apply-progress` events.
+  const [applyStates, setApplyStates] = useState<Record<string, ApplyState>>({});
   const [error, setError] = useState<string | null>(null);
   // Delete-confirm flow: clicking the trash icon opens an inline warning
   // panel showing how many saved files will also be removed. Inline rather
@@ -105,6 +131,46 @@ export function RuleManagementModal({
   const [pendingDeleteCount, setPendingDeleteCount] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
+
+  const allTags = useMemo(
+    () => [...new Set([...existingTags, ...rules.flatMap((r) => r.tags)])].sort((a, b) => a.localeCompare(b)),
+    [existingTags, rules],
+  );
+
+  useEffect(() => {
+    const unlisten = listen('attachment-rule-apply-progress', (event) => {
+      if (!isApplyProgress(event.payload)) return;
+      const { ruleId, processed, total, saved } = event.payload;
+      setApplyStates((prev) =>
+        prev[ruleId]?.status === 'running'
+          ? { ...prev, [ruleId]: { processed, total, saved, status: 'running' } }
+          : prev,
+      );
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, []);
+
+  const runApply = async (rule: AttachmentRule) => {
+    setApplyStates((prev) => ({ ...prev, [rule.id]: { processed: 0, total: 0, saved: 0, status: 'running' } }));
+    addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
+    try {
+      const count = await api.applyRuleRetroactively(rule.id, accountId);
+      setApplyStates((prev) => ({
+        ...prev,
+        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0 }), saved: count, status: 'done' },
+      }));
+      addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
+      onRefreshAfterApply();
+    } catch (err) {
+      setApplyStates((prev) => ({
+        ...prev,
+        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0, saved: 0 }), status: 'failed' },
+      }));
+      addLog('error', 'attachments', `Failed to apply rule retroactively: ${err}`);
+    }
+  };
 
   // Mount-only: the parent re-renders on every sync batch, so depending on
   // the callback identity would re-mine continuously while the modal is open.
@@ -153,7 +219,8 @@ export function RuleManagementModal({
       senderEmailPattern: suggestion.senderEmailPattern,
       subjectPattern: '',
       filenamePattern: suggestion.filenamePattern ?? '',
-      tags: suggestion.tags.join(', '),
+      // Left for the user: their own tag vocabulary beats a guessed one.
+      tags: [],
       applyToExisting: true,
     });
     setEditingRuleId(null);
@@ -176,7 +243,7 @@ export function RuleManagementModal({
       senderEmailPattern: rule.senderEmailPattern ?? '',
       subjectPattern: rule.subjectPattern ?? '',
       filenamePattern: rule.filenamePattern ?? '',
-      tags: rule.tags.join(', '),
+      tags: rule.tags,
       applyToExisting: false,
     });
     setEditingRuleId(rule.id);
@@ -190,10 +257,7 @@ export function RuleManagementModal({
     const sender = form.senderEmailPattern.trim() || null;
     const subject = form.subjectPattern.trim() || null;
     const filename = form.filenamePattern.trim() || null;
-    const tags = form.tags
-      .split(',')
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
+    const tags = form.tags;
 
     if (!trimmedName) {
       setError(t('attachments:rules.nameRequired'));
@@ -216,18 +280,10 @@ export function RuleManagementModal({
         if (reviewingSuggestionId) {
           await onAcceptSuggestion(reviewingSuggestionId);
         }
+        // Not awaited: the form closes at once and the rule card shows the
+        // scan's progress. It used to sit on "Saving..." for the whole scan.
         if (form.applyToExisting) {
-          setApplyingRuleId(newRule.id);
-          try {
-            addLog('info', 'attachments', `Scanning existing emails for rule "${trimmedName}"...`);
-            const count = await api.applyRuleRetroactively(newRule.id, accountId);
-            addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
-            onRefreshAfterApply();
-          } catch (err) {
-            addLog('error', 'attachments', `Failed to apply rule retroactively: ${err}`);
-          } finally {
-            setApplyingRuleId(null);
-          }
+          void runApply(newRule);
         }
       }
       resetForm();
@@ -276,20 +332,6 @@ export function RuleManagementModal({
       );
     } catch (err) {
       setError(errorText(err));
-    }
-  };
-
-  const handleApplyRetroactively = async (rule: AttachmentRule) => {
-    setApplyingRuleId(rule.id);
-    try {
-      addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
-      const count = await api.applyRuleRetroactively(rule.id, accountId);
-      addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
-      onRefreshAfterApply();
-    } catch (err) {
-      addLog('error', 'attachments', `Failed to apply rule retroactively: ${err}`);
-    } finally {
-      setApplyingRuleId(null);
     }
   };
 
@@ -379,13 +421,7 @@ export function RuleManagementModal({
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">{t('attachments:rules.tags')}</label>
-                <input
-                  type="text"
-                  value={form.tags}
-                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                  placeholder={t('attachments:rules.tagsPlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
+                <TagPicker value={form.tags} onChange={(tags) => setForm({ ...form, tags })} existingTags={allTags} />
                 <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.tagsHelp')}</p>
               </div>
 
@@ -470,12 +506,12 @@ export function RuleManagementModal({
                     </div>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleApplyRetroactively(rule)}
-                        disabled={applyingRuleId === rule.id}
+                        onClick={() => void runApply(rule)}
+                        disabled={applyStates[rule.id]?.status === 'running'}
                         className="p-1.5 text-gray-400 hover:text-primary-600 rounded hover:bg-gray-100 disabled:opacity-50"
                         title={t('attachments:rules.applyToExisting')}
                       >
-                        {applyingRuleId === rule.id ? (
+                        {applyStates[rule.id]?.status === 'running' ? (
                           <div className="w-4 h-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
                         ) : (
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -574,6 +610,7 @@ export function RuleManagementModal({
                       </div>
                     </div>
                   )}
+                  <ApplyProgress state={applyStates[rule.id]} />
                   <div className="text-xs text-gray-500 space-y-0.5">
                     {rule.senderEmailPattern && (
                       <div>
@@ -618,6 +655,43 @@ export function RuleManagementModal({
           <p className="text-xs text-gray-400">{t('attachments:rules.footerHelp')}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ApplyProgress({ state }: { state: ApplyState | undefined }) {
+  const { t } = useTranslation(['attachments']);
+  if (!state) return null;
+  if (state.status === 'done') {
+    return <p className="mb-2 text-xs text-green-700">{t('attachments:rules.applyDone', { count: state.saved })}</p>;
+  }
+  if (state.status === 'failed') {
+    return <p className="mb-2 text-xs text-red-600">{t('attachments:rules.applyFailed')}</p>;
+  }
+  const percent = state.total > 0 ? Math.round((state.processed / state.total) * 100) : 0;
+  return (
+    <div className="mb-2 space-y-1">
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden"
+      >
+        <div
+          className={`h-full bg-primary-500 transition-all ${state.total === 0 ? 'w-1/3 animate-pulse' : ''}`}
+          style={state.total > 0 ? { width: `${percent}%` } : undefined}
+        />
+      </div>
+      <p className="text-xs text-gray-500">
+        {state.total > 0
+          ? t('attachments:rules.applyProgress', {
+              processed: state.processed,
+              total: state.total,
+              saved: state.saved,
+            })
+          : t('attachments:rules.applyStarting')}
+      </p>
     </div>
   );
 }

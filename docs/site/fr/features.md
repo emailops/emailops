@@ -89,8 +89,8 @@ sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et rempli
   n'importe quel expéditeur. <!-- claim:feat-attachments-view-4 -->
 - **Motif de l'objet** et **Motif du nom de fichier** — `*` est un joker ; seuls les noms de
   fichiers correspondants sont collectés. <!-- claim:feat-attachments-view-5 -->
-- **Étiquettes** — séparées par des virgules ; elles apparaissent comme boutons de filtre en haut
-  de la vue. <!-- claim:feat-attachments-view-6 -->
+- **Étiquettes** — choisissez celles que vous utilisez déjà ou saisissez-en une nouvelle ; elles
+  apparaissent comme boutons de filtre en haut de la vue. <!-- claim:feat-attachments-view-6 -->
 
 <!-- claim:feat-attachments-view-7 -->
 Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
@@ -103,7 +103,7 @@ EmailOps propose aussi des règles de lui-même. Quand un même expéditeur vous
 des documents (PDF, fichiers Office ou factures électroniques) — au moins deux e-mails sur deux mois
 différents —, une section **Règles suggérées** apparaît dans **Gérer les règles**, et un
 compteur à côté de **Pièces jointes** dans la barre latérale indique leur nombre. **Examiner**
-ouvre le formulaire de la règle déjà rempli (expéditeur, motif de nom de fichier, étiquettes) ; la
+ouvre le formulaire de la règle déjà rempli (expéditeur et motif de nom de fichier) ; la
 règle n'est créée que lorsque vous l'enregistrez. **Ignorer** masque la suggestion définitivement.
 
 ## Recherche

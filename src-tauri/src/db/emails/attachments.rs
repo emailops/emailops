@@ -63,6 +63,45 @@ impl Database {
         self.insert_email_attachment_metas_batch(&metas)
     }
 
+    /// Recorded attachment filenames per email, for the whole account — what a
+    /// retroactive rule application plans from without touching the provider.
+    pub fn get_attachment_filenames_by_email(
+        &self,
+        account_id: &str,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT email_id, filename FROM email_attachment_meta WHERE account_id = ?1")?;
+        let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let rows = stmt.query_map(rusqlite::params![account_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (email_id, filename) = row?;
+            out.entry(email_id).or_default().push(filename);
+        }
+        Ok(out)
+    }
+
+    /// One email's recorded attachments as provider infos (IMAP rows carry
+    /// their bytes inline; the others are fetched by attachment id).
+    pub fn get_attachment_infos(&self, email_id: &str) -> Result<Vec<crate::sync::provider::AttachmentInfo>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT provider_attachment_id, filename, mime_type, file_size, inline_data
+             FROM email_attachment_meta WHERE email_id = ?1 ORDER BY filename",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![email_id], |row| {
+            Ok(crate::sync::provider::AttachmentInfo {
+                attachment_id: row.get(0)?,
+                filename: row.get(1)?,
+                mime_type: row.get(2)?,
+                size: row.get(3)?,
+                inline_data: row.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     /// Ids of the account's emails with no attachment metadata at all — the
     /// candidates of the one-time attachment backfill.
     pub fn get_email_ids_without_attachment_meta(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {

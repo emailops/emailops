@@ -39,7 +39,7 @@
     "subjectPatternHelp": "Use * as wildcard. Leave empty to match any subject.",
     "filenamePattern": "Filename Pattern",
     "tags": "Tags",
-    "tagsHelp": "Comma-separated. Used for filtering attachments.",
+    "tagsHelp": "Pick an existing tag or type to create one. Used for filtering attachments.",
     "disabled": "(disabled)",
     "deleteConfirm": "Delete this rule?",
     "editTitle": "Edit Rule",
@@ -69,7 +69,15 @@
     "rowSubject": "Subject:",
     "rowFilename": "Filename:",
     "rowTags": "Tags:",
-    "footerHelp": "Rules match emails during sync. Use * for wildcards. All specified patterns must match (AND logic). Filename filters which attachments are collected from matching emails."
+    "footerHelp": "Rules match emails during sync. Use * for wildcards. All specified patterns must match (AND logic). Filename filters which attachments are collected from matching emails.",
+    "createTag": "Create tag \"{{tag}}\"",
+    "removeTag": "Remove tag {{tag}}",
+    "applyStarting": "Looking for matching attachments…",
+    "applyProgress": "Checked {{processed}} of {{total}} emails · {{saved}} attachments collected",
+    "applyDone_one": "Done: {{count}} attachment collected from existing emails",
+    "applyDone_other": "Done: {{count}} attachments collected from existing emails",
+    "applyFailed": "Could not apply the rule to existing emails. See the Output panel.",
+    "applyDone_many": "Done: {{count}} attachments collected from existing emails"
   },
   "suggestions": {
     "title": "Suggested rules",

@@ -87,7 +87,7 @@ reglas** (o **Crear una regla** en la vista vacía) y rellena:
   cualquier remitente. <!-- claim:feat-attachments-view-4 -->
 - **Patrón del asunto** y **Patrón del nombre de archivo** — `*` es un comodín; solo se
   recopilan los nombres de archivo que coinciden. <!-- claim:feat-attachments-view-5 -->
-- **Etiquetas** — separadas por coma; aparecen como botones de filtro arriba de la vista. <!-- claim:feat-attachments-view-6 -->
+- **Etiquetas** — elige las que ya usas o escribe para crear una nueva; aparecen como botones de filtro arriba de la vista. <!-- claim:feat-attachments-view-6 -->
 
 <!-- claim:feat-attachments-view-7 -->
 Tienen que coincidir todos los patrones que rellenes. Las reglas se aplican al correo nuevo
@@ -100,7 +100,7 @@ EmailOps también propone reglas por su cuenta. Cuando un mismo remitente te env
 y otra vez (PDF, archivos de Office o facturas electrónicas) — al menos dos correos en dos meses
 distintos —, aparece una sección **Reglas sugeridas** en **Gestionar reglas**, y un contador
 junto a **Adjuntos** en la barra lateral indica cuántas hay. **Revisar** abre el formulario de la
-regla ya relleno (remitente, patrón de nombre de archivo, etiquetas); la regla solo se crea cuando
+regla ya relleno (remitente y patrón de nombre de archivo); la regla solo se crea cuando
 la guardas. **Descartar** oculta la sugerencia para siempre.
 
 ## Búsqueda

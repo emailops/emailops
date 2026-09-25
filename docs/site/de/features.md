@@ -87,7 +87,7 @@ verwalten** (oder **Regel erstellen** in der leeren Ansicht) und füllen Sie aus
   (`*apple.com*` erfasst jeden Absender, der „apple.com“ enthält). Leer lassen für jeden Absender. <!-- claim:feat-attachments-view-4 -->
 - **Betreffmuster** und **Dateinamen-Muster** — `*` ist ein Platzhalter; nur passende Dateinamen
   werden gesammelt. <!-- claim:feat-attachments-view-5 -->
-- **Tags** — komma-getrennt; sie erscheinen oben in der Ansicht als Filter-Schaltflächen. <!-- claim:feat-attachments-view-6 -->
+- **Tags** — wählen Sie vorhandene Tags oder tippen Sie, um einen neuen anzulegen; sie erscheinen oben in der Ansicht als Filter-Schaltflächen. <!-- claim:feat-attachments-view-6 -->
 
 <!-- claim:feat-attachments-view-7 -->
 Alle ausgefüllten Muster müssen zutreffen. Regeln greifen bei neuer Post während der
@@ -100,7 +100,7 @@ EmailOps schlägt auch selbst Regeln vor. Wenn Ihnen derselbe Absender immer wie
 schickt (PDFs, Office-Dateien oder E-Rechnungen) — mindestens zwei E-Mails in zwei
 verschiedenen Monaten —, erscheint unter **Regeln verwalten** ein Abschnitt **Vorgeschlagene Regeln**, und ein
 Zähler neben **Anhänge** in der Seitenleiste zeigt ihre Anzahl. **Prüfen** öffnet das
-Regelformular bereits ausgefüllt (Absender, Dateinamenmuster, Tags); die Regel wird erst angelegt,
+Regelformular bereits ausgefüllt (Absender und Dateinamenmuster); die Regel wird erst angelegt,
 wenn Sie sie speichern. **Verwerfen** blendet den Vorschlag dauerhaft aus.
 
 ## Suche

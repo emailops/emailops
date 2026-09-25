@@ -80,7 +80,7 @@ The view collects attachments through **rules**, so it starts empty. Click **Man
   (`*apple.com*` matches any sender containing "apple.com"). Leave it empty to match any sender. <!-- claim:feat-attachments-view-4 -->
 - **Subject Pattern** and **Filename Pattern** — `*` is a wildcard; only matching filenames are
   collected. <!-- claim:feat-attachments-view-5 -->
-- **Tags** — comma-separated; they appear as filter buttons at the top of the view. <!-- claim:feat-attachments-view-6 -->
+- **Tags** — pick tags you already use or type to create a new one; they appear as filter buttons at the top of the view. <!-- claim:feat-attachments-view-6 -->
 
 <!-- claim:feat-attachments-view-7 -->
 Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
@@ -91,8 +91,8 @@ them together to your Downloads folder.
 EmailOps also proposes rules on its own. When the same sender keeps mailing you documents
 (PDFs, Office files or e-invoices) — at least two emails in two different months — a
 **Suggested rules** section appears in **Manage Rules**, and a badge next to **Attachments** in
-the sidebar counts them. **Review** opens the rule form already filled in (sender, filename
-pattern, tags); the rule is only created when you save it. **Dismiss** hides the suggestion for
+the sidebar counts them. **Review** opens the rule form already filled in (sender and filename
+pattern); the rule is only created when you save it. **Dismiss** hides the suggestion for
 good.
 
 ## Search

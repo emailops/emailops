@@ -16,6 +16,14 @@ vi.mock('@/stores/logStore', () => ({
   useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
 }));
 
+const events = vi.hoisted(() => ({ handlers: {} as Record<string, (e: { payload: unknown }) => void> }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, handler: (e: { payload: unknown }) => void) => {
+    events.handlers[name] = handler;
+    return () => {};
+  }),
+}));
+
 vi.mock('@/lib/api', () => ({
   applyRuleRetroactively: vi.fn(async () => 3),
   countAttachmentsForRule: vi.fn(async () => 0),
@@ -71,14 +79,30 @@ const handlers = {
   onAcceptSuggestion: vi.fn(async () => {}),
 };
 
-function render(suggestions: AttachmentRuleSuggestion[]) {
+function render(suggestions: AttachmentRuleSuggestion[], rules: AttachmentRule[] = []) {
   act(() => {
-    root.render(<RuleManagementModal rules={[]} accountId="acc-1" suggestions={suggestions} {...handlers} />);
+    root.render(
+      <RuleManagementModal
+        rules={rules}
+        accountId="acc-1"
+        suggestions={suggestions}
+        existingTags={['invoice']}
+        {...handlers}
+      />,
+    );
+  });
+}
+
+async function emitProgress(payload: { ruleId: string; processed: number; total: number; saved: number }) {
+  await act(async () => {
+    events.handlers['attachment-rule-apply-progress']?.({ payload });
   });
 }
 
 function button(label: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label));
+  const found = Array.from(container.querySelectorAll('button')).find(
+    (b) => b.textContent?.includes(label) || b.getAttribute('title') === label,
+  );
   if (!found) throw new Error(`button "${label}" not found`);
   return found;
 }
@@ -138,7 +162,8 @@ describe('RuleManagementModal suggestions', () => {
 
     await click(button('attachments:suggestions.review'));
 
-    expect(inputValues()).toEqual(['Acme · invoice', 'billing@acme.com', '', 'Invoice_*.pdf', 'invoice, acme']);
+    // Tags stay empty: the user picks their own.
+    expect(inputValues()).toEqual(['Acme · invoice', 'billing@acme.com', '', 'Invoice_*.pdf', '']);
   });
 
   it('creating the reviewed rule applies it to existing mail and accepts the suggestion', async () => {
@@ -147,10 +172,7 @@ describe('RuleManagementModal suggestions', () => {
 
     await click(button('attachments:rules.createRule'));
 
-    expect(handlers.onCreateRule).toHaveBeenCalledWith('Acme · invoice', 'billing@acme.com', null, 'Invoice_*.pdf', [
-      'invoice',
-      'acme',
-    ]);
+    expect(handlers.onCreateRule).toHaveBeenCalledWith('Acme · invoice', 'billing@acme.com', null, 'Invoice_*.pdf', []);
     expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1');
     expect(handlers.onAcceptSuggestion).toHaveBeenCalledWith('sug-1');
   });
@@ -185,5 +207,37 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(handlers.onCreateRule).toHaveBeenCalled();
     expect(handlers.onAcceptSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('creating a rule closes the form without waiting for the scan of existing mail', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    render([SUGGESTION]);
+    await click(button('attachments:suggestions.review'));
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(container.textContent).not.toContain('attachments:rules.newTitle');
+    expect(api.applyRuleRetroactively).toHaveBeenCalled();
+  });
+
+  it('the rule card shows the scan progress reported by the backend', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    render([], [makeRule('Acme')]);
+    await click(button('attachments:rules.applyToExisting'));
+
+    await emitProgress({ ruleId: 'rule-1', processed: 1, total: 4, saved: 1 });
+
+    const bar = container.querySelector('[role="progressbar"]');
+    expect(bar?.getAttribute('aria-valuenow')).toBe('25');
+  });
+
+  it('the rule card reports how many attachments were collected once the scan ends', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockResolvedValueOnce(3);
+    render([], [makeRule('Acme')]);
+
+    await click(button('attachments:rules.applyToExisting'));
+
+    expect(container.querySelector('[role="progressbar"]')).toBeNull();
+    expect(container.textContent).toContain('attachments:rules.applyDone');
   });
 });

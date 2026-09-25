@@ -39,7 +39,7 @@
     "subjectPatternHelp": "Verwende * als Platzhalter. Leer lassen, um jeden Betreff abzudecken.",
     "filenamePattern": "Dateinamen-Muster",
     "tags": "Tags",
-    "tagsHelp": "Komma-getrennt. Wird zum Filtern von Anhängen verwendet.",
+    "tagsHelp": "Wählen Sie einen vorhandenen Tag oder tippen Sie, um einen neuen zu erstellen. Dienen zum Filtern der Anhänge.",
     "disabled": "(deaktiviert)",
     "deleteConfirm": "Diese Regel löschen?",
     "editTitle": "Regel bearbeiten",
@@ -69,7 +69,15 @@
     "rowSubject": "Betreff:",
     "rowFilename": "Dateiname:",
     "rowTags": "Tags:",
-    "footerHelp": "Regeln werden während der Synchronisierung auf E-Mails angewendet. Verwende * als Platzhalter. Alle angegebenen Muster müssen übereinstimmen (UND-Logik). Der Dateiname filtert, welche Anhänge aus passenden E-Mails gesammelt werden."
+    "footerHelp": "Regeln werden während der Synchronisierung auf E-Mails angewendet. Verwende * als Platzhalter. Alle angegebenen Muster müssen übereinstimmen (UND-Logik). Der Dateiname filtert, welche Anhänge aus passenden E-Mails gesammelt werden.",
+    "createTag": "Tag „{{tag}}“ erstellen",
+    "removeTag": "Tag {{tag}} entfernen",
+    "applyStarting": "Passende Anhänge werden gesucht…",
+    "applyProgress": "{{processed}} von {{total}} E-Mails geprüft · {{saved}} Anhänge gesammelt",
+    "applyDone_one": "Fertig: {{count}} Anhang aus vorhandenen E-Mails gesammelt",
+    "applyDone_other": "Fertig: {{count}} Anhänge aus vorhandenen E-Mails gesammelt",
+    "applyFailed": "Die Regel konnte nicht auf vorhandene E-Mails angewendet werden. Siehe Ausgabebereich.",
+    "applyDone_many": "Fertig: {{count}} Anhänge aus vorhandenen E-Mails gesammelt"
   },
   "suggestions": {
     "title": "Vorgeschlagene Regeln",

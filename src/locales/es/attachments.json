@@ -39,7 +39,7 @@
     "subjectPatternHelp": "Usa * como comodín. Déjalo vacío para coincidir con cualquier asunto.",
     "filenamePattern": "Patrón del nombre de archivo",
     "tags": "Etiquetas",
-    "tagsHelp": "Separadas por coma. Se usan para filtrar adjuntos.",
+    "tagsHelp": "Elige una etiqueta existente o escribe para crear una. Sirven para filtrar los adjuntos.",
     "disabled": "(deshabilitada)",
     "deleteConfirm": "¿Eliminar esta regla?",
     "editTitle": "Editar regla",
@@ -69,7 +69,15 @@
     "rowSubject": "Asunto:",
     "rowFilename": "Nombre de archivo:",
     "rowTags": "Etiquetas:",
-    "footerHelp": "Las reglas coinciden con los correos durante la sincronización. Usa * como comodín. Todos los patrones especificados deben coincidir (lógica Y). El nombre de archivo filtra qué adjuntos se recopilan de los correos coincidentes."
+    "footerHelp": "Las reglas coinciden con los correos durante la sincronización. Usa * como comodín. Todos los patrones especificados deben coincidir (lógica Y). El nombre de archivo filtra qué adjuntos se recopilan de los correos coincidentes.",
+    "createTag": "Crear etiqueta «{{tag}}»",
+    "removeTag": "Quitar etiqueta {{tag}}",
+    "applyStarting": "Buscando adjuntos que coincidan…",
+    "applyProgress": "Revisados {{processed}} de {{total}} correos · {{saved}} adjuntos recopilados",
+    "applyDone_one": "Listo: {{count}} adjunto recopilado de los correos existentes",
+    "applyDone_other": "Listo: {{count}} adjuntos recopilados de los correos existentes",
+    "applyFailed": "No se pudo aplicar la regla a los correos existentes. Consulta el panel de salida.",
+    "applyDone_many": "Listo: {{count}} adjuntos recopilados de los correos existentes"
   },
   "suggestions": {
     "title": "Reglas sugeridas",
