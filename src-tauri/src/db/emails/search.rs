@@ -725,6 +725,10 @@ impl Database {
 
         let conn = self.reader();
         let order_clause = thread_order_clause("e", ascending);
+        // Each thread is represented by one matching email: the latest one
+        // newest-first, the earliest one oldest-first — otherwise a thread the
+        // user started long ago and replied to yesterday sorts by yesterday.
+        let thread_pick = if ascending { "MIN" } else { "MAX" };
 
         // ── CTE: find thread_ids that contain a matching email ────────────────────
         // All filter conditions apply to the same email row (`match_e`) so that
@@ -1125,7 +1129,7 @@ impl Database {
                 "SELECT {cols}
                  FROM emails e
                  INNER JOIN (
-                     SELECT thread_id AS tid, MAX(timestamp) AS max_ts
+                     SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
                      FROM emails
                      WHERE account_id = ?1 AND is_deleted = 0 AND id IN ({phs})
                      GROUP BY thread_id
@@ -1136,6 +1140,7 @@ impl Database {
                 phs = id_phs.join(", "),
                 cols = EMAIL_COLUMNS,
                 order = order_clause,
+                thread_pick = thread_pick,
                 limit_idx = limit_idx,
             );
 
@@ -1172,7 +1177,7 @@ impl Database {
                  WHERE {cte_where}
              ),
              thread_latest AS (
-                 SELECT thread_id AS tid, MAX(timestamp) AS max_ts
+                 SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
                  FROM filter_match
                  GROUP BY thread_id
              )
@@ -1186,6 +1191,7 @@ impl Database {
             cte_where = cte_where,
             cols = EMAIL_COLUMNS,
             order = order_clause,
+            thread_pick = thread_pick,
             limit_idx = param_idx,
         );
 
@@ -2300,6 +2306,70 @@ mod tests {
             Some("old"),
             "ascending must surface the oldest (first) matching email"
         );
+    }
+
+    /// A thread the user started long ago and replied to recently.
+    fn seed_long_running_thread(db: &Database, account: &str) {
+        insert_search_email(
+            db,
+            "opener",
+            account,
+            "t-long",
+            "Me",
+            "me@example.com",
+            "Kickoff",
+            "b",
+            100,
+        );
+        insert_search_email(
+            db,
+            "reply",
+            account,
+            "t-long",
+            "Me",
+            "me@example.com",
+            "Re: Kickoff",
+            "b",
+            900,
+        );
+        insert_search_email(
+            db,
+            "single",
+            account,
+            "t-single",
+            "Me",
+            "me@example.com",
+            "Invoice",
+            "b",
+            500,
+        );
+    }
+
+    fn oldest_first(db: &Database, from: Option<&str>, subject: Option<&str>) -> Vec<String> {
+        db.search_emails_ordered(
+            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect()
+    }
+
+    #[test]
+    fn oldest_first_ranks_a_thread_by_its_earliest_match_not_its_latest_reply() {
+        // "The first email I sent" was answered with a September email because
+        // a June thread's latest reply made it sort last.
+        let db = Database::new_for_testing().unwrap();
+        seed_long_running_thread(&db, "acc1");
+        assert_eq!(oldest_first(&db, Some("me@example.com"), None), vec!["opener"]);
+    }
+
+    #[test]
+    fn oldest_first_ranks_by_earliest_match_on_the_general_path_too() {
+        // A subject filter without `from` takes the general (CTE) path.
+        let db = Database::new_for_testing().unwrap();
+        seed_long_running_thread(&db, "acc1");
+        assert_eq!(oldest_first(&db, None, Some("Kickoff")), vec!["opener"]);
     }
 
     #[test]
