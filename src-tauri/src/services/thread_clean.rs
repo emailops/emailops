@@ -121,6 +121,8 @@ fn to_plain_text(body: &str) -> String {
 fn looks_like_html(body: &str) -> bool {
     static MARKERS: &[&str] = &[
         "<html", "<body", "<div", "<p>", "<p ", "<br", "<table", "<span", "</p>", "</div>",
+        // Plain text some clients wrap in <pre> with its `<`/`>` escaped.
+        "<pre",
     ];
     // Lowercase a bounded prefix — bodies can be megabytes.
     let prefix: String = body.chars().take(4096).collect::<String>().to_lowercase();
@@ -251,7 +253,7 @@ fn strip_quoted_replies(text: &str) -> String {
             // "On <date>, <name> wrote:" / "On <date> at <time>, <name> wrote:"
             // Localised variants: "El <date>, <name> escribió:", "Le <date>, ... a écrit:",
             // "Am <date> schrieb <name>:".
-            || line_is_reply_attribution(trimmed)
+            || attribution_starts_at(&lines, i)
             // Outlook header: a "From:" line followed by "Sent:" / "Subject:" within
             // the next few lines. Bare "From:" alone is too easy to false-positive
             // (some bodies talk about "from" addresses), so require the second
@@ -282,6 +284,27 @@ fn strip_quoted_replies(text: &str) -> String {
         }
     }
     kept[..end].join("\n")
+}
+
+/// An attribution line, or one a client wrapped so its "wrote:" lands on one
+/// of the next two lines ("On <date>, <name> <addr>" / "[addr]> wrote:").
+fn attribution_starts_at(lines: &[&str], i: usize) -> bool {
+    let mut joined = lines[i].trim().to_string();
+    if line_is_reply_attribution(&joined) {
+        return true;
+    }
+    for next in lines.iter().skip(i + 1).take(2) {
+        let next = next.trim();
+        if next.is_empty() {
+            return false;
+        }
+        joined.push(' ');
+        joined.push_str(next);
+        if line_is_reply_attribution(&joined) {
+            return true;
+        }
+    }
+    false
 }
 
 fn line_is_reply_attribution(line: &str) -> bool {
@@ -510,6 +533,26 @@ mod tests {
     fn a_marker_line_framed_by_dashes_still_cuts() {
         let body = "Replying inline.\n\n-------- Mensaje original --------\nDe: Ana\nOld text.";
         assert_eq!(clean_email_body(body, 4000), "Replying inline.");
+    }
+
+    #[test]
+    fn a_reply_wrapped_in_a_pre_block_is_read_as_html() {
+        // Some clients send plain text inside <pre style="white-space:pre-wrap">
+        // with its `<`/`>` escaped: the `&gt; ` quote prefix and the escaped
+        // address stayed as entities, so no quote marker was ever seen.
+        let body = "<pre style=\"white-space:pre-wrap\">Hi,\r\n\r\nJust following up on our earlier email.\r\n\r\n\
+                    Best,\r\nSam\r\n\r\nOn Wed, February 26, 2025 10:48 AM, Sam Lee &lt;sam@example.com&gt;\r\n\
+                    [sam@example.com]&gt; wrote:\r\n\r\n&gt; Dear team,\r\n&gt;\r\n&gt; We looked at your website.\r\n&gt;\r\n</pre>";
+        assert_eq!(
+            clean_email_body(body, 4000),
+            "Hi,\n\nJust following up on our earlier email.\n\nBest,\nSam"
+        );
+    }
+
+    #[test]
+    fn an_attribution_whose_wrote_lands_on_the_next_line_is_cut() {
+        let body = "Sounds good.\n\nOn Wed, 26 Feb 2025 at 10:48, Sam Lee <sam@example.com>\nwrote:\n\n> Are you free?";
+        assert_eq!(clean_email_body(body, 4000), "Sounds good.");
     }
 
     #[test]
