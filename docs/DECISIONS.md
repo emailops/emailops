@@ -1747,3 +1747,25 @@ is unlikely to run on.
   launch and could lose throughput, and those are the users the asset is for.
 - *Publishing without the CUDA asset and attaching it later*: it changes when a release
   goes out, not how long the build takes.
+
+## 2026-09-25 — Windows Vulkan builds without --jobs 1
+
+**Decision:** `scripts/build_platform.sh` no longer forces `--jobs 1` on Windows Vulkan
+builds. The C1041 PDB race it worked around is covered by three later fixes: the Ninja
+generator, `CL=/FS`, and the short `CARGO_TARGET_DIR` (C:/ct). Confirmed by a
+`windows-vulkan` dry run (run 36119358082): no C1041, the smoke test passed, pass 1 took
+22m57s (was 43m53s) and the job 35 min (was 54).
+**Context:** `--jobs 1` serialized every Rust crate, not just the CMake build. On the
+25/09/2026 release run, pass 1 took 43m53s on Windows against 17m05s on Linux. After the
+CUDA job was trimmed, the 54-minute Windows Vulkan leg became the next-longest part of
+the release. The commit that added `--jobs 1` was made before any of the three later
+fixes, and the short-target-dir fix showed C1041 also fired on a single, uncontended
+compile, from path length alone.
+**Rejected:**
+- *Serializing only llama-cpp-sys-2* (a `cargo build -p llama-cpp-sys-2 --jobs 1`
+  first pass): cargo refuses `--features` for a package outside the workspace. Without
+  them the crate would build with different features and be rebuilt in pass 2.
+- *Avoiding pass 2's recompile of `emailops`* (~3-5 min per leg): the merged Tauri
+  config, which includes backends staged after pass 1, changes the app's build script
+  input. Fixing it means reworking packaging around `tauri build --no-bundle` +
+  `tauri bundle`, on a path with no per-PR CI coverage.
