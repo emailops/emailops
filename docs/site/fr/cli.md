@@ -62,6 +62,7 @@ de chat (les jetons arrivent en direct) et les autres correspondent aux sous-com
 | `classify [--all]` | Classe les e-mails nouveaux — ou tous |
 | `embed [--batch N]` | Génère les embeddings de recherche |
 | `doctor` | Rapport d'état en lecture seule (base, comptes, configuration IA) |
+| `attachment-suggestions` | Aperçu des règles de pièces jointes qu'EmailOps suggérerait (lecture seule) |
 
 <!-- claim:cli-commands-2 -->
 Les options globales fonctionnent avant ou après la sous-commande : `--json`, `--quiet`,

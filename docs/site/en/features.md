@@ -87,6 +87,14 @@ Every pattern you fill in must match. Rules run on new mail as it syncs; tick **
 emails after creating** to collect from the mail you already have. Select attachments to download
 them together to your Downloads folder.
 
+<!-- claim:feat-attachments-view-8 -->
+EmailOps also proposes rules on its own. When the same sender keeps mailing you documents
+(PDFs, Office files or e-invoices) — at least three emails spread over two or more months — a
+**Suggested rules** section appears in **Manage Rules**, and a badge next to **Attachments** in
+the sidebar counts them. **Review** opens the rule form already filled in (sender, filename
+pattern, tags); the rule is only created when you save it. **Dismiss** hides the suggestion for
+good.
+
 ## Search
 
 <!-- claim:feat-search-1 -->

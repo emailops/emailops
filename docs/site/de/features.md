@@ -95,6 +95,14 @@ Synchronisierung; setzen Sie **Nach dem Erstellen auf vorhandene E-Mails anwende
 der bereits vorhandenen Post zu sammeln. Markieren Sie Anhänge, um sie gemeinsam in Ihren
 Downloads-Ordner herunterzuladen.
 
+<!-- claim:feat-attachments-view-8 -->
+EmailOps schlägt auch selbst Regeln vor. Wenn Ihnen derselbe Absender immer wieder Dokumente
+schickt (PDFs, Office-Dateien oder E-Rechnungen) — mindestens drei E-Mails über zwei oder mehr
+Monate —, erscheint unter **Regeln verwalten** ein Abschnitt **Vorgeschlagene Regeln**, und ein
+Zähler neben **Anhänge** in der Seitenleiste zeigt ihre Anzahl. **Prüfen** öffnet das
+Regelformular bereits ausgefüllt (Absender, Dateinamenmuster, Tags); die Regel wird erst angelegt,
+wenn Sie sie speichern. **Verwerfen** blendet den Vorschlag dauerhaft aus.
+
 ## Suche
 
 <!-- claim:feat-search-1 -->

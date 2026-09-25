@@ -61,6 +61,7 @@ In der REPL ist jede Aktion ein Befehl mit `/` am Anfang: `/chat <Frage>` ist ei
 | `classify [--all]` | Neue — oder alle — E-Mails klassifizieren |
 | `embed [--batch N]` | Such-Embeddings erzeugen |
 | `doctor` | Schreibgeschützter Statusbericht (Datenbank, Konten, KI-Konfiguration) |
+| `attachment-suggestions` | Vorschau der Anhangsregeln, die EmailOps vorschlagen würde (nur Lesen) |
 
 <!-- claim:cli-commands-2 -->
 Globale Optionen funktionieren vor oder nach dem Unterbefehl: `--json`, `--quiet`,

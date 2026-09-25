@@ -61,6 +61,7 @@ stream live), and the rest map onto the subcommands — `/search`, `/account`, `
 | `classify [--all]` | Classify new — or all — emails |
 | `embed [--batch N]` | Generate search embeddings |
 | `doctor` | Read-only readiness report (database, accounts, AI config) |
+| `attachment-suggestions` | Preview the attachment rules EmailOps would suggest (read-only) |
 
 <!-- claim:cli-commands-2 -->
 Global flags work before or after the subcommand: `--json`, `--quiet`,
