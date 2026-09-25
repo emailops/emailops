@@ -1705,3 +1705,27 @@ flag under its assistant message id (`chat::cancel`).
 - *Discarding the partial answer*: the user saw it, and dropping it looks like data
   loss.
 - *A separate research-only control*: one Cancel for every turn is simpler to find.
+
+## 2026-09-25 — Email text reaches the AI minus only what its thread already contains
+
+**Decision:** Quote, forward and signature markers ("On … wrote:", Outlook
+`From:/Sent:` headers, "Original/Forwarded message", `>` lines, `<blockquote>`, the
+`-- ` delimiter) only split a body into blocks (`thread_clean::segment`). A quoted or
+signature block is dropped only when ~80% of its 5-word runs appear in an earlier
+message of the same thread (`thread_clean::History`), and an own paragraph only when it
+repeats one. "Sent from my iPhone" stubs always go. Everything else reaches the chat,
+drafts, Lenses, Tasks and Memory. Draft style samples keep only the user's own text
+(`own_text`).
+**Context:** Cutting at the first marker lost the substance of emails whose quote was
+the only copy: forwards with a note, Apple Mail forwards in a `<blockquote>`, replies
+to mail that was never synced, contact-form notifications that open with `From:` /
+`Subject:` or end in a `--` footer. Each new marker rule added another way to lose
+text. Comparing with the thread fails safe: when it errs, the model reads more text,
+never less. On a 50-email sample of a real mailbox the AI now reads 66% of the text
+instead of 31%.
+**Rejected:**
+- *More marker rules, forward detection by subject prefix* (Mailgun `talon` does this
+  for a single message): still loses text whenever a rule misfires, and a thread-less
+  view is not what the features read.
+- *Cleaning only one-message threads differently*: a special case of comparing with
+  the thread, which covers it.
