@@ -126,19 +126,39 @@ pub fn is_document_attachment(mime_type: &str, filename: &str) -> bool {
     extension(filename).is_some_and(|ext| DOCUMENT_EXTENSIONS.contains(&ext.as_str()))
 }
 
-/// Generalise a filename into the glob its siblings share: every run of
-/// digits (with the separators between them — dates, invoice numbers)
-/// becomes one `*`, and the extension is lowercased.
+/// Month names (en/es/fr/de, full and abbreviated) as they appear in
+/// periodic document names — `invoice-jan.pdf`, `Factura_Enero_2026.pdf`.
+const MONTH_NAMES: &str = "january|february|march|april|may|june|july|august|september|october|november|december\
+    |jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec\
+    |enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre\
+    |ene|abr|ago|dic\
+    |janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|octobre|novembre|décembre|decembre\
+    |janv|févr|fevr|juil|déc\
+    |januar|februar|märz|maerz|juni|juli|oktober|dezember|okt|dez";
+
+/// Generalise a filename into the glob its siblings share: month names and
+/// every run of digits (with the separators between them — dates, invoice
+/// numbers) become one `*`, and the extension is lowercased.
 pub fn filename_family(filename: &str) -> String {
+    use std::sync::LazyLock;
+
+    // A month only counts as a whole token, so `summary` or `mayor` survive.
     #[allow(clippy::unwrap_used)] // infallible by construction: literal pattern
-    static NUMBER_RUN: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"\d(?:[\d\-_./ ]*\d)?").unwrap());
+    static MONTH: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(&format!(r"(?i)(^|[^\p{{L}}])(?:{MONTH_NAMES})([^\p{{L}}]|$)")).unwrap());
+    #[allow(clippy::unwrap_used)] // infallible by construction: literal pattern
+    static NUMBER_RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\d(?:[\d\-_./ ]*\d)?").unwrap());
+    // `Factura_*_*` (month then year) is one variable part, not two.
+    #[allow(clippy::unwrap_used)] // infallible by construction: literal pattern
+    static WILDCARD_RUN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\*(?:[\-_./ ]*\*)+").unwrap());
 
     let (stem, ext) = match filename.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => (stem, Some(ext.to_ascii_lowercase())),
         _ => (filename, None),
     };
-    let stem = NUMBER_RUN.replace_all(stem, "*");
+    let stem = MONTH.replace_all(stem, "${1}*${2}");
+    let stem = NUMBER_RUN.replace_all(&stem, "*");
+    let stem = WILDCARD_RUN.replace_all(&stem, "*");
     match ext {
         Some(ext) => format!("{stem}.{ext}"),
         None => stem.into_owned(),
@@ -362,12 +382,27 @@ pub fn refresh_suggestions_at(
     account_id: &str,
     now: i64,
 ) -> Result<Vec<AttachmentRuleSuggestion>> {
+    let candidates = preview_suggestions_at(db, account_id, now)?;
+    db.replace_pending_attachment_rule_suggestions(account_id, &candidates, now)?;
+    list_suggestions(db, account_id)
+}
+
+/// Mine the account without persisting anything — what a refresh at `now`
+/// would propose. Backs the read-only `emailops-cli attachment-suggestions`.
+pub fn preview_suggestions_at(
+    db: &crate::db::Database,
+    account_id: &str,
+    now: i64,
+) -> Result<Vec<SuggestionCandidate>> {
     let observations = db.get_attachment_observations(account_id, now - LOOKBACK_SECS)?;
     let rules = db.get_all_attachment_rules(account_id)?;
     let resolved = db.get_resolved_attachment_rule_suggestion_keys(account_id)?;
-    let candidates = plan_suggestions(&observations, &rules, &resolved, SuggestionParams::default());
-    db.replace_pending_attachment_rule_suggestions(account_id, &candidates, now)?;
-    list_suggestions(db, account_id)
+    Ok(plan_suggestions(
+        &observations,
+        &rules,
+        &resolved,
+        SuggestionParams::default(),
+    ))
 }
 
 pub fn list_suggestions(db: &crate::db::Database, account_id: &str) -> Result<Vec<AttachmentRuleSuggestion>> {
@@ -495,6 +530,18 @@ mod executor_tests {
         assert!(refresh_suggestions_at(&db, "acc1", three_years_later)
             .expect("refresh")
             .is_empty());
+    }
+
+    #[test]
+    fn preview_reports_candidates_without_persisting_them() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+
+        let preview = preview_suggestions_at(&db, "acc1", NOW).expect("preview");
+
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0].key, "billing@acme.com|invoice_*.pdf");
+        assert!(list_suggestions(&db, "acc1").expect("list").is_empty());
     }
 
     #[test]
@@ -657,6 +704,20 @@ mod tests {
         assert_eq!(filename_family("invoice-123.PDF"), "invoice-*.pdf");
         assert_eq!(filename_family("Statement 03.2026.pdf"), "Statement *.pdf");
         assert_eq!(filename_family("contract.pdf"), "contract.pdf");
+    }
+
+    #[test]
+    fn filename_family_treats_month_names_as_variable() {
+        assert_eq!(filename_family("borgbase-invoice-jan.pdf"), "borgbase-invoice-*.pdf");
+        assert_eq!(filename_family("Factura_Enero_2026.pdf"), "Factura_*.pdf");
+        assert_eq!(filename_family("Relevé Mars 2026.pdf"), "Relevé *.pdf");
+        assert_eq!(filename_family("Rechnung-März-2026.pdf"), "Rechnung-*.pdf");
+    }
+
+    #[test]
+    fn filename_family_keeps_month_letters_inside_words() {
+        assert_eq!(filename_family("summary.pdf"), "summary.pdf");
+        assert_eq!(filename_family("mayor-report.pdf"), "mayor-report.pdf");
     }
 
     #[test]

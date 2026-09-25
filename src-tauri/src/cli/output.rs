@@ -414,6 +414,33 @@ pub fn render_drafts(drafts: &[Draft], style: RenderStyle) -> Result<()> {
     Ok(())
 }
 
+pub fn render_attachment_suggestions(
+    candidates: &[crate::services::attachment_suggestions::SuggestionCandidate],
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(candidates);
+    }
+    if candidates.is_empty() {
+        println!("(no suggested attachment rules)");
+        return Ok(());
+    }
+    let color = style.color();
+    for c in candidates {
+        println!(
+            "{} {:<32} {:<24} {}",
+            paint(&format!("{:<32}", truncate(&c.name, 32)), "1", color),
+            truncate(&c.sender_email_pattern, 32),
+            truncate(c.filename_pattern.as_deref().unwrap_or("(any)"), 24),
+            dim(
+                &format!("{} emails · last {}", c.email_count, format_thread_date(c.last_seen)),
+                color
+            ),
+        );
+    }
+    Ok(())
+}
+
 /// Full single-draft view for the `draft <id>` and `compose` commands: headers
 /// (incl. provider link + attachments) then the body. JSON emits the raw draft.
 pub fn render_draft_detail(draft: &Draft, style: RenderStyle) -> Result<()> {

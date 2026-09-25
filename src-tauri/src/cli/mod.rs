@@ -353,6 +353,10 @@ pub enum Command {
     /// List saved drafts for an account.
     Drafts,
 
+    /// Preview the attachment rules EmailOps would suggest for an account
+    /// (recurring documents from the same sender). Read-only: nothing is saved.
+    AttachmentSuggestions,
+
     /// Show a single draft (recipients, subject, body, attachments).
     Draft {
         /// Draft id.
@@ -920,6 +924,12 @@ mod tests {
             }
             other => panic!("expected Eval, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn attachment_suggestions_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "attachment-suggestions"]);
+        assert!(matches!(cli.command, Some(Command::AttachmentSuggestions)));
     }
 
     #[test]

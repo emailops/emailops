@@ -384,6 +384,16 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             output::render_calendar_events(&events, session.style)
         }
 
+        Command::AttachmentSuggestions => {
+            let account = session.require_account()?;
+            let candidates = crate::services::attachment_suggestions::preview_suggestions_at(
+                &session.db,
+                &account,
+                crate::services::clock::now_secs(),
+            )?;
+            output::render_attachment_suggestions(&candidates, session.style)
+        }
+
         Command::Drafts => {
             let account = session.require_account()?;
             let drafts = crate::services::emails::list_drafts(&session.db, &account)?;
