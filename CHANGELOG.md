@@ -19,17 +19,16 @@ No unreleased changes yet.
   stopped, re-researches when you correct it, and answers counts and lists
   exactly, with a link to each matching conversation. Also available from the
   CLI.
-- **Fill the app's forms from chat.** Ask for something the app has a form for
-  (a new Lens, for example) and the real form opens with the fields filled in,
-  for you to review and save. The chat never creates anything by itself.
+- **Create a Lens from chat.** Ask for one ("track my suppliers' invoices with
+  amount and date") and the Create Lens form opens with the fields filled in,
+  for you to review and save. The chat never creates it by itself.
 - **Steer AI reply drafts.** Drafts are written from what the thread actually
   says up to the message being answered, in your own voice, and you can tell
   the draft what to say.
 - **Lens improvements.** Lenses can scope custom IMAP folders; a new
-  contact-form template; the Config dialog shows and edits a Lens's columns;
-  Excel-style column filters and sorting by date; each run's errors in a row
-  of their own; dates shown as DD/MM/YYYY HH:mm; the Lens UI is translated.
-  Creating a Lens asks whether to build it with the chat or by hand.
+  contact-form template; Excel-style column filters and sorting by date; each
+  run's errors in a row of their own. Creating a Lens asks whether to build it
+  with the chat or by hand.
 - **Reopen the chat from any view.** A collapsed chat leaves a slim rail on
   the right edge.
 - **Cancel a running chat turn.**
