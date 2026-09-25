@@ -160,8 +160,9 @@ fn any_tag_re() -> &'static Regex {
 fn inline_addr_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // <foo@bar.tld> and <https://...> tokens that show up in plain-text bodies
-    // (mailto display form, RFC 3986 angle-bracket URIs).
-    RE.get_or_init(|| Regex::new(r"<\s*(?:[^<>\s]+@[^<>\s]+|https?://[^<>\s]+)\s*>").expect("valid regex"))
+    // (mailto display form, RFC 3986 angle-bracket URIs). Group 1 is the
+    // address itself, which is content: only the brackets go.
+    RE.get_or_init(|| Regex::new(r"<\s*([^<>\s]+@[^<>\s]+|https?://[^<>\s]+)\s*>").expect("valid regex"))
 }
 
 /// Remove every `<blockquote>…</blockquote>` element, nested ones included.
@@ -207,7 +208,7 @@ fn html_to_plain_text(html: &str) -> String {
 }
 
 fn strip_inline_addr_brackets(text: &str) -> String {
-    inline_addr_re().replace_all(text, "").into_owned()
+    inline_addr_re().replace_all(text, "$1").into_owned()
 }
 
 // ── Quoted-reply stripping ─────────────────────────────────────────────────
@@ -220,49 +221,49 @@ fn strip_inline_addr_brackets(text: &str) -> String {
 ///
 /// Heuristic, not perfect: we cut at the *first* match and drop everything
 /// after, since once a reply quote starts the rest of the body is almost always
-/// quoted history.
+/// quoted history. A match with nothing written above it is not a reply's
+/// quote — a forward with no note, or a contact-form notification that opens
+/// with the visitor's From:/Subject: — so it never cuts.
 fn strip_quoted_replies(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
 
-    // Patterns that indicate "quoted history starts here".
-    let original_markers: [&str; 6] = [
-        "-----Original Message-----",
-        "-------- Forwarded Message --------",
-        "-------- Original Message --------",
-        "Mensaje original",
-        "Mensaje reenviado",
-        "Ursprüngliche Nachricht",
+    // A line that is only one of these (dashes around it allowed) starts the
+    // quoted history. Matched on the whole line: the words inside a sentence
+    // ("te reenvío el mensaje original") are prose, not a marker.
+    let original_markers: [&str; 5] = [
+        "original message",
+        "forwarded message",
+        "mensaje original",
+        "mensaje reenviado",
+        "ursprüngliche nachricht",
     ];
 
     let mut cut_at: Option<usize> = None;
+    let mut own_content = false;
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        // Hard markers — case-insensitive substring match.
         let lower = trimmed.to_lowercase();
-        if original_markers.iter().any(|m| lower.contains(&m.to_lowercase())) {
+        let marker = lower.trim_matches(|c: char| c == '-' || c.is_whitespace());
+        let starts_quote = original_markers.contains(&marker)
+            // "On <date>, <name> wrote:" / "On <date> at <time>, <name> wrote:"
+            // Localised variants: "El <date>, <name> escribió:", "Le <date>, ... a écrit:",
+            // "Am <date> schrieb <name>:".
+            || line_is_reply_attribution(trimmed)
+            // Outlook header: a "From:" line followed by "Sent:" / "Subject:" within
+            // the next few lines. Bare "From:" alone is too easy to false-positive
+            // (some bodies talk about "from" addresses), so require the second
+            // header line to confirm.
+            || ((trimmed.starts_with("From:") || trimmed.starts_with("De:") || trimmed.starts_with("Von:"))
+                && has_outlook_header_followup(&lines, i));
+        if starts_quote && own_content {
             cut_at = Some(i);
             break;
         }
-        // "On <date>, <name> wrote:" / "On <date> at <time>, <name> wrote:"
-        // Localised variants: "El <date>, <name> escribió:", "Le <date>, ... a écrit:",
-        // "Am <date> schrieb <name>:".
-        if line_is_reply_attribution(trimmed) {
-            cut_at = Some(i);
-            break;
-        }
-        // Outlook header: a "From:" line followed by "Sent:" / "Subject:" within
-        // the next few lines. Bare "From:" alone is too easy to false-positive
-        // (some bodies talk about "from" addresses), so require the second
-        // header line to confirm.
-        if (trimmed.starts_with("From:") || trimmed.starts_with("De:") || trimmed.starts_with("Von:"))
-            && has_outlook_header_followup(&lines, i)
-        {
-            cut_at = Some(i);
-            break;
-        }
+        // The marker line of an uncut forward is not the sender's own text.
+        own_content |= !starts_quote;
     }
 
     let kept: Vec<&str> = match cut_at {
@@ -470,6 +471,45 @@ mod tests {
         // next line, and a one-line check never saw it.
         let text = "The budget is 4,000 EUR.\n\nEl lun, 1 jun 2017 a las 10:00, Ana Pérez <\nana@example.com> escribió:\n\n> Could you send me a budget?";
         assert_eq!(clean_email_body(text, 1000), "The budget is 4,000 EUR.");
+    }
+
+    #[test]
+    fn a_form_notification_opening_with_from_and_subject_lines_is_kept() {
+        // Contact-form plugins put the visitor's From:/Subject: at the top of
+        // the body. With nothing written above it, it is not a quoted reply.
+        let body = "From: Sam Lee <sam.lee@example.com>\nSubject: Question about availability\n\n\
+                    Message Body:\nAre you available from next month?\n\n--\nSent from a contact form";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.contains("sam.lee@example.com"), "{cleaned:?}");
+        assert!(cleaned.contains("Are you available from next month?"), "{cleaned:?}");
+    }
+
+    #[test]
+    fn a_forward_with_no_note_keeps_the_forwarded_message() {
+        let body = "---------- Forwarded message ---------\nFrom: Ana <ana@example.com>\nSubject: Budget\n\nThe budget is 4,000 EUR.";
+        assert!(clean_email_body(body, 4000).contains("The budget is 4,000 EUR."));
+    }
+
+    #[test]
+    fn a_plain_text_address_in_angle_brackets_is_kept() {
+        let body = "Write to Irene Soto <irene@example.com> about the order.";
+        assert_eq!(
+            clean_email_body(body, 4000),
+            "Write to Irene Soto irene@example.com about the order."
+        );
+    }
+
+    #[test]
+    fn a_marker_phrase_inside_a_sentence_does_not_cut_the_body() {
+        let body = "Te reenvío el mensaje original que pediste.\n\nEl presupuesto es de 4.000 EUR.";
+        let cleaned = clean_email_body(body, 4000);
+        assert!(cleaned.contains("El presupuesto es de 4.000 EUR."), "{cleaned:?}");
+    }
+
+    #[test]
+    fn a_marker_line_framed_by_dashes_still_cuts() {
+        let body = "Replying inline.\n\n-------- Mensaje original --------\nDe: Ana\nOld text.";
+        assert_eq!(clean_email_body(body, 4000), "Replying inline.");
     }
 
     #[test]
