@@ -74,10 +74,10 @@
     "removeTag": "Remove tag {{tag}}",
     "applyStarting": "Looking for matching attachments…",
     "applyProgress": "Checked {{processed}} of {{total}} emails · {{saved}} attachments collected",
-    "applyDone_one": "Done: {{count}} attachment collected from existing emails",
-    "applyDone_other": "Done: {{count}} attachments collected from existing emails",
+    "applyDone_one": "Done: {{count}} attachment in this rule · {{new}} new",
+    "applyDone_other": "Done: {{count}} attachments in this rule · {{new}} new",
     "applyFailed": "Could not apply the rule to existing emails. See the Output panel.",
-    "applyDone_many": "Done: {{count}} attachments collected from existing emails"
+    "applyDone_many": "Done: {{count}} attachments in this rule · {{new}} new"
   },
   "suggestions": {
     "title": "Suggested rules",

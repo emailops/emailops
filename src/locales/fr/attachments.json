@@ -74,10 +74,10 @@
     "removeTag": "Retirer l'étiquette {{tag}}",
     "applyStarting": "Recherche des pièces jointes correspondantes…",
     "applyProgress": "{{processed}} e-mails vérifiés sur {{total}} · {{saved}} pièces jointes collectées",
-    "applyDone_one": "Terminé : {{count}} pièce jointe collectée dans les e-mails existants",
-    "applyDone_other": "Terminé : {{count}} pièces jointes collectées dans les e-mails existants",
+    "applyDone_one": "Terminé : {{count}} pièce jointe dans cette règle · {{new}} nouvelles",
+    "applyDone_other": "Terminé : {{count}} pièces jointes dans cette règle · {{new}} nouvelles",
     "applyFailed": "Impossible d'appliquer la règle aux e-mails existants. Consultez le panneau de sortie.",
-    "applyDone_many": "Terminé : {{count}} pièces jointes collectées dans les e-mails existants"
+    "applyDone_many": "Terminé : {{count}} pièces jointes dans cette règle · {{new}} nouvelles"
   },
   "suggestions": {
     "title": "Règles suggérées",

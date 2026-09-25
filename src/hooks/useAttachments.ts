@@ -1,6 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect } from 'react';
-import * as api from '@/lib/api';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
@@ -119,16 +118,9 @@ export function useAttachments() {
       enabled: boolean,
     ): Promise<AttachmentRule> => {
       const rule = await updateRule(ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled);
-      addLog('info', 'attachments', `Updated rule "${name}", re-evaluating...`);
-      // Backend cleared old attachments — re-scan existing emails
-      if (activeAccountId && enabled) {
-        try {
-          const count = await api.applyRuleRetroactively(ruleId, activeAccountId);
-          addLog('success', 'attachments', `Rule "${name}": found ${count} attachments`);
-        } catch (err) {
-          addLog('error', 'attachments', `Re-evaluation failed: ${err}`);
-        }
-      }
+      addLog('info', 'attachments', `Updated rule "${name}"`);
+      // The backend dropped attachments the new patterns no longer match; the
+      // rules modal re-scans existing mail in the background with progress.
       if (activeAccountId) {
         fetchAttachments(activeAccountId, selectedTag);
         fetchTags(activeAccountId);

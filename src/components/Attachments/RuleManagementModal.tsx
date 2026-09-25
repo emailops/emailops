@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
@@ -51,7 +51,10 @@ interface RuleManagementModalProps {
 interface ApplyState {
   processed: number;
   total: number;
+  /** New attachments collected by this run. */
   saved: number;
+  /** Every attachment the rule holds once the run is done (new + earlier). */
+  collected?: number;
   status: 'running' | 'done' | 'failed';
 }
 
@@ -119,6 +122,12 @@ export function RuleManagementModal({
   // accepts it, cancelling leaves it pending.
   const [reviewingSuggestionId, setReviewingSuggestionId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // The form sits above the suggestions and the rule list; opening it from
+  // further down must bring it into view instead of leaving it off-screen.
+  const formRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showForm) formRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [showForm, editingRuleId, reviewingSuggestionId]);
   // Applying a rule to existing mail runs in the background; each rule card
   // shows its own progress, fed by `attachment-rule-apply-progress` events.
   const [applyStates, setApplyStates] = useState<Record<string, ApplyState>>({});
@@ -157,9 +166,15 @@ export function RuleManagementModal({
     addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
     try {
       const count = await api.applyRuleRetroactively(rule.id, accountId);
+      // `count` is only what this run added; re-applying an edited rule adds
+      // nothing new, and "0" read as if the rule had found nothing.
+      const collected = await api.countAttachmentsForRule(rule.id).catch((err) => {
+        addLog('error', 'attachments', `Failed to count rule attachments: ${err}`);
+        return undefined;
+      });
       setApplyStates((prev) => ({
         ...prev,
-        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0 }), saved: count, status: 'done' },
+        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0 }), saved: count, collected, status: 'done' },
       }));
       addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
       onRefreshAfterApply();
@@ -274,7 +289,18 @@ export function RuleManagementModal({
     try {
       if (editingRuleId) {
         const existing = rules.find((r) => r.id === editingRuleId);
-        await onUpdateRule(editingRuleId, trimmedName, sender, subject, filename, tags, existing?.enabled ?? true);
+        const updated = await onUpdateRule(
+          editingRuleId,
+          trimmedName,
+          sender,
+          subject,
+          filename,
+          tags,
+          existing?.enabled ?? true,
+        );
+        // Editing drops attachments the new patterns no longer match; re-scan
+        // in the background, with the same progress as a new rule.
+        if (updated.enabled) void runApply(updated);
       } else {
         const newRule = await onCreateRule(trimmedName, sender, subject, filename, tags);
         if (reviewingSuggestionId) {
@@ -359,7 +385,10 @@ export function RuleManagementModal({
               visible when creating or editing without forcing the user to
               scroll past the existing rules). */}
           {showForm ? (
-            <div className="border border-primary-200 rounded-lg p-4 bg-primary-50/30 space-y-3">
+            <div
+              ref={formRef}
+              className="border border-primary-200 rounded-lg p-4 bg-primary-50/30 space-y-3 scroll-mt-4"
+            >
               <h3 className="text-sm font-medium text-gray-900">
                 {editingRuleId ? t('attachments:rules.editTitle') : t('attachments:rules.newTitle')}
               </h3>
@@ -663,7 +692,11 @@ function ApplyProgress({ state }: { state: ApplyState | undefined }) {
   const { t } = useTranslation(['attachments']);
   if (!state) return null;
   if (state.status === 'done') {
-    return <p className="mb-2 text-xs text-green-700">{t('attachments:rules.applyDone', { count: state.saved })}</p>;
+    return (
+      <p className="mb-2 text-xs text-green-700">
+        {t('attachments:rules.applyDone', { count: state.collected ?? state.saved, new: state.saved })}
+      </p>
+    );
   }
   if (state.status === 'failed') {
     return <p className="mb-2 text-xs text-red-600">{t('attachments:rules.applyFailed')}</p>;

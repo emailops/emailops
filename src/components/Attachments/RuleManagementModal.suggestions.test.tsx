@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
+  useTranslation: () => ({
+    t: (key: string, opts?: Record<string, unknown>) => (opts ? `${key}${JSON.stringify(opts)}` : key),
+    i18n: { language: 'en' },
+  }),
 }));
 
 vi.mock('@/stores/logStore', () => ({
@@ -119,6 +122,7 @@ async function click(el: HTMLElement) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -239,5 +243,43 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(container.querySelector('[role="progressbar"]')).toBeNull();
     expect(container.textContent).toContain('attachments:rules.applyDone');
+  });
+
+  it('reviewing a suggestion scrolls the prefilled form into view', async () => {
+    render([SUGGESTION]);
+
+    await click(button('attachments:suggestions.review'));
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('editing a rule scrolls the form into view', async () => {
+    render([], [makeRule('Acme')]);
+
+    await click(button('common:actions.edit'));
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('saving an edited rule closes the form and re-applies it in the background', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    render([], [makeRule('Acme')]);
+    await click(button('common:actions.edit'));
+
+    await click(button('attachments:rules.updateRule'));
+
+    expect(handlers.onUpdateRule).toHaveBeenCalled();
+    expect(container.textContent).not.toContain('attachments:rules.editTitle');
+    expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1');
+  });
+
+  it('the done message counts every attachment of the rule, not only the new ones', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockResolvedValueOnce(0);
+    vi.mocked(api.countAttachmentsForRule).mockResolvedValue(20);
+    render([], [makeRule('Acme')]);
+
+    await click(button('attachments:rules.applyToExisting'));
+
+    expect(container.textContent).toContain('attachments:rules.applyDone{"count":20,"new":0}');
   });
 });

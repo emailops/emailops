@@ -74,10 +74,10 @@
     "removeTag": "Tag {{tag}} entfernen",
     "applyStarting": "Passende Anhänge werden gesucht…",
     "applyProgress": "{{processed}} von {{total}} E-Mails geprüft · {{saved}} Anhänge gesammelt",
-    "applyDone_one": "Fertig: {{count}} Anhang aus vorhandenen E-Mails gesammelt",
-    "applyDone_other": "Fertig: {{count}} Anhänge aus vorhandenen E-Mails gesammelt",
+    "applyDone_one": "Fertig: {{count}} Anhang in dieser Regel · {{new}} neu",
+    "applyDone_other": "Fertig: {{count}} Anhänge in dieser Regel · {{new}} neu",
     "applyFailed": "Die Regel konnte nicht auf vorhandene E-Mails angewendet werden. Siehe Ausgabebereich.",
-    "applyDone_many": "Fertig: {{count}} Anhänge aus vorhandenen E-Mails gesammelt"
+    "applyDone_many": "Fertig: {{count}} Anhänge in dieser Regel · {{new}} neu"
   },
   "suggestions": {
     "title": "Vorgeschlagene Regeln",

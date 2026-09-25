@@ -74,10 +74,10 @@
     "removeTag": "Quitar etiqueta {{tag}}",
     "applyStarting": "Buscando adjuntos que coincidan…",
     "applyProgress": "Revisados {{processed}} de {{total}} correos · {{saved}} adjuntos recopilados",
-    "applyDone_one": "Listo: {{count}} adjunto recopilado de los correos existentes",
-    "applyDone_other": "Listo: {{count}} adjuntos recopilados de los correos existentes",
+    "applyDone_one": "Listo: {{count}} adjunto en esta regla · {{new}} nuevos",
+    "applyDone_other": "Listo: {{count}} adjuntos en esta regla · {{new}} nuevos",
     "applyFailed": "No se pudo aplicar la regla a los correos existentes. Consulta el panel de salida.",
-    "applyDone_many": "Listo: {{count}} adjuntos recopilados de los correos existentes"
+    "applyDone_many": "Listo: {{count}} adjuntos en esta regla · {{new}} nuevos"
   },
   "suggestions": {
     "title": "Reglas sugeridas",
