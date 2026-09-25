@@ -12,6 +12,7 @@ import type {
   AllQueuesState,
   Attachment,
   AttachmentRule,
+  AttachmentRuleSuggestion,
   BackfillStatus,
   Calendar,
   CalendarEvent,
@@ -740,6 +741,22 @@ export async function listAttachmentRules(accountId: string): Promise<Attachment
 
 export async function countAttachmentsForRule(ruleId: string): Promise<number> {
   return invoke('count_attachments_for_rule', { ruleId });
+}
+
+export async function listAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_attachment_rule_suggestions', { accountId });
+}
+
+export async function refreshAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('refresh_attachment_rule_suggestions', { accountId });
+}
+
+export async function dismissAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
+  return invoke('dismiss_attachment_rule_suggestion', { accountId, suggestionId });
+}
+
+export async function acceptAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
+  return invoke('accept_attachment_rule_suggestion', { accountId, suggestionId });
 }
 
 export async function getAttachments(

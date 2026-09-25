@@ -71,6 +71,19 @@
     "rowTags": "Etiquetas:",
     "footerHelp": "Las reglas coinciden con los correos durante la sincronización. Usa * como comodín. Todos los patrones especificados deben coincidir (lógica Y). El nombre de archivo filtra qué adjuntos se recopilan de los correos coincidentes."
   },
+  "suggestions": {
+    "title": "Reglas sugeridas",
+    "subtitle": "Documentos que llegan una y otra vez del mismo remitente. Revisa una para crear la regla o descártala.",
+    "recurrence_one": "{{count}} correo desde {{since}} · último {{last}}",
+    "recurrence_other": "{{count}} correos desde {{since}} · último {{last}}",
+    "recurrence_many": "{{count}} correos desde {{since}} · último {{last}}",
+    "examples": "p. ej.",
+    "review": "Revisar",
+    "dismiss": "Descartar",
+    "badgeTitle_one": "{{count}} regla de adjuntos sugerida",
+    "badgeTitle_other": "{{count}} reglas de adjuntos sugeridas",
+    "badgeTitle_many": "{{count}} reglas de adjuntos sugeridas"
+  },
   "download": {
     "savedTo": "Se guardó \"{{filename}}\" en Descargas",
     "showInFinder": "Mostrar en Finder"

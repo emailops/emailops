@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import type { Attachment, AttachmentRule } from '@/types';
+import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 
 const PAGE_SIZE = 50;
 
@@ -9,6 +9,11 @@ interface AttachmentStore {
   // Rules
   rules: AttachmentRule[];
   isLoadingRules: boolean;
+
+  // Candidate rules mined from recurring document attachments, for the
+  // account in `suggestionsAccountId`.
+  suggestions: AttachmentRuleSuggestion[];
+  suggestionsAccountId: string | null;
 
   // Attachments list
   attachments: Attachment[];
@@ -50,6 +55,12 @@ interface AttachmentStore {
   ) => Promise<AttachmentRule>;
   deleteRule: (ruleId: string, accountId: string) => Promise<void>;
 
+  // Suggestion actions
+  fetchSuggestions: (accountId: string) => Promise<void>;
+  refreshSuggestions: (accountId: string) => Promise<void>;
+  dismissSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
+  acceptSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
+
   // Attachment actions
   fetchAttachments: (accountId: string, tag?: string | null) => Promise<void>;
   loadMoreAttachments: (accountId: string) => Promise<void>;
@@ -67,9 +78,35 @@ interface AttachmentStore {
   reset: () => void;
 }
 
+/** Pending suggestion count, shown as a badge next to the rules entry points. */
+export const selectSuggestionCount = (state: Pick<AttachmentStore, 'suggestions'>): number => state.suggestions.length;
+
+const withoutSuggestion = (suggestions: AttachmentRuleSuggestion[], id: string) =>
+  suggestions.filter((s) => s.id !== id);
+
+// Monotonic id of the latest suggestion load, so a slow response for an
+// account the user already switched away from never overwrites the list.
+let suggestionsLoadId = 0;
+
+async function loadSuggestions(
+  set: (partial: Partial<AttachmentStore>) => void,
+  accountId: string,
+  load: (accountId: string) => Promise<AttachmentRuleSuggestion[]>,
+) {
+  const loadId = ++suggestionsLoadId;
+  try {
+    const suggestions = await load(accountId);
+    if (loadId === suggestionsLoadId) set({ suggestions, suggestionsAccountId: accountId });
+  } catch (error) {
+    if (loadId === suggestionsLoadId) set({ error: errorText(error) });
+  }
+}
+
 export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   rules: [],
   isLoadingRules: false,
+  suggestions: [],
+  suggestionsAccountId: null,
   attachments: [],
   selectedAttachment: null,
   checkedIds: new Set<string>(),
@@ -126,6 +163,28 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     set((state) => ({
       rules: state.rules.filter((r) => r.id !== ruleId),
     }));
+  },
+
+  fetchSuggestions: (accountId) => loadSuggestions(set, accountId, api.listAttachmentRuleSuggestions),
+
+  refreshSuggestions: (accountId) => loadSuggestions(set, accountId, api.refreshAttachmentRuleSuggestions),
+
+  dismissSuggestion: async (accountId, suggestionId) => {
+    try {
+      await api.dismissAttachmentRuleSuggestion(accountId, suggestionId);
+      set((state) => ({ suggestions: withoutSuggestion(state.suggestions, suggestionId) }));
+    } catch (error) {
+      set({ error: errorText(error) });
+    }
+  },
+
+  acceptSuggestion: async (accountId, suggestionId) => {
+    try {
+      await api.acceptAttachmentRuleSuggestion(accountId, suggestionId);
+      set((state) => ({ suggestions: withoutSuggestion(state.suggestions, suggestionId) }));
+    } catch (error) {
+      set({ error: errorText(error) });
+    }
   },
 
   fetchAttachments: async (accountId, tag) => {

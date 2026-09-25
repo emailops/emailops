@@ -71,6 +71,19 @@
     "rowTags": "Tags:",
     "footerHelp": "Rules match emails during sync. Use * for wildcards. All specified patterns must match (AND logic). Filename filters which attachments are collected from matching emails."
   },
+  "suggestions": {
+    "title": "Suggested rules",
+    "subtitle": "Documents that keep arriving from the same sender. Review one to create a rule, or dismiss it.",
+    "recurrence_one": "{{count}} email since {{since}} · last {{last}}",
+    "recurrence_other": "{{count}} emails since {{since}} · last {{last}}",
+    "recurrence_many": "{{count}} emails since {{since}} · last {{last}}",
+    "examples": "e.g.",
+    "review": "Review",
+    "dismiss": "Dismiss",
+    "badgeTitle_one": "{{count}} suggested attachment rule",
+    "badgeTitle_other": "{{count}} suggested attachment rules",
+    "badgeTitle_many": "{{count}} suggested attachment rules"
+  },
   "download": {
     "savedTo": "Saved \"{{filename}}\" to Downloads",
     "showInFinder": "Show in Finder"

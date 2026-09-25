@@ -9,6 +9,7 @@ import { folderLabel } from '@/lib/folderDisplay';
 import { formatShortcut } from '@/lib/platform';
 import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { selectSuggestionCount, useAttachmentStore } from '@/stores/attachmentStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { useLensStore } from '@/stores/lensStore';
@@ -131,6 +132,7 @@ export function Sidebar({
 }: SidebarProps) {
   const { counts } = useMemoryStore();
   const tasksBadge = counts.totalOpen + counts.awaitingThem;
+  const attachmentSuggestionCount = useAttachmentStore(selectSuggestionCount);
   // Master AI switch — when disabled, hide Chat / Tasks / Memory entries entirely.
   // Tasks and Memory are *also* gated on their per-feature experimental flags;
   // both must be on for the entry to appear. Dashboard stays visible (it shows
@@ -140,7 +142,7 @@ export function Sidebar({
   // enabled so the sidebar shows them even before the user opens the Lenses view.
   const { lenses, activeLensId, initialize: initializeLenses, setCreateChooserOpen: openCreateLens } = useLensStore();
 
-  const { t } = useTranslation(['common', 'sidebar', 'chat', 'tagboard']);
+  const { t } = useTranslation(['common', 'sidebar', 'chat', 'tagboard', 'attachments']);
   const [accountsOpen, setAccountsOpen] = useState(true);
   const [viewsOpen, setViewsOpen] = useState(true);
   const [aiFeaturesOpen, setAiFeaturesOpen] = useState(true);
@@ -473,7 +475,15 @@ export function Sidebar({
                       d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
                     />
                   </svg>
-                  {t('sidebar:attachments')}
+                  <span className="flex-1">{t('sidebar:attachments')}</span>
+                  {attachmentSuggestionCount > 0 && (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500 text-white"
+                      title={t('attachments:suggestions.badgeTitle', { count: attachmentSuggestionCount })}
+                    >
+                      {attachmentSuggestionCount}
+                    </span>
+                  )}
                 </button>
               </li>
               <li>

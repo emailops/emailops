@@ -17,6 +17,8 @@ interface AttachmentToolbarProps {
   onClearChecked: () => void;
   checkedIds: Set<string>;
   onOpenRules: () => void;
+  /** Pending suggested rules, badged on the "Manage Rules" button. */
+  suggestionCount: number;
 }
 
 export function AttachmentToolbar({
@@ -31,6 +33,7 @@ export function AttachmentToolbar({
   onClearChecked,
   checkedIds,
   onOpenRules,
+  suggestionCount,
 }: AttachmentToolbarProps) {
   const { t } = useTranslation(['common', 'attachments']);
   const addLog = useLogStore((s) => s.addLog);
@@ -112,9 +115,17 @@ export function AttachmentToolbar({
         {/* Right: manage rules */}
         <button
           onClick={onOpenRules}
-          className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
+          className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0 flex items-center gap-1.5"
         >
           {t('attachments:toolbar.manageRules')}
+          {suggestionCount > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500 text-white"
+              title={t('attachments:suggestions.badgeTitle', { count: suggestionCount })}
+            >
+              {suggestionCount}
+            </span>
+          )}
         </button>
       </div>
 

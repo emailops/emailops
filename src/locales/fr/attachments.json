@@ -71,6 +71,19 @@
     "rowTags": "Étiquettes :",
     "footerHelp": "Les règles correspondent aux e-mails pendant la synchronisation. Utilisez * comme joker. Tous les motifs spécifiés doivent correspondre (logique ET). Le nom de fichier filtre les pièces jointes collectées parmi les e-mails correspondants."
   },
+  "suggestions": {
+    "title": "Règles suggérées",
+    "subtitle": "Des documents envoyés régulièrement par le même expéditeur. Examinez-en un pour créer la règle, ou ignorez-le.",
+    "recurrence_one": "{{count}} e-mail depuis {{since}} · dernier {{last}}",
+    "recurrence_other": "{{count}} e-mails depuis {{since}} · dernier {{last}}",
+    "recurrence_many": "{{count}} e-mails depuis {{since}} · dernier {{last}}",
+    "examples": "p. ex.",
+    "review": "Examiner",
+    "dismiss": "Ignorer",
+    "badgeTitle_one": "{{count}} règle de pièces jointes suggérée",
+    "badgeTitle_other": "{{count}} règles de pièces jointes suggérées",
+    "badgeTitle_many": "{{count}} règles de pièces jointes suggérées"
+  },
   "download": {
     "savedTo": "« {{filename}} » enregistré dans Téléchargements",
     "showInFinder": "Afficher dans le Finder"

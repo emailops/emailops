@@ -444,6 +444,10 @@ function AppInner() {
     clearChecked,
     setSelectedTag,
     refreshAfterRuleApply,
+    suggestions: attachmentRuleSuggestions,
+    refreshSuggestions: refreshAttachmentRuleSuggestions,
+    dismissSuggestion: dismissAttachmentRuleSuggestion,
+    acceptSuggestion: acceptAttachmentRuleSuggestion,
   } = useAttachments();
 
   const ruleNames = useMemo(() => {
@@ -1635,6 +1639,7 @@ function AppInner() {
                 onClearChecked={clearChecked}
                 checkedIds={checkedIds}
                 onOpenRules={() => setIsRuleModalOpen(true)}
+                suggestionCount={attachmentRuleSuggestions.length}
               />
               <div className="flex flex-1 overflow-hidden">
                 <AttachmentList
@@ -1769,6 +1774,10 @@ function AppInner() {
           onUpdateRule={updateAttachmentRule}
           onDeleteRule={deleteAttachmentRule}
           onRefreshAfterApply={refreshAfterRuleApply}
+          suggestions={attachmentRuleSuggestions}
+          onRefreshSuggestions={refreshAttachmentRuleSuggestions}
+          onDismissSuggestion={dismissAttachmentRuleSuggestion}
+          onAcceptSuggestion={acceptAttachmentRuleSuggestion}
         />
       )}
 

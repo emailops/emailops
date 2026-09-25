@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
-import type { AttachmentRule } from '@/types';
+import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
+import { RuleSuggestionList } from './RuleSuggestionList';
 
 export interface RuleFormPrefill {
   name: string;
@@ -34,6 +35,12 @@ interface RuleManagementModalProps {
   ) => Promise<AttachmentRule>;
   onDeleteRule: (ruleId: string) => Promise<void>;
   onRefreshAfterApply: () => void;
+  /** Pending candidate rules mined from recurring document attachments. */
+  suggestions: AttachmentRuleSuggestion[];
+  /** Re-mine on open, so rules created or deleted since the last sync count. */
+  onRefreshSuggestions: () => void;
+  onDismissSuggestion: (suggestionId: string) => Promise<void>;
+  onAcceptSuggestion: (suggestionId: string) => Promise<void>;
 }
 
 interface RuleFormState {
@@ -63,6 +70,10 @@ export function RuleManagementModal({
   onUpdateRule,
   onDeleteRule,
   onRefreshAfterApply,
+  suggestions,
+  onRefreshSuggestions,
+  onDismissSuggestion,
+  onAcceptSuggestion,
 }: RuleManagementModalProps) {
   const { t } = useTranslation(['common', 'attachments']);
   const hasPrefill = !!prefill;
@@ -80,6 +91,9 @@ export function RuleManagementModal({
         }
       : EMPTY_FORM,
   );
+  // Set while the form holds a suggestion under review: saving the form
+  // accepts it, cancelling leaves it pending.
+  const [reviewingSuggestionId, setReviewingSuggestionId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [applyingRuleId, setApplyingRuleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +105,13 @@ export function RuleManagementModal({
   const [pendingDeleteCount, setPendingDeleteCount] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
+
+  // Mount-only: the parent re-renders on every sync batch, so depending on
+  // the callback identity would re-mine continuously while the modal is open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run once per open
+  useEffect(() => {
+    onRefreshSuggestions();
+  }, []);
 
   // Fetch the attachment count when a rule is armed for deletion. Done in an
   // effect (not inline) so the warning panel can show a loading state instead
@@ -122,7 +143,31 @@ export function RuleManagementModal({
     setForm(EMPTY_FORM);
     setShowForm(false);
     setEditingRuleId(null);
+    setReviewingSuggestionId(null);
     setError(null);
+  };
+
+  const startReviewing = (suggestion: AttachmentRuleSuggestion) => {
+    setForm({
+      name: suggestion.name,
+      senderEmailPattern: suggestion.senderEmailPattern,
+      subjectPattern: '',
+      filenamePattern: suggestion.filenamePattern ?? '',
+      tags: suggestion.tags.join(', '),
+      applyToExisting: true,
+    });
+    setEditingRuleId(null);
+    setReviewingSuggestionId(suggestion.id);
+    setShowForm(true);
+    setError(null);
+  };
+
+  const handleDismissSuggestion = async (suggestionId: string) => {
+    try {
+      await onDismissSuggestion(suggestionId);
+    } catch (err) {
+      setError(errorText(err));
+    }
   };
 
   const startEditing = (rule: AttachmentRule) => {
@@ -135,6 +180,7 @@ export function RuleManagementModal({
       applyToExisting: false,
     });
     setEditingRuleId(rule.id);
+    setReviewingSuggestionId(null);
     setShowForm(true);
     setError(null);
   };
@@ -167,6 +213,9 @@ export function RuleManagementModal({
         await onUpdateRule(editingRuleId, trimmedName, sender, subject, filename, tags, existing?.enabled ?? true);
       } else {
         const newRule = await onCreateRule(trimmedName, sender, subject, filename, tags);
+        if (reviewingSuggestionId) {
+          await onAcceptSuggestion(reviewingSuggestionId);
+        }
         if (form.applyToExisting) {
           setApplyingRuleId(newRule.id);
           try {
@@ -379,6 +428,7 @@ export function RuleManagementModal({
               onClick={() => {
                 setShowForm(true);
                 setEditingRuleId(null);
+                setReviewingSuggestionId(null);
                 setForm(EMPTY_FORM);
                 setError(null);
               }}
@@ -394,6 +444,14 @@ export function RuleManagementModal({
           {/* Surface errors raised outside the form (e.g. delete failures) so
               they're visible even when the form isn't open. */}
           {!showForm && error && <p className="text-xs text-red-600 px-1">{error}</p>}
+
+          {!showForm && (
+            <RuleSuggestionList
+              suggestions={suggestions}
+              onReview={startReviewing}
+              onDismiss={handleDismissSuggestion}
+            />
+          )}
 
           {/* Existing rules */}
           {rules.length > 0 && (

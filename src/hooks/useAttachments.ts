@@ -40,15 +40,34 @@ export function useAttachments() {
     fetchTags,
     clearError,
     reset,
+    suggestions,
+    fetchSuggestions,
+    refreshSuggestions,
+    dismissSuggestion,
+    acceptSuggestion,
   } = useAttachmentStore();
 
-  // Load rules and tags when account changes
+  // Load rules, tags and rule suggestions when account changes
   useEffect(() => {
     if (activeAccountId) {
       fetchRules(activeAccountId);
       fetchTags(activeAccountId);
+      fetchSuggestions(activeAccountId);
     }
-  }, [activeAccountId, fetchRules, fetchTags]);
+  }, [activeAccountId, fetchRules, fetchTags, fetchSuggestions]);
+
+  // The backend re-mines rule suggestions after every sync that brought new
+  // mail; reload them so the badge reflects the new candidates.
+  useEffect(() => {
+    if (!activeAccountId) return;
+    const unlisten = listen<string>('attachment-rule-suggestions-updated', (event) => {
+      if (event.payload && event.payload !== activeAccountId) return;
+      fetchSuggestions(activeAccountId);
+    });
+    return () => {
+      void unlisten.then((u) => u());
+    };
+  }, [activeAccountId, fetchSuggestions]);
 
   // Load attachments when account or selected tag changes
   useEffect(() => {
@@ -124,11 +143,13 @@ export function useAttachments() {
       if (!activeAccountId) return;
       await deleteRule(ruleId, activeAccountId);
       addLog('success', 'attachments', 'Rule deleted');
-      // Refresh attachments and tags since deletions may have occurred
+      // Refresh attachments and tags since deletions may have occurred, and
+      // suggestions since the deleted rule's documents may be candidates again.
       fetchAttachments(activeAccountId, selectedTag);
       fetchTags(activeAccountId);
+      refreshSuggestions(activeAccountId);
     },
-    [activeAccountId, deleteRule, fetchAttachments, fetchTags, selectedTag, addLog],
+    [activeAccountId, deleteRule, fetchAttachments, fetchTags, refreshSuggestions, selectedTag, addLog],
   );
 
   const handleLoadMore = useCallback(() => {
@@ -149,6 +170,27 @@ export function useAttachments() {
       setSelectedTag(tag);
     },
     [setSelectedTag],
+  );
+
+  const handleRefreshSuggestions = useCallback(() => {
+    if (activeAccountId) refreshSuggestions(activeAccountId);
+  }, [activeAccountId, refreshSuggestions]);
+
+  const handleDismissSuggestion = useCallback(
+    async (suggestionId: string) => {
+      if (!activeAccountId) return;
+      await dismissSuggestion(activeAccountId, suggestionId);
+      addLog('info', 'attachments', 'Dismissed suggested attachment rule');
+    },
+    [activeAccountId, dismissSuggestion, addLog],
+  );
+
+  const handleAcceptSuggestion = useCallback(
+    async (suggestionId: string) => {
+      if (!activeAccountId) return;
+      await acceptSuggestion(activeAccountId, suggestionId);
+    },
+    [activeAccountId, acceptSuggestion],
   );
 
   const refreshAfterRuleApply = useCallback(() => {
@@ -183,5 +225,9 @@ export function useAttachments() {
     clearError,
     reset,
     refreshAfterRuleApply,
+    suggestions,
+    refreshSuggestions: handleRefreshSuggestions,
+    dismissSuggestion: handleDismissSuggestion,
+    acceptSuggestion: handleAcceptSuggestion,
   };
 }

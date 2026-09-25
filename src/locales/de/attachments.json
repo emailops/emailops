@@ -71,6 +71,19 @@
     "rowTags": "Tags:",
     "footerHelp": "Regeln werden während der Synchronisierung auf E-Mails angewendet. Verwende * als Platzhalter. Alle angegebenen Muster müssen übereinstimmen (UND-Logik). Der Dateiname filtert, welche Anhänge aus passenden E-Mails gesammelt werden."
   },
+  "suggestions": {
+    "title": "Vorgeschlagene Regeln",
+    "subtitle": "Dokumente, die regelmäßig vom selben Absender kommen. Prüfen Sie einen Vorschlag, um die Regel anzulegen, oder verwerfen Sie ihn.",
+    "recurrence_one": "{{count}} E-Mail seit {{since}} · zuletzt {{last}}",
+    "recurrence_other": "{{count}} E-Mails seit {{since}} · zuletzt {{last}}",
+    "recurrence_many": "{{count}} E-Mails seit {{since}} · zuletzt {{last}}",
+    "examples": "z. B.",
+    "review": "Prüfen",
+    "dismiss": "Verwerfen",
+    "badgeTitle_one": "{{count}} vorgeschlagene Anhangsregel",
+    "badgeTitle_other": "{{count}} vorgeschlagene Anhangsregeln",
+    "badgeTitle_many": "{{count}} vorgeschlagene Anhangsregeln"
+  },
   "download": {
     "savedTo": "\"{{filename}}\" in Downloads gespeichert",
     "showInFinder": "Im Finder zeigen"
