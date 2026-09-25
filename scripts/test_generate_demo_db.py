@@ -142,3 +142,26 @@ class ThreadMessagesAreAddressedToTheOtherSide(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvoiceReadStateDoesNotDependOnDrawOrder(unittest.TestCase):
+    # Chat evals ask for the oldest unread email and for unread BorgBase mail.
+    # Read state used to be a random draw, so three demo threads added elsewhere
+    # in the generator shifted it and those evals failed on a correct answer.
+
+    def test_the_unread_invoices_stay_unread_whatever_the_draw(self):
+        for subject in gen.UNREAD_INVOICES_EN:
+            self.assertFalse(gen.invoice_is_read(subject, "en", roll=0.0), subject)
+
+    def test_every_other_english_invoice_is_read_whatever_the_draw(self):
+        self.assertTrue(gen.invoice_is_read("Fly.io invoice — March 2026", "en", roll=0.99))
+
+    def test_the_evals_unread_invoices_are_listed(self):
+        self.assertEqual(
+            gen.UNREAD_INVOICES_EN,
+            {
+                "BorgBase invoice for January 2026",
+                "Your Hetzner Cloud invoice for February 2026",
+                "BorgBase invoice for April 2026",
+            },
+        )

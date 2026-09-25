@@ -2548,6 +2548,25 @@ def _month_label_from_filename(filename: str, locale_code: str) -> str:
     return next(iter(table.values()))
 
 
+# English invoices the chat evals ask about as unread ("oldest unread email",
+# "unread mail from BorgBase"); every other English invoice is read. Explicit
+# rather than a random draw: a draw depends on how many draws came before, so
+# adding a demo email anywhere upstream silently changed which invoices were
+# unread and those evals failed on correct answers.
+UNREAD_INVOICES_EN = {
+    "BorgBase invoice for January 2026",
+    "Your Hetzner Cloud invoice for February 2026",
+    "BorgBase invoice for April 2026",
+}
+
+
+def invoice_is_read(subject: str, locale_code: str, roll: float) -> bool:
+    if locale_code == "en":
+        return subject not in UNREAD_INVOICES_EN
+    # Invoices skew "already seen" — they're transactional notifications.
+    return roll < 0.85
+
+
 def populate_invoice_emails(
     conn: sqlite3.Connection,
     locale: Locale,
@@ -2574,8 +2593,8 @@ def populate_invoice_emails(
             timestamp = epoch_for(2026, month_num, RNG.randint(2, 6))
         else:
             timestamp = pick_timestamp_within_days(45)
-        # Invoices skew "already seen" — they're transactional notifications.
-        is_read = RNG.random() < 0.85
+        # Draw even when the locale ignores it, so every later draw stays put.
+        is_read = invoice_is_read(subject, locale.code, RNG.random())
 
         email_id = insert_email(
             conn,
