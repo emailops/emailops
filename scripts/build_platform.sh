@@ -118,7 +118,6 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
        "$TARGET_DIR/$TARGET/release/deps" \
        -maxdepth 1 \( -iname 'libggml*.so*' -o -iname 'libllama*.so*' \) -delete 2>/dev/null || true
 
-  CARGO_JOBS_ARGS=()
   if [ "$PLATFORM" = "windows" ]; then
     # llama-cpp-sys-2's vendored CMake build compiles its vulkan-shaders-gen
     # sub-tool (and runs CMake's own C/CXX compiler-ABI detection try_compiles
@@ -140,47 +139,18 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     export CL="/FS"
     export MSYS_NO_PATHCONV=1
 
-    # CL=/FS alone doesn't reach this race: CMake's own internal compiler-ABI
-    # detection (CMakeTestCCompiler.cmake / CMakeTestCXXCompiler.cmake, run
-    # for the vulkan-shaders-gen sub-project's own from-scratch `project()`
-    # bootstrap) compiles a scratch test file using CMake's hardcoded default
-    # debug flags, not our CMAKE_C_FLAGS/CMAKE_CXX_FLAGS overrides — so /FS
-    # never reaches that specific cl.exe invocation no matter how it's passed
-    # in. Confirmed against a real CI failure log: our
-    # -DCMAKE_C_FLAGS="... /FS ..." was present in the cmake configure
-    # command, yet C1041 still fired from exactly this ABI-detection step.
-    #
-    # CMAKE_BUILD_PARALLEL_LEVEL is a red herring here: passing it via -D at
-    # configure time is inert (CMake warns "Manually-specified variables were
-    # not used by the project"), and exporting it as an env var is *also*
-    # inert in practice — the `cmake` crate (which llama-cpp-sys-2 uses to
-    # drive the build) constructs its `cmake --build ... --parallel N` call
-    # from cargo's own NUM_JOBS env var, not CMAKE_BUILD_PARALLEL_LEVEL. Cargo
-    # sets NUM_JOBS itself (to match its own build concurrency) for every
-    # build script invocation, overriding whatever we export ahead of time —
-    # confirmed both by reading the vendored `cmake` crate source and by the
-    # real CI log still showing `--parallel 4` despite
-    # CMAKE_BUILD_PARALLEL_LEVEL=1 being exported.
-    #
-    # Remove the race at its source instead: force this cargo invocation
-    # itself to a single job. That makes cargo set NUM_JOBS=1 for the
-    # build script, which the `cmake` crate turns into `--parallel 1` for
-    # every cmake-driven sub-build (the main ggml build and the
-    # vulkan-shaders-gen ExternalProject alike) — so no two cl.exe processes
-    # are ever writing a .pdb concurrently, regardless of whether that
-    # particular invocation picked up /FS.
-    #
-    # Scoped to vulkan specifically (not "any Windows build"): vulkan-shaders-gen
-    # is only ever configured when GGML_VULKAN is ON (see llama-cpp-sys-2's
-    # build.rs), which only happens for CARGO_FEATURES=vulkan. A CUDA build
-    # never touches that sub-project, so it never hits this race — verified by
-    # timing a from-scratch CUDA release compile at 270m40s forced to --jobs 1
-    # vs 31m54s with full parallelism restored (8.5x, on a 4-vCPU test VM).
-    # Applying --jobs 1 unconditionally to every Windows build (as this used
-    # to) silently paid that ~4.5h tax on every CUDA build for no reason.
-    if [[ "$CARGO_FEATURES" == *"vulkan"* ]]; then
-      CARGO_JOBS_ARGS+=(--jobs 1)
-    fi
+    # No `--jobs 1`. It used to be forced for CARGO_FEATURES=vulkan because
+    # C1041 also fired from CMake's own compiler-ABI detection try_compile,
+    # which /FS never reaches; a single cargo job made the `cmake` crate pass
+    # `--parallel 1` (it derives that from cargo's NUM_JOBS, not
+    # CMAKE_BUILD_PARALLEL_LEVEL). That fix predates the three that followed
+    # it: the Ninja generator below, the pinned MSVC linker, and the short
+    # CARGO_TARGET_DIR above, whose comment shows C1041 also fired for a
+    # single, uncontended compile once object paths passed 250 chars. It also
+    # serialized every Rust crate, not just the CMake build: the Vulkan pass 1
+    # took 43m53s on Windows against 17m05s on Linux (25/09/2026 release run).
+    # If C1041 comes back, restore `--jobs 1` for vulkan here and re-read
+    # docs/DECISIONS.md ("Windows Vulkan builds without --jobs 1").
 
     # CMAKE_GENERATOR=Ninja routes around the C1041 race above entirely —
     # Ninja invokes cl.exe one translation unit at a time with no
@@ -214,7 +184,7 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   # llama-cpp-sys-2's build script has run. So compile first, stage, then
   # bundle (the second cargo invocation is a cache hit).
   echo "[build-$PLATFORM] pass 1/2: compiling to produce ggml backend modules"
-  cargo build --release "${CARGO_JOBS_ARGS[@]}" --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
+  cargo build --release --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
 
   # llama-cpp-sys-2 installs the modules under its OUT_DIR and advertises the
   # location via `cargo:backends_dir`. Locate the most recent one rather than
