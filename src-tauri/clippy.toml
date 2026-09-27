@@ -6,3 +6,10 @@ too-many-arguments-threshold = 12
 # heavily and the safety argument doesn't apply there.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+
+# `clippy::large_futures` (denied in lib.rs) flags a future bigger than this
+# that is awaited or passed by value. 16 KiB is the default, pinned here because
+# the command future-size test in lib.rs (`COMMAND_FUTURE_BUDGET_BYTES`) uses the
+# same budget: Tauri copies a command's future ~24× in stack while spawning it on
+# the main thread, and that is 1 MB on Windows.
+future-size-threshold = 16384

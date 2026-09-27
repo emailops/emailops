@@ -83,6 +83,13 @@ jobs:
         # other lints don't silently regress in test files.
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
 
+      # The step above builds without `desktop`, which compiles out `commands/`
+      # entirely — so lints never saw the Tauri command layer. That is where
+      # clippy::large_futures (denied in lib.rs) catches a command future grown
+      # big enough to overflow Windows' 1 MB main thread, as v0.6.10 did.
+      - name: Clippy (desktop)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --features desktop --tests -- -D warnings
+
       - name: Rustfmt
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
@@ -115,6 +122,12 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+
+      # Tauri spawns command futures on the main thread, 1 MB on Windows. The
+      # budget test measures every registered command's future and needs
+      # `desktop`, which the run above leaves out.
+      - name: Command future budget (desktop)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --features desktop --lib command_future_budget
 
   # The highest-value job in this file. Everything else runs on a Unix host,
   # where `std::os::unix` imports and unix-only crate APIs compile fine — this

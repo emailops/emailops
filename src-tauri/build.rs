@@ -27,6 +27,7 @@ fn main() {
 
     emit_git_build_metadata();
     request_common_controls_v6_for_tests();
+    reserve_macos_sized_main_stack_on_windows();
 
     // `tauri-build` is an optional build-dependency, enabled only by the `desktop`
     // feature. Headless builds (`--no-default-features`) skip it entirely: there is
@@ -71,6 +72,27 @@ fn request_common_controls_v6_for_tests() {
          name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
          processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
     );
+}
+
+/// Give the Windows app the 8 MiB main-thread stack macOS and Linux give it.
+///
+/// Tauri builds and spawns every async command's future on the main thread,
+/// and copies it several times on the way (`respond_async_serialized` →
+/// `async_runtime::spawn` → `tokio::spawn`). link.exe reserves only 1 MB for
+/// that thread by default, so a command future that grew was enough for
+/// v0.6.10 to die with STATUS_STACK_OVERFLOW (0xc00000fd) the moment a sync
+/// started — on Windows only, since the same frames fit in 8 MiB. The task
+/// queue no longer inflates those futures (see `services::task_queue`); this
+/// keeps the next growth from being a Windows-only crash. Only the main
+/// thread's *reservation* changes: every other thread sets its own size, and
+/// pages are committed as they are touched.
+fn reserve_macos_sized_main_stack_on_windows() {
+    let is_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let is_msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if !(is_windows && is_msvc) {
+        return;
+    }
+    println!("cargo:rustc-link-arg-bins=/STACK:8388608");
 }
 
 /// Embed the git short sha and any tags pointing at HEAD so the app can show
