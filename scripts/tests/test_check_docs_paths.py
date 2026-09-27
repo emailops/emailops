@@ -29,3 +29,25 @@ def test_a_path_escaping_the_repo_does_not_resolve_even_if_a_sibling_checkout_ha
     candidate = "../homebrew-tap/Casks/emailops.rb"
     assert not check_docs_paths.resolves(candidate, root / "homebrew", [])
     assert not check_docs_paths.resolves(candidate, root, [])
+
+
+def test_a_gitignored_dotfile_gets_the_same_verdict_whether_or_not_it_exists(tmp_path, monkeypatch):
+    # `.claude/settings.local.json` is gitignored and per-checkout: present in
+    # the developer's main checkout, absent in CI and in fresh worktrees. An
+    # allowlist entry for it went "stale" wherever the file existed, so the
+    # pre-commit hook failed in one checkout and passed in the next.
+    import subprocess
+
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / ".gitignore").write_text(".claude/settings.local.json\n")
+    (root / "docs" / "guide.md").write_text("Allow the command in `.claude/settings.local.json`.\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    monkeypatch.setattr(check_docs_paths, "ROOT", root)
+    monkeypatch.setattr(check_docs_paths, "ALLOWED_UNRESOLVED", {})
+
+    assert check_docs_paths.main() == 0
+    (root / ".claude").mkdir()
+    (root / ".claude" / "settings.local.json").write_text("{}")
+    assert check_docs_paths.main() == 0
