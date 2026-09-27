@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.11] — 2026-09-27
+
+### Fixed
+
+- **Windows: the app no longer crashes when a sync starts.** 0.6.10 closed
+  with a stack overflow (`0xc00000fd`) as soon as an account began syncing,
+  and when sending a reply or a new email. Queued work no longer inflates the
+  stack, and the Windows app now reserves the same 8 MiB main-thread stack as
+  macOS and Linux.
+
 ## [0.6.10] — 2026-09-25
 
 ### Added
