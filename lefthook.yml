@@ -76,6 +76,13 @@ pre-commit:
           echo "warning: gitleaks not installed — skipping secret scan. Run 'brew install gitleaks'."
         fi
 
+# New worktrees get their src-tauri/target linked to /Volumes/Build (when the
+# machine has that volume) before the first build — see scripts/build_target.sh.
+post-checkout:
+  commands:
+    build-target:
+      run: bash scripts/build_target.sh link
+
 pre-push:
   parallel: true
   commands:

@@ -30,6 +30,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWED_UNRESOLVED = {
     "docs/site/README.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
     "homebrew/README.md:../homebrew-tap/Casks/emailops.rb": "lives in the emailops/homebrew-tap repo",
+    # Gitignored per-checkout permissions file; absent in fresh worktrees.
+    ".claude/skills/build-ai-feature/SKILL.md:.claude/settings.local.json": "gitignored local file",
+    ".claude/skills/fix-ai-bug/SKILL.md:.claude/settings.local.json": "gitignored local file",
     # A worked example of adding a draft-review feature. The files are
     # deliberately fictional; the skill teaches the shape, not these paths.
     ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/commands/review.rs": "illustrative example",
