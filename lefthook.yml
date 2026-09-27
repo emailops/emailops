@@ -82,6 +82,10 @@ pre-push:
     clippy:
       # See the pre-commit clippy comment above — must match CI's exact flags.
       run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
+    clippy-desktop:
+      # Matches CI's "Clippy (desktop)" step: the only lint run that sees
+      # `commands/`, where clippy::large_futures guards the Windows main stack.
+      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --features desktop --tests -- -D warnings
     rust-tests:
       run: cargo test --manifest-path src-tauri/Cargo.toml
     secrets-check:

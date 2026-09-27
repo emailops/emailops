@@ -1775,6 +1775,10 @@ compile, from path length alone.
 **Decision:** `TaskQueue::submit*` are plain `fn`s that box the task before anything is
 awaited, and never `async fn`s taking the task by value. The Windows app links with
 `/STACK:8388608` (`build.rs`), the main-thread stack size macOS and Linux already give it.
+Guarded by `#![deny(clippy::large_futures)]` (16 KiB, `clippy.toml`), a CI Clippy step
+with `--features desktop` (the only one that compiles `commands/`), and a test that holds
+every registered Tauri command's future to the same 16 KiB. The command list lives once, in
+`app_commands!`, so the test sees every command `generate_handler!` does.
 **Context:** v0.6.10 crashed on Windows with STATUS_STACK_OVERFLOW (0xc00000fd) once a
 sync started. Tauri builds and spawns each async command's future on the main thread,
 and copies it through `respond_async_serialized` → `async_runtime::spawn` →
@@ -1790,3 +1794,7 @@ boxed first, the largest spawn frame is ~75 KB.
   Windows alone. No CI leg runs the app on Windows.
 - *Running a custom Tauri async runtime with larger worker stacks*: the frames that
   overflowed were on the main thread, which that setting does not reach.
+- *An IPC test through `tauri::test`'s mock runtime on a 1 MB thread*: commands take
+  `AppHandle`, which is `AppHandle<Wry>`, so they cannot be registered on the mock
+  runtime, and a real Wry app needs a display and the process main thread. The future-size
+  budget measures the same thing from the types alone, on every OS.
