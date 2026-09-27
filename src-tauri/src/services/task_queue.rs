@@ -120,23 +120,32 @@ impl TaskQueue {
         }
     }
 
+    // Every submit entry point is a plain `fn` that boxes the task *before*
+    // anything is awaited, and returns the future of `enqueue`, which only
+    // holds that box. Written as `async fn`s taking `task: F`, each layer kept
+    // the whole task inline in its own state, and so did the caller's future:
+    // a command that queues work carried its task two or three times. Tauri
+    // builds and spawns command futures on the main thread (1 MB on Windows)
+    // and copies them several times on the way; v0.6.10 overflowed it the
+    // moment a sync started (0xc00000fd). Keep these non-async.
+
     /// Submit an unnamed task. Prefer `submit_named` so the dashboard shows
     /// something meaningful instead of "unnamed".
-    pub async fn submit<F>(&self, task: F)
+    pub fn submit<'a, F>(&'a self, task: F) -> impl Future<Output = ()> + Send + 'a
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        self.submit_named("unnamed", task).await
+        self.enqueue("unnamed", TaskPriority::Background, Box::pin(task))
     }
 
     /// Submit a task with a human-readable name. The name appears in the
     /// background-task panel of the dashboard while the task is queued and
     /// while it's running.
-    pub async fn submit_named<F>(&self, name: &str, task: F)
+    pub fn submit_named<'a, F>(&'a self, name: &'a str, task: F) -> impl Future<Output = ()> + Send + 'a
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        self.submit_with_priority(name, TaskPriority::Background, task).await
+        self.enqueue(name, TaskPriority::Background, Box::pin(task))
     }
 
     /// Submit a task the user is waiting on, so it goes ahead of the
@@ -146,18 +155,28 @@ impl TaskQueue {
     /// screen reporting it — a lens backfill, a re-extract. Without it the
     /// queue is strictly FIFO, and on a concurrency-1 queue a click can sit
     /// behind hours of classify/embed work with nothing to show for it.
-    pub async fn submit_priority<F>(&self, name: &str, task: F)
+    pub fn submit_priority<'a, F>(&'a self, name: &'a str, task: F) -> impl Future<Output = ()> + Send + 'a
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        self.submit_with_priority(name, TaskPriority::Interactive, task).await
+        self.enqueue(name, TaskPriority::Interactive, Box::pin(task))
     }
 
     /// Shared submit path. See [`TaskPriority`].
-    pub async fn submit_with_priority<F>(&self, name: &str, priority: TaskPriority, task: F)
+    pub fn submit_with_priority<'a, F>(
+        &'a self,
+        name: &'a str,
+        priority: TaskPriority,
+        task: F,
+    ) -> impl Future<Output = ()> + Send + 'a
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        self.enqueue(name, priority, Box::pin(task))
+    }
+
+    /// Queue an already-boxed task. The only `async` step of submitting.
+    async fn enqueue(&self, name: &str, priority: TaskPriority, fut: BoxFuture) {
         // Lazy-start the consumer
         {
             let mut started = self.started.lock().await;
@@ -190,7 +209,7 @@ impl TaskQueue {
             id,
             name: name.to_string(),
             priority,
-            fut: Box::pin(task),
+            fut,
         };
 
         if self.sender.send(queued).is_err() {
@@ -328,6 +347,42 @@ async fn run_consumer(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// A task whose state is `BIG_TASK_BYTES` wide: a buffer held across an
+    /// `.await`, like a sync or a chat turn keeps its locals.
+    const BIG_TASK_BYTES: usize = 64 * 1024;
+
+    async fn big_task() {
+        let buf = [0u8; BIG_TASK_BYTES];
+        tokio::task::yield_now().await;
+        std::hint::black_box(&buf);
+    }
+
+    /// The bug this pins: v0.6.10 crashed on Windows with a stack overflow
+    /// (0xc00000fd) as soon as a sync started. Tauri builds and spawns a
+    /// command's future on the main thread — 1 MB on Windows, 8 MB on macOS —
+    /// and `submit_named` became an `async fn` awaiting another `async fn`, so
+    /// every command that queues work carried its task inline twice. Boxing
+    /// the task before the first `.await` keeps it out of the caller.
+    #[test]
+    fn submitting_does_not_carry_the_task_in_the_callers_future() {
+        let q = TaskQueue::new(1, "test");
+        let named = q.submit_named("big", big_task());
+        let priority = q.submit_priority("big", big_task());
+        let explicit = q.submit_with_priority("big", TaskPriority::Background, big_task());
+        let unnamed = q.submit(big_task());
+        for (what, size) in [
+            ("submit_named", std::mem::size_of_val(&named)),
+            ("submit_priority", std::mem::size_of_val(&priority)),
+            ("submit_with_priority", std::mem::size_of_val(&explicit)),
+            ("submit", std::mem::size_of_val(&unnamed)),
+        ] {
+            assert!(
+                size < 1024,
+                "{what}'s future is {size} bytes: it holds the task inline instead of boxed"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn a_user_initiated_task_runs_before_background_work_queued_ahead_of_it() {

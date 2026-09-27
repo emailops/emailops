@@ -1769,3 +1769,24 @@ compile, from path length alone.
   config, which includes backends staged after pass 1, changes the app's build script
   input. Fixing it means reworking packaging around `tauri build --no-bundle` +
   `tauri bundle`, on a path with no per-PR CI coverage.
+
+## 2026-09-27 — Task-queue submits box the task first; Windows reserves an 8 MiB main stack
+
+**Decision:** `TaskQueue::submit*` are plain `fn`s that box the task before anything is
+awaited, and never `async fn`s taking the task by value. The Windows app links with
+`/STACK:8388608` (`build.rs`), the main-thread stack size macOS and Linux already give it.
+**Context:** v0.6.10 crashed on Windows with STATUS_STACK_OVERFLOW (0xc00000fd) once a
+sync started. Tauri builds and spawns each async command's future on the main thread,
+and copies it through `respond_async_serialized` → `async_runtime::spawn` →
+`tokio::spawn`. Making `submit_named` an `async fn` that awaited `submit_with_priority`
+put every queued task inline in the caller twice. That doubled the futures of the sync
+and send commands: the spawn frames for `start_sync_account` went from ~486 KB (v0.6.9)
+to ~939 KB, over Windows' 1 MB default and harmless under macOS' 8 MiB. With the task
+boxed first, the largest spawn frame is ~75 KB.
+**Rejected:**
+- *Only raising the stack*: it hides the doubling, and every queued task still costs its
+  full size on the stack several times over.
+- *Only boxing the task*: the next command whose future grows would again crash on
+  Windows alone. No CI leg runs the app on Windows.
+- *Running a custom Tauri async runtime with larger worker stacks*: the frames that
+  overflowed were on the main thread, which that setting does not reach.
