@@ -593,6 +593,37 @@ pub fn render_thread(
 /// Render dashboard-style stats — the same numbers as the app's dashboard cards
 /// — one block per account: local/sent/server totals, pipeline coverage
 /// (classified / embeddings / memory / tasks), and per-category counts.
+pub fn render_skills(overview: &crate::services::skills::SkillsOverview, style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(overview);
+    }
+    let color = style.color();
+    let dir = overview
+        .dir
+        .as_ref()
+        .map(|d| d.display().to_string())
+        .unwrap_or_else(|| "(no data dir)".to_string());
+    println!("{} {}", dim("Folder:", color), dir);
+    if !overview.enabled {
+        println!("{}", dim("(skills are turned off in Settings)", color));
+    }
+    if overview.skills.is_empty() {
+        println!("(no skills)");
+    }
+    for s in &overview.skills {
+        println!("  {} {}", paint(&format!("/{}", s.name), "1", color), s.description);
+    }
+    for e in &overview.errors {
+        println!(
+            "  {} {}: {}",
+            paint("not loaded", "31", color),
+            e.path.display(),
+            e.message
+        );
+    }
+    Ok(())
+}
+
 pub fn render_stats(dashboards: &[AccountDashboard], style: RenderStyle) -> Result<()> {
     if style == RenderStyle::Json {
         return emit_ok(dashboards);

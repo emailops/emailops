@@ -63,3 +63,6 @@ export const useTranslationEnabledStore = createBoolPrefStore('ai_translation_en
 // questions about EmailOps from the bundled guides, and open the matching
 // settings tab or view when the answer cites a section.
 export const useHelpDocsEnabledStore = createBoolPrefStore('help_docs_enabled', true);
+// Mirrors `services::skills::skills_enabled` (default on): the chat may load
+// the user's skills from `<data dir>/skills/` and `/name` invokes one.
+export const useSkillsEnabledStore = createBoolPrefStore('skills_enabled', true);

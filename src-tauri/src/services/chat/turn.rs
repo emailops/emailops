@@ -2967,6 +2967,24 @@ email written, simply invite them to ask you to draft a reply.",
 ///
 /// Used as a short-circuit at the top of [`run_chat_turn`].
 #[allow(clippy::too_many_arguments)]
+/// The skill a `/name` message invokes, if any — logged so the output panel
+/// shows it, and so a skill that failed to load does not vanish silently.
+fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skills::SkillTurn> {
+    if !message.trim_start().starts_with('/') {
+        return None;
+    }
+    let catalog = crate::services::skills::catalog_for(db);
+    for err in &catalog.errors {
+        emit_log(
+            "warn",
+            &format!("skill not loaded ({}): {}", err.path.display(), err.message),
+        );
+    }
+    let turn = crate::services::skills::plan_skill_turn(message, &catalog)?;
+    emit_log("info", &format!("skill \"{}\" applied to this turn", turn.skill));
+    Some(turn)
+}
+
 async fn run_thread_bound_turn(
     db: Arc<Database>,
     provider: Arc<dyn AIProvider>,
@@ -2974,6 +2992,7 @@ async fn run_thread_bound_turn(
     assistant_message_id: String,
     account_id: String,
     user_question: String,
+    skill_block: Option<String>,
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
@@ -3064,7 +3083,11 @@ async fn run_thread_bound_turn(
             initial_messages.push((msg.role.clone(), msg.content.clone()));
         }
     }
-    initial_messages.push(("user".to_string(), user_question.clone()));
+    let final_user = match skill_block.as_deref() {
+        Some(block) => format!("{block}\n\n{user_question}"),
+        None => user_question.clone(),
+    };
+    initial_messages.push(("user".to_string(), final_user));
 
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
@@ -3653,6 +3676,16 @@ pub async fn run_chat_turn(
     let turn_guard = super::cancel::register_turn(&assistant_message_id);
     let turn_start = std::time::Instant::now();
 
+    // A message that starts with `/name` invokes one of the user's skills. The
+    // rest of the message is what the turn asks (retrieval, the planner and the
+    // title read it); the skill's instructions ride in the final user message,
+    // never the cached system prefix. The folder is only read when the message
+    // could be an invocation.
+    let (user_question, skill_block) = match plan_turn_skill(&db, &user_question) {
+        Some(turn) => (turn.question, Some(turn.block)),
+        None => (user_question, None),
+    };
+
     // Destructured back into locals so the body below reads unchanged.
     // A research question is about the mailbox, not the email on screen, so
     // the open thread is not offered as context on a research turn.
@@ -3768,6 +3801,7 @@ pub async fn run_chat_turn(
             assistant_message_id,
             account_id,
             user_question,
+            skill_block,
             history,
             system_messages,
             turn_start,
@@ -4216,6 +4250,12 @@ pub async fn run_chat_turn(
         &tools_section,
         ambient_context.as_deref(),
     );
+
+    // The invoked skill goes first so it sits right before the question: it is
+    // what decides how this turn is answered.
+    if let Some(block) = skill_block.as_deref() {
+        prepend_to_final_user_message(&mut initial_messages, block);
+    }
 
     // What the user has on screen, so "esto" / "aquí" resolve. Same placement
     // rule as everything else in this block: per-turn content goes in the final

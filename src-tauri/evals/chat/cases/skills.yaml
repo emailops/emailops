@@ -1,0 +1,72 @@
+# User skills (`services::skills`): Markdown instructions in
+# `<data dir>/skills/<name>/SKILL.md` that the chat loads only when a turn
+# needs them. Each case installs its own skill for the run (`skills:`, see
+# `evals/skill_fixtures.rs`) and removes it afterwards.
+#
+# WHAT THESE ASSERT
+# - The model picks a skill from its description alone: the catalog line in
+#   the `load_skill` schema is all it sees until it calls the tool.
+# - `/name` applies the skill without a `load_skill` round: the body already
+#   rides in the final user message.
+# - The skill's body is actually followed: every skill here asks for a marker
+#   line (`Ticket template: SUPPORT-REQ`) that nothing else would produce, so
+#   an answer that ignores the instructions fails.
+# - A skill that does not match the request stays unloaded and leaves the
+#   answer alone.
+#
+# Built on the Kelvo purifier and Bogotá flight mail of the demo personal
+# account (see citations.yaml / categories.yaml). Synthetic by construction.
+
+- id: skill_picked_by_description_en
+  question: "my Kelvo air purifier broke, find me their support addresses"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  skills:
+    - name: vendor-support
+      description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
+      body: |
+        1. Search the mail for the vendor's support or customer-care emails.
+        2. List every support address you find, one per line, with what that email was about.
+        3. End the answer with this exact line: Ticket template: SUPPORT-REQ
+  expected_tools_called: ["load_skill"]
+  expected_answer_contains:
+    - "support@kelvo-home.example"
+    - "SUPPORT-REQ"
+  expected_output: "The Kelvo support addresses, one per line: support@kelvo-home.example (approved the AP-300 recall claim) and care@kelvo.example.eu (EU replacement delivery). Ticket template: SUPPORT-REQ"
+  metrics: [answer_relevancy, faithfulness]
+
+- id: skill_invoked_by_slash_es
+  question: "/vendor-support mi purificador Kelvo se ha roto"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  skills:
+    - name: vendor-support
+      description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
+      body: |
+        1. Search the mail for the vendor's support or customer-care emails.
+        2. List every support address you find, one per line, with what that email was about.
+        3. End the answer with this exact line: Ticket template: SUPPORT-REQ
+  expected_tools_not_called: ["load_skill"]
+  expected_answer_contains:
+    - "support@kelvo-home.example"
+    - "SUPPORT-REQ"
+  expected_output: "Direcciones de soporte de Kelvo, una por línea: support@kelvo-home.example (aprobó la reclamación del AP-300) y care@kelvo.example.eu (entrega del reemplazo en la UE). Ticket template: SUPPORT-REQ"
+  metrics: [answer_relevancy, faithfulness]
+
+- id: skill_left_alone_when_unrelated_es
+  question: "¿a qué hora sale mi vuelo a Bogotá?"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  skills:
+    - name: vendor-support
+      description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
+      body: |
+        End the answer with this exact line: Ticket template: SUPPORT-REQ
+  expected_tools_not_called: ["load_skill"]
+  expected_answer_contains: ["16:10"]
+  expected_answer_not_contains: ["SUPPORT-REQ"]
+  expected_output: "Tu vuelo a Bogotá sale de Madrid el 29 de octubre de 2026 a las 16:10."
+  metrics: [answer_relevancy, faithfulness]

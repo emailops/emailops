@@ -32,6 +32,7 @@ pub mod list_drafts;
 pub mod list_lenses;
 pub mod list_open_threads;
 pub mod list_pending_tasks;
+pub mod load_skill;
 pub mod memory_search;
 pub mod next_page;
 pub mod recall_entity;
@@ -567,6 +568,7 @@ pub fn default_registry() -> ToolRegistry {
         Arc::new(list_lenses::ListLensesTool),
         Arc::new(get_lens_data::GetLensDataTool),
         Arc::new(next_page::NextPageTool),
+        Arc::new(load_skill::LoadSkillTool),
     ])
 }
 

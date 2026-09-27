@@ -979,6 +979,30 @@ export interface PromptInfo {
   variables: PromptVariableInfo[];
 }
 
+/** One skill in `<data dir>/skills/` (mirrors `services::skills::SkillInfo`). */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+}
+
+/** Mirrors `services::skills::SkillsOverview`. */
+export interface SkillsOverview {
+  enabled: boolean;
+  dir: string | null;
+  skills: SkillInfo[];
+  errors: { path: string; message: string }[];
+}
+
+export async function listSkills(): Promise<SkillsOverview> {
+  return invoke('list_skills');
+}
+
+/** Create the skills folder if needed and open it in the OS file manager. */
+export async function openSkillsFolder(): Promise<void> {
+  return invoke('open_skills_folder');
+}
+
 export async function listPrompts(): Promise<PromptInfo[]> {
   return invoke('list_prompts');
 }

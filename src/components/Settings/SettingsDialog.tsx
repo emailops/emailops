@@ -16,6 +16,7 @@ import { JunkSettings } from './JunkSettings';
 import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
 import { PrivacySettings } from './PrivacySettings';
+import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
 
 export type SettingsTab =
@@ -30,6 +31,7 @@ export type SettingsTab =
   | 'aidrafts'
   | 'aitranslation'
   | 'aisearch'
+  | 'skills'
   | 'privacy';
 
 interface SettingsDialogProps {
@@ -69,6 +71,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'aidrafts', needsAi: true },
   { id: 'aitranslation', needsAi: true },
   { id: 'aisearch', needsAi: true },
+  { id: 'skills', needsAi: true },
   { id: 'privacy' },
 ];
 
@@ -233,6 +236,7 @@ export function SettingsDialog({
           {tab === 'aidrafts' && <AiDraftsSettings />}
           {tab === 'aitranslation' && <AiTranslationSettings />}
           {tab === 'aisearch' && <AiSearchSettings activeAccountId={effectiveAccountId} />}
+          {tab === 'skills' && <SkillsSettings />}
           {tab === 'privacy' && <PrivacySettings />}
         </div>
       </div>

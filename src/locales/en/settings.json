@@ -21,6 +21,8 @@
     "aitranslationDesc": "Translate emails and drafts",
     "aisearch": "AI Search",
     "aisearchDesc": "Embedding & semantic search options",
+    "skills": "AI Skills",
+    "skillsDesc": "Instructions the chat loads on demand",
     "privacy": "Privacy & Security",
     "privacyDesc": "Password, remote content",
     "junk": "Junk",
@@ -498,5 +500,16 @@
     "backfill": "Score {{count}} older messages",
     "backfillStarted": "Scoring older messages in the background",
     "backfillRunning": "Scoring… {{count}} left"
+  },
+  "skills": {
+    "enable": "Enable skills",
+    "enableDesc": "Let the chat use your skills: it loads one when a request matches its description, and you can call one directly by starting a message with /name.",
+    "folderTitle": "Skills folder",
+    "folderDesc": "Each skill is a folder here holding a SKILL.md file: a frontmatter block with name (the folder's name) and description, then the instructions in Markdown. Only the name and description stay in the chat's prompt; the instructions are read when the skill is used.",
+    "openFolder": "Open folder",
+    "reload": "Reload",
+    "listTitle": "Available skills",
+    "empty": "No skills yet. Open the folder and add one.",
+    "errorsTitle": "Not loaded"
   }
 }

@@ -20,6 +20,7 @@ pub mod preferences;
 pub mod prompts;
 pub mod search;
 pub mod security;
+pub mod skills;
 pub mod system;
 pub mod translation;
 pub mod trusted_senders;

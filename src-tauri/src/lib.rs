@@ -214,6 +214,8 @@ macro_rules! app_commands {
             commands::prompts::list_prompts,
             commands::prompts::set_prompt,
             commands::prompts::reset_prompt,
+            commands::skills::list_skills,
+            commands::skills::open_skills_folder,
             commands::security::has_main_password,
             commands::security::set_main_password,
             commands::security::verify_main_password,

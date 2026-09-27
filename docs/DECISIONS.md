@@ -1910,3 +1910,27 @@ Cohere), too many to impose.
   policy does not require.
 - *Silently switching or retrying a blocked model*: sends mail somewhere the user did not
   choose; a clear error pointing to Settings is better.
+
+## 2026-09-27 — Chat skills are Agent Skills folders on disk, loaded on demand
+
+**Decision:** The chat supports user *skills* in the Agent Skills shape: a folder per
+skill under `<data dir>/skills/` holding a `SKILL.md` (YAML frontmatter with `name` and
+`description`, then Markdown instructions). Only the one-line catalog rides in the prompt,
+inside the `load_skill` tool's schema; a body enters a turn only when the model calls
+`load_skill`, or when the user starts a message with `/name` (then it rides in the final
+user message). Skills are instructions only — nothing in a skill folder is executed.
+Settings → AI Skills lists them, shows why one failed to load, opens the folder and holds
+the `skills_enabled` toggle (default on). `emailops-cli skills` lists them too.
+**Context:** The developer asked for skills "like Anthropic's" and chose a folder on disk
+over an in-app editor, so skills can be written in any editor and shared as files. The
+chat runs on an 8192-token window on the smallest supported machine and relies on a
+byte-stable system prefix for the llama.cpp KV cache, so bodies cannot sit in the system
+prompt, and per-turn content must stay out of it.
+**Rejected:**
+- *Skills stored in SQLite and edited in Settings*: the developer preferred files.
+- *Putting every skill body in the system prompt*: eats the context window and grows
+  with every skill.
+- *Slash commands only (the model never picks a skill)*: loses the main value — the chat
+  applying the right procedure without being told.
+- *Running scripts bundled in a skill*: a local email client executing arbitrary code
+  from a folder is a security surface this feature does not need.

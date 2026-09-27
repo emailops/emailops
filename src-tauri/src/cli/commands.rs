@@ -328,6 +328,8 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             super::doctor::render(&report, session.mode)
         }
 
+        Command::Skills => output::render_skills(&crate::services::skills::overview(&session.db), session.style),
+
         Command::Stats => {
             // Same per-account aggregates as the app's dashboard cards.
             let dashboards = crate::services::dashboard::collect_dashboards(&session.db)?;
@@ -1309,6 +1311,13 @@ mod tests {
     fn collect_referenced_drafts_empty_when_no_refs() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         assert!(collect_referenced_drafts(&db, &[]).expect("collect ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_skills_lists_without_a_data_dir() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let mut session = test_session(db, None);
+        dispatch(&mut session, Command::Skills).await.expect("skills ok");
     }
 
     #[tokio::test]
