@@ -155,6 +155,15 @@ pub(crate) fn plan_gather(plan: Option<&SearchPlan>, question: &str) -> Vec<Gath
     if !plan.has_structural_filter() {
         return vec![semantic(plan.query.clone())];
     }
+    // A semantic query describes the mail by meaning, not by its words; as a
+    // filter it would demand every word ("métricas principales" in a report
+    // that never says it → zero rows). A who/subject filter already bounds the
+    // set, and research reads all of it.
+    let names_mail = plan.from.is_some() || plan.to.is_some() || plan.with.is_some() || plan.subject.is_some();
+    if names_mail && plan.mode.as_deref() == Some("semantic") {
+        plan.query = None;
+        plan.mode = None;
+    }
     let mut steps = vec![GatherStep::Filter(plan.clone())];
     let tagged = plan.intent.is_some() || plan.topic.is_some();
     let untagged = plan.clone().without_classifier_tags();
@@ -435,6 +444,30 @@ mod tests {
         let steps = plan_gather(Some(&p), "q");
         let expected = plan(|p| p.from = Some("alice@example.com".into()));
         assert_eq!(steps, vec![GatherStep::Filter(expected)]);
+    }
+
+    #[test]
+    fn a_meaning_query_does_not_narrow_a_sender_filter_to_its_exact_words() {
+        let p = plan(|p| {
+            p.from = Some("reports@example.com".into());
+            p.since = Some("2026-03-28".into());
+            p.query = Some("main metrics weekly reports".into());
+            p.mode = Some("semantic".into());
+        });
+        let expected = plan(|p| {
+            p.from = Some("reports@example.com".into());
+            p.since = Some("2026-03-28".into());
+        });
+        assert_eq!(plan_gather(Some(&p), "q"), vec![GatherStep::Filter(expected)]);
+    }
+
+    #[test]
+    fn a_keyword_query_still_narrows_a_sender_filter() {
+        let p = plan(|p| {
+            p.from = Some("reports@example.com".into());
+            p.query = Some("INV-2041".into());
+        });
+        assert_eq!(plan_gather(Some(&p), "q"), vec![GatherStep::Filter(p)]);
     }
 
     #[test]
