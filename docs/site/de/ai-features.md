@@ -143,7 +143,9 @@ seiner Dauer und jeden Tool-Aufruf mit Argumenten und Ergebnis.
 Der Modus **Recherche** ist für Fragen, die alle passenden E-Mails brauchen statt der wenigen,
 die eine normale Antwort liest — *„liste alle Rechnungen aus diesem Jahr“*, *„wie viele Kunden
 haben ein Angebot angefragt?“*. Er schätzt zuerst, wie viele E-Mails er lesen würde und wie
-lange das dauert, und fragt vor einem großen Durchlauf nach. Dann liest er sie in Stapeln, und
+lange das dauert, und fragt vor einem großen Durchlauf nach. Die Schätzung zeigt auch die ausgeführte Suche —
+Absender, Zeitraum, Wörter —, damit Sie beurteilen können, ob sie sinnvoll ist, auch wenn sie
+nichts gefunden hat. Dann liest er sie in Stapeln, und
 Listen und Zählungen sind exakt, mit einem Link zu jeder passenden Unterhaltung. **Recherche
 abbrechen** stoppt einen Durchlauf.
 

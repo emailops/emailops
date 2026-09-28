@@ -263,6 +263,18 @@
     "stopping": "Cancelling…",
     "filter": "Filter",
     "byMeaning": "Gathered by meaning (no filter)",
+    "field": {
+      "from": "From",
+      "to": "To",
+      "with": "With",
+      "subject": "Subject",
+      "query": "Words",
+      "intent": "Type",
+      "topic": "Topic",
+      "since": "Since",
+      "until": "Until",
+      "unread": "Unread only"
+    },
     "mode": {
       "list": "Answer: a list of every match — no written report, faster",
       "count": "Answer: the exact count and the list — no written report, faster",

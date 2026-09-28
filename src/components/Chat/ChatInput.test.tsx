@@ -144,6 +144,32 @@ describe('ChatInput research confirmation', () => {
     expect(container.querySelector('[data-testid="research-start"]')).toBeNull();
   });
 
+  it('shows the search it ran even when nothing matches, so the user can judge it', () => {
+    useChatStore.setState({
+      pendingResearch: {
+        content: 'q',
+        opts: {},
+        status: 'ready',
+        estimate: { ...estimate, emails: 0, filter: { from: 'reports@example.com', since: '2026-03-28' } },
+        error: null,
+      },
+    });
+    renderInput();
+    const search = container.querySelector('[data-testid="research-filter"]')?.textContent ?? '';
+    expect(search).toContain('research.field.from');
+    expect(search).toContain('reports@example.com');
+    expect(search).toContain('research.field.since');
+    expect(search).toContain('28/03/2026');
+  });
+
+  it('says a filterless research is gathered by meaning', () => {
+    useChatStore.setState({
+      pendingResearch: { content: 'q', opts: {}, status: 'ready', estimate, error: null },
+    });
+    renderInput();
+    expect(container.querySelector('[data-testid="research-filter"]')?.textContent).toContain('research.byMeaning');
+  });
+
   it('puts a cancelled question back in the textarea', () => {
     useChatStore.setState({ pendingResearch: null, inputPrefill: null });
     const textarea = renderInput();

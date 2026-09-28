@@ -490,7 +490,14 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     let lens: Vec<usize> = docs.iter().map(ResearchDoc::rendered_len).collect();
     let batches = plan_batches(&lens, budget.batch_chars, budget.max_emails_per_batch).len();
     let seconds = plan_estimate(emails, ms_per_email);
-    let filter = prepared.plan.as_ref().map(filter_arguments);
+    // What the gather ran, not what the planner wrote: a semantic query the
+    // gather dropped must not show as a filter the user thinks was applied.
+    let filter = plan_gather(prepared.plan.as_ref(), input.question)
+        .into_iter()
+        .find_map(|step| match step {
+            GatherStep::Filter(p) => Some(filter_arguments(&p)),
+            _ => None,
+        });
     let mode = prepared.mode;
     super::emit_log(
         "info",
@@ -1595,6 +1602,25 @@ mod tests {
         let prepared = take_estimate(&est.estimate_id, "acct", input.question).expect("kept for the run");
         assert_eq!(prepared.email_ids.len(), 41);
         assert!(prepared.planner_call.is_some());
+    }
+
+    #[tokio::test]
+    async fn an_estimate_shows_the_filter_it_ran_not_the_meaning_query_it_dropped() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 5);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(
+            r#"{"from": "billing@supplier.example", "query": "supplier invoice trends", "mode": "semantic"}"#,
+        );
+        let categories: Vec<String> = Vec::new();
+        let est = estimate(&prepare_input(&db, &provider, &categories)).await;
+        let filter = est.filter.expect("a sender filter ran");
+        assert_eq!(filter["from"].as_str(), Some("billing@supplier.example"));
+        assert!(
+            filter.get("query").is_none(),
+            "the dropped query is not shown: {filter}"
+        );
+        assert!(filter.get("mode").is_none(), "{filter}");
     }
 
     #[tokio::test]
