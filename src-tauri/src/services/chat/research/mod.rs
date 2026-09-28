@@ -492,12 +492,21 @@ pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     let seconds = plan_estimate(emails, ms_per_email);
     // What the gather ran, not what the planner wrote: a semantic query the
     // gather dropped must not show as a filter the user thinks was applied.
-    let filter = plan_gather(prepared.plan.as_ref(), input.question)
-        .into_iter()
-        .find_map(|step| match step {
-            GatherStep::Filter(p) => Some(filter_arguments(&p)),
-            _ => None,
-        });
+    // With an untagged step the set is its matches (the tagged ones are a
+    // subset), so the tags narrowed nothing and are not shown either.
+    let steps = plan_gather(prepared.plan.as_ref(), input.question);
+    let untagged = steps.iter().find_map(|s| match s {
+        GatherStep::FilterUntagged(p) => Some(p),
+        _ => None,
+    });
+    let filter = untagged
+        .or_else(|| {
+            steps.iter().find_map(|s| match s {
+                GatherStep::Filter(p) => Some(p),
+                _ => None,
+            })
+        })
+        .map(filter_arguments);
     let mode = prepared.mode;
     super::emit_log(
         "info",
@@ -1621,6 +1630,20 @@ mod tests {
             "the dropped query is not shown: {filter}"
         );
         assert!(filter.get("mode").is_none(), "{filter}");
+    }
+
+    #[tokio::test]
+    async fn an_estimate_does_not_show_tags_the_untagged_step_widened_past() {
+        // Tagged ∪ untagged = untagged: the tags narrowed nothing.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 5);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "billing@supplier.example", "intent": "notification"}"#);
+        let categories: Vec<String> = Vec::new();
+        let est = estimate(&prepare_input(&db, &provider, &categories)).await;
+        let filter = est.filter.expect("a sender filter ran");
+        assert_eq!(filter["from"].as_str(), Some("billing@supplier.example"));
+        assert!(filter.get("intent").is_none(), "{filter}");
     }
 
     #[tokio::test]

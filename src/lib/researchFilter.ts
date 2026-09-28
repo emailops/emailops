@@ -21,12 +21,15 @@ export interface ResearchFilterPart {
 }
 
 const TEXT_FIELDS: ResearchFilterField[] = ['from', 'to', 'with', 'subject', 'query', 'intent', 'topic'];
-const DATE_FIELDS: ResearchFilterField[] = ['since', 'until'];
 
-/** `YYYY-MM-DD` → `DD/MM/YYYY`; anything else is shown as written. */
-function formatPlanDate(value: string): string {
+/** `YYYY-MM-DD` → `DD/MM/YYYY`, moved back `daysBack` days; anything else is
+ *  shown as written. Calendar arithmetic in UTC so no zone shifts the day. */
+function formatPlanDate(value: string, daysBack = 0): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : value;
+  if (!m) return value;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - daysBack));
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
 export function researchFilterParts(filter: Record<string, unknown>): ResearchFilterPart[] {
@@ -39,10 +42,12 @@ export function researchFilterParts(filter: Record<string, unknown>): ResearchFi
     const v = text(field);
     if (v) parts.push({ field, value: v });
   }
-  for (const field of DATE_FIELDS) {
-    const v = text(field);
-    if (v) parts.push({ field, value: formatPlanDate(v) });
-  }
+  const since = text('since');
+  if (since) parts.push({ field: 'since', value: formatPlanDate(since) });
+  // `until` is exclusive (the search keeps mail before it): show the last day
+  // the search includes, or "until 28/09" would promise mail from the 28th.
+  const until = text('until');
+  if (until) parts.push({ field: 'until', value: formatPlanDate(until, 1) });
   if (filter.unread === true) parts.push({ field: 'unread', value: '' });
   return parts;
 }

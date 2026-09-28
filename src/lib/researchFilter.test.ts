@@ -6,8 +6,13 @@ describe('researchFilterParts', () => {
     expect(researchFilterParts({ until: '2026-09-28', since: '2026-03-28', from: 'reports@example.com' })).toEqual([
       { field: 'from', value: 'reports@example.com' },
       { field: 'since', value: '28/03/2026' },
-      { field: 'until', value: '28/09/2026' },
+      { field: 'until', value: '27/09/2026' },
     ]);
+  });
+
+  it('shows the exclusive end bound as the last day it includes', () => {
+    expect(researchFilterParts({ until: '2026-01-01' })).toEqual([{ field: 'until', value: '31/12/2025' }]);
+    expect(researchFilterParts({ until: '2024-03-01' })).toEqual([{ field: 'until', value: '29/02/2024' }]);
   });
 
   it('shows keywords and tags as they were searched', () => {
