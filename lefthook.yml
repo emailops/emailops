@@ -135,13 +135,20 @@ pre-push:
     # without regenerating the lockfile — the failure only surfaced on
     # the macOS runner mid-release. `npm ci --dry-run` reproduces that
     # exact check locally in ~1s with a warm npm cache.
+    # Runs on a copy of the manifests: npm 9's `npm ci` empties node_modules
+    # before it honours --dry-run, so checking in place wiped the checkout's
+    # node_modules on every push.
     npm-lockfile-sync:
       run: |
-        if ! npm ci --dry-run >/dev/null 2>&1; then
+        tmp=$(mktemp -d)
+        cp package.json package-lock.json "$tmp"/
+        if ! (cd "$tmp" && npm ci --dry-run >/dev/null 2>&1); then
           echo "ERROR: package.json and package-lock.json are out of sync."
           echo "Run 'npm install --package-lock-only' and commit the updated lockfile."
           echo ""
           echo "Full npm ci output:"
-          npm ci --dry-run 2>&1 | head -40
+          (cd "$tmp" && npm ci --dry-run 2>&1 | head -40)
+          rm -rf "$tmp"
           exit 1
         fi
+        rm -rf "$tmp"
