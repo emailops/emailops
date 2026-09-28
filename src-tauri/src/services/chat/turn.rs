@@ -2958,15 +2958,6 @@ email written, simply invite them to ask you to draft a reply.",
     system
 }
 
-/// Run one chat turn for a "thread-bound" conversation — one that was seeded
-/// with the cleaned content of an email thread (see
-/// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
-/// is already the entire context the user wants the model to consider, and
-/// exposes a single tool — `generate_email_draft` — so the user can ask it to
-/// draft a reply grounded in that thread.
-///
-/// Used as a short-circuit at the top of [`run_chat_turn`].
-#[allow(clippy::too_many_arguments)]
 /// The skill a `/name` message invokes, if any — logged so the output panel
 /// shows it, and so a skill that failed to load does not vanish silently.
 fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skills::SkillTurn> {
@@ -2985,6 +2976,15 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
     Some(turn)
 }
 
+/// Run one chat turn for a "thread-bound" conversation — one that was seeded
+/// with the cleaned content of an email thread (see
+/// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
+/// is already the entire context the user wants the model to consider, and
+/// exposes a single tool — `generate_email_draft` — so the user can ask it to
+/// draft a reply grounded in that thread.
+///
+/// Used as a short-circuit at the top of [`run_chat_turn`].
+#[allow(clippy::too_many_arguments)]
 async fn run_thread_bound_turn(
     db: Arc<Database>,
     provider: Arc<dyn AIProvider>,
