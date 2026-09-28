@@ -36,32 +36,34 @@ impl Tool for LoadSkillTool {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the skill to load."
+                    "description": "Name of the skill to load (see Skills in the system prompt)."
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Optional: one of the skill's reference files, as listed when the skill was loaded."
                 }
             },
             "required": ["name"]
         })
     }
 
-    /// The catalog goes in the `name` description and the names become an
-    /// `enum`, so a model with constrained decoding cannot invent one.
+    /// The names become an `enum`, so a model with constrained decoding
+    /// cannot invent one. The descriptions ride once, in `prompt_appendix`.
     fn parameters_schema_for(&self, db: &Database) -> Value {
         let catalog = skills::catalog_for(db);
-        let (lines, names) = skills::render_catalog(&catalog.skills);
-        if names.is_empty() {
-            return self.parameters_schema();
+        let (_, names) = skills::render_catalog(&catalog.skills);
+        let mut schema = self.parameters_schema();
+        if !names.is_empty() {
+            schema["properties"]["name"]["enum"] = json!(names);
         }
-        json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "enum": names,
-                    "description": format!("Name of the skill to load. Available skills:\n{lines}")
-                }
-            },
-            "required": ["name"]
-        })
+        schema
+    }
+
+    /// Hermes-style skills index: the catalog plus the instruction to load a
+    /// matching skill before answering. Depends only on the skills folder, so
+    /// the system prefix stays byte-identical turn to turn.
+    fn prompt_appendix(&self, db: &Database) -> Option<String> {
+        skills::render_skills_index(&skills::catalog_for(db).skills)
     }
 
     /// Hidden unless the feature is on AND at least one valid skill exists: an
@@ -76,10 +78,22 @@ impl Tool for LoadSkillTool {
             .and_then(Value::as_str)
             .map(|s| s.trim().trim_start_matches('/').to_ascii_lowercase())
             .unwrap_or_default();
+        let file = args
+            .get("file")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|f| !f.is_empty());
         let catalog = skills::catalog_for(ctx.db);
-        Ok(ToolOutput::text(match catalog.get(&requested) {
-            Some(skill) => skills::render_skill_block(skill),
-            None => format!(
+        Ok(ToolOutput::text(match (catalog.get(&requested), file) {
+            (Some(skill), None) => skills::render_skill_block(skill),
+            (Some(skill), Some(file)) => match skills::read_reference(skill, file) {
+                Ok(text) => format!(
+                    "<skill-file skill=\"{}\" path=\"{file}\">\n{text}\n</skill-file>",
+                    skill.name
+                ),
+                Err(msg) => msg,
+            },
+            (None, _) => format!(
                 "No skill named \"{requested}\". Available skills: {}.",
                 catalog.names().join(", ")
             ),
@@ -134,19 +148,33 @@ mod tests {
     }
 
     #[test]
-    fn schema_advertises_the_catalog_and_restricts_names() {
+    fn schema_restricts_names_and_leaves_the_catalog_to_the_index() {
         let (_tmp, db) = db_with_skills(&[
             ("weekly-summary", "Weekly recap by client.", "Group by client."),
             ("vendor-reply", "Reply to vendor quotes.", "Be brief."),
         ]);
         let schema = LoadSkillTool.parameters_schema_for(&db);
-        let name = &schema["properties"]["name"];
-        assert_eq!(name["enum"], json!(["vendor-reply", "weekly-summary"]));
-        let desc = name["description"].as_str().unwrap();
-        assert!(desc.contains("- vendor-reply: Reply to vendor quotes."), "{desc}");
-        assert!(desc.contains("- weekly-summary: Weekly recap by client."), "{desc}");
-        // The body never rides in the schema — that is the point.
-        assert!(!desc.contains("Group by client."), "{desc}");
+        assert_eq!(
+            schema["properties"]["name"]["enum"],
+            json!(["vendor-reply", "weekly-summary"])
+        );
+        assert_eq!(schema["required"], json!(["name"]));
+        assert!(schema["properties"]["file"].is_object(), "{schema}");
+        // Descriptions ride once, in the system-prompt index, not again here.
+        assert!(!schema.to_string().contains("Weekly recap by client."), "{schema}");
+    }
+
+    #[test]
+    fn the_prompt_appendix_is_the_skills_index() {
+        let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendor quotes.", "Be brief.")]);
+        let appendix = LoadSkillTool.prompt_appendix(&db).unwrap();
+        assert!(
+            appendix.contains("- vendor-reply: Reply to vendor quotes."),
+            "{appendix}"
+        );
+        assert!(appendix.contains("FIRST"), "{appendix}");
+        // The body stays out of every-turn text — that is the point.
+        assert!(!appendix.contains("Be brief."), "{appendix}");
     }
 
     #[test]
@@ -187,5 +215,23 @@ mod tests {
         let out = LoadSkillTool.execute(&ctx(&db), json!({"name": "nope"})).await.unwrap();
         assert!(out.text.contains("No skill named \"nope\""), "{}", out.text);
         assert!(out.text.contains("vendor-reply"));
+    }
+
+    #[tokio::test]
+    async fn reads_a_listed_reference_file() {
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "See references.")]);
+        let refs = tmp.path().join(skills::SKILLS_DIR).join("vendor-reply/references");
+        std::fs::create_dir_all(&refs).unwrap();
+        std::fs::write(refs.join("tone.md"), "Always formal.").unwrap();
+        let out = LoadSkillTool
+            .execute(&ctx(&db), json!({"name": "vendor-reply", "file": "references/tone.md"}))
+            .await
+            .unwrap();
+        assert!(out.text.contains("Always formal."), "{}", out.text);
+        let refused = LoadSkillTool
+            .execute(&ctx(&db), json!({"name": "vendor-reply", "file": "../../emailops.db"}))
+            .await
+            .unwrap();
+        assert!(refused.text.contains("has no file"), "{}", refused.text);
     }
 }

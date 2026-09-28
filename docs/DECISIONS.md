@@ -1913,12 +1913,15 @@ Cohere), too many to impose.
 
 ## 2026-09-27 — Chat skills are Agent Skills folders on disk, loaded on demand
 
-**Decision:** The chat supports user *skills* in the Agent Skills shape: a folder per
-skill under `<data dir>/skills/` holding a `SKILL.md` (YAML frontmatter with `name` and
-`description`, then Markdown instructions). Only the one-line catalog rides in the prompt,
-inside the `load_skill` tool's schema; a body enters a turn only when the model calls
-`load_skill`, or when the user starts a message with `/name` (then it rides in the final
-user message). Skills are instructions only — nothing in a skill folder is executed.
+**Decision:** The chat supports user *skills* in the Agent Skills shape, modelled on
+Hermes Agent: a folder per skill under `<data dir>/skills/` holding a `SKILL.md` (YAML
+frontmatter with `name` and `description`, then Markdown instructions) and optional
+`.md`/`.txt` reference files. Progressive disclosure in three levels: a skills index (the
+one-line catalog plus "load a matching skill FIRST") in the system prompt, the body when
+the model calls `load_skill(name)`, a reference file when it calls
+`load_skill(name, file)`. `/name` at the start of a message applies a skill directly
+(stackable: `/a /b request`), riding in the final user message. Skills are instructions
+only — nothing in a skill folder is executed.
 Settings → AI Skills lists them, shows why one failed to load, opens the folder and holds
 the `skills_enabled` toggle (default on). `emailops-cli skills` lists them too.
 **Context:** The developer asked for skills "like Anthropic's" and chose a folder on disk

@@ -2972,7 +2972,10 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
         );
     }
     let turn = crate::services::skills::plan_skill_turn(message, &catalog)?;
-    emit_log("info", &format!("skill \"{}\" applied to this turn", turn.skill));
+    emit_log(
+        "info",
+        &format!("skill(s) applied to this turn: {}", turn.skills.join(", ")),
+    );
     Some(turn)
 }
 

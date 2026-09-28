@@ -56,6 +56,15 @@ pub const MAX_BODY_CHARS: usize = 8000;
 /// stay usable via `/name`.
 pub const MAX_CATALOG_CHARS: usize = 2000;
 
+/// Most supporting files listed per skill, and how deep under the skill
+/// folder they are looked for (`references/escalation.md` is depth 2).
+pub const MAX_SKILL_FILES: usize = 20;
+const MAX_FILE_DEPTH: usize = 2;
+
+/// Supporting files are instructions too: only plain text is listed. Scripts
+/// and binaries are ignored — nothing in a skill folder is ever executed.
+const TEXT_EXTENSIONS: &[&str] = &["md", "txt"];
+
 /// One skill parsed from disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Skill {
@@ -65,6 +74,9 @@ pub struct Skill {
     pub body: String,
     /// Path of the `SKILL.md` it came from (empty when parsed from a string).
     pub path: PathBuf,
+    /// Supporting text files in the skill folder (`references/…`, templates),
+    /// relative to it — what `load_skill(name, file)` may read.
+    pub files: Vec<String>,
 }
 
 /// A `SKILL.md` that could not be loaded, and why — surfaced in Settings and
@@ -162,6 +174,7 @@ pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
         description,
         body,
         path: PathBuf::new(),
+        files: Vec::new(),
     })
 }
 
@@ -188,7 +201,8 @@ fn validate_name(name: &str) -> Result<(), String> {
 /// what the user asked besides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
-    pub name: String,
+    /// Every skill named, in the order typed, without repeats.
+    pub names: Vec<String>,
     /// The message without the `/name` prefix, trimmed. May be empty.
     pub rest: String,
 }
@@ -197,20 +211,34 @@ pub struct Invocation {
 /// known skill counts, so a path or a date ("/2026") typed mid-sentence, or a
 /// slash command for something else, is left alone.
 pub fn plan_invocation(message: &str, names: &[&str]) -> Option<Invocation> {
-    let rest = message.trim_start().strip_prefix('/')?;
-    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    let typed = rest[..end].to_ascii_lowercase();
-    let name = names.iter().find(|n| **n == typed)?;
+    let mut rest = message.trim_start();
+    let mut found: Vec<String> = Vec::new();
+    // Stack `/a /b …` until the first token that is not a known skill, so a
+    // path or a date in the request itself is left alone.
+    while let Some(after_slash) = rest.strip_prefix('/') {
+        let end = after_slash.find(char::is_whitespace).unwrap_or(after_slash.len());
+        let typed = after_slash[..end].to_ascii_lowercase();
+        let Some(name) = names.iter().find(|n| **n == typed) else {
+            break;
+        };
+        if !found.iter().any(|f| f == name) {
+            found.push((*name).to_string());
+        }
+        rest = after_slash[end..].trim_start();
+    }
+    if found.is_empty() {
+        return None;
+    }
     Some(Invocation {
-        name: (*name).to_string(),
-        rest: rest[end..].trim().to_string(),
+        names: found,
+        rest: rest.trim().to_string(),
     })
 }
 
 /// A chat turn the user started with `/name`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillTurn {
-    pub skill: String,
+    pub skills: Vec<String>,
     /// What the turn asks: the text after `/name`, or a request to apply the
     /// skill when the user typed nothing else.
     pub question: String,
@@ -222,16 +250,24 @@ pub struct SkillTurn {
 /// that does not invoke a skill in `catalog`.
 pub fn plan_skill_turn(message: &str, catalog: &SkillCatalog) -> Option<SkillTurn> {
     let invocation = plan_invocation(message, &catalog.names())?;
-    let skill = catalog.get(&invocation.name)?;
-    let question = if invocation.rest.is_empty() {
-        format!("Apply the skill \"{}\".", skill.name)
-    } else {
-        invocation.rest
+    let skills: Vec<&Skill> = invocation.names.iter().filter_map(|n| catalog.get(n)).collect();
+    if skills.is_empty() {
+        return None;
+    }
+    let quoted: Vec<String> = skills.iter().map(|s| format!("\"{}\"", s.name)).collect();
+    let question = match (invocation.rest.is_empty(), quoted.len()) {
+        (false, _) => invocation.rest,
+        (true, 1) => format!("Apply the skill {}.", quoted.join("")),
+        (true, _) => format!("Apply the skills {}.", quoted.join(", ")),
     };
     Some(SkillTurn {
-        skill: skill.name.clone(),
+        skills: skills.iter().map(|s| s.name.clone()).collect(),
         question,
-        block: render_skill_block(skill),
+        block: skills
+            .iter()
+            .map(|s| render_skill_block(s))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
     })
 }
 
@@ -257,10 +293,98 @@ pub fn render_catalog(skills: &[Skill]) -> (String, Vec<String>) {
     (lines.join("\n"), names)
 }
 
+/// The system-prompt section listing the skills, Hermes-style: the catalog
+/// plus the instruction to load a matching skill before answering. `None`
+/// with no skills.
+pub fn render_skills_index(skills: &[Skill]) -> Option<String> {
+    let (lines, names) = render_catalog(skills);
+    if names.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Skills (the user's saved procedures):\n{lines}\n\
+Before replying, scan the skills above. If one matches the request, call load_skill with its name FIRST and follow the instructions it returns. Never say you loaded a skill without calling load_skill."
+    ))
+}
+
+/// Read one of `skill`'s supporting files. Only a path listed in
+/// `skill.files` is served, so nothing outside the skill folder is reachable.
+pub fn read_reference(skill: &Skill, file: &str) -> Result<String, String> {
+    let wanted = file.trim().trim_start_matches("./");
+    let Some(listed) = skill.files.iter().find(|f| f.as_str() == wanted) else {
+        return Err(if skill.files.is_empty() {
+            format!("The skill \"{}\" has no reference files.", skill.name)
+        } else {
+            format!(
+                "The skill \"{}\" has no file \"{wanted}\". Its files: {}.",
+                skill.name,
+                skill.files.join(", ")
+            )
+        });
+    };
+    let dir = skill
+        .path
+        .parent()
+        .ok_or_else(|| format!("The skill \"{}\" has no folder.", skill.name))?;
+    let text = std::fs::read_to_string(dir.join(listed)).map_err(|e| format!("Could not read {listed}: {e}"))?;
+    if text.chars().count() <= MAX_BODY_CHARS {
+        return Ok(text);
+    }
+    let cut: String = text.chars().take(MAX_BODY_CHARS).collect();
+    Ok(format!("{cut}\n[truncated]"))
+}
+
+/// The supporting text files under a skill folder, relative and sorted.
+fn list_skill_files(dir: &Path) -> Vec<String> {
+    fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if depth < MAX_FILE_DEPTH {
+                    walk(root, &path, depth + 1, out);
+                }
+                continue;
+            }
+            let is_text = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| TEXT_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
+            let Ok(rel) = path.strip_prefix(root) else {
+                continue;
+            };
+            let rel = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if is_text && rel != SKILL_FILE {
+                out.push(rel);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, 1, &mut out);
+    out.sort();
+    out.truncate(MAX_SKILL_FILES);
+    out
+}
+
 /// The block that carries a skill's instructions into a prompt.
 pub fn render_skill_block(skill: &Skill) -> String {
+    let files = if skill.files.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\nReference files — read one with load_skill(name=\"{}\", file=…) when the instructions need it: {}",
+            skill.name,
+            skill.files.join(", ")
+        )
+    };
     format!(
-        "<skill name=\"{}\">\nThe user's skill \"{}\" applies to this request. Follow its instructions:\n\n{}\n</skill>",
+        "<skill name=\"{}\">\nThe user's skill \"{}\" applies to this request. Follow its instructions:\n\n{}{files}\n</skill>",
         skill.name, skill.name, skill.body
     )
 }
@@ -314,6 +438,7 @@ pub fn load_catalog(dir: &Path) -> SkillCatalog {
             .and_then(|text| parse_skill_md(&text, &folder));
         match parsed {
             Ok(mut skill) => {
+                skill.files = list_skill_files(&folder_path);
                 skill.path = file;
                 catalog.skills.push(skill);
             }

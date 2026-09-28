@@ -12,6 +12,7 @@ fn skill(name: &str, description: &str) -> Skill {
         description: description.to_string(),
         body: "Do the thing.".to_string(),
         path: PathBuf::new(),
+        files: Vec::new(),
     }
 }
 
@@ -126,21 +127,21 @@ fn a_leading_slash_name_invokes_the_skill() {
     assert_eq!(
         plan_invocation("/vendor-reply the quote from ACME", &names),
         Some(Invocation {
-            name: "vendor-reply".into(),
+            names: vec!["vendor-reply".into()],
             rest: "the quote from ACME".into()
         })
     );
     assert_eq!(
         plan_invocation("  /weekly-summary  ", &names),
         Some(Invocation {
-            name: "weekly-summary".into(),
+            names: vec!["weekly-summary".into()],
             rest: String::new()
         })
     );
     assert_eq!(
         plan_invocation("/weekly-summary\nsolo clientes de Madrid", &names),
         Some(Invocation {
-            name: "weekly-summary".into(),
+            names: vec!["weekly-summary".into()],
             rest: "solo clientes de Madrid".into()
         })
     );
@@ -149,8 +150,27 @@ fn a_leading_slash_name_invokes_the_skill() {
 #[test]
 fn the_skill_name_is_matched_case_insensitively() {
     assert_eq!(
-        plan_invocation("/Weekly-Summary", &["weekly-summary"]).map(|i| i.name),
-        Some("weekly-summary".to_string())
+        plan_invocation("/Weekly-Summary", &["weekly-summary"]).map(|i| i.names),
+        Some(vec!["weekly-summary".to_string()])
+    );
+}
+
+#[test]
+fn several_leading_skills_stack_until_the_first_other_token() {
+    // Hermes-style stacking: `/a /b request`. Parsing stops at the first
+    // token that is not a known skill, so a path in the request survives.
+    let names = ["weekly-summary", "vendor-reply"];
+    assert_eq!(
+        plan_invocation("/vendor-reply /weekly-summary /tmp/report.pdf please", &names),
+        Some(Invocation {
+            names: vec!["vendor-reply".into(), "weekly-summary".into()],
+            rest: "/tmp/report.pdf please".into()
+        })
+    );
+    // A skill named twice is applied once.
+    assert_eq!(
+        plan_invocation("/vendor-reply /vendor-reply go", &names).map(|i| i.names),
+        Some(vec!["vendor-reply".to_string()])
     );
 }
 
@@ -266,7 +286,7 @@ fn catalog_of(skills: Vec<Skill>) -> SkillCatalog {
 fn a_skill_turn_asks_the_rest_and_carries_the_block() {
     let catalog = catalog_of(vec![skill("vendor-reply", "Reply to vendors.")]);
     let turn = plan_skill_turn("/vendor-reply the ACME quote", &catalog).unwrap();
-    assert_eq!(turn.skill, "vendor-reply");
+    assert_eq!(turn.skills, vec!["vendor-reply".to_string()]);
     assert_eq!(turn.question, "the ACME quote");
     assert_eq!(turn.block, render_skill_block(&catalog.skills[0]));
 }
@@ -278,6 +298,17 @@ fn a_bare_invocation_asks_to_apply_the_skill() {
     let catalog = catalog_of(vec![skill("weekly-summary", "Weekly recap.")]);
     let turn = plan_skill_turn("/weekly-summary", &catalog).unwrap();
     assert_eq!(turn.question, "Apply the skill \"weekly-summary\".");
+}
+
+#[test]
+fn a_stacked_turn_carries_every_block_in_order() {
+    let catalog = catalog_of(vec![skill("a-skill", "A."), skill("b-skill", "B.")]);
+    let turn = plan_skill_turn("/b-skill /a-skill", &catalog).unwrap();
+    assert_eq!(turn.skills, vec!["b-skill".to_string(), "a-skill".to_string()]);
+    assert_eq!(turn.question, "Apply the skills \"b-skill\", \"a-skill\".");
+    let b = turn.block.find("<skill name=\"b-skill\">").unwrap();
+    let a = turn.block.find("<skill name=\"a-skill\">").unwrap();
+    assert!(b < a, "{}", turn.block);
 }
 
 #[test]
@@ -326,4 +357,86 @@ fn ensure_skills_dir_creates_the_folder_once() {
 fn ensure_skills_dir_errors_without_a_data_dir() {
     let db = Database::new_for_testing().unwrap();
     assert!(ensure_skills_dir(&db).is_err());
+}
+
+// ── skills index (system prompt) ───────────────────────────────────────
+
+#[test]
+fn the_index_lists_skills_and_tells_the_model_to_load_first() {
+    let index = render_skills_index(&[skill("vendor-support", "Find support contacts.")]).unwrap();
+    assert!(index.contains("- vendor-support: Find support contacts."), "{index}");
+    assert!(index.contains("load_skill"), "{index}");
+    assert!(index.contains("FIRST"), "{index}");
+    // It must never claim a load happened without the call.
+    assert!(index.contains("Never say you loaded a skill"), "{index}");
+}
+
+#[test]
+fn no_skills_means_no_index() {
+    assert_eq!(render_skills_index(&[]), None);
+}
+
+// ── reference files (level 2) ──────────────────────────────────────────
+
+#[test]
+fn loading_lists_the_skills_text_files_but_not_skill_md_or_others() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_skill(tmp.path(), "vendor-support", &skill_md("vendor-support", "d", "Body."));
+    let dir = tmp.path().join("vendor-support");
+    fs::create_dir_all(dir.join("references/deep/deeper")).unwrap();
+    fs::write(dir.join("references/escalation.md"), "Escalate.").unwrap();
+    fs::write(dir.join("templates.txt"), "Hi {name}").unwrap();
+    fs::write(dir.join("logo.png"), [0u8, 1, 2]).unwrap();
+    fs::write(dir.join("run.sh"), "rm -rf /").unwrap();
+    fs::write(dir.join("references/deep/deeper/too-deep.md"), "x").unwrap();
+
+    let catalog = load_catalog(tmp.path());
+    assert_eq!(
+        catalog.get("vendor-support").unwrap().files,
+        vec!["references/escalation.md".to_string(), "templates.txt".to_string()]
+    );
+}
+
+#[test]
+fn the_skill_block_names_its_reference_files() {
+    let mut s = skill("vendor-support", "d");
+    s.files = vec!["references/escalation.md".into()];
+    let block = render_skill_block(&s);
+    assert!(block.contains("references/escalation.md"), "{block}");
+    assert!(block.contains("load_skill"), "{block}");
+    // No files, no mention.
+    assert!(!render_skill_block(&skill("x", "d")).contains("load_skill"));
+}
+
+#[test]
+fn read_reference_serves_only_listed_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_skill(tmp.path(), "vendor-support", &skill_md("vendor-support", "d", "Body."));
+    let dir = tmp.path().join("vendor-support");
+    fs::create_dir_all(dir.join("references")).unwrap();
+    fs::write(dir.join("references/escalation.md"), "Escalate after 48h.").unwrap();
+    fs::write(tmp.path().join("secret.md"), "not yours").unwrap();
+    let catalog = load_catalog(tmp.path());
+    let s = catalog.get("vendor-support").unwrap();
+
+    assert_eq!(
+        read_reference(s, "references/escalation.md").unwrap(),
+        "Escalate after 48h."
+    );
+    // Leading `./` is tolerated.
+    assert!(read_reference(s, "./references/escalation.md").is_ok());
+    for bad in ["../secret.md", "/etc/passwd", "SKILL.md", "references/missing.md", ""] {
+        assert!(read_reference(s, bad).is_err(), "{bad:?} must be refused");
+    }
+}
+
+#[test]
+fn a_long_reference_is_cut_with_a_visible_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_skill(tmp.path(), "big", &skill_md("big", "d", "Body."));
+    fs::write(tmp.path().join("big/notes.md"), "y".repeat(MAX_BODY_CHARS + 50)).unwrap();
+    let catalog = load_catalog(tmp.path());
+    let text = read_reference(catalog.get("big").unwrap(), "notes.md").unwrap();
+    assert!(text.ends_with("[truncated]"), "{}", &text[text.len() - 30..]);
+    assert!(text.chars().count() <= MAX_BODY_CHARS + 20);
 }

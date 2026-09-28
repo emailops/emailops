@@ -281,6 +281,14 @@ pub trait Tool: Send + Sync {
         self.description()
     }
 
+    /// Extra guidance rendered into the system prompt after the `Tools:` list,
+    /// for a tool whose use depends on settings-driven content (the skills
+    /// index). Must be stable turn to turn — it sits in the cached system
+    /// prefix. Only rendered while the tool is available. Default: none.
+    fn prompt_appendix(&self, _db: &Database) -> Option<String> {
+        None
+    }
+
     /// Whether this tool should be advertised to the LLM right now. Default:
     /// always available. Override only for tools whose underlying feature
     /// has a Settings toggle. Returns plain `bool` (not `Result<bool>`) so
@@ -398,6 +406,21 @@ impl ToolRegistry {
         let mut out = String::from("Tools:\n");
         for (_, line) in entries {
             out.push_str(&line);
+            out.push('\n');
+        }
+
+        // Tool appendices (e.g. the skills index), in tool-name order so the
+        // cached prefix is byte-stable.
+        let mut appendices: Vec<(&'static str, String)> = self
+            .tools
+            .values()
+            .filter(|t| t.is_available(db))
+            .filter_map(|t| t.prompt_appendix(db).map(|a| (t.name(), a)))
+            .collect();
+        appendices.sort_by_key(|(name, _)| *name);
+        for (_, appendix) in appendices {
+            out.push('\n');
+            out.push_str(&appendix);
             out.push('\n');
         }
 
@@ -841,6 +864,38 @@ mod tests {
             structured.contains("full long description"),
             "structured tools block missing description: {structured}"
         );
+    }
+
+    struct AppendixTool;
+
+    #[async_trait]
+    impl Tool for AppendixTool {
+        fn name(&self) -> &'static str {
+            "with_appendix"
+        }
+        fn description(&self) -> &'static str {
+            "d"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn prompt_appendix(&self, _db: &Database) -> Option<String> {
+            Some("Extra guidance block.".into())
+        }
+        async fn execute(&self, _ctx: &ToolCtx<'_>, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text(""))
+        }
+    }
+
+    #[test]
+    fn render_system_prompt_section_appends_tool_appendices_before_the_tools_block() {
+        let db = Database::new_for_testing().expect("db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(AppendixTool)]);
+        let section = registry.render_system_prompt_section(&db);
+        let appendix = section.find("Extra guidance block.").expect("appendix rendered");
+        let tools_block = section.find("<tools>").expect("tools block");
+        let list = section.find("  - with_appendix(").expect("tool line");
+        assert!(list < appendix && appendix < tools_block, "{section}");
     }
 
     #[test]
