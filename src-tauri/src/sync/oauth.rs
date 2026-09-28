@@ -274,22 +274,24 @@ pub async fn revoke_token(revoke_url: &str, token: &str) -> Result<()> {
     Ok(())
 }
 
+/// How long the loopback listener waits for the browser redirect. A first
+/// sign-in while the Google app is unverified walks through the "Google
+/// hasn't verified this app" interstitial and a per-scope consent page; when
+/// the listener closed before that finished, the redirect failed with
+/// ERR_CONNECTION_REFUSED.
+const OAUTH_CALLBACK_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
 fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String> {
     listener
         .set_nonblocking(true)
         .map_err(|e| AppError::OAuthError(format!("Failed to configure callback listener: {}", e)))?;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    let deadline = std::time::Instant::now() + OAUTH_CALLBACK_TIMEOUT;
 
     while std::time::Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(15)))
-                    .map_err(|e| AppError::OAuthError(format!("Failed to configure callback stream: {}", e)))?;
-                stream
-                    .set_write_timeout(Some(Duration::from_secs(15)))
-                    .map_err(|e| AppError::OAuthError(format!("Failed to configure callback stream: {}", e)))?;
+                prepare_callback_stream(&stream)?;
 
                 match read_callback_request(&stream, expected_state) {
                     Ok(code) => {
@@ -313,6 +315,22 @@ fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<Stri
     Err(AppError::OAuthError(
         "Timed out waiting for OAuth callback. Please try again.".to_string(),
     ))
+}
+
+/// Put an accepted callback connection into blocking mode with timeouts.
+/// On macOS/BSD an accepted socket inherits O_NONBLOCK from the non-blocking
+/// listener, so without this a request line that has not arrived yet reads as
+/// WouldBlock and the authorization code is dropped.
+fn prepare_callback_stream(stream: &TcpStream) -> Result<()> {
+    let configure = |e: std::io::Error| AppError::OAuthError(format!("Failed to configure callback stream: {}", e));
+    stream.set_nonblocking(false).map_err(configure)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(configure)?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(15)))
+        .map_err(configure)?;
+    Ok(())
 }
 
 fn read_callback_request(stream: &TcpStream, expected_state: &str) -> Result<String> {
@@ -389,6 +407,7 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 mod tests {
     use super::extract_callback_code;
     use super::{authorization_url, oauth_client, revoke_token, OAuthConfig};
+    use super::{prepare_callback_stream, read_callback_request, OAUTH_CALLBACK_TIMEOUT};
 
     #[test]
     fn gmail_scopes_include_calendar_events_read_write() {
@@ -519,6 +538,51 @@ mod tests {
     fn rejects_callback_without_code() {
         let error = extract_callback_code("/?state=expected", "expected").unwrap_err();
         assert!(error.to_string().contains("Missing authorization code"));
+    }
+
+    /// A connected (server, client) socket pair on loopback.
+    fn loopback_pair() -> (std::net::TcpStream, std::net::TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (server, client)
+    }
+
+    #[test]
+    fn callback_stream_waits_for_a_request_that_arrives_after_accept() {
+        // On macOS an accepted socket inherits O_NONBLOCK from the listener,
+        // which `wait_for_callback` polls non-blocking. Unless the stream is
+        // switched back to blocking, a request line that lands a moment after
+        // `accept` (a browser preconnect, a slow first packet) reads as
+        // WouldBlock and the real OAuth callback is thrown away.
+        use std::io::Write;
+        let (server, mut client) = loopback_pair();
+        server.set_nonblocking(true).unwrap(); // what macOS hands back from accept
+
+        prepare_callback_stream(&server).unwrap();
+
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            client
+                .write_all(b"GET /?code=late-code&state=expected HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .unwrap();
+            client
+        });
+        let code = read_callback_request(&server, "expected").unwrap();
+        writer.join().unwrap();
+        assert_eq!(code, "late-code");
+    }
+
+    #[test]
+    fn callback_listener_outlives_the_unverified_app_consent_screens() {
+        // While the Google OAuth app is unverified, sign-in goes through the
+        // "Google hasn't verified this app" interstitial plus a per-scope
+        // consent page before redirecting. Three minutes was not enough: the
+        // listener closed first and the redirect hit ERR_CONNECTION_REFUSED.
+        assert!(
+            OAUTH_CALLBACK_TIMEOUT >= std::time::Duration::from_secs(10 * 60),
+            "callback timeout too short for a first-time consent: {OAUTH_CALLBACK_TIMEOUT:?}"
+        );
     }
 
     /// One-shot HTTP server: answers the first request with `status` and
