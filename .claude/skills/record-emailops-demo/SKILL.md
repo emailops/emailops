@@ -1,6 +1,6 @@
 ---
 name: record-emailops-demo
-description: "Record a demo video of the real EmailOps app — a promo, a feature short (vertical 9:16 or 16:9) or a how-to, narrated or text-only — from the synthetic demo instance, never the developer's mailbox. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots with an animated camera that eases from the whole window onto each action (the click, the chat being filled, the result) or as still 1:1 shots, with title and section cards, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a 16:9 promo, a narrated demo or a tutorial video of EmailOps, or wants one re-cut. For a short (YouTube Shorts, Reels, TikTok, any vertical clip) use record-emailops-short instead — it is the default for shorts."
+description: "Record a demo video of the real EmailOps app — a promo, a feature short (vertical 9:16 or 16:9) or a how-to, narrated or text-only — from the synthetic demo instance, never real account data. Drives the app through WebDriver measuring every control it clicks, so the video can draw a pointer and a click marker that land exactly where the action happened; composes the shots with an animated camera that eases from the whole window onto each action (the click, the chat being filled, the result) or as still 1:1 shots, with title and section cards, dissolves and paced pauses; speaks the script locally with Kokoro (Apache-2.0, safe to publish, unlike the macOS say voices); mixes the narration over a licensed music bed with ducking; and ships the MP4 with no burned-in text plus one .srt per language, a music-only cut, the narration alone and a YouTube sheet. Use when the user asks for a 16:9 promo, a narrated demo or a tutorial video of EmailOps, or wants one re-cut. For a short (YouTube Shorts, Reels, TikTok, any vertical clip) use record-emailops-short instead — it is the default for shorts."
 argument-hint: <what the video should show, and in which language>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---
@@ -12,7 +12,7 @@ how-to, narrated or text-only. Output is an MP4 with no burned-in text, subtitle
 languages as you write, a music-only cut, the narration on its own, and a sheet
 with everything YouTube asks for.
 
-Everything is driven from the **demo instance**, never the developer's mailbox.
+Everything is driven from the **demo instance**, never real account data.
 The persona, accounts and 79 synthetic emails come from `verify-emailops`.
 
 ```bash
@@ -228,7 +228,7 @@ Copy into `docs/marketing/videos/` (gitignored):
 | `<name>-<lang>.srt` | one per language |
 | `youtube-<name>.md` | title, description, tags, section markers, upload settings |
 
-Never publish real mailbox content: the demo data is synthetic, keep it that way.
+Never publish private data: the demo data is synthetic, keep it that way.
 
 ## Gotchas
 

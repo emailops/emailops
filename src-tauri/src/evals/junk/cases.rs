@@ -7,7 +7,7 @@
 //! pass even if the parser never read a header correctly.
 //!
 //! Every case is synthetic. Domains use the RFC 2606 `.example` TLD; no address,
-//! name or subject comes from a real mailbox.
+//! name or subject comes from real-world mail.
 
 use std::collections::BTreeMap;
 use std::path::Path;

@@ -26,7 +26,7 @@
 # The `help://<lang>/…` link therefore follows the AI output language, not the
 # language of the question, so the checks pin the scheme rather than the code.
 #
-# Synthetic by construction: nothing here comes from a real mailbox.
+# Synthetic by construction: nothing here comes from real-world mail.
 
 - id: app_help_ollama_en
   question: "how do I make EmailOps use my local Ollama instead of the built-in model?"

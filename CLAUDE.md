@@ -30,7 +30,7 @@ Common development operations live in the root `Makefile`. **Before reaching for
 
 - **App run:** `make dev` (repo-local data dir) / `make dev-fresh` (throwaway data dir) / `make dev-trace` (tracing feature enabled)
 - **Demo data:** `make demo-db` / `make demo-embed` / `make demo` (run app against demo DB) — plus `-es` variants for Spanish demo data
-- **Quality gates:** `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
+- **Quality gates:** `make gates SET=commit|push|rust|frontend|all` (one summary line per gate, full output in files — `scripts/gates.sh`, which the lefthook pre-commit clippy/rustfmt/typecheck and pre-push hooks also call), `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
 - **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Linux / Windows Release Builds" below
 - **Hooks / deps:** `make install`, `make hooks`, `make audit`, `make clean`
 
@@ -104,7 +104,8 @@ Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_p
 - All email data stored locally in SQLite
 - OAuth tokens stored in OS keychain (not plain files)
 - No telemetry, no cloud sync, no external API calls except to email providers or AI providers (only when user chooses to use remote LLMs)
-- **NEVER include real names, email addresses, subjects, or other personal data from the developer's mailbox in git-tracked files** — not in test fixtures, not in code comments, not in regression test cases, not in commit messages, not in PR descriptions. When a real-world failure surfaces a personal-data string, paraphrase it into a synthetic equivalent that preserves the technical shape (length, multibyte boundaries, regex pattern, etc.) but drops the identifying content. Real bench output goes under `src-tauri/reports/` which is gitignored — keep it there.
+- **NEVER include real names, email addresses, subjects, or other real personal data in git-tracked files** — not in test fixtures, not in code comments, not in regression test cases, not in commit messages, not in PR descriptions. When a real-world failure surfaces a personal-data string, paraphrase it into a synthetic equivalent that preserves the technical shape (length, multibyte boundaries, regex pattern, etc.) but drops the identifying content. Real bench output goes under `src-tauri/reports/` which is gitignored — keep it there.
+- **Check it with the `privacy-reviewer` subagent** (`.claude/agents/privacy-reviewer.md`) before every commit (scope `staged`), before a push or PR (scope `branch`, plus the PR title/body as `text`), and whenever a real personal-data string may have reached a tracked file. Resolve every `LEAK` with the synthetic replacement it proposes and ask the developer about every `UNSURE` before going on.
 
 ### Separation of Concerns
 - Tauri commands are thin wrappers that delegate to service modules
@@ -157,8 +158,9 @@ Every user-facing operation must emit log entries so they appear in the output p
 ## Git Conventions
 - On a `feature/*`, `fix/*` or `refactor/*` branch, commit at every green checkpoint (gates below pass) without asking. If on `main`, create the branch first. NEVER push unless the developer explicitly asks.
 - NEVER include claude or other agent as author or co-author in commits
-- After implementing a feature, bug fix, or any moderate change, run the full pre-commit hook suite locally (`npx lefthook run pre-commit` or, if some files are unstaged, the equivalent commands directly: `npx biome check src/`, `npx tsc --noEmit`, `cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings` (must match CI's exact flags — see `lefthook.yml`'s clippy comment) and the same with `--features desktop` (the only lint run that sees `commands/`), `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, plus the `no-invoke-outside-api` grep check). Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures.
-- For changes that affect Rust behavior, also run `cargo test --manifest-path src-tauri/Cargo.toml` (matches the pre-push hook) before declaring the work done.
+- Before committing, pushing or opening a PR, run the `privacy-reviewer` subagent (see Privacy First) alongside the gates.
+- After implementing a feature, bug fix, or any moderate change, run the quality gates through the `gate-runner` subagent (`.claude/agents/gate-runner.md`, which runs `make gates`) with the `commit` set (clippy with and without `--features desktop`, rustfmt, biome, tsc — the exact CI flags live in `scripts/gates.sh`) and act on its report. Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures. The `no-invoke-outside-api`, JSX-literal and docs guards run in the lefthook pre-commit hook itself.
+- For changes that affect Rust behavior, also run the `gate-runner` `push` set (`cargo test`, both clippy variants, `cargo-outdated` — matches the pre-push hook) before declaring the work done.
 
 ### Branch Naming
 - `feature/description` - New features

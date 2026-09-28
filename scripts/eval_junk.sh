@@ -20,7 +20,7 @@ cd "$REPO_ROOT"
 OUT_DIR="src-tauri/reports/evaluations/junk"
 
 # Default to the public synthetic corpus; a caller-supplied --cases-dir (e.g.
-# the private golden set exported from a real mailbox) wins.
+# the private golden set exported from real-world mail) wins.
 CASES_DIR="src-tauri/evals/junk/cases"
 ARGS=()
 while [ $# -gt 0 ]; do

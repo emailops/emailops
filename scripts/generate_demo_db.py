@@ -146,7 +146,7 @@ ACCOUNT_PERSONAL_ES = Account(
 # uses the curated `Thread`-based content further below (WORK_THREADS_EN etc.);
 # these two lists are no longer referenced by any locale and are kept only as a
 # format reference for the weight-based path the Spanish demo still uses. Safe to
-# delete. Synthetic data — no real mailbox content.
+# delete. Synthetic data — no private data.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # (sender_name, sender_email, subject, body, category, weight)
@@ -1262,7 +1262,7 @@ def populate_prospect_requests(conn: sqlite3.Connection, locale: Locale) -> None
             category="primary",
         )
         # A prospect's inquiry is a first contact by construction: label it with
-        # the classifier's `introduction` intent, as real mailboxes carry it.
+        # the classifier's `introduction` intent, as real-world mail carries it.
         insert_tags(conn, email_id, subject, body, email, intent="introduction")
 
 

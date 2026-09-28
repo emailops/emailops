@@ -1,7 +1,7 @@
 //! Eval harness for AI email translation (language detection + translation).
 //!
 //! Fully synthetic and heuristic: cases live in `src-tauri/evals/translation/`
-//! (no personal-mailbox content), scoring is deterministic (exact ISO-code
+//! (no private-data content), scoring is deterministic (exact ISO-code
 //! match for detection; keyword presence/absence for translation) — no LLM
 //! judge. Runs against an in-memory DB seeded with the synthetic case text, so
 //! the real `services::translation` executors are exercised end-to-end minus

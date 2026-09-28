@@ -142,7 +142,7 @@ Scopes under review (`GMAIL_SCOPES`, `src-tauri/src/sync/oauth.rs:24`):
 
 **Recording hygiene:**
 
-- [ ] Film with a **dedicated test Google account**, not the personal mailbox.
+- [ ] Film with a **dedicated test Google account**, not a personal account.
   ```
   The address, every subject line and every contact name ends up on YouTube
   permanently. Seed it with synthetic mail and calendar events.

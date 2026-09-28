@@ -1,6 +1,6 @@
 // Demo-phase doc claims: what the docs promise about a mailbox with mail in it.
 // Loaded by doc_claims.mjs (`phase demo`), which passes its helpers in. Runs
-// against the synthetic demo DB (.emailops-demo-data), never a real mailbox.
+// against the synthetic demo DB (.emailops-demo-data), never real-world mail.
 //
 // Same contract as doc_claims.mjs: every case quotes the sentences it proves
 // (`covers`), says how in `how`, takes its expected values from `doc`, and

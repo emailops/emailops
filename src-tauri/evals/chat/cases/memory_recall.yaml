@@ -1,5 +1,5 @@
 # Public synthetic memory-recall eval examples.
-# Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
+# Cases built on private data belong under ignored `private-evals/chat/cases/`.
 
 # Exercises the `list_pending_tasks` shortcut path: the prompt must hit BOTH
 # the tools-first keyword classifier (`routing.rs::TOOLS_FIRST_KEYWORDS`)

@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn a_flag_that_barely_crossed_the_threshold_is_marked_marginal() {
-        // REGRESSION, from a real mailbox: a message a human called legitimate
+        // REGRESSION, from real-world mail: a message a human called legitimate
         // was flagged at 5.4 against the server's own threshold of 5.0, with
         // more than half the points coming from an SPF softfail and a valid DKIM
         // signature on the message. Treating that as the same verdict as a

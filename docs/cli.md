@@ -19,7 +19,7 @@ are safe to run while the desktop app is open. Run heavy **write** commands
 (`sync`, `classify`, `embed`) with the app closed to avoid contention.
 
 > **Examples below use `$EMAILOPS_PERSONAL_ACCOUNT`** rather than a literal
-> address, so nothing in this repo hardcodes a real mailbox. Set it in
+> address, so nothing in this repo hardcodes a real address. Set it in
 > `.env.local` (gitignored — see `.env.local.example`). The Makefile picks it
 > up automatically via `-include .env.local`, but your *shell* does not, so
 > export it once per session before running the examples verbatim:

@@ -3,7 +3,7 @@
 //! # Why this exists
 //!
 //! The synthetic corpus (`src-tauri/evals/junk/cases/`) stops regressions. It
-//! cannot *find* anything: in one session the real mailbox surfaced six defects
+//! cannot *find* anything: in one session real-world mail surfaced six defects
 //! the synthetic cases were structurally incapable of catching — a header whose
 //! presence was read as a verdict, a display-name convention mistaken for an
 //! address, an ESP bounce domain read as impersonation, English-only lexicons on

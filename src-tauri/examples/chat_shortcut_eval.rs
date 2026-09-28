@@ -26,7 +26,7 @@ use emailops_lib::evals::shortcuts::runner::{run, ShortcutRunnerConfig};
 #[derive(Parser, Debug)]
 #[command(
     name = "chat_shortcut_eval",
-    about = "A/B/C-test shortcut prompt variants against a real mailbox.",
+    about = "A/B/C-test shortcut prompt variants against real-world mail.",
     long_about = None,
 )]
 struct Args {

@@ -50,21 +50,18 @@ pre-commit:
     docs-scripts-tests:
       glob: "scripts/{docs_*,check_docs*,check-docs*}.py"
       run: uv run --no-project --with pytest pytest -q scripts/tests
+    # typecheck, clippy and rustfmt-check run single gates from
+    # scripts/gates.sh, which owns the exact CI flags and the Node version
+    # (.nvmrc); `make gates` runs the same commands by hand.
     typecheck:
       glob: "src/**/*.{ts,tsx}"
-      run: npx tsc --noEmit
+      run: bash scripts/gates.sh tsc
     clippy:
       glob: "src-tauri/src/**/*.rs"
-      # --no-default-features --tests matches CI (ci.yml lint-backend and the
-      # Windows job) exactly. CI never lints the default-features build, so
-      # this flag isn't optional — a plain `cargo clippy --tests` here can be
-      # green locally while the identical command still fails on the runner
-      # (bit us once: AppHandle's stub type is Copy only under
-      # --no-default-features, and clippy::clone_on_copy only fires there).
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
+      run: bash scripts/gates.sh clippy
     rustfmt-check:
       glob: "src-tauri/src/**/*.rs"
-      run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      run: bash scripts/gates.sh fmt
     # Scan staged files for committed secrets. Requires gitleaks to be
     # installed locally: `brew install gitleaks`. The hook is a no-op if
     # the binary isn't present so contributors aren't blocked by setup.
@@ -86,48 +83,13 @@ post-checkout:
 pre-push:
   parallel: true
   commands:
-    clippy:
-      # See the pre-commit clippy comment above — must match CI's exact flags.
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
-    clippy-desktop:
-      # Matches CI's "Clippy (desktop)" step: the only lint run that sees
-      # `commands/`, where clippy::large_futures guards the Windows main stack.
-      run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --features desktop --tests -- -D warnings
-    rust-tests:
-      run: cargo test --manifest-path src-tauri/Cargo.toml
+    # cargo test, clippy with and without `--features desktop` and
+    # cargo-outdated: the `push` set of scripts/gates.sh, which owns the exact
+    # CI flags. A missing cargo-outdated warns instead of blocking the push.
+    rust-gates:
+      run: GATES_OPTIONAL=outdated bash scripts/gates.sh push
     secrets-check:
       run: "! git diff origin/main...HEAD -- ':(exclude)*.example' ':(exclude)*.md' 2>/dev/null | grep -E '^\\+.*(sk-or-v1-[a-f0-9]{20}|GOCSPX-[A-Za-z0-9]{20})' || (echo 'ERROR: Potential secrets detected in diff' && exit 1)"
-    # Blocking check for outdated Rust dependencies. Push fails if any
-    # root dep has a newer version available on crates.io.
-    # Install via Homebrew (recommended on macOS — `cargo install` tends to
-    # fail at link time against libssh2/OpenSSL): `brew install cargo-outdated`.
-    #
-    # Deps intentionally pinned below latest because of upstream constraints.
-    # Drop these flags as the upstreams catch up:
-    #   - reqwest  (--ignore):  oauth2 5.x's AsyncHttpClient is wired against
-    #                           reqwest 0.12. Reporting is hidden but the
-    #                           scratch resolver still sees the constraint.
-    #   - rusqlite (--exclude): refinery 0.9 caps its rusqlite range at <=0.39.
-    #                           Must --exclude (not --ignore) so cargo-outdated's
-    #                           scratch resolver doesn't try to bump rusqlite to
-    #                           0.40 and crash on the libsqlite3-sys links clash.
-    #
-    # sysinfo (0.39) and reedline (0.51) were un-ignored once both were bumped:
-    # they need rustc 1.95, which CI already has (`dtolnay/rust-toolchain@stable`),
-    # so 1.95 is now the floor for building this crate — `rustup update` if a
-    # local `cargo check` refuses to resolve them.
-    cargo-outdated:
-      run: |
-        if command -v cargo-outdated >/dev/null 2>&1; then
-          cargo outdated --manifest-path src-tauri/Cargo.toml \
-            --root-deps-only \
-            --exit-code 1 \
-            --exclude rusqlite \
-            --ignore reqwest \
-            --color always
-        else
-          echo "warning: cargo-outdated not installed — skipping outdated-deps check. Run 'brew install cargo-outdated' (or 'cargo install --locked cargo-outdated' on Linux)."
-        fi
     # Catch package.json / package-lock.json drift before it breaks CI.
     # CI (.github/workflows/ci.yml) and the release workflow both call
     # `npm ci`, which refuses to install when the two files are out of
@@ -135,13 +97,20 @@ pre-push:
     # without regenerating the lockfile — the failure only surfaced on
     # the macOS runner mid-release. `npm ci --dry-run` reproduces that
     # exact check locally in ~1s with a warm npm cache.
+    # Runs on a copy of the manifests: npm 9's `npm ci` empties node_modules
+    # before it honours --dry-run, so checking in place wiped the checkout's
+    # node_modules on every push.
     npm-lockfile-sync:
       run: |
-        if ! npm ci --dry-run >/dev/null 2>&1; then
+        tmp=$(mktemp -d)
+        cp package.json package-lock.json "$tmp"/
+        if ! (cd "$tmp" && npm ci --dry-run >/dev/null 2>&1); then
           echo "ERROR: package.json and package-lock.json are out of sync."
           echo "Run 'npm install --package-lock-only' and commit the updated lockfile."
           echo ""
           echo "Full npm ci output:"
-          npm ci --dry-run 2>&1 | head -40
+          (cd "$tmp" && npm ci --dry-run 2>&1 | head -40)
+          rm -rf "$tmp"
           exit 1
         fi
+        rm -rf "$tmp"

@@ -201,7 +201,7 @@ install the freshly built app locally and confirm it runs:
    Allow/Always Allow and enter it, then continue once they confirm.
 6. Take a screenshot **scoped to just the app's window, not the full
    screen** — a full-screen capture leaks whatever else is on the developer's
-   desktop, and the app itself will be showing their real mailbox (personal
+   desktop, and the app itself will be showing real account data (personal
    data). Get the window bounds and capture just that region:
 
    ```bash

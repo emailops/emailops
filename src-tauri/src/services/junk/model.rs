@@ -144,7 +144,7 @@ pub fn train(samples: &[Sample]) -> NaiveBayes {
 /// That distinction is the crux. The free training labels come from the
 /// provider's spam folder, which is not a random sample of the inbox: it
 /// deliberately concentrates months of junk next to a slice of ordinary mail. On
-/// a real mailbox the empirical ratio can read ~25% while the inbox's actual
+/// real-world mail the empirical ratio can read ~25% while the inbox's actual
 /// spam rate is ~1%. Learning the prior from those counts would inflate it by a
 /// factor of twenty-five — and at 25% the classifier needs roughly thirty times
 /// less evidence to accuse than it does at 1%. The bias would be invisible in

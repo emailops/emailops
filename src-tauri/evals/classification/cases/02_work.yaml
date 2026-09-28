@@ -1,6 +1,6 @@
 # Synthetic tag-classification corpus — project, operations and support.
 # Every address is a .test domain and every name is invented: this corpus
-# never touches a real mailbox. Gold label first, accepted alternatives after.
+# never touches real-world mail. Gold label first, accepted alternatives after.
 
 - id: en_project_status_update
   lang: en
