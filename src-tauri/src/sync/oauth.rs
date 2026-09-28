@@ -15,6 +15,7 @@ use crate::models::OAuthTokens;
 // release builds at compile time for installed desktop app usage.
 const GMAIL_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GMAIL_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+pub const GMAIL_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const BUNDLED_GMAIL_CLIENT_ID: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_ID");
 const BUNDLED_GMAIL_CLIENT_SECRET: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_SECRET");
 
@@ -256,6 +257,23 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
     })
 }
 
+/// Revoke a token at an RFC 7009 endpoint (Google's `/revoke`). Revoking a
+/// refresh token ends the whole grant, so the app loses access immediately
+/// instead of when the user finds it in their Google Account settings.
+pub async fn revoke_token(revoke_url: &str, token: &str) -> Result<()> {
+    let response = reqwest::Client::new()
+        .post(revoke_url)
+        .form(&[("token", token)])
+        .send()
+        .await
+        .map_err(|e| AppError::OAuthError(format!("Token revocation failed: {e}")))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AppError::OAuthError(format!("Token revocation failed: HTTP {status}")));
+    }
+    Ok(())
+}
+
 fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String> {
     listener
         .set_nonblocking(true)
@@ -370,7 +388,7 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::extract_callback_code;
-    use super::{authorization_url, oauth_client, OAuthConfig};
+    use super::{authorization_url, oauth_client, revoke_token, OAuthConfig};
 
     #[test]
     fn gmail_scopes_include_calendar_events_read_write() {
@@ -501,5 +519,63 @@ mod tests {
     fn rejects_callback_without_code() {
         let error = extract_callback_code("/?state=expected", "expected").unwrap_err();
         assert!(error.to_string().contains("Missing authorization code"));
+    }
+
+    /// One-shot HTTP server: answers the first request with `status` and
+    /// returns the raw request text it received.
+    fn one_shot_server(status: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/revoke", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            // Give up after 5 s so a client that never connects fails the
+            // test instead of hanging it.
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(20))
+                    }
+                    Err(_) => return String::new(),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = vec![0u8; 8192];
+            let mut request = String::new();
+            // Read until the form body (after the blank line) has arrived.
+            while !request.contains("token=") {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+            let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.write_all(response.as_bytes()).unwrap();
+            request
+        });
+        (url, handle)
+    }
+
+    #[tokio::test]
+    async fn revoke_token_posts_the_token_as_a_form() {
+        let (url, server) = one_shot_server("200 OK");
+        revoke_token(&url, "refresh-123").await.unwrap();
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /revoke "), "{request}");
+        assert!(request.contains("token=refresh-123"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn revoke_token_fails_on_a_non_success_status() {
+        let (url, server) = one_shot_server("400 Bad Request");
+        let result = revoke_token(&url, "already-revoked").await;
+        server.join().unwrap();
+        assert!(result.is_err(), "{result:?}");
     }
 }

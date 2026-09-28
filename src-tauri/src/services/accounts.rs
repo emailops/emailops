@@ -180,6 +180,59 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
     Ok(())
 }
 
+/// The token to revoke at the provider when an account is removed. Only
+/// Google exposes a per-app revocation endpoint; revoking the refresh token
+/// ends the whole grant (access tokens included).
+pub fn revocable_token(provider: &str, tokens: &OAuthTokens) -> Option<String> {
+    match provider {
+        "gmail" => Some(
+            tokens
+                .refresh_token
+                .clone()
+                .unwrap_or_else(|| tokens.access_token.clone()),
+        ),
+        _ => None,
+    }
+}
+
+/// Read the token to revoke for `account_id`, before `remove_account` deletes
+/// it. `None` when the provider has no revocation endpoint or no tokens are
+/// stored (nothing left to revoke).
+pub fn revocable_token_for_account(db: &Arc<Database>, account_id: &str) -> Option<String> {
+    let provider = db.get_account(account_id).ok().flatten()?.provider;
+    if provider != "gmail" {
+        return None;
+    }
+    match get_tokens(account_id) {
+        Ok(tokens) => revocable_token(&provider, &tokens),
+        Err(AppError::NeedsReauth { .. }) => None,
+        Err(e) => {
+            logger::log(
+                "error",
+                "account",
+                format!("Could not read the account's tokens to revoke them at Google: {e}"),
+            );
+            None
+        }
+    }
+}
+
+/// Revoke a removed Gmail account's grant at Google. Best effort: the account
+/// is already gone locally, so a failure is logged with the manual fallback.
+pub async fn revoke_removed_account_grant(token: &str) {
+    match oauth::revoke_token(oauth::GMAIL_REVOKE_URL, token).await {
+        Ok(()) => logger::log("success", "account", "Revoked EmailOps' access at Google".to_string()),
+        Err(e) => logger::log(
+            "error",
+            "account",
+            format!(
+                "Account removed, but revoking EmailOps' access at Google failed ({e}). \
+                 Remove it at https://myaccount.google.com/permissions"
+            ),
+        ),
+    }
+}
+
 /// Re-authenticate an existing account by triggering OAuth flow and updating tokens.
 /// Only valid for OAuth providers (gmail, outlook). IMAP accounts must update
 /// credentials via `update_imap_credentials` instead — this function rejects
@@ -900,6 +953,33 @@ pub fn available_categories_for_account(db: &Database, account_id: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tokens(refresh: Option<&str>) -> OAuthTokens {
+        OAuthTokens {
+            access_token: "access-1".to_string(),
+            refresh_token: refresh.map(str::to_string),
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn revocable_token_prefers_the_gmail_refresh_token() {
+        assert_eq!(
+            revocable_token("gmail", &tokens(Some("refresh-1"))),
+            Some("refresh-1".to_string())
+        );
+    }
+
+    #[test]
+    fn revocable_token_falls_back_to_the_gmail_access_token() {
+        assert_eq!(revocable_token("gmail", &tokens(None)), Some("access-1".to_string()));
+    }
+
+    #[test]
+    fn revocable_token_is_none_for_providers_without_revocation() {
+        assert_eq!(revocable_token("outlook", &tokens(Some("refresh-1"))), None);
+        assert_eq!(revocable_token("imap", &tokens(Some("refresh-1"))), None);
+    }
     use crate::models::AppLogEvent;
     use crate::services::events::seam_test_lock;
     use crate::services::keychain::{self, Keychain};
