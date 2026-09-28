@@ -289,11 +289,12 @@ pub(crate) async fn gather(input: &PrepareInput<'_>, plan: Option<SearchPlan>) -
         ..Default::default()
     };
     let mut lists: Vec<Vec<String>> = Vec::new();
-    for step in for_every_user_address(plan_gather(plan.as_ref(), input.question), &prepared.user_addresses) {
+    let user_addresses = prepared.user_addresses.clone();
+    for step in for_every_user_address(plan_gather(plan.as_ref(), input.question), &user_addresses) {
         let t = std::time::Instant::now();
         let (name, arguments, ids) = match &step {
             GatherStep::Filter(p) | GatherStep::FilterUntagged(p) => {
-                let ids = gather_filter(input, p);
+                let ids = gather_filter(input, p, &user_addresses);
                 prepared.search_hits += ids.len() as u32;
                 ("search_emails", filter_arguments(p), ids)
             }
@@ -348,7 +349,7 @@ fn filter_arguments(plan: &SearchPlan) -> Value {
 
 /// Every email matching the filter, each thread expanded to its messages (a
 /// conversation's replies carry as much of the answer as its first email).
-fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan) -> Vec<String> {
+fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[String]) -> Vec<String> {
     let since = plan.since.as_deref().and_then(|s| super::parse_iso_date_secs(s).ok());
     let until = plan.until.as_deref().and_then(|s| super::parse_until_date_secs(s).ok());
     let tags: Vec<TagQuery> = [("intent", &plan.intent), ("topic", &plan.topic)]
@@ -356,8 +357,15 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan) -> Vec<String> {
         .filter_map(|(kind, v)| v.as_ref().map(|v| TagQuery::typed(kind, v.trim().to_lowercase())))
         .collect();
     // Same rule as `search_emails`: a named sender / recipient / subject is
-    // not narrowed by the chat's category scope.
-    let explicit = plan.from.is_some() || plan.to.is_some() || plan.with.is_some() || plan.subject.is_some();
+    // not narrowed by the chat's category scope; the user's own address is
+    // a direction ("mail I received"), not a name.
+    let explicit = crate::services::chat::tools::search_emails::names_a_target(
+        plan.from.as_deref(),
+        plan.to.as_deref(),
+        plan.with.as_deref(),
+        plan.subject.as_deref(),
+        user_addresses,
+    );
     let categories = (!explicit && !input.categories.is_empty()).then_some(input.categories);
     // "With X": X's name plus the addresses X writes from, either direction.
     let participants: Vec<String> = plan
@@ -1710,6 +1718,42 @@ mod tests {
         ids.sort();
         // r00 is the seed's own reply from the account address.
         assert_eq!(ids, ["r00", "s1", "s2"], "the alias's mail too, never the client's");
+    }
+
+    #[tokio::test]
+    async fn research_on_mail_the_user_received_keeps_the_category_scope() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 0);
+        {
+            let conn = db.connection();
+            for (id, category) in [("p1", "primary"), ("u1", "updates")] {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1,'acct',?1,'Hi','x@y.example','x@y.example','y.example',
+                             '[\"me@example.com\"]','[]','snip',1780000000,1,?2,'inbox',0)",
+                    rusqlite::params![id, category],
+                )
+                .unwrap();
+            }
+        }
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"to": "me@example.com"}"#);
+        let categories = vec!["primary".to_string()];
+        let est = estimate(&prepare_input(&db, &provider, &categories)).await;
+        let prepared = take_estimate(&est.estimate_id, "acct", "¿Qué facturas me ha enviado el proveedor?")
+            .expect("kept for the run");
+        assert!(
+            prepared.email_ids.contains(&"p1".to_string()),
+            "{:?}",
+            prepared.email_ids
+        );
+        assert!(
+            !prepared.email_ids.contains(&"u1".to_string()),
+            "{:?}",
+            prepared.email_ids
+        );
     }
 
     #[tokio::test]

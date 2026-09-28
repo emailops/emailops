@@ -411,8 +411,20 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
         // scope is meant for broad keyword/RAG retrieval; when the user names a
         // target we return the newest matching mail regardless of Gmail category
         // — a newsletter landing in `updates` must still surface for `from:X`.
-        let has_explicit_target =
-            from_filter.is_some() || to_filter.is_some() || with_filter.is_some() || subject_filter.is_some();
+        // A filter on the user's own address ("mail I received") names nobody
+        // and keeps the scope; the lookup only runs when there is an address.
+        let user_addresses = if from_filter.is_some() || to_filter.is_some() || with_filter.is_some() {
+            ctx.db.user_addresses(ctx.account_id).unwrap_or_else(|e| {
+                crate::services::chat::emit_log(
+                    "error",
+                    &format!("search_emails: listing the user's addresses failed: {e}"),
+                );
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
+        let has_explicit_target = names_a_target(from_filter, to_filter, with_filter, subject_filter, &user_addresses);
         let cat_filter: Option<&[String]> = if has_explicit_target || ctx.categories.is_empty() {
             None
         } else {
@@ -810,9 +822,60 @@ fn render_rows(
     }
 }
 
+/// Whether the filters name someone or something the category scope must not
+/// hide ("from:X" should surface X's newsletter even from Updates). A
+/// sender/recipient/person that is one of the user's own addresses names
+/// nobody: "mail I received" is most of the inbox, so the scope still applies.
+/// Pure.
+pub(crate) fn names_a_target(
+    from: Option<&str>,
+    to: Option<&str>,
+    with: Option<&str>,
+    subject: Option<&str>,
+    user_addresses: &[String],
+) -> bool {
+    let someone_else = |addr: Option<&str>| {
+        addr.map(str::trim)
+            .is_some_and(|a| !a.is_empty() && !user_addresses.iter().any(|u| u.trim().eq_ignore_ascii_case(a)))
+    };
+    someone_else(from) || someone_else(to) || someone_else(with) || subject.is_some_and(|s| !s.trim().is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn me() -> Vec<String> {
+        vec!["me@example.com".to_string(), "alias@example.com".to_string()]
+    }
+
+    #[test]
+    fn mail_i_received_is_a_direction_not_a_named_target() {
+        // "qué correos recibí hoy" plans to = the user's own address.
+        assert!(!names_a_target(None, Some("Me@Example.com"), None, None, &me()));
+        assert!(!names_a_target(Some("alias@example.com"), None, None, None, &me()));
+    }
+
+    #[test]
+    fn a_named_sender_recipient_person_or_subject_is_a_target() {
+        assert!(names_a_target(Some("news@substack.com"), None, None, None, &me()));
+        assert!(names_a_target(None, Some("maria"), None, None, &me()));
+        assert!(names_a_target(None, None, Some("marisol"), None, &me()));
+        assert!(names_a_target(None, None, None, Some("invoice"), &me()));
+        // The user on one side and someone named on the other still names them.
+        assert!(names_a_target(
+            Some("news@substack.com"),
+            Some("me@example.com"),
+            None,
+            None,
+            &me()
+        ));
+    }
+
+    #[test]
+    fn no_filter_names_no_target() {
+        assert!(!names_a_target(None, None, None, None, &me()));
+    }
 
     #[test]
     fn no_note_when_the_page_is_the_whole_result() {
