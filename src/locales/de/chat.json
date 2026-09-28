@@ -263,6 +263,18 @@
     "stopping": "Wird abgebrochen…",
     "filter": "Filter",
     "byMeaning": "Nach Bedeutung gesammelt (kein Filter)",
+    "field": {
+      "from": "Von",
+      "to": "An",
+      "with": "Mit",
+      "subject": "Betreff",
+      "query": "Wörter",
+      "intent": "Art",
+      "topic": "Thema",
+      "since": "Seit",
+      "until": "Bis",
+      "unread": "Nur ungelesene"
+    },
     "mode": {
       "list": "Antwort: Liste aller Treffer — ohne ausformulierten Bericht, schneller",
       "count": "Antwort: genaue Anzahl und Liste — ohne ausformulierten Bericht, schneller",

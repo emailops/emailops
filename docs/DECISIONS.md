@@ -1798,3 +1798,26 @@ boxed first, the largest spawn frame is ~75 KB.
   `AppHandle`, which is `AppHandle<Wry>`, so they cannot be registered on the mock
   runtime, and a real Wry app needs a display and the process main thread. The future-size
   budget measures the same thing from the types alone, on every OS.
+
+## 2026-09-28 — A search window's `until` includes its own day
+
+**Decision:** Every date window the AI reads or writes — `search_emails`,
+`list_calendar_events`, the query planner, research, the today/week shortcuts — treats
+`until` as the last day included: one day is `since == until`, a week ends on its
+Sunday, "last 6 months" ends today. The conversion to a timestamp happens in one place,
+`parse_until_date_secs` (start of the next local day). "Today", "yesterday" and the
+calendar weeks are injected into the planner prompt as computed dates, so the model
+never does that arithmetic.
+**Context:** `until` was end-exclusive, and the prompts said so, but the model kept
+writing inclusive ends ("últimos 6 meses" → `until = today`, "en 2025" →
+`until = 2025-12-31`), so the last day's mail — today's report, in the case that
+surfaced it — silently dropped out. An inclusive end is what a model and a user both
+assume, and the worst case of a model still writing a half-open end is one extra day
+of mail rather than a missing one.
+**Rejected:**
+- *Ignoring `until` when it equals today*: `until = today` is also the correct
+  half-open end for "yesterday" and for "last week" asked on a Monday, so the rule
+  needed exceptions, and it overrode what the planner asked for.
+- *A prompt rule "a period up to now has no until"*: it fixed those questions but moved
+  unrelated plans on the 4B model (a recipient flipped to sender; a document keyword
+  replaced by a tag), measured on the planner and chat evals.

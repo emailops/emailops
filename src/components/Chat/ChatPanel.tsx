@@ -115,6 +115,15 @@ export function ChatPanel({
     prewarmChat(accountId).catch(() => {});
   }, [accountId]);
 
+  const handleCreate = async () => {
+    if (!accountId) return;
+    try {
+      await createConversation(accountId);
+    } catch (e) {
+      addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
+    }
+  };
+
   const handleSend = async (content: string) => {
     if (!activeConversationId) {
       if (!accountId) return;
@@ -153,7 +162,7 @@ export function ChatPanel({
       </select>
       <button
         type="button"
-        onClick={() => void (accountId && createConversation(accountId))}
+        onClick={() => void handleCreate()}
         title={t('chat:newConversation')}
         aria-label={t('chat:newConversation')}
         className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
@@ -241,6 +250,7 @@ export function ChatPanel({
       <ChatInput
         compact
         onSend={handleSend}
+        onClear={handleCreate}
         prefillText={inputPrefill?.text}
         prefillNonce={inputPrefill?.nonce}
         disabled={isSending || streamingMessageId !== null}

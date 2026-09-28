@@ -119,6 +119,11 @@ Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigen
 Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also dorthin zurück,
 wo Sie aufgehört haben, und nicht zu einem leeren Chat.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Geben Sie **/clear** ein und drücken Sie Enter, um eine neue Unterhaltung zu beginnen. Die
+App erledigt das selbst — nichts wird an das Modell gesendet, es kostet also weder Zeit
+noch Tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Der Chat beantwortet auch Fragen zu EmailOps selbst — *„Wie verbinde ich Ollama?“*, *„Wo
 werden meine Daten gespeichert?“*, *„Was zeigt das Tag Board?“* — aus diesen Anleitungen,
@@ -138,7 +143,9 @@ seiner Dauer und jeden Tool-Aufruf mit Argumenten und Ergebnis.
 Der Modus **Recherche** ist für Fragen, die alle passenden E-Mails brauchen statt der wenigen,
 die eine normale Antwort liest — *„liste alle Rechnungen aus diesem Jahr“*, *„wie viele Kunden
 haben ein Angebot angefragt?“*. Er schätzt zuerst, wie viele E-Mails er lesen würde und wie
-lange das dauert, und fragt vor einem großen Durchlauf nach. Dann liest er sie in Stapeln, und
+lange das dauert, und fragt vor einem großen Durchlauf nach. Die Schätzung zeigt auch die ausgeführte Suche —
+Absender, Zeitraum, Wörter —, damit Sie beurteilen können, ob sie sinnvoll ist, auch wenn sie
+nichts gefunden hat. Dann liest er sie in Stapeln, und
 Listen und Zählungen sind exakt, mit einem Link zu jeder passenden Unterhaltung. **Recherche
 abbrechen** stoppt einen Durchlauf.
 

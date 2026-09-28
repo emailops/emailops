@@ -1620,6 +1620,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mail_received_by_the_user_keeps_the_category_scope() {
+        // "qué correos recibí hoy" plans to = the user's own address. That is
+        // almost the whole inbox, not a named recipient: a Primary-only chat
+        // must not list Updates.
+        let db = tools_test_db();
+        let me = "me@example.com";
+        seed_email_with_category(&db, "p1", me, "t-p", "Ana", "ana@x.com", "Hola", "b", 100, "primary");
+        seed_email_with_category(&db, "u1", me, "t-u", "Jobs", "jobs@x.com", "Alert", "b", 200, "updates");
+        db.connection()
+            .execute("UPDATE emails SET recipients_json = '[\"me@example.com\"]'", [])
+            .unwrap();
+
+        let categories = vec!["primary".to_string()];
+        let out = execute_tool(
+            &db,
+            me,
+            &categories,
+            "search_emails",
+            &arg(serde_json::json!({ "to": me, "limit": 10 })),
+        );
+        assert!(out.contains("id=p1"), "out:\n{out}");
+        assert!(
+            !out.contains("id=u1"),
+            "Updates leaked past a Primary scope; out:\n{out}"
+        );
+    }
+
     fn tag_email(db: &Database, email_id: &str, tag_type: &str, tag_value: &str) {
         db.connection()
             .execute(
@@ -2643,7 +2671,8 @@ mod tests {
             &arg(serde_json::json!({
                 "from": "a@x.com",
                 "since": "2026-04-17",
-                "until": "2026-04-18",
+                // `until` includes its own day: one day is since == until.
+                "until": "2026-04-17",
                 "limit": 10,
             })),
         );

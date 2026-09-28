@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
+import { researchFilterParts } from '@/lib/researchFilter';
 import { formatDuration } from '@/lib/researchTime';
 import { useChatStore } from '@/stores/chatStore';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
@@ -44,6 +45,8 @@ function ResearchToggle() {
 
 interface ChatInputProps {
   onSend: (content: string) => void;
+  /** `/clear` starts a new conversation here instead of reaching the model. */
+  onClear: () => void;
   disabled: boolean;
   placeholder?: string;
   /** When `prefillNonce` changes, the textarea's value is replaced with
@@ -57,6 +60,31 @@ interface ChatInputProps {
   compact?: boolean;
   /** Rendered directly above the textarea — the panel's context chip slot. */
   contextSlot?: ReactNode;
+}
+
+/** The search the research ran, in words, so the user can tell whether it
+ *  makes sense — most of all when it found nothing. */
+function ResearchSearch({ filter }: { filter: Record<string, unknown> | null }) {
+  const { t } = useTranslation(['chat']);
+  const parts = filter ? researchFilterParts(filter) : [];
+  return (
+    <div data-testid="research-filter" className="text-xs text-gray-600">
+      {parts.length === 0 ? (
+        t('chat:research.byMeaning')
+      ) : (
+        <>
+          <span>{t('chat:research.filter')}: </span>
+          {parts.map((p, i) => (
+            <span key={p.field}>
+              {i > 0 && ' · '}
+              <span className="text-gray-500">{t(`chat:research.field.${p.field}`)}</span>
+              {p.value && <span className="font-medium text-gray-800"> {p.value}</span>}
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
 }
 
 /** The estimate of a research question, for the user to start or drop before
@@ -75,13 +103,13 @@ function ResearchConfirm() {
   } else if (pending.status === 'error') {
     body = <span className="text-red-700">{t('chat:research.estimateFailed', { error: pending.error ?? '' })}</span>;
   } else if (estimate && estimate.emails === 0) {
-    body = <span className="text-gray-700">{t('chat:research.estimateNone')}</span>;
+    body = (
+      <>
+        <div className="text-gray-700">{t('chat:research.estimateNone')}</div>
+        <ResearchSearch filter={estimate.filter} />
+      </>
+    );
   } else if (estimate) {
-    const filter = estimate.filter
-      ? Object.entries(estimate.filter)
-          .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
-          .join(', ')
-      : null;
     body = (
       <>
         <div className="text-gray-900">
@@ -94,9 +122,7 @@ function ResearchConfirm() {
         <div data-testid="research-mode" className="text-xs text-gray-700">
           {t(`chat:research.mode.${estimate.mode}`)}
         </div>
-        <div className="text-xs text-gray-600">
-          {filter ? `${t('chat:research.filter')}: ${filter}` : t('chat:research.byMeaning')}
-        </div>
+        <ResearchSearch filter={estimate.filter} />
       </>
     );
   }
@@ -140,6 +166,7 @@ function ResearchHint() {
 
 export function ChatInput({
   onSend,
+  onClear,
   disabled,
   placeholder,
   prefillText,
@@ -185,7 +212,9 @@ export function ChatInput({
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed || isDisabled) return;
-    onSend(trimmed);
+    // Handled before any send: no turn, no model call, no tokens.
+    if (trimmed.toLowerCase() === '/clear') onClear();
+    else onSend(trimmed);
     setValue('');
   };
 

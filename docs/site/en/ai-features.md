@@ -117,6 +117,10 @@ silently drawn from the wrong mailbox. Each account keeps its own conversation f
 as the app is open, so switching accounts returns you to where you left off rather than to
 a blank chat.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Type **/clear** and press Enter to start a new conversation. It is handled in the app
+itself — nothing is sent to the model, so it costs no time and no tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Chat also answers questions about EmailOps itself — *"how do I connect Ollama?"*, *"where is
 my data stored?"*, *"what does the Tag Board show?"* — from these guides, in your language,
@@ -136,7 +140,8 @@ result.
 **Research** mode is for questions that need every matching email rather than the few a
 normal answer reads — *"list every invoice from this year"*, *"how many clients asked for a
 quote?"*. It first estimates how many emails it would read and how long that takes, and asks
-before a large run. It then reads them in batches, and lists and counts come out exact, with
+before a large run. The estimate also shows the search it ran — sender, dates, words — so
+you can tell whether it makes sense, even when it found nothing. It then reads them in batches, and lists and counts come out exact, with
 a link to each matching conversation. **Cancel research** stops a run.
 
 <!-- claim:ai-chat-mailbox-13 -->

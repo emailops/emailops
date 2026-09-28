@@ -199,6 +199,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
             </div>
             <ChatInput
               onSend={handleSend}
+              onClear={handleCreate}
               disabled={isSending}
               placeholder={t('chat:input.placeholderEmails')}
               prefillText={inputPrefillText}
@@ -231,6 +232,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
             </div>
             <ChatInput
               onSend={handleSend}
+              onClear={handleCreate}
               disabled={isSending || streamingMessageId !== null}
               placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
             />

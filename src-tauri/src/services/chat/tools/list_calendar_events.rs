@@ -22,10 +22,12 @@ pub(crate) fn resolve_window(args: &Value, now: i64) -> (i64, i64) {
         .get("since")
         .and_then(|v| v.as_str())
         .and_then(parse_iso_date_to_ts);
-    let until = args
-        .get("until")
-        .and_then(|v| v.as_str())
-        .and_then(parse_iso_date_to_ts);
+    // A bare date includes its whole day; a datetime is taken as given.
+    let until = args.get("until").and_then(|v| v.as_str()).and_then(|u| {
+        crate::services::chat::parse_until_date_secs(u)
+            .ok()
+            .or_else(|| parse_iso_date_to_ts(u))
+    });
     match (since, until) {
         (Some(start), Some(end)) if end > start => (start, end),
         (Some(start), _) => (start, start + DEFAULT_DAYS * 86_400),
@@ -139,7 +141,7 @@ impl Tool for ListCalendarEventsTool {
             "type": "object",
             "properties": {
                 "since": { "type": "string", "description": "ISO date (YYYY-MM-DD) — start of the range. Defaults to now." },
-                "until": { "type": "string", "description": "ISO date (YYYY-MM-DD) — exclusive end of the range." },
+                "until": { "type": "string", "description": "ISO date (YYYY-MM-DD) — last day of the range, included." },
                 "days": { "type": "integer", "description": "Days ahead from now when since/until are omitted (default 7, max 60)." }
             },
             "required": []
@@ -240,8 +242,14 @@ mod tests {
     #[test]
     fn window_uses_explicit_since_until() {
         let (start, end) = resolve_window(&json!({"since": "2026-07-27", "until": "2026-08-03"}), NOW);
-        assert_eq!(end - start, 7 * 86_400);
+        assert_eq!(end - start, 8 * 86_400, "until's own day is included");
         assert!(start > 0);
+    }
+
+    #[test]
+    fn a_single_day_window_is_that_whole_day() {
+        let (start, end) = resolve_window(&json!({"since": "2026-07-27", "until": "2026-07-27"}), NOW);
+        assert_eq!(end - start, 86_400);
     }
 
     #[test]
