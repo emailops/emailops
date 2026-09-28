@@ -30,7 +30,7 @@ Common development operations live in the root `Makefile`. **Before reaching for
 
 - **App run:** `make dev` (repo-local data dir) / `make dev-fresh` (throwaway data dir) / `make dev-trace` (tracing feature enabled)
 - **Demo data:** `make demo-db` / `make demo-embed` / `make demo` (run app against demo DB) — plus `-es` variants for Spanish demo data
-- **Quality gates:** `make gates SET=commit|push|rust|frontend|all` (one summary line per gate, full output in files — `scripts/gates.sh`), `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
+- **Quality gates:** `make gates SET=commit|push|rust|frontend|all` (one summary line per gate, full output in files — `scripts/gates.sh`, which the lefthook pre-commit clippy/rustfmt/typecheck and pre-push hooks also call), `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
 - **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Linux / Windows Release Builds" below
 - **Hooks / deps:** `make install`, `make hooks`, `make audit`, `make clean`
 

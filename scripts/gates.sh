@@ -5,7 +5,9 @@
 # summary table (and, for failing gates, a short excerpt), so an agent or a
 # human sees the result without scrolling through thousands of test lines.
 # Exit code: 0 when every requested gate passed, 1 otherwise (a skipped gate
-# counts as not passed — it did not run).
+# counts as not passed — it did not run — unless it is listed in
+# GATES_OPTIONAL, e.g. GATES_OPTIONAL=outdated for git hooks, where a missing
+# cargo-outdated must warn rather than block).
 #
 # Usage: scripts/gates.sh <set|gate> [out_dir]      (make gates SET=... OUT=...)
 #   sets:  commit   clippy clippy-desktop fmt biome tsc   (pre-commit checks)
@@ -69,9 +71,34 @@ run_gate() {
   local gate="$1" file="$OUT/$1.txt"
   case "$gate" in
     rust-test)      cargo test --manifest-path src-tauri/Cargo.toml ;;
+    # --no-default-features --tests matches CI (ci.yml lint-backend and the
+    # Windows job) exactly: CI never lints the default-features build, and a
+    # plain `cargo clippy --tests` can pass locally while CI fails (AppHandle's
+    # stub type is Copy only under --no-default-features, so
+    # clippy::clone_on_copy only fires there). clippy-desktop matches CI's
+    # "Clippy (desktop)" step, the only lint run that sees `commands/`.
     clippy)         cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings ;;
     clippy-desktop) cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --features desktop --tests -- -D warnings ;;
     fmt)            cargo fmt --manifest-path src-tauri/Cargo.toml -- --check ;;
+    # Blocking check for outdated Rust dependencies. The gate fails if any
+    # root dep has a newer version available on crates.io.
+    # Install via Homebrew (recommended on macOS — `cargo install` tends to
+    # fail at link time against libssh2/OpenSSL): `brew install cargo-outdated`.
+    #
+    # Deps intentionally pinned below latest because of upstream constraints.
+    # Drop these flags as the upstreams catch up:
+    #   - reqwest  (--ignore):  oauth2 5.x's AsyncHttpClient is wired against
+    #                           reqwest 0.12. Reporting is hidden but the
+    #                           scratch resolver still sees the constraint.
+    #   - rusqlite (--exclude): refinery 0.9 caps its rusqlite range at <=0.39.
+    #                           Must --exclude (not --ignore) so cargo-outdated's
+    #                           scratch resolver doesn't try to bump rusqlite to
+    #                           0.40 and crash on the libsqlite3-sys links clash.
+    #
+    # sysinfo (0.39) and reedline (0.51) were un-ignored once both were bumped:
+    # they need rustc 1.95, which CI already has (`dtolnay/rust-toolchain@stable`),
+    # so 1.95 is now the floor for building this crate — `rustup update` if a
+    # local `cargo check` refuses to resolve them.
     outdated)       cargo outdated --manifest-path src-tauri/Cargo.toml --root-deps-only --exit-code 1 --exclude rusqlite --ignore reqwest ;;
     biome)          PATH="$NODE_BIN:$PATH" ./node_modules/.bin/biome check src/ ;;
     tsc)            PATH="$NODE_BIN:$PATH" ./node_modules/.bin/tsc --noEmit ;;
@@ -111,8 +138,12 @@ for gate in "${GATES[@]}"; do
       command -v cargo-outdated >/dev/null || reason="cargo-outdated not installed" ;;
   esac
   if [[ -n "$reason" ]]; then
-    printf '%-15s %-6s %-4s %s\n' "$gate" skip - "$reason"
-    failed=1
+    if [[ " ${GATES_OPTIONAL:-} " == *" $gate "* ]]; then
+      printf '%-15s %-6s %-4s %s\n' "$gate" skip - "$reason (optional: warning only)"
+    else
+      printf '%-15s %-6s %-4s %s\n' "$gate" skip - "$reason"
+      failed=1
+    fi
     continue
   fi
   run_gate "$gate"
