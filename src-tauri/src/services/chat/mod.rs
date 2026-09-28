@@ -219,6 +219,63 @@ pub(crate) fn relink_self_numbered_citations(answer: &str, source_ids: &[String]
     relinked.trim_end().to_string()
 }
 
+/// `[email://ID]` or `[email://A, email://B]` — citations the model bracketed
+/// instead of linking. The optional `(` tells them from the label of a real
+/// link (the regex crate has no lookahead).
+fn bare_email_ref_re() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    // Hard-coded literal that cannot fail by construction.
+    #[allow(clippy::unwrap_used)]
+    RE.get_or_init(|| regex::Regex::new(r"\[(email://[^\]\s(),]+(?:\s*,\s*email://[^\]\s(),]+)*)\](\()?").unwrap())
+}
+
+/// The ids inside one bracket: `email://A, email://B` → `[A, B]`.
+fn ids_in_bracket(inner: &str) -> impl Iterator<Item = &str> {
+    inner.split(',').filter_map(|part| part.trim().strip_prefix("email://"))
+}
+
+/// The ids of the bare `[email://ID]` refs in `answer`, in order, each once.
+pub(crate) fn bare_email_ref_ids(answer: &str) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for cap in bare_email_ref_re().captures_iter(answer) {
+        if cap.get(2).is_some() {
+            continue;
+        }
+        for id in ids_in_bracket(cap.get(1).map_or("", |m| m.as_str())) {
+            if !ids.iter().any(|seen| seen == id) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+/// Turn each bare `[email://ID]` into the `[label](email://ID)` link the
+/// answer contract asks for. Markdown renders the bare form as literal text
+/// (seen from Qwen 3.6 35B), and grounding only counts real links. The label
+/// is the email's subject from `labels`, or empty (the UI then shows a
+/// glyph-only chip).
+pub(crate) fn link_bare_email_refs(answer: &str, labels: &std::collections::HashMap<String, String>) -> String {
+    bare_email_ref_re()
+        .replace_all(answer, |cap: &regex::Captures<'_>| {
+            if cap.get(2).is_some() {
+                return cap[0].to_string();
+            }
+            ids_in_bracket(cap.get(1).map_or("", |m| m.as_str()))
+                .map(|id| {
+                    let label = labels
+                        .get(id)
+                        .map(|s| s.replace('[', r"\[").replace(']', r"\]"))
+                        .unwrap_or_default();
+                    format!("[{label}](email://{id})")
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .into_owned()
+}
+
 /// What an answer's sources are, and therefore what a bare `[n]` may mean.
 ///
 /// Answers cite by `email://` link: numbered Sources invited Qwen 3.6 35B to
@@ -796,6 +853,62 @@ mod tests {
         // Bracketed text with non-numeric content should not be counted.
         let ans = "See [notes] and [TODO]. Source: [1].";
         assert_eq!(count_invalid_citations(ans, 1), 0);
+    }
+
+    #[test]
+    fn a_bracketed_bare_email_ref_becomes_a_link_labelled_with_its_subject() {
+        let labels = std::collections::HashMap::from([("demo_a".to_string(), "Renewal notice".to_string())]);
+        let ans = "The deadline is 14 November [email://demo_a].";
+        assert_eq!(bare_email_ref_ids(ans), vec!["demo_a".to_string()]);
+        assert_eq!(
+            link_bare_email_refs(ans, &labels),
+            "The deadline is 14 November [Renewal notice](email://demo_a)."
+        );
+    }
+
+    #[test]
+    fn a_bare_email_ref_without_a_subject_gets_an_empty_label() {
+        let labels = std::collections::HashMap::new();
+        assert_eq!(
+            link_bare_email_refs("[email://demo_a] [email://demo_b]", &labels),
+            "[](email://demo_a) [](email://demo_b)"
+        );
+    }
+
+    #[test]
+    fn a_bracketed_list_of_email_refs_becomes_one_link_each() {
+        let labels = std::collections::HashMap::from([("demo_b".to_string(), "Invoice".to_string())]);
+        let ans = "three reports [email://demo_a, email://demo_b,email://demo_c].";
+        assert_eq!(bare_email_ref_ids(ans), vec!["demo_a", "demo_b", "demo_c"]);
+        assert_eq!(
+            link_bare_email_refs(ans, &labels),
+            "three reports [](email://demo_a) [Invoice](email://demo_b) [](email://demo_c)."
+        );
+    }
+
+    #[test]
+    fn brackets_in_a_subject_do_not_break_the_link() {
+        let labels = std::collections::HashMap::from([("demo_a".to_string(), "[EXT] Invoice [42]".to_string())]);
+        assert_eq!(
+            link_bare_email_refs("see [email://demo_a]", &labels),
+            r"see [\[EXT\] Invoice \[42\]](email://demo_a)"
+        );
+    }
+
+    #[test]
+    fn a_proper_email_link_is_left_alone() {
+        let labels = std::collections::HashMap::from([("demo_a".to_string(), "Renewal".to_string())]);
+        let ans = "see [the notice](email://demo_a) and [email://demo_a](email://demo_a)";
+        assert!(bare_email_ref_ids(ans).is_empty());
+        assert_eq!(link_bare_email_refs(ans, &labels), ans);
+    }
+
+    #[test]
+    fn a_linked_bare_ref_counts_as_the_answers_grounding() {
+        let labels = std::collections::HashMap::new();
+        let answer = link_bare_email_refs("deadline [email://t1]", &labels);
+        let grounding = plan_answer_grounding(&[], &["t1".to_string(), "t2".to_string()], &answer, true);
+        assert_eq!(grounding, AnswerGrounding::Emails(vec!["t1".to_string()]));
     }
 
     #[test]

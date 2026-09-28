@@ -27,9 +27,28 @@ use super::retrieval::{
 use super::routing::classify_route;
 use super::tools;
 use super::{
-    count_invalid_citations, emit_log, emit_phase, format_date, phase_for_tool, plan_answer_grounding,
-    relink_self_numbered_citations, strip_invalid_citations, strip_tool_call_markup, truncate_chars, AnswerGrounding,
+    bare_email_ref_ids, count_invalid_citations, emit_log, emit_phase, format_date, link_bare_email_refs,
+    phase_for_tool, plan_answer_grounding, relink_self_numbered_citations, strip_invalid_citations,
+    strip_tool_call_markup, truncate_chars, AnswerGrounding,
 };
+
+/// Link the answer's bare `[email://ID]` refs, labelled with each email's
+/// subject (see `link_bare_email_refs`). A failed lookup is logged and the
+/// refs still become links, with empty labels.
+fn link_bare_email_refs_from_db(db: &Database, answer: &str) -> String {
+    let ids = bare_email_ref_ids(answer);
+    if ids.is_empty() {
+        return answer.to_string();
+    }
+    let labels: std::collections::HashMap<String, String> = match db.get_emails_by_ids(&ids) {
+        Ok(emails) => emails.into_iter().map(|e| (e.id, e.subject)).collect(),
+        Err(e) => {
+            emit_log("error", &format!("chat: loading cited email subjects failed: {e}"));
+            std::collections::HashMap::new()
+        }
+    };
+    link_bare_email_refs(answer, &labels)
+}
 
 /// Max conversation turns (user+assistant combined) kept in the prompt.
 const MAX_HISTORY_TURNS: usize = 6;
@@ -4573,6 +4592,7 @@ pub async fn run_chat_turn(
                 // Relink first: a self-numbered marker the answer defines as a
                 // tool-found email becomes a link to it instead of pointing at
                 // (or, past the range, being stripped from) the Sources.
+                let answer = link_bare_email_refs_from_db(&db, &answer);
                 let answer = relink_self_numbered_citations(&answer, &source_email_ids(&sources));
                 let answer = strip_invalid_citations(&answer, sources.len());
                 // Contradiction guard: the model answered "no emails found"
@@ -4810,6 +4830,7 @@ pub async fn run_chat_turn(
             // the live-streaming path (and is a cheap no-op when nothing leaked).
             let shipped = result.content.clone();
             result.content = strip_tool_call_markup(&result.content);
+            result.content = link_bare_email_refs_from_db(&db, &result.content);
             result.content = relink_self_numbered_citations(&result.content, &source_email_ids(&sources));
             // On a tool turn the tool-returned emails are the answer's
             // sources and a bare `[n]` means nothing against them — the
