@@ -1,6 +1,6 @@
 use oauth2::{
-    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, RefreshToken, TokenResponse, TokenUrl,
+    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, RefreshToken, TokenResponse, TokenUrl,
 };
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
@@ -138,11 +138,6 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
         )));
     }
 
-    // Public client = no client secret. Azure AD public-client apps reject any
-    // client_secret (AADSTS90023) and require PKCE. If a secret is provided we
-    // treat this as a confidential client (Google's desktop-app flow).
-    let is_public_client = config.client_secret.is_empty();
-
     // Find an available port for the callback
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| AppError::OAuthError(format!("Failed to bind port: {}", e)))?;
@@ -152,32 +147,8 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
         .port();
     let redirect_url = format!("http://{}:{}", config.redirect_host, port);
 
-    // Create OAuth client
-    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
-        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|e| AppError::OAuthError(e.to_string()))?);
-    if !is_public_client {
-        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
-    }
-
-    // Generate authorization URL (with PKCE for public clients — Azure AD
-    // enforces PKCE when the app registration has no client secret).
-    let (pkce_challenge, pkce_verifier) = if is_public_client {
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        (Some(challenge), Some(verifier))
-    } else {
-        (None, None)
-    };
-
-    let mut auth_request = client.authorize_url(oauth2::CsrfToken::new_random);
-    for scope in &config.scopes {
-        auth_request = auth_request.add_scope(oauth2::Scope::new(scope.clone()));
-    }
-    if let Some(challenge) = pkce_challenge {
-        auth_request = auth_request.set_pkce_challenge(challenge);
-    }
-    let (auth_url, csrf_token) = auth_request.url();
+    let client = oauth_client(config, Some(&redirect_url))?;
+    let (auth_url, csrf_token, pkce_verifier) = authorization_url(&client, &config.scopes);
 
     // Open browser for user authorization. `that_detached` (not `that`) is
     // required here: `open::that` blocks the calling thread until the
@@ -194,12 +165,9 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
 
     // Exchange code for tokens
     let http_client = reqwest::Client::new();
-    let mut exchange = client.exchange_code(AuthorizationCode::new(code));
-    if let Some(verifier) = pkce_verifier {
-        // PkceCodeVerifier is move-only; re-wrap its secret so we can hand it in.
-        exchange = exchange.set_pkce_verifier(PkceCodeVerifier::new(verifier.secret().clone()));
-    }
-    let token_result = exchange
+    let token_result = client
+        .exchange_code(AuthorizationCode::new(code))
+        .set_pkce_verifier(pkce_verifier)
         .request_async(&http_client)
         .await
         .map_err(|e| AppError::OAuthError(format!("Token exchange failed: {}", e)))?;
@@ -217,6 +185,46 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
     })
 }
 
+type ConfiguredClient = oauth2::basic::BasicClient<
+    oauth2::EndpointSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointSet,
+>;
+
+/// Public client = no client secret. Azure AD public-client apps reject any
+/// client_secret (AADSTS90023); Google desktop clients ship a secret that is
+/// not confidential (it is embedded in the binary).
+fn oauth_client(config: &OAuthConfig, redirect_url: Option<&str>) -> Result<ConfiguredClient> {
+    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
+        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
+        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?);
+    if let Some(redirect_url) = redirect_url {
+        client = client.set_redirect_uri(
+            RedirectUrl::new(redirect_url.to_string()).map_err(|e| AppError::OAuthError(e.to_string()))?,
+        );
+    }
+    if !config.client_secret.is_empty() {
+        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
+    }
+    Ok(client)
+}
+
+/// Authorization URL with a random `state` and a PKCE S256 challenge.
+fn authorization_url(client: &ConfiguredClient, scopes: &[String]) -> (oauth2::url::Url, CsrfToken, PkceCodeVerifier) {
+    let mut auth_request = client.authorize_url(CsrfToken::new_random);
+    for scope in scopes {
+        auth_request = auth_request.add_scope(oauth2::Scope::new(scope.clone()));
+    }
+    // PKCE for every client, not only public ones: a desktop app's client
+    // secret is extractable, so only PKCE binds the code to this instance
+    // (RFC 8252 §6). Azure AD requires it; Google accepts it with the secret.
+    let (challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    let (url, state) = auth_request.set_pkce_challenge(challenge).url();
+    (url, state, pkce_verifier)
+}
+
 pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthTokens> {
     if config.client_id.is_empty() {
         return Err(AppError::OAuthError(format!(
@@ -225,14 +233,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
         )));
     }
 
-    let is_public_client = config.client_secret.is_empty();
-
-    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
-        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?);
-    if !is_public_client {
-        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
-    }
+    let client = oauth_client(config, None)?;
 
     let http_client = reqwest::Client::new();
     let token_result = client
@@ -369,7 +370,7 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::extract_callback_code;
-    use super::OAuthConfig;
+    use super::{authorization_url, oauth_client, OAuthConfig};
 
     #[test]
     fn gmail_scopes_include_calendar_events_read_write() {
@@ -442,6 +443,45 @@ mod tests {
             config.scopes.iter().any(|s| s == "Calendars.ReadWrite"),
             "Outlook OAuth must request read/write access to Graph calendars, got: {:?}",
             config.scopes
+        );
+    }
+
+    fn confidential_config() -> OAuthConfig {
+        OAuthConfig {
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            ..OAuthConfig::gmail()
+        }
+    }
+
+    #[test]
+    fn authorization_url_sends_pkce_s256_for_confidential_client() {
+        // Google desktop clients ship a (non-confidential) client secret; PKCE
+        // must still bind the code to this app instance (RFC 8252 §6).
+        let config = confidential_config();
+        let client = oauth_client(&config, Some("http://127.0.0.1:1234")).unwrap();
+        let (url, _state, _verifier) = authorization_url(&client, &config.scopes);
+        let query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        assert!(
+            query.iter().any(|(k, v)| k == "code_challenge_method" && v == "S256"),
+            "{url}"
+        );
+        assert!(query.iter().any(|(k, _)| k == "code_challenge"), "{url}");
+    }
+
+    #[test]
+    fn authorization_url_sends_pkce_s256_for_public_client() {
+        let config = OAuthConfig {
+            client_id: "client-id".to_string(),
+            client_secret: String::new(),
+            ..OAuthConfig::outlook()
+        };
+        let client = oauth_client(&config, Some("http://localhost:1234")).unwrap();
+        let (url, _state, _verifier) = authorization_url(&client, &config.scopes);
+        assert!(
+            url.query_pairs()
+                .any(|(k, v)| k == "code_challenge_method" && v == "S256"),
+            "{url}"
         );
     }
 
