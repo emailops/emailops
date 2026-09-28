@@ -405,7 +405,18 @@ fn the_skill_block_names_its_reference_files() {
     assert!(block.contains("references/escalation.md"), "{block}");
     assert!(block.contains("load_skill"), "{block}");
     // No files, no mention.
-    assert!(!render_skill_block(&skill("x", "d")).contains("load_skill"));
+    assert!(!render_skill_block(&skill("x", "d")).contains("Reference files"));
+}
+
+#[test]
+fn the_skill_block_says_it_is_already_loaded() {
+    // A `/name` turn carries the block in the user message; without this the
+    // index's "call load_skill FIRST" made the model load it a second time.
+    let block = render_skill_block(&skill("vendor-reply", "d"));
+    assert!(
+        block.contains("already loaded — do not call load_skill for \"vendor-reply\""),
+        "{block}"
+    );
 }
 
 #[test]

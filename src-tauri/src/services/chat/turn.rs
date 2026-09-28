@@ -356,6 +356,18 @@ fn prepend_to_final_user_message(messages: &mut [(String, String)], block: &str)
     }
 }
 
+/// Insert a block right before the question at the end of the final user
+/// message, after the Sources list. Falls back to prepending if the message
+/// does not end with the question.
+fn insert_before_question(messages: &mut [(String, String)], question: &str, block: &str) {
+    if let Some((_, content)) = messages.last_mut() {
+        match content.strip_suffix(question) {
+            Some(head) => *content = format!("{head}{block}\n\n{question}"),
+            None => *content = format!("{block}\n\n{content}"),
+        }
+    }
+}
+
 /// Persist the final user-message bytes (memory header + sources + question)
 /// onto the user row so future turns replay them byte-identically — see
 /// `ChatMessage::prompt_content`. Failure degrades to a debug log: a turn
@@ -4254,10 +4266,11 @@ pub async fn run_chat_turn(
         ambient_context.as_deref(),
     );
 
-    // The invoked skill goes first so it sits right before the question: it is
-    // what decides how this turn is answered.
+    // The invoked skill sits right before the question, after the Sources: it
+    // is what decides how this turn is answered, and ahead of the Sources the
+    // model followed their "cite each fact" line instead of the skill's steps.
     if let Some(block) = skill_block.as_deref() {
-        prepend_to_final_user_message(&mut initial_messages, block);
+        insert_before_question(&mut initial_messages, &user_question, block);
     }
 
     // What the user has on screen, so "esto" / "aquí" resolve. Same placement
@@ -6800,6 +6813,21 @@ mod tests {
         let last = &msgs.last().unwrap().1;
         assert!(last.starts_with("<memory>user likes tables</memory>"));
         assert!(last.trim_end().ends_with("anything?"));
+    }
+
+    #[test]
+    fn skill_block_sits_between_sources_and_question() {
+        // The skill decides how this turn is answered, so it is the last thing
+        // the model reads before the question — after the Sources list, whose
+        // "cite each fact" line otherwise wins over the skill's own steps.
+        let mut msgs = build_prompt(&[], &[], "my purifier broke", "en", "", tpl(), "");
+        insert_before_question(&mut msgs, "my purifier broke", "<skill name=\"x\">steps</skill>");
+        assert!(!msgs[0].1.contains("<skill"), "skill leaked into system");
+        let last = &msgs.last().unwrap().1;
+        let sources_at = last.find("Sources:").unwrap();
+        let skill_at = last.find("<skill").unwrap();
+        assert!(sources_at < skill_at, "{last}");
+        assert!(last.ends_with("</skill>\n\nmy purifier broke"), "{last}");
     }
 
     #[test]

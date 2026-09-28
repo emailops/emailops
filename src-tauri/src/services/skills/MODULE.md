@@ -56,7 +56,11 @@ A body enters the prompt only on a turn that uses the skill:
 - **The model chooses it**: it calls `load_skill(name)` and the body comes back
   as a tool result.
 - **The user invokes it**: a message starting with `/name` puts the block in
-  the **final user message** (never the system message), and the rest of the
+  the **final user message** (never the system message), right before the
+  question and after the Sources — placed ahead of the Sources, the model
+  followed their citation line instead of the skill's steps. The block says
+  it is already loaded, so the index's "load FIRST" does not trigger a second
+  `load_skill` round. The rest of the
   message becomes the question that retrieval, the planner and the title see.
   Skills stack — `/a /b request` applies both, in order; parsing stops at the
   first token that is not a skill, so a path in the request survives. The block

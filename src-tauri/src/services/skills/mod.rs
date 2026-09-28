@@ -384,8 +384,8 @@ pub fn render_skill_block(skill: &Skill) -> String {
         )
     };
     format!(
-        "<skill name=\"{}\">\nThe user's skill \"{}\" applies to this request. Follow its instructions:\n\n{}{files}\n</skill>",
-        skill.name, skill.name, skill.body
+        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already loaded — do not call load_skill for \"{0}\". Follow them:\n\n{1}{files}\n</skill>",
+        skill.name, skill.body
     )
 }
 
