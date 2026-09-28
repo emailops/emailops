@@ -25,7 +25,7 @@ afterEach(() => {
 
 function renderInput() {
   act(() => {
-    root.render(<ChatInput onSend={() => {}} disabled={false} />);
+    root.render(<ChatInput onSend={() => {}} onClear={() => {}} disabled={false} />);
   });
   const textarea = container.querySelector('textarea');
   if (!textarea) throw new Error('textarea not rendered');
@@ -149,5 +149,43 @@ describe('ChatInput research confirmation', () => {
     const textarea = renderInput();
     act(() => useChatStore.setState({ inputPrefill: { text: 'themes?', nonce: 1 } }));
     expect(textarea.value).toBe('themes?');
+  });
+});
+
+describe('ChatInput /clear command', () => {
+  function renderWith(onSend: (c: string) => void, onClear: () => void) {
+    act(() => {
+      root.render(<ChatInput onSend={onSend} onClear={onClear} disabled={false} />);
+    });
+    const textarea = container.querySelector('textarea');
+    if (!textarea) throw new Error('textarea not rendered');
+    return textarea;
+  }
+
+  function pressEnter(textarea: HTMLTextAreaElement) {
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+  }
+
+  it('starts a new conversation without sending anything to the model', () => {
+    const onSend = vi.fn();
+    const onClear = vi.fn();
+    const textarea = renderWith(onSend, onClear);
+    typeInto(textarea, '  /CLEAR ');
+    pressEnter(textarea);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('');
+  });
+
+  it('sends a message that only mentions /clear as a normal question', () => {
+    const onSend = vi.fn();
+    const onClear = vi.fn();
+    const textarea = renderWith(onSend, onClear);
+    typeInto(textarea, 'what does /clear do?');
+    pressEnter(textarea);
+    expect(onSend).toHaveBeenCalledWith('what does /clear do?');
+    expect(onClear).not.toHaveBeenCalled();
   });
 });

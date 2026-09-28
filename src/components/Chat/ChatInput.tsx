@@ -44,6 +44,8 @@ function ResearchToggle() {
 
 interface ChatInputProps {
   onSend: (content: string) => void;
+  /** `/clear` starts a new conversation here instead of reaching the model. */
+  onClear: () => void;
   disabled: boolean;
   placeholder?: string;
   /** When `prefillNonce` changes, the textarea's value is replaced with
@@ -140,6 +142,7 @@ function ResearchHint() {
 
 export function ChatInput({
   onSend,
+  onClear,
   disabled,
   placeholder,
   prefillText,
@@ -185,7 +188,9 @@ export function ChatInput({
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed || isDisabled) return;
-    onSend(trimmed);
+    // Handled before any send: no turn, no model call, no tokens.
+    if (trimmed.toLowerCase() === '/clear') onClear();
+    else onSend(trimmed);
     setValue('');
   };
 
