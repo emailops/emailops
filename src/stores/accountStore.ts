@@ -80,6 +80,41 @@ export function planChatAccountChange(nextAccountId: string, mailScopeId: string
   };
 }
 
+/** An account add that failed, tagged with the banner error it produced. */
+export interface FailedAdd {
+  provider: 'gmail' | 'outlook';
+  error: string;
+}
+
+/** What the error banner's "Sign in again" button does — see `planSignInAgain`. */
+export type SignInAgainPlan =
+  | { kind: 'reauth'; accountId: string }
+  | { kind: 'add'; provider: 'gmail' | 'outlook' }
+  | { kind: 'none' };
+
+/**
+ * Decide what "Sign in again" should do for the error currently shown.
+ *
+ * A failed *add* (e.g. the OAuth callback timed out) leaves no account row
+ * behind, so re-authenticating can never fix it: the add itself has to be
+ * retried. Treating it as a re-auth used to make the button a silent no-op
+ * with no accounts, and re-auth the unrelated active account otherwise (#107).
+ * `failedAdd` only counts while its error is still the one on screen.
+ */
+export function planSignInAgain(input: {
+  error: string | null;
+  errorAccountId: string | null;
+  failedAdd: FailedAdd | null;
+  effectiveAccountId: string | null;
+}): SignInAgainPlan {
+  if (input.errorAccountId) return { kind: 'reauth', accountId: input.errorAccountId };
+  if (input.failedAdd && input.failedAdd.error === input.error) {
+    return { kind: 'add', provider: input.failedAdd.provider };
+  }
+  if (input.effectiveAccountId) return { kind: 'reauth', accountId: input.effectiveAccountId };
+  return { kind: 'none' };
+}
+
 export function selectAccountById(accounts: Account[], id: string | null): Account | null {
   if (!id) return null;
   return accounts.find((a) => a.id === id) ?? null;
@@ -190,6 +225,9 @@ interface AccountStore {
   /// active one, so a background auto-sync failure on Account B doesn't
   /// surface the banner while Account A is selected.
   errorAccountId: string | null;
+  /// Set when `addAccount` fails, so "Sign in again" retries the add instead
+  /// of re-authenticating an account that was never created.
+  failedAdd: FailedAdd | null;
   // Track the current sync operation to prevent race conditions
   currentSyncId: number;
   /// Account whose initial setup dialog (sync window picker) is still open.
@@ -245,6 +283,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   syncProgress: null,
   error: null,
   errorAccountId: null,
+  failedAdd: null,
   currentSyncId: 0,
   setupPendingAccountId: null,
   syncingAccountIds: new Set<string>(),
@@ -260,7 +299,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
   setSyncProgress: (progress) => set((state) => reduceSyncProgress(state, progress)),
 
-  clearError: () => set({ error: null, errorAccountId: null }),
+  clearError: () => set({ error: null, errorAccountId: null, failedAdd: null }),
 
   fetchAccounts: async () => {
     set({ isLoading: true, error: null, errorAccountId: null });
@@ -276,7 +315,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   },
 
   addAccount: async (provider, syncFromTimestamp, options) => {
-    set({ isLoading: true, error: null, errorAccountId: null });
+    set({ isLoading: true, error: null, errorAccountId: null, failedAdd: null });
     try {
       const account = await api.addAccount(provider, syncFromTimestamp);
       // When the caller (onboarding) is about to open the sync-window dialog,
@@ -292,7 +331,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       }));
       return account;
     } catch (error) {
-      set({ error: errorText(error), errorAccountId: null, isLoading: false });
+      const text = errorText(error);
+      set({ error: text, errorAccountId: null, failedAdd: { provider, error: text }, isLoading: false });
       throw error;
     }
   },
