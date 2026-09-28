@@ -270,6 +270,30 @@ impl SearchPlan {
         }
         self
     }
+
+    /// A period the model closed on `today` runs through today.
+    ///
+    /// `until` is end-exclusive, but for "los últimos 6 meses" the model writes
+    /// an inclusive end (until = today), which taken literally drops today's
+    /// mail. The two windows whose correct end-exclusive bound IS today keep
+    /// it: a single day (yesterday) and the calendar week before this one
+    /// (last week, asked on a Monday).
+    pub fn through_today(mut self, today: &str) -> Self {
+        let today = today.trim();
+        let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) else {
+            return self;
+        };
+        if until != today {
+            return self;
+        }
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
+        let single_day = matches!((day(since), day(until)), (Some(s), Some(u)) if u - s == chrono::Duration::days(1));
+        let last_week = week_bounds(today).is_some_and(|w| since == w.last_since && until == w.last_until);
+        if !single_day && !last_week {
+            self.until = None;
+        }
+        self
+    }
 }
 
 /// Turn the model's reply into a [`Plan`], and say why it landed there.
@@ -509,6 +533,10 @@ pub async fn plan_search(
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => {
             let (plan, outcome) = parse_plan_detailed(&result.text);
+            let plan = match plan {
+                Plan::Search(p) => Plan::Search(Box::new(p.through_today(today))),
+                other => other,
+            };
             PlanRun {
                 plan,
                 outcome,
@@ -753,6 +781,69 @@ mod tests {
             panic!("expected a plan");
         };
         assert_eq!(plan.since, None);
+        assert_eq!(plan.until, None);
+    }
+
+    fn window(since: &str, until: &str) -> SearchPlan {
+        SearchPlan {
+            since: Some(since.into()),
+            until: Some(until.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_period_closed_on_today_runs_through_today() {
+        // "los últimos 6 meses" planned as until=today: taken as the
+        // end-exclusive bound it is, it would drop today's mail.
+        let plan = window("2026-03-28", "2026-09-28").through_today("2026-09-28");
+        assert_eq!(plan.since.as_deref(), Some("2026-03-28"));
+        assert_eq!(plan.until, None);
+    }
+
+    #[test]
+    fn yesterday_still_ends_before_today() {
+        // since=yesterday, until=today is the correct end-exclusive plan.
+        let plan = window("2026-09-27", "2026-09-28").through_today("2026-09-28");
+        assert_eq!(plan.until.as_deref(), Some("2026-09-28"));
+    }
+
+    #[test]
+    fn last_week_asked_on_a_monday_still_ends_before_today() {
+        // 2026-09-28 is a Monday: last week's end-exclusive bound is today.
+        let plan = window("2026-09-21", "2026-09-28").through_today("2026-09-28");
+        assert_eq!(plan.until.as_deref(), Some("2026-09-28"));
+    }
+
+    #[test]
+    fn a_window_ending_on_another_day_is_kept() {
+        for until in ["2026-09-01", "2026-09-29"] {
+            let plan = window("2026-08-01", until).through_today("2026-09-28");
+            assert_eq!(plan.until.as_deref(), Some(until));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_planned_period_closed_on_today_includes_today() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"from": "reports@example.com", "since": "2025-12-15", "until": "2026-06-15"}"#);
+
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "reports from the last 6 months",
+            &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
+        )
+        .await;
+
+        let Plan::Search(plan) = run.plan else {
+            panic!("expected a search plan");
+        };
+        assert_eq!(plan.since.as_deref(), Some("2025-12-15"));
         assert_eq!(plan.until, None);
     }
 

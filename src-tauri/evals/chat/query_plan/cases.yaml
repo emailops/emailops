@@ -365,3 +365,33 @@
     with: "janos"
   absent: [from, to, since, until]
   ignore: [query, intent, topic, mode, limit, order]
+
+
+- id: a_window_up_to_now_has_no_end_es
+  question: "analiza cómo evolucionan los informes de metrics@emailopslabs.dev en los últimos 6 meses"
+  note: "planned until = today; until is end-exclusive, so today's report was dropped"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+  absent: [until]
+  ignore: [to, query, mode, intent, topic, since, order]
+
+
+- id: a_window_up_to_now_has_no_end_en
+  question: "emails from metrics@emailopslabs.dev in the last 30 days"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    since: "2026-08-19"
+  absent: [until]
+  ignore: [to, query, mode, intent, topic]
+
+
+- id: since_a_month_runs_up_to_now
+  question: "correos de metrics@emailopslabs.dev desde marzo"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    since: "2026-03-01"
+  absent: [until]
+  ignore: [to, query, mode, intent, topic]
