@@ -1,6 +1,6 @@
 use oauth2::{
-    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, RefreshToken, TokenResponse, TokenUrl,
+    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, RefreshToken, TokenResponse, TokenUrl,
 };
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,6 +15,7 @@ use crate::models::OAuthTokens;
 // release builds at compile time for installed desktop app usage.
 const GMAIL_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GMAIL_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+pub const GMAIL_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const BUNDLED_GMAIL_CLIENT_ID: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_ID");
 const BUNDLED_GMAIL_CLIENT_SECRET: Option<&str> = option_env!("EMAILOPS_GMAIL_CLIENT_SECRET");
 
@@ -138,11 +139,6 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
         )));
     }
 
-    // Public client = no client secret. Azure AD public-client apps reject any
-    // client_secret (AADSTS90023) and require PKCE. If a secret is provided we
-    // treat this as a confidential client (Google's desktop-app flow).
-    let is_public_client = config.client_secret.is_empty();
-
     // Find an available port for the callback
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| AppError::OAuthError(format!("Failed to bind port: {}", e)))?;
@@ -152,32 +148,8 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
         .port();
     let redirect_url = format!("http://{}:{}", config.redirect_host, port);
 
-    // Create OAuth client
-    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
-        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_redirect_uri(RedirectUrl::new(redirect_url).map_err(|e| AppError::OAuthError(e.to_string()))?);
-    if !is_public_client {
-        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
-    }
-
-    // Generate authorization URL (with PKCE for public clients — Azure AD
-    // enforces PKCE when the app registration has no client secret).
-    let (pkce_challenge, pkce_verifier) = if is_public_client {
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        (Some(challenge), Some(verifier))
-    } else {
-        (None, None)
-    };
-
-    let mut auth_request = client.authorize_url(oauth2::CsrfToken::new_random);
-    for scope in &config.scopes {
-        auth_request = auth_request.add_scope(oauth2::Scope::new(scope.clone()));
-    }
-    if let Some(challenge) = pkce_challenge {
-        auth_request = auth_request.set_pkce_challenge(challenge);
-    }
-    let (auth_url, csrf_token) = auth_request.url();
+    let client = oauth_client(config, Some(&redirect_url))?;
+    let (auth_url, csrf_token, pkce_verifier) = authorization_url(&client, &config.scopes);
 
     // Open browser for user authorization. `that_detached` (not `that`) is
     // required here: `open::that` blocks the calling thread until the
@@ -194,12 +166,9 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
 
     // Exchange code for tokens
     let http_client = reqwest::Client::new();
-    let mut exchange = client.exchange_code(AuthorizationCode::new(code));
-    if let Some(verifier) = pkce_verifier {
-        // PkceCodeVerifier is move-only; re-wrap its secret so we can hand it in.
-        exchange = exchange.set_pkce_verifier(PkceCodeVerifier::new(verifier.secret().clone()));
-    }
-    let token_result = exchange
+    let token_result = client
+        .exchange_code(AuthorizationCode::new(code))
+        .set_pkce_verifier(pkce_verifier)
         .request_async(&http_client)
         .await
         .map_err(|e| AppError::OAuthError(format!("Token exchange failed: {}", e)))?;
@@ -217,6 +186,46 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
     })
 }
 
+type ConfiguredClient = oauth2::basic::BasicClient<
+    oauth2::EndpointSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointNotSet,
+    oauth2::EndpointSet,
+>;
+
+/// Public client = no client secret. Azure AD public-client apps reject any
+/// client_secret (AADSTS90023); Google desktop clients ship a secret that is
+/// not confidential (it is embedded in the binary).
+fn oauth_client(config: &OAuthConfig, redirect_url: Option<&str>) -> Result<ConfiguredClient> {
+    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
+        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
+        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?);
+    if let Some(redirect_url) = redirect_url {
+        client = client.set_redirect_uri(
+            RedirectUrl::new(redirect_url.to_string()).map_err(|e| AppError::OAuthError(e.to_string()))?,
+        );
+    }
+    if !config.client_secret.is_empty() {
+        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
+    }
+    Ok(client)
+}
+
+/// Authorization URL with a random `state` and a PKCE S256 challenge.
+fn authorization_url(client: &ConfiguredClient, scopes: &[String]) -> (oauth2::url::Url, CsrfToken, PkceCodeVerifier) {
+    let mut auth_request = client.authorize_url(CsrfToken::new_random);
+    for scope in scopes {
+        auth_request = auth_request.add_scope(oauth2::Scope::new(scope.clone()));
+    }
+    // PKCE for every client, not only public ones: a desktop app's client
+    // secret is extractable, so only PKCE binds the code to this instance
+    // (RFC 8252 §6). Azure AD requires it; Google accepts it with the secret.
+    let (challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    let (url, state) = auth_request.set_pkce_challenge(challenge).url();
+    (url, state, pkce_verifier)
+}
+
 pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthTokens> {
     if config.client_id.is_empty() {
         return Err(AppError::OAuthError(format!(
@@ -225,14 +234,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
         )));
     }
 
-    let is_public_client = config.client_secret.is_empty();
-
-    let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
-        .set_auth_uri(AuthUrl::new(config.auth_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?)
-        .set_token_uri(TokenUrl::new(config.token_url.clone()).map_err(|e| AppError::OAuthError(e.to_string()))?);
-    if !is_public_client {
-        client = client.set_client_secret(ClientSecret::new(config.client_secret.clone()));
-    }
+    let client = oauth_client(config, None)?;
 
     let http_client = reqwest::Client::new();
     let token_result = client
@@ -253,6 +255,23 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
             .or_else(|| Some(refresh_token.to_string())),
         expires_at,
     })
+}
+
+/// Revoke a token at an RFC 7009 endpoint (Google's `/revoke`). Revoking a
+/// refresh token ends the whole grant, so the app loses access immediately
+/// instead of when the user finds it in their Google Account settings.
+pub async fn revoke_token(revoke_url: &str, token: &str) -> Result<()> {
+    let response = reqwest::Client::new()
+        .post(revoke_url)
+        .form(&[("token", token)])
+        .send()
+        .await
+        .map_err(|e| AppError::OAuthError(format!("Token revocation failed: {e}")))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AppError::OAuthError(format!("Token revocation failed: HTTP {status}")));
+    }
+    Ok(())
 }
 
 fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String> {
@@ -369,7 +388,7 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::extract_callback_code;
-    use super::OAuthConfig;
+    use super::{authorization_url, oauth_client, revoke_token, OAuthConfig};
 
     #[test]
     fn gmail_scopes_include_calendar_events_read_write() {
@@ -445,6 +464,45 @@ mod tests {
         );
     }
 
+    fn confidential_config() -> OAuthConfig {
+        OAuthConfig {
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            ..OAuthConfig::gmail()
+        }
+    }
+
+    #[test]
+    fn authorization_url_sends_pkce_s256_for_confidential_client() {
+        // Google desktop clients ship a (non-confidential) client secret; PKCE
+        // must still bind the code to this app instance (RFC 8252 §6).
+        let config = confidential_config();
+        let client = oauth_client(&config, Some("http://127.0.0.1:1234")).unwrap();
+        let (url, _state, _verifier) = authorization_url(&client, &config.scopes);
+        let query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        assert!(
+            query.iter().any(|(k, v)| k == "code_challenge_method" && v == "S256"),
+            "{url}"
+        );
+        assert!(query.iter().any(|(k, _)| k == "code_challenge"), "{url}");
+    }
+
+    #[test]
+    fn authorization_url_sends_pkce_s256_for_public_client() {
+        let config = OAuthConfig {
+            client_id: "client-id".to_string(),
+            client_secret: String::new(),
+            ..OAuthConfig::outlook()
+        };
+        let client = oauth_client(&config, Some("http://localhost:1234")).unwrap();
+        let (url, _state, _verifier) = authorization_url(&client, &config.scopes);
+        assert!(
+            url.query_pairs()
+                .any(|(k, v)| k == "code_challenge_method" && v == "S256"),
+            "{url}"
+        );
+    }
+
     #[test]
     fn extracts_code_from_valid_callback() {
         let code = extract_callback_code("/?code=abc123&state=expected", "expected").unwrap();
@@ -461,5 +519,63 @@ mod tests {
     fn rejects_callback_without_code() {
         let error = extract_callback_code("/?state=expected", "expected").unwrap_err();
         assert!(error.to_string().contains("Missing authorization code"));
+    }
+
+    /// One-shot HTTP server: answers the first request with `status` and
+    /// returns the raw request text it received.
+    fn one_shot_server(status: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/revoke", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            // Give up after 5 s so a client that never connects fails the
+            // test instead of hanging it.
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(20))
+                    }
+                    Err(_) => return String::new(),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = vec![0u8; 8192];
+            let mut request = String::new();
+            // Read until the form body (after the blank line) has arrived.
+            while !request.contains("token=") {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+            let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.write_all(response.as_bytes()).unwrap();
+            request
+        });
+        (url, handle)
+    }
+
+    #[tokio::test]
+    async fn revoke_token_posts_the_token_as_a_form() {
+        let (url, server) = one_shot_server("200 OK");
+        revoke_token(&url, "refresh-123").await.unwrap();
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /revoke "), "{request}");
+        assert!(request.contains("token=refresh-123"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn revoke_token_fails_on_a_non_success_status() {
+        let (url, server) = one_shot_server("400 Bad Request");
+        let result = revoke_token(&url, "already-revoked").await;
+        server.join().unwrap();
+        assert!(result.is_err(), "{result:?}");
     }
 }

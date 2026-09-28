@@ -367,16 +367,14 @@ impl Database {
             Some(s) => match schema_cols.iter().find(|(k, _)| k == &s.key) {
                 Some((_, col_type)) => {
                     let dir = if s.desc { "DESC" } else { "ASC" };
-                    // `s.key` is whitelisted against the schema; safe to inline
-                    // as a JSON path. COALESCE so an override sorts before the
-                    // extracted value when both exist.
-                    let path = match col_type {
-                        LensColumnType::Currency => format!("$.{}.amount", s.key),
-                        _ => format!("$.{}", s.key),
+                    // COALESCE so an override sorts before the extracted
+                    // value when both exist.
+                    let key = key_literal(&s.key);
+                    let field = match col_type {
+                        LensColumnType::Currency => format!("-> {key} ->> 'amount'"),
+                        _ => format!("->> {key}"),
                     };
-                    let raw = format!(
-                        "COALESCE(json_extract(overrides_json, '{path}'), json_extract(extracted_json, '{path}'))",
-                    );
+                    let raw = format!("COALESCE(overrides_json {field}, extracted_json {field})");
                     let comparable = match col_type {
                         LensColumnType::Number | LensColumnType::Currency => {
                             format!("CAST({raw} AS REAL)")
@@ -944,13 +942,19 @@ fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
     }
 }
 
+/// A Lens column key as a SQL string literal. Keys are free text typed by the
+/// user, so they are never spliced raw: quotes are doubled (SQLite literals
+/// have no other escapes) and the literal is used with `->`/`->>`, which read
+/// a non-`$` text operand as a plain object label rather than a JSON path.
+fn key_literal(key: &str) -> String {
+    format!("'{}'", key.replace('\'', "''"))
+}
+
 /// The value a column shows in the table, as text: a hand edit
-/// (`overrides_json`) wins over the extracted value. `key` must already be
-/// whitelisted against the Lens schema — it is spliced into a JSON path.
+/// (`overrides_json`) wins over the extracted value.
 fn effective_value_sql(key: &str) -> String {
-    format!(
-        "CAST(COALESCE(json_extract(r.overrides_json, '$.{key}'), json_extract(r.extracted_json, '$.{key}')) AS TEXT)"
-    )
+    let key = key_literal(key);
+    format!("CAST(COALESCE(r.overrides_json ->> {key}, r.extracted_json ->> {key}) AS TEXT)")
 }
 
 #[cfg(test)]
@@ -1260,6 +1264,61 @@ mod column_filter_tests {
         seed(&db, &lens.id, "globex", Some("Globex"), 200);
         seed(&db, &lens.id, "blank", None, 100);
         (db, lens.id)
+    }
+
+    /// A Lens whose only column key is free text crafted to break out of a
+    /// SQL string literal, with one row per vendor value.
+    fn setup_with_key(key: &str) -> (Database, String) {
+        let db = Database::new_for_testing().expect("test db");
+        let mut input = sample_input();
+        input.schema.columns[0].key = key.to_string();
+        let lens = db.create_lens(&input).unwrap();
+        for (id, vendor, ts) in [("acme", "Acme", 300), ("globex", "Globex", 200)] {
+            seed(&db, &lens.id, id, None, ts);
+            let data = serde_json::json!({ key: vendor }).to_string();
+            db.upsert_lens_row(&lens.id, id, "acc1", &data, 1, ts, "ok", None)
+                .unwrap();
+        }
+        (db, lens.id)
+    }
+
+    #[test]
+    fn a_column_key_with_quotes_is_data_not_sql() {
+        let key = "vendor's name') OR 1=1 --";
+        let (db, lens) = setup_with_key(key);
+        let filters = vec![ColumnFilter {
+            key: key.into(),
+            values: vec!["Globex".into()],
+            include_empty: false,
+        }];
+        let page = db.get_lens_rows_filtered(&lens, None, &filters, 50, 0).unwrap();
+        assert_eq!(ids(&page), vec!["globex"]);
+    }
+
+    #[test]
+    fn sorting_by_a_column_key_with_quotes_works() {
+        let key = "vendor's name') OR 1=1 --";
+        let (db, lens) = setup_with_key(key);
+        let sort = crate::models::lens::SortSpec {
+            key: key.into(),
+            desc: true,
+        };
+        let page = db.get_lens_rows_filtered(&lens, Some(&sort), &[], 50, 0).unwrap();
+        // Globex > Acme; the timestamp tiebreak alone would put acme first.
+        assert_eq!(ids(&page), vec!["globex", "acme"]);
+    }
+
+    #[test]
+    fn column_values_for_a_key_with_quotes_are_listed() {
+        let key = "vendor's name') OR 1=1 --";
+        let (db, lens) = setup_with_key(key);
+        let values: Vec<_> = db
+            .get_lens_column_values(&lens, key)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.value)
+            .collect();
+        assert_eq!(values, vec![Some("Acme".to_string()), Some("Globex".to_string())]);
     }
 
     #[test]

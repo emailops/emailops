@@ -139,6 +139,20 @@ pub fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
     }
 }
 
+/// Destination filename for a bulk download: `<RuleName>_<original>`, or just
+/// the original when the rule has no name. Both parts are reduced to a single
+/// path component so the result always stays inside the Downloads folder.
+pub fn bulk_download_name(rule_name: Option<&str>, filename: &str) -> String {
+    let filename = sanitize_download_filename(filename);
+    match rule_name
+        .map(|n| n.replace([' ', '/', '\\'], "_"))
+        .filter(|n| !n.is_empty())
+    {
+        Some(prefix) => format!("{prefix}_{filename}"),
+        None => filename,
+    }
+}
+
 /// Write attachment bytes into `dir` (the user's Downloads folder) under a
 /// sanitized, collision-free name. Returns the path actually written.
 pub fn save_bytes_to_downloads(dir: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf> {
@@ -1749,6 +1763,34 @@ mod tests {
             result.is_err(),
             "a fetch is needed, so missing credentials must surface: {result:?}"
         );
+    }
+
+    // --- bulk_download_name ---
+
+    #[test]
+    fn bulk_download_name_prefixes_the_rule_name() {
+        assert_eq!(
+            bulk_download_name(Some("Monthly invoices"), "march.pdf"),
+            "Monthly_invoices_march.pdf"
+        );
+    }
+
+    #[test]
+    fn bulk_download_name_strips_path_components_from_the_email_filename() {
+        assert_eq!(
+            bulk_download_name(None, "../../Library/LaunchAgents/x.plist"),
+            "x.plist"
+        );
+        assert_eq!(bulk_download_name(None, "/etc/evil.sh"), "evil.sh");
+        assert_eq!(
+            bulk_download_name(Some("Invoices"), "..\\..\\evil.sh"),
+            "Invoices_evil.sh"
+        );
+    }
+
+    #[test]
+    fn bulk_download_name_keeps_a_rule_name_with_slashes_in_one_component() {
+        assert_eq!(bulk_download_name(Some("a/../b"), "x.pdf"), "a_.._b_x.pdf");
     }
 
     // --- save_bytes_to_downloads ---

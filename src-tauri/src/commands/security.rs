@@ -1,10 +1,10 @@
 use tauri::State;
 
 use crate::models::error::{AppError, Result};
-use crate::services::password;
+use crate::services::{clock, password};
 use crate::AppState;
 
-const PREF_KEY: &str = "security.main_password_hash";
+const PREF_KEY: &str = password::MAIN_PASSWORD_KEY;
 
 #[tauri::command]
 pub async fn has_main_password(state: State<'_, AppState>) -> Result<bool> {
@@ -30,10 +30,10 @@ pub async fn set_main_password(
 
     let existing = state.db.get_preference(PREF_KEY)?.filter(|v| !v.is_empty());
 
-    if let Some(stored) = existing {
+    if existing.is_some() {
         let current = current_password
             .ok_or_else(|| AppError::InvalidInput("Current password is required to change it.".into()))?;
-        if !password::verify_password(&current, &stored)? {
+        if !password::verify_main_password(&state.db, &current, clock::now_secs())? {
             return Err(AppError::AuthError("Current password is incorrect.".into()));
         }
     }
@@ -46,34 +46,17 @@ pub async fn set_main_password(
 
 #[tauri::command]
 pub async fn verify_main_password(state: State<'_, AppState>, password: String) -> Result<bool> {
-    let stored = state.db.get_preference(PREF_KEY)?.filter(|v| !v.is_empty());
-    let Some(stored_hash) = stored else {
-        return Ok(false);
-    };
-
-    if !password::verify_password(&password, &stored_hash)? {
-        return Ok(false);
-    }
-
-    // Transparently upgrade legacy SHA-256 hashes to Argon2 on successful verify.
-    if password::needs_rehash(&stored_hash) {
-        let new_hash = password::hash_password(&password)?;
-        state.db.set_preference(PREF_KEY, &new_hash)?;
-    }
-
-    Ok(true)
+    password::verify_main_password(&state.db, &password, clock::now_secs())
 }
 
 /// Remove the main password. Requires the current password to confirm.
 #[tauri::command]
 pub async fn remove_main_password(state: State<'_, AppState>, password: String) -> Result<()> {
-    let stored = state
-        .db
-        .get_preference(PREF_KEY)?
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| AppError::InvalidInput("No main password is currently set.".into()))?;
+    if state.db.get_preference(PREF_KEY)?.filter(|v| !v.is_empty()).is_none() {
+        return Err(AppError::InvalidInput("No main password is currently set.".into()));
+    }
 
-    if !password::verify_password(&password, &stored)? {
+    if !password::verify_main_password(&state.db, &password, clock::now_secs())? {
         return Err(AppError::AuthError("Password is incorrect.".into()));
     }
 

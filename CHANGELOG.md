@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Security
+
+- **Google sign-in uses PKCE.** Adding or re-authenticating a Gmail account
+  now sends a PKCE (S256) challenge, so an intercepted authorization code
+  cannot be exchanged by another app.
+- **Removing a Gmail account revokes EmailOps' access at Google.** Before,
+  the tokens were only deleted locally and access stayed granted until you
+  removed it in your Google Account. If revocation fails, the Logs panel
+  says how to remove it by hand.
+- **Bulk-downloading attachments can no longer write outside Downloads.** A
+  crafted attachment filename containing `../` or an absolute path is now
+  reduced to a plain file name, as single downloads already were.
+- **The main password is throttled.** After five wrong attempts the lock
+  screen waits 30 seconds, doubling up to 15 minutes, and restarting the app
+  does not reset the count.
+
+### Fixed
+
+- **Lens columns whose key contains a quote** no longer break sorting,
+  filtering or the column-value list.
 
 ## [0.6.11] — 2026-09-27
 
