@@ -55,4 +55,11 @@ describe('ErrorBanner', () => {
     });
     expect(container.textContent).toBe('');
   });
+
+  it('offers no "Sign in again" button when there is nothing to retry (#107)', () => {
+    act(() => {
+      root.render(<ErrorBanner message="Sign-in error: Timed out waiting for OAuth callback." onDismiss={() => {}} />);
+    });
+    expect(container.textContent).not.toContain('Sign in again');
+  });
 });
