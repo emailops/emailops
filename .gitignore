@@ -142,3 +142,6 @@ src-tauri/gen/apple/xcuserdata/
 # ts-rs output when the `ts` feature runs from inside src-tauri/ — the
 # committed frontend types live in src/types/index.ts and are hand-maintained.
 src-tauri/src/types/generated/
+
+# Swift Package Manager build output (created by Swift tooling run in the checkout)
+.build/
