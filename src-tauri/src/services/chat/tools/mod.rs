@@ -2643,7 +2643,8 @@ mod tests {
             &arg(serde_json::json!({
                 "from": "a@x.com",
                 "since": "2026-04-17",
-                "until": "2026-04-18",
+                // `until` includes its own day: one day is since == until.
+                "until": "2026-04-17",
                 "limit": 10,
             })),
         );

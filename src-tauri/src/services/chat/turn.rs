@@ -1554,8 +1554,8 @@ fn heuristic_direct_tools_at(
 
     // Summary of today's emails (EN + ES).
     if has_today && has_summary && !has_week && !has_month {
-        let tomorrow = today + chrono::Duration::days(1);
-        return Some(search_since_until(today, tomorrow));
+        // `until` includes its own day: today is since == until.
+        return Some(search_since_until(today, today));
     }
 
     // Summary of this week's emails (EN + ES). When the account has calendar
@@ -1564,15 +1564,15 @@ fn heuristic_direct_tools_at(
     if has_week && has_summary && !has_month {
         let days_since_monday = today.weekday().num_days_from_monday() as i64;
         let monday = today - chrono::Duration::days(days_since_monday);
-        let next_monday = monday + chrono::Duration::days(7);
-        let mut calls = search_since_until(monday, next_monday);
+        let sunday = monday + chrono::Duration::days(6);
+        let mut calls = search_since_until(monday, sunday);
         if calendar_available {
             calls.push(AiToolCall {
                 function: AiToolCallFunction {
                     name: "list_calendar_events".to_string(),
                     arguments: serde_json::json!({
                         "since": monday.format("%Y-%m-%d").to_string(),
-                        "until": next_monday.format("%Y-%m-%d").to_string(),
+                        "until": sunday.format("%Y-%m-%d").to_string(),
                     }),
                 },
             });
@@ -7226,7 +7226,8 @@ mod tests {
         let calls = heuristic_direct_tools_at("resumen de hoy", false, today).expect("today shortcut");
         let args = &calls[0].function.arguments;
         assert_eq!(args.get("since").and_then(|v| v.as_str()), Some("2026-04-17"));
-        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2026-04-18"));
+        // `until` includes its own day: one day is since == until.
+        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2026-04-17"));
     }
 
     #[test]
@@ -7482,7 +7483,7 @@ Termina con un párrafo breve destacando lo más importante del día.";
         assert_eq!(calls[0].function.name, "search_emails");
         let args = &calls[0].function.arguments;
         assert!(args.get("since").is_some(), "must pass a since=today bound");
-        assert!(args.get("until").is_some(), "must pass an until=tomorrow bound");
+        assert!(args.get("until").is_some(), "must pass an until=today bound");
         assert_eq!(
             args.get("include_bodies").and_then(|v| v.as_bool()),
             Some(true),
@@ -7520,7 +7521,7 @@ Termina con dos o tres frases sobre los temas dominantes de la semana.";
         assert_eq!(calls.len(), 2, "email search + calendar events");
         assert_eq!(calls[0].function.name, "search_emails");
         assert_eq!(calls[1].function.name, "list_calendar_events");
-        // Both cover the same Monday..next-Monday window.
+        // Both cover the same Monday..Sunday window.
         assert_eq!(
             calls[0].function.arguments.get("since"),
             calls[1].function.arguments.get("since")
@@ -7609,7 +7610,7 @@ Preséntalos en una tabla markdown …";
             .expect("today shortcut must match the demo prompt");
         let args = &calls[0].function.arguments;
         assert_eq!(args.get("since").and_then(|v| v.as_str()), Some("2024-01-15"));
-        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2024-01-16"));
+        assert_eq!(args.get("until").and_then(|v| v.as_str()), Some("2024-01-15"));
 
         crate::services::clock::install(std::sync::Arc::new(crate::services::clock::SystemClock));
     }

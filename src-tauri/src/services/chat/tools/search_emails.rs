@@ -255,7 +255,7 @@ fn parameters_schema_with(glossary: &TagGlossary) -> Value {
             "with": { "type": "string", "description": "A person the mail was exchanged with, in either direction — use for 'emails with X' / 'correos con X' / 'my conversations with X'. Matches X as the sender or among the recipients, including mail sent to the addresses X writes from. Use instead of from/to when the question gives no direction." },
             "subject": { "type": "string", "description": "Filter by subject keywords (FTS5 match on subject column)." },
             "since": { "type": "string", "description": "Only return emails on or after this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: '2026-04-17' for today." },
-            "until": { "type": "string", "description": "Only return emails strictly before this date. ISO-8601 date 'YYYY-MM-DD' (UTC). Example: use until='2026-04-18' together with since='2026-04-17' to get today's emails only." },
+            "until": { "type": "string", "description": "Only return emails up to and including this date. ISO-8601 date 'YYYY-MM-DD'. Example: since='2026-04-17' and until='2026-04-17' is that one day. Omit it for a period that runs up to now." },
             "limit": { "type": "integer", "description": "Max number of results to return. Default 20, max 25. Use 25 for 'all X' / 'todas' queries, 5 for 'latest X' / 'última'." },
             "offset": { "type": "integer", "description": "Skip this many matches before the page starts. Default 0 (the newest matches). To walk further into a long result set call `next_page` instead of setting this by hand." },
             "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." },
@@ -390,7 +390,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             None => None,
         };
         let until_ts = match until_str {
-            Some(s) => match parse_iso_date_secs(s) {
+            Some(s) => match crate::services::chat::parse_until_date_secs(s) {
                 Ok(ts) => Some(ts),
                 Err(e) => return Ok(ToolOutput::text(format!("Error: invalid 'until' date: {}", e))),
             },

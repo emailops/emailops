@@ -514,6 +514,16 @@ pub(crate) fn parse_iso_date_secs(s: &str) -> std::result::Result<i64, String> {
     Ok(local_day_start(date, crate::services::clock::utc_offset_secs()))
 }
 
+/// An `until` date as the exclusive timestamp bound: the start of the NEXT day,
+/// so the date itself is included. `until` means "up to and including" in
+/// every prompt and tool schema — the reading a model and a user both assume.
+pub(crate) fn parse_until_date_secs(s: &str) -> std::result::Result<i64, String> {
+    let date = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+        .map_err(|_| format!("expected 'YYYY-MM-DD', got '{}'", s))?;
+    let next = date.succ_opt().ok_or_else(|| format!("date out of range: '{}'", s))?;
+    Ok(local_day_start(next, crate::services::clock::utc_offset_secs()))
+}
+
 pub(crate) fn truncate_chars(s: &str, max_chars: usize) -> String {
     let mut out = String::new();
     for (i, ch) in s.chars().enumerate() {
@@ -785,6 +795,14 @@ mod tests {
         assert_eq!(local_date(late_evening, 0).to_string(), "2026-04-16");
         assert_eq!(local_date(late_evening, 7_200).to_string(), "2026-04-17");
         assert_eq!(local_date(utc(2026, 4, 17, 1, 0), -7_200).to_string(), "2026-04-16");
+    }
+
+    #[test]
+    fn an_until_date_includes_its_whole_day() {
+        // The bound is exclusive at the start of the NEXT day.
+        assert_eq!(parse_until_date_secs("2026-04-17"), parse_iso_date_secs("2026-04-18"));
+        assert_eq!(parse_until_date_secs("2025-12-31"), parse_iso_date_secs("2026-01-01"));
+        assert!(parse_until_date_secs("not a date").is_err());
     }
 
     #[test]

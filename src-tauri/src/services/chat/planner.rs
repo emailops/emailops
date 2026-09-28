@@ -257,40 +257,14 @@ impl SearchPlan {
         if bare_name && !self.wants_oldest() && self.limit.unwrap_or(25) < 5 {
             self.limit = Some(5);
         }
-        // 3. A window that cannot contain anything is dropped rather than run.
-        //    The model stamps `since = until = {{today}}` on questions that
-        //    name no date at all ("when did X first write to me?"), and
-        //    `until` is end-exclusive, so the search matches nothing and the
-        //    turn burns rounds widening it by hand.
+        // 3. An inverted window cannot contain anything: drop it rather than
+        //    run it. `until` includes its own day, so since == until is a
+        //    real single day and stays.
         if let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) {
-            if until <= since {
+            if until < since {
                 self.since = None;
                 self.until = None;
             }
-        }
-        self
-    }
-
-    /// A period the model closed on `today` runs through today.
-    ///
-    /// `until` is end-exclusive, but for "los últimos 6 meses" the model writes
-    /// an inclusive end (until = today), which taken literally drops today's
-    /// mail. The two windows whose correct end-exclusive bound IS today keep
-    /// it: a single day (yesterday) and the calendar week before this one
-    /// (last week, asked on a Monday).
-    pub fn through_today(mut self, today: &str) -> Self {
-        let today = today.trim();
-        let (Some(since), Some(until)) = (self.since.as_deref(), self.until.as_deref()) else {
-            return self;
-        };
-        if until != today {
-            return self;
-        }
-        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
-        let single_day = matches!((day(since), day(until)), (Some(s), Some(u)) if u - s == chrono::Duration::days(1));
-        let last_week = week_bounds(today).is_some_and(|w| since == w.last_since && until == w.last_until);
-        if !single_day && !last_week {
-            self.until = None;
         }
         self
     }
@@ -381,7 +355,7 @@ fn extract_json_object(text: &str) -> Option<serde_json::Map<String, serde_json:
     }
 }
 
-/// Monday-anchored week boundaries (ISO `YYYY-MM-DD`, end-exclusive) derived
+/// Monday-anchored week boundaries (ISO `YYYY-MM-DD`, `until` inclusive) derived
 /// deterministically from `today`. "This week" is the calendar week starting
 /// Monday and containing `today`; "last week" is the preceding one. Injected
 /// into the planner prompt so week math never depends on the model counting
@@ -402,14 +376,14 @@ pub(crate) fn week_bounds(today: &str) -> Option<WeekBounds> {
     // Monday = 0 … Sunday = 6.
     let offset = d.weekday().num_days_from_monday() as i64;
     let this_monday = d - Duration::days(offset);
-    let next_monday = this_monday + Duration::days(7);
     let last_monday = this_monday - Duration::days(7);
     let fmt = |dt: NaiveDate| dt.format("%Y-%m-%d").to_string();
+    // `until` includes its own day: a week ends on its Sunday.
     Some(WeekBounds {
         this_since: fmt(this_monday),
-        this_until: fmt(next_monday),
+        this_until: fmt(this_monday + Duration::days(6)),
         last_since: fmt(last_monday),
-        last_until: fmt(this_monday),
+        last_until: fmt(this_monday - Duration::days(1)),
     })
 }
 
@@ -455,6 +429,14 @@ pub(crate) fn split_planner_prompt(
     // never rely on the model's weekday arithmetic. Empty on an unparseable
     // date — the template's generic relative-date rule still applies.
     let wb = week_bounds(today);
+    // Same for "yesterday": the model wrote since=yesterday, until=today
+    // out of half-open habit, which with an inclusive `until` adds today.
+    let yesterday = chrono::NaiveDate::parse_from_str(today.trim(), "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.pred_opt())
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
+    vars.insert("yesterday", yesterday);
     vars.insert(
         "this_week_since",
         wb.as_ref().map(|w| w.this_since.clone()).unwrap_or_default(),
@@ -533,10 +515,6 @@ pub async fn plan_search(
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
         Ok(result) => {
             let (plan, outcome) = parse_plan_detailed(&result.text);
-            let plan = match plan {
-                Plan::Search(p) => Plan::Search(Box::new(p.through_today(today))),
-                other => other,
-            };
             PlanRun {
                 plan,
                 outcome,
@@ -597,9 +575,9 @@ mod tests {
         // 2026-06-30 is a Tuesday; its week starts Monday 2026-06-29.
         let w = week_bounds("2026-06-30").expect("valid date");
         assert_eq!(w.this_since, "2026-06-29");
-        assert_eq!(w.this_until, "2026-07-06", "end-exclusive: next Monday");
+        assert_eq!(w.this_until, "2026-07-05", "inclusive: this Sunday");
         assert_eq!(w.last_since, "2026-06-22");
-        assert_eq!(w.last_until, "2026-06-29");
+        assert_eq!(w.last_until, "2026-06-28");
     }
 
     #[test]
@@ -607,11 +585,11 @@ mod tests {
         // Monday: the week starts on that day.
         let mon = week_bounds("2026-06-29").expect("valid");
         assert_eq!(mon.this_since, "2026-06-29");
-        assert_eq!(mon.this_until, "2026-07-06");
+        assert_eq!(mon.this_until, "2026-07-05");
         // Sunday: still the same week starting the prior Monday.
         let sun = week_bounds("2026-07-05").expect("valid");
         assert_eq!(sun.this_since, "2026-06-29");
-        assert_eq!(sun.this_until, "2026-07-06");
+        assert_eq!(sun.this_until, "2026-07-05");
     }
 
     #[test]
@@ -624,7 +602,19 @@ mod tests {
     fn render_planner_prompt_injects_week_ranges() {
         let tmpl = "this={{this_week_since}}..{{this_week_until}} last={{last_week_since}}..{{last_week_until}}";
         let out = render_planner_prompt(tmpl, "me@x.com", "2026-06-30", "this week", &TagGlossary::defaults());
-        assert_eq!(out, "this=2026-06-29..2026-07-06 last=2026-06-22..2026-06-29");
+        assert_eq!(out, "this=2026-06-29..2026-07-05 last=2026-06-22..2026-06-28");
+    }
+
+    #[test]
+    fn render_planner_prompt_injects_yesterday() {
+        let out = render_planner_prompt(
+            "y={{yesterday}}",
+            "me@x.com",
+            "2026-03-01",
+            "q",
+            &TagGlossary::defaults(),
+        );
+        assert_eq!(out, "y=2026-02-28");
     }
 
     #[test]
@@ -758,21 +748,14 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_width_date_window_is_dropped() {
-        // "when did Marisol first write to me about the logistics dashboard?"
-        // carries no date, yet the planner stamped since = until = today. The
-        // tool then matched nothing and the model spent two more rounds
-        // widening it by hand. A window that starts and ends on the same day
-        // can never be what the user asked for: the prompt's own rule for a
-        // single day ("today") is since=today, until=tomorrow.
-        let Plan::Search(plan) =
-            parse_plan(r#"{"from": "Marisol", "order": "oldest", "since": "2026-09-18", "until": "2026-09-18"}"#)
-        else {
+    fn a_single_day_window_survives() {
+        // `until` includes its own day, so since == until is that one day
+        // ("yesterday" → since = until = yesterday), not an empty window.
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "since": "2026-09-17", "until": "2026-09-17"}"#) else {
             panic!("expected a plan");
         };
-        assert_eq!(plan.since, None);
-        assert_eq!(plan.until, None);
-        assert_eq!(plan.from.as_deref(), Some("Marisol"));
+        assert_eq!(plan.since.as_deref(), Some("2026-09-17"));
+        assert_eq!(plan.until.as_deref(), Some("2026-09-17"));
     }
 
     #[test]
@@ -781,69 +764,6 @@ mod tests {
             panic!("expected a plan");
         };
         assert_eq!(plan.since, None);
-        assert_eq!(plan.until, None);
-    }
-
-    fn window(since: &str, until: &str) -> SearchPlan {
-        SearchPlan {
-            since: Some(since.into()),
-            until: Some(until.into()),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn a_period_closed_on_today_runs_through_today() {
-        // "los últimos 6 meses" planned as until=today: taken as the
-        // end-exclusive bound it is, it would drop today's mail.
-        let plan = window("2026-03-28", "2026-09-28").through_today("2026-09-28");
-        assert_eq!(plan.since.as_deref(), Some("2026-03-28"));
-        assert_eq!(plan.until, None);
-    }
-
-    #[test]
-    fn yesterday_still_ends_before_today() {
-        // since=yesterday, until=today is the correct end-exclusive plan.
-        let plan = window("2026-09-27", "2026-09-28").through_today("2026-09-28");
-        assert_eq!(plan.until.as_deref(), Some("2026-09-28"));
-    }
-
-    #[test]
-    fn last_week_asked_on_a_monday_still_ends_before_today() {
-        // 2026-09-28 is a Monday: last week's end-exclusive bound is today.
-        let plan = window("2026-09-21", "2026-09-28").through_today("2026-09-28");
-        assert_eq!(plan.until.as_deref(), Some("2026-09-28"));
-    }
-
-    #[test]
-    fn a_window_ending_on_another_day_is_kept() {
-        for until in ["2026-09-01", "2026-09-29"] {
-            let plan = window("2026-08-01", until).through_today("2026-09-28");
-            assert_eq!(plan.until.as_deref(), Some(until));
-        }
-    }
-
-    #[tokio::test]
-    async fn a_planned_period_closed_on_today_includes_today() {
-        let provider = crate::ai::provider::FakeAiProvider::new();
-        provider.push_completion(r#"{"from": "reports@example.com", "since": "2025-12-15", "until": "2026-06-15"}"#);
-
-        let run = plan_search(
-            &provider,
-            "Question: {{query}}\nJSON:",
-            "me@example.test",
-            "2026-06-15",
-            "reports from the last 6 months",
-            &TagGlossary::defaults(),
-            None,
-            TEST_CATALOG,
-        )
-        .await;
-
-        let Plan::Search(plan) = run.plan else {
-            panic!("expected a search plan");
-        };
-        assert_eq!(plan.since.as_deref(), Some("2025-12-15"));
         assert_eq!(plan.until, None);
     }
 

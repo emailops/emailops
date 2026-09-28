@@ -349,9 +349,8 @@ fn filter_arguments(plan: &SearchPlan) -> Value {
 /// Every email matching the filter, each thread expanded to its messages (a
 /// conversation's replies carry as much of the answer as its first email).
 fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan) -> Vec<String> {
-    let parse = |d: &Option<String>| d.as_deref().and_then(|s| super::parse_iso_date_secs(s).ok());
-    let since = parse(&plan.since);
-    let until = parse(&plan.until);
+    let since = plan.since.as_deref().and_then(|s| super::parse_iso_date_secs(s).ok());
+    let until = plan.until.as_deref().and_then(|s| super::parse_until_date_secs(s).ok());
     let tags: Vec<TagQuery> = [("intent", &plan.intent), ("topic", &plan.topic)]
         .into_iter()
         .filter_map(|(kind, v)| v.as_ref().map(|v| TagQuery::typed(kind, v.trim().to_lowercase())))
