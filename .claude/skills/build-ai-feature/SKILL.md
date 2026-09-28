@@ -1,6 +1,6 @@
 ---
 name: build-ai-feature
-description: Build a net-new AI feature or change an existing AI surface in EmailOps — a new chat tool, a model/heuristic planner or route, a prompt edit, a shortcut fast-path, a new classifier/extractor, or a tweak to retrieval/drafts/memory. Drives the work through the repo's seams: pure planner first (TDD, failing test before code), thin executor, frontend toggle + feature gating when user-facing, and a mandatory eval gate because any change that can move an AI reply must be verified by an eval. Before building, it checks the change fits the current setup and config — context-window budget (n_ctx) and the KV-prefix prompt cache especially: a prompt extension that puts per-turn-variable content in the system prefix busts the cache anchor every turn, so the skill warns and proposes fixes. Establishes a CLI baseline ("before") to show the delta, gates confirmation to genuine design forks, and offers to graduate eval cases (synthetic → public `src-tauri/evals/`, personal-mailbox → `private-evals/`). All read-only DB inspections run via `make cli-*` without asking. Reports in a chat-style before/after format. Use whenever the user wants to add to or modify an AI feature — e.g. "add a planner that catches search-email/contact prompts as a direct tool call." For diagnosing broken AI behavior, use fix-ai-bug instead.
+description: Build a net-new AI feature or change an existing AI surface in EmailOps — a new chat tool, a model/heuristic planner or route, a prompt edit, a shortcut fast-path, a new classifier/extractor, or a tweak to retrieval/drafts/memory. Drives the work through the repo's seams: pure planner first (TDD, failing test before code), thin executor, frontend toggle + feature gating when user-facing, and a mandatory eval gate because any change that can move an AI reply must be verified by an eval. Before building, it checks the change fits the current setup and config — context-window budget (n_ctx) and the KV-prefix prompt cache especially: a prompt extension that puts per-turn-variable content in the system prefix busts the cache anchor every turn, so the skill warns and proposes fixes. Establishes a CLI baseline ("before") to show the delta, gates confirmation to genuine design forks, and offers to graduate eval cases (synthetic → public `src-tauri/evals/`, private-data → `private-evals/`). All read-only DB inspections run via `make cli-*` without asking. Reports in a chat-style before/after format. Use whenever the user wants to add to or modify an AI feature — e.g. "add a planner that catches search-email/contact prompts as a direct tool call." For diagnosing broken AI behavior, use fix-ai-bug instead.
 argument-hint: <feature idea or the AI surface to change>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
@@ -309,7 +309,7 @@ run the matching eval **scoped to related cases**, not the full suite:
 - Eval canonical model/provider: `qwen3.5-4b-q4_k_m` on `llamacpp` (matches
   what ships). The `make eval-*` / `make cli-eval` targets default to it.
 - If **no** existing case covers the new behaviour, add a focused one in this
-  same change (synthetic → `src-tauri/evals/<area>/cases/`; personal-mailbox →
+  same change (synthetic → `src-tauri/evals/<area>/cases/`; private-data →
   `private-evals/` — see Phase 7).
 - A planner that adds a deterministic route usually wants a unit test (Phase 4)
   **and** a chat eval case proving the end-to-end reply is still correct on
@@ -330,11 +330,11 @@ Then run the local quality gates on what you touched:
 A new AI feature should leave behind a permanent regression case. Decide the
 home by data sensitivity:
 
-- **Synthetic prompts, no personal-mailbox content** → public
+- **Synthetic prompts, no private-data content** → public
   `src-tauri/evals/<area>/cases/` (e.g. `chat/cases/`). Ship in-tree; never put
   real names/emails/subjects in them. You can add these without asking,
   following the existing case schema.
-- **Depends on the user's real mailbox** (a specific sender, subject, id) →
+- **Depends on private data** (a specific sender, subject, id) →
   `private-evals/` (gitignored). **Ask the user before adding** — never copy in
   silently. Read `private-evals/CLAUDE.md` for the schema first.
 
@@ -405,7 +405,7 @@ prompt? Ask and I'll paste."
   tests (open-ended questions that must still reach the model / RAG).
 - **localStorage for a feature toggle.** Preferences live in SQLite.
 - **Real personal data in a public eval case.** Synthetic only in-tree;
-  personal-mailbox cases go to gitignored `private-evals/` with the user's ok.
+  private-data cases go to gitignored `private-evals/` with the user's ok.
 - **Forgetting i18n / feature gating** on a user-facing feature, or leaving
   `MODULE.md` stale after changing a module's surface.
 ```

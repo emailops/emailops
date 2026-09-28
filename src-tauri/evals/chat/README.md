@@ -4,7 +4,7 @@
 chat turn against the synthetic demo DB, checks the deterministic anchors each case
 declares (`expected_route`, `expected_tools_called`, `expected_answer_contains`…) and,
 with `--judge`, scores the answer against its `expected_output` golden with the local
-model as judge. Private cases keyed to a real mailbox live in `private-evals/chat/cases/`
+model as judge. Private cases keyed to real-world mail live in `private-evals/chat/cases/`
 and follow the same schema.
 
 ## `category`: what the user is asking for
@@ -44,7 +44,7 @@ Cross-cutting dimensions every category should eventually cover:
 ## Writing a case
 
 - Key public cases to the demo persona (`ulises@emailopslabs.dev`; calendar cases to
-  `ulises.emailopslabs@gmail.com`). Anything from a real mailbox goes to `private-evals/`.
+  `ulises.emailopslabs@gmail.com`). Anything from real-world mail goes to `private-evals/`.
 - Give every case deterministic anchors **and** an `expected_output` golden with
   `metrics: [answer_relevancy, faithfulness]`, so the judge has a reference.
 - Anchor goldens on data the generator seeds (`scripts/generate_demo_db.py`); if the case

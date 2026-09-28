@@ -57,7 +57,7 @@ impl Database {
 
         // Pull all distinct senders for the account in a single pass. The
         // result set is bounded by the actual number of unique senders — a
-        // real mailbox rarely exceeds a few thousand and the GROUP BY runs
+        // typical mailbox rarely exceeds a few thousand and the GROUP BY runs
         // entirely against the `idx_emails_account_active` index.
         const MAX_CANDIDATE_SENDERS: i32 = 5000;
         let conn = self.reader();
@@ -118,7 +118,7 @@ impl Database {
     ///
     /// All three passes use `reader()` connections — no writes. The total
     /// memory footprint is bounded by the number of distinct addresses seen
-    /// (typically a few thousand on a real mailbox), so the in-memory
+    /// (typically a few thousand on a typical mailbox), so the in-memory
     /// aggregation is intentional: it lets us compute counts, recency, and
     /// the relationship score without materialising N rows in SQL.
     pub fn list_contacts(&self, account_id: &str, query: &ContactsQuery) -> Result<ContactsPage> {

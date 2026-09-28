@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn a_name_after_an_at_sign_is_not_an_embedded_address() {
-        // Regression from a real mailbox: "Blake @ Flippa" is a normal display
+        // Regression from real-world mail: "Blake @ Flippa" is a normal display
         // name used by marketing senders. Reading "Flippa" as a domain made the
         // impersonation check fire on ordinary legitimate mail.
         assert_eq!(embedded_address_domain("Blake @ Flippa"), None);

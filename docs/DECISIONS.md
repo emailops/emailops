@@ -1225,7 +1225,7 @@ unrelated shipping notice. A prompt-only fix (the CITATION CONTRACT rewrite plus
 under the Sources header) was measured on the demo DB, 54 chat cases, greedy decoding: it
 raised tool turns with `email://` links from 22/34 to 26/36 and fixed `kelvo_support_addresses`
 (`[1][2][2]` → two links), but `pc_priya_address` still answered `… [1]` for a fact in Source
-`[6]` on both prompts, and the developer's real mailbox still got `[1][2][3]` in bullet
+`[6]` on both prompts, and real-world mail still got `[1][2][3]` in bullet
 order with no links. Self-numbering survives the instruction, so the fix had to stop
 depending on the model: on those two sweeps bare `[n]` appeared on 2–3 of ~35 tool turns
 and was wrong in the self-numbered ones, while 22–26 of them carried `email://` links —
@@ -1453,7 +1453,7 @@ direct answer: citation cleanup, sources and trace. Bare `(email://ID)` and
 `[email://ID]` references are relinked to `[subject](email://ID)`.
 **Context:** a normal turn answers from about 8 sources or one 25-row page. That suits
 "what did X say?" but is too thin for "what themes came up this quarter?". Measured
-before and after on the developer's mailbox (qwen3.5-4b-q8_0, n_ctx 15360), the same
+before and after on real-world mail (qwen3.5-4b-q8_0, n_ctx 15360), the same
 question went from 25 rows read in 53 s to 100 emails read in 10 batches in 213 s, with
 35 emails cited. Every research call runs on the one-shot prefix slot (2026-09-19
 entry), so the chat's KV anchor survives for the next ordinary turn, and the map
@@ -1677,7 +1677,7 @@ account's most frequent senders matching the name), so mail the user sent to tho
 addresses is found even when it doesn't carry X's name. The planner is told: "with X" /
 "con X" with no direction → `with = X`, not `from`/`to`.
 **Context:** "resume todos los correos con Genoveva" was planned as
-`from: genoveva, to: me`. On a real mailbox that missed the 40 threads the user started
+`from: genoveva, to: me`. On real-world mail that missed the 40 threads the user started
 (about 40% of the conversations). `from` and `to` are AND-ed, so no plan could express
 "either way", and a `to` on a name misses mail addressed to a bare address.
 **Rejected:**
@@ -1721,7 +1721,7 @@ the only copy: forwards with a note, Apple Mail forwards in a `<blockquote>`, re
 to mail that was never synced, contact-form notifications that open with `From:` /
 `Subject:` or end in a `--` footer. Each new marker rule added another way to lose
 text. Comparing with the thread fails safe: when it errs, the model reads more text,
-never less. On a 50-email sample of a real mailbox the AI now reads 66% of the text
+never less. On a 50-email sample of real-world mail the AI now reads 66% of the text
 instead of 31%.
 **Rejected:**
 - *More marker rules, forward detection by subject prefix* (Mailgun `talon` does this

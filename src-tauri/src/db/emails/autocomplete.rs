@@ -11,7 +11,7 @@ const HEX_BLOB_MIN: usize = 16;
 
 /// Does this local-part segment read as a randomly generated token?
 ///
-/// The discriminator against a real mailbox is WHERE the digits sit. Humans
+/// The discriminator against a human address is WHERE the digits sit. Humans
 /// append them — `robertaquinnbarlow90`, `roselynhartfordbaum70` — so stripping
 /// the trailing run leaves a pure word. A generated token scatters them —
 /// `7kqmz3wtbnvxrjhdyplsc48`, `3bxwqmzpvrt58k2ndhguf` — so digits survive the
@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(emails, vec!["alice@example.com"]);
     }
 
-    /// Some prefixes are dominated by filtered addresses — on a real mailbox a
+    /// Some prefixes are dominated by filtered addresses — on a typical mailbox a
     /// vendor-name prefix can be ~90% no-reply. The over-fetch has to be deep
     /// enough that a full page still comes back, not a stub of two entries.
     #[test]

@@ -40,7 +40,7 @@ pub struct AccountContext {
 
 /// Default base rates.
 ///
-/// Measured against a real mailbox rather than assumed: roughly 1% of inbox mail
+/// Measured against real-world mail rather than assumed: roughly 1% of inbox mail
 /// is spam the server let through, and roughly a quarter is unengaged bulk.
 /// These are deliberately NOT derived from the training counts — the free labels
 /// come from the provider's spam folder, which over-represents spam by more than

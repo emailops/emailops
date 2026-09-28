@@ -346,7 +346,7 @@
   ignore: [intent, topic, mode, to, limit, order]
 
 # "With X" names a person without a direction: X's mail AND the user's mail
-# to X. `from`/`to` would keep only one side (a real mailbox lost ~40% of the
+# to X. `from`/`to` would keep only one side (real-world mail lost ~40% of the
 # conversations to `from: X, to: me`).
 - id: with_a_person_is_both_directions_es
   question: "resume todos los correos con Marisol, uno por línea"

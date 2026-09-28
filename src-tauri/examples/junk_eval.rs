@@ -1,7 +1,7 @@
 // `junk_eval` — measurement gate for the junk detector (spam / phishing / graymail).
 //
 // Fully synthetic and fully deterministic: no model, no network, no database.
-// Cases live in `src-tauri/evals/junk/cases/` and contain no personal-mailbox
+// Cases live in `src-tauri/evals/junk/cases/` and contain no private-data
 // content, so this runs in milliseconds and is safe in CI.
 //
 // Exits non-zero when a gate is blown. The gates are asymmetric on purpose: a
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn defaults_to_the_public_synthetic_corpus() {
         // Must never default to private-evals/: this suite is the one that runs
-        // in CI, and CI has no access to (and no business with) real mailbox data.
+        // in CI, and CI has no access to (and no business with) private data.
         let args = Args::try_parse_from(["junk_eval"]).expect("parse default args");
         assert!(args.cases_dir.is_none());
         assert!(args.case.is_none());

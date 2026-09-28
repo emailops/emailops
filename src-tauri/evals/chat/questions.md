@@ -4,7 +4,7 @@ Target list of questions for the public chat eval, three per `category` of
 [README.md](README.md), written for the demo persona (Ulises, EmailOps Labs). Each
 question becomes one YAML case with deterministic checks and an `expected_output`
 golden. **Data** says whether the demo DB answers it today or needs rows imported
-from a real mailbox and anonymised into the generator (`scripts/generate_demo_db.py`).
+from real-world mail and anonymised into the generator (`scripts/generate_demo_db.py`).
 
 Legend: ctx = context dimension (none · open email · open email off-topic · bound
 thread); tier as in the README.

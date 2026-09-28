@@ -362,7 +362,7 @@
     A short round-up of what came onto the marketplace this week.
   sender_engaged: false
   expect:
-    # REGRESSION, from a real mailbox. "Name @ Company" is an extremely common
+    # REGRESSION, from real-world mail. "Name @ Company" is an extremely common
     # legitimate display-name style. Reading the text after the at-sign as a
     # domain made the impersonation check fire on ordinary marketing mail.
     phishing: clean
@@ -386,7 +386,7 @@
     This week's reading on platform engineering.
   sender_engaged: false
   expect:
-    # REGRESSION, from a real mailbox. Every ESP on earth sends with a bounce
+    # REGRESSION, from real-world mail. Every ESP on earth sends with a bounce
     # domain that differs from the From domain, and so does ordinary forwarding.
     # Return-Path divergence must never be enough, on its own, to make an
     # authentication failure read as impersonation.
@@ -430,7 +430,7 @@
   known_contact_domains: [workmarket.example]
   sender_engaged: true
   expect:
-    # REGRESSION, measured on a real mailbox. The preheader div — display:none
+    # REGRESSION, measured on real-world mail. The preheader div — display:none
     # plus font-size:0 plus white text — is how essentially every HTML newsletter
     # renders its preview line, and treating it as concealed filler flagged a
     # quarter of all legitimate mail.
@@ -457,7 +457,7 @@
     ¡Muy buenas! ¿Qué tal estás? Espero que los proyectos vayan bien.
     Te escribo porque hace tiempo que no hablamos y quería presentarte a alguien.
   expect:
-    # REGRESSION, from a real mailbox. The server flagged this at 5.4 against its
+    # REGRESSION, from real-world mail. The server flagged this at 5.4 against its
     # own threshold of 5.0 — it barely fired, more than half the points came from
     # an SPF softfail (the state forwarded mail and small senders land in), and
     # the message carries a VALID DKIM signature.
@@ -511,7 +511,7 @@
   sender_engaged: false
   sender_message_count: 1
   expect:
-    # REGRESSION, from a real mailbox: four recruiter job offers and a conference
+    # REGRESSION, from real-world mail: four recruiter job offers and a conference
     # invitation were all badged as unwanted bulk.
     #
     # `List-Unsubscribe` marks an ESP, not an unwanted sender — it is mandatory

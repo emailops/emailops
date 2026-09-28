@@ -1,6 +1,6 @@
 ---
 name: fix-ai-bug
-description: Reproduce a bug the user reported in chat, drafts, classification, lenses, retrieval, or any other AI feature — using a CLI-driven repro (eval case, integration test, or shell script) against the user's personal DB by default. All read-only DB inspections (doctor, accounts, emails, show, search, chat --trace, raw sqlite3) run via `make cli-*` without asking the user — those commands are pre-authorised in `.claude/settings.local.json`. Run the repro to surface the failure, explain the root cause, propose a fix (gated on confirmation only when there is real ambiguity), then re-run until the repro turns green. If the repro is a good fit for a permanent regression case in private-evals/ (deterministic, depends on personal mailbox content, exercises a regressable class of bug), ASK the user before adding it — never copy in silently. The final report uses a chat-style format (Session / User: / A:) and never dumps the raw trace unless the user asks. Use whenever the user reports unexpected AI behavior — even if they only paste a screenshot or trace fragment.
+description: Reproduce a bug the user reported in chat, drafts, classification, lenses, retrieval, or any other AI feature — using a CLI-driven repro (eval case, integration test, or shell script) against the local data dir by default. All read-only DB inspections (doctor, accounts, emails, show, search, chat --trace, raw sqlite3) run via `make cli-*` without asking the user — those commands are pre-authorised in `.claude/settings.local.json`. Run the repro to surface the failure, explain the root cause, propose a fix (gated on confirmation only when there is real ambiguity), then re-run until the repro turns green. If the repro is a good fit for a permanent regression case in private-evals/ (deterministic, depends on private data, exercises a regressable class of bug), ASK the user before adding it — never copy in silently. The final report uses a chat-style format (Session / User: / A:) and never dumps the raw trace unless the user asks. Use whenever the user reports unexpected AI behavior — even if they only paste a screenshot or trace fragment.
 argument-hint: <optional bug summary or pasted trace>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
@@ -30,7 +30,7 @@ chat unless the user explicitly asks for them.
    `Bash(cargo run:*)`), so they will not trigger a permission prompt — do
    not ask the user "should I run this?" before executing a read-only CLI
    inspection. Just run it and report the result.
-4. **Personal DB by default.** `make cli-run` and `make cli-fast` target the
+4. **Local data dir by default.** `make cli-run` and `make cli-fast` target the
    personal app data dir already. Switch to `make cli-demo` (synthetic) or
    `make cli-ask` (`.env.local` account override) only when the user asks or
    the bug is account-specific.
@@ -182,7 +182,7 @@ Before declaring done, run the matching local gate:
 ## Phase 5b — Offer to graduate the repro into private-evals
 
 `private-evals/` is the gitignored home for regression cases that ride on the
-user's real mailbox (personal names, subjects, IDs that the public
+user's private data (personal names, subjects, IDs that the public
 `src-tauri/evals/chat/cases/` would violate). When the repro you just turned
 green is a good fit, **ask the user** before adding it — never copy into
 `private-evals/` silently.
@@ -192,7 +192,7 @@ A repro is worth graduating when **all** of these hold:
 - It's **deterministic enough to replay** — same prompt + same account + same
   fix path → same outcome. Stochastic-only failures (random sampling, race
   conditions) are not a fit.
-- It **depends on personal-mailbox content** (a specific sender, subject, or
+- It **depends on private-data content** (a specific sender, subject, or
   email id) that cannot land in the public `src-tauri/evals/chat/cases/`.
   Repros driven purely by synthetic prompts belong in the public cases
   directory instead — see `src-tauri/CLAUDE.md` "AI replies verified by an
@@ -273,7 +273,7 @@ failing-round output, or the system prompt? Ask and I'll paste."
   chat-style summary; everything else lives in the persisted tool result.
 - **Running the full eval suite** for a parser bug. Use `--case <id>` or the
   smallest scoped flag.
-- **Mutating the personal DB** silently. `sync`/`classify`/`embed` are
+- **Mutating the local data dir** silently. `sync`/`classify`/`embed` are
   write paths — ask first, and warn that the app must be closed.
 - **Switching to the demo DB** to make the repro "work". The demo DB is for
   screen recordings, not for reproducing production bugs unless the user

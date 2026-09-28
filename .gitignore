@@ -88,7 +88,7 @@ eval_report_*.html
 reference_docs/eval_report_*.html
 reference_docs/evaluation/
 
-# Private benchmark suites can contain real mailbox-derived cases and notes.
+# Private benchmark suites can contain cases derived from private data and notes.
 private-evals/*
 !private-evals/README.md
 !private-evals/*.example
@@ -99,7 +99,7 @@ private-scripts/
 
 # Repo-local app data used by Makefile dev/demo workflows.
 # Wildcard so ad-hoc data dirs (e.g. EMAILOPS_DEV_FRESH_DIR overrides) can never
-# be staged — every one of these holds a real mailbox once an account is added.
+# be staged — every one of these holds real account data once an account is added.
 .emailops-data*/
 .emailops-demo-data/
 .emailops-demo-data-es/

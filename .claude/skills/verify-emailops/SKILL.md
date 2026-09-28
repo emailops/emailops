@@ -227,7 +227,7 @@ perf budgets. Results are attributed to features through `features.json`.
   A copy button on each trace puts the whole case (question, golden, answer, checks, flow,
   every step's text, raw JSON) on the clipboard as plain text, ready to paste into a chat.
 - **Private run.** `make verify-private` (`scripts/verify_private.sh` → `verify_private.py`) runs the
-  suites that need the real mailbox: `private-evals/chat/cases` through the same judged CLI
+  suites that need private data: `private-evals/chat/cases` through the same judged CLI
   harness and the private junk golden set, against the `make eval-snapshot` copy of the
   production DB (`EVAL_SNAPSHOT_DIR`, default `$TMPDIR/eval-snapshot`, with a `models` symlink
   to the real models dir so the CLI never opens the production data dir). Report under

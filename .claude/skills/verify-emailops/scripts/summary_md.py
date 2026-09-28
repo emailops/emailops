@@ -6,7 +6,7 @@
 Writes <out_dir>/<run stamp>-<short commit>.md and prints its path. The full HTML report
 stays local (src-tauri/reports/ is gitignored); this file is the durable record: commit,
 totals, per-feature counts, what changed since the previous full run, and what fails.
-Private runs (real mailbox) are refused: their content must never reach git.
+Private runs (private data) are refused: their content must never reach git.
 """
 import collections, datetime, json, pathlib, sys
 
@@ -51,7 +51,7 @@ def _counts_row(records):
 def summarize(data, prev):
     meta, records = data["meta"], data["records"]
     if "verify-private" in meta["run_dir"]:
-        raise ValueError("refusing to summarise a private run: it carries real mailbox content")
+        raise ValueError("refusing to summarise a private run: it carries private data")
     started = datetime.datetime.fromisoformat(meta["started"])
     minutes = (datetime.datetime.fromisoformat(meta["finished"]) - started).total_seconds() / 60
     subject = meta["commit"].split(" ", 1)[1] if " " in meta["commit"] else ""

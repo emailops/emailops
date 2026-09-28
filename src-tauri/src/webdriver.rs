@@ -4,7 +4,7 @@
 //! The server is unauthenticated automation over HTTP on 127.0.0.1, so it is
 //! opt-in twice: the `webdriver` cargo feature (dev builds only, see the
 //! `compile_error!` below) and `TAURI_WEBDRIVER_PORT` at launch. A plain
-//! `make dev` — which may be holding the real mailbox — never listens.
+//! `make dev` — which may be holding real account data — never listens.
 
 use tauri::{Builder, Runtime};
 
@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn an_unparseable_or_zero_value_keeps_the_server_off() {
         // A typo must not silently open the default port on a dev app that may
-        // be holding the real mailbox.
+        // be holding real account data.
         for bad in ["", "abc", "0", "70000", "-1"] {
             assert_eq!(port_from_env(Some(bad)), None, "value {bad:?}");
         }

@@ -1,7 +1,7 @@
 // `translation_eval` — evaluates AI language detection + translation against
 // the synthetic cases in `src-tauri/evals/translation/cases.yaml`.
 //
-// Fully synthetic (no personal-mailbox content) and heuristic (exact ISO-code
+// Fully synthetic (no private-data content) and heuristic (exact ISO-code
 // match for detection, keyword presence/absence for translation) — no judge.
 //
 // Usage:

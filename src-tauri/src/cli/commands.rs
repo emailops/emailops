@@ -186,7 +186,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             // see what was decided (priority / intent / topic / confidence /
             // method) without a follow-up sqlite query. The batch paths still
             // return just a count — exposing per-email rows there would dump
-            // hundreds of objects on a real mailbox.
+            // hundreds of objects on a typical mailbox.
             if let Some(email_id) = id {
                 let outcome =
                     crate::services::classification::classify_email_by_id(&session.db, &account, &email_id).await?;

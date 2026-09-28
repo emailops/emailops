@@ -1,4 +1,4 @@
-# Synthetic translation eval cases — NO personal-mailbox content.
+# Synthetic translation eval cases — NO private-data content.
 #
 # detect:    exact-match on the ISO 639-1 code returned by the detection path.
 # translate: heuristic checks on the translated output — names / URLs / numbers

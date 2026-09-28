@@ -54,7 +54,7 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("No previous full run", md)
 
     def test_refuses_a_private_run(self):
-        # Private runs carry real mailbox content; their summary must never reach the repo.
+        # Private runs carry private data; their summary must never reach the repo.
         data = run([], run_dir="/repo/src-tauri/reports/verify-private/20260915-110600-private")
         with self.assertRaises(ValueError):
             summary_md.summarize(data, None)
