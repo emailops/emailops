@@ -1,8 +1,5 @@
-//! Password hashing and verification using Argon2id.
-//!
-//! Legacy SHA-256 hashes (stored as 64-char lowercase hex) are transparently
-//! verified so existing users are not locked out. Callers should call
-//! `needs_rehash` after a successful verify and upgrade to Argon2 when true.
+//! Password hashing and verification using Argon2id, and the throttled check
+//! of the main (app-lock) password.
 
 use argon2::{
     // `phc::PasswordHash` rather than the root re-export: password-hash 0.6
@@ -10,8 +7,8 @@ use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
-use sha2::{Digest, Sha256};
 
+use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
 /// Hash `password` with Argon2id (random salt). Returns a PHC-format string.
@@ -27,17 +24,12 @@ pub fn hash_password(password: &str) -> Result<String> {
 
 /// Verify `password` against `stored_hash`.
 ///
-/// Supports both:
-/// - **Argon2id** — PHC string starting with `$argon2`
-/// - **Legacy SHA-256** — exactly 64 lowercase hex chars (transparently migrated)
+/// Only Argon2 PHC strings are accepted; every release has stored those.
 ///
 /// Returns `Ok(true)` on match, `Ok(false)` on mismatch, and `Err` when
 /// `stored_hash` matches neither format — a corrupt or truncated record is a
 /// different problem from a wrong password and must not masquerade as one.
 pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
-    if is_legacy_sha256(stored_hash) {
-        return Ok(legacy_matches(password, stored_hash));
-    }
     if !stored_hash.starts_with("$argon2") {
         return Err(AppError::AuthError(
             "Stored password hash is not in a recognised format. Reset the main password to continue.".to_string(),
@@ -69,43 +61,56 @@ pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
     }
 }
 
-/// Returns `true` when `stored_hash` is a legacy hash that should be upgraded
-/// after a successful verify.
-///
-/// Only says `true` for something that really is a legacy digest — a malformed
-/// value is neither format and is rejected by [`verify_password`] instead of
-/// being silently compared against.
-pub fn needs_rehash(stored_hash: &str) -> bool {
-    is_legacy_sha256(stored_hash)
-}
+pub const MAIN_PASSWORD_KEY: &str = "security.main_password_hash";
 
-/// Exactly 64 lowercase hex characters — the shape [`sha2_hex`] emits. Anything
-/// else is not a legacy hash, however superficially similar.
-fn is_legacy_sha256(stored_hash: &str) -> bool {
-    stored_hash.len() == 64
-        && stored_hash
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
+const FAILED_ATTEMPTS_KEY: &str = "security.main_password_failed_attempts";
+const LAST_FAILED_AT_KEY: &str = "security.main_password_last_failed_at";
 
-/// Compare a candidate password against a legacy digest in constant time.
-///
-/// `==` on `str` short-circuits at the first differing byte, which leaks how much
-/// of the digest matched. Argon2's own `verify_password` is already constant
-/// time; this brings the legacy path in line.
-fn legacy_matches(password: &str, stored_hash: &str) -> bool {
-    use subtle::ConstantTimeEq;
-    let computed = sha2_hex(password);
-    // Length is already pinned by `is_legacy_sha256`, but compare defensively so
-    // this helper is safe to call directly (the tests do).
-    if computed.len() != stored_hash.len() {
-        return false;
+/// Wrong main passwords allowed before attempts start being delayed.
+const FREE_ATTEMPTS: u32 = 5;
+const FIRST_LOCKOUT_SECS: i64 = 30;
+const MAX_LOCKOUT_SECS: i64 = 15 * 60;
+
+/// Seconds the lock screen refuses attempts after `failures` consecutive
+/// wrong main passwords: none for the first few, then doubling up to a cap.
+pub fn lockout_secs(failures: u32) -> i64 {
+    if failures < FREE_ATTEMPTS {
+        return 0;
     }
-    computed.as_bytes().ct_eq(stored_hash.as_bytes()).into()
+    let doublings = (failures - FREE_ATTEMPTS).min(8);
+    (FIRST_LOCKOUT_SECS << doublings).min(MAX_LOCKOUT_SECS)
 }
 
-fn sha2_hex(password: &str) -> String {
-    hex::encode(Sha256::digest(password.as_bytes()))
+/// Verify the main password, throttled by consecutive failures. The counter
+/// lives in the DB so restarting the app does not reset it. Attempts made
+/// during a lockout are refused without being checked.
+pub fn verify_main_password(db: &Database, password: &str, now: i64) -> Result<bool> {
+    let failures: u32 = db
+        .get_preference(FAILED_ATTEMPTS_KEY)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let last_failed_at: i64 = db
+        .get_preference(LAST_FAILED_AT_KEY)?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let wait = lockout_secs(failures) - (now - last_failed_at);
+    if wait > 0 {
+        return Err(AppError::AuthError(format!(
+            "Too many incorrect attempts. Try again in {wait} s."
+        )));
+    }
+
+    let Some(stored) = db.get_preference(MAIN_PASSWORD_KEY)?.filter(|v| !v.is_empty()) else {
+        return Ok(false);
+    };
+    if verify_password(password, &stored)? {
+        db.set_preference(FAILED_ATTEMPTS_KEY, "0")?;
+        Ok(true)
+    } else {
+        db.set_preference(FAILED_ATTEMPTS_KEY, &failures.saturating_add(1).to_string())?;
+        db.set_preference(LAST_FAILED_AT_KEY, &now.to_string())?;
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
@@ -149,8 +154,10 @@ mod tests {
 
     use super::*;
 
+    /// The unsalted SHA-256 hex digest pre-0.5.0 builds stored.
     fn legacy_hash(password: &str) -> String {
-        sha2_hex(password)
+        use sha2::{Digest, Sha256};
+        hex::encode(Sha256::digest(password.as_bytes()))
     }
 
     #[test]
@@ -181,26 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn verify_legacy_sha256_correct_password_returns_true() {
+    fn a_legacy_unsalted_sha256_digest_is_rejected() {
+        // Every release since 0.5.0 stores Argon2id; an unsalted digest is
+        // not an acceptable stored form (CASA 1.1.3), so it must not verify.
         let stored = legacy_hash("legacy");
-        assert!(verify_password("legacy", &stored).unwrap());
-    }
-
-    #[test]
-    fn verify_legacy_sha256_wrong_password_returns_false() {
-        let stored = legacy_hash("legacy");
-        assert!(!verify_password("wrong", &stored).unwrap());
-    }
-
-    #[test]
-    fn needs_rehash_true_for_sha256_hex() {
-        assert!(needs_rehash(&legacy_hash("x")));
-    }
-
-    #[test]
-    fn needs_rehash_false_for_argon2_hash() {
-        let h = hash_password("x").unwrap();
-        assert!(!needs_rehash(&h));
+        assert!(verify_password("legacy", &stored).is_err());
     }
 
     // Regression: anything not starting with `$argon2` was treated as a legacy
@@ -229,35 +221,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn legacy_hex_digests_are_still_accepted_case_sensitively() {
-        // The legacy writer emitted lowercase hex; that must keep verifying.
-        let stored = legacy_hash("legacy");
-        assert_eq!(stored.len(), 64);
-        assert!(verify_password("legacy", &stored).unwrap());
+    // --- main password throttling ---
+
+    fn db_with_main_password(password: &str) -> Database {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference(MAIN_PASSWORD_KEY, &hash_password(password).unwrap())
+            .unwrap();
+        db
     }
 
-    // A near-miss on the stored hash must not leak how far the comparison got.
     #[test]
-    fn legacy_comparison_is_constant_time() {
-        let stored = legacy_hash("legacy");
-        // Behavioural proxy for the property: the comparison is routed through a
-        // constant-time primitive, so a first-byte mismatch and a last-byte
-        // mismatch are both simply "false".
-        let mut first_byte_differs = stored.clone().into_bytes();
-        first_byte_differs[0] ^= 0x01;
-        let mut last_byte_differs = stored.clone().into_bytes();
-        let last = last_byte_differs.len() - 1;
-        last_byte_differs[last] ^= 0x01;
+    fn lockout_starts_after_the_free_attempts_and_doubles_up_to_a_cap() {
+        assert_eq!(lockout_secs(0), 0);
+        assert_eq!(lockout_secs(4), 0);
+        assert_eq!(lockout_secs(5), 30);
+        assert_eq!(lockout_secs(6), 60);
+        assert_eq!(lockout_secs(7), 120);
+        assert_eq!(lockout_secs(12), 900);
+        assert_eq!(lockout_secs(u32::MAX), 900);
+    }
 
-        assert!(!legacy_matches(
-            "legacy",
-            std::str::from_utf8(&first_byte_differs).unwrap()
-        ));
-        assert!(!legacy_matches(
-            "legacy",
-            std::str::from_utf8(&last_byte_differs).unwrap()
-        ));
-        assert!(legacy_matches("legacy", &stored));
+    #[test]
+    fn the_right_password_unlocks() {
+        let db = db_with_main_password("right");
+        assert!(verify_main_password(&db, "right", 1_000).unwrap());
+    }
+
+    #[test]
+    fn attempts_are_refused_during_a_lockout_even_with_the_right_password() {
+        let db = db_with_main_password("right");
+        for _ in 0..5 {
+            assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
+        }
+        let result = verify_main_password(&db, "right", 1_010);
+        assert!(matches!(result, Err(AppError::AuthError(_))), "{result:?}");
+    }
+
+    #[test]
+    fn the_lockout_ends_after_its_delay() {
+        let db = db_with_main_password("right");
+        for _ in 0..5 {
+            assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
+        }
+        assert!(verify_main_password(&db, "right", 1_030).unwrap());
+    }
+
+    #[test]
+    fn a_success_resets_the_failure_count() {
+        let db = db_with_main_password("right");
+        for _ in 0..4 {
+            assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
+        }
+        assert!(verify_main_password(&db, "right", 1_000).unwrap());
+        for _ in 0..4 {
+            assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
+        }
+        assert!(verify_main_password(&db, "right", 1_000).unwrap());
     }
 }
