@@ -123,6 +123,10 @@ provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conser
 conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
 en étiez, et non à un chat vide.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Tapez **/clear** puis Entrée pour démarrer une nouvelle conversation. L'application le
+traite elle-même — rien n'est envoyé au modèle, cela ne coûte donc ni temps ni tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
 *« où sont stockées mes données ? »*, *« que montre le tableau des étiquettes ? »* — à partir de ces

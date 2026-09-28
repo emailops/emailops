@@ -117,6 +117,10 @@ silently drawn from the wrong mailbox. Each account keeps its own conversation f
 as the app is open, so switching accounts returns you to where you left off rather than to
 a blank chat.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Type **/clear** and press Enter to start a new conversation. It is handled in the app
+itself — nothing is sent to the model, so it costs no time and no tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Chat also answers questions about EmailOps itself — *"how do I connect Ollama?"*, *"where is
 my data stored?"*, *"what does the Tag Board show?"* — from these guides, in your language,

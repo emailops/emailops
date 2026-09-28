@@ -119,6 +119,11 @@ Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigen
 Unterhaltung, solange die App geöffnet ist; ein Kontowechsel bringt Sie also dorthin zurück,
 wo Sie aufgehört haben, und nicht zu einem leeren Chat.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Geben Sie **/clear** ein und drücken Sie Enter, um eine neue Unterhaltung zu beginnen. Die
+App erledigt das selbst — nichts wird an das Modell gesendet, es kostet also weder Zeit
+noch Tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Der Chat beantwortet auch Fragen zu EmailOps selbst — *„Wie verbinde ich Ollama?“*, *„Wo
 werden meine Daten gespeichert?“*, *„Was zeigt das Tag Board?“* — aus diesen Anleitungen,

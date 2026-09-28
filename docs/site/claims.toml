@@ -707,6 +707,11 @@ checks = [
   { manual = 'That each account keeps its own conversation while the app is open is not exercised.' },
 ]
 
+[ai-chat-mailbox-15]
+checks = [
+  { manual = 'Covered by src/components/Chat/ChatInput.test.tsx (/clear calls onClear, never onSend); the docs app check does not drive it yet.' },
+]
+
 [ai-chat-mailbox-4]
 checks = [
   { app = true },
