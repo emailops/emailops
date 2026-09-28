@@ -30,6 +30,9 @@ use super::optimistic::LOCAL_SENT_ID_PREFIX;
 pub async fn mark_as_read(db: &Arc<Database>, email_id: &str, app: Option<AppHandle>) -> Result<()> {
     let provider = match write_provider(db, email_id, app).await {
         Ok(provider) => provider,
+        // The email (or its account) is gone, e.g. the account was just
+        // removed: there is nothing to mark, locally or at the provider.
+        Err(e @ AppError::NotFound(_)) => return Err(e),
         Err(e) => {
             logger::log(
                 "error",
@@ -182,6 +185,38 @@ mod tests {
     }
 
     // ── read state ────────────────────────────────────────────────────────
+
+    // Regression: marking read an email whose account was just removed logged
+    // "Read state will stay local — could not reach the mail provider", which
+    // blamed the network for a row that no longer exists.
+    // Sync `#[test]` on its own runtime so the seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn mark_read_of_a_missing_email_is_not_found_without_a_provider_error() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logs = crate::services::logger::install_for_testing();
+        let db = test_db("acc-1");
+
+        let result = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build test runtime")
+            .block_on(super::mark_as_read(&db, "gone", None));
+
+        assert!(
+            matches!(result, Err(crate::models::error::AppError::NotFound(_))),
+            "got {result:?}"
+        );
+        // The logger is process-global, so other tests' lines can land here too.
+        let provider_errors: Vec<_> = logs
+            .events()
+            .into_iter()
+            .filter(|e| e.message.contains("Email gone not found"))
+            .collect();
+        assert!(
+            provider_errors.is_empty(),
+            "missing email must not log a provider error, got: {provider_errors:?}"
+        );
+    }
 
     #[tokio::test]
     async fn mark_read_updates_the_row_and_pushes_to_the_provider() {

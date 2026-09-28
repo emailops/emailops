@@ -349,7 +349,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     set({ isLoading: true, error: null, errorAccountId: null });
     try {
       await api.removeAccount(accountId);
+      // The backend stops a removed account's sync without a terminal
+      // sync-progress event, so drop it here or its spinner never clears.
+      const syncing = new Set(get().syncingAccountIds);
+      syncing.delete(accountId);
       set((state) => ({
+        syncingAccountIds: syncing,
+        isSyncing: syncing.size > 0,
+        syncProgress: state.syncProgress?.accountId === accountId ? null : state.syncProgress,
         accounts: state.accounts.filter((a) => a.id !== accountId),
         activeAccountId: (() => {
           if (state.activeAccountId !== accountId) {

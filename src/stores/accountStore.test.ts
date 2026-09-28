@@ -236,6 +236,43 @@ describe('fetchAccounts', () => {
 });
 
 describe('removeAccount', () => {
+  // Regression: removing an account mid-sync stops its run without a terminal
+  // sync-progress event, so the account stayed in `syncingAccountIds` and the
+  // inbox spinner never cleared.
+  it('stops tracking the removed account as syncing', async () => {
+    useAccountStore.setState({
+      accounts: [makeAccount('a'), makeAccount('b')],
+      activeAccountId: 'a',
+      isSyncing: true,
+      syncProgress: makeProgress('a', 'syncing'),
+      syncingAccountIds: new Set(['a']),
+    });
+
+    await useAccountStore.getState().removeAccount('a');
+
+    const state = useAccountStore.getState();
+    expect(state.syncingAccountIds.has('a')).toBe(false);
+    expect(state.isSyncing).toBe(false);
+    expect(state.syncProgress).toBeNull();
+  });
+
+  it('keeps tracking another account that is still syncing', async () => {
+    useAccountStore.setState({
+      accounts: [makeAccount('a'), makeAccount('b')],
+      activeAccountId: 'a',
+      isSyncing: true,
+      syncProgress: makeProgress('b', 'syncing'),
+      syncingAccountIds: new Set(['a', 'b']),
+    });
+
+    await useAccountStore.getState().removeAccount('a');
+
+    const state = useAccountStore.getState();
+    expect([...state.syncingAccountIds]).toEqual(['b']);
+    expect(state.isSyncing).toBe(true);
+    expect(state.syncProgress?.accountId).toBe('b');
+  });
+
   it('keeps the sentinel active when a member account is removed', async () => {
     useAccountStore.setState({
       accounts: [makeAccount('a'), makeAccount('b')],

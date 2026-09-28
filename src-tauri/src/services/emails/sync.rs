@@ -150,18 +150,7 @@ pub async fn sync_account_with_contention(
     impl Drop for SyncStatusGuard {
         fn drop(&mut self) {
             if !self.completed {
-                if let Err(e) = self.db.upsert_sync_status(
-                    &self.account_id,
-                    "error",
-                    None,
-                    Some("Sync interrupted (network error or crash)"),
-                ) {
-                    crate::services::logger::log(
-                        "error",
-                        "sync",
-                        format!("failed to reset stuck sync_status for {}: {}", self.account_id, e),
-                    );
-                }
+                reset_interrupted_sync_status(&self.db, &self.account_id);
             }
         }
     }
@@ -215,6 +204,37 @@ pub async fn sync_account_with_contention(
         status_guard.completed = true;
     }
     result
+}
+
+/// Mark an interrupted sync run as errored so the poll loop retries it.
+///
+/// Removing an account interrupts its sync after the account row is gone:
+/// there is nothing left to retry, and the upsert would fail on the foreign key.
+fn reset_interrupted_sync_status(db: &Database, account_id: &str) {
+    match db.get_account(account_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return,
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!("failed to reset stuck sync_status for {account_id}: {e}"),
+            );
+            return;
+        }
+    }
+    if let Err(e) = db.upsert_sync_status(
+        account_id,
+        "error",
+        None,
+        Some("Sync interrupted (network error or crash)"),
+    ) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to reset stuck sync_status for {account_id}: {e}"),
+        );
+    }
 }
 
 /// Ask an in-flight sync of `account_id` to stop at its next batch boundary.
@@ -3857,6 +3877,51 @@ mod spam_reconcile_tests {
             stored_mailbox(&db, "m-1"),
             "inbox",
             "re-checked once the interval has passed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod interrupted_sync_status_tests {
+    //! The sync-status guard resets an interrupted run's status to "error" so
+    //! the poll loop retries. Removing an account mid-sync interrupts the run
+    //! *after* the account row is gone, and the reset then hit a FOREIGN KEY
+    //! failure that surfaced as an error in the output panel.
+    use super::*;
+    use crate::services::events::seam_test_lock;
+    use crate::services::logger;
+
+    #[test]
+    fn interrupted_sync_marks_a_live_account_as_errored() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.seed_test_account("acc-1");
+        db.upsert_sync_status("acc-1", "syncing", None, None).unwrap();
+
+        reset_interrupted_sync_status(&db, "acc-1");
+
+        assert_eq!(db.get_sync_status("acc-1").unwrap().status, "error");
+    }
+
+    #[test]
+    fn interrupted_sync_of_a_removed_account_logs_nothing() {
+        let _seam = seam_test_lock();
+        let logs = logger::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.seed_test_account("acc-gone");
+        db.upsert_sync_status("acc-gone", "syncing", None, None).unwrap();
+        db.delete_account("acc-gone").unwrap();
+
+        reset_interrupted_sync_status(&db, "acc-gone");
+
+        // The logger is process-global, so other tests' lines can land here too.
+        let resets: Vec<_> = logs
+            .events()
+            .into_iter()
+            .filter(|e| e.message.contains("sync_status for acc-gone"))
+            .collect();
+        assert!(
+            resets.is_empty(),
+            "removed account must not log a reset failure, got: {resets:?}"
         );
     }
 }
