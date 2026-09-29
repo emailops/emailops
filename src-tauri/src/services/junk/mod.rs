@@ -74,12 +74,8 @@ pub async fn score_new_emails(db: &Arc<Database>, account_id: &str) -> Result<us
     if !is_enabled(db) {
         return Ok(0);
     }
-    let min_timestamp = db
-        .get_preference("ai_processing_min_timestamp")
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    // Same age window as the other AI pipelines (Settings → AI limits).
+    let min_timestamp = db.ai_processing_min_timestamp(account_id, now_secs())?.unwrap_or(0);
 
     let ids = db.get_unscored_junk_email_ids(account_id, SCORE_BATCH, min_timestamp)?;
     if ids.is_empty() {
@@ -410,6 +406,29 @@ mod feedback_tests {
             .into_iter()
             .find(|t| t.tag_type == "junk")
             .map(|t| t.tag_value)
+    }
+
+    /// Post-sync scoring honours the same AI-processing age window as the
+    /// other AI pipelines (it used to read a preference nothing writes).
+    #[tokio::test]
+    async fn scoring_new_emails_skips_mail_older_than_the_ai_window() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db); // timestamp 100 — decades old
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES ('e2','acct','t2','Hello','Friend','friend@example.net','example.net',
+                         '[]','[]','snip',?1,0,'primary',0)",
+                rusqlite::params![now_secs() - 60],
+            )
+            .unwrap();
+        db.set_preference("junk_enabled", "true").unwrap();
+        db.set_preference("ai_max_email_count", "0").unwrap();
+        db.set_preference("ai_max_email_age_days", "30").unwrap();
+
+        assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 1);
     }
 
     /// Marking a message as junk must show the junk chip right away, as
