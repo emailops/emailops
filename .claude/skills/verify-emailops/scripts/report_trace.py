@@ -34,6 +34,8 @@ def step_label(t, step):
         return f"route: {r.get('classifier', '?')}" + (f" (matched: {', '.join(kws)})" if kws else "")
     if kind == "retrieval":
         return "RAG retrieval"
+    if kind == "skill":
+        return "skill: " + ", ".join(f"{s.get('name')} ({'/' if s.get('via') == 'slash' else 'planner'})" for s in t.get("appliedSkills") or [])
     if kind == "help":
         h = t.get("help")
         return f"guides ({h.get('included', 0)} of {h.get('candidates', 0)} sections)" if h else "guides"

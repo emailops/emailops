@@ -1217,6 +1217,8 @@ pub enum TraceStep {
     Research,
     Retrieval,
     Help,
+    /// The user skills applied before the model ran (`ChatTrace::applied_skills`).
+    Skill,
     #[serde(rename_all = "camelCase")]
     Llm {
         index: usize,

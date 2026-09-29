@@ -41,6 +41,12 @@ class FlowTest(unittest.TestCase):
                   help={"candidates": 24, "included": 2, "elapsedMs": 7})
         self.assertEqual(report_trace.flow_summary(t), "route: planner → RAG retrieval → guides (2 of 24 sections)")
 
+    def test_flow_names_the_applied_skill_and_who_chose_it(self):
+        t = trace(steps=[{"type": "route"}, {"type": "llm", "index": 0}, {"type": "skill"}],
+                  appliedSkills=[{"name": "weekly-report", "via": "planner"}, {"name": "formal-tone", "via": "slash"}])
+        self.assertEqual(report_trace.flow_summary(t),
+                         "route: heuristic (matched: latest) → planner → skill: weekly-report (planner), formal-tone (/)")
+
     def test_a_trace_without_steps_has_no_flow(self):
         self.assertIsNone(report_trace.flow_summary(trace(steps=[])))
         self.assertIsNone(report_trace.flow_summary(None))

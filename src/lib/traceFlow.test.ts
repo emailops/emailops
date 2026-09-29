@@ -160,3 +160,28 @@ describe('formatCall', () => {
     expect(formatCall('f', { q: 'y'.repeat(200) }).length).toBeLessThanOrEqual(124);
   });
 });
+
+describe('buildFlow — skills', () => {
+  it('shows which skill was applied and who chose it', () => {
+    const trace: ChatTrace = {
+      route: {
+        mode: 'rag_first',
+        reason: 'planner found no single search',
+        matchedKeywords: [],
+        classifier: 'planner',
+      },
+      toolCalls: [],
+      model: 'qwen',
+      totalElapsedMs: 1000,
+      llmCalls: [llm('planner', -2, { output: 'planner: defer' })],
+      appliedSkills: [
+        { name: 'weekly-report', via: 'planner' },
+        { name: 'formal-tone', via: 'slash' },
+      ],
+      steps: [{ type: 'route' }, { type: 'llm', index: 0, kvCache: null, cacheAction: null }, { type: 'skill' }],
+    };
+    const flow = buildFlow(trace);
+    expect(flow.map((s) => s.kind)).toEqual(['router', 'planner', 'skill']);
+    expect(flow[2].summary).toBe('weekly-report (planner), formal-tone (/)');
+  });
+});

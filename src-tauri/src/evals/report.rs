@@ -481,6 +481,7 @@ fn step_views(trace: &ChatTrace, outcome: &CaseOutcome) -> Vec<StepView> {
                         text: s.body_snippet.clone(),
                     })
                     .collect(),
+                TraceStep::Skill => Vec::new(),
                 TraceStep::Help => outcome
                     .help_sections
                     .iter()

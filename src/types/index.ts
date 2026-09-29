@@ -793,6 +793,8 @@ export interface ChatTrace {
    *  (`services::chat::trace_steps`) — the one ordering the reasoning panel,
    *  the CLI and the eval report all walk. */
   steps: TraceStep[];
+  /** User skills applied before the model ran (mirrors `AppliedSkill`). */
+  appliedSkills?: { name: string; via: 'slash' | 'planner' }[];
 }
 
 /** Mirrors `KvCacheStats`: prompt tokens served from the KV cache. */
@@ -816,6 +818,7 @@ export type TraceStep =
   | { type: 'research' }
   | { type: 'retrieval' }
   | { type: 'help' }
+  | { type: 'skill' }
   | { type: 'llm'; index: number; kvCache: KvCacheStats | null; cacheAction: CacheAction | null }
   | { type: 'tool'; index: number };
 
