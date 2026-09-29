@@ -168,4 +168,19 @@ describe('useAttachments', () => {
 
     expect(api.refreshAttachmentRuleSuggestions).toHaveBeenCalledWith('acc-1');
   });
+
+  it('a tag filter left over from another account falls back to all attachments', async () => {
+    act(() => root.unmount());
+    useAttachmentStore.setState({ selectedTag: 'facturas' });
+    vi.mocked(api.getAttachmentTags).mockResolvedValueOnce([]);
+    vi.mocked(api.getAttachments).mockClear();
+    root = createRoot(container);
+
+    await act(async () => root.render(<Probe />));
+    await flush();
+
+    expect(useAttachmentStore.getState().selectedTag).toBeNull();
+    const calls = vi.mocked(api.getAttachments).mock.calls;
+    expect(calls[calls.length - 1]?.slice(0, 2)).toEqual(['acc-1', null]);
+  });
 });

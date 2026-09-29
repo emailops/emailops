@@ -404,7 +404,13 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   fetchTags: async (accountId) => {
     try {
       const tags = await api.getAttachmentTags(accountId);
-      set({ availableTags: tags });
+      // A tag picked on another account, or whose last attachment went with a
+      // deleted rule, would keep filtering the list to nothing with no chip
+      // lit to show why: fall back to "All".
+      set((state) => ({
+        availableTags: tags,
+        selectedTag: state.selectedTag !== null && tags.includes(state.selectedTag) ? state.selectedTag : null,
+      }));
     } catch (error) {
       console.error('Failed to fetch tags:', error);
     }

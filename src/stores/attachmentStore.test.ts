@@ -7,6 +7,7 @@ import type { AttachmentRuleSuggestion } from '@/types';
 import { selectSuggestionCount, useAttachmentStore } from './attachmentStore';
 
 vi.mock('@/lib/api', () => ({
+  getAttachmentTags: vi.fn(async () => []),
   listAttachmentRules: vi.fn(async () => []),
   createAttachmentRule: vi.fn(),
   updateAttachmentRule: vi.fn(),
@@ -371,5 +372,39 @@ describe('suggestion failures', () => {
 
     await expect(useAttachmentStore.getState().restoreSuggestion('acc-1', 'd1')).rejects.toThrow('gone');
     expect(useAttachmentStore.getState().dismissedSuggestions.map((s) => s.id)).toEqual(['d1']);
+  });
+});
+
+describe('tag filter', () => {
+  beforeEach(() => {
+    useAttachmentStore.setState({ selectedTag: null, availableTags: [] });
+  });
+
+  it("drops a selected tag the account's attachments no longer carry", async () => {
+    // Picked on another account, or its last attachment went with a deleted rule.
+    useAttachmentStore.setState({ selectedTag: 'facturas' });
+    vi.mocked(api.getAttachmentTags).mockResolvedValueOnce(['acme', 'invoice']);
+
+    await useAttachmentStore.getState().fetchTags('acc-1');
+
+    expect(useAttachmentStore.getState().selectedTag).toBeNull();
+  });
+
+  it('drops it too when the account has no tags at all', async () => {
+    useAttachmentStore.setState({ selectedTag: 'facturas' });
+    vi.mocked(api.getAttachmentTags).mockResolvedValueOnce([]);
+
+    await useAttachmentStore.getState().fetchTags('acc-1');
+
+    expect(useAttachmentStore.getState().selectedTag).toBeNull();
+  });
+
+  it('keeps a selected tag the account still has', async () => {
+    useAttachmentStore.setState({ selectedTag: 'invoice' });
+    vi.mocked(api.getAttachmentTags).mockResolvedValueOnce(['acme', 'invoice']);
+
+    await useAttachmentStore.getState().fetchTags('acc-1');
+
+    expect(useAttachmentStore.getState().selectedTag).toBe('invoice');
   });
 });
