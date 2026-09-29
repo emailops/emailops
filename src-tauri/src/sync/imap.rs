@@ -1733,10 +1733,11 @@ impl ImapClient {
                 .map_err(|(e, _)| e)
         }) {
             Ok(s) => s,
-            Err(_) => return,
+            Err(e) => return Self::log_idle_stop(&creds, "connect", &e),
         };
 
-        if imap_search::select(&mut session, "INBOX").is_err() {
+        if let Err(e) = imap_search::select(&mut session, "INBOX") {
+            Self::log_idle_stop(&creds, "SELECT INBOX", &e);
             let _ = session.logout();
             return;
         }
@@ -1749,20 +1750,35 @@ impl ImapClient {
 
             let handle = match session.idle() {
                 Ok(h) => h,
-                Err(_) => return, // connection broken; outer watcher will reconnect
+                // Connection broken; the outer watcher reconnects.
+                Err(e) => return Self::log_idle_stop(&creds, "IDLE", &e),
             };
 
             // wait_with_timeout sends IDLE, blocks until mailbox change or timeout.
             let new_mail = match handle.wait_with_timeout(IDLE_TIMEOUT) {
                 Ok(WaitOutcome::MailboxChanged) => true,
                 Ok(WaitOutcome::TimedOut) => false, // keepalive — re-enter IDLE
-                Err(_) => return,                   // connection error
+                Err(e) => return Self::log_idle_stop(&creds, "IDLE wait", &e),
             };
 
             if tx.blocking_send(new_mail).is_err() {
                 return; // receiver dropped (scheduler stopped)
             }
         }
+    }
+
+    /// Record why the IDLE loop is giving up. The scheduler reconnects, but
+    /// without this line a dead push channel left no trace. Names the account
+    /// by login and host — never the password.
+    fn log_idle_stop(creds: &ImapCredentials, stage: &str, error: &dyn std::fmt::Display) {
+        crate::services::logger::log(
+            "warn",
+            "sync",
+            format!(
+                "IMAP IDLE for {} on {} stopped at {stage}: {error}",
+                creds.username, creds.host
+            ),
+        );
     }
 
     async fn smtp_send(&self, email: lettre::Message) -> Result<()> {
@@ -2474,6 +2490,44 @@ mod tests {
             parse_address_list("Team: a@example.com, B <b@example.com>;"),
             vec!["a@example.com", "b@example.com"]
         );
+    }
+
+    /// The IDLE loop used to `return` on a failed connect without a trace, so
+    /// push notifications silently stopped. It must log a warning naming the
+    /// account (never the password) before it gives up.
+    #[test]
+    fn idle_logs_a_connect_failure_instead_of_dropping_it() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        // A port nothing listens on: the connect is refused at once.
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let creds = ImapCredentials {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "idle-user@example.com".to_string(),
+            password: "not-a-real-secret".to_string(),
+            smtp_host: "127.0.0.1".to_string(),
+            smtp_port: 587,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+        ImapClient::run_imap_idle_blocking(
+            creds,
+            tx,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+
+        let events = logger.events();
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        let warn = events
+            .iter()
+            .find(|e| e.level == "warn" && e.source == "sync")
+            .unwrap_or_else(|| panic!("no warn logged: {events:?}"));
+        assert!(warn.message.contains("idle-user@example.com"), "{}", warn.message);
+        assert!(!warn.message.contains("not-a-real-secret"), "{}", warn.message);
     }
 
     const NOW: i64 = 1_800_000_000;
