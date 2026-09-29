@@ -1164,7 +1164,7 @@ mod tests {
             filename_family("cursor_analytics_2025-10-09T09:14:00Z.csv"),
             "cursor_analytics_*.csv"
         );
-        assert_eq!(filename_family("EMI 1T.pdf"), "EMI *T.pdf");
+        assert_eq!(filename_family("PLN 1T.pdf"), "PLN *T.pdf");
     }
 
     #[test]
