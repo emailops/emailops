@@ -87,7 +87,7 @@ import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useReminderStore } from '@/stores/reminderStore';
-import { useTagStore } from '@/stores/tagStore';
+import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
 import { useUpdateStore } from '@/stores/updateStore';
@@ -837,18 +837,12 @@ function AppInner() {
 
     // Listen for email classification events (real-time tag updates)
     unlisteners.push(
-      listen<{ emailId: string; tags: { priority: string; intent: string; topic: string; confidence: number | null } }>(
-        'email-classified',
-        (event) => {
-          const { emailId, tags } = event.payload;
-          const now = Math.floor(Date.now() / 1000);
-          useTagStore.getState().setEmailTags(emailId, [
-            { emailId, tagType: 'priority', tagValue: tags.priority, confidence: tags.confidence, createdAt: now },
-            { emailId, tagType: 'intent', tagValue: tags.intent, confidence: tags.confidence, createdAt: now },
-            { emailId, tagType: 'topic', tagValue: tags.topic, confidence: tags.confidence, createdAt: now },
-          ]);
-        },
-      ),
+      listen<{ emailId: string; tags: ClassifiedTags }>('email-classified', (event) => {
+        const { emailId, tags } = event.payload;
+        const now = Math.floor(Date.now() / 1000);
+        const existing = useTagStore.getState().tagsByEmail[emailId] ?? [];
+        useTagStore.getState().setEmailTags(emailId, mergeClassifiedTags(existing, emailId, tags, now));
+      }),
     );
 
     // Chat streaming — tokens and source citations from the backend chat service.
