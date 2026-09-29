@@ -104,9 +104,9 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
 /// `Fetch::body()` reads both `BODY[]` and `RFC822` responses, so the parser is
 /// indifferent; only the request changes.
 ///
-/// `INTERNALDATE` rides along because it — not the sender-controlled `Date:`
+/// `FLAGS` carries the read state (`\Seen`); `INTERNALDATE` rides along because it — not the sender-controlled `Date:`
 /// header — is the timestamp the incremental cursor can trust.
-const FETCH_BODY_PEEK: &str = "(UID INTERNALDATE BODY.PEEK[])";
+const FETCH_BODY_PEEK: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[])";
 
 /// One message as the server returned it.
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +116,8 @@ pub(crate) struct FetchedMessage {
     /// The server's INTERNALDATE (arrival time), epoch seconds. `None` when
     /// the server omitted it or sent an unparseable value.
     pub internal_date: Option<i64>,
+    /// Whether the server reports `\Seen` — the message's read state.
+    pub seen: bool,
 }
 
 impl FetchedMessage {
@@ -123,6 +125,7 @@ impl FetchedMessage {
         Some(Self {
             raw: fetch.body()?.to_vec(),
             internal_date: fetch.internal_date().map(|d| d.timestamp()),
+            seen: fetch.flags().contains(&imap::types::Flag::Seen),
         })
     }
 }
@@ -580,6 +583,24 @@ mod tests {
         assert_eq!(message.raw, b"hello");
         // 1996-07-17T09:44:25Z
         assert_eq!(message.internal_date, Some(837_596_665));
+    }
+
+    /// The sync used to hard-code every IMAP message as unread; the server's
+    /// `\Seen` flag is the truth and has to be fetched with the body.
+    #[test]
+    fn batch_fetch_requests_flags_and_reports_seen_state() {
+        let response = "* 1 FETCH (UID 91 FLAGS (\\Seen \\Answered) BODY[] {5}\r\nhello)\r\n\
+                        * 2 FETCH (UID 92 FLAGS () BODY[] {5}\r\nworld)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        let fetched = match uid_fetch_body_batch(&mut session, &[91, 92]) {
+            Ok(fetched) => fetched,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+
+        assert!(sent.text().contains("FLAGS"), "sent: {}", sent.text());
+        assert!(fetched.get(&91).expect("uid 91").seen);
+        assert!(!fetched.get(&92).expect("uid 92").seen);
     }
 
     #[test]

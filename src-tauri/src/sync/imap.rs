@@ -681,7 +681,7 @@ impl ImapClient {
             body,
             snippet,
             timestamp,
-            is_read: false,
+            is_read: fetched.seen,
             triage_status: None,
             category: "primary".to_string(),
             // Overridden by the caller per-mailbox (INBOX/Sent/Trash/Junk).
@@ -2157,7 +2157,24 @@ mod tests {
         imap_search::FetchedMessage {
             raw: raw.as_bytes().to_vec(),
             internal_date,
+            seen: false,
         }
+    }
+
+    #[test]
+    fn read_state_follows_the_servers_seen_flag() {
+        let raw = "From: a@example.com\r\nSubject: s\r\n\r\nbody";
+        let seen = imap_search::FetchedMessage {
+            seen: true,
+            ..fetched(raw, Some(NOW))
+        };
+        assert!(ImapClient::parse_message(1, &seen).unwrap().0.is_read);
+        assert!(
+            !ImapClient::parse_message(1, &fetched(raw, Some(NOW)))
+                .unwrap()
+                .0
+                .is_read
+        );
     }
 
     /// A sender whose clock (or malice) stamps `Date:` in 2099 must not set
