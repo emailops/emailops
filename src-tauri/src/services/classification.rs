@@ -699,14 +699,25 @@ pub(crate) struct LabelRepairs {
 }
 
 /// Coerce a model response onto the configured taxonomy.
+///
+/// Case-insensitive, always returning the configured spelling. An empty value
+/// falls back: it is a substring of every label, so it would otherwise
+/// "match" whichever label happens to come first.
 fn normalise_one(value: String, allowed: &[String], fallback: &str) -> (String, Repair) {
     if allowed.contains(&value) {
         return (value, Repair::Exact);
     }
-    match allowed
-        .iter()
-        .find(|a| value.contains(a.as_str()) || a.contains(&value))
-    {
+    let needle = value.trim().to_lowercase();
+    if needle.is_empty() {
+        return (fallback.to_string(), Repair::Fallback);
+    }
+    let matched = allowed.iter().find(|a| a.to_lowercase() == needle).or_else(|| {
+        allowed.iter().find(|a| {
+            let label = a.to_lowercase();
+            !label.is_empty() && (needle.contains(&label) || label.contains(&needle))
+        })
+    });
+    match matched {
         Some(matched) => (matched.clone(), Repair::Matched),
         None => (fallback.to_string(), Repair::Fallback),
     }
@@ -719,7 +730,10 @@ fn normalise_labels(parsed: ClassificationResponse, config: &ClassificationConfi
     let (topic, topic_repair) = normalise_one(parsed.topic, &config.topics, "operations");
     let (urgency, urgency_repair) = match parsed.urgency.as_str() {
         "urgent" | "normal" | "low" => (parsed.urgency, Repair::Exact),
-        _ => ("normal".to_string(), Repair::Fallback),
+        other => match other.trim().to_lowercase().as_str() {
+            level @ ("urgent" | "normal" | "low") => (level.to_string(), Repair::Matched),
+            _ => ("normal".to_string(), Repair::Fallback),
+        },
     };
 
     (
@@ -1690,6 +1704,29 @@ mod tests {
     #[test]
     fn normalise_labels_falls_back_when_nothing_matches() {
         let (classified, repairs) = normalise_labels(response("banana", "zeppelin", "normal"), &taxonomy_config());
+
+        assert_eq!(classified.intent, "notification");
+        assert_eq!(classified.topic, "operations");
+        assert_eq!(repairs.intent, Repair::Fallback);
+        assert_eq!(repairs.topic, Repair::Fallback);
+    }
+
+    #[test]
+    fn normalise_labels_maps_a_differently_cased_label_to_the_configured_one() {
+        let (classified, repairs) = normalise_labels(response("Request", "BILLING", "Urgent"), &taxonomy_config());
+
+        assert_eq!(classified.intent, "request");
+        assert_eq!(classified.topic, "billing");
+        assert_eq!(classified.urgency, "urgent");
+        assert_eq!(repairs.intent, Repair::Matched);
+        assert_eq!(repairs.topic, Repair::Matched);
+    }
+
+    #[test]
+    fn normalise_labels_falls_back_on_an_empty_label() {
+        // An empty string is a substring of every label; it used to "match"
+        // whichever configured label came first.
+        let (classified, repairs) = normalise_labels(response("", "  ", "normal"), &taxonomy_config());
 
         assert_eq!(classified.intent, "notification");
         assert_eq!(classified.topic, "operations");
