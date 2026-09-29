@@ -250,7 +250,9 @@ interface EmailStore {
     selectedCategories?: EmailCategory[],
     mailbox?: MailboxView,
   ) => Promise<void>;
-  selectEmail: (email: Email | null, focusId?: string) => Promise<void>;
+  /** `markRead: false` opens the email without marking it read (the split
+   *  layout's automatic first selection). */
+  selectEmail: (email: Email | null, focusId?: string, opts?: { markRead?: boolean }) => Promise<void>;
   /**
    * Silently refetch the thread currently on screen (selected pane and/or
    * matching thread tab). Used right after a reply is sent — the backend has
@@ -581,14 +583,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  selectEmail: async (email, focusId) => {
+  selectEmail: async (email, focusId, opts) => {
     const requestId = ++threadRequestSeq;
     if (!email) {
       set({ selectedEmail: null, threadEmails: [], focusEmailId: null });
       return;
     }
 
-    if (!email.isRead) void get().markAsRead(email.id);
+    if (!email.isRead && opts?.markRead !== false) void get().markAsRead(email.id);
 
     set({ selectedEmail: email, threadEmails: [], isLoadingThread: true, focusEmailId: focusId ?? null });
 

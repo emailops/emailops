@@ -1537,9 +1537,9 @@ function AppInner() {
                 const handleOpenInTab = !activeTab && selectedEmail ? () => openTab(selectedEmail) : undefined;
                 const hasEmailToShow = activeTab !== null || selectedEmail !== null;
 
-                const handleInboxSelect = (email: Email) => {
+                const handleInboxSelect = (email: Email, opts?: { auto?: boolean }) => {
                   setActiveTab(null);
-                  selectEmail(email);
+                  selectEmail(email, undefined, { markRead: !opts?.auto });
                 };
 
                 const emailPane = (

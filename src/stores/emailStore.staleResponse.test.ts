@@ -176,3 +176,21 @@ describe('loadMoreEmails after a failure', () => {
     expect(api.getEmails).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('selectEmail without marking read', () => {
+  beforeEach(() => {
+    useEmailStore.getState().reset();
+    vi.clearAllMocks();
+    vi.mocked(api.getThread).mockResolvedValue([]);
+  });
+
+  it('leaves an unread email unread when asked to', async () => {
+    await useEmailStore.getState().selectEmail({ ...a, isRead: false }, undefined, { markRead: false });
+    expect(api.markAsRead).not.toHaveBeenCalled();
+  });
+
+  it('marks an unread email read by default', async () => {
+    await useEmailStore.getState().selectEmail({ ...a, isRead: false });
+    expect(api.markAsRead).toHaveBeenCalledWith('a');
+  });
+});

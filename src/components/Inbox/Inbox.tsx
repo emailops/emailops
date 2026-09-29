@@ -20,7 +20,9 @@ interface InboxProps {
   hasMore: boolean;
   totalCount: number;
   selectedEmailId: string | null;
-  onSelectEmail: (email: Email) => void;
+  /** `auto` is set when the split layout picked the email itself (first load
+   *  of a list), not the user — such a selection must not mark it read. */
+  onSelectEmail: (email: Email, opts?: { auto?: boolean }) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
   onBlockSender?: (senderEmail: string) => void;
@@ -340,10 +342,24 @@ export function Inbox({
     void loadTags(ids);
   }, [filteredEmails, loadTags]);
 
-  // Auto-select first visible email only when nothing is selected (split layout only)
+  // Auto-select the first visible email once per list load (split layout
+  // only). Armed while a list is loading or empty, spent by the first
+  // auto-select or by any selection. Re-selecting on every null selection
+  // reopened — and marked read — the next email as soon as the user closed
+  // the pane or deleted/moved the open one.
+  const autoSelectArmedRef = useRef(true);
   useEffect(() => {
-    if (disableAutoSelect || filteredEmails.length === 0 || isLoading || selectedEmailId) return;
-    onSelectEmail(filteredEmails[0]);
+    if (isLoading || filteredEmails.length === 0) {
+      autoSelectArmedRef.current = true;
+      return;
+    }
+    if (selectedEmailId) {
+      autoSelectArmedRef.current = false;
+      return;
+    }
+    if (disableAutoSelect || !autoSelectArmedRef.current) return;
+    autoSelectArmedRef.current = false;
+    onSelectEmail(filteredEmails[0], { auto: true });
   }, [disableAutoSelect, filteredEmails, selectedEmailId, isLoading, onSelectEmail]);
 
   // Check if we need to load more (content doesn't fill container)
