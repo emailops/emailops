@@ -857,9 +857,10 @@ pub struct RuleApplies {
 }
 
 /// A registered apply. Dropping it unregisters the apply unless a newer one
-/// for the same rule has replaced it.
-pub struct RuleApplyTicket<'a> {
-    applies: &'a RuleApplies,
+/// for the same rule has replaced it. It owns its registry so it can travel
+/// into the background task that runs the apply.
+pub struct RuleApplyTicket {
+    applies: Arc<RuleApplies>,
     rule_id: String,
     generation: u64,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
@@ -867,7 +868,7 @@ pub struct RuleApplyTicket<'a> {
 
 impl RuleApplies {
     /// Register a new apply of `rule_id`, cancelling the one already running.
-    pub fn begin(&self, rule_id: &str) -> RuleApplyTicket<'_> {
+    pub fn begin(self: &Arc<Self>, rule_id: &str) -> RuleApplyTicket {
         use std::sync::atomic::Ordering;
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -880,7 +881,7 @@ impl RuleApplies {
             flag.store(true, Ordering::Relaxed);
         }
         RuleApplyTicket {
-            applies: self,
+            applies: Arc::clone(self),
             rule_id: rule_id.to_string(),
             generation,
             cancelled,
@@ -900,13 +901,13 @@ impl RuleApplies {
     }
 }
 
-impl RuleApplyTicket<'_> {
+impl RuleApplyTicket {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
-impl Drop for RuleApplyTicket<'_> {
+impl Drop for RuleApplyTicket {
     fn drop(&mut self) {
         let mut running = self
             .applies
@@ -1020,6 +1021,61 @@ pub async fn apply_rule_retroactively(
         should_abort,
     )
     .await
+}
+
+/// How a retroactive apply ended, as the `attachment-rule-apply-finished`
+/// event reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApplyStatus {
+    Done,
+    Failed,
+    /// Superseded by a newer apply of the rule, or the rule was edited or
+    /// deleted meanwhile — not a failure.
+    Cancelled,
+}
+
+/// The `AppError` wire shape (`code`, `params`, `message`), owned.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ApplyErrorPayload {
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyOutcome {
+    pub status: ApplyStatus,
+    /// New attachments collected (0 unless done).
+    pub saved: u32,
+    pub error: Option<ApplyErrorPayload>,
+}
+
+impl ApplyOutcome {
+    pub fn from_result(result: &Result<u32>) -> Self {
+        match result {
+            Ok(saved) => Self {
+                status: ApplyStatus::Done,
+                saved: *saved,
+                error: None,
+            },
+            Err(AppError::Cancelled) => Self {
+                status: ApplyStatus::Cancelled,
+                saved: 0,
+                error: None,
+            },
+            Err(e) => Self {
+                status: ApplyStatus::Failed,
+                saved: 0,
+                error: Some(ApplyErrorPayload {
+                    code: e.code().to_string(),
+                    params: e.params().into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    message: e.to_string(),
+                }),
+            },
+        }
+    }
 }
 
 /// Progress of a retroactive rule application: `processed` of the `total`
@@ -2215,8 +2271,44 @@ mod tests {
     // ── One apply per rule, and applies racing edits / deletes ─────────────
 
     #[test]
+    fn an_apply_ticket_can_move_into_a_background_task() {
+        fn assert_background<T: Send + 'static>(_: T) {}
+        let applies = Arc::new(RuleApplies::default());
+
+        assert_background(applies.begin("rule-1"));
+    }
+
+    #[test]
+    fn a_finished_apply_reports_what_it_saved() {
+        assert_eq!(
+            ApplyOutcome::from_result(&Ok(3)),
+            ApplyOutcome {
+                status: ApplyStatus::Done,
+                saved: 3,
+                error: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_cancelled_apply_is_reported_as_cancelled_not_failed() {
+        assert_eq!(
+            ApplyOutcome::from_result(&Err(AppError::Cancelled)).status,
+            ApplyStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn a_failed_apply_carries_its_error() {
+        let outcome = ApplyOutcome::from_result(&Err(AppError::NotFound("Rule r1 not found".into())));
+
+        assert_eq!(outcome.status, ApplyStatus::Failed);
+        assert!(outcome.error.is_some_and(|e| e.message.contains("r1")));
+    }
+
+    #[test]
     fn beginning_an_apply_cancels_the_one_already_running_for_the_rule() {
-        let applies = RuleApplies::default();
+        let applies = Arc::new(RuleApplies::default());
         let first = applies.begin("rule-1");
 
         let second = applies.begin("rule-1");
@@ -2227,7 +2319,7 @@ mod tests {
 
     #[test]
     fn cancelling_a_rule_leaves_other_rules_running() {
-        let applies = RuleApplies::default();
+        let applies = Arc::new(RuleApplies::default());
         let one = applies.begin("rule-1");
         let two = applies.begin("rule-2");
 
@@ -2239,7 +2331,7 @@ mod tests {
 
     #[test]
     fn a_finished_older_apply_does_not_unregister_the_newer_one() {
-        let applies = RuleApplies::default();
+        let applies = Arc::new(RuleApplies::default());
         let first = applies.begin("rule-1");
         let second = applies.begin("rule-1");
         drop(first);

@@ -1,8 +1,7 @@
-import { listen } from '@tauri-apps/api/event';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
-import { errorText, isAppErrorPayload } from '@/lib/errors';
+import { errorText } from '@/lib/errors';
 import { type RuleApplyState, useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
@@ -37,7 +36,6 @@ interface RuleManagementModalProps {
     enabled: boolean,
   ) => Promise<AttachmentRule>;
   onDeleteRule: (ruleId: string) => Promise<void>;
-  onRefreshAfterApply: () => void;
   /** Pending candidate rules mined from recurring document attachments. */
   suggestions: AttachmentRuleSuggestion[];
   /** Re-mine on open, so rules created or deleted since the last sync count. */
@@ -46,17 +44,6 @@ interface RuleManagementModalProps {
   onAcceptSuggestion: (suggestionId: string) => Promise<void>;
   /** Tags already on collected attachments, offered by the tag picker. */
   existingTags: string[];
-}
-
-function isApplyProgress(p: unknown): p is { ruleId: string; processed: number; total: number; saved: number } {
-  if (typeof p !== 'object' || p === null) return false;
-  const o = p as Record<string, unknown>;
-  return (
-    typeof o.ruleId === 'string' &&
-    typeof o.processed === 'number' &&
-    typeof o.total === 'number' &&
-    typeof o.saved === 'number'
-  );
 }
 
 interface RuleFormState {
@@ -85,7 +72,6 @@ export function RuleManagementModal({
   onCreateRule,
   onUpdateRule,
   onDeleteRule,
-  onRefreshAfterApply,
   suggestions,
   onRefreshSuggestions,
   onDismissSuggestion,
@@ -118,15 +104,12 @@ export function RuleManagementModal({
   useEffect(() => {
     if (showForm) formRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   }, [showForm, editingRuleId, reviewingSuggestionId]);
-  // Applying a rule to existing mail runs in the background; each rule card
-  // shows its own progress, fed by `attachment-rule-apply-progress` events.
-  // The state lives in the store so a scan outlives the modal being closed.
+  // Applying a rule to existing mail runs in a backend queue; each rule card
+  // shows its own progress. The state lives in the store, fed by the
+  // app-wide `useRuleApplyEvents`, so a scan outlives the modal being closed.
   const applyStates = useAttachmentStore((s) => s.ruleApplies);
   const beginRuleApply = useAttachmentStore((s) => s.beginRuleApply);
-  const reportRuleApplyProgress = useAttachmentStore((s) => s.reportRuleApplyProgress);
-  const finishRuleApply = useAttachmentStore((s) => s.finishRuleApply);
   const failRuleApply = useAttachmentStore((s) => s.failRuleApply);
-  const dropRuleApply = useAttachmentStore((s) => s.dropRuleApply);
   const [error, setError] = useState<string | null>(null);
   // Delete-confirm flow: clicking the trash icon opens an inline warning
   // panel showing how many saved files will also be removed. Inline rather
@@ -142,39 +125,15 @@ export function RuleManagementModal({
     [existingTags, rules],
   );
 
-  useEffect(() => {
-    const unlisten = listen('attachment-rule-apply-progress', (event) => {
-      if (isApplyProgress(event.payload)) reportRuleApplyProgress(event.payload);
-    });
-    return () => {
-      void unlisten.then((u) => u());
-    };
-  }, [reportRuleApplyProgress]);
-
   const runApply = async (rule: AttachmentRule) => {
     // A newer apply of the same rule cancels this one in the backend.
     const runId = beginRuleApply(rule.id);
     addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
     try {
-      const count = await api.applyRuleRetroactively(rule.id, accountId);
-      // `count` is only what this run added; re-applying an edited rule adds
-      // nothing new, and "0" read as if the rule had found nothing.
-      const collected = await api.countAttachmentsForRule(rule.id).catch((err) => {
-        addLog('error', 'attachments', `Failed to count rule attachments: ${errorText(err)}`);
-        return undefined;
-      });
-      finishRuleApply(rule.id, runId, count, collected);
-      addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
-      onRefreshAfterApply();
+      await api.applyRuleRetroactively(rule.id, accountId, runId);
     } catch (err) {
-      // Superseded by a newer scan, or the rule was edited / deleted: not a failure.
-      if (isAppErrorPayload(err) && err.code === 'cancelled') {
-        dropRuleApply(rule.id, runId);
-        addLog('debug', 'attachments', `Scan for rule "${rule.name}" was superseded`);
-        return;
-      }
       failRuleApply(rule.id, runId);
-      addLog('error', 'attachments', `Failed to apply rule retroactively: ${errorText(err)}`);
+      addLog('error', 'attachments', `Failed to start applying rule "${rule.name}": ${errorText(err)}`);
     }
   };
 

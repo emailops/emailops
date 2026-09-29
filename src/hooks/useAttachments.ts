@@ -5,6 +5,7 @@ import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore
 import { useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment, AttachmentRule } from '@/types';
+import { useRuleApplyEvents } from './useRuleApplyEvents';
 
 export function useAttachments() {
   // Attachments stay per-account: in unified ("All accounts") mode we scope
@@ -237,6 +238,10 @@ export function useAttachments() {
     }
   }, [activeAccountId, selectedTag, fetchAttachments, fetchTags]);
 
+  // Rule scans run in the background and may finish after the rules modal
+  // closed; this app-wide listener records their outcome.
+  useRuleApplyEvents(refreshAfterRuleApply);
+
   return {
     rules,
     isLoadingRules,
@@ -261,7 +266,6 @@ export function useAttachments() {
     setSelectedTag: handleSetSelectedTag,
     clearError,
     reset,
-    refreshAfterRuleApply,
     suggestions,
     refreshSuggestions: handleRefreshSuggestions,
     dismissSuggestion: handleDismissSuggestion,

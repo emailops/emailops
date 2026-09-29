@@ -15,11 +15,12 @@ export interface RuleApplyState {
   collected?: number;
   status: 'running' | 'done' | 'failed';
   /** Which run this is: a newer apply of the rule supersedes an older one. */
-  runId: number;
+  runId: string;
 }
 
 export interface RuleApplyProgress {
   ruleId: string;
+  runId: string;
   processed: number;
   total: number;
   saved: number;
@@ -87,11 +88,11 @@ interface AttachmentStore {
 
   // Rule apply actions. `beginRuleApply` returns the run id the other
   // actions take, so a superseded run can never overwrite the newer one.
-  beginRuleApply: (ruleId: string) => number;
+  beginRuleApply: (ruleId: string) => string;
   reportRuleApplyProgress: (progress: RuleApplyProgress) => void;
-  finishRuleApply: (ruleId: string, runId: number, saved: number, collected: number | undefined) => void;
-  failRuleApply: (ruleId: string, runId: number) => void;
-  dropRuleApply: (ruleId: string, runId: number) => void;
+  finishRuleApply: (ruleId: string, runId: string, saved: number, collected: number | undefined) => void;
+  failRuleApply: (ruleId: string, runId: string) => void;
+  dropRuleApply: (ruleId: string, runId: string) => void;
 
   // Attachment actions
   fetchAttachments: (accountId: string, tag?: string | null) => Promise<void>;
@@ -124,7 +125,7 @@ let suggestionsLoadId = 0;
 // already in flight when they did must not bring them back.
 const resolvedSuggestionIds = new Set<string>();
 
-let ruleApplyRunId = 0;
+let ruleApplyRunCounter = 0;
 
 async function loadSuggestions(
   set: (partial: Partial<AttachmentStore>) => void,
@@ -169,7 +170,7 @@ async function resolveSuggestion(
 function forRun(
   applies: Record<string, RuleApplyState>,
   ruleId: string,
-  runId: number,
+  runId: string,
   update: (current: RuleApplyState) => RuleApplyState | null,
 ): Record<string, RuleApplyState> {
   const current = applies[ruleId];
@@ -255,17 +256,17 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     resolveSuggestion(set, suggestionId, () => api.acceptAttachmentRuleSuggestion(accountId, suggestionId)),
 
   beginRuleApply: (ruleId) => {
-    const runId = ++ruleApplyRunId;
+    const runId = `${Date.now()}-${++ruleApplyRunCounter}`;
     set((state) => ({
       ruleApplies: { ...state.ruleApplies, [ruleId]: { processed: 0, total: 0, saved: 0, status: 'running', runId } },
     }));
     return runId;
   },
 
-  reportRuleApplyProgress: ({ ruleId, processed, total, saved }) =>
+  reportRuleApplyProgress: ({ ruleId, runId, processed, total, saved }) =>
     set((state) => {
       const current = state.ruleApplies[ruleId];
-      if (current?.status !== 'running') return {};
+      if (current?.status !== 'running' || current.runId !== runId) return {};
       return { ruleApplies: { ...state.ruleApplies, [ruleId]: { ...current, processed, total, saved } } };
     }),
 

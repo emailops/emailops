@@ -334,42 +334,73 @@ pub async fn reveal_in_finder(path: String) -> Result<(), AppError> {
     services::attachments::reveal_in_file_manager(&target)
 }
 
+/// Queue applying a rule to the mail already stored and return at once. The
+/// scan reports `attachment-rule-apply-progress` and, when it ends,
+/// `attachment-rule-apply-finished` — both tagged with the caller's `run_id`.
+/// Starting it cancels the apply of the same rule that is still running.
 #[tauri::command]
 pub async fn apply_rule_retroactively(
     app: AppHandle,
     state: State<'_, AppState>,
     rule_id: String,
     account_id: String,
-) -> Result<u32, AppError> {
+    run_id: String,
+) -> Result<(), AppError> {
+    use crate::services::background_tasks::BackgroundTask;
     use tauri::Emitter;
-    // Progress for the rule card's bar; the payload names the rule so a
-    // second apply running at the same time updates its own card.
-    let progress_app = app.clone();
-    let progress_rule = rule_id.clone();
-    let on_progress = move |p: services::attachments::RetroProgress| {
-        let payload = serde_json::json!({
-            "ruleId": progress_rule,
-            "processed": p.processed,
-            "total": p.total,
-            "saved": p.saved,
-        });
-        if let Err(e) = progress_app.emit("attachment-rule-apply-progress", payload) {
-            eprintln!("[attachments] could not emit apply progress: {e}");
-        }
+
+    let core = state.core();
+    let ticket = core.rule_applies.begin(&rule_id);
+    let task = BackgroundTask::ApplyAttachmentRule {
+        rule_id: rule_id.clone(),
+        run_id: run_id.clone(),
     };
-    // Starting a new scan of the rule cancels the one already running; the
-    // cancelled call returns `AppError::Cancelled`.
-    let ticket = state.rule_applies.begin(&rule_id);
-    services::attachments::apply_rule_retroactively(
-        &state.db,
-        &rule_id,
-        &account_id,
-        &state.app_data_dir,
-        Some(&app),
-        &on_progress,
-        &|| ticket.is_cancelled(),
-    )
-    .await
+    state
+        .dispatcher
+        .dispatch(
+            task,
+            Box::new(move || {
+                Box::pin(async move {
+                    let progress_app = app.clone();
+                    let (progress_rule, progress_run) = (rule_id.clone(), run_id.clone());
+                    let on_progress = move |p: services::attachments::RetroProgress| {
+                        let payload = serde_json::json!({
+                            "ruleId": progress_rule,
+                            "runId": progress_run,
+                            "processed": p.processed,
+                            "total": p.total,
+                            "saved": p.saved,
+                        });
+                        if let Err(e) = progress_app.emit("attachment-rule-apply-progress", payload) {
+                            eprintln!("[attachments] could not emit apply progress: {e}");
+                        }
+                    };
+                    let result = services::attachments::apply_rule_retroactively(
+                        &core.db,
+                        &rule_id,
+                        &account_id,
+                        &core.app_data_dir,
+                        Some(&app),
+                        &on_progress,
+                        &|| ticket.is_cancelled(),
+                    )
+                    .await;
+                    let outcome = services::attachments::ApplyOutcome::from_result(&result);
+                    let payload = serde_json::json!({
+                        "ruleId": rule_id,
+                        "runId": run_id,
+                        "status": outcome.status,
+                        "saved": outcome.saved,
+                        "error": outcome.error,
+                    });
+                    if let Err(e) = app.emit("attachment-rule-apply-finished", payload) {
+                        eprintln!("[attachments] could not emit apply finished: {e}");
+                    }
+                })
+            }),
+        )
+        .await;
+    Ok(())
 }
 
 #[tauri::command]

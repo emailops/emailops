@@ -443,7 +443,6 @@ function AppInner() {
     toggleCheckAll,
     clearChecked,
     setSelectedTag,
-    refreshAfterRuleApply,
     suggestions: attachmentRuleSuggestions,
     refreshSuggestions: refreshAttachmentRuleSuggestions,
     dismissSuggestion: dismissAttachmentRuleSuggestion,
@@ -1773,7 +1772,6 @@ function AppInner() {
           onCreateRule={createAttachmentRule}
           onUpdateRule={updateAttachmentRule}
           onDeleteRule={deleteAttachmentRule}
-          onRefreshAfterApply={refreshAfterRuleApply}
           suggestions={attachmentRuleSuggestions}
           onRefreshSuggestions={refreshAttachmentRuleSuggestions}
           onDismissSuggestion={dismissAttachmentRuleSuggestion}

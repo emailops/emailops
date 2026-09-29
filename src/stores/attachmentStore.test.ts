@@ -144,11 +144,17 @@ describe('rule applies', () => {
     useAttachmentStore.setState({ ruleApplies: {} });
   });
 
-  it('tracks progress of a running apply', () => {
-    const { beginRuleApply, reportRuleApplyProgress } = useAttachmentStore.getState();
-    beginRuleApply('r1');
+  it('gives each apply its own run id', () => {
+    const { beginRuleApply } = useAttachmentStore.getState();
 
-    reportRuleApplyProgress({ ruleId: 'r1', processed: 3, total: 10, saved: 1 });
+    expect(beginRuleApply('r1')).not.toBe(beginRuleApply('r1'));
+  });
+
+  it('tracks progress of the running apply', () => {
+    const { beginRuleApply, reportRuleApplyProgress } = useAttachmentStore.getState();
+    const runId = beginRuleApply('r1');
+
+    reportRuleApplyProgress({ ruleId: 'r1', runId, processed: 3, total: 10, saved: 1 });
 
     expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({
       processed: 3,
@@ -158,8 +164,20 @@ describe('rule applies', () => {
     });
   });
 
+  it('ignores progress of a superseded run', () => {
+    const { beginRuleApply, reportRuleApplyProgress } = useAttachmentStore.getState();
+    const older = beginRuleApply('r1');
+    beginRuleApply('r1');
+
+    reportRuleApplyProgress({ ruleId: 'r1', runId: older, processed: 9, total: 10, saved: 9 });
+
+    expect(useAttachmentStore.getState().ruleApplies.r1.processed).toBe(0);
+  });
+
   it('ignores progress for a rule that is not running', () => {
-    useAttachmentStore.getState().reportRuleApplyProgress({ ruleId: 'r1', processed: 3, total: 10, saved: 1 });
+    useAttachmentStore
+      .getState()
+      .reportRuleApplyProgress({ ruleId: 'r1', runId: 'x', processed: 3, total: 10, saved: 1 });
 
     expect(useAttachmentStore.getState().ruleApplies.r1).toBeUndefined();
   });

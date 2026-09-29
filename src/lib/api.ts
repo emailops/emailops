@@ -796,8 +796,13 @@ export async function bulkDownloadAttachments(accountId: string, attachmentIds: 
   return invoke('bulk_download_attachments', { accountId, attachmentIds });
 }
 
-export async function applyRuleRetroactively(ruleId: string, accountId: string): Promise<number> {
-  return invoke('apply_rule_retroactively', { ruleId, accountId });
+/**
+ * Queue applying a rule to the mail already stored; resolves once queued.
+ * Progress and the outcome arrive as `attachment-rule-apply-progress` /
+ * `attachment-rule-apply-finished` events tagged with `runId`.
+ */
+export async function applyRuleRetroactively(ruleId: string, accountId: string, runId: string): Promise<void> {
+  return invoke('apply_rule_retroactively', { ruleId, accountId, runId });
 }
 
 export async function openAttachmentExternally(accountId: string, attachmentId: string): Promise<void> {
