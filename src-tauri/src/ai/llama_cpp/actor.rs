@@ -481,7 +481,7 @@ fn copy_aux_into_generation(ctx: &mut LlamaContext) -> std::result::Result<(), S
 /// The raw bytes of `token`'s text, special tokens rendered. A piece can be
 /// part of a multi-byte character, so it is decoded by the caller's
 /// [`Utf8Stream`], never on its own.
-fn token_bytes(model: &LlamaModel, token: LlamaToken) -> std::result::Result<Vec<u8>, String> {
+pub(crate) fn token_bytes(model: &LlamaModel, token: LlamaToken) -> std::result::Result<Vec<u8>, String> {
     match model.token_to_piece_bytes(token, 8, true, None) {
         Ok(bytes) => Ok(bytes),
         // The piece is longer than the first buffer: llama.cpp reports the

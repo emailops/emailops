@@ -7,6 +7,7 @@ pub mod gpu_plan;
 pub mod json_shape;
 pub mod ollama;
 pub mod openrouter;
+pub mod prompt_guard;
 pub mod provider;
 pub mod stream_gate;
 pub mod think_priming;
