@@ -2543,7 +2543,8 @@ async fn sync_extra_mailbox_backfill(
     }
 }
 
-/// Manually triggered full re-scan of one mailbox.
+/// Manually triggered full re-scan of one mailbox. Holds the account's sync
+/// lock (see [`sync_account_with_contention`]) for its whole run.
 ///
 /// Clears the per-mailbox backfill done flag and walks the entire history to
 /// exhaustion, deduplicating against existing rows. Use this to recover from
@@ -2556,9 +2557,29 @@ pub async fn resync_mailbox_full(
     mailbox: ExtraMailbox,
     email_provider: &dyn EmailProvider,
     rules_ctx: Option<&RuleSyncCtx<'_>>,
+    sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 ) -> Result<u32> {
     let account_id = &account.id;
     let mailbox_name = mailbox.as_str();
+
+    // Same per-account lock as `sync_account_with_contention`, in `Wait` mode:
+    // the user asked for this rescan, so it queues behind a running sync
+    // instead of being skipped — and never runs beside one.
+    let account_lock = {
+        let mut locks = sync_locks.lock().unwrap_or_else(PoisonError::into_inner);
+        locks
+            .entry(account_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _sync_guard = tokio::time::timeout(INFLIGHT_SYNC_WAIT, account_lock.lock())
+        .await
+        .map_err(|_| {
+            AppError::SyncError(format!(
+                "a sync of {} is still running; try the {mailbox_name} resync again later",
+                account.email
+            ))
+        })?;
     let target = SyncTarget::Canonical(mailbox);
     let done_key = extra_mailbox_backfill_key(account_id, &target);
     let cursor_key = extra_mailbox_backfill_cursor_key(account_id, &target);
@@ -2965,6 +2986,35 @@ mod extra_mailbox_window_tests {
         // "Sync everything" accounts keep their unbounded behaviour.
         assert_eq!(extra_mailbox_after_timestamp(None, None), None);
         assert_eq!(extra_mailbox_after_timestamp(None, Some(42)), Some(42));
+    }
+
+    /// The manual full resync used to run beside a scheduler sync of the same
+    /// account: two passes writing the same watermarks and downloading the
+    /// same messages at once. It has to queue behind the account's sync lock.
+    #[tokio::test]
+    async fn full_resync_waits_for_the_running_sync_of_the_account() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("s1", FLOOR + 10), EmailCategory::Primary, vec![]);
+
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let sync_locks = Arc::new(Mutex::new(HashMap::from([(account.id.clone(), lock.clone())])));
+        let running_sync = lock.try_lock().expect("uncontended");
+
+        let resync = resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None, sync_locks);
+        tokio::pin!(resync);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut resync)
+                .await
+                .is_err(),
+            "the resync must wait while a sync of the account holds the lock"
+        );
+        assert!(stored_ids(&db).is_empty(), "nothing may be written while waiting");
+
+        drop(running_sync);
+        assert_eq!(resync.await.expect("resync"), 1);
     }
 
     #[tokio::test]

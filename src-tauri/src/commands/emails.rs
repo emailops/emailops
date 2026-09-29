@@ -545,6 +545,7 @@ pub async fn start_resync_mailbox(
     let app_for_errors = app.clone();
     let task_label = format!("resync-mailbox:{}:{}", account_id, mailbox);
     let account_queue = state.sync_queue_for(&account_id);
+    let sync_locks = state.sync_locks.clone();
 
     account_queue
         .submit_named(&task_label, async move {
@@ -613,7 +614,15 @@ pub async fn start_resync_mailbox(
                 app: Some(&app_for_task),
             };
 
-            match services::emails::resync_mailbox_full(&db, &account, extra, provider.as_ref(), Some(&rules_ctx)).await
+            match services::emails::resync_mailbox_full(
+                &db,
+                &account,
+                extra,
+                provider.as_ref(),
+                Some(&rules_ctx),
+                sync_locks,
+            )
+            .await
             {
                 Ok(inserted) => {
                     emit_log(

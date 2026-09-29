@@ -4734,10 +4734,16 @@ async fn resync_mailbox_full_recovers_gap_and_returns_delta() {
         vec![],
     );
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(
         inserted, 3,
@@ -4773,10 +4779,16 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
     // Provider has no messages, so resync just resets state and produces 0 inserts.
     let provider = FakeEmailProvider::new("reset@example.com", "Reset");
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(inserted, 0, "no provider messages → 0 inserted");
 
@@ -5256,6 +5268,7 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
         emailops_lib::sync::provider::ExtraMailbox::Sent,
         &provider,
         Some(&ctx),
+        Default::default(),
     )
     .await
     .expect("resync");
