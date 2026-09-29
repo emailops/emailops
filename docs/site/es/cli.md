@@ -62,7 +62,7 @@ chat (los tokens llegan en directo) y el resto corresponden a los subcomandos �
 | `classify [--all]` | Clasifica los correos nuevos — o todos |
 | `embed [--batch N]` | Genera los embeddings de búsqueda |
 | `doctor` | Informe de estado de solo lectura (base de datos, cuentas, configuración de IA) |
-| `attachment-suggestions` | Muestra las reglas de adjuntos que EmailOps sugeriría (solo lectura) |
+| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>]` | Reglas de adjuntos sugeridas: muestra lo que se sugeriría (solo lectura, por defecto), lista o recalcula las guardadas, descarta o acepta una |
 
 <!-- claim:cli-commands-2 -->
 Las opciones globales funcionan antes o después del subcomando: `--json`, `--quiet`,

@@ -10,7 +10,7 @@ use crate::models::error::{AppError, Result};
 
 use super::output;
 use super::session::CliSession;
-use super::{Command, OutputMode, RenderStyle};
+use super::{Command, OutputMode, RenderStyle, SuggestionAction};
 
 /// Execute one parsed command against the session.
 pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> {
@@ -384,14 +384,43 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             output::render_calendar_events(&events, session.style)
         }
 
-        Command::AttachmentSuggestions => {
+        Command::AttachmentSuggestions { action } => {
+            use crate::models::AttachmentRuleSuggestionStatus;
+            use crate::services::attachment_suggestions as suggestions;
             let account = session.require_account()?;
-            let candidates = crate::services::attachment_suggestions::preview_suggestions_at(
-                &session.db,
-                &account,
-                crate::services::clock::now_secs(),
-            )?;
-            output::render_attachment_suggestions(&candidates, session.style)
+            match action.unwrap_or(SuggestionAction::Preview) {
+                SuggestionAction::Preview => {
+                    let candidates =
+                        suggestions::preview_suggestions_at(&session.db, &account, crate::services::clock::now_secs())?;
+                    output::render_attachment_suggestions(&candidates, session.style)
+                }
+                SuggestionAction::List => output::render_attachment_rule_suggestions(
+                    &suggestions::list_suggestions(&session.db, &account)?,
+                    session.style,
+                ),
+                SuggestionAction::Refresh => output::render_attachment_rule_suggestions(
+                    &suggestions::refresh_suggestions(&session.db, &account)?,
+                    session.style,
+                ),
+                SuggestionAction::Dismiss { id } => {
+                    suggestions::set_suggestion_status(
+                        &session.db,
+                        &account,
+                        &id,
+                        AttachmentRuleSuggestionStatus::Dismissed,
+                    )?;
+                    output::render_suggestion_status(&id, AttachmentRuleSuggestionStatus::Dismissed, session.style)
+                }
+                SuggestionAction::Accept { id } => {
+                    suggestions::set_suggestion_status(
+                        &session.db,
+                        &account,
+                        &id,
+                        AttachmentRuleSuggestionStatus::Accepted,
+                    )?;
+                    output::render_suggestion_status(&id, AttachmentRuleSuggestionStatus::Accepted, session.style)
+                }
+            }
         }
 
         Command::Drafts => {
@@ -1028,6 +1057,86 @@ mod tests {
         dispatch(&mut session, Command::Accounts { action: None })
             .await
             .expect("accounts ok");
+    }
+
+    fn seed_suggestion(db: &Database, account_id: &str) -> String {
+        use crate::services::attachment_suggestions::SuggestionCandidate;
+        db.replace_pending_attachment_rule_suggestions(
+            account_id,
+            &[SuggestionCandidate {
+                key: "*@acme.com|invoice_*.pdf".into(),
+                name: "Acme · invoice".into(),
+                sender_email_pattern: "billing@acme.com".into(),
+                filename_pattern: Some("Invoice_*.pdf".into()),
+                tags: vec![],
+                email_count: 3,
+                first_seen: 0,
+                last_seen: 0,
+                sample_filenames: vec![],
+            }],
+            0,
+        )
+        .expect("seed suggestion");
+        db.get_pending_attachment_rule_suggestions(account_id).expect("list")[0]
+            .id
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn dispatch_dismiss_hides_a_persisted_suggestion() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        let id = seed_suggestion(&db, "a1");
+        let mut session = test_session(Arc::clone(&db), Some("a1"));
+
+        dispatch(
+            &mut session,
+            Command::AttachmentSuggestions {
+                action: Some(SuggestionAction::Dismiss { id }),
+            },
+        )
+        .await
+        .expect("dismiss");
+
+        assert!(db
+            .get_pending_attachment_rule_suggestions("a1")
+            .expect("list")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_accepting_an_unknown_suggestion_is_not_found() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        let mut session = test_session(db, Some("a1"));
+
+        let err = dispatch(
+            &mut session,
+            Command::AttachmentSuggestions {
+                action: Some(SuggestionAction::Accept { id: "ghost".into() }),
+            },
+        )
+        .await
+        .expect_err("unknown id");
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn dispatch_lists_persisted_suggestions() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        seed_suggestion(&db, "a1");
+        let mut session = test_session(db, Some("a1"));
+
+        dispatch(
+            &mut session,
+            Command::AttachmentSuggestions {
+                action: Some(SuggestionAction::List),
+            },
+        )
+        .await
+        .expect("list");
     }
 
     #[tokio::test]

@@ -441,6 +441,48 @@ pub fn render_attachment_suggestions(
     Ok(())
 }
 
+/// Persisted suggestions (`attachment-suggestions list|refresh`), with the id
+/// `dismiss` / `accept` take.
+pub fn render_attachment_rule_suggestions(
+    suggestions: &[crate::models::AttachmentRuleSuggestion],
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(suggestions);
+    }
+    if suggestions.is_empty() {
+        println!("(no pending suggested attachment rules)");
+        return Ok(());
+    }
+    let color = style.color();
+    for s in suggestions {
+        println!(
+            "{}  {} {:<32} {:<24} {}",
+            dim(&s.id, color),
+            paint(&format!("{:<32}", truncate(&s.name, 32)), "1", color),
+            truncate(&s.sender_email_pattern, 32),
+            truncate(s.filename_pattern.as_deref().unwrap_or("(any)"), 24),
+            dim(
+                &format!("{} emails · last {}", s.email_count, format_thread_date(s.last_seen)),
+                color
+            ),
+        );
+    }
+    Ok(())
+}
+
+pub fn render_suggestion_status(
+    id: &str,
+    status: crate::models::AttachmentRuleSuggestionStatus,
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(serde_json::json!({ "id": id, "status": status.as_str() }));
+    }
+    println!("Suggestion {id} marked {}.", status.as_str());
+    Ok(())
+}
+
 /// Full single-draft view for the `draft <id>` and `compose` commands: headers
 /// (incl. provider link + attachments) then the body. JSON emits the raw draft.
 pub fn render_draft_detail(draft: &Draft, style: RenderStyle) -> Result<()> {
