@@ -778,14 +778,17 @@ impl Database {
         // Keyword search via FTS5 (already indexed — no change needed here)
         if !query.is_empty() {
             let fts_query = sanitize_fts_query(query);
-            if !fts_query.is_empty() {
-                cte_conditions.push(format!(
-                    "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                    param_idx
-                ));
-                params_vec.push(Box::new(fts_query));
-                param_idx += 1;
+            // A keyword of only symbols ("?!") can match nothing; dropping
+            // the condition instead would match every thread.
+            if fts_query.is_empty() {
+                return Ok(Vec::new());
             }
+            cte_conditions.push(format!(
+                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+                param_idx
+            ));
+            params_vec.push(Box::new(fts_query));
+            param_idx += 1;
         }
 
         // From filter — two-pronged:
@@ -3763,5 +3766,31 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["e32999", "e32998", "e32997", "e32996", "e32995"]);
+    }
+
+    // Regression: a keyword made only of symbols ("?!") sanitized to an empty
+    // FTS query, the keyword condition was dropped, and every thread matched.
+    #[test]
+    fn search_symbol_only_query_returns_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "t1",
+            "Alice",
+            "alice@example.com",
+            "hello",
+            "body",
+            100,
+        );
+        let results = db
+            .search_emails("acc1", "?!", None, None, None, None, None, None, None, 50)
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "got {:?}",
+            results.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
     }
 }
