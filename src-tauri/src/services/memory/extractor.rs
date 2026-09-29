@@ -13,12 +13,13 @@ use uuid::Uuid;
 
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use crate::models::{Email, MemoryFact};
 use crate::services::ai::AiService;
 use crate::services::memory::config::MemoryConfig;
 
 pub use crate::services::tasks::extractor::ExtractedTask;
+use crate::services::tasks::extractor::{lenient_items, reply_object};
 
 const MAX_BODY_CHARS: usize = 1500;
 
@@ -95,7 +96,7 @@ pub async fn extract_batch(
                 break;
             }
         }
-        match process_email(db, app, &ai, &owner_email, email_id, cfg).await {
+        match process_email(db, &ai, &owner_email, email_id, cfg).await {
             Ok(true) => ok += 1,
             Ok(false) => {}
             Err(e) => emit_log(
@@ -117,7 +118,6 @@ pub async fn extract_batch(
 
 async fn process_email(
     db: &Arc<Database>,
-    app: &AppHandle,
     ai: &AiService,
     owner_email: &str,
     email_id: &str,
@@ -140,20 +140,15 @@ async fn process_email(
         return Ok(false);
     }
 
-    match run_llm_extraction(db, ai, &email).await {
-        Ok(extracted) => write_extraction(
-            db,
-            &email,
-            &extracted,
-            derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
-        )?,
-        Err(e) => emit_log(
-            app,
-            "debug",
-            "memory",
-            &format!("LLM memory extraction skipped for {email_id}: {e}"),
-        ),
-    }
+    // A failed call or unparseable reply propagates without marking the
+    // email, so the next batch retries it (the caller logs it at warn).
+    let extracted = run_llm_extraction(db, ai, &email).await?;
+    write_extraction(
+        db,
+        &email,
+        &extracted,
+        derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
+    )?;
     db.mark_memory_facts_extracted(email_id, Utc::now().timestamp())?;
     Ok(true)
 }
@@ -199,7 +194,15 @@ async fn run_llm_extraction(db: &Arc<Database>, ai: &AiService, email: &Email) -
             }),
         )
         .await?;
-    Ok(parse_json_subset(&res))
+    parse_payload(&res).ok_or_else(|| AppError::AiError("memory extraction reply held no JSON object".into()))
+}
+
+fn parse_payload(raw: &str) -> Option<ExtractedPayload> {
+    let obj = reply_object(raw)?;
+    Some(ExtractedPayload {
+        tasks: lenient_items(&obj, "tasks", "memory"),
+        facts: lenient_items(&obj, "facts", "memory"),
+    })
 }
 
 fn build_prompt(db: &Arc<Database>, email: &Email) -> Result<String> {
@@ -461,27 +464,6 @@ fn is_silly_fact(text: &str) -> bool {
     BAD_EXACT.iter().any(|s| lower == *s)
 }
 
-fn parse_json_subset<T: Default + for<'de> Deserialize<'de>>(raw: &str) -> T {
-    serde_json::from_str::<T>(&extract_json(raw)).unwrap_or_default()
-}
-
-fn extract_json(text: &str) -> String {
-    let cleaned = if text.contains("```") {
-        text.lines()
-            .filter(|l| !l.trim().starts_with("```"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        text.to_string()
-    };
-    if let (Some(start), Some(end)) = (cleaned.find('{'), cleaned.rfind('}')) {
-        if end >= start {
-            return cleaned[start..=end].to_string();
-        }
-    }
-    cleaned.trim().to_string()
-}
-
 use crate::util::text::truncate_utf8;
 
 fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
@@ -507,13 +489,74 @@ mod thread_tests {
 }
 
 #[cfg(test)]
+mod process_tests {
+    //! An email is only marked fact-extracted after a successful model call
+    //! and parse — otherwise it is never retried.
+    use super::*;
+    use crate::ai::provider::FakeAiProvider;
+    use crate::services::thread_reader::fixtures;
+
+    fn setup() -> (Arc<Database>, Arc<FakeAiProvider>, AiService, MemoryConfig) {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        let fake = Arc::new(FakeAiProvider::new());
+        let ai = AiService::with_provider(db.clone(), fake.clone());
+        let cfg = MemoryConfig {
+            extract_from_self_only: false,
+            ..MemoryConfig::default()
+        };
+        (db, fake, ai, cfg)
+    }
+
+    fn is_pending(db: &Database, id: &str) -> bool {
+        db.get_memory_unextracted_email_ids("acct", 50, &[], None)
+            .unwrap()
+            .iter()
+            .any(|e| e == id)
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        fake.fail_completions(Some("model offline"));
+        let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+        assert!(res.is_err());
+        assert!(is_pending(&db, "e1"));
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_reply_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        for reply in ["", "Sorry, I cannot help with that."] {
+            fake.push_completion(reply);
+            let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+            assert!(res.is_err(), "reply {reply:?}");
+            assert!(is_pending(&db, "e1"), "reply {reply:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn one_malformed_fact_does_not_drop_the_others() {
+        let (db, fake, ai, cfg) = setup();
+        fake.push_completion(
+            r#"{"facts":[
+                {"subjectKind":"contact","subjectKey":"ana@example.com","fact":"Ana leads the portal project"},
+                {"subjectKind":"contact","fact":42},
+                {"subjectKind":"contact","subjectKey":"ana@example.com","fact":"Ana prefers written updates"}
+            ]}"#,
+        );
+        assert!(process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap());
+        assert!(!is_pending(&db, "e1"));
+        let facts = db
+            .get_memory_facts_by_subject("acct", "contact", "ana@example.com")
+            .unwrap();
+        assert_eq!(facts.len(), 2, "{facts:?}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn extract_json_strips_markdown() {
-        assert_eq!(extract_json("```json\n{\"facts\":[]}\n```").trim(), "{\"facts\":[]}");
-    }
 
     #[test]
     fn subject_invite_detection() {
