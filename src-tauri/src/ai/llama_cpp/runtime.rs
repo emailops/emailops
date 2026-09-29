@@ -44,7 +44,7 @@
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -431,10 +431,15 @@ pub struct LlamaCppRuntime {
     /// runtime.  Concurrent requests on the same Metal/CPU device contend on
     /// the same hardware and hurt total throughput, so we serialise them here.
     inference_sem: Arc<Semaphore>,
-    /// Unix-seconds timestamp of the last inference call. Bumped by
-    /// `touch_last_used()` before every chat/embed pass so the idle-eviction
-    /// task can tell when the model is truly cold.
+    /// Unix-seconds timestamp of the last inference activity. Stamped when a
+    /// chat/embed pass starts and when it ends (`begin_request`) so the
+    /// idle-eviction task can tell when the model is truly cold.
     last_used: Arc<AtomicI64>,
+    /// Chat/embed requests currently running. Idle eviction never fires while
+    /// this is non-zero: a generation longer than the keep-alive would
+    /// otherwise lose its model mid-reply and the next call would load a
+    /// second copy while the first is still finishing.
+    in_flight: Arc<AtomicUsize>,
     /// Seconds of idleness before the loaded model(s) are dropped to free
     /// RAM. 0 = disable eviction (pin forever). Default set by
     /// `LlamaCppRuntime::new`; callable sites override via
@@ -470,6 +475,7 @@ impl LlamaCppRuntime {
             embed_model: Mutex::new(None),
             inference_sem: Arc::new(Semaphore::new(1)),
             last_used: Arc::new(AtomicI64::new(now_secs())),
+            in_flight: Arc::new(AtomicUsize::new(0)),
             keep_alive_secs: Arc::new(AtomicU32::new(30 * 60)),
             n_ctx_override: Arc::new(AtomicU32::new(0)),
             chat_no_think_primer: OnceLock::new(),
@@ -537,6 +543,27 @@ impl LlamaCppRuntime {
         self.last_used.store(now_secs(), Ordering::Relaxed);
     }
 
+    /// Mark a chat/embed request as running until the guard drops. Starting
+    /// and finishing both count as use for the idle clock.
+    fn begin_request(&self) -> InFlight {
+        self.touch_last_used();
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        InFlight {
+            in_flight: Arc::clone(&self.in_flight),
+            last_used: Arc::clone(&self.last_used),
+        }
+    }
+
+    /// Whether the idle-eviction task should drop the loaded models now.
+    fn eviction_due(&self) -> bool {
+        if self.in_flight.load(Ordering::SeqCst) > 0 {
+            return false;
+        }
+        let keep_alive = self.keep_alive_secs.load(Ordering::Relaxed);
+        let idle = now_secs().saturating_sub(self.last_used.load(Ordering::Relaxed));
+        crate::services::ai::should_evict(keep_alive, idle)
+    }
+
     /// Spawn a periodic task that drops `chat_model` / `embed_model` when they
     /// have been idle longer than `keep_alive_secs`. Uses a weak reference so
     /// the task exits automatically when the last `Arc<LlamaCppRuntime>`
@@ -553,11 +580,10 @@ impl LlamaCppRuntime {
                     break; // runtime dropped — nothing to evict
                 };
 
-                let keep_alive = runtime.keep_alive_secs.load(Ordering::Relaxed);
-                let idle = now_secs().saturating_sub(runtime.last_used.load(Ordering::Relaxed));
-                if !crate::services::ai::should_evict(keep_alive, idle) {
+                if !runtime.eviction_due() {
                     continue;
                 }
+                let idle = now_secs().saturating_sub(runtime.last_used.load(Ordering::Relaxed));
 
                 // Evict. We drop both models — they'll be lazily reloaded on
                 // the next inference call. Use try_lock so an in-flight
@@ -1003,7 +1029,7 @@ impl LlamaCppRuntime {
         aux_prefix: Option<String>,
         opts: &CompletionOptions,
     ) -> Result<GenOutcome> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
         let temperature = opts.temperature.unwrap_or(0.8) as f32;
@@ -1059,7 +1085,7 @@ impl LlamaCppRuntime {
         messages: Vec<AiMessage>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
         let temperature = 0.8f32;
@@ -1146,7 +1172,7 @@ impl LlamaCppRuntime {
     /// `apply_chat_template` doesn't accept one) — the model sees the tool
     /// catalogue via the system prompt's `tools_section` template variable.
     pub async fn chat_with_tools(&self, messages: &[AiMessage], _tools: &[serde_json::Value]) -> Result<AiMessage> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
         let temperature = 0.0f32; // greedy for deterministic tool selection
@@ -1200,7 +1226,7 @@ impl LlamaCppRuntime {
         _tools: &[serde_json::Value],
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
         let temperature = 0.0f32; // greedy for deterministic tool selection
@@ -1294,7 +1320,7 @@ impl LlamaCppRuntime {
     /// Uses the embedding model (encoder-mode GGUF) and returns the mean-pooled,
     /// L2-normalised vector via `embeddings_seq_ith(0)`.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_embed_model().await?;
         let text_owned = text.to_string();
 
@@ -1400,7 +1426,7 @@ impl LlamaCppRuntime {
     /// instead of cold-prefilling. See `services/chat/prewarm.rs` for the
     /// caller that guarantees the messages match real turns byte-for-byte.
     pub async fn prewarm_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
-        self.touch_last_used();
+        let _busy = self.begin_request();
         let model = self.get_chat_model().await?;
         let actor = self.get_chat_actor().await?;
 
@@ -1432,6 +1458,20 @@ impl LlamaCppRuntime {
             ),
         );
         Ok(())
+    }
+}
+
+/// A running chat/embed request, for the idle-eviction task. Dropping it
+/// (the request finished, failed or was abandoned) stamps the idle clock.
+struct InFlight {
+    in_flight: Arc<AtomicUsize>,
+    last_used: Arc<AtomicI64>,
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.last_used.store(now_secs(), Ordering::Relaxed);
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -1632,6 +1672,24 @@ fn render_gemma4_chat_template(messages: &[AiMessage], add_generation_prompt: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A generation longer than the keep-alive used to be evicted mid-reply:
+    /// `last_used` was only stamped when it started. A request in flight pins
+    /// the model, and finishing one counts as use.
+    #[tokio::test]
+    async fn a_model_is_not_evicted_while_a_request_runs_nor_right_after() {
+        let rt = LlamaCppRuntime::new(None, None);
+        rt.set_keep_alive_secs(60);
+        rt.last_used.store(now_secs() - 3600, Ordering::Relaxed);
+        assert!(rt.eviction_due(), "idle past the keep-alive");
+
+        let busy = rt.begin_request();
+        rt.last_used.store(now_secs() - 3600, Ordering::Relaxed);
+        assert!(!rt.eviction_due(), "a request has been running for an hour");
+
+        drop(busy);
+        assert!(!rt.eviction_due(), "the request just finished");
+    }
 
     /// A caller that answers "stop" to every piece, recording what it saw.
     fn stopping_caller(seen: &mut Vec<String>) -> impl FnMut(String) -> bool + '_ {
