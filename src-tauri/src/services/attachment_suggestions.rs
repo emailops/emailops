@@ -69,6 +69,8 @@ pub struct SuggestionParams {
     /// and Feb 1 span two months but are one conversation.
     pub min_spread_secs: i64,
     pub max_suggestions: usize,
+    /// UI language the kind tags and names are written in.
+    pub language: crate::services::i18n::Language,
 }
 
 impl Default for SuggestionParams {
@@ -80,6 +82,7 @@ impl Default for SuggestionParams {
             min_distinct_months: 2,
             min_spread_secs: 20 * 86_400,
             max_suggestions: 20,
+            language: crate::services::i18n::Language::En,
         }
     }
 }
@@ -164,6 +167,36 @@ const KIND_KEYWORDS: &[(&str, &[&str])] = &[
         ],
     ),
 ];
+
+/// The tag a kind is suggested under, in the user's UI language — so it
+/// matches the tags they type themselves. Keywords stay multilingual: a
+/// Spanish user still gets German invoices tagged.
+fn kind_label(kind: &str, language: crate::services::i18n::Language) -> &'static str {
+    use crate::services::i18n::Language::{De, En, Es, Fr};
+    match (kind, language) {
+        ("invoice", En) => "invoice",
+        ("invoice", Es) => "factura",
+        ("invoice", Fr) => "facture",
+        ("invoice", De) => "rechnung",
+        ("receipt", En) => "receipt",
+        ("receipt", Es) => "recibo",
+        ("receipt", Fr) => "reçu",
+        ("receipt", De) => "quittung",
+        ("payroll", En) => "payroll",
+        ("payroll", Es) => "nómina",
+        ("payroll", Fr) => "paie",
+        ("payroll", De) => "lohnabrechnung",
+        ("statement", En) => "statement",
+        ("statement", Es) => "extracto",
+        ("statement", Fr) => "relevé",
+        ("statement", De) => "kontoauszug",
+        ("contract", En) => "contract",
+        ("contract", Es) => "contrato",
+        ("contract", Fr) => "contrat",
+        ("contract", De) => "vertrag",
+        _ => "",
+    }
+}
 
 const MAX_SAMPLE_FILENAMES: usize = 3;
 
@@ -395,7 +428,7 @@ fn contains_word(haystack: &str, word: &str) -> bool {
     })
 }
 
-fn kind_tags(group: &[&AttachmentObservation]) -> Vec<String> {
+fn kind_tags(group: &[&AttachmentObservation], language: crate::services::i18n::Language) -> Vec<String> {
     let haystacks: Vec<String> = group
         .iter()
         .map(|o| format!("{} {}", o.filename, o.subject).to_lowercase())
@@ -409,7 +442,8 @@ fn kind_tags(group: &[&AttachmentObservation]) -> Vec<String> {
                 .count();
             hits * 2 >= haystacks.len()
         })
-        .map(|(tag, _)| (*tag).to_string())
+        .map(|(kind, _)| kind_label(kind, language).to_string())
+        .filter(|label| !label.is_empty())
         .collect()
 }
 
@@ -417,6 +451,7 @@ fn build_candidate(
     identity: &str,
     group: &[&AttachmentObservation],
     filename_pattern: Option<String>,
+    language: crate::services::i18n::Language,
 ) -> SuggestionCandidate {
     let mut by_recency: Vec<&AttachmentObservation> = group.to_vec();
     by_recency.sort_by_key(|o| std::cmp::Reverse(o.timestamp));
@@ -440,7 +475,7 @@ fn build_candidate(
         crate::util::email_addr::company_label_for(&domain, Some(&newest_sender))
     };
 
-    let mut tags = kind_tags(group);
+    let mut tags = kind_tags(group, language);
     let display_label = if corporate {
         tags.push(label.clone());
         let mut chars = label.chars();
@@ -559,7 +594,7 @@ pub fn plan_suggestions(
             {
                 continue;
             }
-            candidates.push(build_candidate(identity, &members, pattern));
+            candidates.push(build_candidate(identity, &members, pattern, params.language));
         }
     }
 
@@ -625,13 +660,29 @@ pub fn preview_suggestions_at(
     let rules = db.get_all_attachment_rules(account_id)?;
     let resolved = db.get_resolved_attachment_rule_suggestions(account_id)?;
     let account_email = db.get_account(account_id)?.map(|a| a.email).unwrap_or_default();
+    let params = SuggestionParams {
+        language: suggestion_language(db)?,
+        ..SuggestionParams::default()
+    };
     Ok(plan_suggestions(
         &observations,
         &rules,
         &resolved,
         &account_email,
-        SuggestionParams::default(),
+        params,
     ))
+}
+
+/// The language the UI shows, resolved the way the frontend does at startup:
+/// the `ui_language` preference, then the OS locale, then English.
+fn suggestion_language(db: &crate::db::Database) -> Result<crate::services::i18n::Language> {
+    use crate::services::i18n::Language;
+    Ok(crate::services::i18n::resolve_ui_language(db)?.unwrap_or_else(|| {
+        sys_locale::get_locale()
+            .as_deref()
+            .and_then(Language::from_pref)
+            .unwrap_or_default()
+    }))
 }
 
 pub fn list_suggestions(db: &crate::db::Database, account_id: &str) -> Result<Vec<AttachmentRuleSuggestion>> {
@@ -872,6 +923,18 @@ mod executor_tests {
         .expect("insert rule");
 
         assert!(refresh_suggestions_at(&db, "acc1", NOW).expect("refresh").is_empty());
+    }
+
+    #[test]
+    fn suggestions_are_tagged_in_the_chosen_ui_language() {
+        let db = setup();
+        db.set_preference(crate::services::i18n::PREF_UI_LANGUAGE, "es")
+            .expect("pref");
+        add_monthly_invoices(&db, "inbox");
+
+        let out = refresh_suggestions_at(&db, "acc1", NOW).expect("refresh");
+
+        assert_eq!(out[0].tags, vec!["factura".to_string(), "acme".to_string()]);
     }
 
     #[test]
@@ -1140,6 +1203,36 @@ mod tests {
         assert_eq!(c.email_count, 3);
         assert_eq!(c.first_seen, JAN_15);
         assert_eq!(c.key, "*@acme.com|factura_*.pdf");
+    }
+
+    #[test]
+    fn kind_tags_and_names_follow_the_ui_language() {
+        use crate::services::i18n::Language;
+        for (language, kind) in [
+            (Language::Es, "factura"),
+            (Language::Fr, "facture"),
+            (Language::De, "rechnung"),
+            (Language::En, "invoice"),
+        ] {
+            let params = SuggestionParams {
+                language,
+                ..SuggestionParams::default()
+            };
+            let out = plan_suggestions(&monthly("billing@acme.com", "Invoice", 3), &[], &[], ACCOUNT, params);
+
+            assert_eq!(out[0].tags, vec![kind.to_string(), "acme".to_string()], "{language:?}");
+            assert_eq!(out[0].name, format!("Acme · {kind}"), "{language:?}");
+        }
+    }
+
+    #[test]
+    fn every_kind_has_a_tag_in_every_language() {
+        use crate::services::i18n::Language;
+        for language in [Language::En, Language::Es, Language::Fr, Language::De] {
+            for (kind, _) in KIND_KEYWORDS {
+                assert!(!kind_label(kind, language).is_empty(), "{kind} {language:?}");
+            }
+        }
     }
 
     #[test]

@@ -1788,3 +1788,16 @@ user's own company.
 **Rejected:** A migration re-keying resolved rows (the stored patterns already carry the
 identity, so coverage is computed from them); matching the resolved row's exact sender
 pattern (a dismissal of `billing@` must also hide `noreply@` of the same company).
+
+## 2026-09-29 — Suggested attachment rules tag the document kind in the UI language
+
+**Decision:** The kind tag a suggestion proposes (and the name built from it,
+"Acme · factura") is written in the UI language — the `ui_language` preference, else the
+OS locale, else English — while the keywords that detect the kind stay multilingual.
+Pending suggestions are re-mined on every sync and modal open, so they follow a language
+change.
+**Context:** English-only tags ("invoice") next to the user's own Spanish tags
+("factura") split one kind of document across two tags.
+**Rejected:** Canonical English tags (they do not match the vocabulary the user types);
+translating at display time (tags are user data stored on rules and attachments, not UI
+strings).
