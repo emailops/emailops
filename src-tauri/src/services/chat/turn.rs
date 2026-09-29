@@ -559,13 +559,9 @@ const NO_MATCHING_EMAILS: &str = "No matching emails found";
 ///
 /// Pure so the formatting is unit-tested without a tool round-trip.
 fn describe_search_filters(args: &serde_json::Value) -> String {
-    const SELECTIVE: &[&str] = &["query", "from", "to", "subject", "since", "until"];
-    let parts: Vec<String> = SELECTIVE
-        .iter()
-        .filter_map(|k| {
-            let v = args.get(*k)?.as_str()?.trim();
-            (!v.is_empty()).then(|| format!("{k}={v:?}"))
-        })
+    let parts: Vec<String> = tools::search_emails::active_filters(args)
+        .into_iter()
+        .map(|(k, v)| format!("{k}={v:?}"))
         .collect();
     if parts.is_empty() {
         // `search_emails({})` is a real emission from a flaky model — say so
@@ -1179,17 +1175,7 @@ fn correct_mangled_address_args(
 /// `include_bodies` is set like the planner's preseeds so the synthesis has
 /// content in one shot. Returns true when the args were modified.
 fn repair_filterless_search_args(args: &mut serde_json::Value, user_question: &str) -> bool {
-    const SELECTIVE: [&str; 6] = ["query", "from", "to", "subject", "since", "until"];
-    let Some(obj) = args.as_object() else {
-        return false;
-    };
-    let has_filter = SELECTIVE.iter().any(|k| {
-        obj.get(*k)
-            .and_then(|v| v.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
-    });
-    if has_filter {
+    if !args.is_object() || !tools::search_emails::active_filters(args).is_empty() {
         return false;
     }
     let addrs = extract_email_addresses(user_question);
@@ -8825,5 +8811,35 @@ Preséntalos en una tabla markdown …";
         };
         let out = finish_cancelled_stream(Ok(untouched), false, "en", "conv-1", "msg-1").expect("ok");
         assert_eq!(out.content, "Full answer.");
+    }
+
+    #[test]
+    fn a_search_filtered_by_any_schema_filter_is_not_repaired() {
+        // `with`, `intent`, `topic` and `unread` are real filters: injecting
+        // the question's address on top of them narrowed a valid call.
+        let question = "emails with ana@example.com about the offer";
+        for args in [
+            serde_json::json!({"with": "Ana"}),
+            serde_json::json!({"intent": "request"}),
+            serde_json::json!({"topic": "billing"}),
+            serde_json::json!({"unread": true}),
+        ] {
+            let mut repaired = args.clone();
+            assert!(
+                !repair_filterless_search_args(&mut repaired, question),
+                "{args} already filters"
+            );
+            assert_eq!(repaired, args);
+        }
+    }
+
+    #[test]
+    fn the_zero_result_log_names_every_filter_the_call_carried() {
+        let args = serde_json::json!({"with": "Ana", "intent": "request", "unread": true, "limit": 5});
+        let described = describe_search_filters(&args);
+        assert!(described.contains("with=\"Ana\""), "{described}");
+        assert!(described.contains("intent=\"request\""), "{described}");
+        assert!(described.contains("unread"), "{described}");
+        assert!(!described.contains("limit"), "{described}");
     }
 }

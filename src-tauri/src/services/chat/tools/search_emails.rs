@@ -234,6 +234,32 @@ pub(crate) fn semantic_post_filter(
         .collect()
 }
 
+/// The `search_emails` parameters that narrow what a call selects. Kept next
+/// to the schema (a test holds every schema parameter to exactly one of these
+/// two lists) so the chat's "does this call filter anything?" checks cannot
+/// drift from what the tool actually accepts.
+pub(crate) const FILTER_PARAMS: &[&str] = &[
+    "query", "from", "to", "with", "subject", "since", "until", "intent", "topic", "unread",
+];
+
+/// Parameters that shape the result (how many, which page, in what order, in
+/// what detail) but select nothing. Only the drift test reads it.
+#[cfg(test)]
+const SHAPING_PARAMS: &[&str] = &["mode", "limit", "offset", "order", "with_bodies"];
+
+/// The filters a call actually carries, in [`FILTER_PARAMS`] order: a
+/// non-blank string, or a boolean switched on. Pure.
+pub(crate) fn active_filters(args: &Value) -> Vec<(&'static str, String)> {
+    FILTER_PARAMS
+        .iter()
+        .filter_map(|k| match args.get(*k)? {
+            Value::String(v) if !v.trim().is_empty() => Some((*k, v.trim().to_string())),
+            Value::Bool(true) => Some((*k, "true".to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The LLM-facing schema, rendered from the user's tag glossary so the
 /// intent / topic menus (and their one-line meanings) follow Settings.
 fn parameters_schema_with(glossary: &TagGlossary) -> Value {
@@ -864,6 +890,37 @@ mod tests {
             None,
             &me()
         ));
+    }
+
+    #[test]
+    fn every_schema_parameter_is_classified_as_filter_or_shaping() {
+        // A new parameter must be sorted into one list, or the chat's
+        // "does this call filter anything?" checks drift from the schema.
+        let schema = SearchEmailsTool.parameters_schema();
+        let mut props: Vec<String> = schema["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .cloned()
+            .collect();
+        props.sort();
+        let mut classified: Vec<String> = FILTER_PARAMS
+            .iter()
+            .chain(SHAPING_PARAMS.iter())
+            .map(|s| s.to_string())
+            .collect();
+        classified.sort();
+        assert_eq!(props, classified);
+    }
+
+    #[test]
+    fn active_filters_reads_text_and_boolean_filters_only() {
+        let args = json!({"from": " a@b.example ", "unread": true, "with_bodies": true, "query": "  ", "limit": 3});
+        assert_eq!(
+            active_filters(&args),
+            vec![("from", "a@b.example".to_string()), ("unread", "true".to_string())]
+        );
+        assert!(active_filters(&json!({"unread": false})).is_empty());
     }
 
     #[test]
